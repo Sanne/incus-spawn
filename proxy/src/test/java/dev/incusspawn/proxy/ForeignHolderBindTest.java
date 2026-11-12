@@ -40,7 +40,7 @@ class ForeignHolderBindTest {
     void setUp() {
         originalHome = System.getProperty("user.home");
         System.setProperty("user.home", home.toString());
-        vertx = Vertx.vertx();
+        vertx = ProxyTransport.vertx();
     }
 
     @AfterEach

@@ -1,0 +1,1065 @@
+{
+ "issue": 475,
+ "date": "2026-11-13",
+ "host": "Linux container box (nested Incus 6.23), x86_64, 32 CPUs, kernel 7.3.3-300.fc45",
+ "toolchain": "Oracle GraalVM 25.4.4.1.1 (JDK 25.0.4), no PGO, -O3 -march=haswell, G1",
+ "source": "branch issue-475-native-transport at 4c12b88e; nio is origin/main at da960615; uring adds netty-transport-native-io_uring and quarkus.vertx.native-transport-type=io-uring",
+ "order": "interleaved: maven nio,epoll,uring,uring,epoll,nio,nio,epoll,uring then saturate nio,epoll,uring,uring,epoll,nio; quiet host",
+ "binarySizeBytes": {
+  "nio": 104140112,
+  "epoll": 106696016,
+  "uring": 107744592
+ },
+ "runs": [
+  {
+   "label": "475-nio-maven-r1",
+   "timestamp": "2026-11-13T03:20:51Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 104140112,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3490,
+   "startupMs": 272,
+   "idleRssKb": 65824,
+   "peakRssKb": 109652,
+   "throughput": {
+    "phase": "c008",
+    "requestCount": 17554,
+    "meanReqPerSec": 1754.0,
+    "success2xxPct": 100.0,
+    "p50Us": 3997.7,
+    "p99Us": 8585.2,
+    "p999Us": 11337.7,
+    "mbPerSec": 1099.7,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 17554,
+      "meanReqPerSec": 1754.0,
+      "success2xxPct": 100.0,
+      "p50Us": 3997.7,
+      "p99Us": 8585.2,
+      "p999Us": 11337.7,
+      "mbPerSec": 1099.7
+     },
+     {
+      "phase": "c032",
+      "requestCount": 17476,
+      "meanReqPerSec": 1743.8,
+      "success2xxPct": 100.0,
+      "p50Us": 18350.1,
+      "p99Us": 22020.1,
+      "p999Us": 35913.7,
+      "mbPerSec": 1093.3
+     },
+     {
+      "phase": "c064",
+      "requestCount": 17252,
+      "meanReqPerSec": 1718.5,
+      "success2xxPct": 100.0,
+      "p50Us": 37224.4,
+      "p99Us": 43778.0,
+      "p999Us": 51642.4,
+      "mbPerSec": 1077.4
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "475-epoll-maven-r2",
+   "timestamp": "2026-11-13T03:21:47Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 106696016,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3500,
+   "startupMs": 274,
+   "idleRssKb": 66996,
+   "peakRssKb": 109900,
+   "throughput": {
+    "phase": "c008",
+    "requestCount": 18312,
+    "meanReqPerSec": 1829.9,
+    "success2xxPct": 100.0,
+    "p50Us": 3866.6,
+    "p99Us": 7864.3,
+    "p999Us": 8716.3,
+    "mbPerSec": 1147.3,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 18312,
+      "meanReqPerSec": 1829.9,
+      "success2xxPct": 100.0,
+      "p50Us": 3866.6,
+      "p99Us": 7864.3,
+      "p999Us": 8716.3,
+      "mbPerSec": 1147.3
+     },
+     {
+      "phase": "c032",
+      "requestCount": 17570,
+      "meanReqPerSec": 1752.8,
+      "success2xxPct": 100.0,
+      "p50Us": 17825.8,
+      "p99Us": 24903.7,
+      "p999Us": 35127.3,
+      "mbPerSec": 1098.9
+     },
+     {
+      "phase": "c064",
+      "requestCount": 18016,
+      "meanReqPerSec": 1795.0,
+      "success2xxPct": 100.0,
+      "p50Us": 35389.4,
+      "p99Us": 45350.9,
+      "p999Us": 50331.6,
+      "mbPerSec": 1125.4
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "475-uring-maven-r3",
+   "timestamp": "2026-11-13T03:22:43Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 107744592,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3444,
+   "startupMs": 273,
+   "idleRssKb": 70264,
+   "peakRssKb": 117652,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 25305,
+    "meanReqPerSec": 2526.7,
+    "success2xxPct": 100.0,
+    "p50Us": 12386.3,
+    "p99Us": 15794.2,
+    "p999Us": 22020.1,
+    "mbPerSec": 1584.1,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 24930,
+      "meanReqPerSec": 2491.8,
+      "success2xxPct": 100.0,
+      "p50Us": 3162.1,
+      "p99Us": 5570.6,
+      "p999Us": 6160.4,
+      "mbPerSec": 1562.2
+     },
+     {
+      "phase": "c032",
+      "requestCount": 25305,
+      "meanReqPerSec": 2526.7,
+      "success2xxPct": 100.0,
+      "p50Us": 12386.3,
+      "p99Us": 15794.2,
+      "p999Us": 22020.1,
+      "mbPerSec": 1584.1
+     },
+     {
+      "phase": "c064",
+      "requestCount": 25241,
+      "meanReqPerSec": 2517.8,
+      "success2xxPct": 100.0,
+      "p50Us": 25165.8,
+      "p99Us": 28180.5,
+      "p999Us": 47448.1,
+      "mbPerSec": 1578.5
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "475-uring-maven-r4",
+   "timestamp": "2026-11-13T03:23:39Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 107744592,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3465,
+   "startupMs": 260,
+   "idleRssKb": 70336,
+   "peakRssKb": 119312,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 25527,
+    "meanReqPerSec": 2549.9,
+    "success2xxPct": 100.0,
+    "p50Us": 12386.3,
+    "p99Us": 13631.5,
+    "p999Us": 20971.5,
+    "mbPerSec": 1598.7,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 24814,
+      "meanReqPerSec": 2480.2,
+      "success2xxPct": 100.0,
+      "p50Us": 3178.5,
+      "p99Us": 5046.3,
+      "p999Us": 6127.6,
+      "mbPerSec": 1554.9
+     },
+     {
+      "phase": "c032",
+      "requestCount": 25527,
+      "meanReqPerSec": 2549.9,
+      "success2xxPct": 100.0,
+      "p50Us": 12386.3,
+      "p99Us": 13631.5,
+      "p999Us": 20971.5,
+      "mbPerSec": 1598.7
+     },
+     {
+      "phase": "c064",
+      "requestCount": 25483,
+      "meanReqPerSec": 2545.0,
+      "success2xxPct": 100.0,
+      "p50Us": 24903.7,
+      "p99Us": 28311.6,
+      "p999Us": 46137.3,
+      "mbPerSec": 1595.6
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "475-epoll-maven-r5",
+   "timestamp": "2026-11-13T03:24:36Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 106696016,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3415,
+   "startupMs": 261,
+   "idleRssKb": 67860,
+   "peakRssKb": 109920,
+   "throughput": {
+    "phase": "c064",
+    "requestCount": 18199,
+    "meanReqPerSec": 1813.2,
+    "success2xxPct": 100.0,
+    "p50Us": 35127.3,
+    "p99Us": 40894.5,
+    "p999Us": 50331.6,
+    "mbPerSec": 1136.8,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 17510,
+      "meanReqPerSec": 1749.6,
+      "success2xxPct": 100.0,
+      "p50Us": 4177.9,
+      "p99Us": 8847.4,
+      "p999Us": 10747.9,
+      "mbPerSec": 1096.9
+     },
+     {
+      "phase": "c032",
+      "requestCount": 18063,
+      "meanReqPerSec": 1802.5,
+      "success2xxPct": 100.0,
+      "p50Us": 17563.6,
+      "p99Us": 23593.0,
+      "p999Us": 34865.2,
+      "mbPerSec": 1130.1
+     },
+     {
+      "phase": "c064",
+      "requestCount": 18199,
+      "meanReqPerSec": 1813.2,
+      "success2xxPct": 100.0,
+      "p50Us": 35127.3,
+      "p99Us": 40894.5,
+      "p999Us": 50331.6,
+      "mbPerSec": 1136.8
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "475-nio-maven-r6",
+   "timestamp": "2026-11-13T03:25:32Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 104140112,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3545,
+   "startupMs": 261,
+   "idleRssKb": 66340,
+   "peakRssKb": 109976,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 16945,
+    "meanReqPerSec": 1691.1,
+    "success2xxPct": 100.0,
+    "p50Us": 18219.0,
+    "p99Us": 24117.2,
+    "p999Us": 35913.7,
+    "mbPerSec": 1060.3,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 16083,
+      "meanReqPerSec": 1606.5,
+      "success2xxPct": 100.0,
+      "p50Us": 4620.3,
+      "p99Us": 9961.5,
+      "p999Us": 10944.5,
+      "mbPerSec": 1007.2
+     },
+     {
+      "phase": "c032",
+      "requestCount": 16945,
+      "meanReqPerSec": 1691.1,
+      "success2xxPct": 100.0,
+      "p50Us": 18219.0,
+      "p99Us": 24117.2,
+      "p999Us": 35913.7,
+      "mbPerSec": 1060.3
+     },
+     {
+      "phase": "c064",
+      "requestCount": 15659,
+      "meanReqPerSec": 1560.0,
+      "success2xxPct": 100.0,
+      "p50Us": 43778.0,
+      "p99Us": 47185.9,
+      "p999Us": 49545.2,
+      "mbPerSec": 978.0
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "475-nio-maven-r7",
+   "timestamp": "2026-11-13T03:26:28Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 104140112,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3472,
+   "startupMs": 261,
+   "idleRssKb": 66200,
+   "peakRssKb": 111964,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 17514,
+    "meanReqPerSec": 1747.7,
+    "success2xxPct": 100.0,
+    "p50Us": 18219.0,
+    "p99Us": 22413.3,
+    "p999Us": 36438.0,
+    "mbPerSec": 1095.7,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 16538,
+      "meanReqPerSec": 1652.6,
+      "success2xxPct": 100.0,
+      "p50Us": 4423.7,
+      "p99Us": 9895.9,
+      "p999Us": 10682.4,
+      "mbPerSec": 1036.1
+     },
+     {
+      "phase": "c032",
+      "requestCount": 17514,
+      "meanReqPerSec": 1747.7,
+      "success2xxPct": 100.0,
+      "p50Us": 18219.0,
+      "p99Us": 22413.3,
+      "p999Us": 36438.0,
+      "mbPerSec": 1095.7
+     },
+     {
+      "phase": "c064",
+      "requestCount": 15826,
+      "meanReqPerSec": 1576.8,
+      "success2xxPct": 100.0,
+      "p50Us": 40108.0,
+      "p99Us": 46661.6,
+      "p999Us": 49807.4,
+      "mbPerSec": 988.6
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "475-epoll-maven-r8",
+   "timestamp": "2026-11-13T03:27:25Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 106696016,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3513,
+   "startupMs": 261,
+   "idleRssKb": 67920,
+   "peakRssKb": 110180,
+   "throughput": {
+    "phase": "c064",
+    "requestCount": 18207,
+    "meanReqPerSec": 1814.0,
+    "success2xxPct": 100.0,
+    "p50Us": 35127.3,
+    "p99Us": 39845.9,
+    "p999Us": 48496.6,
+    "mbPerSec": 1137.3,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 17982,
+      "meanReqPerSec": 1796.6,
+      "success2xxPct": 100.0,
+      "p50Us": 3915.8,
+      "p99Us": 8093.7,
+      "p999Us": 11993.1,
+      "mbPerSec": 1126.4
+     },
+     {
+      "phase": "c032",
+      "requestCount": 18099,
+      "meanReqPerSec": 1806.3,
+      "success2xxPct": 100.0,
+      "p50Us": 17563.6,
+      "p99Us": 23986.2,
+      "p999Us": 34865.2,
+      "mbPerSec": 1132.5
+     },
+     {
+      "phase": "c064",
+      "requestCount": 18207,
+      "meanReqPerSec": 1814.0,
+      "success2xxPct": 100.0,
+      "p50Us": 35127.3,
+      "p99Us": 39845.9,
+      "p999Us": 48496.6,
+      "mbPerSec": 1137.3
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "475-uring-maven-r9",
+   "timestamp": "2026-11-13T03:28:21Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 107744592,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3242,
+   "startupMs": 260,
+   "idleRssKb": 70448,
+   "peakRssKb": 119748,
+   "throughput": {
+    "phase": "c064",
+    "requestCount": 25667,
+    "meanReqPerSec": 2562.1,
+    "success2xxPct": 100.0,
+    "p50Us": 24772.6,
+    "p99Us": 30539.8,
+    "p999Us": 49807.4,
+    "mbPerSec": 1606.3,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 24709,
+      "meanReqPerSec": 2469.7,
+      "success2xxPct": 100.0,
+      "p50Us": 3178.5,
+      "p99Us": 5603.3,
+      "p999Us": 6389.8,
+      "mbPerSec": 1548.4
+     },
+     {
+      "phase": "c032",
+      "requestCount": 25425,
+      "meanReqPerSec": 2538.9,
+      "success2xxPct": 100.0,
+      "p50Us": 12451.8,
+      "p99Us": 17170.4,
+      "p999Us": 23199.7,
+      "mbPerSec": 1591.8
+     },
+     {
+      "phase": "c064",
+      "requestCount": 25667,
+      "meanReqPerSec": 2562.1,
+      "success2xxPct": 100.0,
+      "p50Us": 24772.6,
+      "p99Us": 30539.8,
+      "p999Us": 49807.4,
+      "mbPerSec": 1606.3
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "475-nio-saturate-r1",
+   "timestamp": "2026-11-13T03:29:26Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 104140112,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3365,
+   "startupMs": 260,
+   "idleRssKb": 66152,
+   "peakRssKb": 93356,
+   "throughput": {
+    "phase": "c064",
+    "requestCount": 979899,
+    "meanReqPerSec": 97940.9,
+    "success2xxPct": 100.0,
+    "p50Us": 647.2,
+    "p99Us": 892.9,
+    "p999Us": 1802.2,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 975248,
+      "meanReqPerSec": 97476.1,
+      "success2xxPct": 100.0,
+      "p50Us": 151.6,
+      "p99Us": 309.2,
+      "p999Us": 462.8,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 979899,
+      "meanReqPerSec": 97940.9,
+      "success2xxPct": 100.0,
+      "p50Us": 647.2,
+      "p99Us": 892.9,
+      "p999Us": 1802.2,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 975848,
+      "meanReqPerSec": 97526.3,
+      "success2xxPct": 100.0,
+      "p50Us": 1302.5,
+      "p99Us": 1622.0,
+      "p999Us": 3227.6,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 963014,
+      "meanReqPerSec": 96253.3,
+      "success2xxPct": 100.0,
+      "p50Us": 2621.4,
+      "p99Us": 3768.3,
+      "p999Us": 4620.3,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "475-epoll-saturate-r2",
+   "timestamp": "2026-11-13T03:30:31Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 106696016,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3388,
+   "startupMs": 260,
+   "idleRssKb": 67816,
+   "peakRssKb": 93244,
+   "throughput": {
+    "phase": "c128",
+    "requestCount": 1004005,
+    "meanReqPerSec": 100360.4,
+    "success2xxPct": 100.0,
+    "p50Us": 1269.8,
+    "p99Us": 1597.4,
+    "p999Us": 1876.0,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 984255,
+      "meanReqPerSec": 98376.3,
+      "success2xxPct": 100.0,
+      "p50Us": 149.5,
+      "p99Us": 307.2,
+      "p999Us": 462.8,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 1003308,
+      "meanReqPerSec": 100280.7,
+      "success2xxPct": 100.0,
+      "p50Us": 634.9,
+      "p99Us": 892.9,
+      "p999Us": 1007.6,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 1004005,
+      "meanReqPerSec": 100360.4,
+      "success2xxPct": 100.0,
+      "p50Us": 1269.8,
+      "p99Us": 1597.4,
+      "p999Us": 1876.0,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 989132,
+      "meanReqPerSec": 98863.8,
+      "success2xxPct": 100.0,
+      "p50Us": 2539.5,
+      "p99Us": 3735.6,
+      "p999Us": 4423.7,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "475-uring-saturate-r3",
+   "timestamp": "2026-11-13T03:31:36Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 107744592,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3376,
+   "startupMs": 261,
+   "idleRssKb": 70468,
+   "peakRssKb": 97076,
+   "throughput": {
+    "phase": "c064",
+    "requestCount": 1037982,
+    "meanReqPerSec": 103756.7,
+    "success2xxPct": 100.0,
+    "p50Us": 634.9,
+    "p99Us": 925.7,
+    "p999Us": 1228.8,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 1024902,
+      "meanReqPerSec": 102428.7,
+      "success2xxPct": 100.0,
+      "p50Us": 155.6,
+      "p99Us": 204.8,
+      "p999Us": 423.9,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 1037982,
+      "meanReqPerSec": 103756.7,
+      "success2xxPct": 100.0,
+      "p50Us": 634.9,
+      "p99Us": 925.7,
+      "p999Us": 1228.8,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 1029179,
+      "meanReqPerSec": 102897.3,
+      "success2xxPct": 100.0,
+      "p50Us": 1163.3,
+      "p99Us": 1712.1,
+      "p999Us": 1916.9,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 1021606,
+      "meanReqPerSec": 102130.0,
+      "success2xxPct": 100.0,
+      "p50Us": 2457.6,
+      "p99Us": 3047.4,
+      "p999Us": 3276.8,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "475-uring-saturate-r4",
+   "timestamp": "2026-11-13T03:32:41Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 107744592,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3454,
+   "startupMs": 260,
+   "idleRssKb": 70432,
+   "peakRssKb": 96848,
+   "throughput": {
+    "phase": "c064",
+    "requestCount": 1036698,
+    "meanReqPerSec": 103618.0,
+    "success2xxPct": 100.0,
+    "p50Us": 634.9,
+    "p99Us": 847.9,
+    "p999Us": 1138.7,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 1030202,
+      "meanReqPerSec": 102979.0,
+      "success2xxPct": 100.0,
+      "p50Us": 155.6,
+      "p99Us": 208.9,
+      "p999Us": 391.2,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 1036698,
+      "meanReqPerSec": 103618.0,
+      "success2xxPct": 100.0,
+      "p50Us": 634.9,
+      "p99Us": 847.9,
+      "p999Us": 1138.7,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 1023246,
+      "meanReqPerSec": 102283.7,
+      "success2xxPct": 100.0,
+      "p50Us": 1171.5,
+      "p99Us": 1687.6,
+      "p999Us": 2768.9,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 1034165,
+      "meanReqPerSec": 103375.1,
+      "success2xxPct": 100.0,
+      "p50Us": 2408.4,
+      "p99Us": 2932.7,
+      "p999Us": 5406.7,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "475-epoll-saturate-r5",
+   "timestamp": "2026-11-13T03:33:46Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 106696016,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3430,
+   "startupMs": 261,
+   "idleRssKb": 67792,
+   "peakRssKb": 93348,
+   "throughput": {
+    "phase": "c064",
+    "requestCount": 1006945,
+    "meanReqPerSec": 100644.2,
+    "success2xxPct": 100.0,
+    "p50Us": 630.8,
+    "p99Us": 905.2,
+    "p999Us": 2129.9,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 995952,
+      "meanReqPerSec": 99545.4,
+      "success2xxPct": 100.0,
+      "p50Us": 147.5,
+      "p99Us": 303.1,
+      "p999Us": 481.3,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 1006945,
+      "meanReqPerSec": 100644.2,
+      "success2xxPct": 100.0,
+      "p50Us": 630.8,
+      "p99Us": 905.2,
+      "p999Us": 2129.9,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 1005761,
+      "meanReqPerSec": 100525.8,
+      "success2xxPct": 100.0,
+      "p50Us": 1269.8,
+      "p99Us": 1523.7,
+      "p999Us": 1966.1,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 1006757,
+      "meanReqPerSec": 100635.4,
+      "success2xxPct": 100.0,
+      "p50Us": 2523.1,
+      "p99Us": 2949.1,
+      "p999Us": 3866.6,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "475-nio-saturate-r6",
+   "timestamp": "2026-11-13T03:34:51Z",
+   "gitSha": "0bfc98a1",
+   "gitSubject": "fixup! Proxy: run Vert.x on Netty's native epoll transport on Linux (#475)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Linux x86_64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "binarySizeBytes": 104140112,
+   "cliBinarySizeBytes": 39652472,
+   "cliStartupUs": 3575,
+   "startupMs": 260,
+   "idleRssKb": 65900,
+   "peakRssKb": 93072,
+   "throughput": {
+    "phase": "c064",
+    "requestCount": 971799,
+    "meanReqPerSec": 97131.3,
+    "success2xxPct": 100.0,
+    "p50Us": 647.2,
+    "p99Us": 954.4,
+    "p999Us": 1237.0,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 960422,
+      "meanReqPerSec": 95994.2,
+      "success2xxPct": 100.0,
+      "p50Us": 153.6,
+      "p99Us": 315.4,
+      "p999Us": 475.1,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 971799,
+      "meanReqPerSec": 97131.3,
+      "success2xxPct": 100.0,
+      "p50Us": 647.2,
+      "p99Us": 954.4,
+      "p999Us": 1237.0,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 958187,
+      "meanReqPerSec": 95770.8,
+      "success2xxPct": 100.0,
+      "p50Us": 1310.7,
+      "p99Us": 1990.7,
+      "p999Us": 2293.8,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 952552,
+      "meanReqPerSec": 95217.1,
+      "success2xxPct": 100.0,
+      "p50Us": 2621.4,
+      "p99Us": 3735.6,
+      "p999Us": 4456.4,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "quay.io/hyperfoil/hyperfoil:latest",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  }
+ ]
+}

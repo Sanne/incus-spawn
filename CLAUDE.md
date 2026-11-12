@@ -153,6 +153,7 @@ Three Maven modules under a parent POM:
   Depends on common.
   Native image: G1 GC on Linux and serial GC on macOS (measured: G1 buys nothing on Apple Silicon, see `docs/dev/PERFORMANCE-NOTES.md`), `-O3` (throughput-optimized), on x86_64 `-march=haswell`, on aarch64 `-march=armv8.1-a+aes`.
   Without a profile `-O3` uses ML-inferred profiles; release builds take a real one (see "PGO" below).
+  On Linux it runs on Netty's native epoll transport (`proxy/pom.xml` profiles add epoll per arch and set `quarkus.vertx.native-transport=if-available`, #475), falling back to NIO when the library cannot load; on epoll, socket errors arrive as Netty's `NativeIoException` (`.claude/rules/proxy.md`).
   The `-march` value is set by arch-gated Maven profiles in `proxy/pom.xml` (one per arch: an x86 `-march` fails an aarch64 build and vice versa).
   x86_64: GraalVM's default `-march=x86-64-v3` omits AES and CLMUL, so the image cannot use AES-NI/GHASH intrinsics and TLS falls back to software AES -- measured 73 MB/s vs 960 MB/s serving a cached Maven artifact (~13x).
   `haswell` costs no hardware support: AES-NI predates the v3 baseline by three years.

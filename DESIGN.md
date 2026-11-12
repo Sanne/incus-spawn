@@ -132,6 +132,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Auth & Security: MITM TLS Proxy
   - Credential Isolation
   - The proxy holds no configuration of its own
+  - The socket transport: epoll on Linux
   - Host routes
   - Exposed host ports
   - Vertex AI: container in Vertex mode vs standard mode
