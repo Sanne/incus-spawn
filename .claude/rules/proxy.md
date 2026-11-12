@@ -365,6 +365,9 @@ Key design:
   Cache fetches, redirects and resumes never send `Connection: close` (#2082).
   An upstream HTTP/1.x response is never `pause()`d: a paused Vert.x connection drops its queued tail when upstream closes, so `CachingDownload` and `pipeResponse` hold it back through `ResponseHold`, which turns the socket's auto-read off and keeps what was already read (#2088).
   A new path that holds an upstream response back goes through it too.
+  Vert.x still pauses a connection itself for a response handled off the connection's event loop (#2176); none is today, since the MITM listener is one server on one loop.
+  Keep it so: `ResponseHold.offLoop()` counts any such response and `upstreamResponsesRunOnTheirConnectionsEventLoop` fails on one.
+  Before adding a second listener instance or sending upstream requests from a worker context, give each event loop its own upstream client.
   A `206` continues only unencoded, with the remaining `Content-Length` and the first response's own validator (`resumesAt`), whatever `If-Range` got, since some servers ignore it.
   Both rules, the validator (`HttpValidator.strong`) and the whole continuation check (`HttpValidator.continues`), live in `common`, shared with `DownloadCache`, so the two paths cannot drift apart again.
   A connect timeout cut short to fit the budget does not start the unreachable backoff (`requestWithAsyncDns`).

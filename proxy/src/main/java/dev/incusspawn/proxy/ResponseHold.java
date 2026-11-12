@@ -2,11 +2,13 @@ package dev.incusspawn.proxy;
 
 import io.netty.channel.Channel;
 import io.vertx.core.Handler;
+import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpVersion;
 
 import java.util.ArrayDeque;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Upstream's response body, held back on the proxy's backpressure by not reading its socket,
@@ -25,8 +27,21 @@ import java.util.ArrayDeque;
  * response's end or error, the connection may serve another request, so reading is turned back on
  * then, whatever is still held here. HTTP/2 is held by pausing its stream, whose flow control
  * keeps what arrives.
+ * <p>
+ * Vert.x still pauses the connection itself when the response's context is not on the
+ * connection's own event loop (#2176): the stream's queue then crosses threads, and above 16
+ * chunks it pauses the connection, whose queued tail a close drops as above. It never does on
+ * the connection's loop, where each chunk is handed on as it is read. Every response is there
+ * today, because the MITM listener is one server on one event loop, so every request and every
+ * upstream connection it opens run on that loop. A response anywhere else is counted and warned
+ * about once ({@link #offLoop}), never served differently.
  */
 final class ResponseHold {
+    // Responses whose context was off their connection's event loop (#2176)
+    private static final AtomicLong OFF_LOOP = new AtomicLong();
+    // HTTP/1.x responses whose loop was checked, so a test of the count above is not vacuous
+    private static final AtomicLong CHECKED = new AtomicLong();
+
     private final HttpClientResponse response;
     // The HTTP/1.x connection's socket; null for HTTP/2 or 3, whose stream is paused instead
     private final Channel channel;
@@ -61,8 +76,28 @@ final class ResponseHold {
     private static Channel channelOf(HttpClientResponse response) {
         if (response.version() != HttpVersion.HTTP_1_1 && response.version() != HttpVersion.HTTP_1_0) return null;
         // Vert.x's own connection type: what holds the socket is not in its public API
-        return response.request().connection() instanceof io.vertx.core.http.impl.HttpClientConnection conn
-                ? conn.channelHandlerContext().channel() : null;
+        if (!(response.request().connection() instanceof io.vertx.core.http.impl.HttpClientConnection conn)) return null;
+        var channel = conn.channelHandlerContext().channel();
+        CHECKED.incrementAndGet();
+        // This runs in the response's handler, so on the response's context
+        if (!(Vertx.currentContext() instanceof io.vertx.core.internal.ContextInternal context)
+                || !context.isEventLoopContext() || context.nettyEventLoop() != channel.eventLoop()) {
+            if (OFF_LOOP.getAndIncrement() == 0) {
+                ProxyLog.warn("An upstream response is handled off its connection's event loop, so a close "
+                        + "after a burst of chunks may cut its end (#2176): please report this");
+            }
+        }
+        return channel;
+    }
+
+    /** How many responses ran off their connection's event loop, where Vert.x can pause it itself (#2176). */
+    static long offLoop() {
+        return OFF_LOOP.get();
+    }
+
+    /** How many HTTP/1.x responses had their event loop checked for {@link #offLoop}. */
+    static long checked() {
+        return CHECKED.get();
     }
 
     HttpClientResponse response() {
