@@ -546,6 +546,17 @@ kbd {
   border-color: rgba(110, 231, 183, 0.35);
 }
 
+/* A docs block with the Copy button (render.js): the prompt wraps, so no line runs under the button. */
+.copy-box {
+  position: relative;
+}
+
+.docs-content .copy-box pre {
+  padding-right: 4.5rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* --- Buttons --- */
 
 .install-agent {

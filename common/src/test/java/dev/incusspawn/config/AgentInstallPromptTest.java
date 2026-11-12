@@ -41,6 +41,13 @@ class AgentInstallPromptTest {
         assertTrue(page().contains(prompt.strip()), "the harness's prompt is not the page's");
     }
 
+    /** The page's prompt is the block a reader copies, so it carries the homepage's Copy button (#2177). */
+    @Test
+    void thePromptHasACopyButton() throws IOException {
+        assertTrue(page().contains("<!-- copy -->\n```text\nInstall isx (https://isx.run)"),
+                "the prompt's block is not marked <!-- copy --> right before its fence, so site/render.js gives it no Copy button");
+    }
+
     @Test
     void llmsTxtLeadsAnAgentToThePageAndTheHandovers() throws IOException {
         var llms = Files.readString(ROOT.resolve("site/llms.txt"));

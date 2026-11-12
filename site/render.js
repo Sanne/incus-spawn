@@ -94,6 +94,10 @@ function tabs(body, consumedIds) {
   });
 }
 
+// A code block preceded by <!-- copy --> gets the Copy button the homepage's install box has
+// (copy.js): it is wrapped in a .copy-box, which the script finds.
+const copyBoxes = body => body.replace(/<!-- copy -->\s*(<pre>[\s\S]*?<\/pre>)/g, '<div class="copy-box">$1</div>');
+
 const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
 for (const page of pages) {
@@ -130,7 +134,7 @@ for (const page of pages) {
     return '<' + tag + ' id="' + id + '">' + inner + '</' + tag + '>';
   });
   page.consumedIds = [];
-  page.body = rewriteLinks(tabs(body, page.consumedIds), page);
+  page.body = rewriteLinks(copyBoxes(tabs(body, page.consumedIds)), page);
 }
 
 // Where a link to /docs#<id> goes when the README no longer has that id: the page that has it
