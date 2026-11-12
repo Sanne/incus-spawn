@@ -825,3 +825,31 @@ Each series made 20 copies of it, deleted them with `incus delete -f`, then time
   It counts the qgroups btrfs-progs paths as `<under deletion>`.
   A freed subvolume's qgroup stays until a later commit, up to 300 s with `commit=300`, with its referenced bytes unchanged and pathed `<stale>`, so a missing subvolume alone would report a backlog already gone.
   `sudo btrfs subvolume sync <pool>` waits for the backlog.
+
+## Quarkus 4.0.0.CR1 against Beta3 (issue #2169)
+
+Measured on 2026-11-12 in a nested isx instance (x86_64, 32 vCPUs), with Oracle GraalVM 25.0.4.1.1 and unprofiled native builds.
+Base is `main` at 8b8fd9b4 on Beta3, head that commit with only the version bump to CR1, which keeps Vert.x 5.2.3 and Netty 4.2.20.
+Each row is the median of alternated `bench/run.sh --skip-build` runs, per Hyperfoil phase: three pairs for `maven`, two for `npm` (four phases each, as the ladder repeats them) and five for `saturate`.
+
+| Load, concurrency | Beta3 req/s | CR1 req/s | Beta3 p50 / p99 | CR1 p50 / p99 |
+|---|---|---|---|---|
+| `maven`, 8 | 1,533 | 1,470 | 4.69 / 11.40 ms | 5.05 / 11.80 ms |
+| `maven`, 64 | 1,536 | 1,626 | 44.30 / 53.74 ms | 37.75 / 55.05 ms |
+| `npm`, 8 | 1,462 | 1,555 | 2.74 / 5.69 ms | 2.49 / 5.34 ms |
+| `npm`, 64 | 1,489 | 1,584 | 20.97 / 40.37 ms | 19.92 / 35.65 ms |
+| `saturate`, 16 | 93,253 | 92,129 | 0.15 / 0.35 ms | 0.16 / 0.33 ms |
+| `saturate`, 256 | 95,663 | 91,580 | 2.62 / 3.41 ms | 2.70 / 4.15 ms |
+
+- **The intercepted HTTPS paths are unchanged.**
+  `maven` and `npm` differ by less than run-to-run spread, in both directions.
+- **The plain-HTTP ceiling is slightly lower on CR1.**
+  `saturate` was 1 to 4% lower at 16 to 256 connections, and its p50 at 256 connections 3% higher, in all five pairs.
+  No proxy code changed and Vert.x and Netty are the same, so the likely cause is the unprofiled build's code layout; a profiled release build was not compared.
+- **Memory and startup are unchanged.**
+  Idle RSS was 66 MB on both, peak 110 MB under `maven` and 113 MB under `npm`; proxy startup was 260 ms.
+  The CLI's `--version` took a median 2.5 ms on CR1 and 2.6 ms on Beta3, over 300 runs each.
+- **Size:** the proxy is 832 KiB smaller (104,664,400 bytes against 105,516,368), as Netty's DNS resolver left it; the CLI is the same size.
+- **Read the phases, not the headline.**
+  `bench/run.sh` reports as its headline the phase with the most throughput, which differed between runs of the same binary.
+  Its p50 then jumped by 7x between runs that measured the same latency per phase.
