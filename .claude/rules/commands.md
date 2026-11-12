@@ -230,6 +230,10 @@ When the socket refuses this process and the user is in the group, `continueInGr
 The probe (`incusConnectivity`, `IncusClient.diagnoseSocket`) connects afresh, since `IncusClient` keeps a failed connect and step 3 must probe for itself.
 The continuation sees `ISX_INIT_CONTINUED`, skips the banner, and `runLinuxSteps` starts it after Incus Installation; it closes with `GROUP_PENDING`.
 `InitGroupContinuationTest` pins it, through `runLinuxSteps` with a fake `host()`, and with `hasSg`, `incusConnectivity`, `ownCommandLine`, `runContinuation` and `exit` as its seams.
+Every other command, `isx mcp` and the TUI included, continues through `GroupContinuation` (#2167), which `IncusSpawn.run` asks before aesh sees the command.
+It reads only the socket's permission (`IncusClient.socketDenied`, a `stat` and an `access(2)` per socket path) unless that refuses this process, and marks its child `ISX_GROUP_CONTINUED`.
+`init` is excluded, since its own continuation starts after Incus Installation; `GroupContinuationTest` pins both.
+The permission-denied message names `sg incus-admin -c 'isx ...'` beside `newgrp` and a new login, for a session that can do neither.
 
 **When to bump `INIT_VERSION`**: increment it when adding a new infrastructure step to init that existing installations need (new dependency, firewall rule, systemd service, config field).
 A sentinel *older* than `INIT_VERSION` causes `hasBeenInitialized()` to return false, triggering a re-run on the next command.

@@ -33,6 +33,11 @@ public class IncusSpawn implements QuarkusApplication {
     @Override
     public int run(String... args) {
         try {
+            // A session that predates the user's incus-admin membership runs the command under sg (#2167)
+            if (!Platform.isMacOS()) {
+                var continued = GroupContinuation.runIfNeeded(args);
+                if (continued >= 0) return continued;
+            }
             if (args.length == 0) {
                 return launchTui() ? 0 : 1;
             }

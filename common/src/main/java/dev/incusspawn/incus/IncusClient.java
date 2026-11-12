@@ -552,6 +552,15 @@ public class IncusClient {
     }
 
     /**
+     * Whether the local Incus socket exists but refuses this process: true when no candidate this
+     * process may write is found and one exists.
+     * A {@code stat} and an {@code access(2)} per candidate, and no connection, so every command may ask it (#2167).
+     */
+    public static boolean socketDenied() {
+        return IncusApi.socketDenied(UnixSocketTransport.SOCKET_CANDIDATES);
+    }
+
+    /**
      * Check connectivity to the Incus daemon.
      * Returns null if connected successfully, or a diagnostic message if not.
      */

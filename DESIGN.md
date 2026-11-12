@@ -48,6 +48,10 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
   An inner `sg <primary group>` gives back the primary group the outer one took, so the files init writes stay in the user's group, with `incus-admin` kept as a supplementary one.
   Without `sg`, which Arch-family distros removed, Storage & Network still stops and asks for a new login.
   Talking to the socket through `sudo` was rejected: it needs a relay such as `socat`, which a fresh host may not have.
+  Every other command does the same through `GroupContinuation`, `isx mcp` included, since an agent started before the root script cannot log in again (#2167).
+  `IncusSpawn.run` asks it before any command runs, so stdin and stdout pass to the continuation untouched.
+  On the way to a working socket it costs a `stat` and an `access(2)` per socket path (`IncusClient.socketDenied`); `id` and `sg` run only when the socket refuses this process.
+  Init is left to its own continuation, which knows its steps, and `ISX_GROUP_CONTINUED` stops a second one.
   `isx init --plan` (#2073) says what a run would change and who must do each part (nobody, sudo, a secret typed by a person, or a person's approval) without changing anything.
   Each step is described once, its header, work and planner together (`InitCommand.InitStep`), and the plan lists the run's own step lists, so it cannot name a step the run does not take.
   A planner reads what the run's checks read and names the commands the run would run, from the same constants; what only root can read, such as firewall rules where polkit refuses or the btrfs sudoers rule, is reported as not checked rather than guessed, with why and the sudo commands that check it, and the plan never runs sudo (Sanne on #2091).

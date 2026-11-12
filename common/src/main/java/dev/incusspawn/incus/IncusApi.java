@@ -101,6 +101,19 @@ class IncusApi {
         return null;
     }
 
+    /** {@link IncusClient#socketDenied()} over an explicit candidate list. */
+    static boolean socketDenied(List<String> socketCandidates) {
+        var denied = false;
+        for (var candidate : socketCandidates) {
+            var path = Path.of(candidate);
+            if (!Files.exists(path)) continue;
+            // Connecting to a Unix socket needs write permission on it
+            if (Files.isWritable(path)) return false;
+            denied = true;
+        }
+        return denied;
+    }
+
     /**
      * Examine the socket paths and return a human-readable, actionable error message
      * explaining why a connection could not be established.
@@ -124,6 +137,7 @@ class IncusApi {
                         Fix (choose one):
                           newgrp incus-admin          activates the group in this shell only
                           Log out and log back in     activates the group for all new sessions
+                          sg incus-admin -c 'isx ...' runs one command in the group, where neither is possible
 
                         If you have not yet been added to the group, run:
                           isx init

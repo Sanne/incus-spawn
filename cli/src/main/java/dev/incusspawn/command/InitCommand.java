@@ -729,15 +729,7 @@ public class InitCommand extends BaseCommand {
         if (connectivity == null || !connectivity.contains("permission denied")) return null;
         var configured = List.of(WHITESPACE.split(captureOutput("id", "-nG", System.getProperty("user.name"))));
         if (!configured.contains("incus-admin") || !hasSg()) return null;
-        var commandLine = ownCommandLine();
-        var primary = captureOutput("id", "-gn");
-        // captureOutput keeps stderr: a gid with no name reads as an error message, not a group
-        if (commandLine.isEmpty() || primary.isEmpty() || primary.chars().anyMatch(Character::isWhitespace)) return null;
-        // The inner sg gives back the primary group the outer one took, keeping incus-admin as a
-        // supplementary one, so that what init writes stays in the user's group
-        var command = "exec " + commandLine.stream().map(Container::shellQuote).collect(Collectors.joining(" "));
-        return List.of("sg", "incus-admin", "-c",
-                "exec sg " + Container.shellQuote(primary) + " -c " + Container.shellQuote(command));
+        return GroupContinuation.sgCommand(ownCommandLine(), captureOutput("id", "-gn"));
     }
 
     /**
@@ -755,14 +747,7 @@ public class InitCommand extends BaseCommand {
 
     /** This process's argv, from {@code /proc}: the native binary, or {@code java} and its arguments. */
     List<String> ownCommandLine() {
-        try {
-            var cmdline = new String(Files.readAllBytes(Path.of("/proc/self/cmdline")));
-            // Each argument ends in a NUL; an empty last argument is still one
-            if (cmdline.endsWith("\0")) cmdline = cmdline.substring(0, cmdline.length() - 1);
-            return cmdline.isEmpty() ? List.of() : List.of(cmdline.split("\0", -1));
-        } catch (IOException e) {
-            return List.of();
-        }
+        return new GroupContinuation().ownCommandLine();
     }
 
     /**
