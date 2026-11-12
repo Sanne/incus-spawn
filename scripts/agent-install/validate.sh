@@ -359,9 +359,12 @@ person_acts() {
         return
     fi
     if [ -z "$APPROVED" ] && grep -qiE 'mcp\.yaml|mcp setup|approv' <<<"$text"; then
-        # The built templates the agent names, or every built one when it names none.
+        # The templates the agent names, or every one when it names none: built ones and the
+        # person's own, built or not, since isx mcp setup offers a definition before its build
+        # (#2178: Codex asked for the approval before building, and was told there was nothing to do).
         # A name counts only whole: tpl-isx is not named by tpl-isx-agent.
-        built=$(as_person isx templates list --format=json 2>/dev/null | jq -r '.[] | select(.built == true) | .name' || true)
+        built=$(as_person isx templates list --format=json 2>/dev/null \
+            | jq -r '.[] | select(.built == true or (.source != null and .source != "built-in")) | .name' || true)
         templates=
         for t in $built; do
             if [[ $text =~ (^|[^A-Za-z0-9_-])"$t"($|[^A-Za-z0-9_-]) ]]; then templates=${templates:+$templates,}$t; fi
