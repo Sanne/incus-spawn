@@ -93,6 +93,29 @@ class ClaudeSetupTest {
     }
 
     @Test
+    void managedSettingsNeverDisableTelemetry() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new ClaudeSetup().configureSettings(new Container(incus, CONTAINER),
+                new SpawnConfig.ClaudeConfig(), Map.of());
+
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), captor.capture());
+        var managed = captor.getAllValues().stream()
+                .filter(cmd -> cmd.contains("managed-settings.json") && cmd.contains("bypassPermissions"))
+                .findFirst().orElseThrow();
+
+        // Managed settings cannot be overridden by the user, and each of these also disables
+        // features such as the advisor, so a template could never turn them back on.
+        for (var flag : List.of("DO_NOT_TRACK", "DISABLE_TELEMETRY",
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")) {
+            assertFalse(managed.contains(flag), flag + " must stay unset: it disables the advisor");
+        }
+        assertTrue(managed.contains("DISABLE_ERROR_REPORTING"), "the narrower opt-outs stay");
+    }
+
+    @Test
     void configureSettingsDeploysStatusline() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
@@ -293,7 +316,7 @@ class ClaudeSetupTest {
     void parametersDeclaresAllSettingsAsOptionalReconfigurable() {
         var params = new ClaudeSetup().parameters();
 
-        for (var name : List.of("model", "attribution-commit", "attribution-pr",
+        for (var name : List.of("model", "advisor-model", "attribution-commit", "attribution-pr",
                 "theme", "editor-mode", "output-style")) {
             assertTrue(params.containsKey(name), "Should declare parameter: " + name);
             var p = params.get(name);
@@ -303,6 +326,7 @@ class ClaudeSetupTest {
         }
 
         assertNotNull(params.get("model").getPattern());
+        assertNotNull(params.get("advisor-model").getPattern());
         assertNotNull(params.get("theme").getPattern());
         assertNotNull(params.get("editor-mode").getPattern());
     }
@@ -311,6 +335,7 @@ class ClaudeSetupTest {
     void buildUserSettingsWithAllParams() {
         var params = Map.of(
                 "model", "claude-opus-4-6",
+                "advisor-model", "opus",
                 "attribution-commit", "Assisted-By: Claude Code <noreply@anthropic.com>",
                 "attribution-pr", "",
                 "theme", "dark",
@@ -322,6 +347,7 @@ class ClaudeSetupTest {
 
         assertTrue(json.contains("\"disableDeepLinkRegistration\": \"disable\""));
         assertTrue(json.contains("\"model\": \"claude-opus-4-6\""));
+        assertTrue(json.contains("\"advisorModel\": \"opus\""));
         assertTrue(json.contains("\"theme\": \"dark\""));
         assertTrue(json.contains("\"editorMode\": \"vim\""));
         assertTrue(json.contains("\"outputStyle\": \"Proactive\""));
