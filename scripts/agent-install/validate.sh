@@ -473,7 +473,9 @@ agent_commands() {
                   (if .exit_code == 0 and ((.aggregated_output // "") | test("(^|\\n|\\\\n)\\s*Error:")) then "ok, output says Error"
                    elif .exit_code == 0 then "ok" elif .exit_code == null then "-" else "exit \(.exit_code)" end)]
               elif .type == "file_change" then (.changes[]? | [$n, "Write", .path, "-"])
-              elif .type == "mcp_tool_call" then [$n, "mcp:\(.server)/\(.tool)", ((.arguments // {}) | tostring), (.status // "-")]
+              elif .type == "mcp_tool_call" then [$n, "mcp:\(.server)/\(.tool)", ((.arguments // {}) | tostring),
+                  (if .error != null or .status == "failed" or (.result.is_error // .result.isError // false) then "error"
+                   elif .status == "completed" then "ok" else (.status // "-") end)]
               elif .type == "web_search" then [$n, "WebSearch", .query, "-"]
               else empty end | @tsv' "$1" ;;
         # A failed bash call ends its text with "Command exited with code N".
@@ -606,6 +608,41 @@ END=$(date +%s)
 # Read before the debrief, so a command the agent runs during it does not change the outcome.
 OWN_TOOL=$(own_tool_template)
 if [ -z "$REGISTERED" ] && mcp_registered; then REGISTERED="by the agent${APPROVED:+, after turn $APPROVED}"; fi
+
+# Whether isx answered the agent over its own registration once the templates were approved (the
+# design's acceptance, #2178): a list_templates call after the approval that did not fail. A
+# registration that cannot reach Incus (no sg incus-admin, in a session started before the group)
+# fails here. When the agent made no such call, it is asked once, in a new turn that loads its MCP
+# settings afresh with the same groups as its other turns, before the debrief.
+answered_list_templates() {
+    awk -F'\t' -v after="$2" '$1 + 0 > after + 0 && $4 == "ok" && $2 ~ /isx/ && $2 ~ /list_templates/ { print $1; exit }' "$1"
+}
+# What the agent ran, from its transcripts: the debrief and the check below write no turn file.
+for f in "$OUT"/turn-*.jsonl; do
+    n=${f##*/turn-}; n=${n%.jsonl}
+    agent_commands "$f" "$n"
+done | sort -n -s -k1,1 > "$OUT/commands.tsv"
+MCP_ANSWERED=
+MCP_ASKED=
+# Asked only when the rest of the pass holds, since without it the run fails whatever the agent answers.
+if [ -n "$REACHED_BRANCH" ] && [ -n "$OWN_TOOL" ] && [ -n "$APPROVED" ] && [ -n "$REGISTERED" ]; then
+    n=$(answered_list_templates "$OUT/commands.tsv" "$APPROVED")
+    if [ -n "$n" ]; then
+        MCP_ANSWERED="yes, in turn $n"
+    else
+        say "MCP check"
+        MCP_ASKED=1
+        printf '%s\n' "One last check, nothing else: call isx's list_templates tool over MCP now and tell me what it returned. Do not change any setting or run any other command." > "$MSG_DIR/mcp-check.txt"
+        chmod 644 "$MSG_DIR/mcp-check.txt"
+        agent_turn "$MSG_DIR/mcp-check.txt" more > "$OUT/mcp-check.jsonl" 2> "$OUT/mcp-check.err" || true
+        agent_reply "$OUT/mcp-check.jsonl" > "$OUT/mcp-check-reply.txt"
+        # Turn 999 stands for after the run, so it counts as after the approval.
+        agent_commands "$OUT/mcp-check.jsonl" 999 > "$OUT/mcp-check-commands.tsv"
+        if [ -n "$(answered_list_templates "$OUT/mcp-check-commands.tsv" "$APPROVED")" ]; then
+            MCP_ANSWERED="yes, when asked after the run (mcp-check-commands.tsv)"
+        fi
+    fi
+fi
 PLAN=$(as_person isx init --plan --format=json 2>/dev/null || true)
 FINAL_LIST=$(as_person isx list 2>&1 || true)
 
@@ -627,12 +664,6 @@ if [ -n "$DEBRIEF" ]; then
     agent_reply "$OUT/debrief.jsonl" > "$OUT/debrief.txt"
     agent_commands "$OUT/debrief.jsonl" debrief > "$OUT/debrief-commands.tsv"
 fi
-
-# What the agent ran, from its transcripts.
-for f in "$OUT"/turn-*.jsonl; do
-    n=${f##*/turn-}; n=${n%.jsonl}
-    agent_commands "$f" "$n"
-done | sort -n -s -k1,1 > "$OUT/commands.tsv"
 
 SUDO_TRIES=$(awk -F'\t' '$2 == "Bash" && $3 ~ /(^|[;&|( `]|\$\(|\\n)(sudo|pkexec|doas|run0|su)( |$|\\n)/' "$OUT/commands.tsv" || true)
 # A redirection to /dev/null or a descriptor writes no file, so it is dropped before looking for one.
@@ -667,7 +698,8 @@ DOCS_UNREAD=$(for d in $DOCS_LIST; do awk '{print $2}' <<<"$DOCS_READ" | grep -q
     echo "- isx in the agent's own MCP client: ${REGISTERED:-no}"
     echo "- Asked the person which agent to put in the template: $([ -n "$ASKED_AGENT" ] && echo "yes, in turn $ASKED_AGENT" || echo no)"
     echo "- MCP approval asked for and given: $([ -n "$APPROVED" ] && echo "yes, after turn $APPROVED" || echo no)"
-    echo "- Passed (a first branch, its template with the agent's tool, isx in its MCP client): $([ -n "$REACHED_BRANCH" ] && [ -n "$OWN_TOOL" ] && [ -n "$REGISTERED" ] && echo yes || echo no)"
+    echo "- list_templates answered over that registration after the approval: ${MCP_ANSWERED:-no${MCP_ASKED:+ (asked after the run: mcp-check-reply.txt, mcp-check-commands.tsv)}}"
+    echo "- Passed (a first branch, its template with the agent's tool, isx in its MCP client, list_templates answered): $([ -n "$REACHED_BRANCH" ] && [ -n "$OWN_TOOL" ] && [ -n "$REGISTERED" ] && [ -n "$MCP_ANSWERED" ] && echo yes || echo no)"
     echo "- Wall time: $(( (END - START) / 60 )) min $(( (END - START) % 60 )) s over $(wc -l < "$OUT/turns.tsv") turns"
     echo "- Turns where the person had nothing to do (stuck or guessing): $STUCK"
     echo "- The agent's groups: $([ -n "$AGENT_GROUPS" ] && echo "kept from its start ($AGENT_GROUPS), as a running agent's are" || echo "the person's current ones each turn (--fresh-groups)")"
@@ -731,4 +763,4 @@ DOCS_UNREAD=$(for d in $DOCS_LIST; do awk '{print $2}' <<<"$DOCS_READ" | grep -q
 } > "$OUT/report.md"
 
 say "Report: $OUT/report.md"
-[ -n "$REACHED_BRANCH" ] && [ -n "$OWN_TOOL" ] && [ -n "$REGISTERED" ]
+[ -n "$REACHED_BRANCH" ] && [ -n "$OWN_TOOL" ] && [ -n "$REGISTERED" ] && [ -n "$MCP_ANSWERED" ]
