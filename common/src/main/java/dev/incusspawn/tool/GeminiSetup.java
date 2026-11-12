@@ -43,6 +43,9 @@ public class GeminiSetup implements ToolSetup {
     static final String LEGACY_LOGIN_NOTICE_PATH = "/etc/profile.d/isx-gemini-login.sh";
 
     @Override
+    public boolean codingAgent() { return true; }
+
+    @Override
     public String name() { return "gemini-cli"; }
 
     @Override

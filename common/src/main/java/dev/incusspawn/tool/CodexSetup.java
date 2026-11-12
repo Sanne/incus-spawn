@@ -15,6 +15,9 @@ public class CodexSetup implements ToolSetup {
             "Codex CLI", "@openai/codex", "codex", "@openai/codex-");
 
     @Override
+    public boolean codingAgent() { return true; }
+
+    @Override
     public String name() {
         return "codex";
     }

@@ -34,6 +34,9 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     @Override
+    public boolean codingAgent() { return true; }
+
+    @Override
     public String name() {
         return "claude";
     }

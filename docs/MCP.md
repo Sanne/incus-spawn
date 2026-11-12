@@ -11,7 +11,11 @@ A program that drives `isx mcp` from code has [a page of its own](MCP-PROTOCOL.m
 `isx init` offers to set this up.
 `isx mcp` is off by default, since it lets an agent on your host create and run instances.
 
-`isx init` asks, for each template that installs Claude Code, Codex or Pi, whether agents may use it.
+`isx init` asks, for each template that installs a coding agent, whether agents may use it.
+
+An agent can create instances from any template you approve and run commands in them.
+It can hand a task only to Claude Code, Codex or Pi, so `isx init` marks a template with Gemini CLI, Bob Shell or GitHub Copilot CLI as create and exec only.
+
 When Claude Code is installed on the host, `isx init` also registers `isx mcp` in Claude Code for all projects.
 
 The step needs a terminal to ask from.
