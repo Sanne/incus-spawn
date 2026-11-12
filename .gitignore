@@ -67,3 +67,6 @@ _site/
 
 # Python
 __pycache__/
+
+# Swift package build output (launcher/)
+launcher/.build/
