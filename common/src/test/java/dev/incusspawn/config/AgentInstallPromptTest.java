@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,17 +29,28 @@ class AgentInstallPromptTest {
 
     @Test
     void theHarnessGivesTheAgentThePagesPrompt() throws Exception {
-        var process = new ProcessBuilder("bash", "scripts/agent-install/validate.sh", "--print-prompt")
-                .directory(ROOT.toFile()).redirectErrorStream(true).start();
-        var prompt = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(process.waitFor(30, TimeUnit.SECONDS), "the harness did not exit");
-        assertEquals(0, process.exitValue(), prompt);
+        var prompt = harnessPrompt();
 
         assertTrue(prompt.startsWith("Install isx (https://isx.run)"), prompt);
         assertTrue(prompt.contains("https://isx.run/llms.txt"), prompt);
         for (var handover : HANDOVERS) assertTrue(prompt.contains(handover), handover + " is not in the prompt:\n" + prompt);
         assertFalse(prompt.contains("```"), "the prompt runs past its fenced block:\n" + prompt);
         assertTrue(page().contains(prompt.strip()), "the harness's prompt is not the page's");
+    }
+
+    /** The agents isx has a tool for, as their users call them or as their tool and namespace are named. */
+    private static final Pattern AGENT = Pattern.compile("\\b(Claude|Codex|Pi|Gemini|Bob|Copilot)\\b", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * One prompt for every agent (#2177): naming one makes it the default, which a user of another
+     * agent has to edit away. The agent puts itself in the template, from llms.txt's table.
+     */
+    @Test
+    void thePromptNamesNoAgent() throws Exception {
+        var prompt = harnessPrompt();
+        var named = AGENT.matcher(prompt);
+        if (named.find()) fail("the prompt names " + named.group()
+                + ", so it is that agent's prompt and every other agent's user edits it:\n" + prompt);
     }
 
     /** The page's prompt is the block a reader copies, so it carries the homepage's Copy button (#2177). */
@@ -53,6 +65,16 @@ class AgentInstallPromptTest {
         var llms = Files.readString(ROOT.resolve("site/llms.txt"));
         assertTrue(llms.contains("https://isx.run/docs/agent-install"), "llms.txt does not link the install page");
         for (var handover : HANDOVERS) assertTrue(llms.contains(handover), handover + " is not in llms.txt");
+    }
+
+    /** The prompt the clean-host harness gives its agent, read from the page. */
+    private static String harnessPrompt() throws Exception {
+        var process = new ProcessBuilder("bash", "scripts/agent-install/validate.sh", "--print-prompt")
+                .directory(ROOT.toFile()).redirectErrorStream(true).start();
+        var prompt = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS), "the harness did not exit");
+        assertEquals(0, process.exitValue(), prompt);
+        return prompt;
     }
 
     private static String page() throws IOException {
