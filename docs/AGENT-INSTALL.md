@@ -8,6 +8,7 @@ The [Quick Start](../README.md#quick-start) is the same install by hand.
 
 Paste this into a coding agent on your computer, such as Claude Code or Codex CLI:
 
+<!-- copy -->
 ```text
 Install isx (https://isx.run) on this machine and set it up for me. I want to end up with a first isx instance branched from a template that has Claude Code in it, and with you able to drive isx over MCP afterwards.
 

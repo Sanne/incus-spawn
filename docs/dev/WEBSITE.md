@@ -155,3 +155,9 @@ curl -sSI https://isx.run/vendor/fonts/inter-v20-core.woff2 | grep -i '^cache-co
 
 For speed, `npx lighthouse https://isx.run/ --only-categories=performance` (mobile, simulated slow 4G) scored 100
 after these changes, with the first paint at about 0.9 s.
+
+## Copy buttons
+
+A code block in `README.md` or `docs/*.md` gets the homepage's Copy button when a `<!-- copy -->` line comes right before its fence.
+`site/render.js` wraps that block in a `.copy-box`, and `site/copy.js`, shared with the homepage's install box, adds the button.
+`copy.js` is versioned by content hash like `style.css` (`build.sh`), so browsers may keep it.
