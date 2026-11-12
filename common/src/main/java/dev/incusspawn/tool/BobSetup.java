@@ -17,6 +17,9 @@ public class BobSetup implements ToolSetup {
     private static final String NPM_PACKAGE = "@ibm/bob";
 
     @Override
+    public boolean codingAgent() { return true; }
+
+    @Override
     public String name() {
         return "bob";
     }

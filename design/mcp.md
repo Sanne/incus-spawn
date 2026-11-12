@@ -311,6 +311,9 @@ Retired keys (`McpConfig.RETIRED`) are the one exception: they restricted nothin
 Values that were only checked on use (the summary model) are checked at load for the same reason, so a bad one stops every call rather than only the one that reads it.
 `isx init`'s step is the only writer, run by `isx mcp setup` too: it writes the file only when an approval changes, owner-only into a temporary file renamed over it (over a symlink's target, so a dotfiles link stays a link) (a session reading meanwhile sees one policy or the other, never a truncated file), and leaves an invalid one alone.
 `isx mcp setup` runs that step alone (#2077), so an agent-driven install (#2072) can end by handing the person this one step instead of all of `isx init`.
+The step offers every template that installs a coding agent (`ToolSetup.codingAgent()`), not only those `delegate` can run (#2178).
+The agent-driven install builds a template with the installing agent in it, whichever agent that is, and the person must be able to approve it.
+A template whose agent `delegate` cannot run is marked create and exec only, so the person knows what they approve.
 It needs stdin and stdout to be a terminal (`Prompts.terminal()`), stricter than init's console, so an agent cannot pipe its own answers in, and it takes no option naming a template.
 An agent with a shell can still do what its user can; the command only means the install path never asks an agent to approve anything.
 It is a subcommand of `isx mcp` because it sets up exactly what that server serves; bare `isx mcp`, which agents run, is unchanged.

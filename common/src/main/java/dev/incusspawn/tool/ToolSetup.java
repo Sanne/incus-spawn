@@ -28,6 +28,12 @@ public interface ToolSetup {
     default String agentNote() { return null; }
 
     /**
+     * Whether this tool is a coding agent a person works with, such as Claude Code: a template that
+     * installs one is offered for approval by {@code isx mcp setup} (#2178). False for most tools.
+     */
+    default boolean codingAgent() { return false; }
+
+    /**
      * Where this tool's agent reads the build's generated instructions: outside agentuser's
      * home, a hardlink to the one stored copy, root-owned; inside it, agentuser's own copy.
      * Prefer a path outside the home, so the user's own file stays theirs, and one the tool

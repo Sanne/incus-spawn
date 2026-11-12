@@ -397,6 +397,27 @@ class McpInitFlowTest {
         assertEquals(List.of("tpl-isx-pi"), approved());
     }
 
+    /**
+     * Every coding agent's template is offered, not only those delegate runs (#2178): an agent on
+     * the host creates instances from a Gemini CLI, Bob Shell or Copilot CLI template and runs
+     * commands in them, and the question says delegate does not run their agent.
+     */
+    @Test
+    void everyCodingAgentsTemplateCanBeApprovedAndTheOnesDelegateCannotRunSaySo() throws Exception {
+        var host = new Host();
+        var prompts = ScriptedPrompts.lines("y", "y", "y", "y");
+        var asked = reported(() -> host.setupMcp(prompts, defs("name: tpl-minimal\n",
+                "name: tpl-bob\nparent: tpl-minimal\ntools: [bob]\n",
+                "name: tpl-copilot\nparent: tpl-minimal\ntools: [copilot]\n",
+                "name: tpl-gemini\nparent: tpl-minimal\ntools: [gemini-cli]\n")));
+        prompts.assertFullyConsumed();
+        assertEquals(List.of("tpl-bob", "tpl-copilot", "tpl-gemini"), approved());
+        for (var t : List.of("tpl-bob", "tpl-copilot", "tpl-gemini")) {
+            var question = prompts.conversation().stream().filter(q -> q.contains(t + " ")).findFirst().orElseThrow();
+            assertTrue(question.contains("(create and exec only: delegate runs Claude Code, Codex or Pi)?"), question + "\n" + asked);
+        }
+    }
+
     @Test
     void approvalsGoToAnOwnerOnlyMcpYamlAndNeverToConfigYaml() throws Exception {
         var seeded = "github:\n  token: ghp_x\n";

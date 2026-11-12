@@ -1411,8 +1411,9 @@ public class InitCommand extends BaseCommand {
 
     /**
      * Offer to register {@code isx mcp} with Claude Code when it is installed, then ask about each template that
-     * installs Claude Code, Codex or Pi (the only ones a task can be delegated to) whether agents may
-     * use it. Templates already approved by hand that install none of them are left as they are.
+     * installs a coding agent whether agents may use it; one with an agent {@code delegate} cannot
+     * run (Gemini CLI, Bob Shell, Copilot CLI) is marked create and exec only (#2178). Templates
+     * already approved by hand that install none of them are left as they are.
      * The approvals live in {@code mcp.yaml}; one that cannot be read is reported and left alone.
      * Without Claude Code the approvals are the whole step: any other client is registered by the
      * person, with the entry {@code isx mcp config} prints (#2078).
@@ -1490,7 +1491,7 @@ public class InitCommand extends BaseCommand {
         BuildOutput.stepNote("For another MCP client, add the entry '" + MCP_CONFIG_COMMAND + "' prints to its settings.");
 
         if (candidates.isEmpty()) {
-            BuildOutput.step("No template installs Claude Code, Codex or Pi yet, so there is none to approve."
+            BuildOutput.step("No template installs a coding agent yet, so there is none to approve."
                     + " Add one, then run '" + MCP_SETUP_COMMAND + "' or edit " + McpConfig.file() + ".");
             return;
         }
@@ -1498,6 +1499,9 @@ public class InitCommand extends BaseCommand {
         try (var group = BuildOutput.group("Approve the templates agents may create instances from", null)) {
             for (var name : candidates) {
                 var note = templateBuilt(name) ? "" : styled(DIM, " (not built yet: isx build " + name + ")");
+                if (!installsAny(defs.get(name), defs, DELEGATE_AGENTS)) {
+                    note += styled(DIM, " (create and exec only: delegate runs Claude Code, Codex or Pi)");
+                }
                 // End of input keeps the existing answer: a closed terminal must not drop an approval.
                 var current = approved.contains(name);
                 if (askYesNo(prompts, name + note + "?", current, current)) chosen.add(name);
@@ -2121,14 +2125,34 @@ public class InitCommand extends BaseCommand {
         return ImageDef.loadTrusted();
     }
 
-    /** Templates that install Claude Code, Codex or Pi: the only ones a task can be delegated to. */
+    /**
+     * The built-in tools that are coding agents, by name: Claude Code, Codex, Pi, Gemini CLI, Bob Shell, Copilot CLI.
+     * Read per call, never held in a static field: that would initialize the run-time-initialized
+     * {@code RuntimeConstants} while the native image is built and bake its host paths in.
+     */
+    private static java.util.Set<String> codingAgents() {
+        return RuntimeServices.toolSetups().stream()
+                .filter(ToolSetup::codingAgent).map(ToolSetup::name).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    /** The tools {@code delegate} can run in an instance ({@code mcp.DelegateAgent}); a template with another agent gets create and exec only. */
+    private static final List<String> DELEGATE_AGENTS = List.of("claude", "codex", "pi");
+
+    /**
+     * Templates that install a coding agent, whichever it is (#2178): an agent on the host uses
+     * such a template however it runs, and {@code delegate} hands a task to the ones it can run.
+     */
     private static List<String> mcpCandidates(Map<String, ImageDef> defs) {
+        var agents = codingAgents();
         return defs.values().stream()
-                .filter(def -> ImageDef.chain(def, defs).stream()
-                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> List.of("claude", "codex", "pi").contains(t.getName()))))
+                .filter(def -> installsAny(def, defs, agents))
                 .map(ImageDef::getName)
                 .sorted()
                 .toList();
+    }
+
+    private static boolean installsAny(ImageDef def, Map<String, ImageDef> defs, java.util.Collection<String> tools) {
+        return ImageDef.chain(def, defs).stream().anyMatch(d -> d.getTools().stream().anyMatch(t -> tools.contains(t.getName())));
     }
 
     /** What {@link #setupMcp(Prompts, Map)} would offer: registering isx with Claude Code, and the approvals that are the person's. */

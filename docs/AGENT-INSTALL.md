@@ -34,9 +34,9 @@ The agent stops and hands over to you at three points:
 
 It also asks you which agent to put in your first template when it cannot tell which agent it is, or isx has no tool for it.
 
-`isx mcp setup` offers only templates with Claude Code, Codex or Pi, the agents a task can be handed to.
-For a template with Gemini CLI, Bob Shell or GitHub Copilot CLI, add its name under `templates:` in `~/.config/incus-spawn/mcp.yaml` yourself.
-An agent can then create instances from it and run commands in them, but cannot hand it a task.
+`isx mcp setup` offers every template with a coding agent in it.
+An agent can create instances from a template you approve and run commands in them.
+It can hand a task only to Claude Code, Codex or Pi, so a template with another agent is marked create and exec only.
 
 On macOS no step needs root, so the first handover does not happen.
 A fresh Linux host usually needs the root script once.

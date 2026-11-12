@@ -206,7 +206,8 @@ The coordination playbook is the `coordinate` MCP prompt (`McpPrompt`, `prompts/
 Every start path's bit is pinned both ways, `1` for a coordinator and `0` otherwise (`McpClientRegistrationStartTest`, `InstanceListingMcpCallerTest` for the TUI listing).
 
 **Set up by `isx init` or `isx mcp setup`.**
-The "Agent Access over MCP" step (`InitCommand.setupMcp`, default off, skipped without a console) registers the server with `claude mcp add --scope user isx -- <isx> mcp` when the host has `claude`, and asks, per template whose chain installs `claude`, `codex` or `pi`, whether to approve it.
+The "Agent Access over MCP" step (`InitCommand.setupMcp`, default off, skipped without a console) registers the server with `claude mcp add --scope user isx -- <isx> mcp` when the host has `claude`, and asks, per template whose chain installs a coding agent (`ToolSetup.codingAgent()`), whether to approve it (#2178).
+A template with no agent `delegate` runs (`claude`, `codex` or `pi`) is marked create and exec only in its question.
 Without a host `claude` the approvals are the whole step, so approved templates alone count as set up, and the menu's `n` says to choose `t` and approve none (#2078).
 Either way, enabling it names `isx mcp config` for any other client.
 Templates approved by hand that it does not ask about are kept.

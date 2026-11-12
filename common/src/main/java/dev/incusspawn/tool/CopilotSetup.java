@@ -20,6 +20,9 @@ public class CopilotSetup implements ToolSetup {
             "GitHub Copilot CLI", "@github/copilot", "copilot", "@github/copilot-");
 
     @Override
+    public boolean codingAgent() { return true; }
+
+    @Override
     public String name() {
         return "copilot";
     }
