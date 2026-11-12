@@ -310,6 +310,10 @@ public class MitmProxy {
     int upstreamWsPort = 443;
     boolean upstreamWsSsl = true;
     static final int MITM_IDLE_TIMEOUT_SECONDS = 120;
+    /** How often a relayed WebSocket pings both legs, well under {@link #MITM_IDLE_TIMEOUT_SECONDS}. */
+    static final long WS_KEEPALIVE_MILLIS = 30_000;
+    // Overridable for tests, which would otherwise wait 30 s for the first ping
+    volatile long wsKeepaliveMillis = WS_KEEPALIVE_MILLIS;
 
     void overrideUpstream(String host, String ip, int port) {
         upstream.overrideUpstream(host, ip, port);
@@ -1911,12 +1915,13 @@ public class MitmProxy {
             // thinking phases; client pings prevent the MITM server's own
             // idle timeout (120s) from killing the connection when no data
             // flows on the client leg (e.g. while the model is reasoning).
-            var upstreamPingTimer = vertx.setPeriodic(30_000, id ->  {
+            long keepaliveMillis = wsKeepaliveMillis;
+            var upstreamPingTimer = vertx.setPeriodic(keepaliveMillis, id -> {
                 if (!upstreamWs.isClosed()) {
                     upstreamWs.writePing(Buffer.buffer("keepalive"));
                 }
             });
-            var clientPingTimer = vertx.setPeriodic(30_000, id -> {
+            var clientPingTimer = vertx.setPeriodic(keepaliveMillis, id -> {
                 if (!clientWs.isClosed()) {
                     clientWs.writePing(Buffer.buffer("keepalive"));
                 }

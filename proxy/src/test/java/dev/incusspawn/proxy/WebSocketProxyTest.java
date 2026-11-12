@@ -423,22 +423,30 @@ class WebSocketProxyTest {
 
     @Test
     void proxySendsKeepalivePingsToClient() throws Exception {
+        assertTrue(MitmProxy.WS_KEEPALIVE_MILLIS * 2 <= MitmProxy.MITM_IDLE_TIMEOUT_SECONDS * 1000L,
+                "keepalive must stay well under the MITM server's idle timeout");
+        // Ping every 200 ms rather than waiting 30 s for the first: the interval is read when
+        // the relay is wired, so other tests' connections keep the default.
+        proxy.wsKeepaliveMillis = 200;
         var client = createClient();
-        var pingReceived = new CompletableFuture<Void>();
+        try {
+            var pingReceived = new CompletableFuture<Void>();
 
-        // Detect the proxy's keepalive ping via raw frame handler since
-        // Vert.x handles ping/pong at the protocol level automatically.
-        var ws = connect(client, connectOptions("/v1/ping-test"), socket -> socket.frameHandler(frame -> {
-            if (frame.isPing()) {
-                pingReceived.complete(null);
-            }
-        }));
+            // Detect the proxy's keepalive ping via raw frame handler since
+            // Vert.x handles ping/pong at the protocol level automatically.
+            var ws = connect(client, connectOptions("/v1/ping-test"), socket -> socket.frameHandler(frame -> {
+                if (frame.isPing()) {
+                    pingReceived.complete(null);
+                }
+            }));
 
-        // The proxy sends keepalive pings every 30s. The periodic timer
-        // starts on connect, so we wait that long and then as long as for anything else.
-        pingReceived.get(30 + WAIT_SECONDS, TimeUnit.SECONDS);
-        await(onClient(ws::close));
-        close(client);
+            // Well short of the default interval, so a relay that ignores the override fails
+            pingReceived.get(10, TimeUnit.SECONDS);
+            await(onClient(ws::close));
+        } finally {
+            proxy.wsKeepaliveMillis = MitmProxy.WS_KEEPALIVE_MILLIS;
+            close(client);
+        }
     }
 
     /**
