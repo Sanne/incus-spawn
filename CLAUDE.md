@@ -348,6 +348,9 @@ Pom profiles add platform arguments through placeholders the list includes and n
 `macos.min.args` is how every macOS build gets its minimum macOS (design/native-image.md "The minimum macOS is set by the build").
 `NativeImageInitializationTest` fails if a list stops deferring a class or registering a guard, or a pom redefines it, and `graal/BakedHostStateFeature` fails the native build if such a path reaches the image heap.
 
+**Java deserialization is not compiled into either binary** (#458).
+Both native builds pass `-H:AbortOnMethodReachable=java.io.ObjectInputStream.readObject0`, so a new path fails the build; cut it with a substitution in `graal/`, never by dropping the gate (design/native-image.md "Java deserialization is not compiled in").
+
 **A regular expression is a `static final Pattern`** (#1929).
 `Pattern.compile`, and with it every `String.matches`, `replaceAll`, `replaceFirst` and regex `split`, costs a compile per call; a constant compiles once, at build time in the native image.
 `PatternConstantGateTest` enforces it; a pattern only known at run time says why with a `// regex at run time:` comment (design/native-image.md "Regular expressions are compiled once").

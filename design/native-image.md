@@ -413,6 +413,30 @@ The CLI's `macos-native` profile carried such a copy until #489, and it had drif
 The sibling guard `SyscallReachabilityFeature` targets something else — keeping lazy system-property resolvers off the startup path of short-lived commands — and currently cannot fail, because it resolves its targets on an abstract GraalVM class whose concrete overrides are what the analysis reaches.
 It now prints `INCONCLUSIVE` per target instead of `ok`, so the report stops reading as evidence; `.claude/rules/native-image.md` records what fixing it involves.
 
+## Java deserialization is not compiled in
+
+Neither binary reads Java serialized objects, so the JDK's object reader stays out of both images (#458).
+That is less code to ship, and no deserialization gadget surface for a future bug to reach.
+Four paths kept it in, and a substitution cuts each one.
+The JDK's JCEKS keystore reached it twice: `JceKeyStore.engineLoad`, from the default SSL context, and `JceKeyStore.engineGetKey` → `KeyProtector.unseal` → `SealedObject`, from `KeyManagerFactory.init` → `KeyStore.getKey`.
+`NativeImageSubstitutions` (`common`) makes both throw.
+Neither binary uses JCEKS, and with `engineLoad` throwing a JCEKS keystore never initializes, so `KeyStore.getKey` throws before it reaches `engineGetKey`.
+Vert.x reaches it in the proxy through `SerializableCodec` on the event bus and through `Checker.copySerializable` for shared data, which `VertxDeserializationSubstitutions` (`proxy`) cuts; the proxy uses neither feature.
+The `engineGetKey` path alone cost the proxy 384 KiB and 366 methods (docs/dev/PERFORMANCE-NOTES.md "Java deserialization in the native images").
+
+Both builds pass `-H:AbortOnMethodReachable=java.io.ObjectInputStream.readObject0`, so a new path fails the build instead of growing the binary silently.
+`readObject0` is where every object read starts, and the gate traces the path that reached it.
+`NativeImageInitializationTest` fails if either list drops the gate.
+The gate is a method, not the type, on purpose.
+`-H:AbortOnTypeReachable=java.io.ObjectInputStream` fails even for a hello world on GraalVM 25.
+GraalVM registers every declared method of a class registered for reflection as queried, which marks their parameter types reachable, and many JDK classes declare a private `readObject(ObjectInputStream)`.
+That makes the type reachable without compiling any of its code.
+`TreeMap.buildFromSorted` still calls `ObjectInputStream.readObject(Class)`, but with no reader ever created the analysis goes no further.
+
+What it gives up: a dependency that really needs Java deserialization fails the native build until its path is substituted or the gate is lifted with a reason.
+The Vert.x substitutions break local event-bus delivery of a `Serializable` body and `Serializable` values in a Vert.x `LocalMap`, both unused here.
+An opt-in switch for them in Quarkus itself is proposed in #529.
+
 ## Regular expressions are compiled once
 
 `Pattern.compile` is expensive, and `String.matches`, `replaceAll`, `replaceFirst` and a regex `split` each call it on every run (#1929).

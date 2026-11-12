@@ -86,6 +86,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - One GraalVM line
   - The install script verifies its downloads
   - Build-time initialization must not capture host paths
+  - Java deserialization is not compiled in
   - Regular expressions are compiled once
   - jjq rather than Jackson
   - Considered and deferred

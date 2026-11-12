@@ -903,3 +903,20 @@ The question was whether Vert.x's own stream queue can pause an HTTP/1.1 client 
 
 The 2000-chunk case loses nothing on NIO because Vert.x turns auto-read off once 8 messages are pending, so the close is read only after the queue drains.
 Across the proxy's unit tests (965 tests, 433 HTTP/1.x responses held by `ResponseHold`) no response ran off its connection's loop.
+
+## Java deserialization in the native images (issue #458)
+
+Measured on 2026-11-12 on `main` at `8c671fb4` (Quarkus 4.0.0.CR1, Vert.x 5.2.3), Oracle GraalVM 25.4 (JDK 25.0.4), x86_64, the proxy at `-O3 -march=haswell`, built with `-H:+PrintAnalysisCallTree`.
+
+| Proxy build | Binary bytes | Reachable methods | `ObjectInputStream.readObject0` reachable |
+|---|---|---|---|
+| `main` (JCEKS `engineLoad` and Vert.x substitutions) | 104,533,328 | 70,806 | yes, through `JceKeyStore.engineGetKey` |
+| + JCEKS `engineGetKey` substitution | 104,140,112 | 70,440 | no |
+| + JCEKS `engineGetKey`, without the Vert.x substitutions | 104,467,792 | 70,782 | yes, through `Checker.copySerializable` |
+
+So the `engineGetKey` substitution saves 393,216 bytes (384 KiB) and 366 methods, and the Vert.x substitutions save 327,680 bytes (320 KiB) and 342 methods once it is in.
+The CLI binary is 39,652,472 bytes with or without the new substitution, and `readObject0` was already unreachable there.
+In the GraalVM 25.5 builder image (`25i5-ol10`), the proxy fails the `readObject0` gate on `main` through the same JCEKS path and passes it with the substitution; the CLI passes it either way.
+A hello world with no metadata fails `-H:AbortOnTypeReachable=java.io.ObjectInputStream` on both 25.4 and 25.5, which is why the gate names a method.
+A stock `quarkus-vertx-http` app on CR1 loses 327,680 bytes and 375 methods when both the JCEKS and the Vert.x paths are cut.
+With the Vert.x substitutions alone its binary keeps the same size and loses one method, because JCEKS keeps the reader in (#529).
