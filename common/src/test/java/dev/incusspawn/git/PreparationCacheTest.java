@@ -101,7 +101,7 @@ class PreparationCacheTest {
         }
     }
 
-    @Test void perUrlWritersWaitBeyondThirtySecondsAcrossProcessesWithoutBlockingOtherUrls() throws Exception {
+    @Test void perUrlWritersWaitForTheHolderAcrossProcessesWithoutBlockingOtherUrls() throws Exception {
         var key = "aa" + "1".repeat(62);
         var otherKey = "aa" + "2".repeat(62); // collided under the old stripe scheme
         var ready = root.resolve("ready");
@@ -112,12 +112,20 @@ class PreparationCacheTest {
             long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
             while (!Files.exists(ready) && child.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
             assertTrue(Files.exists(ready), Files.readString(root.resolve("writer.log")));
-            var cache = new PreparationCache(root, GitCacheConfig.DEFAULT);
+            assertTrue(PreparationCache.WRITER_TIMEOUT.compareTo(dev.incusspawn.util.HostLock.TIMEOUT) > 0);
+            // production passes it: the test below injects a short wait, so this is what pins the real one
+            assertEquals(PreparationCache.WRITER_TIMEOUT,
+                    new PreparationCache(root, GitCacheConfig.DEFAULT).writerTimeout());
+            var cache = new PreparationCache(root, GitCacheConfig.DEFAULT, Duration.ofSeconds(20));
             var waiting = workers.submit(() -> { try (var lock = cache.writer(key)) { return true; } });
             try {
                 assertTimeoutPreemptively(Duration.ofSeconds(5), () -> { try (var lock = cache.writer(otherKey)) { } });
+                // a writer past its own wait fails rather than taking the held lock
+                var impatient = new PreparationCache(root, GitCacheConfig.DEFAULT, Duration.ofSeconds(1));
+                assertThrows(dev.incusspawn.util.HostLock.HostLockException.class, () -> impatient.writer(key));
+                // while one with a longer wait is still waiting
                 assertThrows(java.util.concurrent.TimeoutException.class,
-                        () -> waiting.get(31, java.util.concurrent.TimeUnit.SECONDS));
+                        () -> waiting.get(3, java.util.concurrent.TimeUnit.SECONDS));
             } finally {
                 child.getOutputStream().close(); // EOF releases the child lock
             }
