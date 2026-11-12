@@ -30,7 +30,7 @@ The heuristics are a first pass: read `reply-<turn>.txt` and `commands.tsv` befo
 
 `--agent` takes `claude`, `codex`, `pi`, `gemini`, `opencode` and `copilot`, each run headless with every tool call allowed.
 `opencode` has no isx tool, so it is the run that exercises the question: give it `--template-agent` (for example `codex`), and the run then expects that tool in the template.
-Pi runs on the OpenAI account (`--provider openai`), since upstream refuses Pi on a Claude subscription.
+Pi runs on the OpenAI account, its default provider in `~/.pi/agent/settings.json` (Pi 1.5 refuses `--provider` without `--model`), since upstream refuses Pi on a Claude subscription.
 `--agent-model` picks the model for `pi`, `gemini`, `opencode` and `copilot`, where their default is not available.
 Bob Shell is not driven: its headless `bob run` has no flag that approves tool calls, and no approval setting was confirmed to apply to it.
 The event shapes the harness reads for the four newer agents come from their sources and docs, not from a recorded run, so check `commands.tsv` against `turn-<n>.jsonl` after a first run of each.
