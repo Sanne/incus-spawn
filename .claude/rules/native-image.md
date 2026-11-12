@@ -73,6 +73,12 @@ Registered via `--features=` in both modules' `application.properties`, comma-es
 
 All three print a `[isx-…-guard]` report to stderr during the build; check it when touching one.
 
+## Java deserialization stays out (#458)
+
+Both lists pass `-H:AbortOnMethodReachable=java.io.ObjectInputStream.readObject0`, inside the `UnlockExperimentalVMOptions` pair, and `NativeImageInitializationTest` fails if either drops it.
+A native build that fails on it has a new path to the JDK's object reader: read the `reports/trace_methods_*.txt` it names, and cut the path with a substitution (`NativeImageSubstitutions` in `common` for the JDK, `VertxDeserializationSubstitutions` in `proxy` for Vert.x), never by dropping the gate.
+Do not gate on the type instead: `-H:AbortOnTypeReachable=java.io.ObjectInputStream` fails for a hello world on GraalVM 25, through query metadata that compiles no code (design/native-image.md "Java deserialization is not compiled in").
+
 ## Regular expressions are constants
 
 Every regex in `main` is a `static final Pattern`, so a build-time-initialized class carries it compiled in the image heap (#1929).

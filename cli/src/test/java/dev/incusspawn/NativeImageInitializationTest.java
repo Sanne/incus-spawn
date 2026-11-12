@@ -48,6 +48,10 @@ class NativeImageInitializationTest {
     private static final List<Class<?>> GUARDS =
             List.of(SyscallReachabilityFeature.class, BakedHostStateFeature.class, PlatformRoleFeature.class);
 
+    /** Fails the native build when the JDK's object reader becomes reachable (design/native-image.md). */
+    private static final String DESERIALIZATION_GATE =
+            "-H:AbortOnMethodReachable=java.io.ObjectInputStream.readObject0";
+
     @Test
     void everyDeclarationDefersTheRightClassesRunsBothGuardsAndKeepsTheEnvironmentSanitized() throws IOException {
         var declarations = Map.of(
@@ -78,6 +82,12 @@ class NativeImageInitializationTest {
                         guard.getName() + " must be registered via --features in " + path
                                 + ", otherwise that binary is built unguarded. Found: " + features);
             }
+
+            // Java deserialization is not compiled into either binary (#458). The gate is a method,
+            // not the type: GraalVM 25 makes ObjectInputStream type-reachable in every image.
+            assertTrue(arguments.contains(DESERIALIZATION_GATE),
+                    DESERIALIZATION_GATE + " must be in " + path + ", otherwise a new path to Java"
+                            + " deserialization compiles in without failing the build. Found: " + arguments);
 
             // native-image hands the builder a sanitized environment (HOME, LANG, PATH, PWD), which
             // is what keeps a build-time getenv() from baking a CI token into a public binary;
