@@ -26,6 +26,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
+import dev.incusspawn.lifecycle.HostIntegration;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.RuntimeSetup;
@@ -1171,7 +1172,7 @@ public class Tui {
                 instance.name(),
                 "Stopped " + instance.name(),
                 Metadata.OP_STOPPING,
-                () -> incus.stop(instance.name()));
+                () -> HostIntegration.stopAll(incus, instance.name(), drawing, () -> incus.stop(instance.name())));
     }
 
     private void restartInBackground(InstanceInfo instance) {
@@ -1586,7 +1587,9 @@ public class Tui {
             progressMessage = "Stopping " + renameSourceName + "...";
             tui.draw(frame -> render(frame, tableState));
             try {
-                incus.stop(renameSourceName);
+                // As any stop isx makes: an open herdr must not start it again before the rename (#2041)
+                var source = renameSourceName;
+                HostIntegration.stopAll(incus, source, drawing, () -> incus.stop(source));
                 progressMessage = null;
                 refreshData(tableState);
                 rename = new RenameDialog(modal, renameSourceName);

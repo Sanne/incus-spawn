@@ -603,7 +603,16 @@ That block is the instance's with `isx ssh-proxy --start`, so herdr's connection
 herdr keeps its machines across a stop and cannot start one, and the instance's own block never starts it (#1720), so the machine sat dead in herdr's sidebar.
 Its label is the instance's name, so `herdr --machine <name>` still finds it.
 Unregistering on stop and adding again on start was the alternative; Sanne chose to keep the machine and start on connect.
-herdr's client reconnects to a lost machine by itself, every 0.5 s to 2 minutes, so while one is open it starts a stopped instance again; `herdr machine disable` keeps it stopped.
+herdr's client reconnects to a lost machine by itself, every 0.5 s to 2 minutes, so while one is open it would start a stopped instance again (#2041).
+So every stop isx makes (`isx stop`, the TUI's, `isx mcp`'s) first runs `HostIntegration.stoppingAll` under the stop mark, and herdr's `stopping` runs `herdr machine disable` on the recorded machine and records `disabled` as a third line.
+herdr applies it to open clients, draws the machine dimmed and does not reconnect to it.
+Disabling before the stop rather than after closes the window in which herdr would reconnect and wait for the stop's lock to start the instance again.
+The next start isx makes enables it again: the record is then not done, so `started` runs `herdr machine enable` once and drops the line, and a later start reads the record and runs nothing, which keeps the start path free.
+A failed enable is warned and forgotten, so a machine the user removed is not asked for on every start; a stop that failed and left the instance running enables it again (`stopFailed`).
+What this gives up: while the machine is disabled, `herdr --machine <name>` refuses it (herdr 0.9.5's `resolve_machine`), rather than starting the instance through the alias.
+herdr has no groups of machines, so a dimmed machine is as close to a "stopped instances" group as isx can get without a change in herdr.
+A stop isx does not see, a guest's poweroff or the host's reboot, leaves the machine enabled, and an open herdr starts the instance again.
+Only a machine targeting the start alias is disabled: one an older isx added for the name never starts the instance.
 herdr's own add runs from a start that is preparing the instance, so every command a host integration runs has `ISX_SSH_PROXY_NO_START=1` in its environment (`SshKeyManager.NO_START_ENV`), which ssh hands its ProxyCommand: that connection does not start an instance.
 A nested start would wait for the start's lock, or, on a path holding none, prepare the instance again, a VM always, and wait for the herdr records lock its parent holds.
 A connection marked that way can only do less than one without the mark, so any host process may set it.

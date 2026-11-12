@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.HostIntegration;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.tui.InstanceLockManager;
 import dev.incusspawn.util.BuildOutput;
@@ -55,7 +56,9 @@ public class StopCommand extends BaseCommand {
                 stopped = InstanceDestroyer.stopMarkedIf(incus, name, instance -> {
                     status.set(instance.path("status").asText(""));
                     return "Running".equals(status.get());
-                }, () -> {}, () -> {});
+                    // A tool that would start it again is told first, under the mark (#2041)
+                }, () -> HostIntegration.stoppingAll(name, BuildOutput.bound()),
+                        () -> HostIntegration.stopFailedAll(incus, name, BuildOutput.bound()));
             } catch (RuntimeException e) {
                 BuildOutput.stepBreak();
                 BuildOutput.error("could not stop " + shown + ": " + failure(e));

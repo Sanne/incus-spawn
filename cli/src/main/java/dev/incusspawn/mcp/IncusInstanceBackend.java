@@ -14,6 +14,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
+import dev.incusspawn.lifecycle.HostIntegration;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.RuntimeSetup;
@@ -21,6 +22,7 @@ import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.tui.InstanceLockManager;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
 
 import java.io.InputStream;
@@ -217,8 +219,14 @@ final class IncusInstanceBackend implements InstanceBackend {
                     instance -> session.equals(instance.path("config").path(Metadata.MCP_SESSION).asText(null))
                             && "Running".equals(instance.path("status").asText()),
                     // Stamped first: stopped without it, the next sweep would destroy it as any stopped orphan.
-                    () -> incus.configUpdate(name, new java.util.HashMap<String, Object>(stamps)),
-                    () -> unstampIfRunning(name, stamps));
+                    () -> {
+                        incus.configUpdate(name, new java.util.HashMap<String, Object>(stamps));
+                        HostIntegration.stoppingAll(name, BuildOutput.bound());
+                    },
+                    () -> {
+                        HostIntegration.stopFailedAll(incus, name, BuildOutput.bound());
+                        unstampIfRunning(name, stamps);
+                    });
         } catch (IncusException e) {
             throw new ToolError(ToolError.Code.UNAVAILABLE, "could not stop '" + name + "': " + e.getMessage());
         }
@@ -254,7 +262,7 @@ final class IncusInstanceBackend implements InstanceBackend {
         try (var held = lock.get()) {
             incus.setPendingOperation(name, Metadata.OP_STOPPING);
             try {
-                incus.stop(name);
+                HostIntegration.stopAll(incus, name, BuildOutput.bound(), () -> incus.stop(name));
             } finally {
                 incus.clearPendingOperation(name);
             }

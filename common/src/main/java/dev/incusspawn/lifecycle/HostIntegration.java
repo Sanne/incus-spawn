@@ -38,6 +38,18 @@ public interface HostIntegration {
      */
     void started(IncusClient incus, String name, JqValue instance, Output out);
 
+    /**
+     * Before isx stops the instance ({@code isx stop}, the TUI, {@code isx mcp}), under its stop
+     * mark: a tool that would start it again, such as herdr reconnecting, is told to leave it be.
+     * Must cost nothing but a read of host state when there is nothing to do. Never throws.
+     */
+    default void stopping(String name, Output out) {
+    }
+
+    /** After a stop that {@link #stopping} preceded failed: undo it, the instance still runs. Never throws. */
+    default void stopFailed(String name, Output out) {
+    }
+
     /** After the instance was deleted, whatever its template: its config is gone. Never throws. */
     void destroyed(String name, Output out);
 
@@ -76,6 +88,39 @@ public interface HostIntegration {
     /** The tools whose host integration registered {@code name}, in {@link #BUILT_IN} order. */
     static List<String> registeredWith(String name) {
         return BUILT_IN.stream().filter(integration -> integration.registered(name)).map(HostIntegration::tool).toList();
+    }
+
+    /** {@link #stopping} of every integration: what it recorded for the instance decides, not its build. */
+    static void stoppingAll(String name, Output out) {
+        for (var integration : BUILT_IN) integration.stopping(name, out);
+    }
+
+    /**
+     * {@link #stopFailed} of every integration, unless the instance stopped after all: a stop that
+     * failed late, such as on its timeout, may still have stopped it. Never throws.
+     */
+    static void stopFailedAll(IncusClient incus, String name, Output out) {
+        try {
+            var instance = incus.instanceMetadataOrThrow(name);
+            if (instance == null || "Stopped".equals(instance.path("status").asText(""))) return;
+        } catch (RuntimeException e) {
+            // Taken as still running: a machine left disabled for a running instance is the worse outcome
+        }
+        for (var integration : BUILT_IN) integration.stopFailed(name, out);
+    }
+
+    /**
+     * Run {@code stop}, the caller's stop of the instance under its lock and mark, between
+     * {@link #stoppingAll} and, when it throws, {@link #stopFailedAll}.
+     */
+    static void stopAll(IncusClient incus, String name, Output out, Runnable stop) {
+        stoppingAll(name, out);
+        try {
+            stop.run();
+        } catch (RuntimeException e) {
+            stopFailedAll(incus, name, out);
+            throw e;
+        }
     }
 
     /** {@link #destroyed} of every integration. */
