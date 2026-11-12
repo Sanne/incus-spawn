@@ -21,6 +21,17 @@ Anything else gets "nothing to do", which the report counts as a turn where the 
 `report.md` lists the turns and their times, the person's actions, every sudo the agent tried (from its commands and the journal), replies that may ask for a secret, every write of `mcp.yaml`, and `isx init --plan` at the end.
 The heuristics are a first pass: read `reply-<turn>.txt` and `commands.tsv` before reporting a finding.
 
+## Agents that passed
+
+The install page names only the agents in this table (#2178), and `AgentInstallPromptTest` holds the two together.
+An agent is added once a clean-VM run with the page's prompt, unedited, reached a first branch, its own agent's tool in that branch's template, and `isx` in its own MCP client, with the three handovers and nothing else.
+Record the run here, then add the agent's name to the page's "tested on a clean host" sentence.
+
+| Agent | Version | isx | Date | Run |
+|---|---|---|---|---|
+| Claude Code | 2.1.322 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6827659356 |
+| Codex CLI | 0.167.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6827659356 |
+
 ## How clear the instructions were
 
 Reaching a first branch is not enough: an agent that got there by guessing shows the instructions are unclear.

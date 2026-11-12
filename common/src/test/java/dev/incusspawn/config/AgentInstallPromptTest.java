@@ -53,6 +53,30 @@ class AgentInstallPromptTest {
                 + ", so it is that agent's prompt and every other agent's user edits it:\n" + prompt);
     }
 
+    /** The agents isx has a tool for, as the install page and the validation notes name them. */
+    private static final List<String> AGENT_NAMES =
+            List.of("Claude Code", "Codex CLI", "Pi", "Gemini CLI", "Bob Shell", "GitHub Copilot CLI");
+
+    /**
+     * The page promises only what a clean-VM run showed (#2178): the agents its "tested" sentence
+     * names are exactly those docs/dev/AGENT-INSTALL-VALIDATION.md records as passing.
+     */
+    @Test
+    void thePageNamesExactlyTheAgentsThatPassedTheHarness() throws IOException {
+        var tested = page().lines().filter(l -> l.startsWith("It has been tested on a clean host with these agents: "))
+                .findFirst().orElseThrow(() -> new AssertionError("the page has no \"tested on a clean host\" sentence"));
+        var named = AGENT_NAMES.stream().filter(a -> tested.matches(".*[ :,]" + Pattern.quote(a) + "[,.].*")).sorted().toList();
+        var notes = Files.readString(ROOT.resolve("docs/dev/AGENT-INSTALL-VALIDATION.md"));
+        var section = notes.substring(notes.indexOf("## Agents that passed"));
+        var next = section.indexOf("\n## ", 1);
+        if (next >= 0) section = section.substring(0, next);
+        var passed = section.lines().filter(l -> l.startsWith("| ") && !l.startsWith("| Agent "))
+                .map(l -> l.substring(2, l.indexOf(" |"))).sorted().toList();
+        assertFalse(passed.isEmpty(), "the validation notes record no agent that passed");
+        assertTrue(AGENT_NAMES.containsAll(passed), "the validation notes name an agent this test does not know: " + passed);
+        assertEquals(passed, named, "the page's tested agents are not the ones the validation notes record as passing");
+    }
+
     /** The page's prompt is the block a reader copies, so it carries the homepage's Copy button (#2177). */
     @Test
     void thePromptHasACopyButton() throws IOException {
