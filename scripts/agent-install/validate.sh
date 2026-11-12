@@ -409,11 +409,17 @@ agent_turn() {
                 exec timeout "$1" "$2" exec resume --last --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "$m"' \
                 sh "$TURN_TIMEOUT" "$AGENT_BIN" "$first" "$msg" ;;
         # Pi asks before no tool call, so it needs no flag for that; -c continues the session of
-        # the directory, which is always the home.
+        # the directory, which is always the home. Pi 1.5 refuses --provider without --model, so
+        # the OpenAI provider is its settings' default, as isx's PiSetup writes it (set over any
+        # other default, as --provider did), and Pi picks the model unless --agent-model names one.
         pi)
             AS_GROUPS=$AGENT_GROUPS as_person ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} -- sh -c '
                 c=; [ "$3" = first ] || c=-c
-                exec timeout "$1" "$2" -p --mode json --provider openai ${5:+--model "$5"} $c "$(cat "$4")"' \
+                s=~/.pi/agent/settings.json
+                if [ -e "$s" ]; then
+                    t=$(jq ".defaultProvider = \"openai\"" "$s") && printf "%s\n" "$t" > "$s"
+                else mkdir -p "${s%/*}" && printf "{\"defaultProvider\": \"openai\"}\n" > "$s"; fi
+                exec timeout "$1" "$2" -p --mode json ${5:+--provider openai --model "$5"} $c "$(cat "$4")"' \
                 sh "$TURN_TIMEOUT" "$AGENT_BIN" "$first" "$msg" "$AGENT_MODEL" ;;
         gemini)
             AS_GROUPS=$AGENT_GROUPS as_person ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} -- sh -c '
