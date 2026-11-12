@@ -20,7 +20,7 @@ isx gives coding agents isolated Linux workstations. When an agent installs it, 
 2. Never ask me for a secret, and never put one on a command line, in the environment or on stdin. When a credential is missing, tell me which `isx account add` command to run at my own terminal, and stop.
 3. Never choose which templates an agent may use, and never write ~/.config/incus-spawn/mcp.yaml. Ask me to run `isx mcp setup`, and stop.
 
-Read https://isx.run/llms.txt first. If you cannot tell which coding agent you are, or isx has no tool for it, ask me which agent to put in the template. When you need me, say exactly what to do and end your turn. I will tell you when it is done.
+Read https://isx.run/llms.txt first. When you register isx's MCP server with yourself, use the exact command llms.txt gives for your platform: on Linux it starts with `sg incus-admin`, even when you already have that group. If you cannot tell which coding agent you are, or isx has no tool for it, ask me which agent to put in the template. When you need me, say exactly what to do and end your turn. I will tell you when it is done.
 ```
 
 ## What you do
@@ -43,7 +43,7 @@ On macOS no step needs root, so the first handover does not happen.
 A fresh Linux host usually needs the root script once.
 
 On Linux the root script adds you to the `incus-admin` group, which an agent that is already running gets only when you start it again from a new login.
-Until then it runs isx commands through `sg incus-admin`.
+Until then it runs isx commands through `sg incus-admin`, and it registers isx's MCP server through `sg incus-admin` too.
 
 ## Why these steps stay with you
 
@@ -73,7 +73,7 @@ The agent reads [llms.txt](https://isx.run/llms.txt), which points it at these d
    An agent that cannot tell which agent it is, or that isx has no tool for, asks you which agent to use instead.
 5. Reads `isx init --plan` again, which now names the credential that template needs, and hands you `isx account add` when it is missing.
 6. Creates the first instance, `my-first`, from that template.
-7. Registers `isx mcp` with itself, so it can create instances from the templates you approve.
+7. Registers `isx mcp` with itself, through `sg incus-admin` on Linux, so it can create instances from the templates you approve.
 
 When the agent first runs init, no template needs a credential yet, so init does not report one as missing.
 
@@ -87,6 +87,10 @@ A script the agent writes itself from the plan does not, so ask it to run `isx i
 
 Open the first instance with `isx shell my-first`, or `isx` for the interactive view of your templates and instances.
 The agent on your computer can now create instances from the templates you approved, run commands in them, and hand them whole tasks ([MCP](MCP.md)).
+
+On Linux, if isx refuses the agent's MCP calls right after the install, with "permission denied" on the Incus socket, restart your agent from a new login.
+Logging out and back in also works.
+The agent then has the `incus-admin` group the root script added.
 
 The recommended place for an agent that coordinates other instances is an instance of its own, where it holds no credentials of yours.
 [A coordinator in an instance](MCP.md#from-a-fresh-install) takes four more commands, starting from the `tpl-agent` template of the Quick Start.
