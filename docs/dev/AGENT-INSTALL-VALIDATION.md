@@ -9,6 +9,8 @@ Run it again for every release that changes `isx init`, `isx mcp` or the install
 
 The agent must reach a first branch while stopping at exactly three handovers: the root script, a credential and the MCP approvals.
 The run passes, and `validate.sh` exits 0, only when the branch's template installs the agent's own isx tool and `isx` is in the agent's own MCP settings as well (#2178).
+It also needs `list_templates` answered over that registration after the approval, without an error, so a registration that cannot reach Incus fails the run.
+When the agent made no such call, the harness asks it for one in a last turn, which starts it afresh with the same groups as its other turns.
 The harness finds the tool by following the branch's template chain through each definition's file, and the registration in the agent's settings file, without starting the server.
 The harness answers each one as the person would:
 
@@ -38,7 +40,7 @@ The event shapes the harness reads for the four newer agents come from their sou
 ## Agents that passed
 
 The install page names only the agents in this table (#2178), and `AgentInstallPromptTest` holds the two together.
-An agent is added once a clean-VM run with the page's prompt, unedited, reached a first branch, its own agent's tool in that branch's template, and `isx` in its own MCP client, with the three handovers and nothing else.
+An agent is added once a clean-VM run with the page's prompt, unedited, reached a first branch, its own agent's tool in that branch's template, `isx` in its own MCP client, and `list_templates` answered there, with the three handovers and nothing else.
 Record the run here, then add the agent's name to the page's "tested on a clean host" sentence.
 
 | Agent | Version | isx | Date | Run |
