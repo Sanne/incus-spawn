@@ -371,7 +371,89 @@ The `macos-role` job bridges with it too, so isx's own requests cross the relay:
 Linux differs from macOS in one place the tests allow for: Linux reserves a descriptor for `accept()` before it blocks, so at the limit an accept already waiting still takes one connection.
 
 What CI cannot show is the framework's half: that a close on its descriptor reaches the guest, and how the relay behaves under bursts, held connections and sleep on a Mac.
-Stage 2 measures those against vfkit on the Mac runner before anything ships.
+Those are measured against vfkit on the Mac runner before anything ships, with the prototype of the next section.
+
+## The launcher's machine
+
+`isx-vm` starts isx's VM on Virtualization.framework with the relay above in front of its vsock ports (#2031).
+It is a prototype: no release holds it, isx does not look for it, and a Mac still runs vfkit.
+It exists so that the relay can be measured against vfkit on one Mac, and the decision to replace vfkit is read from that measurement.
+
+It reads the part of vfkit's command line that isx writes (`VmManager`, and `boot_vfkit` of `appliance/test-boot.sh`), so an unchanged isx starts either program.
+An option or a device it does not know is refused by name with exit code 64, so a device isx asked for is never missing from the machine without a word.
+The launcher that ships takes arguments of its own; reading vfkit's is for the measurement alone.
+The arguments and what a wake needs are in the module `IsxVmCore`, which imports no framework and is tested on Linux as well (`VmSpecTests`, `WakeTests`).
+The machine itself is `launcher/Sources/isx-vm`, which only a Mac compiles.
+
+vfkit's defaults are not the specification.
+Each setting is chosen for isx, and where it is vfkit's own that is a decision too:
+
+| Setting | `isx-vm` | vfkit, as isx runs it | Why, and what it gives up |
+|---|---|---|---|
+| Disks | host page cache, a guest flush is an `fsync()` | the same | The measurement compares relays, so the disks must not differ. A policy per disk (the swap disk needs no durability) is the shipping launcher's to choose, with arguments that say which disk is which. |
+| Initial ramdisk | none; `--initrd` is read and not used | required, so isx writes an empty one | The appliance kernel is built without support for one (`CONFIG_BLK_DEV_INITRD=n`) and the framework does not ask for one. Nothing is given up. |
+| Network | the host's NAT, with isx's fixed MAC address | the same | isx finds the VM's address in the host's DHCP leases by that MAC address (`VmNetwork`). |
+| Console | written to a file that is not appended to | the same | isx reads a boot's console from the start of the file. |
+| Home share | read-only at the hypervisor | writable; only the guest's `-o ro` mount keeps it read-only | Root in the guest can remount a share, and cannot change what the hypervisor refuses. It gives up nothing isx does: the guest never writes there. |
+| Entropy device | present | absent (isx passes no `virtio-rng`) | The guest's random numbers come from the host from the first moment of a boot; the kernel has the driver (`CONFIG_HW_RANDOM_VIRTIO`). One more device in the machine; the measurement records when the guest's pool is ready under each. |
+| Memory balloon | absent | absent (isx passes no `virtio-balloon`) | Nothing in isx would ask the guest for memory back, and a device nobody drives is only surface. |
+| Control endpoint | none; `--restful-uri` is read and not used | a REST socket | isx asks the guest's own agent to shut down and then signals the process, and the appliance has nothing behind the power button vfkit's endpoint presses. The shipping launcher gets a control socket for the relays' counts. |
+| Stop | `SIGTERM` or `SIGINT` stops the machine at once | presses the power button, waits five seconds, then stops it | isx sends the signal only after the guest was asked and did not end. |
+| Guest clock | set after each wake, on a new connection to the guest agent | set after each wake, on one connection kept for the process's life | See below. |
+| Guest connections | each `VZVirtioSocketConnection` is kept while its descriptor is in use, and closed through the framework once | the descriptor is copied, the framework's own closed and the object let go | The framework closes a connection's descriptor when its object is closed or released, so the relay hands back exactly what it was given (`GuestConnections`). |
+
+The signature is ad hoc and carries one entitlement, `com.apple.security.virtualization`, which the framework requires before it starts a machine (`launcher/build-isx-vm.sh`, `launcher/isx-vm.entitlements`).
+It needs no certificate, key or Apple account, and CI makes it.
+vfkit's entitlements file also lists the two network entitlements of the App Sandbox, which mean nothing to a program outside that sandbox.
+The build script reads the entitlements back from the signature and fails unless they are exactly that one.
+
+**On a wake the launcher ends every connection it accepted before the sleep and sets the guest's clock.**
+A connection may have died on either side while the host slept, and neither side is told, so each one is ended on both sides (`Relay.dropAll(stampedBefore:)`) and isx makes new ones.
+What this gives up: a connection that would have survived a short sleep, an open `isx shell` for one, is cut on every wake.
+A connection isx makes after the wake, before the launcher has noticed it, is kept.
+The relay stamps each connection when it accepts it with how far the clock that counts the time asleep is ahead of the other.
+That lead grows only in a sleep, so a stamp more than half a second below the lead read at the wake was taken before the sleep, or before the last one of several.
+The stamp is taken before the guest is dialled, so a connection whose dial the sleep interrupted counts as made before it, and is ended when that dial returns.
+The guest does not run while its host sleeps, so its clock is behind by the time asleep.
+The launcher sends the host's time to the guest agent (`guest-set-time`), on a connection of its own for each wake, tried up to five times a second apart since the guest is waking too.
+vfkit keeps one connection for all wakes and stops setting the clock for good when that one cannot be made.
+The clock is set for one wake at a time, on a serial queue, since the guest agent serves one client at a time.
+A second wake while the first is still being served sets the clock again afterwards, since the guest stood still once more.
+The launcher learns of a wake from two clocks, one that counts the time asleep and one that does not (`SleepWatch`), read every two seconds.
+That needs no system notification, so no AppKit and no IOKit in a program with no other use for them.
+What it gives up: the wake is noticed up to two and a half seconds late, and the process wakes every two seconds to ask.
+
+The framework's objects are used on the main queue alone, the queue the machine is made on.
+A relay's thread reaches the guest through `dial`, which asks the main queue and waits for it; nothing on the main queue waits for a relay.
+
+### The measurement and the rule
+
+`appliance/launcher-on-mac.sh <pr>` measures `isx-vm` against vfkit on a Mac and posts the record on the PR, as `test-kernel-on-mac.sh` does for a kernel.
+It takes the appliance and `isx-vm` from the artifacts of the PR head's CI run (`appliance-aarch64`, `isx-vm-macos-aarch64`), so what is measured is what CI built and signed.
+Each half runs once under each program:
+
+- **The machine alone.**
+  `test-boot.sh` boots the PR's appliance (`VFKIT=<program>`) and runs its tunnel checks, which hold the two forwarder checks: a connection the host closed leaves no forwarder child in the guest.
+  A second boot runs `appliance/measure-tunnel.sh` before those checks (`WHILE_UP`): 24 runs of `test-tunnel.sh`, bursts of 70 and 120 requests, and the latency of a request with 0, 200 and 400 connections held.
+- **Under isx.**
+  The VM isx already has on that Mac is restarted under the program, so an existing VM is what boots.
+  isx finds its hypervisor as `vfkit` on the `PATH`, so `isx-vm` is given to it as a copy of that name in a directory put first.
+  Then `bench/trace-branch.sh --isx=<the installed isx>` runs three times: a branch to its prompt, the shell's end after it and the destroy.
+  Then one instance shows the VM's network and its share of the home, which neither the API nor a branch needs.
+  It gets an answer over HTTPS (`REACH_URL`, `https://github.com/`), and it reads a file the script wrote in the home, through a directory mounted as its inbox.
+  The appliance mounts the share with a failure ignored, so without this step a VM that macOS refused the home would still pass.
+  A failure of this step under `isx-vm` turns a go into "go by the rule, with failed steps", as any failed step of `isx-vm` does.
+  With `--sleep` the Mac is put to sleep for a minute with 20 connections held, and the record says how many the host still held, how soon the API answered and how far the guest's clock was off.
+  The VM is back under vfkit when the script ends, however it ends.
+
+The rule is the design's: go when a host-side close reaches the guest, and failures and latency are no worse than vfkit's.
+The script reads it from the values and prints the reading at the top of the record.
+"No worse" for a latency is the script's own margin, since two medians never agree to the digit: above vfkit's by more than a tenth and by more than 0.2 ms (a branch: by more than a tenth).
+A latency with connections held counts only when isx-vm held no fewer of them than vfkit, to the end of the sampling.
+If the close does not reach the guest, the framework itself loses it and no relay can fix that; the fallback is then a close sent in band, and the launcher is weighed on its other merits.
+
+What the script does not answer is whether macOS asks again for the Local Network and home folder permissions when `isx-vm` runs in vfkit's place: a prompt needs a person at the screen.
+A record of other counts than the defaults says so, and a measurement taken while the Mac was busy is not a basis for the decision.
 
 ## The macOS VM outlives whatever started it
 
