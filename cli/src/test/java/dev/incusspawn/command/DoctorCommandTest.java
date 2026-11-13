@@ -376,7 +376,8 @@ class DoctorCommandTest {
     @Test
     void adequatePoolSuggestsDoublingWhenFull() {
         long hundredGiB = 100L * 1024 * 1024 * 1024;
-        var usage = new IncusClient.PoolUsage(hundredGiB * 95 / 100, hundredGiB);
+        // 96%: at 95% a 100 GiB pool has exactly 5 GiB free, which is not yet critical
+        var usage = new IncusClient.PoolUsage(hundredGiB * 96 / 100, hundredGiB);
         var f = DoctorCommand.evaluatePoolSize("cow", usage, null, null);
         assertNotNull(f);
         assertEquals(DoctorCommand.Status.WARN, f.status());

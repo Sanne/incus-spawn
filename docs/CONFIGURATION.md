@@ -358,7 +358,7 @@ isx also compresses data inside the pool, since no layer under the pool compress
 On macOS the pool lives on the appliance's own disk, the appliance being the Linux VM that isx runs; `isx vm resize` grows it.
 
 A subvolume pool has no cap of its own, so it can fill the host's disk.
-`isx doctor` warns when the pool is at least 90% full and has less than 20 GiB free.
+`isx doctor` warns when the pool is at least 90% full and has less than 5 GiB free.
 Each instance's `--disk` limit still applies.
 
 A subvolume pool also changes the host filesystem as a whole.

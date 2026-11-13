@@ -996,10 +996,13 @@ public class IncusClient {
     public record PoolUsage(long usedBytes, long totalBytes) {
         private static final long GIB = 1024L * 1024 * 1024;
         public static final int LOW_PERCENT = 75;
-        public static final long LOW_FREE_BYTES = 50 * GIB;
+        public static final long LOW_FREE_BYTES = 10 * GIB;
         public static final int CRIT_PERCENT = 90;
-        /** About what one larger template build takes. */
-        public static final long CRIT_FREE_BYTES = 20 * GIB;
+        /**
+         * Margin, not a build's size: btrfs can refuse writes with a few GiB still reported free,
+         * and reclaiming space needs some itself.
+         */
+        public static final long CRIT_FREE_BYTES = 5 * GIB;
 
         public int percent() {
             return totalBytes == 0 ? 0 : (int) (usedBytes * 100 / totalBytes);
@@ -1007,11 +1010,11 @@ public class IncusClient {
         public long freeBytes() {
             return Math.max(0, totalBytes - usedBytes);
         }
-        /** Amber: at least 75% used and under 50 GiB free. */
+        /** Amber: at least 75% used and under 10 GiB free. */
         public boolean isLow() {
             return totalBytes > 0 && percent() >= LOW_PERCENT && freeBytes() < LOW_FREE_BYTES;
         }
-        /** Red: at least 90% used and under 20 GiB free. */
+        /** Red: at least 90% used and under 5 GiB free. */
         public boolean isCritical() {
             return totalBytes > 0 && percent() >= CRIT_PERCENT && freeBytes() < CRIT_FREE_BYTES;
         }

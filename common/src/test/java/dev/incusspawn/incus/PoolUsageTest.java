@@ -16,10 +16,11 @@ class PoolUsageTest {
 
     @Test
     void smallPoolFollowsThePercentage() {
-        assertFalse(usage(74, 100).isLow());
-        assertTrue(usage(75, 100).isLow());
-        assertFalse(usage(89, 100).isCritical());
-        assertTrue(usage(90, 100).isCritical());
+        // Under 40 GiB the percentage leaves less than either floor free
+        assertFalse(usage(14, 20).isLow());
+        assertTrue(usage(15, 20).isLow());
+        assertFalse(usage(17, 20).isCritical());
+        assertTrue(usage(18, 20).isCritical());
     }
 
     @Test
@@ -32,10 +33,19 @@ class PoolUsageTest {
 
     @Test
     void largePoolTurnsLowThenCriticalAsTheFreeSpaceRunsShort() {
-        assertFalse(usage(974, 1024).isLow(), "exactly 50 GiB free");
-        assertTrue(usage(975, 1024).isLow());
-        assertFalse(usage(1004, 1024).isCritical(), "exactly 20 GiB free");
-        assertTrue(usage(1005, 1024).isCritical());
+        assertFalse(usage(1014, 1024).isLow(), "exactly 10 GiB free");
+        assertTrue(usage(1015, 1024).isLow());
+        assertFalse(usage(1019, 1024).isCritical(), "exactly 5 GiB free");
+        assertTrue(usage(1020, 1024).isCritical());
+    }
+
+    @Test
+    void theDefaultLoopPoolSizeFollowsTheFloors() {
+        // 100 GiB: amber from 90% and red from 95%, not from 75% and 90%
+        assertFalse(usage(90, 100).isLow(), "exactly 10 GiB free");
+        assertTrue(usage(91, 100).isLow());
+        assertFalse(usage(95, 100).isCritical(), "exactly 5 GiB free");
+        assertTrue(usage(96, 100).isCritical());
     }
 
     @Test
