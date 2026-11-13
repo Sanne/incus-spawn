@@ -23,6 +23,12 @@ set -euo pipefail
 # itself printed, which is otherwise discarded. The exception above is vfkit's
 # alone: under another program both checks are strict unless the caller says
 # otherwise.
+#
+# WHILE_UP=<program> runs "<program> <incus-socket> <agent-socket> <silent-socket>"
+# on macOS once the guest is ready and before the tunnel checks, with the
+# hypervisor's pid in HYPERVISOR_PID. It is how a machine is measured between
+# its boot and its checks (measure-tunnel.sh). The program's exit status does
+# not change this script's result: the checks that follow say what it left.
 
 BUILD_DIR="${1:-$(dirname "$0")/build}"
 TIMEOUT="${2:-300}"
@@ -113,9 +119,10 @@ boot_vfkit() {
         --restful-uri "tcp://localhost:0" \
         > "${HYPERVISOR_LOG:-/dev/null}" 2>&1 &
     local pid=$!
-    local elapsed=0
+    local elapsed=0 ready=0
     while [ "$elapsed" -lt "$((TIMEOUT * 10))" ]; do
         if grep -q 'ISX READY' "$LOGFILE" 2>/dev/null; then
+            ready=1
             local ms=$((elapsed * 100))
             echo "  ISX READY in ~${ms}ms"
             break
@@ -123,6 +130,14 @@ boot_vfkit() {
         sleep 0.1
         elapsed=$((elapsed + 1))
     done
+    if [ -n "${WHILE_UP:-}" ] && [ "$ready" = 0 ]; then
+        echo "  not running $(basename "$WHILE_UP"): the guest was not ready within ${TIMEOUT}s"
+    elif [ -n "${WHILE_UP:-}" ]; then
+        echo "  running $(basename "$WHILE_UP") while the guest is up"
+        # The status first: the $(basename) below would replace it.
+        HYPERVISOR_PID=$pid "$WHILE_UP" "$vsock_sock" "$agent_sock" "$silent_sock" \
+            || { local while_up_rc=$?; echo "  $(basename "$WHILE_UP") exited $while_up_rc"; }
+    fi
     # Probe the forwarded sockets regardless of ISX READY (the daemon is up well
     # before readiness; the probes poll on their own). Results go to VSOCK_RESULT,
     # NOT the serial LOGFILE: vfkit streams the boot log into LOGFILE concurrently,
