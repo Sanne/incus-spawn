@@ -141,13 +141,13 @@ results=()
 failed=0
 logs=""
 step() {
-    local name="$1" rc=0; shift
+    local name="$1" rc=0 known checks; shift
     echo "==> $name"
     "$@" > "$WORK/$name.log" 2>&1 || rc=$?
     # A check that failed on vfkit's own leak and was allowed (test-tunnel.sh's KNOWN, #2031)
     # is named in the record of every run, a failed one included, so the exception stays in sight
     # until it is removed. Not from the guest's console that test-boot.sh quotes after its summary.
-    known="$(perl -ne 'last if /^Last 40 log lines:$/; print' "$WORK/$name.log" \
+    known="$(perl -ne 'last if /^Last 40 log lines:$/; s/\e\[[0-9;]*m//g; print' "$WORK/$name.log" \
         | grep -E '^[[:space:]]*KNOWN:' | sed 's/^[[:space:]]*//' | head -n 10 | cut -c 1-300 || true)"
     [ -z "$known" ] || logs+=$'\n'"$name, known failures allowed:"$'\n\n```\n'"$known"$'\n```\n'
     if [ "$rc" = 0 ]; then
