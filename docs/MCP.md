@@ -26,16 +26,21 @@ It asks the same questions and needs a terminal too, so an agent that installed 
 
 Once `isx mcp` is set up, a re-run of `isx init` or `isx mcp setup` asks one question instead: `t` to change the approved templates, `n` to see how to turn it off, Enter to keep everything.
 
-To register `isx mcp` with Claude Code by hand instead:
+To register `isx mcp` with Claude Code or Codex without the rest of the step:
 
 ```shell
-claude mcp add --scope user isx -- ~/.local/bin/isx mcp
+isx mcp register claude
+isx mcp register codex
 ```
+
+It replaces an existing `isx` entry.
+On Linux it runs the server through `sg incus-admin` when your host has `sg`, so an agent started before you joined that group still reaches Incus.
+Without `sg`, the agent reaches Incus once you start it again from a new login.
 
 ### Other agents
 
 Any agent that speaks MCP over stdio can use `isx mcp`.
-`isx mcp config` prints the entry to add to that agent's settings:
+`isx mcp config` prints the entry to add to that agent's settings, on Linux through `sg incus-admin` as `isx mcp register` writes it:
 
 ```json
 {
@@ -52,13 +57,6 @@ Cursor reads it from `~/.cursor/mcp.json`, and Gemini CLI from `~/.gemini/settin
 Most desktop apps and editors take the same `mcpServers` object in their MCP settings.
 If the file already holds servers, add `isx` beside them.
 The command only prints the entry and does not write any file, so you add the entry yourself.
-
-Codex and Gemini CLI also register `isx mcp` with their own commands:
-
-```shell
-codex mcp add isx -- ~/.local/bin/isx mcp
-gemini mcp add --scope user isx ~/.local/bin/isx mcp
-```
 
 Approve templates with `isx mcp setup` whichever agent you use.
 

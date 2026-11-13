@@ -95,15 +95,16 @@ class AgentInstallPromptTest {
      * On Linux an agent's session predates the incus-admin group the root script adds, so an MCP
      * server it registers without {@code sg incus-admin} is refused by the Incus socket (#2178:
      * Claude Code took the plain form twice while llms.txt offered sg only as a condition).
-     * The prompt asks for the sg form, and llms.txt gives it as the Linux command for each agent.
+     * llms.txt gives one command per agent, {@code isx mcp register}, which chooses the sg form
+     * itself (#2189), and the prompt sends the agent to it.
      */
     @Test
-    void theLinuxRegistrationRunsUnderSg() throws Exception {
-        assertTrue(harnessPrompt().contains("`sg incus-admin`"), "the prompt does not ask for the sg registration");
+    void theRegistrationIsOneCommandThatChoosesSg() throws Exception {
+        assertTrue(harnessPrompt().contains("`isx mcp register`"), "the prompt does not name isx mcp register");
         var llms = Files.readString(ROOT.resolve("site/llms.txt"));
-        for (var linux : List.of("| Claude Code | `claude mcp add --scope user isx -- sg incus-admin -c \"<isx> mcp\"` |",
-                "| Codex CLI | `codex mcp add isx -- sg incus-admin -c \"<isx> mcp\"` |"))
-            assertTrue(llms.contains(linux), "llms.txt does not give the Linux registration " + linux);
+        for (var command : List.of("`<isx> mcp register claude`", "`<isx> mcp register codex`", "`<isx> mcp config`"))
+            assertTrue(llms.contains(command), "llms.txt does not give the registration " + command);
+        assertFalse(llms.contains("claude mcp add"), "llms.txt still has an agent write the registration itself");
     }
 
     /** The prompt the clean-host harness gives its agent, read from the page. */
