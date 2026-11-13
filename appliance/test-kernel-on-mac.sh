@@ -141,12 +141,23 @@ results=()
 failed=0
 logs=""
 step() {
-    local name="$1"; shift
+    local name="$1" rc=0; shift
     echo "==> $name"
-    if "$@" > "$WORK/$name.log" 2>&1; then
-        results+=("$name: pass")
+    "$@" > "$WORK/$name.log" 2>&1 || rc=$?
+    # A check that failed on vfkit's own leak and was allowed (test-tunnel.sh's KNOWN, #2031)
+    # is named in the record of every run, a failed one included, so the exception stays in sight
+    # until it is removed. Not from the guest's console that test-boot.sh quotes after its summary.
+    known="$(perl -ne 'last if /^Last 40 log lines:$/; print' "$WORK/$name.log" \
+        | grep -E '^[[:space:]]*KNOWN:' | sed 's/^[[:space:]]*//' | head -n 10 | cut -c 1-300 || true)"
+    [ -z "$known" ] || logs+=$'\n'"$name, known failures allowed:"$'\n\n```\n'"$known"$'\n```\n'
+    if [ "$rc" = 0 ]; then
+        if [ -n "$known" ]; then
+            results+=("$name: pass, with $(printf '%s\n' "$known" | wc -l | tr -d ' ') known failures of vfkit allowed (#2031)")
+        else
+            results+=("$name: pass")
+        fi
     else
-        results+=("$name: FAIL (exit $?)")
+        results+=("$name: FAIL (exit $rc)")
         failed=1
         # The lines the boot scripts print for a failed check, which carry its counts, and their
         # tally. A tail alone does not name them (#2033).
@@ -190,6 +201,8 @@ scrub() {
         my $u = $ENV{U}; s/\b\Q$u\E\b/<user>/g if length $u;'
 }
 
+logs="$(printf '%s' "$logs" | scrub)"
+
 # What decides a failure is in the full logs, so they outlive this run. Of the artifact only
 # kernel-inputs: its images and kernel are tens of MB, and an unattended Mac would fill up with
 # them. Saving is best effort, since the record must still be posted. The paths are isx's own
@@ -207,7 +220,6 @@ if [ "$failed" = 1 ]; then
     else
         saved=""
     fi
-    logs="$(printf '%s' "$logs" | scrub)"
     # Only the path is scrubbed: a short host name such as "mac" would take this line's own words.
     [ -z "$saved" ] || logs=$'\n'"Logs: kept on the Mac in $(printf '%s' "$saved" | scrub)"$'\n'"$logs"
 fi
