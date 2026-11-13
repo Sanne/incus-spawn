@@ -401,7 +401,7 @@ final class ListingLoader {
             storageWarningShown = false;
             return;
         }
-        if (tui.poolUsage.percent() >= IncusClient.PoolUsage.CRIT_PERCENT) {
+        if (tui.poolUsage.isCritical()) {
             if (!storageWarningShown && tui.statusMessage == null) {
                 tui.statusMessage = "⚠ Storage " + tui.poolUsage.percent()
                         + "% full — press C to reclaim space (stale templates, unused images, caches)"

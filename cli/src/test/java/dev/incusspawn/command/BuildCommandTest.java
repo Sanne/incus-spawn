@@ -1970,6 +1970,20 @@ class BuildCommandTest {
         assertTrue(recorder.events(RecordingOutput.Kind.WARN).isEmpty(), recorder.events()::toString);
     }
 
+    /** A large pool past 90% with plenty free is not named as the likely cause (#2204). */
+    @Test
+    void aLargePoolWithPlentyFreeIsNotTheLikelyCause() {
+        var cmd = new BuildCommand();
+        cmd.incus = mock(IncusClient.class);
+        when(cmd.incus.findCowPool()).thenReturn("default");
+        when(cmd.incus.getPoolUsageBytes("default")).thenReturn(new IncusClient.PoolUsage(942L << 30, 1024L << 30));
+
+        var recorder = RecordingOutput.during(() -> cmd.printBuildDiagnostics("tpl-x-build", false));
+
+        assertTrue(recorder.events().stream().noneMatch(e -> e.msg() != null && e.msg().startsWith("Likely cause")),
+                recorder.events()::toString);
+    }
+
     // --- diagnoseCrashCause ---
 
     @Test

@@ -986,10 +986,34 @@ public class IncusClient {
         return usage.format(poolName);
     }
 
+    /**
+     * A pool's space, and the one rule for when it is running short (#2204).
+     * A pool is low or critical only when it is past the percentage <em>and</em> has less than a
+     * fixed amount free: a percentage alone calls a large pool full while it still holds many builds,
+     * and a free-space floor alone calls a small pool full while it is mostly empty.
+     * Critical implies low.
+     */
     public record PoolUsage(long usedBytes, long totalBytes) {
+        private static final long GIB = 1024L * 1024 * 1024;
+        public static final int LOW_PERCENT = 75;
+        public static final long LOW_FREE_BYTES = 50 * GIB;
         public static final int CRIT_PERCENT = 90;
+        /** About what one larger template build takes. */
+        public static final long CRIT_FREE_BYTES = 20 * GIB;
+
         public int percent() {
             return totalBytes == 0 ? 0 : (int) (usedBytes * 100 / totalBytes);
+        }
+        public long freeBytes() {
+            return Math.max(0, totalBytes - usedBytes);
+        }
+        /** Amber: at least 75% used and under 50 GiB free. */
+        public boolean isLow() {
+            return totalBytes > 0 && percent() >= LOW_PERCENT && freeBytes() < LOW_FREE_BYTES;
+        }
+        /** Red: at least 90% used and under 20 GiB free. */
+        public boolean isCritical() {
+            return totalBytes > 0 && percent() >= CRIT_PERCENT && freeBytes() < CRIT_FREE_BYTES;
         }
         public String format(String poolName) {
             return "%s pool: %dMiB used / %dMiB total (%d%% full)".formatted(

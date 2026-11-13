@@ -1,6 +1,5 @@
 package dev.incusspawn.tui;
 
-import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.OutputFormat;
 import dev.tamboui.layout.Constraint;
@@ -79,10 +78,12 @@ final class MainScreen {
         int gaugeW = 0;
         if (tui.poolUsage != null && tui.poolUsage.totalBytes() > 0) {
             int percent = tui.poolUsage.percent();
-            Color fillColor = percent >= IncusClient.PoolUsage.CRIT_PERCENT ? tui.theme.statusFailure()
-                    : percent >= Tui.STORAGE_WARN_PERCENT ? tui.theme.statusWarning()
+            boolean critical = tui.poolUsage.isCritical();
+            boolean low = tui.poolUsage.isLow();
+            Color fillColor = critical ? tui.theme.statusFailure()
+                    : low ? tui.theme.statusWarning()
                     : tui.theme.statusRunning();
-            var glabel = percent >= IncusClient.PoolUsage.CRIT_PERCENT ? "⚠ Storage " : "Storage ";
+            var glabel = critical ? "⚠ Storage " : "Storage ";
             var readout = "  " + percent + "%  " + gibShort(tui.poolUsage.usedBytes())
                     + "/" + gibShort(tui.poolUsage.totalBytes());
 
@@ -103,7 +104,7 @@ final class MainScreen {
                     gauge.add(Span.styled("▏", Style.EMPTY.fg(fillColor).bg(bg)));
                 }
                 gauge.add(Span.styled(readout, Style.EMPTY.fg(fillColor).bg(bg)));
-                if (percent >= Tui.STORAGE_WARN_PERCENT) {
+                if (low) {
                     var hint = "  C:clean";
                     if (avail - gaugeW >= hint.length()) {
                         gauge.add(Span.styled(hint, Style.EMPTY.fg(tui.theme.textDim()).bg(bg)));
