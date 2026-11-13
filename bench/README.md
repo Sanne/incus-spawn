@@ -626,6 +626,26 @@ whatever else the host runs, so run it with nothing else running. Every fio JSON
 is kept under `--out`. What it found is in docs/dev/PERFORMANCE-NOTES.md "VM root disk: bus
 and host cache mode".
 
+## A VM Disk's Cache Mode, Per Context (`vm-disk-cache.sh`)
+
+`vm-disk-cache.sh` measures `io.cache` where #810 left it open, one context at a time:
+`tmp` puts `/tmp` on a disk device of its own and compares it with `/tmp` on the root disk,
+`branches` reads the same template blocks from several copies in turn and records the host's
+page cache after each, `build` times a Maven build and the host memory the VM's disk then
+holds, and `template` installs packages on `unsafe`, stops the VM, flushes the pool and boots
+it again on `none`. Each workload starts with the guest's and the host's caches dropped, except
+across the copies of `branches`, where the host's cache is what is measured. The script's
+header lists what the guest needs: a stock Fedora VM with `tmp.mount` masked, as isx's images
+have it, a populated Maven repository and a set of rpms to install offline.
+
+```shell
+bench/vm-disk-cache.sh benchbase all                                  # every context, every mode
+bench/vm-disk-cache.sh benchbase branches --branches=4 --caches=none,writeback
+```
+
+The whole run takes about an hour under nested KVM, with nothing else running on the host.
+Every timing is kept under `--out`.
+
 ## File Layout
 
 ```
@@ -637,6 +657,7 @@ bench/
   request-cost.sh         # What one Incus request costs, outside isx
   vm-boot.sh              # Where a VM's boot goes, firmware to exec
   vm-disk-bus.sh          # A VM root disk's bus and cache mode, measured in the guest
+  vm-disk-cache.sh        # A VM disk's io.cache per context: /tmp, branches, a build, a template
   isxbench.py             # Shared helper: run a command to a usable shell prompt or a screen
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
