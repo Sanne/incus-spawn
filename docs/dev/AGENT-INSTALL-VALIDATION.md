@@ -80,6 +80,8 @@ The person's account must be able to read either directory.
 The directory holds `bin/isx`, `bin/isx-proxy` and `docs/` (the repository's `docs/` without `docs/dev/`, `README.md` and `site/llms.txt`), and the prompt then tells the agent to read those docs instead of isx.run.
 The harness refuses a `docs/dev/` there: this page would tell the agent how the person answers.
 A JVM build serves: launchers in `bin/` that run `java -jar` on copies of `cli/target/quarkus-app` and `proxy/target/quarkus-app`.
+Each launcher names Java by its full path, such as `/usr/bin/java`, as `install.sh` writes it: `isx proxy install` refuses a wrapper whose Java is a bare `java`, and the agent then works around the proxy service.
+A nested VM from `run-in-vm.sh` has no Java, so give it native binaries (`mvn package -Dnative -DskipTests`).
 
 The host must not have Incus, since the first run is the one that matters.
 A second agent therefore needs a second clean host.
