@@ -9,9 +9,10 @@
 # proposes nothing for an older release, and fails closed on a bad signature, a sum the publisher
 # does not confirm or a link off the allowlist; that verify-trees passes exactly the engine's
 # regeneration of an app PR and fails one with anything else in it, a tampered sum, a downgrade,
-# another series or a judgement item, passes a person's bump whose values are the publisher's and
-# fails one whose are not, and passes a PR touching no item; that issues and track open each issue
-# once. Needs bash, git, jq, yq, gpg, gpgv, curl faked, tar, perl.
+# another series or a judgement item, and a review item's the same way, passes a person's bump
+# whose values are the publisher's and fails one whose are not, and passes a PR touching no item;
+# that issues and track open each issue once. Needs bash, git, jq, yq, gpg, gpgv, curl faked, tar,
+# perl.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="$(mktemp -d)"
@@ -182,6 +183,12 @@ git init -q --bare "$WORK/remote.git" && git remote add origin "$WORK/remote.git
 git --git-dir="$WORK/remote.git" config uploadpack.allowAnySHA1InWant true
 E="$REPO/upstream/engine/upstream.sh"
 BASE="$(git rev-parse HEAD)"
+# commit_from <start> <message> <edit command...>: a commit on top of <start> with the edit.
+commit_from() {
+    local start="$1" msg="$2"; shift 2
+    local wt="$WORK/wt"; rm -rf "$wt"; git -C "$REPO" worktree prune; git -C "$REPO" worktree add -q --detach "$wt" "$start"
+    ( cd "$wt" && "$@" && git add -A && git -c user.name=a -c user.email="$APP_EMAIL" commit -qm "$msg" && git rev-parse HEAD )
+}
 
 # ---- validate ----------------------------------------------------------------------------------------
 "$E" validate > /dev/null || fail "validate refuses the fixture manifest"
@@ -204,6 +211,12 @@ bad_manifest 'del(.items.idea-backend.source.code)' "a JetBrains item without a 
 bad_manifest '.items.idea-backend.source.url-prefix = "https://evil.example/idea/"' "a JetBrains prefix off download.jetbrains.com"
 yq '.items.kernel.class = "judgement" | del(.items.kernel.verify)' "$REPO/upstream/manifest.yaml" > "$WORK/judgement.yaml"
 MANIFEST="$WORK/judgement.yaml" "$E" validate > /dev/null || fail "a judgement item needs no verify"
+# A review item (#2210) is proposed as a PR too, so it is specified as fully as a mechanical one.
+yq '.items.idea-backend.class = "review"' "$REPO/upstream/manifest.yaml" > "$WORK/review.yaml"
+MANIFEST="$WORK/review.yaml" "$E" validate > /dev/null || fail "validate refuses a review item"
+bad_manifest '.items.idea-backend.class = "review" | del(.items.idea-backend.verify)' "a review item without verify"
+bad_manifest '.items.idea-backend.class = "review" | del(.items.idea-backend.within)' "a review item without within"
+bad_manifest '.items.idea-backend.class = "review" | .items.idea-backend.cooling = "1h"' "a review item's cooling under the 24h floor"
 echo "validate: ok"
 
 # ---- check -------------------------------------------------------------------------------------------
@@ -310,6 +323,20 @@ P="$(plan judgement)"
 [ "$(action "$P" idea-backend)" = issue ] && [ -f "$P/issues/idea-backend-2026.3.json" ] || fail "a judgement item did not become an issue: $(cat "$P/plan.tsv")"
 [ ! -f "$P/idea-backend.json" ] || fail "a judgement item got a commit"
 git -C "$REPO" checkout -q -- upstream/manifest.yaml
+# A review item (#2210) gets the same commit as a mechanical one, never an issue, and its PR says
+# who merges it.
+yq -i '.items.idea-backend.class = "review"' "$REPO/upstream/manifest.yaml"
+P="$(plan review)"
+[ "$(action "$P" idea-backend)" = pr ] && [ "$(version "$P" idea-backend)" = 2026.3 ] || fail "a review item did not become a PR: $(cat "$P/plan.tsv")"
+[ ! -f "$P/issues/idea-backend-2026.3.json" ] || fail "a review item got an issue"
+jq -r .body "$P/idea-backend.json" | grep -q 'the bot never approves or merges it' || fail "a review item's PR does not say the bot leaves it: $(jq -r .body "$P/idea-backend.json")"
+jq -r .body "$P/kernel.json" | grep -q 'only then may the bot approve and merge it' || fail "a mechanical item's PR lost its merge sentence"
+R3="$(jq -r .commit "$P/idea-backend.json")"
+"$E" verify-trees "$BASE" "$R3" "$APP_LOGIN" yes > "$WORK/verify.log" 2>&1 || { cat "$WORK/verify.log" >&2; fail "the engine's own bump of a review item failed verification"; }
+r3bad="$(commit_from "$R3" bad sed -i "s/^    sha256: $S3X\$/    sha256: $(sumof wrong)/" common/src/main/resources/tools/idea-backend.yaml)"
+"$E" verify-trees "$BASE" "$r3bad" "$APP_LOGIN" yes > "$WORK/verify.log" 2>&1 && fail "an app PR for a review item with a tampered sum passed"
+grep -q "is not main's engine's regeneration" "$WORK/verify.log" || fail "the tampered sum was not what failed: $(cat "$WORK/verify.log")"
+git -C "$REPO" checkout -q -- upstream/manifest.yaml
 echo "plan fail-closed: ok"
 
 # ---- verify-trees ------------------------------------------------------------------------------------
@@ -319,12 +346,6 @@ verify() { "$E" verify-trees "$BASE" "$1" "$2" "$3" > "$WORK/verify.log" 2>&1; }
 for i in kernel base-image idea-backend; do
     verify "$(jq -r .commit "$P/$i.json")" "$APP_LOGIN" yes || { cat "$WORK/verify.log" >&2; fail "the engine's own $i bump failed verification"; }
 done
-# commit_from <start> <message> <edit command...>: a commit on top of <start> with the edit.
-commit_from() {
-    local start="$1" msg="$2"; shift 2
-    local wt="$WORK/wt"; rm -rf "$wt"; git -C "$REPO" worktree prune; git -C "$REPO" worktree add -q --detach "$wt" "$start"
-    ( cd "$wt" && "$@" && git add -A && git -c user.name=a -c user.email="$APP_EMAIL" commit -qm "$msg" && git rev-parse HEAD )
-}
 K="$(jq -r .commit "$P/kernel.json")"
 extra="$(commit_from "$K" extra bash -c 'echo x > appliance/kernel/isx.config')"
 verify "$extra" "$APP_LOGIN" yes && fail "an app PR with a file beside the bump passed"
@@ -373,7 +394,7 @@ rm -f "$FIX/prs-closed.json"
 # An app PR for an item the manifest calls judgement fails whatever it carries.
 yq -i '.items.kernel.class = "judgement" | del(.items.kernel.verify) | del(.items.kernel.within)' "$REPO/upstream/manifest.yaml"
 verify "$K" "$APP_LOGIN" yes && fail "an app PR for a judgement item passed"
-grep -q "not mechanical" "$WORK/verify.log" || fail "the class was not what failed: $(cat "$WORK/verify.log")"
+grep -q "is class judgement" "$WORK/verify.log" || fail "the class was not what failed: $(cat "$WORK/verify.log")"
 git -C "$REPO" checkout -q -- upstream/manifest.yaml
 # verify-pr: the same through the PR's refs and gh.
 git -C "$REPO" push -q origin "$K:refs/pull/5/head"

@@ -22,8 +22,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * {@code upstream/manifest.yaml} (#2036) is what the upstream watch may bump without a person: an
  * item it lists as {@code mechanical} gets a PR whose every value is the publisher's, verified by
  * the method its {@code verify.type} names, and merged by the bot once {@code upstream-verify}
- * regenerates it. So the manifest is a policy file, and these tests hold its shape statically: a
- * mechanical item is fully specified, its verification keys name committed files and the pinned
+ * regenerates it; a {@code review} item (#2210) gets the same proven PR, which only Sanne merges.
+ * So the manifest is a policy file, and these tests hold its shape statically: an item the engine
+ * bumps is fully specified, its verification keys name committed files and the pinned
  * fingerprint, a third-party source cools for a day, and no key anywhere switches a check off.
  * {@code upstream.sh validate} holds the same rules at run time, with the source types loaded, and
  * the last test runs it so the two cannot drift apart unnoticed.
@@ -66,13 +67,16 @@ class UpstreamManifestTest {
         return items.asMap();
     }
 
-    private static Map<String, JqValue> mechanicalItems() {
-        var mechanical = new java.util.LinkedHashMap<String, JqValue>();
+    /** The classes whose bump the engine writes as a PR: {@code lib.sh}'s {@code item_proposed}. */
+    private static final Set<String> PROPOSED_CLASSES = Set.of("mechanical", "review");
+
+    private static Map<String, JqValue> proposedItems() {
+        var proposed = new java.util.LinkedHashMap<String, JqValue>();
         items().forEach((name, item) -> {
-            if (item.pathText("class", "judgement").equals("mechanical")) mechanical.put(name, item);
+            if (PROPOSED_CLASSES.contains(item.pathText("class", "judgement"))) proposed.put(name, item);
         });
-        assertFalse(mechanical.isEmpty(), "manifest has no mechanical item");
-        return mechanical;
+        assertFalse(proposed.isEmpty(), "manifest has no item the engine bumps");
+        return proposed;
     }
 
     private static List<String> strings(JqValue list) {
@@ -113,20 +117,20 @@ class UpstreamManifestTest {
                 assertTrue(ITEM_KEYS.contains(key), name + " has an unknown key '" + key + "'");
             }
             var itemClass = item.pathText("class", "judgement");
-            assertTrue(Set.of("mechanical", "judgement").contains(itemClass),
-                    name + ": class must be mechanical or judgement, not '" + itemClass + "'");
+            assertTrue(Set.of("mechanical", "review", "judgement").contains(itemClass),
+                    name + ": class must be mechanical, review or judgement, not '" + itemClass + "'");
         });
     }
 
     /**
-     * A mechanical item is one the watch bumps on its own, so everything the engine needs to do that
-     * safely is written down: where to look, how to verify, which files to rewrite, and how long to
-     * wait. A {@code source.type} without a script would fail at run time only, after the watch had
-     * been green for weeks on the other items.
+     * A mechanical or review item is one the watch bumps on its own, so everything the engine needs
+     * to do that safely is written down: where to look, how to verify, which files to rewrite, and
+     * how long to wait. A {@code source.type} without a script would fail at run time only, after
+     * the watch had been green for weeks on the other items.
      */
     @Test
-    void aMechanicalItemIsFullySpecified() {
-        mechanicalItems().forEach((name, item) -> {
+    void anItemTheEngineBumpsIsFullySpecified() {
+        proposedItems().forEach((name, item) -> {
             var within = item.pathText("within", "");
             assertTrue(Set.of("series", "any").contains(within), name + ": within must be series or any, not '" + within + "'");
             var type = item.path("source").pathText("type", "");
@@ -155,7 +159,7 @@ class UpstreamManifestTest {
      */
     @Test
     void coolingUnderADayIsOnlyForAFirstPartySource() {
-        mechanicalItems().forEach((name, item) -> {
+        proposedItems().forEach((name, item) -> {
             var cooling = text(item, "cooling");
             if (seconds(cooling) >= 86400) return;
             assertEquals(FIRST_PARTY_SOURCE_TYPE, item.path("source").pathText("type", ""),
@@ -173,7 +177,7 @@ class UpstreamManifestTest {
         var pinned = FINGERPRINT_PIN.matcher(Files.readString(PIN_SCRIPT));
         assertTrue(pinned.find(), "AUTOSIGNER_FPR is not set in " + PIN_SCRIPT);
         var seen = new ArrayList<String>();
-        mechanicalItems().forEach((name, item) -> {
+        proposedItems().forEach((name, item) -> {
             var verify = item.path("verify");
             if (!verify.pathText("type", "").equals("signed-sums")) return;
             seen.add(name);
@@ -188,7 +192,7 @@ class UpstreamManifestTest {
 
     @Test
     void gatesAreCheckNames() {
-        mechanicalItems().forEach((name, item) -> {
+        proposedItems().forEach((name, item) -> {
             for (var gate : strings(item.path("gates"))) {
                 assertTrue(CHECK_NAME.matcher(gate).matches(), name + ": gate '" + gate + "' is not a check name");
             }

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The upstream watch (#2036, design/upstream.md): one manifest of watched artifacts, one engine
-# that proposes a bump PR for a mechanical item, an issue for a judgement item, and verifies both a
-# person's bump and its own against the publisher. Runs from main's checkout only: upstream-watch.yml
+# that proposes a bump PR for a mechanical or review item (#2210: a review item's PR is Sanne's to
+# merge), an issue for a judgement item, and verifies both a person's bump and its own against the
+# publisher. Runs from main's checkout only: upstream-watch.yml
 # calls validate, plan, issues, publish and track; upstream-verify.yml calls verify-pr.
 #
 #   validate                 the manifest keeps every rule (UpstreamManifestTest runs it too)
@@ -46,7 +47,7 @@ validate() {
                 *) die "manifest: item $i has unknown key '$k' (there is no key that skips a check)" ;; esac
         done
         class="$(item_class "$i")"
-        [[ "$class" == mechanical || "$class" == judgement ]] || die "manifest: item $i: class must be mechanical or judgement, not '$class'"
+        [[ "$class" == mechanical || "$class" == review || "$class" == judgement ]] || die "manifest: item $i: class must be mechanical, review or judgement, not '$class'"
         judgement="$(item "$i" judgement design)"
         [[ "$judgement" == design || "$judgement" == build ]] || die "manifest: item $i: judgement must be design or build"
         files="$(item_list "$i" files)"
@@ -59,11 +60,11 @@ validate() {
         load_source "$i"
         type="$(item_source_type "$i")"
         ! declare -F src_validate > /dev/null || src_validate
-        [[ "$class" == mechanical ]] || continue
+        item_proposed "$i" || continue
         within="$(item "$i" within)"
-        [[ "$within" == series || "$within" == any ]] || die "manifest: mechanical item $i: within must be series or any"
+        [[ "$within" == series || "$within" == any ]] || die "manifest: $class item $i: within must be series or any"
         verify="$(item "$i" verify.type)"
-        [[ -n "$verify" ]] || die "manifest: mechanical item $i has no verify.type"
+        [[ -n "$verify" ]] || die "manifest: $class item $i has no verify.type"
         [[ "$verify" == "$(src_verifier)" ]] || die "manifest: item $i: verify.type $verify is not what source type $type provides ($(src_verifier))"
         if [[ "$verify" == signed-sums ]]; then
             fingerprint="$(item "$i" verify.fingerprint)"
@@ -72,7 +73,7 @@ validate() {
                 || die "manifest: item $i: verify.fingerprint is not the pinned one"
         fi
         cooling="$(item "$i" cooling)"
-        [[ -n "$cooling" ]] || die "manifest: mechanical item $i has no cooling"
+        [[ -n "$cooling" ]] || die "manifest: $class item $i has no cooling"
         secs="$(duration_seconds "$cooling")"
         if (( secs < 86400 )) && ! src_first_party; then
             die "manifest: item $i: cooling $cooling is under the 24h floor for a third-party source"
@@ -134,13 +135,12 @@ check() {
 # (a worktree of HEAD with the bump committed as the app) and the issues to open in <out>/issues/.
 # Needs APP_LOGIN and APP_EMAIL for the commits; fetches with no app credential.
 plan() {
-    local out="$1" i class within cur cands cand all top series judgement reason
+    local out="$1" i within cur cands cand all top series judgement reason
     [[ -n "${APP_LOGIN:-}" && -n "${APP_EMAIL:-}" ]] || die "plan needs APP_LOGIN and APP_EMAIL"
     mkdir -p "$out/issues"
     : > "$out/plan.tsv"
     for i in $(items); do
         [[ -z "${UPSTREAM_ONLY:-}" || "$UPSTREAM_ONLY" == "$i" ]] || continue
-        class="$(item_class "$i")"
         load_source "$i"
         TREE="$ENGINE_ROOT"
         cur="$(src_current)"
@@ -161,7 +161,7 @@ A release published again under its name, or a sums source that changed: a perso
             printf '%s\tissue\t%s\tpin mismatch\n' "$i" "$cur" >> "$out/plan.tsv"
             continue
         fi
-        if [[ "$class" != mechanical ]]; then
+        if ! item_proposed "$i"; then
             if is_newer "$top" "$cur"; then
                 issue_file "$out" "$i" "$top" "[upstream] $i: $top available" \
                     "\`$i\` pins \`$cur\`; the publisher lists \`$top\`. The item is \`class: judgement\`: a box implements the bump and Sanne merges it (#2036).
@@ -180,7 +180,7 @@ $(src_describe "$top" 2>/dev/null || true)" "$(item "$i" judgement design)"
             cands="$(for v in $all; do [[ "$(src_series "$v")" == "$series" ]] && echo "$v"; done || true)"
             if is_newer "$top" "$cur" && [[ "$(src_series "$top")" != "$series" ]]; then
                 issue_file "$out" "$i" "$(src_series "$top")" "[upstream] $i: series $(src_series "$top") available" \
-                    "\`$i\` pins \`$cur\` and follows series \`$series\` mechanically; the publisher now lists \`$top\`. Moving to another series needs a person (#2036)." \
+                    "\`$i\` pins \`$cur\` and is bumped within series \`$series\` only; the publisher now lists \`$top\`. Moving to another series needs a person (#2036)." \
                     "$(item "$i" judgement design)"
             fi
         fi
@@ -240,14 +240,16 @@ issue_file() {
 # prepare_commit <out> <item> <current> <version>: a worktree of the engine's HEAD at <out>/<item>
 # with the bump applied and committed as the app, and <out>/<item>.json describing the PR.
 prepare_commit() {
-    local out="$1" i="$2" cur="$3" version="$4" wt="$1/$2" title body marker f
+    local out="$1" i="$2" cur="$3" version="$4" wt="$1/$2" title body marker merges f
     git -C "$ENGINE_ROOT" worktree add -q --detach "$wt" HEAD
     TREE="$wt" src_apply "$version"
     title="$(pr_title "$i" "$version")"
     marker="<!-- upstream-watch: $i $version -->"
+    merges="only then may the bot approve and merge it"
+    [[ "$(item_class "$i")" != review ]] || merges="the item is \`class: review\`, so the bot never approves or merges it: Sanne merges it, or closes it to decline this version"
     body="$(TREE="$wt" src_describe "$version")
 
-Written by \`upstream/engine\` on \`main\` (#2036) for item \`$i\` of \`upstream/manifest.yaml\`: every value above comes from the publisher, nothing from a build log or a PR. The \`upstream-verify\` check regenerates this change from the same publisher data and fails unless this PR is exactly that; only then may the bot approve and merge it.
+Written by \`upstream/engine\` on \`main\` (#2036) for item \`$i\` of \`upstream/manifest.yaml\`: every value above comes from the publisher, nothing from a build log or a PR. The \`upstream-verify\` check regenerates this change from the same publisher data and fails unless this PR is exactly that; $merges.
 
 $marker"
     (
@@ -407,7 +409,7 @@ _verify_trees() {
         # The app's PR: the whole tree must be what main's engine writes for that version.
         [[ ${#touched[@]} == 1 ]] || die "an upstream PR changes one item, this one changes: ${touched[*]}"
         i="${touched[0]}"
-        [[ "$(item_class "$i")" == mechanical ]] || die "item $i is not mechanical, so no PR of the app's may bump it"
+        item_proposed "$i" || die "item $i is class $(item_class "$i"), so no PR of the app's may bump it"
         while read -r f; do
             grep -qxF -- "$f" <(item_list "$i" files) || die "an upstream PR for $i changes $f, which is not one of its files"
         done <<<"$changed"

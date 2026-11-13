@@ -18,8 +18,8 @@ It checks that a PR *is* the trusted engine's output for one item at one version
 Four parts carry that:
 
 **The manifest** (`upstream/manifest.yaml`) declares every watched artifact, one item each, as a policy file.
-An item names its `class` (`mechanical`, or `judgement` by default), what a mechanical bump may move `within` (`series` or `any`), its `cooling` period, which `go:` label a `judgement` issue gets (`design` by default, or `build`), its `source.type`, its `verify.type`, the `files` and `fields` the bump rewrites, and the `gates` its PR needs beyond CI.
-`upstream.sh validate` and `UpstreamManifestTest` hold its rules: a mechanical item needs `within`, a source, a verifier and files; `verify.type` must be what the source type provides; a signed verifier's key must be a committed file and its fingerprint the one `update-kernel-pin.sh` pins; `fields` must be exactly what the source type reads; an unknown key fails, since there is no key that skips a check.
+An item names its `class` (`mechanical`, `review`, or `judgement` by default), what a bump may move `within` (`series` or `any`), its `cooling` period, which `go:` label a `judgement` issue gets (`design` by default, or `build`), its `source.type`, its `verify.type`, the `files` and `fields` the bump rewrites, and the `gates` its PR needs beyond CI.
+`upstream.sh validate` and `UpstreamManifestTest` hold its rules: a mechanical or review item needs `within`, a source, a verifier and files; `verify.type` must be what the source type provides; a signed verifier's key must be a committed file and its fingerprint the one `update-kernel-pin.sh` pins; `fields` must be exactly what the source type reads; an unknown key fails, since there is no key that skips a check.
 
 **The engine** (`upstream/engine/upstream.sh`, with `lib.sh`, `pr.sh`, `app-token.sh` and one `source-<type>.sh` per source type) is a deterministic script that runs from `main`'s checkout only.
 `current`, `releases`, `check` and `apply` read and rewrite one item; `plan` decides every item (a prepared commit, an issue, or nothing) with no app credential; `issues` opens what `plan` wrote; `publish` pushes the prepared commits and opens or refreshes their PRs as the app; `verify-pr` and `verify-trees` are the check; `track` keeps the one `[upstream] watch failing` issue.
@@ -42,13 +42,14 @@ A newer release replaces the PR's commit rather than opening a second PR, and a 
 **The check** (`.github/workflows/upstream-verify.yml`, `upstream-verify`) runs on every PR under `pull_request_target`, checks out the default branch, holds no secret and `contents: read` and `pull-requests: read` only, and reads the PR's trees as data through git and the API.
 It passes at once when no item's files changed, so it can be a required check.
 For anyone else's bump it re-derives every declared field of each touched item from the publisher, re-hashing the downloads, and fails on a difference.
-For a PR by the app from this repository it requires more: exactly one item, `class: mechanical`, only that item's files, a version newer than the base's and of the same series when `within: series`, a version the engine would propose itself (its `cooling` period over since the publisher dated it, and not one a closed unmerged `upstream/<item>` PR declined), every regenerated sum of a sum's shape, and a tree byte-identical to `main`'s engine applying that version to the merge base; anything else in the diff fails it.
+For a PR by the app from this repository it requires more: exactly one item, `class: mechanical` or `review`, only that item's files, a version newer than the base's and of the same series when `within: series`, a version the engine would propose itself (its `cooling` period over since the publisher dated it, and not one a closed unmerged `upstream/<item>` PR declined), every regenerated sum of a sum's shape, and a tree byte-identical to `main`'s engine applying that version to the merge base; anything else in the diff fails it.
 The regeneration runs in a subshell with errexit on and `inherit_errexit` set, since a function on the left of `||` runs with errexit off and a `die` inside `$(...)` would otherwise leave an empty sum that the final diff passes (the review of #2047 reproduced exactly that); the fixture test keeps that case.
 A PR touching `upstream/**` or `.github/**` is never the app's regeneration of any item, so the engine and its manifest change only through a PR a person merges, checked by `main`'s copy of themselves.
 
 **The merge gate** lives outside Actions, in the coordinator box: isx-workflow's `bin/upstream-merge.sh` is the only thing that ever approves or merges as the bot (its documentation is in that repository, WORKFLOW.md "Upstream bumps").
 It derives the item from the branch name, reads the manifest from `main` through the API and requires `class: mechanical`, the app as author, a same-repository head, base `main`, changed files within the item's `files`, `upstream-verify` concluded `success` at the head SHA, every other check `success` or `skipped` with none pending, the item's `gates` green, no changes requested, not draft, a clean merge state and no commit by anyone but the app; then `review --approve` and `merge --squash --match-head-commit <sha>`.
 Any API error or missing field is a refusal, and a refused PR is left alone: the next watch run refreshes it, and nobody fixes it in place.
+A `review` item's PR fails the script's first requirement, so the bot never approves or merges one ("The review class" below).
 Opening lives in Actions as the app and approving lives in the coordinator as the bot; neither holds both credentials, so landing a bad change needs both compromised.
 
 ## The items
@@ -68,6 +69,31 @@ The images repo's `repository_dispatch` to this one, and its `INCUS_SPAWN_DISPAT
 `publisher-sums` proves consistency and transfer, not provenance, since the sums come from the same origin as the artifact; the manifest says so in the verifier's name rather than pretending otherwise.
 Items the design inventories for later phases (Maven and Apache artifacts, the siblings' `isx-ref` and engine pins, Alpine, the CI cloud images) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
 
+## The review class
+
+Sanne's words on #2210, after asking what the class would mean:
+
+> Good idea, go with (a) and add such a review class to cover more components.
+
+**Chosen:** a third class, `review`, between the two.
+The engine writes a review item's bump as a PR exactly as it does a mechanical one's, `upstream-verify` proves it by the same regeneration, and CI runs on it.
+The bot never approves or merges it: Sanne merges it, or closes it, and a version he closed is not proposed again.
+The PR's text says so, so nobody waits for the bot.
+
+**Alternatives:** make such an item `judgement`, which costs a box and a review for a one-line change and delivers it later.
+Make it `mechanical`, which lets code that ships in the binary change with no person having looked.
+
+**Why:** some bumps a script can write and a publisher's sum cannot vouch for.
+A library that ships inside isx (aesh, jjq) or a plugin that runs in an instance is one line to bump, and its checksum proves only that the file is the publisher's, not that it behaves.
+The regeneration check still earns its place there: it proves the diff is that one line and nothing else, so what Sanne reads is the version number and the CI result.
+
+What this gives up: a review PR waits for a person, so such a pin can lag as long as nobody merges it.
+
+The class is held in three places.
+`item_proposed` (`lib.sh`) is the one test for "the engine writes this item's PR", used by `validate`, `plan` and the check, so a review item needs everything a mechanical one does: `within`, a verifier its source provides, and a `cooling` at or above the floor.
+`upstream-verify` passes the app's PR for a review item only as the regeneration, like a mechanical one's.
+The merge script requires `class: mechanical` by name, so it refuses a review item without knowing the class exists; a class added later is refused the same way.
+
 ## Threat model
 
 | Threat | How it is closed |
@@ -76,7 +102,7 @@ Items the design inventories for later phases (Maven and Apache artifacts, the s
 | Poisoned checksum source | Signed sums: closed by the signature. Same-origin sums: `upstream-verify` re-downloads artifact and sums from the publisher, never from the PR, so a sum not derived from the publisher fails; and a pinned version whose values the publisher no longer confirms becomes an issue, not a re-pin. |
 | Credential exfiltration | The app key is an environment secret only `main`'s `upstream-watch.yml` can reference; it is read in one step of a job that does not download anything, on another runner than the one that fetched publisher data, and the minted token is per run, per repository, one hour. The app has no ruleset bypass, so the worst a thief can do is open branches and PRs, and the bot merges only a PR that byte-matches the engine's regeneration. Sanne's own account's token (`BOT_TOKEN`) leaves Actions. |
 | A malicious PR or issue reaching the job | The watch has no PR, issue or comment trigger, reads no PR, issue or comment, and takes input only from the manifest on `main` and the publisher endpoints it names; `workflow_dispatch` input is checked against the manifest's keys; no `${{ }}` reaches a `run:` line. `upstream-verify` runs `main`'s engine, has no secret and never executes PR content. |
-| The bot approving outside the class | `bin/upstream-merge.sh` re-checks every gate from GitHub alone and refuses on the first failure; `upstream-verify` has already refused a PR that touches a second item, a file outside the item's, a non-mechanical item or anything the regeneration did not write. |
+| The bot approving outside the class | `bin/upstream-merge.sh` re-checks every gate from GitHub alone and refuses on the first failure; `upstream-verify` has already refused a PR that touches a second item, a file outside the item's, a judgement item or anything the regeneration did not write. The script itself refuses every class but `mechanical`, a `review` item's included. |
 | The engine or manifest changed by a PR | They are ordinary files: a PR touching them is never the app's regeneration of an item, so the gate refuses it, and the check runs `main`'s copy, so a PR cannot verify itself. |
 | A stolen app key reaching the Mac | `appliance/test-kernel-on-mac.sh` trusts the app login, since a kernel bump needs a Mac boot; but for an app PR the script itself refuses unless the `upstream-verify` check run at the very head it boots, by GitHub Actions, concluded `success` (and isx-workflow's `bin/mac-pick.sh` lists it only then), so only a kernel whose build is `main`'s engine's regeneration is ever booted with the verifier's credentials. |
 | Replay or downgrade | Forward-only comparison in both the engine and the check, `within: series`, the declined marker; a sums file that lost entries never moves a pin back. |
@@ -118,6 +144,7 @@ The same central watch mints a one-hour token per target repository, so no sibli
 
 No manifest key skips a check: an unknown key fails `validate`, and there is no field that disables a verifier, the regeneration or a gate.
 `class` defaults to `judgement`, so an item that forgets to say what it is gets an issue, not a PR.
+The bot never approves or merges a `review` item's PR.
 `cooling` has a floor of 24 hours for a third-party source and no off switch; only a first-party source (`Sanne/*`) may set 0.
 The watch never moves a `within: series` item to another series, never re-pins a version the publisher stopped confirming, and never proposes a version whose PR was closed unmerged.
 Nothing else becomes auto-mergeable: not a bot PR, not a lead's, not an upstream PR anyone else pushed to.
