@@ -5,10 +5,10 @@ mask_services: [tmp.mount]
 image: fedora-45-base
 image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-45-{arch}.tar.xz
 vm_image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-45-{arch}-vm-direct.tar.xz
-image_tag: fedora-45-v1
+image_tag: fedora-45-20261111
 image_sha256:
-  x86_64: ffd3baeed2012162bc0362cb5981cca742ad17d847d5fdf9a73decd8712aa919
-  aarch64: 01cda4c156733855d9dae4039e80b0d83329d9d3cdffb080a81e0e10534b27f8
+  x86_64: e0888612dad2653d0b20f1542454d9b6858e50f51b0cc191fefe064c30d531be
+  aarch64: 416f2753de3b4d816a4b5326619607be764dfd12497c90d5b6028eda38499ebd
 vm_image_sha256:
-  x86_64: 719ce92f3b99bfd494e731ee1ec4a77de7a3c850ed92daa249c036025bee226a
-  aarch64: 6cd5d8ded9944c8b26d6ee6bfacbdaf8550790af1db34a55d8b2ae719b6b4ed5
+  x86_64: 94866b6cb783890f7cb0487ccfb73d2de08fe99efbe41bf89289ccdbb6efebba
+  aarch64: a3213b927030833799dcb564cf53910d78caac0ce26680633b58bfe93ca50196
