@@ -92,14 +92,18 @@ enum DelegateAgent {
                 "unsupported task agent or metadata version; upgrade isx before continuing it");
     }
 
-    /** A CLI check inside the worker, with no inference and no credential reads. */
+    /**
+     * A CLI check inside the worker, with no inference and no credential reads. Each help is read
+     * from stdout and stderr alike: opencode's yargs prints it on stderr, and a CLI that moves it
+     * there must not have every delegate refused.
+     */
     String probe() {
         return switch (this) {
             case CODEX -> "command -v codex >/dev/null && command -v node >/dev/null"
-                    + " && timeout 10 codex exec --help | grep -q -- --output-last-message"
-                    + " && timeout 10 codex exec resume --help | grep -q -- --json";
+                    + " && timeout 10 codex exec --help 2>&1 | grep -q -- --output-last-message"
+                    + " && timeout 10 codex exec resume --help 2>&1 | grep -q -- --json";
             case PI -> "command -v pi >/dev/null && command -v node >/dev/null"
-                    + " && timeout 10 pi --help | grep -q -- --session-id";
+                    + " && timeout 10 pi --help 2>&1 | grep -q -- --session-id";
             case OPENCODE -> "command -v opencode >/dev/null && command -v node >/dev/null"
                     + " && timeout 10 opencode run --help 2>&1 | grep -q -- --auto";
             default -> "command -v claude >/dev/null";

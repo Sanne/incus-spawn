@@ -27,6 +27,9 @@ A session is tied to the directory it ran in: a `--session` run from another dir
 
 ## The runner
 
+Before a launch, isx checks the CLI in the worker (`DelegateAgent.probe`): `opencode run --help` must list `--auto`.
+opencode prints its help on stderr, so every agent's probe reads both streams; reading stdout alone refused every delegate on a real VM.
+
 `mcp/opencode-runner.cjs` runs inside the worker under Node, which `OpencodeSetup` installs, and shares `mcp/runner-io.cjs` with the other runners.
 
 ```sh
