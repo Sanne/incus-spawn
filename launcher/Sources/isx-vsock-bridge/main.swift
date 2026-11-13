@@ -28,6 +28,9 @@ import IsxRelay
 signal(SIGPIPE, SIG_IGN)
 signal(SIGUSR1, SIG_IGN)
 
+// As the launcher does: two descriptors for each connection a relay holds.
+Relay.raiseDescriptorLimit()
+
 let usage = "usage: isx-vsock-bridge <guest-cid> <unix-socket>=<vsock-port> ..."
 let arguments = CommandLine.arguments.dropFirst()
 guard arguments.count >= 2, let cid = UInt32(arguments.first!) else { fail(usage, status: 64) }

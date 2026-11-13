@@ -416,6 +416,30 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(said, Array("ping".utf8))
     }
 
+    // A connection holds two descriptors, and macOS starts a program with room for 256.
+    func testTheDescriptorLimitIsRaisedAsFarAsItGoes() throws {
+        var before = rlimit()
+        XCTAssertEqual(getrlimit(descriptorLimit, &before), 0)
+        defer { _ = setrlimit(descriptorLimit, &before) }
+        var low = before
+        low.rlim_cur = 256
+        try XCTSkipIf(before.rlim_max <= low.rlim_cur, "this process may not have more than 256 descriptors")
+        XCTAssertEqual(setrlimit(descriptorLimit, &low), 0)
+
+        let raised = Relay.raiseDescriptorLimit()
+
+        var after = rlimit()
+        XCTAssertEqual(getrlimit(descriptorLimit, &after), 0)
+        XCTAssertEqual(UInt64(after.rlim_cur), raised)
+        // Enough for the measurement's 400 held connections and a burst of 120 beside them.
+        XCTAssertGreaterThanOrEqual(raised, min(UInt64(before.rlim_max), 2048))
+        #if canImport(Glibc)
+        XCTAssertEqual(after.rlim_cur, before.rlim_max)
+        #endif
+        // At the limit already, it changes nothing.
+        XCTAssertEqual(Relay.raiseDescriptorLimit(), raised)
+    }
+
     func testServingEndsWhenTheListenerIsGone() throws {
         let rig = try Rig()
         rig.close()

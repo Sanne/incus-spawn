@@ -16,9 +16,11 @@ import Synchronization
 #if canImport(Glibc)
 import Glibc
 private let sockStream = Int32(SOCK_STREAM.rawValue)
+private let descriptorLimit = __rlimit_resource_t(RLIMIT_NOFILE.rawValue)
 #else
 import Darwin
 private let sockStream = SOCK_STREAM
+private let descriptorLimit = RLIMIT_NOFILE
 #endif
 
 // The C library's, which `Relay.listen(at:)` hides inside the class.
@@ -164,6 +166,31 @@ public final class Relay: Sendable {
         pthread_detach(thread)
         #endif
         return true
+    }
+
+    /// Raises this process's limit on open descriptors as far as it may go, and returns the
+    /// limit it then has. A connection holds two descriptors, and a program on macOS starts
+    /// with room for 256: without this the relay would hold some 120 connections and leave
+    /// every later one waiting in the backlog. vfkit gets the same from Go's runtime.
+    @discardableResult
+    public static func raiseDescriptorLimit() -> UInt64 {
+        var limit = rlimit()
+        guard getrlimit(descriptorLimit, &limit) == 0 else { return 0 }
+        var most = limit.rlim_max
+        #if canImport(Darwin)
+        // macOS's hard limit is "unlimited" by default, and it refuses a soft limit above
+        // kern.maxfilesperproc. 10240 is OPEN_MAX, which it always allows.
+        var perProcess: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        if sysctlbyname("kern.maxfilesperproc", &perProcess, &size, nil, 0) != 0 || perProcess <= 0 {
+            perProcess = 10240
+        }
+        most = min(most, rlim_t(perProcess))
+        #endif
+        guard most > limit.rlim_cur else { return UInt64(limit.rlim_cur) }
+        var raised = limit
+        raised.rlim_cur = most
+        return setrlimit(descriptorLimit, &raised) == 0 ? UInt64(most) : UInt64(limit.rlim_cur)
     }
 
     /// Listens on a Unix socket at `path`, for this user only, replacing a socket a killed

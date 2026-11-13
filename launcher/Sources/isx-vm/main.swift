@@ -6,12 +6,16 @@
 // relay's counts.
 import Darwin
 import Foundation
+import IsxRelay
 import IsxVmCore
 import Virtualization
 
 // A report or a log line written to a pipe whose reader has gone must fail, not end the
 // launcher and the machine with it.
 signal(SIGPIPE, SIG_IGN)
+
+// Two descriptors for each connection a relay holds, where macOS starts a program with 256.
+Relay.raiseDescriptorLimit()
 
 let spec: VmSpec
 do {
