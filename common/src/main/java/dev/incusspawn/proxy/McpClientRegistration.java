@@ -10,14 +10,15 @@ import java.util.List;
 
 /**
  * Registers {@code isx mcp} in the agents of an instance branched with {@code --mcp-client},
- * Claude Code (#1182) and Pi, and takes it out of every other.
+ * Claude Code (#1182), Pi and opencode, and takes it out of every other.
  *
  * <p>Reconciled from the {@link Metadata#MCP_CALLER} stamp on every isx start, by the exec that
  * already delivers the per-start secret ({@link InstanceSecret#GUEST_SCRIPT}): the host says
  * whether the instance holds the grant ({@link #ENV}), and a marker per agent in the rootfs says
  * whether isx registered the server there before. Only on a mismatch does the script run the
  * agent's own commands ({@code claude mcp add-json} or {@code claude mcp remove} at user scope,
- * {@code pi mcp add} or {@code pi mcp remove}), so a steady-state start costs a few file tests
+ * {@code pi mcp add} or {@code pi mcp remove}, for opencode a Node edit of its config,
+ * {@link #OPENCODE_EDIT}), so a steady-state start costs a few file tests
  * per agent and runs nothing as the agent, whichever agents the template has. A copy of a
  * coordinator carries the registrations and markers until its first isx start, which removes
  * them: no copy carries the stamp.
@@ -26,7 +27,7 @@ import java.util.List;
  * address, per-start secret and stamp, so a registration left behind, or one a user adds by
  * hand, reaches nothing an instance without the stamp could not.
  *
- * <p>Root runs the script, and the agent can put its own {@code claude} or {@code pi} first on
+ * <p>Root runs the script, and the agent can put its own {@code claude}, {@code pi} or {@code node} first on
  * the PATH they are run from ({@code claude} lives in its home anyway): each only ever runs as
  * the agent, never as root. The marker is root's, so nothing in the guest but this script
  * decides what isx believes it registered.
@@ -42,11 +43,15 @@ public final class McpClientRegistration {
     static final String MARKER = MARKER_DIR + "/mcp-client-registered";
     /** The same record for Pi: {@link #PI_ENTRY_VERSION}. */
     static final String PI_MARKER = MARKER_DIR + "/mcp-client-registered-pi";
+    /** The same record for opencode: {@link #OPENCODE_ENTRY_VERSION}. */
+    static final String OPENCODE_MARKER = MARKER_DIR + "/mcp-client-registered-opencode";
     private static final String AGENT_HOME = "/home/agentuser";
     /** Claude Code's user-scope config, where the entry lives. */
     static final String CLAUDE_CONFIG = ClaudeSetup.CLAUDE_JSON_PATH;
     /** Pi's user-level MCP config, where its entry lives. */
     static final String PI_CONFIG = AGENT_HOME + "/.pi/agent/mcp.json";
+    /** opencode's global config, which {@code OpencodeSetup} writes and its {@code mcp} section is in. */
+    static final String OPENCODE_CONFIG = AGENT_HOME + "/.config/opencode/opencode.json";
     /** How long root may spend reading an agent's config, and how much of it. */
     static final int CONFIG_READ_SECONDS = 2;
     static final int CONFIG_READ_BYTES = 16 << 20;
@@ -89,11 +94,15 @@ public final class McpClientRegistration {
     /** {@link #CONFIG_HAS_ENTRY}'s test of Pi's config. */
     static final String PI_CONFIG_HAS_ENTRY = configHasEntry(PI_CONFIG);
 
+    /** {@link #CONFIG_HAS_ENTRY}'s test of opencode's config. */
+    static final String OPENCODE_CONFIG_HAS_ENTRY = configHasEntry(OPENCODE_CONFIG);
+
     /**
      * Shell test that some agent's config holds an entry for the endpoint, so the instance has
      * a client for it: what {@link McpClientCheck} reports.
      */
-    static final String ANY_CONFIG_HAS_ENTRY = "{ " + CONFIG_HAS_ENTRY + " || " + PI_CONFIG_HAS_ENTRY + "; }";
+    static final String ANY_CONFIG_HAS_ENTRY = "{ " + CONFIG_HAS_ENTRY + " || " + PI_CONFIG_HAS_ENTRY
+            + " || " + OPENCODE_CONFIG_HAS_ENTRY + "; }";
 
     private static String configHasEntry(String config) {
         return "{ [ -f " + config + " ] && timeout -k 1 " + CONFIG_READ_SECONDS + " head -c "
@@ -121,6 +130,47 @@ public final class McpClientRegistration {
     /** {@link #ENTRY_VERSION} for Pi's entry. */
     static final String PI_ENTRY_VERSION = ToolDef.sha256hex("pi " + SERVER_NAME + " " + String.join(" ", PI_ADD_ARGS))
             .substring(0, 16);
+
+    /**
+     * opencode's entry: a remote server whose header opencode reads from the secret's file when it
+     * loads its config, once per process ({@code {file:...}}), so an opencode started before a
+     * rotation keeps the old secret; every rotation is a start of a stopped instance, which no
+     * process outlives. A missing file fails opencode's config, and with it opencode, until isx
+     * delivers the secret again, which every way into the instance through isx does first.
+     * {@code oauth: false}, so a refusal is reported as one, never answered with an OAuth flow.
+     */
+    static final String OPENCODE_SERVER_JSON = JqObject.builder(4)
+            .put("type", "remote")
+            .put("url", "https://" + ProxyConfig.MCP_DOMAIN + "/mcp")
+            .put("headers", JqObject.builder(1).put(InstanceSecret.HEADER, "{file:" + InstanceSecret.GUEST_PATH + "}").build())
+            .put("oauth", false)
+            .build().toJsonString();
+
+    /** {@link #ENTRY_VERSION} for opencode's entry. */
+    static final String OPENCODE_ENTRY_VERSION = ToolDef.sha256hex("opencode " + SERVER_NAME + " " + OPENCODE_SERVER_JSON)
+            .substring(0, 16);
+
+    /**
+     * Node, run as the agent, that sets ({@code add}) or deletes ({@code remove}) the server's
+     * entry under {@code mcp} in opencode's config: opencode has no command that removes one, and
+     * its {@code mcp add} cannot set {@code oauth}. It reads the file as JSON, which is what
+     * {@code OpencodeSetup} writes; a file it cannot parse (a person's comments) is left as it is,
+     * and the failure leaves the marker too, so the next start tries again. It replaces the file
+     * by a rename, keeping its mode; a link (a dotfiles resource) is followed, so the rename
+     * replaces its target, never the link.
+     */
+    static final String OPENCODE_EDIT = "const fs=require('fs'),path=require('path');"
+            + "let f='" + OPENCODE_CONFIG + "';try{f=fs.realpathSync(f)}catch(e){}"
+            + "const add=process.argv[1]==='add';let c={},mode=0o644;"
+            + "try{mode=fs.statSync(f).mode&0o777;c=JSON.parse(fs.readFileSync(f,'utf8'))}"
+            + "catch(e){if(e.code!=='ENOENT')process.exit(1);if(!add)process.exit(0)}"
+            + "if(!c||typeof c!=='object'||Array.isArray(c))process.exit(1);"
+            + "const m=c.mcp&&typeof c.mcp==='object'&&!Array.isArray(c.mcp)?c.mcp:{};"
+            + "if(add)m." + SERVER_NAME + "=" + OPENCODE_SERVER_JSON + ";"
+            + "else if(!m." + SERVER_NAME + ")process.exit(0);"
+            + "else delete m." + SERVER_NAME + ";"
+            + "c.mcp=m;fs.mkdirSync(path.dirname(f),{recursive:true});"
+            + "const t=f+'.isx-'+process.pid;fs.writeFileSync(t,JSON.stringify(c,null,2)+'\\n',{mode});fs.renameSync(t,f)";
 
     /** The PATH the agent's commands run with, the agent's own directory first. */
     private static final List<String> AGENT_PATH = List.of(AGENT_HOME + "/.local/bin", "/usr/local/bin", "/usr/bin", "/bin");
@@ -159,25 +209,30 @@ public final class McpClientRegistration {
      */
     static final String GUEST_SCRIPT = "isx_mcp=$" + ENV + "; unset " + ENV + "; { " + AS_AGENT
             // Remove first either way: add-json refuses a name already there, as a hand-made one would be
-            + reconcile("claude", MARKER, ENTRY_VERSION, CONFIG_HAS_ENTRY, true,
+            + reconcile(onAgentPath("claude"), MARKER, ENTRY_VERSION, CONFIG_HAS_ENTRY, true,
                     "claude mcp remove --scope user " + SERVER_NAME,
                     "claude mcp add-json --scope user " + SERVER_NAME + " " + Container.shellQuote(SERVER_JSON))
             // pi mcp add replaces an entry of the same name, so only a copy removes it
-            + reconcile("pi", PI_MARKER, PI_ENTRY_VERSION, PI_CONFIG_HAS_ENTRY, false,
+            + reconcile(onAgentPath("pi"), PI_MARKER, PI_ENTRY_VERSION, PI_CONFIG_HAS_ENTRY, false,
                     "pi mcp remove " + SERVER_NAME,
                     "pi mcp add " + SERVER_NAME + " "
                             + String.join(" ", PI_ADD_ARGS.stream().map(Container::shellQuote).toList()))
+            // Set in place, so it is never removed first either; the edit is Node's, which opencode's own
+            // binary does not need, so an instance without it is left to try again rather than run a missing command
+            + reconcile(onAgentPath("opencode") + " && " + onAgentPath("node"), OPENCODE_MARKER, OPENCODE_ENTRY_VERSION, OPENCODE_CONFIG_HAS_ENTRY, false,
+                    "node -e " + Container.shellQuote(OPENCODE_EDIT) + " remove",
+                    "node -e " + Container.shellQuote(OPENCODE_EDIT) + " add")
             + "} >/dev/null 2>&1; unset isx_mcp isx_have; true";
 
     /**
-     * Shell reconciling one agent, {@code binary}: {@code add} (after {@code remove} when
+     * Shell reconciling one agent: {@code add} (after {@code remove} when
      * {@code removeFirst}) when granted and its marker or config does not show {@code version};
      * {@code remove} once when not granted and the marker is there. Both run through
-     * {@code isx_as_agent}, only when the binary is on the agent's PATH.
+     * {@code isx_as_agent}, only when {@code present}, root's test that what they run is on the
+     * agent's PATH ({@link #onAgentPath}), holds.
      */
-    private static String reconcile(String binary, String marker, String version, String hasEntry,
+    private static String reconcile(String present, String marker, String version, String hasEntry,
                                     boolean removeFirst, String remove, String add) {
-        var present = onAgentPath(binary);
         return "if [ \"$isx_mcp\" = 1 ]; then isx_have=; [ -e " + marker + " ] && read -r isx_have < " + marker + "; "
                 + "{ [ \"$isx_have\" = " + version + " ] && " + hasEntry + "; } || { " + present
                 + " && { " + (removeFirst ? "isx_as_agent " + remove + "; " : "") + "isx_as_agent " + add

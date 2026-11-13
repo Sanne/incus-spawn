@@ -55,6 +55,8 @@ class DelegationToolsTest {
     private volatile String savedAgent = "codex";
     /** What a Pi task's session check answers before send_message launches: ok, or why not. */
     private volatile String piSession = "ok";
+    /** What a runner's {@code recover} prints: the session ID it found in the first run's events, or nothing. */
+    private volatile String recoveredSession = "";
     /** When set, reading the tasks listing fails, as an exec the guest did not answer would. */
     private volatile boolean failListing;
     /** What the model check answers; null for a model the account can use. */
@@ -122,6 +124,7 @@ class DelegationToolsTest {
             if (script.startsWith("f=$(mktemp)")) return "exit=0\nsummarised=12 lines, 345 bytes\n---\nIt touches A.java only.\n";
             if (script.contains("/result-1.txt")) return "Codex completed the task";
             if (script.contains("tr ':.' '--'") && script.endsWith("echo ok")) return piSession + "\n";
+            if (script.startsWith("node -e ") && script.contains(" recover ")) return recoveredSession + "\n";
             if (script.contains("--numstat")) {
                 return "## /home/agentuser\n3\t1\tsrc/A.java\0-\t-\tlogo.png\0\n---\n"
                         + (script.contains("--src-prefix") ? "diff --git a/src/A.java b/src/A.java\n+fixed\n" : "");
@@ -1466,6 +1469,60 @@ class DelegationToolsTest {
         assertTrue(backend.scripts.stream().anyMatch(s -> s.contains("command -v pi")), "the CLI is probed before launch");
         assertEquals("pi", structured(call("delegate", "{\"template\":\"tpl-claude-pi\",\"agent\":\"pi\",\"instruction\":\"go\"}")).path("agent").asText());
         assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-pi\",\"agent\":\"claude\",\"instruction\":\"go\"}")));
+    }
+
+    @Test
+    void anOpencodeOnlyTemplateDelegatesToOpencode() throws Exception {
+        backend.template("tpl-opencode", true, "opencode").template("tpl-pi-opencode", true, "pi", "opencode");
+        config.setTemplates(List.of("tpl-agent", "tpl-opencode", "tpl-pi-opencode"));
+        var opencode = templateNamed("tpl-opencode");
+        assertTrue(opencode.path("supports_delegate").asBoolean(false), opencode.toString());
+        assertEquals("opencode", opencode.path("default_delegate_agent").asText());
+        assertEquals(1, opencode.path("delegate_agents").size());
+        var descriptor = opencode.path("delegate_agents").getElement(0);
+        assertEquals("opencode", descriptor.path("agent").asText());
+        assertFalse(descriptor.path("supports_model_preflight").asBoolean(true));
+        assertEquals("full-access", descriptor.path("permission_mode").asText());
+        // Every agent that delegated before keeps its place before opencode.
+        assertEquals("pi", templateNamed("tpl-pi-opencode").path("default_delegate_agent").asText());
+
+        var task = structured(call("delegate", "{\"template\":\"tpl-opencode\",\"instruction\":\"go\"}"));
+        assertEquals("opencode", task.path("agent").asText());
+        assertEquals("full-access", task.path("permission_mode").asText());
+        assertTrue(backend.scripts.stream().anyMatch(s -> s.contains("command -v opencode")), "the CLI is probed before launch");
+        assertEquals("opencode", structured(call("delegate",
+                "{\"template\":\"tpl-pi-opencode\",\"agent\":\"opencode\",\"instruction\":\"go\"}")).path("agent").asText());
+        assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-opencode\",\"agent\":\"claude\",\"instruction\":\"go\"}")));
+
+        var id = task.path("task_id").asText();
+        taskState = "finished";
+        savedAgent = "opencode";
+        savedSession = "ses_e29fbf87cffeP68alr4EmpRbaD";
+        finishedEvents = "{\"type\":\"isx.opencode.result\",\"success\":true,\"report_bytes\":24,\"turns\":2,\"cost_usd\":0.25,"
+                + "\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"cached_input_tokens\":5,\"cache_creation_input_tokens\":9}}\n";
+        var status = structured(call("task_status", "{\"task_id\":\"" + id + "\"}"));
+        assertTrue(status.path("resumable").asBoolean(false));
+        var report = structured(call("task_result", "{\"task_id\":\"" + id + "\"}"));
+        assertEquals("success", report.path("outcome").asText());
+        assertEquals(2, report.path("turns").asInt(0));
+        assertEquals(0.25, report.path("cost_usd").asDouble(0), 1e-9);
+        assertEquals(9, report.path("cache_creation_input_tokens").asInt(0));
+        var continued = structured(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"continue\"}"));
+        assertEquals("opencode", continued.path("agent").asText());
+        assertEquals(2, continued.path("run").asInt(0));
+        assertTrue(runScript(2).contains("node -e") && !runScript(2).contains("claude -p"), runScript(2));
+
+        // No saved session, and none the runner can recover from the first run's events: nothing to continue.
+        savedSession = null;
+        claudeSession = null;
+        var launched = launches();
+        var none = call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"again\"}");
+        assertEquals("wrong_state", code(none));
+        assertTrue(text(none).contains("no recoverable opencode session ID"), text(none));
+        assertEquals(launched, launches());
+        // One the runner recovers is continued.
+        recoveredSession = "ses_e29fbf87cffeP68alr4EmpRbaD";
+        assertEquals(3, structured(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"again\"}")).path("run").asInt(0));
     }
 
     @Test

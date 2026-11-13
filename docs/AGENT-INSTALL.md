@@ -37,7 +37,7 @@ It also asks you which agent to put in your first template when it cannot tell w
 
 `isx mcp setup` offers every template with a coding agent in it.
 An agent can create instances from a template you approve and run commands in them.
-It can hand a task only to Claude Code, Codex or Pi, so a template with another agent is marked create and exec only.
+It can hand a task only to Claude Code, Codex, Pi or opencode, so a template with another agent is marked create and exec only.
 
 On macOS no step needs root, so the first handover does not happen.
 A fresh Linux host usually needs the root script once.

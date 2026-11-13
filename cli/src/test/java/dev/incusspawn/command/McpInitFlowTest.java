@@ -414,7 +414,7 @@ class McpInitFlowTest {
         assertEquals(List.of("tpl-bob", "tpl-copilot", "tpl-gemini"), approved());
         for (var t : List.of("tpl-bob", "tpl-copilot", "tpl-gemini")) {
             var question = prompts.conversation().stream().filter(q -> q.contains(t + " ")).findFirst().orElseThrow();
-            assertTrue(question.contains("(create and exec only: delegate runs Claude Code, Codex or Pi)?"), question + "\n" + asked);
+            assertTrue(question.contains("(create and exec only: delegate runs Claude Code, Codex, Pi or opencode)?"), question + "\n" + asked);
         }
     }
 

@@ -1,6 +1,6 @@
 # Delegating from an agent on your host (MCP)
 
-An agent on your host, such as Claude Code, can use isx itself: create instances from templates you approved, run builds and tests in them, and hand whole tasks to Claude Code, Codex or Pi inside an instance.
+An agent on your host, such as Claude Code, can use isx itself: create instances from templates you approved, run builds and tests in them, and hand whole tasks to Claude Code, Codex, Pi or opencode inside an instance.
 `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio.
 
 This page covers setup, what the agent gets, and running the coordinating agent in an instance of its own.
@@ -14,7 +14,7 @@ A program that drives `isx mcp` from code has [a page of its own](MCP-PROTOCOL.m
 `isx init` asks, for each template that installs a coding agent, whether agents may use it.
 
 An agent can create instances from any template you approve and run commands in them.
-It can hand a task only to Claude Code, Codex or Pi, so `isx init` marks a template with Gemini CLI, Bob Shell or GitHub Copilot CLI as create and exec only.
+It can hand a task only to Claude Code, Codex, Pi or opencode, so `isx init` marks a template with Gemini CLI, Bob Shell or GitHub Copilot CLI as create and exec only.
 
 When Claude Code is installed on the host, `isx init` also registers `isx mcp` in Claude Code for all projects.
 
@@ -119,7 +119,7 @@ An agent gets these tools, and no others.
 | `stop_instance` / `start_instance` | Stop an instance, to fork it, and start it again. Stop is refused while a task runs, unless forced. |
 | `list_instances` / `adopt_instance` | The agent's instances and their tasks, including the instances an ended session left behind. `adopt_instance` gives one of those to the current session. |
 | `exec` | Run a command as `agentuser`, in the foreground or as a background task. |
-| `delegate` | Give an instruction or an installed skill to Claude Code, Codex or Pi in an instance, or in a fresh one from a template. |
+| `delegate` | Give an instruction or an installed skill to Claude Code, Codex, Pi or opencode in an instance, or in a fresh one from a template. |
 | `task_status` / `wait_any` / `task_result` | Follow a task, wait for whichever of several finishes first, read its outcome or the agent's report. |
 | `send_message` | Continue a delegated agent's conversation, for example "push and open a PR". |
 | `get_diff` | What a delegated task changed, committed or not: a patch, or only the files and line counts. |
@@ -127,19 +127,24 @@ An agent gets these tools, and no others.
 | `cancel_task` / `destroy_instance` | Stop a task, or delete an instance. |
 | `keep_instance` | Give an instance to you permanently. |
 
-### Delegating to Claude Code, Codex or Pi
+### Delegating to Claude Code, Codex, Pi or opencode
 
-`delegate` runs Claude Code, Codex or Pi inside the instance.
-The agent picks one with `agent: "claude"`, `"codex"` or `"pi"`; without a choice, `delegate` runs Claude Code when the template installs it, otherwise Codex, otherwise Pi.
+`delegate` runs Claude Code, Codex, Pi or opencode inside the instance.
+The agent picks one with `agent: "claude"`, `"codex"`, `"pi"` or `"opencode"`.
+Without a choice, `delegate` runs Claude Code when the template installs it, then Codex, then Pi, then opencode.
+
 `send_message` keeps the task's agent and resumes its saved conversation.
 The agent that delegates may be Claude Code whichever agent it delegates to.
 
 Every delegated agent runs with full access inside its instance and no turn limit, since the instance is the boundary.
-Claude runs in `bypassPermissions` mode, Codex in `danger-full-access` without approval prompts, and Pi with every tool.
+Claude runs in `bypassPermissions` mode, Codex in `danger-full-access` without approval prompts, Pi with every tool, and opencode with `--auto`.
+
 The model is the template's unless the call names one.
+For opencode the call names it as `provider/model`.
+A bare model ID also works when the template sets a model, and gets that model's provider.
 
 Codex uses the template's `openai` credential account.
-Pi uses the account of its template's `provider`: the Claude account, the `openai` one or the `gemini` one.
+Pi and opencode use the account of their template's `provider`: the Claude account, the `openai` one or the `gemini` one.
 
 ### Asking a question instead of reading the output
 
@@ -147,7 +152,7 @@ Pi uses the account of its template's `provider`: the Claude account, the `opena
 The tool then does not return the text: a single run of Claude Code on `summary-model` reads the text inside the instance and answers the question, such as "which tests fail?".
 A long log or patch then never fills the host agent's context.
 
-This needs Claude Code in the instance; a Codex-only or Pi-only instance refuses `ask`.
+This needs Claude Code in the instance; an instance with only Codex, Pi or opencode refuses `ask`.
 
 The answer is a model's reading of the text, so it can be wrong and it leaves details out.
 Whatever decides a merge stays deterministic: `get_diff` with `stat`, CI, a reviewer.
@@ -207,7 +212,7 @@ With several tasks in the instance it lists them, each with its command, and doe
 It also refuses a Pi task whose saved session is gone, since Pi would open an empty conversation in its place.
 
 While you are in the conversation, `task_status` says `attached` and `send_message` is refused.
-Resuming by hand (`claude --resume`, `codex resume` or `pi --session-id` in a plain `isx shell`) gives up that protection: a turn that `send_message` starts at the same moment runs in the same conversation as you.
+Resuming by hand (`claude --resume`, `codex resume`, `pi --session-id` or `opencode --session` in a plain `isx shell`) gives up that protection: a turn that `send_message` starts at the same moment runs in the same conversation as you.
 
 ### Keeping the agent to the MCP tools
 
@@ -274,11 +279,11 @@ The box is not offered while the network is Airgapped.
 Such a coordinator cannot control any template until its template lists templates under `control-over`, and isx warns of that with a link to the steps above.
 
 Once the instance has started, isx checks the connection to the `isx mcp` server from inside the instance.
-It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code or Pi has the server registered.
+It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code, Pi or opencode has the server registered.
 
-If the template has the `claude` or `pi` tool, there is nothing to set up.
-Every isx start registers the server in whichever of the two the instance has, where `claude mcp list` or `pi mcp list` shows it as `isx`.
-Interactive sessions, and `claude -p` or `pi -p` under a systemd unit, all have the tools.
+If the template has the `claude`, `pi` or `opencode` tool, there is nothing to set up.
+Every isx start registers the server in each of them the instance has, where `claude mcp list`, `pi mcp list` or `opencode mcp list` shows it as `isx`.
+Interactive sessions, and `claude -p`, `pi -p` or `opencode run` under a systemd unit, all have the tools.
 
 Claude Code also lists the coordination workflow as the prompt `/mcp__isx__coordinate`; Pi does not list MCP prompts.
 
@@ -325,6 +330,6 @@ What differs:
 - No coordinator makes another.
   Only `isx branch`, from the flag or the template's default, or the dialog's box makes an instance a coordinator.
   The grant never passes to a copy: not to `isx branch --from coord`, and not to anything created through MCP.
-  A copy of the coordinator loses the grant and its Claude Code and Pi registrations on its first start.
+  A copy of the coordinator loses the grant and its Claude Code, Pi and opencode registrations on its first start.
 - The coordinator reaches the `isx mcp` server only through the host proxy.
   The proxy serves the `isx mcp` server to the coordinator, so a coordinator works with `--proxy-only`; an `--airgap` instance cannot be a coordinator.

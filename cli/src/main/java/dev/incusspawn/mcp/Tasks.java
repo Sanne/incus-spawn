@@ -262,16 +262,19 @@ final class Tasks {
         task.agent().requireKnown();
         var current = status(task, 0);
         var attached = current.attachedPid();
-        if (task.agent() == DelegateAgent.CODEX && !current.running() && current.sessionId() == null) {
+        if (task.agent().recoversSession() && !current.running() && current.sessionId() == null) {
+            // Codex's runner takes a sandbox before the model, opencode's only the model
+            var empty = task.agent() == DelegateAgent.CODEX ? " '' ''" : " ''";
+            var what = task.agent() == DelegateAgent.CODEX ? "thread" : "session";
             try {
-                var recovered = run(task.instance(), "node -e " + ExecScript.quote(WorkerRunners.of(DelegateAgent.CODEX)) + " \""
-                        + TaskScripts.dir(task.id()) + "\" recover '' ''", null).strip();
+                var recovered = run(task.instance(), "node -e " + ExecScript.quote(WorkerRunners.of(task.agent())) + " \""
+                        + TaskScripts.dir(task.id()) + "\" recover" + empty, null).strip();
                 if (!SESSION_ID.matcher(recovered).matches())
-                    throw new ToolError(ToolError.Code.WRONG_STATE, "no valid recovered thread ID");
+                    throw new ToolError(ToolError.Code.WRONG_STATE, "no valid recovered " + what + " ID");
                 attached = status(task, 0).attachedPid();
             } catch (ToolError e) {
                 throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id()
-                        + " has no recoverable Codex thread ID; start a new delegated task. " + e.getMessage());
+                        + " has no recoverable " + task.agent().label + " " + what + " ID; start a new delegated task. " + e.getMessage());
             }
         }
         if (task.agent() == DelegateAgent.CLAUDE && !current.running() && current.sessionId() == null) {

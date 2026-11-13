@@ -123,6 +123,8 @@ class TaskScriptsTest {
         // Pi's session locations: the default one under this test's home.
         pb.environment().remove("PI_CODING_AGENT_DIR");
         pb.environment().remove("PI_CODING_AGENT_SESSION_DIR");
+        // opencode's config is under XDG_CONFIG_HOME when set, as GitHub's runners set it: the default one here.
+        pb.environment().remove("XDG_CONFIG_HOME");
         var outFile = Files.createTempFile(home, "script-out-", ".txt");
         var errFile = Files.createTempFile(home, "script-err-", ".txt");
         pb.redirectOutput(outFile.toFile()).redirectError(errFile.toFile());
@@ -1550,6 +1552,239 @@ class TaskScriptsTest {
         }
     }
 
+    /**
+     * A stand-in for opencode's {@code run --format json} that keeps its session rule: run without
+     * {@code --session} it opens a new session, named by itself; with one it continues that session
+     * if it exists, and otherwise refuses with "Session not found" and exit 1, opening none. Every
+     * event names the session. Sessions are files under {@code $HOME/opencode-sessions}.
+     */
+    private void opencodeStub(String events) throws Exception {
+        assumeNode();
+        var script = home.resolve("opencode-stub.cjs");
+        Files.writeString(script, """
+                const fs = require('node:fs');
+                const args = process.argv.slice(2);
+                fs.writeFileSync(process.env.HOME + '/opencode-args', JSON.stringify(args));
+                const prompt = fs.readFileSync(0, 'utf8');
+                fs.writeFileSync(process.env.HOME + '/opencode-prompt', prompt);
+                const sessions = process.env.HOME + '/opencode-sessions';
+                fs.mkdirSync(sessions, {recursive: true});
+                let sessionID = args.includes('--session') ? args[args.indexOf('--session') + 1] : '';
+                if (sessionID && !fs.existsSync(sessions + '/' + sessionID)) {
+                    process.stderr.write('Error: Session not found\\n');
+                    process.exit(1);
+                }
+                if (!sessionID) {
+                    sessionID = 'ses_' + Math.random().toString(36).slice(2, 12);
+                    fs.writeFileSync(sessions + '/' + sessionID, '');
+                }
+                const emit = (type, part) => console.log(JSON.stringify({type, timestamp: Date.now(), sessionID, part}));
+                let message = 0;
+                const step = (text, reason = 'stop') => {
+                    const messageID = 'msg_' + ++message;
+                    emit('step_start', {type: 'step-start', messageID, sessionID});
+                    if (text !== undefined) emit('text', {type: 'text', text, messageID, sessionID, time: {start: 1, end: 2}});
+                    emit('step_finish', {type: 'step-finish', reason, messageID, sessionID,
+                        tokens: {input: 10, output: 3, reasoning: 0, cache: {read: 5, write: 7}}, cost: 0.125});
+                };
+                """ + events);
+        stub("opencode", "exec node " + ExecScript.quote(script.toString()) + " \"$@\"");
+    }
+
+    private void launchOpencode(String id, int run, String prompt, Tasks.Profile profile) throws Exception {
+        sh(TaskScripts.launch(id, run, Tasks.AGENT,
+                TaskScripts.agentRun(id, run, work.toString(), profile, DelegateAgent.OPENCODE),
+                null, DelegateAgent.OPENCODE), prompt);
+    }
+
+    private static final String OPENCODE_SUCCESS = """
+            emit('tool_use', {type: 'tool', tool: 'bash', messageID: 'msg_0', sessionID,
+                state: {status: 'completed', input: {command: 'make test'}, output: 'ok'}});
+            step('Working on it.', 'tool-calls');
+            step('The report: ' + prompt.split('\\n\\n').pop());
+            """;
+
+    @Test
+    void opencodeRunsAndResumesTheSessionItNamedWithPromptsOnStdin() throws Exception {
+        opencodeStub(OPENCODE_SUCCESS);
+        launchOpencode("t1-oc", 1, "fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely", Tasks.Profile.NONE);
+        var first = awaitFinished("t1-oc");
+        assertEquals(0, first.exit(), first.stderr());
+        var d = home.resolve(".isx-mcp/tasks/t1-oc");
+        var session = first.sessionId();
+        assertTrue(session.matches("ses_[a-z0-9]+"), session);
+        var argv = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(Files.readString(home.resolve("opencode-args")));
+        assertEquals(List.of("run", "--format", "json", "--auto"), argv.asList().stream().map(v -> v.asText()).toList(),
+                "a new session, every permission answered, and nothing of the prompt on the command line");
+        var prompt = Files.readString(home.resolve("opencode-prompt"));
+        assertTrue(prompt.startsWith("You are a delegate"), "the brief opens the first message: " + prompt);
+        assertTrue(prompt.endsWith("\n\nfix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely"), prompt);
+        assertFalse(Files.exists(work.resolve("SHOULD_NOT_EXIST")));
+        assertEquals("The report: fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely", Files.readString(d.resolve("result-1.txt")),
+                "the last message's text, not the earlier one's");
+        assertTrue(sh(TaskScripts.list(), "").contains("identity t1-oc 1 opencode"));
+        var summary = OpencodeEvents.summarize(first.output(), 8);
+        assertFalse(summary.isError(), first.toString());
+        assertEquals(2, summary.result().path("turns").asInt(0));
+        assertEquals(0.25, summary.result().path("cost_usd").asDouble(0), 1e-9);
+        assertEquals(20, summary.result().path("usage").path("input_tokens").asInt(0));
+        assertEquals(10, summary.result().path("usage").path("cached_input_tokens").asInt(0));
+        assertEquals(14, summary.result().path("usage").path("cache_creation_input_tokens").asInt(0));
+        assertEquals(List.of("ran bash: make test", "said: Working on it.",
+                "said: The report: fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely"), summary.recent());
+
+        launchOpencode("t1-oc", 2, "follow up with $HOME and `literal`", Tasks.Profile.NONE);
+        var resumed = awaitFinished("t1-oc");
+        assertEquals(0, resumed.exit(), resumed.stderr());
+        assertEquals(session, resumed.sessionId());
+        argv = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(Files.readString(home.resolve("opencode-args")));
+        assertEquals(List.of("run", "--format", "json", "--auto", "--session", session),
+                argv.asList().stream().map(v -> v.asText()).toList(), "the same session, by its id");
+        assertEquals("follow up with $HOME and `literal`", Files.readString(home.resolve("opencode-prompt")),
+                "the brief only once, in the first message");
+        assertEquals("The report: follow up with $HOME and `literal`", Files.readString(d.resolve("result-2.txt")));
+    }
+
+    @Test
+    void opencodeIsGivenTheModelAsProviderAndModel() throws Exception {
+        opencodeStub(OPENCODE_SUCCESS);
+        launchOpencode("t2-oc", 1, "go", new Tasks.Profile("openai/gpt-5.1"));
+        assertEquals(0, awaitFinished("t2-oc").exit());
+        var argv = Files.readString(home.resolve("opencode-args"));
+        assertTrue(argv.endsWith("\"--model\",\"openai/gpt-5.1\"]"), argv);
+
+        // A bare id is for the provider the template configured, which opencode.json's model names
+        var config = Files.createDirectories(home.resolve(".config/opencode")).resolve("opencode.json");
+        Files.writeString(config, "{\"model\": \"google/gemini-3.7-flash\"}");
+        launchOpencode("t3-oc", 1, "go", new Tasks.Profile("gemini-3.7-pro"));
+        assertEquals(0, awaitFinished("t3-oc").exit());
+        argv = Files.readString(home.resolve("opencode-args"));
+        assertTrue(argv.endsWith("\"--model\",\"google/gemini-3.7-pro\"]"), argv);
+
+        Files.writeString(config, "{}");
+        launchOpencode("t4-oc", 1, "go", new Tasks.Profile("gemini-3.7-pro"));
+        var unknown = awaitFinished("t4-oc");
+        assertTrue(unknown.exit() != 0, unknown.toString());
+        assertTrue(unknown.stderr().contains("provider/model"), unknown.stderr());
+    }
+
+    @Test
+    void anOpencodeSessionThatIsGoneFailsTheRunAndOpensNoOther() throws Exception {
+        opencodeStub(OPENCODE_SUCCESS);
+        launchOpencode("t5-oc", 1, "first", Tasks.Profile.NONE);
+        var first = awaitFinished("t5-oc");
+        assertEquals(0, first.exit(), first.stderr());
+        try (var sessions = Files.list(home.resolve("opencode-sessions"))) {
+            for (var f : sessions.toList()) Files.delete(f);
+        }
+
+        launchOpencode("t5-oc", 2, "second", Tasks.Profile.NONE);
+        var lost = awaitFinished("t5-oc");
+        assertTrue(lost.exit() != 0, lost.toString());
+        var result = OpencodeEvents.summarize(lost.output(), 0);
+        assertTrue(result.isError());
+        assertTrue(result.resultText().contains("start a new delegated task"), result.resultText());
+        assertTrue(lost.stderr().contains("Session not found"), lost.stderr());
+        try (var sessions = Files.list(home.resolve("opencode-sessions"))) {
+            assertEquals(0, sessions.count(), "opencode never opened another session in its place");
+        }
+    }
+
+    @Test
+    void opencodeRequiresAZeroExitAStepAndNoError() throws Exception {
+        int trial = 0;
+        for (var ending : List.of(
+                "",
+                "step('partial'); console.log(JSON.stringify({type: 'error', sessionID, error: {name: 'APIError', data: {message: 'overloaded'}}})); process.exitCode = 1;",
+                "step('partial'); console.log(JSON.stringify({type: 'error', sessionID, error: {name: 'APIError', data: {message: 'overloaded'}}}));",
+                "step('done'); process.exitCode = 7;",
+                "step('', 'error');",
+                "console.log('invalid-json'); step('done');")) {
+            opencodeStub(ending);
+            var id = "t6-oc-" + trial++;
+            launchOpencode(id, 1, "fail", Tasks.Profile.NONE);
+            var status = awaitFinished(id);
+            assertTrue(status.exit() != 0, ending + " " + status);
+            assertTrue(OpencodeEvents.summarize(status.output(), 0).isError(), ending);
+        }
+        opencodeStub("step('partial'); console.log(JSON.stringify({type: 'error', sessionID, error: {name: 'APIError', data: {message: 'overloaded'}}}));");
+        launchOpencode("t6-oc-err", 1, "fail", Tasks.Profile.NONE);
+        assertEquals("overloaded", OpencodeEvents.summarize(awaitFinished("t6-oc-err").output(), 0).resultText());
+    }
+
+    @Test
+    void opencodeNeverReportsTheRestOfAMessageWhosePartWasTooLargeToKeep() throws Exception {
+        opencodeStub("""
+                emit('step_start', {type: 'step-start', messageID: 'msg_1', sessionID});
+                emit('text', {type: 'text', text: 'b'.repeat(9 * 1024 * 1024), messageID: 'msg_1', sessionID});
+                emit('text', {type: 'text', text: 'the tail of it', messageID: 'msg_1', sessionID});
+                emit('step_finish', {type: 'step-finish', reason: 'stop', messageID: 'msg_1', sessionID, tokens: {}});
+                """);
+        launchOpencode("t8-oc", 1, "huge report", Tasks.Profile.NONE);
+        var lost = awaitFinished("t8-oc");
+        assertTrue(lost.exit() != 0, lost.toString());
+        assertEquals("", Files.readString(home.resolve(".isx-mcp/tasks/t8-oc/result-1.txt")));
+        assertTrue(OpencodeEvents.summarize(lost.output(), 0).resultText().contains("too large"));
+
+        // A later step's message is a report of its own
+        opencodeStub("""
+                emit('step_start', {type: 'step-start', messageID: 'msg_1', sessionID});
+                emit('text', {type: 'text', text: 'b'.repeat(9 * 1024 * 1024), messageID: 'msg_1', sessionID});
+                emit('step_finish', {type: 'step-finish', reason: 'tool-calls', messageID: 'msg_1', sessionID, tokens: {}});
+                step('the final word');
+                """);
+        launchOpencode("t9-oc", 1, "huge then small", Tasks.Profile.NONE);
+        var kept = awaitFinished("t9-oc");
+        assertEquals(0, kept.exit(), kept.toString());
+        assertEquals("the final word", Files.readString(home.resolve(".isx-mcp/tasks/t9-oc/result-1.txt")));
+    }
+
+    @Test
+    void aLinkedOpencodeConfigStillNamesTheProvider() throws Exception {
+        opencodeStub(OPENCODE_SUCCESS);
+        var dotfiles = Files.writeString(home.resolve("dotfiles-opencode.json"), "{\"model\": \"openai/gpt-5.1\"}");
+        Files.createSymbolicLink(Files.createDirectories(home.resolve(".config/opencode")).resolve("opencode.json"), dotfiles);
+        launchOpencode("t10-oc", 1, "go", new Tasks.Profile("gpt-5.2"));
+        assertEquals(0, awaitFinished("t10-oc").exit());
+        assertTrue(Files.readString(home.resolve("opencode-args")).endsWith("\"--model\",\"openai/gpt-5.2\"]"));
+    }
+
+    @Test
+    void anOpencodeSessionIdCutOffBeforeItWasSavedIsRecovered() throws Exception {
+        opencodeStub(OPENCODE_SUCCESS);
+        launchOpencode("t7-oc", 1, "first", Tasks.Profile.NONE);
+        var first = awaitFinished("t7-oc");
+        var d = home.resolve(".isx-mcp/tasks/t7-oc");
+        Files.delete(d.resolve("session_id"));
+        assertEquals(first.sessionId(), sh("node -e " + ExecScript.quote(WorkerRunners.of(DelegateAgent.OPENCODE))
+                + " " + d + " recover ''", "").strip(), "from the first event, which names it");
+        assertEquals(first.sessionId(), Files.readString(d.resolve("session_id")));
+    }
+
+    @Test
+    void aPersonsOpencodeIsFoundByTheSessionItResumes() throws Exception {
+        for (var args : List.of(List.of("--session", sessionId()), List.of("-s", sessionId()),
+                List.of("--session=" + sessionId()), List.of("run", "--model", "x/y", "--session", sessionId(), "go"))) {
+            var pb = new ProcessBuilder(java.util.stream.Stream.concat(java.util.stream.Stream.of("bash", "-c",
+                    "exec -a opencode bash -c ': > \"$HOME/oc-ready\"; while read -r line; do :; done' \"$@\"", "opencode"),
+                    args.stream()).toList()).directory(Path.of("/").toFile());
+            pb.environment().put("HOME", home.toString());
+            pb.environment().remove(TaskScripts.TASK_ENV);
+            Files.deleteIfExists(home.resolve("oc-ready"));
+            var person = pb.start();
+            try {
+                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (!Files.exists(home.resolve("oc-ready")) && System.nanoTime() < deadline) Thread.sleep(10);
+                var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
+                assertEquals(person.pid(), who.holderOf(DelegateAgent.OPENCODE, sessionId(), "/elsewhere"), args.toString());
+                assertNull(who.holderOf(DelegateAgent.OPENCODE, "another-session", "/elsewhere"), args.toString());
+            } finally {
+                person.destroy();
+                assertTrue(person.waitFor(5, TimeUnit.SECONDS));
+            }
+        }
+    }
+
     @Test
     void presenceRecognizesBothAgentsAndQualifiesSessionIds() {
         var presence = Presence.parse(List.of("codex 71 /codex", "resume 71 same-id", "claude 72 /claude", "resume 72 same-id"));
@@ -1624,7 +1859,7 @@ class TaskScriptsTest {
     @Timeout(60)
     void theJoinCommandIsWhatPresenceTakesForAPersonInTheConversation() throws Exception {
         var cwd = work.toRealPath().toString();
-        for (var agent : List.of(DelegateAgent.CLAUDE, DelegateAgent.CODEX, DelegateAgent.PI)) {
+        for (var agent : List.of(DelegateAgent.CLAUDE, DelegateAgent.CODEX, DelegateAgent.PI, DelegateAgent.OPENCODE)) {
             var id = "t9-" + agent.id;
             var d = finishedTaskFiles(id, Tasks.AGENT);
             if (agent != DelegateAgent.CLAUDE) Files.writeString(d.resolve("identity"), "1 " + agent.id + "\n");

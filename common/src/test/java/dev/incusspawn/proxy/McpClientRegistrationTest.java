@@ -97,7 +97,16 @@ class McpClientRegistrationTest {
         return "mcp add isx " + String.join(" ", McpClientRegistration.PI_ADD_ARGS).replace("/run/isx", root + "/run/isx") + "|0";
     }
 
+    /** When set, the guest has no {@code node} in {@code /usr/bin} or {@code /bin}, whatever this host has. */
+    private boolean hideSystemNode;
+
     private String script() throws Exception {
+        var script = guestScript();
+        return hideSystemNode ? script.replace("[ -x /usr/bin/node ]", "[ -x " + root + "/usr/bin/node ]")
+                .replace("[ -x /bin/node ]", "[ -x " + root + "/bin/node ]") : script;
+    }
+
+    private String guestScript() throws Exception {
         return InstanceSecretTest.guestScriptUnder(root, "tmpfs /run tmpfs rw 0 0\n")
                 .replace("/home/agentuser", home.toString())
                 .replace("/var/lib/isx", root + "/var/lib/isx")
@@ -478,5 +487,111 @@ class McpClientRegistrationTest {
 
     private Path piMarker() {
         return root.resolve("var/lib/isx/mcp-client-registered-pi");
+    }
+
+    /** Whether the guest's Node is on the system part of the agent's PATH here, which the opencode edit runs. */
+    private static final boolean HAS_NODE = Files.isExecutable(Path.of("/usr/bin/node")) || Files.isExecutable(Path.of("/bin/node"));
+
+    private Path opencodeMarker() {
+        return root.resolve("var/lib/isx/mcp-client-registered-opencode");
+    }
+
+    private Path opencodeConfig() {
+        return home.resolve(".config/opencode/opencode.json");
+    }
+
+    /** An {@code opencode} on the agent's PATH (never run: Node edits its config), and the config its build wrote. */
+    private void installOpencode() throws Exception {
+        assumeTrue(HAS_NODE, "no node in /usr/bin or /bin");
+        var bin = Files.createDirectories(home.resolve(".local/bin"));
+        var opencode = bin.resolve("opencode");
+        Files.writeString(opencode, "#!/bin/sh\nexit 1\n");
+        Files.setPosixFilePermissions(opencode, PosixFilePermissions.fromString("rwxr-xr-x"));
+        Files.createDirectories(opencodeConfig().getParent());
+        Files.writeString(opencodeConfig(), "{\"model\": \"anthropic/claude-sonnet-5-5\", \"mcp\": {\"mine\": {\"type\": \"local\"}}}\n");
+    }
+
+    @Test
+    void aCoordinatorsFirstStartRegistersTheServerInOpencode() throws Exception {
+        installOpencode();
+        start("1");
+
+        var config = JqValues.parse(Files.readString(opencodeConfig()));
+        var entry = config.path("mcp").path("isx");
+        assertEquals("remote", entry.path("type").asText());
+        assertEquals("https://" + ProxyConfig.MCP_DOMAIN + "/mcp", entry.path("url").asText());
+        assertEquals("{file:" + root + "/run/isx/instance-secret}",
+                entry.path("headers").path(InstanceSecret.HEADER).asText(), "the secret, read by its path");
+        assertFalse(entry.path("oauth").asBoolean(true));
+        assertEquals("anthropic/claude-sonnet-5-5", config.path("model").asText(), "the rest of the config is kept");
+        assertEquals("local", config.path("mcp").path("mine").path("type").asText(), "and the person's own servers");
+        assertEquals(McpClientRegistration.OPENCODE_ENTRY_VERSION + "\n", Files.readString(opencodeMarker()));
+        assertEquals(1, agentRuns().size(), "one edit, as the agent");
+
+        start("1");
+        assertEquals(1, agentRuns().size(), "a start that changes nothing runs nothing as the agent");
+    }
+
+    @Test
+    void aCopysFirstStartRemovesTheOpencodeRegistration() throws Exception {
+        installOpencode();
+        start("1");
+
+        start("0");
+        var config = JqValues.parse(Files.readString(opencodeConfig()));
+        assertTrue(config.path("mcp").path("isx").isMissingNode() || config.path("mcp").path("isx").isNull(),
+                Files.readString(opencodeConfig()));
+        assertEquals("local", config.path("mcp").path("mine").path("type").asText());
+        assertFalse(Files.exists(opencodeMarker()));
+
+        var runs = agentRuns().size();
+        start("0");
+        assertEquals(runs, agentRuns().size(), "one removal attempt, then nothing");
+    }
+
+    @Test
+    void anOpencodeConfigThatIsNotJsonIsLeftAsItIs() throws Exception {
+        installOpencode();
+        var commented = "{\n  // a person's note\n  \"model\": \"openai/gpt-4.1\"\n}\n";
+        Files.writeString(opencodeConfig(), commented);
+        start("1");
+
+        assertEquals(commented, Files.readString(opencodeConfig()));
+        assertFalse(Files.exists(opencodeMarker()), "so the next start tries again");
+    }
+
+    @Test
+    void anOpencodeWithoutNodeIsLeftToTryAgain() throws Exception {
+        var bin = Files.createDirectories(home.resolve(".local/bin"));
+        Files.writeString(bin.resolve("opencode"), "#!/bin/sh\nexit 1\n");
+        Files.setPosixFilePermissions(bin.resolve("opencode"), PosixFilePermissions.fromString("rwxr-xr-x"));
+        hideSystemNode = true;
+        start("1");
+        assertEquals(List.of(), agentRuns(), "the edit is Node's: nothing runs without it");
+        assertFalse(Files.exists(opencodeMarker()));
+    }
+
+    @Test
+    void aLinkedOpencodeConfigKeepsItsLink() throws Exception {
+        installOpencode();
+        // A dotfiles resource links the config elsewhere: the edit goes to the target, and the link stays
+        var target = Files.writeString(home.resolve("dotfiles-opencode.json"), Files.readString(opencodeConfig()));
+        Files.delete(opencodeConfig());
+        Files.createSymbolicLink(opencodeConfig(), target);
+        start("1");
+
+        assertTrue(Files.isSymbolicLink(opencodeConfig()));
+        assertTrue(Files.readString(target).contains(ProxyConfig.MCP_DOMAIN + "/mcp\""), Files.readString(target));
+    }
+
+    @Test
+    void anEntryRemovedFromOpencodesConfigIsRegisteredAgain() throws Exception {
+        installOpencode();
+        start("1");
+        // A rebuild's reconfigure writes the config whole, without the entry
+        Files.writeString(opencodeConfig(), "{\"model\": \"anthropic/claude-sonnet-5-5\"}\n");
+
+        start("1");
+        assertTrue(Files.readString(opencodeConfig()).contains(ProxyConfig.MCP_DOMAIN + "/mcp\""));
     }
 }

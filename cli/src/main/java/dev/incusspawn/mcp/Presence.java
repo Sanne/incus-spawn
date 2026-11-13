@@ -21,7 +21,7 @@ final class Presence {
 
     /**
      * Prints {@code tty <pid>} for each process on a pseudo-terminal, {@code claude <pid> <cwd>},
-     * {@code codex <pid> <cwd>} or {@code pi <pid> <cwd>} for each coding agent, and
+     * {@code codex <pid> <cwd>}, {@code pi <pid> <cwd>} or {@code opencode <pid> <cwd>} for each coding agent, and
      * {@code resume <pid> <session>} for each session one resumes. Pi replaces its command line
      * with its title, {@code pi}, so its session is never seen: it is found by its directory,
      * which is enough, as its sessions belong to the directory they started in (a
@@ -44,12 +44,25 @@ final class Presence {
                 claude) agent=claude; i=1;;
                 codex) agent=codex; i=1;;
                 pi) agent=pi; i=1;;
+                opencode) agent=opencode; i=1;;
                 node|bun) case "${argv[1]}" in *claude*) agent=claude; i=2;; *codex*) agent=codex; i=2;; */pi-coding-agent/*) agent=pi; i=2;; *) continue;; esac;;
                 *) continue;;
               esac
               grep -qz '^ISX_MCP_TASK=' "$d/environ" 2>/dev/null && continue
               echo "$agent $pid $(readlink "$d/cwd" 2>/dev/null)"
               [ "$agent" = pi ] && continue
+              if [ "$agent" = opencode ]; then
+                # opencode's TUI, run and attach all resume with --session or -s.
+                while [ "$i" -lt ${#argv[@]} ]; do
+                  case "${argv[$i]}" in
+                    --session|-s) i=$((i + 1)); [ -n "${argv[$i]}" ] && echo "resume $pid ${argv[$i]}";;
+                    --session=*) echo "resume $pid ${argv[$i]#--session=}";;
+                    --) break;;
+                  esac
+                  i=$((i + 1))
+                done
+                continue
+              fi
               if [ "$agent" = codex ]; then
                 # Parse subcommands and the first resume positional, not words in a prompt.
                 # These options take a separate value; --name=value and -mVALUE need no skip.
@@ -113,7 +126,7 @@ final class Presence {
         // POSIX, as the login shell running it need not be bash; the probe brings its own.
         return "h=$(" + script("") + " | { h=; a=' '; while read -r k p rest; do "
                 + "case $k in " + agent.id + ") a=\"$a$p \";; esac; "
-                + "case $k in claude|codex|pi) [ \"$rest\" = " + ExecScript.quote(cwd) + " ] && h=$p;; "
+                + "case $k in claude|codex|pi|opencode) [ \"$rest\" = " + ExecScript.quote(cwd) + " ] && h=$p;; "
                 + "resume) case $a in *\" $p \"*) [ \"$rest\" = " + ExecScript.quote(sessionId) + " ] && h=$p;; esac;; esac; "
                 + "done; echo \"$h\"; }); ";
     }
@@ -132,7 +145,7 @@ final class Presence {
             }
             switch (parts[0]) {
                 case "tty" -> terminals.add(pid);
-                case "claude", "codex", "pi" -> agents.put(pid, new AgentProcess(pid, DelegateAgent.parse(parts[0]), parts.length > 2 ? parts[2] : "", new HashSet<>()));
+                case "claude", "codex", "pi", "opencode" -> agents.put(pid, new AgentProcess(pid, DelegateAgent.parse(parts[0]), parts.length > 2 ? parts[2] : "", new HashSet<>()));
                 case "resume" -> {
                     var c = agents.get(pid);
                     if (c != null && parts.length > 2) c.resumes().add(parts[2]);

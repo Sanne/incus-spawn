@@ -16,6 +16,7 @@ final class WorkerRunners {
         return switch (agent) {
             case CODEX -> load("codex-runner.cjs");
             case PI -> load("pi-runner.cjs");
+            case OPENCODE -> load("opencode-runner.cjs");
             default -> throw new IllegalArgumentException(agent.id + " has no runner");
         };
     }

@@ -37,13 +37,15 @@ A task's `state` is the same word in every tool.
 
 | Field | What it holds |
 |-------|---------------|
-| `agent` | `claude`, `codex` or `pi`. |
+| `agent` | `claude`, `codex`, `pi` or `opencode`. |
 | `model` | The template's configured model. |
-| `supports_model_preflight` | Whether a chosen `model` is checked against the account before launch. Claude only; Codex and Pi report model-access errors in the task result. |
-| `permission_mode`, `approval_policy` | Always full access inside the instance: `bypassPermissions` for Claude, `danger-full-access` with approval policy `never` for Codex, `full-access` for Pi. |
+| `supports_model_preflight` | Whether a chosen `model` is checked against the account before launch. Claude only; Codex, Pi and opencode report model-access errors in the task result. |
+| `permission_mode`, `approval_policy` | Always full access inside the instance: `bypassPermissions` for Claude, `danger-full-access` with approval policy `never` for Codex, `full-access` for Pi and for opencode, which runs with `--auto`. |
 
 A task's `model` override persists across `send_message` and adoption.
 A Pi task has a `session_id` only once Pi has saved its session; before that, or once that session is gone, `send_message` is refused with `wrong_state`.
+
+An opencode task saves the session opencode names in its first event; a resume of a session opencode no longer has fails the run, and opens no new one.
 
 No agent has a turn limit.
 Older releases took `max_turns` on `delegate` and `send_message` and reported `supports_max_turns`, `refusal`, `delegate_max_turns` and `max_turns`; these no longer exist, and a call passing `max_turns` is refused with `invalid_argument`.
@@ -100,4 +102,4 @@ For what a task spent, read the counts before and after the task and subtract, b
 A different or missing `counting_since` means the proxy restarted between the two reads and the counts started again from zero.
 `isx proxy activity` shows the same counts for every instance on the host.
 
-Codex reports its own token usage in the task result when available, and Pi its turns, tokens and `cost_usd`.
+Codex reports its own token usage in the task result when available, and Pi and opencode their turns, tokens and `cost_usd`.

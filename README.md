@@ -335,7 +335,7 @@ See [Tools](docs/TOOLS.md).
 
 ## Delegating over MCP
 
-An agent on your host, such as Claude Code, can control isx through `isx mcp`: branch instances from templates you approved, run builds and tests in those instances, and give whole tasks to Claude Code, Codex or Pi inside an instance.
+An agent on your host, such as Claude Code, can control isx through `isx mcp`: branch instances from templates you approved, run builds and tests in them, and give whole tasks to Claude Code, Codex, Pi or opencode inside an instance.
 `isx mcp` is off by default, because it gives an agent that control; `isx init` offers to set it up.
 
 [Delegating from an agent on your host](docs/MCP.md) says what such an agent can and cannot do, and how to run the coordinating agent in an instance of its own, branched with `isx branch --mcp-client`.

@@ -19,7 +19,7 @@ public final class McpClientCheck {
 
     /**
      * What the check found: whether the start registered the server in an agent of the instance
-     * (Claude Code or Pi), and the server's version and tool count, or why it was not reached.
+     * (Claude Code, Pi or opencode), and the server's version and tool count, or why it was not reached.
      */
     public record Outcome(boolean registered, String version, int tools, String problem) {
         public boolean reached() {
@@ -37,9 +37,9 @@ public final class McpClientCheck {
             // What the guest printed may be anything: its curl, its proxy answer, its version
             var said = reached() ? name + " reaches " + endpoint + ": isx " + OutputFormat.oneLine(version) + ", " + tools + " tools"
                     : name + " cannot reach " + endpoint + ": " + OutputFormat.oneLine(problem);
-            return said + (registered ? "." : (reached() ? "; but" : ", and") + " neither its Claude Code nor its Pi has an '"
-                    + McpClientRegistration.SERVER_NAME + "' server in its config: the template has neither the claude"
-                    + " nor the pi tool, or registering it failed (the next start tries again).");
+            return said + (registered ? "." : (reached() ? "; but" : ", and") + " none of its Claude Code, Pi or opencode has an '"
+                    + McpClientRegistration.SERVER_NAME + "' server in its config: the template has none of the claude,"
+                    + " pi or opencode tools, or registering it failed (the next start tries again).");
         }
     }
 
@@ -49,7 +49,7 @@ public final class McpClientCheck {
      * the coordinator's own {@code initialize} to replace it. Prints {@code @init}, then
      * {@code @tools} once a session was opened, each followed by curl's output and
      * {@code @code <status>}; or {@code @error <why>} when it cannot try. First,
-     * {@code @registered} when Claude Code's or Pi's own user config holds an entry for the
+     * {@code @registered} when Claude Code's, Pi's or opencode's own user config holds an entry for the
      * endpoint ({@link McpClientRegistration#ANY_CONFIG_HAS_ENTRY}, the tests the start's
      * reconcile makes too).
      */

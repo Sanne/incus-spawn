@@ -321,7 +321,7 @@ A session ending releases them as orphans, which a later session can `adopt_inst
 One kept only for a delegate that shows no activity is stopped instead, and destroyed after `dormant-grace-hours` in `mcp.yaml` unless adopted (#1028).
 A person sees the same: `isx list` (`mcp_state`, `mcp_purpose`) and the TUI's instance details say which instances a session made, what for, and whether they are held, orphaned or kept (`McpStanding`, from the listing alone, #1053).
 `exec` has no default time limit (cancel kills the process tree).
-Background commands and `delegate` (Claude Code, Codex or Pi inside the instance) run as systemd units in the guest.
+Background commands and `delegate` (Claude Code, Codex, Pi or opencode inside the instance) run as systemd units in the guest.
 A client that lists `isx/task_changed` under `capabilities.experimental` is notified of every task state change (`TaskWatcher`, #1014), and only then are tasks polled.
 `instance_activity` reads what the proxy counted of an instance's model calls and, by domain, of all its traffic (its host-only, read-only `/activity`, #935; `isx proxy activity` for a person), so a coordinator tells working from stuck without touching the instance.
 Every tool declares an `outputSchema` and returns matching `structuredContent` for programs, while the text stays for the model; a refusal carries no `structuredContent`, only a code in `_meta["dev.incusspawn/error"]` (#1010).
@@ -330,11 +330,11 @@ An agent may also run in an instance branched with `--mcp-client` (#915), or fro
 Such a coordinator may use only the templates in both `mcp.yaml`'s `templates:` and its template's `coordinator.control-over`, and none when that lists none or is missing (`McpScope`, deny by default).
 The proxy serves it `https://mcp.isx.internal/mcp` (`McpBridge`, Streamable HTTP) after checking address, per-start secret and the `mcp-caller` stamp, bridged to a host `isx mcp --caller-instance <name>` whose session is the instance itself.
 No copy inherits the stamp and the MCP path refuses it.
-Every start registers the server in that instance's Claude Code and Pi, or removes it from one without the stamp, inside the exec that delivers the secret (`McpClientRegistration`, #1182), so a copy loses it on its first start.
+Every start registers the server in that instance's Claude Code, Pi and opencode, or removes it from one without the stamp, inside the exec that delivers the secret (`McpClientRegistration`, #1182), so a copy loses it on its first start.
 See `.claude/rules/mcp.md` and design/mcp.md "MCP server".
-Managed delegation selects `claude`, `codex` or `pi`, exposes installed agents through `list_templates.delegate_agents`, and persists the selected agent with each task.
-See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation, and [MCP delegation to Pi workers](docs/dev/MCP-PI-DELEGATION.md) for what differs for Pi.
-Every worker runs with full access inside its instance and no turn limit (Claude `bypassPermissions`, Codex `danger-full-access`, Pi every tool; `DelegateAgent.permissionMode`, #1857): the instance is the boundary, so no agent is refused for policy.
+Managed delegation selects `claude`, `codex`, `pi` or `opencode`, exposes installed agents through `list_templates.delegate_agents`, and persists the selected agent with each task.
+See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation, and [MCP delegation to Pi workers](docs/dev/MCP-PI-DELEGATION.md) and [to opencode workers](docs/dev/MCP-OPENCODE-DELEGATION.md) for what differs for each.
+Every worker runs with full access inside its instance and no turn limit (Claude `bypassPermissions`, Codex `danger-full-access`, Pi every tool, opencode `--auto`; `DelegateAgent.permissionMode`, #1857): the instance is the boundary, so no agent is refused for policy.
 The `mcp.yaml` keys that once narrowed them still load, have no effect and are named (`McpConfig.RETIRED`).
 
 **External orchestrators drive isx through ordinary commands (#1720).**

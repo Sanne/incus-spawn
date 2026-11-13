@@ -145,7 +145,7 @@ Key design:
   It is not reentrant, so code under it calls the `*Held` variants; it sits outside `CredentialProof.lock`, never inside.
   A new path that starts or restarts an instance for use goes through these or does the same; builds use `BuildAccounts` and revoke their grants before publication.
   The secret reaches the guest in the exec environment (`InstanceSecret.guestEnv` + `GUEST_SCRIPT`), never on a command line, which any guest user can read.
-  The same exec reconciles the Claude Code and Pi registrations of `mcp.isx.internal` with the `mcp-caller` grant every caller passes beside it (`McpClientRegistration`, #1182, see `mcp.md`).
+  The same exec reconciles the Claude Code, Pi and opencode registrations of `mcp.isx.internal` with the `mcp-caller` grant every caller passes beside it (`McpClientRegistration`, #1182, see `mcp.md`).
   Rotation does not signal the proxy (cost on every start; a refusal right after a start refreshes and retries, throttled by `wantsMissRefresh()` like a lookup miss).
   On macOS (#1583) `routeRequest` passes the `proofMayIdentify` gate to `McpBridge` and `HostRouteRelay`, and a caller at an unknown address is the instance whose secret it presents (`identify(address, secret, true)`, the snapshot's `addressBySecret`, running owners only, by `owner`'s rule, cleared by a failed listing like `addressByProof`); its traffic flow starts pending and the handler begins it for the instance it names; never widen that gate to Linux either.
   See design/accounts.md "A per-start secret".

@@ -178,6 +178,7 @@ public final class TaskJoin {
             case CLAUDE -> "claude --resume ";
             case CODEX -> "codex resume ";
             case PI -> "pi --session-id ";
+            case OPENCODE -> "opencode --session ";
             case UNKNOWN -> throw new IllegalArgumentException("unsupported task agent");
         };
         // Under the conversation's lock, so a run that starts in the meantime and the person's
