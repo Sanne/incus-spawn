@@ -446,5 +446,6 @@ Results go to `bench/results/cli/` so `run.sh` never compares against them.
 `bench/request-cost.sh` times plain requests on the daemon's socket, with no isx involved: what one read or one settings write costs on a host, the number to multiply a request count by.
 `bench/vm-boot.sh` times a VM copy's boot phase by phase (firmware, GRUB, kernel, `incus-agent`, Incus seeing it, exec) with `incus` alone, Linux only, and `--set` tries an instance setting on the copies (docs/dev/PERFORMANCE-NOTES.md "VM boot: where the wait goes").
 `bench/vm-disk-bus.sh` sets a VM copy's root disk bus and `io.cache` and measures fio, a clone, an unpack and boot in the guest (docs/dev/PERFORMANCE-NOTES.md "VM root disk: bus and host cache mode").
+`bench/vm-disk-cache.sh` measures `io.cache` per context instead (#2198): `/tmp` on a disk of its own, template blocks read by several branches, a build's host memory, and a template build on `unsafe` made safe before use.
 `cli.sh`, `trace-branch.sh` and `request-cost.sh` run on macOS against the appliance too: `cli.sh` needs no `incus` client there, and `trace-branch.sh` points the client at the appliance's socket by itself.
 All of them are developer-run and too noisy for CI; the PR-time guard for CLI latency is the request-count budget in `InstanceLifecycleRequestBudgetTest` (see `incus.md`).
