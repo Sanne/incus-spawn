@@ -43,6 +43,10 @@ The runner's config sets `KeyboardProtocol.LEGACY`: 0.7.0 pushes kitty flags 5 b
 `TuiRunner` clears the screen before its first frame, so `Tui.openRunner` is gone.
 Ctrl+L stays, since tamboui clears again only on a resize.
 `KeyboardProtocol` stays too.
-Tamboui now reads Esc and Ctrl+C in the CSI u and modifyOtherKeys encodings, but it still delivers key releases as events and ignores a shifted alternate key, so Alt+Shift+1 would read as Alt+Shift+1 and not Alt+`!`.
-Probed by running `KeyboardProtocolTest` against tamboui's parser alone: five of ten tests failed.
+Tamboui now reads Esc and Ctrl+C in the CSI u and modifyOtherKeys encodings, but our decoder stays.
+It still delivers a key release as an event, where a legacy terminal sends none, and `KeyEvent.isKey` matches it (tamboui#640).
+A shifted key keeps the Shift modifier, so Alt+`!` arrives as Alt+Shift with `!` as its shifted form, where the legacy encoding has no Shift on it, and `DigitKeys` would read it as Shift+F1.
+Shift with a letter that reports no shifted form arrives as `a` with Shift, not `A`.
+`KeyEvent.isChar` does match the shifted form, so a plain character check is unaffected.
+Probed by running `KeyboardProtocolTest` against tamboui's parser alone: five of ten tests failed, on releases, those two Shift cases and two timing checks.
 Still open from 0.6.0: Paragraph hanging indentation for `ModalRenderer.wrapText`, and `RenderClock` for the spinner.
