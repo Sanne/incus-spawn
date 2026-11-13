@@ -1,6 +1,10 @@
-# TamboUI 0.6.0 review
+# TamboUI upgrade reviews
 
-The shared `tamboui.version` property upgrades the CLI's TUI, toolkit, and Panama backend dependencies from 0.5.0 to 0.6.0.
+The sections below record each upgrade's review, newest last.
+
+## 0.6.0
+
+The shared `tamboui.version` property upgraded the CLI's TUI, toolkit, and Panama backend dependencies from 0.5.0 to 0.6.0.
 The upstream release was published on October 12, 2026.
 Source: [TamboUI 0.6.0 release notes](https://github.com/tamboui/tamboui/releases/tag/v0.6.0).
 
@@ -39,10 +43,10 @@ Our own wrapping now measures terminal cells with `CharWidth` too (#1412): `Help
 
 ## 0.7.0
 
-The runner's config sets `KeyboardProtocol.LEGACY`: 0.7.0 pushes kitty flags 5 by default, which would sit over the flags 0 that `LegacyKeyboardBackend` pushes.
+The runner's config sets tamboui's `KeyboardProtocol.LEGACY`, and `LegacyKeyboardBackend` pushes nothing whatever a config says: 0.7.0 pushes kitty flags 5 by default, which would sit over the flags 0 that `LegacyKeyboardBackend` pushes.
 `TuiRunner` clears the screen before its first frame, so `Tui.openRunner` is gone.
 Ctrl+L stays, since tamboui clears again only on a resize.
-`KeyboardProtocol` stays too.
+The `KeyboardProtocol` decoder, isx's own class, stays too.
 Tamboui now reads Esc and Ctrl+C in the CSI u and modifyOtherKeys encodings, but our decoder stays.
 It still delivers a key release as an event, where a legacy terminal sends none, and `KeyEvent.isKey` matches it (tamboui#640).
 A shifted key keeps the Shift modifier, so Alt+`!` arrives as Alt+Shift with `!` as its shifted form, where the legacy encoding has no Shift on it, and `DigitKeys` would read it as Shift+F1.

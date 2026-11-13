@@ -37,6 +37,12 @@ final class LegacyKeyboardBackend extends PanamaBackend {
         super();
     }
 
+    /** Never pushes kitty flags, whatever the runner's config says: the push here is flags 0. */
+    @Override
+    public boolean enableKeyboardProtocol(dev.tamboui.terminal.KeyboardProtocol protocol) {
+        return false;
+    }
+
     @Override
     public void enterAlternateScreen() throws IOException {
         super.enterAlternateScreen();
