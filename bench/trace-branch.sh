@@ -11,11 +11,12 @@
 # Requires: the `incus` client with access to the daemon isx uses (on macOS the client alone:
 #           the script points it at the appliance's socket), a working isx setup with the
 #           proxy running, a built template, python3, and an isx build in cli/target (run
-#           bench/cli.sh or mvn package first).
+#           bench/cli.sh or mvn package first) or an installed one given with --isx.
 #
 # Usage:
 #   bench/trace-branch.sh                       # native build, from tpl-minimal
 #   bench/trace-branch.sh --from=tpl-java --runtime=jvm
+#   bench/trace-branch.sh --isx="$(command -v isx)"   # the installed isx, not this checkout's
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -23,16 +24,20 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RESULTS_DIR="$SCRIPT_DIR/results/trace"
 
 RUNTIME="native"
+RUNTIME_GIVEN=0
 FROM="tpl-minimal"
+GIVEN_ISX=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --runtime=*) RUNTIME="${1#--runtime=}" ;;
-        --runtime) shift; RUNTIME="${1:-}" ;;
+        --runtime=*) RUNTIME="${1#--runtime=}"; RUNTIME_GIVEN=1 ;;
+        --runtime) shift; RUNTIME="${1:-}"; RUNTIME_GIVEN=1 ;;
         --from=*) FROM="${1#--from=}" ;;
         --from) shift; FROM="${1:-}" ;;
+        --isx=*) GIVEN_ISX="${1#--isx=}" ;;
+        --isx) shift; GIVEN_ISX="${1:-}" ;;
         --help|-h)
-            echo "Usage: bench/trace-branch.sh [--runtime=native|jvm] [--from=TEMPLATE]"
+            echo "Usage: bench/trace-branch.sh [--runtime=native|jvm] [--isx=PROGRAM] [--from=TEMPLATE]"
             echo ""
             echo "Runs one 'isx branch --shell' to a usable prompt, then 'isx destroy' on the"
             echo "running instance, while recording the Incus daemon's events. Prints a timeline,"
@@ -41,6 +46,7 @@ while [ $# -gt 0 ]; do
             echo ""
             echo "Options:"
             echo "  --runtime=MODE   native (default) or jvm; uses the build already in cli/target"
+            echo "  --isx=PROGRAM    Trace this isx, such as the installed one, instead of a build"
             echo "  --from=TEMPLATE  Template to branch from (default tpl-minimal)"
             exit 0
             ;;
@@ -54,7 +60,18 @@ die() { echo "Error: $*" >&2; exit 1; }
 command -v python3 &>/dev/null || die "python3 not found on PATH"
 command -v incus &>/dev/null || die "the incus client is not on PATH; it is needed to record the daemon's events"
 
+if [ -n "$GIVEN_ISX" ]; then
+    [ "$RUNTIME_GIVEN" = 0 ] || die "--isx names the program itself, so --runtime cannot be given with it"
+    # A path with no spaces: $ISX is split into words below, for the JVM's "java -jar <path>".
+    case "$GIVEN_ISX" in *[[:space:]]*) die "--isx takes a path without spaces" ;; esac
+    command -v "$GIVEN_ISX" >/dev/null 2>&1 || die "--isx: $GIVEN_ISX is not a program that can be run"
+    RUNTIME="given"
+fi
 case "$RUNTIME" in
+    given)
+        [ -n "$GIVEN_ISX" ] || die "Unknown --runtime 'given' (expected: native, jvm)"
+        ISX="$GIVEN_ISX"
+        ;;
     native)
         # shellcheck disable=SC2012  # -t ordering is the point; names have no spaces
         ISX="$(ls -t "$PROJECT_DIR"/cli/target/incus-spawn-*-runner 2>/dev/null | head -1 || true)"
@@ -175,7 +192,11 @@ with open(raw_path, "wb") as raw:
     monitor.wait()
 if destroyed.returncode != 0:
     print(f"Warning: isx destroy exited {destroyed.returncode}:\n{destroyed.stdout}{destroyed.stderr}")
-print(f"Prompt after {prompt_ms:.0f} ms, destroy took {(d_end - d0) * 1000:.0f} ms. Raw events: {raw_path}")
+# From the prompt to isx's own exit: the typed line ends the shell at once, so this is the
+# exec's teardown. It is read by polling, to about 100 ms.
+exit_ms = max(0.0, (t_end - t0) * 1000 - prompt_ms)
+print(f"Prompt after {prompt_ms:.0f} ms, the shell ended {exit_ms:.0f} ms later, "
+      f"destroy took {(d_end - d0) * 1000:.0f} ms. Raw events: {raw_path}")
 
 # ── Parse ───────────────────────────────────────────────────────────────────
 
