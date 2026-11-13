@@ -8,6 +8,7 @@ import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
+import dev.incusspawn.util.VirtualThreadPollers;
 import dev.incusspawn.vm.VmNetwork;
 import io.quarkus.arc.Arc;
 import io.quarkus.runtime.QuarkusApplication;
@@ -28,6 +29,8 @@ public class ProxyMain implements QuarkusApplication {
 
     @Override
     public int run(String... args) {
+        // Before any virtual thread waits on a socket: the poller mode is read once (#2129)
+        VirtualThreadPollers.usePlatformThreads();
         int port = ProxyConfig.DEFAULT_MITM_PORT;
         int healthPort = ProxyConfig.DEFAULT_HEALTH_PORT;
         String gatewayIpOption = null;

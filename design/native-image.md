@@ -446,6 +446,37 @@ A one-character `split` (`"\n"`, `"\t"`, `":"`) is exempt: `String.split` takes 
 A pattern known only at run time (a tool definition's `pattern:`, one per placeholder at load) is compiled once where it is known and carries a `// regex at run time: <why>` comment.
 `PatternConstantGateTest` (`cli`) fails on any other compile, in all three modules.
 
+## Socket wakeups come from platform threads
+
+Both binaries wait on sockets from virtual threads: the exec relay behind `isx ssh-proxy`, `isx shell` and git, and the proxy's MCP bridge and host port relay.
+Since JDK 22 the JDK wakes such a thread on Linux through pollers that are themselves virtual threads (`VTHREAD_POLLERS`), driven by one platform `MasterPoller`.
+A socket's readiness reaches the waiting reader only after the master poller has unparked a sub-poller and that sub-poller has run.
+
+The strict ssh check of `test-ssh-host-keys.sh` failed in CI on that path (#2129).
+Incus had connected all four exec sockets of the ssh connection within 6 ms, and the guest's sshd was listening.
+`isx ssh-proxy` delivered neither direction for 30 s.
+Then the stdin socket's handshake watchdog closed that socket, on time.
+sshd then saw `nc` close the connection, and ssh got the banner 35 s after it connected, too late to use it.
+The watchdog is itself a virtual thread that sleeps, so carriers were free and the scheduler ran.
+Its close unparks the blocked reader from the closing thread itself (`Poller.stopPoll`), without a sub-poller.
+So what did not arrive was the poller's readiness wakeup, while a direct close did.
+The trace does not show why the sub-poller path lost it.
+JDK-8371045 is one known way virtual sub-pollers can starve: with every carrier pinned by class initialization, no sub-poller runs.
+That starvation lasts as long as every carrier stays pinned, and it is not what happened here, since the watchdog ran.
+
+So both entry points, `IncusSpawn.run` and `ProxyMain.run`, first call `VirtualThreadPollers.usePlatformThreads()`, which sets `jdk.pollerMode=1` (`SYSTEM_THREADS`).
+Its `Read-Poller` and `Write-Poller` platform threads block in `epoll_wait` and unpark the waiting reader themselves, which takes the virtual sub-pollers and the master poller out of the wakeup path.
+A woken reader still needs a free carrier to run, as it does in either mode.
+The JDK reads the property once, when the first virtual thread waits on a socket, a pipe or a selector, so the call comes before any command or proxy work runs.
+In the native image `sun.nio.ch.Poller` is initialized at run time, so the property set there decides it.
+A native CLI showed it against a fake Incus socket: `MasterPoller` without the call, `Read-Poller` and `Write-Poller` with it.
+A mode already set, such as `-Djdk.pollerMode=2` on a JVM, is kept, to compare the two.
+`VirtualThreadPollersTest` checks it in a JVM of its own, since a test JVM's mode is whatever its first socket read chose.
+
+What it gives up: the I/O wakeups no longer go through the virtual thread scheduler, which the JDK's default mode does for fairness under heavy socket load.
+Neither binary runs that load on virtual threads: the proxy's traffic is on Netty's event loops, and the CLI's relays move one connection's bytes.
+If a later JDK drops mode 1, its `Poller` fails to initialize and every socket wait on a virtual thread fails, which this test catches on the JDK bump.
+
 ## jjq rather than Jackson
 YAML definitions, `config.yaml` and every JSON isx reads or writes go through jjq (#1250, from #1249): `Jjq` holds one mapper with the generated `@JqMapped` mappings registered explicitly (no reflection, no `ServiceLoader`), YAML in `YamlOptions.STRICT` (duplicate keys fail), JSON through `JqValues.parseStrict`.
 Every DTO it binds has a registered generated mapping (`JjqGeneratedMappingTest`), `ImageDef` included, so no DTO carries `@RegisterForReflection`: jjq's reflective fallback would need it in the native image (#1316).

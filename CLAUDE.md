@@ -365,6 +365,12 @@ Both native builds pass `-H:AbortOnMethodReachable=java.io.ObjectInputStream.rea
 `Pattern.compile`, and with it every `String.matches`, `replaceAll`, `replaceFirst` and regex `split`, costs a compile per call; a constant compiles once, at build time in the native image.
 `PatternConstantGateTest` enforces it; a pattern only known at run time says why with a `// regex at run time:` comment (design/native-image.md "Regular expressions are compiled once").
 
+**Virtual threads are woken by platform pollers** (#2129).
+`IncusSpawn.run` and `ProxyMain.run` first call `VirtualThreadPollers.usePlatformThreads()`, which sets `jdk.pollerMode=1` before any virtual thread waits on a socket.
+The JDK's Linux default delivers a socket's readiness through virtual sub-pollers, and in CI that wakeup did not reach `isx ssh-proxy` for 30 s, while a watchdog's direct close did.
+Mode 1's platform `Read-Poller` and `Write-Poller` take the sub-pollers out of the wakeup path.
+A new entry point calls it first too (design/native-image.md "Socket wakeups come from platform threads").
+
 **The platform role is the OS's, and no released binary can be switched (#1800).**
 On macOS the proxy identifies a caller by its credential proof without the Linux address check, so a Linux isx in macOS's role would drop that check.
 `Platform` takes macOS's role from `os.name` (which a JVM's `-Dos.name` or `JAVA_TOOL_OPTIONS` sets) only on a host with macOS's `SystemVersion.plist` and no Linux kernel (elsewhere it refuses to start), and native images fold it at build time, where `graal/PlatformRoleFeature` fails a build whose role is not its target OS's.
