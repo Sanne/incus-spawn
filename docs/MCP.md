@@ -26,11 +26,12 @@ It asks the same questions and needs a terminal too, so an agent that installed 
 
 Once `isx mcp` is set up, a re-run of `isx init` or `isx mcp setup` asks one question instead: `t` to change the approved templates, `n` to see how to turn it off, Enter to keep everything.
 
-To register `isx mcp` with Claude Code or Codex without the rest of the step:
+To register `isx mcp` with Claude Code, Codex or opencode without the rest of the step:
 
 ```shell
 isx mcp register claude
 isx mcp register codex
+isx mcp register opencode
 ```
 
 It replaces an existing `isx` entry.

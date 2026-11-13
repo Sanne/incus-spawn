@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.Environment;
 import dev.incusspawn.mcp.McpMain;
 import dev.incusspawn.proxy.McpClientRegistration;
 import dev.incusspawn.proxy.ProxyService;
@@ -22,7 +23,7 @@ import java.util.Map;
 /**
  * Bare, {@code isx mcp} is the MCP server an agent starts; {@code isx mcp setup} is the person's
  * step of approving what that server may branch (#2077), {@code isx mcp register} registers it
- * with Claude Code or Codex (#2189), and {@code isx mcp config} prints the entry any MCP client
+ * with Claude Code, Codex or opencode (#2189, #2214), and {@code isx mcp config} prints the entry any MCP client
  * takes to start it (#2078). The approvals are written by {@link InitCommand}, never by the
  * {@code mcp} package.
  */
@@ -55,16 +56,16 @@ public class McpCommand extends BaseCommand {
     }
 
     /**
-     * {@code isx mcp register <agent>} (#2189): registers {@code isx mcp} with Claude Code or Codex
+     * {@code isx mcp register <agent>} (#2189): registers {@code isx mcp} with Claude Code, Codex or opencode
      * through the agent's own CLI, in the form {@link McpLaunch} gives this host, so an agent that
      * installed isx runs one command and never chooses the {@code sg} form itself.
      * An existing {@code isx} entry is replaced, since one an agent wrote by hand may lack {@code sg}.
      */
     @CommandDefinition(name = "register",
-            description = "Register isx mcp with an agent's MCP client: claude or codex",
+            description = "Register isx mcp with an agent's MCP client: claude, codex or opencode",
             generateHelp = true)
     public static class Register extends BaseCommand {
-        @Argument(description = "The agent to register with: claude or codex")
+        @Argument(description = "The agent to register with: claude, codex or opencode")
         String agent;
 
         @Override
@@ -78,9 +79,12 @@ public class McpCommand extends BaseCommand {
         CLAUDE("claude", "Claude Code", List.of("claude", "mcp", "add", "--scope", "user", McpClientRegistration.SERVER_NAME, "--"),
                 // A local-scope entry, the default of a bare 'claude mcp add', overrides the user one in its directory
                 List.of(List.of("claude", "mcp", "remove", "--scope", "user", McpClientRegistration.SERVER_NAME),
-                        List.of("claude", "mcp", "remove", "--scope", "local", McpClientRegistration.SERVER_NAME))),
+                        List.of("claude", "mcp", "remove", "--scope", "local", McpClientRegistration.SERVER_NAME)), false),
         CODEX("codex", "Codex", List.of("codex", "mcp", "add", McpClientRegistration.SERVER_NAME, "--"),
-                List.of(List.of("codex", "mcp", "remove", McpClientRegistration.SERVER_NAME)));
+                List.of(List.of("codex", "mcp", "remove", McpClientRegistration.SERVER_NAME)), false),
+        // opencode's add replaces an entry of that name in its user-wide opencode.json(c), and it has no remove.
+        // It also rewrites the opencode.json of the directory it runs in, so it runs from the home directory.
+        OPENCODE("opencode", "opencode", List.of("opencode", "mcp", "add", McpClientRegistration.SERVER_NAME, "--"), List.of(), true);
 
         final String tool;
         final String label;
@@ -88,12 +92,15 @@ public class McpCommand extends BaseCommand {
         final List<String> add;
         /** The commands that remove an existing entry, each in a scope the client reads. */
         final List<List<String>> remove;
+        /** Whether its commands run from the home directory rather than the caller's, which they would change. */
+        final boolean fromHome;
 
-        Client(String tool, String label, List<String> add, List<List<String>> remove) {
+        Client(String tool, String label, List<String> add, List<List<String>> remove, boolean fromHome) {
             this.tool = tool;
             this.label = label;
             this.add = add;
             this.remove = remove;
+            this.fromHome = fromHome;
         }
 
         static Client named(String name) {
@@ -116,8 +123,8 @@ public class McpCommand extends BaseCommand {
         int register(String agent, String isxPath) {
             var client = Client.named(agent);
             if (client == null) {
-                BuildOutput.error(agent == null || agent.isBlank() ? "Name the agent to register with: claude or codex."
-                                : "isx mcp register knows claude and codex, not '" + OutputFormat.oneLine(agent) + "'.",
+                BuildOutput.error(agent == null || agent.isBlank() ? "Name the agent to register with: claude, codex or opencode."
+                                : "isx mcp register knows claude, codex and opencode, not '" + OutputFormat.oneLine(agent) + "'.",
                         "For any other agent, add the entry 'isx mcp config' prints to its user-wide MCP settings.");
                 return 1;
             }
@@ -132,9 +139,10 @@ public class McpCommand extends BaseCommand {
             var form = launch.form();
             var add = client.addCommand(McpLaunch.command(isxPath, form));
             // An entry by that name, from an earlier register or by hand, would make the add fail
+            var directory = client.fromHome ? Environment.home().toFile() : null;
             var replaced = false;
-            for (var remove : client.remove) replaced |= run(remove).exit() == 0;
-            var added = run(add);
+            for (var remove : client.remove) replaced |= run(remove, directory).exit() == 0;
+            var added = run(add, directory);
             if (added.exit() != 0) {
                 var details = new ArrayList<String>();
                 if (!added.output().isBlank()) details.add(OutputFormat.oneLine(added.output().strip()));
@@ -159,11 +167,15 @@ public class McpCommand extends BaseCommand {
             return HostPath.isOnPath(command);
         }
 
-        /** Runs {@code command} with no input, for its exit code and its output, stderr included. */
-        Ran run(List<String> command) {
+        /**
+         * Runs {@code command} with no input in {@code directory} (null: this process's), for its exit
+         * code and its output, stderr included.
+         */
+        Ran run(List<String> command, File directory) {
             Privilege.check(command);
             try {
                 var process = new ProcessBuilder(command)
+                        .directory(directory)
                         .redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")))
                         .redirectErrorStream(true)
                         .start();
