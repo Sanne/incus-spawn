@@ -960,3 +960,54 @@ In the GraalVM 25.5 builder image (`25i5-ol10`), the proxy fails the `readObject
 A hello world with no metadata fails `-H:AbortOnTypeReachable=java.io.ObjectInputStream` on both 25.4 and 25.5, which is why the gate names a method.
 A stock `quarkus-vertx-http` app on CR1 loses 327,680 bytes and 375 methods when both the JCEKS and the Vert.x paths are cut.
 With the Vert.x substitutions alone its binary keeps the same size and loses one method, because JCEKS keeps the reader in (#529).
+
+## The vsock tunnel's relay under load, on Linux (issue #2031)
+
+Measured on 2026-11-13 in a quiet window, in an isx VM under nested KVM (x86_64, 8 vCPUs, 16 GiB, QEMU 11.1.3), with the scripts as #2197 first proposed them.
+The question was whether the launcher's relay holds up under the load that makes vfkit's fail, and what a request costs through it.
+This says nothing of Virtualization.framework: that half is `appliance/launcher-on-mac.sh` on a Mac, and its record is on the PR.
+
+The v0.5.0 appliance was booted under QEMU with `vhost-vsock-pci` (2 vCPUs, 2 GiB), anew for each bridge, and `appliance/measure-tunnel.sh` was run with its default counts through three bridges in turn:
+
+- **vfkit's relay logic**: tcpproxy's `DialProxy` with the vsock side wrapped as vz wraps it, the stand-in of design/macos-and-vms.md "Where the vsock leak comes from".
+  It is not vfkit itself.
+- **`socat`**: `UNIX-LISTEN:…,fork,backlog=128 VSOCK-CONNECT:3:<port>`, CI's bridge before the relay.
+- **the relay**: `isx-vsock-bridge`, a release build of this commit's `launcher/`.
+
+| | vfkit's relay logic | `socat` | the relay |
+|---|---|---|---|
+| `test-tunnel.sh`, 24 runs: passed | 0 | 24 | 24 |
+| Runs in which a forwarder child outlived its connection | 24 | 0 | 0 |
+| The 24 runs took | 1750 s | 299 s | 299 s |
+| Forwarder back to its listener after a run, median | 19985 ms | 12 ms | 11 ms |
+| Bursts of 70, five of them: answered | 350 of 350 | 350 of 350 | 350 of 350 |
+| Bursts of 120, five of them: answered | 600 of 600 | 600 of 600 | 600 of 600 |
+| Forwarder back to its listener after a burst, median | 30250 ms | 12 ms | 12 ms |
+| Nothing held: request on a new connection, median and 95th percentile | 2.005 and 3.375 ms | 1.856 and 2.420 ms | 1.619 and 2.146 ms |
+| Nothing held: request on a kept connection | 1.144 and 1.411 ms | 0.969 and 1.088 ms | 1.039 and 1.531 ms |
+| 200 held: request on a new connection | 3.291 and 4.681 ms | 2.465 and 3.314 ms | 2.171 and 2.974 ms |
+| 200 held: request on a kept connection | 1.335 and 1.831 ms | 1.057 and 1.677 ms | 1.066 and 1.634 ms |
+| 400 held: request on a new connection | 2.412 and 3.846 ms | 2.509 and 3.281 ms | 1.931 and 2.628 ms |
+| 400 held: request on a kept connection | 1.198 and 2.157 ms | 1.153 and 1.650 ms | 1.101 and 1.716 ms |
+| Forwarder back to its listener after the 200 were closed | 30407 ms | 20 ms | 32 ms |
+| Forwarder back to its listener after the 400 were closed | 30353 ms | 564 ms | 557 ms |
+| Forwarder count at the end (1 with nothing connected) | 2 | 1 | 1 |
+| The whole measurement took | 2186 s | 343 s | 342 s |
+
+A request is `GET /1.0` on the Incus socket, 200 of them for each latency.
+Every held connection was accepted and was still open when its sampling ended, with all three bridges.
+No request of a burst or of a latency sample failed, timed out or got an empty reply with any bridge.
+
+What it shows:
+
+- The relay ends every connection in the guest when the host ends it, under this load as well as in the unit tests.
+  Through vfkit's logic every run leaves forwarder children behind, and the forwarder is back to its listener only 20 to 30 s after the load ends.
+  The 24 runs then take 1750 s instead of 299 s.
+- The relay costs no more than `socat` for a request.
+  On a new connection its median is below `socat`'s in all three rows, and on a kept one the two are within 0.1 ms of each other.
+  Each figure is one sample of 200 requests, so a difference of a tenth of a millisecond is not a finding.
+- With 200 or 400 connections held, a request through the relay costs 0.3 to 0.6 ms more on a new connection than with none held, and under 0.1 ms more on a kept one.
+- After the load the relay's process held 10 descriptors and 6 threads, and its peak resident memory was 19 MB.
+
+What it does not show: the failures a Mac sees beyond the leaked children, missed requests, `Empty reply from server` and a socket that stops answering (P2).
+Linux reproduces none of them with vfkit's logic, so only the Mac's record compares the two programs on those.
