@@ -43,10 +43,20 @@ final class GuestConnections: @unchecked Sendable {
         return descriptor
     }
 
-    /// Taken out before it is closed, so the number is not in here when another connection gets it.
+    /// Closes the connection on the main queue, as every use of the framework's objects is,
+    /// whatever thread calls this (#2207). It returns before the close: a caller has shut the
+    /// descriptor down already, so the guest knows the connection ended.
+    ///
+    /// No caller closes the descriptor itself, so its number cannot name another connection
+    /// until this close. It is taken out of the table just before, so it is not in here when
+    /// another connection gets that number.
     func hangUp(_ descriptor: Int32) {
-        let connection = lock.withLock { open.removeValue(forKey: descriptor) }
-        connection?.close()
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let connection = self.lock.withLock { self.open.removeValue(forKey: descriptor) }
+                connection?.close()
+            }
+        }
     }
 }
 
