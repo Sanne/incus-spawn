@@ -31,7 +31,8 @@ The heuristics are a first pass: read `reply-<turn>.txt` and `commands.tsv` befo
 ## The agents it drives
 
 `--agent` takes `claude`, `codex`, `pi`, `gemini`, `opencode` and `copilot`, each run headless with every tool call allowed.
-`opencode` has no isx tool, so it is the run that exercises the question: give it `--template-agent` (for example `codex`), and the run then expects that tool in the template.
+Each of them has an isx tool, which the run expects in the template; `opencode` has had one since its built-in tool (#2214).
+`--template-agent` names the tool the person answers with when the agent asks which agent to use, and the run then expects that tool instead.
 Pi runs on the OpenAI account, its default provider in `~/.pi/agent/settings.json` (Pi 1.5 refuses `--provider` without `--model`), since upstream refuses Pi on a Claude subscription.
 `--agent-model` picks the model for `pi`, `gemini`, `opencode` and `copilot`, where their default is not available.
 Bob Shell is not driven: its headless `bob run` has no flag that approves tool calls, and no approval setting was confirmed to apply to it.
@@ -89,7 +90,7 @@ A second agent therefore needs a second clean host.
 
 ```shell
 scripts/agent-install/run-in-vm.sh --agent codex --out ~/runs/codex -- --docs /tmp/isx-docs
-scripts/agent-install/run-in-vm.sh --agent opencode --out ~/runs/opencode -- --template-agent codex --agent-model <provider/model>
+scripts/agent-install/run-in-vm.sh --agent opencode --out ~/runs/opencode -- --agent-model <provider/model>
 ```
 
 The person's account joins the group that reads `/run/isx`, so the instance's proxy serves the agent.

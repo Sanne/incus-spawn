@@ -801,11 +801,12 @@ Without a terminal it does not change `mcp.yaml` and exits 1, since approving te
 
 ### `isx mcp register`
 
-Register `isx mcp` with Claude Code or Codex, through that agent's own `mcp add` command.
+Register `isx mcp` with Claude Code, Codex or opencode, through that agent's own `mcp add` command.
 
 ```shell
 isx mcp register claude
 isx mcp register codex
+isx mcp register opencode
 ```
 
 It replaces an existing `isx` entry, and exits 1 when the agent is not installed or its command fails.
@@ -824,7 +825,7 @@ isx mcp config
 
 It names the installed `isx` by its full path and does not change any file.
 On Linux its command is `sg` with `incus-admin`, as `isx mcp register` writes it, when the host has `sg` and you are in that group.
-Paste it into the settings of an agent other than Claude Code and Codex, such as Cursor or Gemini CLI.
+Paste it into the settings of an agent other than Claude Code, Codex and opencode, such as Cursor or Gemini CLI.
 
 ## `isx completion`
 

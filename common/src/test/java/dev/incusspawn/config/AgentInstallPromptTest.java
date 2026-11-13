@@ -39,7 +39,7 @@ class AgentInstallPromptTest {
     }
 
     /** The agents isx has a tool for, as their users call them or as their tool and namespace are named. */
-    private static final Pattern AGENT = Pattern.compile("\\b(Claude|Codex|Pi|Gemini|Bob|Copilot)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern AGENT = Pattern.compile("\\b(Claude|Codex|Pi|opencode|Gemini|Bob|Copilot)\\b", Pattern.CASE_INSENSITIVE);
 
     /**
      * One prompt for every agent (#2177): naming one makes it the default, which a user of another
@@ -55,7 +55,7 @@ class AgentInstallPromptTest {
 
     /** The agents isx has a tool for, as the install page and the validation notes name them. */
     private static final List<String> AGENT_NAMES =
-            List.of("Claude Code", "Codex CLI", "Pi", "Gemini CLI", "Bob Shell", "GitHub Copilot CLI");
+            List.of("Claude Code", "Codex CLI", "Pi", "opencode", "Gemini CLI", "Bob Shell", "GitHub Copilot CLI");
 
     /**
      * The page promises only what a clean-VM run showed (#2178): the agents its "tested" sentence
@@ -102,7 +102,7 @@ class AgentInstallPromptTest {
     void theRegistrationIsOneCommandThatChoosesSg() throws Exception {
         assertTrue(harnessPrompt().contains("`isx mcp register`"), "the prompt does not name isx mcp register");
         var llms = Files.readString(ROOT.resolve("site/llms.txt"));
-        for (var command : List.of("`<isx> mcp register claude`", "`<isx> mcp register codex`", "`<isx> mcp config`"))
+        for (var command : List.of("`<isx> mcp register claude`", "`<isx> mcp register codex`", "`<isx> mcp register opencode`", "`<isx> mcp config`"))
             assertTrue(llms.contains(command), "llms.txt does not give the registration " + command);
         assertFalse(llms.contains("claude mcp add"), "llms.txt still has an agent write the registration itself");
     }

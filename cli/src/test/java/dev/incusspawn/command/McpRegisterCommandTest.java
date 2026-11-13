@@ -3,14 +3,15 @@ package dev.incusspawn.command;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * {@code isx mcp register} (#2189): one command registers {@code isx mcp} with Claude Code or
- * Codex, under {@code sg incus-admin} where that helps, and plain where {@code sg} is missing.
+ * {@code isx mcp register} (#2189): one command registers {@code isx mcp} with Claude Code,
+ * Codex or opencode, under {@code sg incus-admin} where that helps, and plain where {@code sg} is missing.
  */
 class McpRegisterCommandTest {
 
@@ -19,6 +20,7 @@ class McpRegisterCommandTest {
     /** The host stubbed: a fixed form, which commands exist, what each run answers. */
     static final class Host extends McpCommand.Registrar {
         final List<List<String>> ran = new ArrayList<>();
+        final List<File> directories = new ArrayList<>();
         int removeExit = 1;
         int addExit = 0;
         boolean installed = true;
@@ -44,8 +46,9 @@ class McpRegisterCommandTest {
         }
 
         @Override
-        Ran run(List<String> command) {
+        Ran run(List<String> command, File directory) {
             ran.add(command);
+            directories.add(directory);
             return command.contains("remove") ? new Ran(removeExit, "") : new Ran(addExit, addExit == 0 ? "" : "boom\n");
         }
     }
@@ -70,6 +73,20 @@ class McpRegisterCommandTest {
                 List.of("codex", "mcp", "remove", "isx"),
                 List.of("codex", "mcp", "add", "isx", "--", "sg", "incus-admin", "-c", "exec " + ISX + " mcp")),
                 host.ran);
+    }
+
+    /**
+     * opencode's add replaces an existing entry, so nothing is removed first (#2214), and it runs
+     * from the home directory, since it rewrites the opencode.json of the directory it runs in.
+     */
+    @Test
+    void opencodeGetsTheSameLaunchThroughItsOwnCli() {
+        var host = new Host(McpLaunch.Form.SG);
+        RecordingOutput.during(() -> assertEquals(0, host.register("opencode", ISX)));
+        assertEquals(List.of(
+                List.of("opencode", "mcp", "add", "isx", "--", "sg", "incus-admin", "-c", "exec " + ISX + " mcp")),
+                host.ran);
+        assertEquals(List.of(dev.incusspawn.Environment.home().toFile()), host.directories);
     }
 
     /** Sanne on #2189: sg is a safeguard, never a requirement. */

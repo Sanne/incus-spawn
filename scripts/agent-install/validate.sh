@@ -20,7 +20,7 @@
 # `bob run` has no flag that approves tool calls.
 #
 # A run passes when the agent reached a first branch whose template installs its own agent's isx
-# tool (or the one the person named, for an agent isx has no tool for), with isx registered in
+# tool (or the one the person named, when given --template-agent), with isx registered in
 # its own MCP client: what docs/dev/AGENT-INSTALL-VALIDATION.md "Agents that passed" records.
 #
 # The person user can authenticate the agent only where its credential reaches it: inside an isx
@@ -33,8 +33,8 @@
 #   scripts/agent-install/validate.sh [options]
 #     --agent NAME            the agent to drive: claude (default), codex, pi, gemini, opencode or copilot
 #     --template-agent TOOL   when the agent asks which agent to put in the template, the person
-#                             names this isx tool (claude, codex, pi, gemini-cli, bob or copilot);
-#                             for opencode, which isx has no tool for, the run then expects this one
+#                             names this isx tool (claude, codex, pi, opencode, gemini-cli, bob or
+#                             copilot), and the run then expects this one in the template
 #     --agent-model MODEL     the model pi, gemini, opencode or copilot runs (default: its own)
 #     --prompt FILE           the prompt to give it (default: the one docs/AGENT-INSTALL.md
 #                             publishes, from its "## The prompt" section)
@@ -98,11 +98,10 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# The agents the harness drives: the isx tool each one should put in its template (none for
-# opencode, which isx has no tool for, so it asks the person), and its name. agent_name also takes
-# an isx tool, for --template-agent.
+# The agents the harness drives: the isx tool each one should put in its template, and its name.
+# agent_name also takes an isx tool, for --template-agent.
 agent_tool() {
-    case "$1" in claude|codex|pi|copilot) echo "$1" ;; gemini) echo gemini-cli ;; *) ;; esac
+    case "$1" in claude|codex|pi|opencode|copilot) echo "$1" ;; gemini) echo gemini-cli ;; *) ;; esac
 }
 agent_name() {
     case "$1" in
@@ -129,7 +128,7 @@ if [ -n "$PRINT_PROMPT" ]; then printf '%s\n' "$PROMPT"; exit 0; fi
 
 [ "$(uname -s)" = Linux ] || die "Linux only"
 case "$AGENT" in claude|codex|pi|gemini|opencode|copilot) ;; *) die "--agent takes claude, codex, pi, gemini, opencode or copilot" ;; esac
-case "$TEMPLATE_AGENT" in ''|claude|codex|pi|gemini-cli|bob|copilot) ;; *) false ;; esac || die "--template-agent takes an isx agent tool: claude, codex, pi, gemini-cli, bob or copilot"
+case "$TEMPLATE_AGENT" in ''|claude|codex|pi|opencode|gemini-cli|bob|copilot) ;; *) false ;; esac || die "--template-agent takes an isx agent tool: claude, codex, pi, opencode, gemini-cli, bob or copilot"
 command -v jq >/dev/null || die "jq is required"
 command -v "$AGENT" >/dev/null || die "$AGENT is not on PATH"
 sudo -n true 2>/dev/null || die "passwordless sudo is required (for the person's part)"
@@ -346,7 +345,7 @@ person_acts() {
         fi
         return
     done
-    # The agent could not tell which agent it is, or isx has no tool for it: the person names one.
+    # The agent could not tell which agent it is: the person names one.
     if [ -z "$ASKED_AGENT" ] && grep -qiE '(which|what) (coding )?agent\b' <<<"$text"; then
         ASKED_AGENT=$turn
         if [ -n "$TEMPLATE_AGENT" ]; then
