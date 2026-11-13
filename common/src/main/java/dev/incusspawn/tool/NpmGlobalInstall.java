@@ -208,8 +208,21 @@ public final class NpmGlobalInstall {
      * resolved yet. {@link #repairAfterUpdate} checks what it dropped without failing.
      */
     public static IncusClient.ExecResult update(Container c) {
-        return npm(c, new Retries(), "what npm update -g resolved", "npm", "update", "-g");
+        return npm(c, new Retries(), "what npm update -g resolved", "sh", "-c", UPDATE_SCRIPT);
     }
+
+    /**
+     * {@code npm update -g}, unlike the build's {@code npm install -g --ignore-scripts}, runs
+     * install scripts, and opencode's runs its binary, which writes directories into {@code HOME}.
+     * So it gets a scratch {@code HOME} and {@code TMPDIR} with root's real npm cache and npmrc, and leaves
+     * nothing in root's home for every branch to inherit (#2221).
+     */
+    public static final String UPDATE_SCRIPT = """
+            cache=$(npm config get cache) || exit 1
+            rcfile=$(npm config get userconfig) || exit 1
+            scratch=$(mktemp -d) || exit 1
+            trap 'rm -rf "$scratch"' EXIT
+            HOME="$scratch" TMPDIR="$scratch" npm_config_cache="$cache" npm_config_userconfig="$rcfile" npm update -g""";
 
     private static IncusClient.ExecResult npmInstall(Container c, String npmPackage, Retries retries) {
         var command = new ArrayList<>(NPM_INSTALL);
