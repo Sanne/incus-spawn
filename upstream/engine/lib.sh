@@ -64,8 +64,15 @@ duration_seconds() {
     esac
 }
 
-# newest <versions...>: the newest by sort -V.
-newest() { printf '%s\n' "$@" | sort -V | tail -1; }
+# newest <versions...>: the newest, by the loaded source's src_order when it defines one (oldest
+# first, from stdin), else by sort -V.
+newest() {
+    if declare -F src_order > /dev/null; then
+        printf '%s\n' "$@" | src_order | tail -1
+    else
+        printf '%s\n' "$@" | sort -V | tail -1
+    fi
+}
 # is_newer <a> <b>: a is strictly newer than b.
 is_newer() { [[ "$1" != "$2" && "$(newest "$1" "$2")" == "$1" ]]; }
 
@@ -79,8 +86,9 @@ load_source() {
     [[ -f "$f" ]] || die "item $1: unknown source type '$type'"
     ITEM="$1"
     # The optional hooks of the type loaded before this one must not carry over: plan asks for
-    # src_extra_issues by name, and the kernel's would file its EOL issue under any later item.
-    unset -f src_extra_issues src_stale_issues src_validate
+    # src_extra_issues by name, and the kernel's would file its EOL issue under any later item;
+    # newest asks for src_order, and the base image's would order the next item's versions.
+    unset -f src_extra_issues src_stale_issues src_validate src_order
     # shellcheck source=/dev/null
     . "$f"
     for fn in src_current src_series src_releases src_released_at src_apply src_fields src_verifier src_first_party src_describe; do

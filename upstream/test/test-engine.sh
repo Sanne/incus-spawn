@@ -68,19 +68,24 @@ serve "$JB_URL" "$WORK/jb.json"
 
 # ---- the images releases -----------------------------------------------------------------------------
 img_sum() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
-mk_release() { # <tag>
+mk_release() { # <tag>: its assets are named for its distribution and release, fedora-45
+    local named; [[ "$1" =~ ^[a-z]+-[0-9]+ ]] && named="${BASH_REMATCH[0]}"
     mkdir -p "$FIX/releases/$1"
     for a in x86_64 aarch64; do
-        printf '%s  %s-%s.tar.xz\n' "$(img_sum "$1-$a")" "${1%-*}" "$a"
-        printf '%s  %s-%s-vm-direct.tar.xz\n' "$(img_sum "$1-$a-vm")" "${1%-*}" "$a"
+        printf '%s  %s-%s.tar.xz\n' "$(img_sum "$1-$a")" "$named" "$a"
+        printf '%s  %s-%s-vm-direct.tar.xz\n' "$(img_sum "$1-$a-vm")" "$named" "$a"
     done > "$FIX/releases/$1/SHA256SUMS.v2"
 }
-mk_release fedora-45-v1; mk_release fedora-45-v2; mk_release fedora-46-v1
+# The built-in is on fedora-45-v1, the one typed tag (#1994); fedora-45-20261111 is the newest of its
+# line, fedora-46 another Fedora, fedora-45-next a channel, which is never followed, and the draft is
+# not published yet.
+mk_release fedora-45-v1; mk_release fedora-45-20261111; mk_release fedora-46-20270101
 jq -n --arg now "$(date -u -d "@$NOW" +%FT%TZ)" '[
-  {tag_name: "fedora-46-v1", draft: false, prerelease: false, published_at: $now},
-  {tag_name: "fedora-45-v2", draft: false, prerelease: false, published_at: $now},
+  {tag_name: "fedora-46-20270101", draft: false, prerelease: false, published_at: $now},
+  {tag_name: "fedora-45-next-20261125", draft: false, prerelease: false, published_at: $now},
+  {tag_name: "fedora-45-20261111", draft: false, prerelease: false, published_at: $now},
   {tag_name: "fedora-45-v1", draft: false, prerelease: false, published_at: "2026-11-04T00:00:00Z"},
-  {tag_name: "fedora-45-v3", draft: true, prerelease: false, published_at: $now}]' > "$FIX/gh-releases.json"
+  {tag_name: "fedora-45-20261120", draft: true, prerelease: false, published_at: $now}]' > "$FIX/gh-releases.json"
 echo '[]' > "$FIX/issues.json"
 
 # ---- fakes -------------------------------------------------------------------------------------------
@@ -215,7 +220,7 @@ action() { awk -F'\t' -v i="$2" '$1 == i { print $2 }' "$1/plan.tsv"; }
 version() { awk -F'\t' -v i="$2" '$1 == i { print $3 }' "$1/plan.tsv"; }
 P="$(plan one)"
 [ "$(action "$P" kernel)" = pr ] && [ "$(version "$P" kernel)" = 7.2.10 ] || fail "kernel: expected a PR for 7.2.10: $(cat "$P/plan.tsv")"
-[ "$(action "$P" base-image)" = pr ] && [ "$(version "$P" base-image)" = fedora-45-v2 ] || fail "base-image: expected a PR for fedora-45-v2: $(cat "$P/plan.tsv")"
+[ "$(action "$P" base-image)" = pr ] && [ "$(version "$P" base-image)" = fedora-45-20261111 ] || fail "base-image: expected a PR for fedora-45-20261111: $(cat "$P/plan.tsv")"
 [ "$(action "$P" idea-backend)" = pr ] && [ "$(version "$P" idea-backend)" = 2026.3 ] || fail "idea-backend: expected a PR for 2026.3: $(cat "$P/plan.tsv")"
 ls "$P/issues/" | grep -q '^kernel-7.3.json$' || fail "no issue for the 7.3 series: $(ls "$P/issues")"
 ls "$P/issues/" | grep -q '^base-image-fedora-46.json$' || fail "no issue for the fedora-46 line: $(ls "$P/issues")"
@@ -249,6 +254,20 @@ jq '{releases: [.releases[] | select(.version != "7.2.10")]}' "$WORK/releases.js
 P="$(plan nodate)"; [ "$(action "$P" kernel)" = wait ] || fail "an undated release did not wait"
 serve https://www.kernel.org/releases.json "$WORK/releases.json"
 echo "plan cooling: ok"
+
+# Release tags in their line's order (#1994): sort -V ranked fedora-45-v1 above fedora-45-20261111,
+# so a built-in on v1 never moved; a channel's release is not listed at all.
+[ "$("$E" releases base-image | tr '\n' ' ')" = "fedora-45-v1 fedora-45-20261111 fedora-46-20270101 " ] \
+    || fail "release tags out of order: $("$E" releases base-image | tr '\n' ' ')"
+ls "$P/issues/" | grep -q 'next' && fail "a channel's release opened an issue: $(ls "$P/issues")"
+# A second release that day is newer than the first, by number.
+mk_release fedora-45-20261111-2; cp "$FIX/gh-releases.json" "$WORK/gh-releases.saved"
+jq --arg now "$(date -u -d "@$NOW" +%FT%TZ)" '[{tag_name: "fedora-45-20261111-2", draft: false, prerelease: false, published_at: $now}] + .' \
+    "$WORK/gh-releases.saved" > "$FIX/gh-releases.json"
+P="$(plan sameday)"
+[ "$(action "$P" base-image)" = pr ] && [ "$(version "$P" base-image)" = fedora-45-20261111-2 ] || fail "base-image: expected a PR for fedora-45-20261111-2: $(cat "$P/plan.tsv")"
+cp "$WORK/gh-releases.saved" "$FIX/gh-releases.json"; rm -rf "$FIX/releases/fedora-45-20261111-2"
+echo "plan base-image lines: ok"
 
 # The next major's signed file, once published, is read too: a new series issue, no PR.
 sign_sums signer 8.0 > "$WORK/sums8.asc"; serve https://cdn.kernel.org/pub/linux/kernel/v8.x/sha256sums.asc "$WORK/sums8.asc"

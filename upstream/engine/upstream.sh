@@ -339,6 +339,8 @@ publish() {
     [[ -n "${REPO:-}" && -n "${APP_EMAIL:-}" ]] || die "publish needs REPO and APP_EMAIL"
     . "$ENGINE_DIR/pr.sh"
     while IFS=$'\t' read -r i action version reason; do
+        # pr.sh compares versions by the item's own order (src_order)
+        load_source "$i"
         case "$action" in
             pr) git fetch -q "$out/$i.bundle" "refs/upstream-prepared/$i:refs/upstream-prepared/$i"
                 [[ "$(git rev-parse "refs/upstream-prepared/$i")" == "$(jq -r .commit "$out/$i.json")" ]] || die "$i: the bundle does not carry the prepared commit"
