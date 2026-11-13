@@ -536,6 +536,18 @@ timed after 20 warmups), and removes the key afterwards. Multiply a count from `
 test by these figures to see what those requests cost; the macOS figures in docs/dev/PERFORMANCE-NOTES.md "CLI
 latency on macOS" come from this script. Nothing is saved: it prints.
 
+## Virtual-thread pollers (`poller-mode.sh`)
+
+Runs `isx ssh-proxy x` under two native builds against `fake-incus-exec.py`, a fake Incus on
+`/run/incus/unix.socket` that answers the exec and its websockets at once, so the whole exec
+relay runs and nothing on the far side waits. It prints each build's latency and every run over
+1 s, which is a wait only a timer ended. docs/dev/PERFORMANCE-NOTES.md "Virtual-thread pollers"
+comes from it. It needs sudo and a host with no `/run/incus`, which it creates and removes.
+
+```bash
+bench/poller-mode.sh /tmp/isx-before /tmp/isx-after 10000
+```
+
 ## Where a Branch Spends Its Time (`trace-branch.sh`)
 
 `cli.sh` says how long `isx branch` takes; `trace-branch.sh` says where the time goes. It

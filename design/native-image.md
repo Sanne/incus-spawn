@@ -453,16 +453,21 @@ Since JDK 22 the JDK wakes such a thread on Linux through pollers that are thems
 A socket's readiness reaches the waiting reader only after the master poller has unparked a sub-poller and that sub-poller has run.
 
 The strict ssh check of `test-ssh-host-keys.sh` failed in CI on that path (#2129).
-Incus had connected all four exec sockets of the ssh connection within 6 ms, and the guest's sshd was listening.
+Incus had connected all four exec sockets of the ssh connection within 6 ms, at 10:30:31.357.
+The guest's sshd began listening at 10:30:31.668, 0.3 s later, when the guest command's wait let `nc` connect.
 `isx ssh-proxy` delivered neither direction for 30 s.
 Then the stdin socket's handshake watchdog closed that socket, on time.
 sshd then saw `nc` close the connection, and ssh got the banner 35 s after it connected, too late to use it.
-The watchdog is itself a virtual thread that sleeps, so carriers were free and the scheduler ran.
+The watchdog is itself a virtual thread that sleeps, so a carrier was free when it fired.
 Its close unparks the blocked reader from the closing thread itself (`Poller.stopPoll`), without a sub-poller.
 So what did not arrive was the poller's readiness wakeup, while a direct close did.
-The trace does not show why the sub-poller path lost it.
+The trace does not show why the sub-poller path did not deliver it in time: the banner did reach ssh 5 s after the close, so it shows a delay, not a loss.
 JDK-8371045 is one known way virtual sub-pollers can starve: with every carrier pinned by class initialization, no sub-poller runs.
 That starvation lasts as long as every carrier stays pinned, and it is not what happened here, since the watchdog ran.
+
+The same delay shows on a quiet host, without CI's load.
+Run against a fake Incus that answers at once, `isx ssh-proxy` in the default mode waited out a timer in 6 of 14,300 runs: 5 s, `OutputDrain`'s ceiling, which ends a drain only while a close frame waits unread, and 2 s, the stdin forwarder's join.
+With platform pollers it did in none of 14,300, at about 0.1 ms more per run (docs/dev/PERFORMANCE-NOTES.md "Virtual-thread pollers").
 
 So both entry points, `IncusSpawn.run` and `ProxyMain.run`, first call `VirtualThreadPollers.usePlatformThreads()`, which sets `jdk.pollerMode=1` (`SYSTEM_THREADS`).
 Its `Read-Poller` and `Write-Poller` platform threads block in `epoll_wait` and unpark the waiting reader themselves, which takes the virtual sub-pollers and the master poller out of the wakeup path.

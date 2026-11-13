@@ -1077,3 +1077,33 @@ In the GraalVM 25.5 builder image (`25i5-ol10`), the proxy fails the `readObject
 A hello world with no metadata fails `-H:AbortOnTypeReachable=java.io.ObjectInputStream` on both 25.4 and 25.5, which is why the gate names a method.
 A stock `quarkus-vertx-http` app on CR1 loses 327,680 bytes and 375 methods when both the JCEKS and the Vert.x paths are cut.
 With the Vert.x substitutions alone its binary keeps the same size and loses one method, because JCEKS keeps the reader in (#529).
+
+## Virtual-thread pollers (issue #2129)
+
+Measured on 2026-11-13 in a Linux VM box (8 vCPUs, AMD Ryzen 9 9950X3D2, kernel 7.3.1, load 0.00 at the start), with nothing else running on the host.
+Both binaries are native CLIs from Oracle GraalVM 25.4 (JDK 25.0.4) from the code of a9be9a8b (built at 4957a309, whose main code differs from it only in comments), `-Os`, unprofiled.
+`isx-ctl` is that commit with `VirtualThreadPollers.usePlatformThreads()` disabled, so the JDK's Linux default (`VTHREAD_POLLERS`); `isx-fix` is the commit as it is (`jdk.pollerMode=1`).
+Each ran `isx ssh-proxy x` against the fake Incus of `bench/poller-mode.sh`, which answers the exec and its websockets at once, under hyperfine with 20 warmups.
+
+| Runs per build | Build | Min | Median | p99 | Mean of runs under 1 s | Runs over 1 s |
+|---|---|---|---|---|---|---|
+| 300 | `isx-ctl` | 4.9 ms | | | | 5025 ms |
+| 300 | `isx-fix` | 5.1 ms | | | | none |
+| 1000 | `isx-ctl` | 5.0 ms | 5.4 ms | 6.8 ms | 5.5 ms | none |
+| 1000 | `isx-fix` | 5.0 ms | 5.6 ms | 7.5 ms | 5.7 ms | none |
+| 3000 | `isx-ctl` | 4.8 ms | 5.4 ms | 6.7 ms | 5.5 ms | 5006, 5025 ms |
+| 3000 | `isx-fix` | 5.1 ms | 5.5 ms | 6.5 ms | 5.6 ms | none |
+| 10000 | `isx-ctl` | 4.8 ms | 5.4 ms | 7.2 ms | 5.5 ms | 2006, 2006, 5026 ms |
+| 10000 | `isx-fix` | 5.0 ms | 5.5 ms | 7.2 ms | 5.6 ms | none |
+
+The 300-run pass kept only hyperfine's summary, so its median and p99 are not recorded; its `isx-fix` maximum was 25.5 ms.
+Its one `isx-ctl` stall is read from the mean: 22.3 ms over 300 runs leaves room for only one run of 5 s.
+Both builds also had runs of 10 to 30 ms, 71 and 68 of the 10,000, so the mode does not change those.
+
+- **Cost:** platform pollers add about 0.1 ms to a run, on a median of 5.4 ms.
+- **Stalls:** the default mode stalled in 6 of 14,300 runs and platform pollers in none of 14,300.
+  Were the mode irrelevant, all six falling in one build would happen with a chance of 1 in 32.
+- **What ended them:** each stall lasted a timer's length.
+  The 5 s ones are `OutputDrain`'s ceiling, which ends a drain only while a reader has not taken a close frame already in its socket.
+  The 2 s ones are the stdin forwarder's `join(2000)` in `IncusApi.execWebSocket`.
+  So in both a virtual thread waiting on a socket was not woken before a timer gave up on it, the same thing CI showed for 30 s (design/native-image.md "Socket wakeups come from platform threads").
