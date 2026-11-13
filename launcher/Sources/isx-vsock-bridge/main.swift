@@ -86,8 +86,7 @@ for one in all {
 let report = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
 report.setEventHandler {
     for one in all {
-        let counts = one.relay.counts
-        say("\(one.path) waiting \(counts.waiting) held \(counts.held) total \(counts.total) refused \(counts.refused)")
+        say("\(one.path) \(one.relay.counts)")
     }
 }
 report.resume()
