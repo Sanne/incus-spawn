@@ -66,7 +66,18 @@ public final class Relay: Sendable {
     private let dial: @Sendable () -> Int32
     private let hangUp: @Sendable (Int32) -> Void
     private let log: @Sendable (String) -> Void
-    private let state = Mutex(Counts())
+    private let stamp: @Sendable () -> Duration
+    private struct State {
+        var counts = Counts()
+        /// The guest's descriptor of every connection being relayed, and the stamp taken when
+        /// the host's was accepted, by the host's descriptor. An entry leaves here before
+        /// either descriptor is closed, so both are open while it is here.
+        var live: [Int32: (guest: Int32, stamp: Duration)] = [:]
+        /// The highest limit `dropAll` was given: a connection stamped before it whose dial
+        /// had not returned then is ended when it does.
+        var dropBefore: Duration?
+    }
+    private let state = Mutex(State())
 
     /// - Parameters:
     ///   - dial: opens a connection to the guest and returns its descriptor, or a negative
@@ -75,15 +86,45 @@ public final class Relay: Sendable {
     ///   - hangUp: closes a descriptor `dial` returned. Called once for each, after the relay
     ///     has let go of it.
     ///   - log: where an accept failure is reported.
+    ///   - stamp: read once for each host connection, when it is accepted and before the guest
+    ///     is dialled. `dropAll(stampedBefore:)` compares it. Called on the connection's thread.
     public init(dial: @escaping @Sendable () -> Int32,
                 hangUp: @escaping @Sendable (Int32) -> Void,
-                log: @escaping @Sendable (String) -> Void = { _ in }) {
+                log: @escaping @Sendable (String) -> Void = { _ in },
+                stamp: @escaping @Sendable () -> Duration = { .zero }) {
         self.dial = dial
         self.hangUp = hangUp
         self.log = log
+        self.stamp = stamp
     }
 
-    public var counts: Counts { state.withLock { $0 } }
+    public var counts: Counts { state.withLock { $0.counts } }
+
+    /// Ends the connections being relayed now, as if both of their sides had closed, and
+    /// returns how many it ended. For a host that slept: a connection may have died on either
+    /// side meanwhile without this relay being told, and one that isx still holds would then
+    /// wait on a guest that no longer knows it. A connection still waiting in `dial` is left alone.
+    ///
+    /// With a limit only the connections stamped before it are ended, so that one accepted
+    /// after the wake, in the time the launcher took to notice it, is kept. Without one, all.
+    /// One stamped before the limit and still waiting in `dial` is not counted here, and is
+    /// ended as soon as its dial returns: the sleep came between its two halves.
+    @discardableResult
+    public func dropAll(stampedBefore limit: Duration? = nil) -> Int {
+        state.withLock { state in
+            if let limit { state.dropBefore = max(state.dropBefore ?? limit, limit) }
+            // Shut down, not closed: each connection's own thread wakes from poll(), sees the
+            // end and closes its two descriptors, once, as for any other end.
+            var dropped = 0
+            for (client, one) in state.live {
+                if let limit, one.stamp >= limit { continue }
+                shutdown(client, Int32(SHUT_RDWR))
+                shutdown(one.guest, Int32(SHUT_RDWR))
+                dropped += 1
+            }
+            return dropped
+        }
+    }
 
     /// Runs `body` on a thread of its own, or returns false when there is none to be had. Never
     /// a Dispatch queue: its pool is bounded, and a connection's thread waits in poll() for as
@@ -174,7 +215,7 @@ public final class Relay: Sendable {
                 reported = 0
                 if !Relay.detach({ self.relay(client) }) {
                     close(client)
-                    state.withLock { $0.refused += 1 }
+                    state.withLock { $0.counts.refused += 1 }
                     log("no thread for a connection, closed it")
                 }
                 continue
@@ -206,22 +247,38 @@ public final class Relay: Sendable {
     // uipc_rcvd() and then sleeps without looking at the socket's state again), so the relay
     // held a connection the guest had closed until the host closed it too.
     private func relay(_ client: Int32) {
-        state.withLock { $0.waiting += 1 }
+        state.withLock { $0.counts.waiting += 1 }
+        // Before the dial: a guest connection asked for before a sleep counts as made before it.
+        let accepted = stamp()
         let guest = dial()
         guard guest >= 0 else {
             close(client)
-            state.withLock { $0.waiting -= 1; $0.refused += 1 }
+            state.withLock { $0.counts.waiting -= 1; $0.counts.refused += 1 }
             return
         }
-        state.withLock { $0.waiting -= 1; $0.held += 1; $0.total += 1 }
+        state.withLock {
+            $0.counts.waiting -= 1
+            $0.counts.held += 1
+            $0.counts.total += 1
+            $0.live[client] = (guest, accepted)
+            // `dropAll` ran while this one was in `dial`: ended as it would have been there, and
+            // closed below as for any other end.
+            if let limit = $0.dropBefore, accepted < limit {
+                shutdown(client, Int32(SHUT_RDWR))
+                shutdown(guest, Int32(SHUT_RDWR))
+            }
+        }
         Relay.noSigPipe(client)
         Relay.noSigPipe(guest)
         Relay.copyBothWays(client, guest)
+        // Before either descriptor is closed: `dropAll` must never shut down a number that
+        // already names another connection.
+        state.withLock { $0.live[client] = nil }
         // The guest is told now, whatever `hangUp` then does with the descriptor.
         shutdown(guest, Int32(SHUT_RDWR))
         close(client)
         hangUp(guest)
-        state.withLock { $0.held -= 1 }
+        state.withLock { $0.counts.held -= 1 }
     }
 
     private static let chunk = 65536
