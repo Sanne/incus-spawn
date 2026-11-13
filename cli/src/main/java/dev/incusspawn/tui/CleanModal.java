@@ -20,7 +20,6 @@ import dev.tamboui.widgets.paragraph.Paragraph;
 import java.util.ArrayList;
 import java.util.List;
 
-import static dev.incusspawn.tui.Tui.STORAGE_WARN_PERCENT;
 import static dev.incusspawn.tui.UsageFormat.gibShort;
 
 /**
@@ -150,8 +149,7 @@ final class CleanModal {
         var usage = cleanScan.usage();
         boolean hasUsage = usage != null && usage.totalBytes() > 0;
         boolean nothingActionable = cleanConfirmActionableCount() == 0;
-        boolean showResizeHint = Platform.isMacOS() && usage != null
-                && usage.percent() >= STORAGE_WARN_PERCENT;
+        boolean showResizeHint = Platform.isMacOS() && usage != null && usage.isLow();
 
         var constraints = new ArrayList<Constraint>();
         constraints.add(Constraint.length(1)); // top spacing

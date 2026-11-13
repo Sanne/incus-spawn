@@ -62,7 +62,7 @@ Doctor offers a resize only for a loop file, a pool whose source is a `.img` (`C
 **The cap and #414**: the 100 GiB `size` came from #414, where creating the pool inside a VM consumed over 32 GB of RAM; the suspect was `mkfs.btrfs` on a large loop device.
 A subvolume pool runs no `mkfs` and allocates no device, so that concern does not apply to it, and the loop path keeps the cap.
 What a subvolume pool loses is the ceiling: instances can fill the host filesystem.
-Incus reports a subvolume pool's usage as its filesystem's, so doctor's existing "nearly full" warning above 90% covers the host disk, and each instance's root `size` (`--disk`, default 100GB) still bounds one runaway instance.
+Incus reports a subvolume pool's usage as its filesystem's, so doctor's existing "nearly full" warning covers the host disk, and each instance's root `size` (`--disk`, default 100GB) still bounds one runaway instance.
 No pool-wide quota is set: a qgroup limit on the pool subvolume would not bound the host's own writes, and it is the full disk that hurts.
 
 **Quotas on the host filesystem**: Incus enables btrfs quotas lazily, the first time it applies a volume size (`btrfs quota enable` on the volume's path), and on a subvolume pool that is the host filesystem: qgroup accounting then covers the host's own subvolumes too, and `BtrfsUsage`'s `quota rescan` walks the whole filesystem.
@@ -74,9 +74,15 @@ Sanne accepted both host-wide changes as the price of one filesystem (2026-10-25
 
 **Disk-space visibility in the TUI**: All instances (and templates — templates are just stopped instances) share this one pool, so the pool's total is the real disk budget.
 On the macOS appliance the `cow` pool is a fixed-size VM disk, so its `space.total` *is* the VM's disk.
-The TUI surfaces this with a full-width **storage gauge** above the panels (green/amber/red by fill percentage) plus a per-row **DISK** column on both panels.
+The TUI surfaces this with a full-width **storage gauge** above the panels (green/amber/red) plus a per-row **DISK** column on both panels.
 The gauge reads whole-pool usage (`getPoolUsageBytes`); the per-row figures come from `state.disk.<dev>.usage` in the recursion=2 listing the TUI already fetches, so no extra API cost.
 Two deliberate honesty choices follow from the CoW model: (1) per-row usage is shown as **absolute used bytes**, never as a percentage of the instance's `root.size` — that limit is a thin-provisioned ceiling (defaults to 100 GB), not an allocation, so a percentage would be meaningless; (2) per-row figures are marked approximate (`~`).
+
+**When a pool counts as low or critical** (#2204): one rule in `IncusClient.PoolUsage` serves the gauge, the TUI's status warning, the clean dialog's resize tip, the build failure diagnostics and `isx doctor`.
+A pool is low (amber) at 75% used with under 50 GiB free, and critical (red, the status warning, the build's "likely cause" and doctor's warning) at 90% used with under 20 GiB free.
+A percentage alone called a 1 TiB pool critical with 100 GiB still free, so users learned to ignore the warning and a failed build pointed at the pool.
+A floor alone would call a mostly empty small pool low, so both must hold, and on a pool under 200 GiB the percentage decides as before.
+20 GiB is about what one larger template build takes; the floors are not configurable, which a config key could change if anyone needs it.
 
 The per-row number is hard because the only figure Incus exposes (`state.disk.<dev>.usage`) is btrfs *exclusive* bytes — blocks unique to that one subvolume — and exclusive **collapses to ~0 for any subvolume that has a CoW descendant**.
 So a template's real weight is invisible: the moment a child template or a branch exists, the parent's own layer stops being exclusive to it.

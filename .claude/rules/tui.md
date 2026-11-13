@@ -147,7 +147,7 @@ Legacy date-only stamps use calendar days ("today", "yesterday").
 
 **Disk-space metrics**: An always-present **header band** (`MainScreen.renderHeader`) sits above the panels.
 A bold accent "brand chip" (` isx ` reverse-video, plus dim version) anchors app identity on the left, and a compact **storage gauge** is right-aligned on the same row when pool usage is available (fed by `IncusClient.getPoolUsageBytes(findUsablePool())`, cached in `poolUsage`, refreshed by each `reloadData()` and each light live refresh -- never per frame).
-Gauge fill colour is green/amber/red at the `STORAGE_WARN_PERCENT`/`STORAGE_CRIT_PERCENT` thresholds; at critical it also raises a one-shot status warning.
+Gauge fill colour is green, amber at `PoolUsage.isLow()` and red at `PoolUsage.isCritical()`, the one rule build diagnostics and doctor share (a percentage and a free-space floor, design/storage.md); at critical it also raises a one-shot status warning.
 The gauge bar grows with the terminal (`HEADER_BAR_MIN`..`HEADER_BAR_MAX`, ~width/5).
 Between the two, a quiet **"N running" badge** (`runningSummary`, split by kind -- e.g. `* 2 containers, 1 VM running`, counted across `allEntries` by `runningCounts`) fills the gap; it is lower priority than the gauge and is shown only when it fits the leftover space, so it never evicts the gauge.
 On narrow terminals the badge drops first, then the gauge (then its bar), so the brand always survives; the gauge is simply omitted on `dir` pools that report no usage.
@@ -216,7 +216,7 @@ An image behind a template's `image_url`/`vm_image_url` alias (`BuildCommand.vmI
 Empty categories are shown as disabled dim lines with a short reason (e.g. "none", "all match a template", "no cache volume").
 Focus navigation skips disabled categories.
 When nothing is reclaimable, the modal shows "Pool is clean." with only an Esc/Close hint.
-On macOS, a dim `isx vm resize` tip appears when pool usage exceeds `STORAGE_WARN_PERCENT`.
+On macOS, a dim `isx vm resize` tip appears when the pool is low (`PoolUsage.isLow()`).
 Space toggles, Enter executes the selected categories via `CleanCommand.cleanPool(incus, builds, images, baseImages, dnf)`, and the `CLEAN_RESULT` modal shows what was freed.
 Both modals are `CleanModal` (`CleanModalTest`): it owns the checkboxes, their keys and the rendering, and hands Enter back, so `Tui` scans the pool to open it and runs the clean with its progress overlay.
 

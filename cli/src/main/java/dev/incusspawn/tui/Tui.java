@@ -341,8 +341,6 @@ public class Tui {
     // (foldBaseWeightIntoRootTemplate) or attributed via its own rfer (applyReferencedTemplateDeltas),
     // or null when it couldn't be attributed. Drives the CoW delete note and the ~ marker.
     String baseTemplateName;
-    // Amber threshold for the storage gauge (percent of pool used).
-    static final int STORAGE_WARN_PERCENT = 75;
     volatile ProxyHealthCheck.ProxyInfo proxyInfo;
     volatile String applianceSkewMessage;
     /**

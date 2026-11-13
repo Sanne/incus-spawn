@@ -319,15 +319,20 @@ class DoctorCommandTest {
 
     // ---- Storage pool usage evaluation ----
 
+    private static final long MIB = 1024L * 1024;
+
+    private static DoctorCommand.Finding storage(long usedMib, long totalMib) {
+        return DoctorCommand.evaluateStorageUsage("default", new IncusClient.PoolUsage(usedMib * MIB, totalMib * MIB));
+    }
+
     @Test
     void storagePoolOkWhenBelowThreshold() {
-        var f = DoctorCommand.evaluateStorageUsage("default", "default pool: 5000MiB used / 50000MiB total (10% full)");
-        assertEquals(DoctorCommand.Status.OK, f.status());
+        assertEquals(DoctorCommand.Status.OK, storage(5000, 50000).status());
     }
 
     @Test
     void storagePoolWarnsWhenAbove90Percent() {
-        var f = DoctorCommand.evaluateStorageUsage("default", "default pool: 46000MiB used / 50000MiB total (92% full)");
+        var f = storage(46000, 50000);
         assertEquals(DoctorCommand.Status.WARN, f.status());
         assertTrue(f.label().contains("nearly full"));
         assertNull(f.remediation(), "overall finding should not have an action — specific findings do");
@@ -335,21 +340,22 @@ class DoctorCommandTest {
     }
 
     @Test
-    void storagePoolOkAtExactly90Percent() {
-        var f = DoctorCommand.evaluateStorageUsage("default", "default pool: 45000MiB used / 50000MiB total (90% full)");
-        assertEquals(DoctorCommand.Status.OK, f.status());
+    void storagePoolWarnsAtExactly90Percent() {
+        // The TUI and build diagnostics already said critical at 90%; doctor now agrees (#2204)
+        assertEquals(DoctorCommand.Status.WARN, storage(45000, 50000).status());
     }
 
     @Test
-    void storagePoolHandlesMalformedUsage() {
-        var f = DoctorCommand.evaluateStorageUsage("default", "(no space info)");
-        assertEquals(DoctorCommand.Status.OK, f.status());
+    void storagePoolOkWhenLargePoolStillHasPlentyFree() {
+        // 1 TiB at 92% leaves about 80 GiB: a percentage alone called that nearly full (#2204)
+        assertEquals(DoctorCommand.Status.OK, storage(964690, 1048576).status());
     }
 
     @Test
-    void storagePoolHandlesEmptyUsage() {
-        var f = DoctorCommand.evaluateStorageUsage("default", "");
+    void storagePoolHandlesNoSpaceInfo() {
+        var f = storage(0, 0);
         assertEquals(DoctorCommand.Status.OK, f.status());
+        assertEquals("(no space info)", f.detail());
     }
 
     // ---- Pool size evaluation ----

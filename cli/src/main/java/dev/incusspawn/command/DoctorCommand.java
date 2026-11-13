@@ -790,9 +790,8 @@ public class DoctorCommand extends BaseCommand {
                 findings.add(Finding.ok("Storage pool " + pool, "(no usage info)"));
                 return findings;
             }
-            var usageString = formatPoolUsage(pool, usage);
-            findings.add(evaluateStorageUsage(pool, usageString));
-            if (usage.percent() > 90) {
+            findings.add(evaluateStorageUsage(pool, usage));
+            if (usage.isCritical()) {
                 findings.addAll(analyzePoolUsage(incus, pool, usage, info.config()));
             }
             return findings;
@@ -1106,27 +1105,14 @@ public class DoctorCommand extends BaseCommand {
         return result;
     }
 
-    static String formatPoolUsage(String poolName, IncusClient.PoolUsage usage) {
-        return "%s pool: %dMiB used / %dMiB total (%d%% full)".formatted(
-                poolName,
-                usage.usedBytes() / (1024 * 1024),
-                usage.totalBytes() / (1024 * 1024),
-                usage.percent());
-    }
-
-    private static final Pattern STORAGE_PCT = Pattern.compile("(\\d+)% full");
-
-    static Finding evaluateStorageUsage(String poolName, String usageString) {
-        if (usageString == null || usageString.isEmpty()) {
-            return Finding.ok("Storage pool " + poolName, "(no usage info)");
+    static Finding evaluateStorageUsage(String poolName, IncusClient.PoolUsage usage) {
+        if (usage.totalBytes() == 0) {
+            return Finding.ok("Storage pool " + poolName, "(no space info)");
         }
-        var matcher = STORAGE_PCT.matcher(usageString);
-        if (matcher.find()) {
-            int pct = Integer.parseInt(matcher.group(1));
-            if (pct > 90) {
-                return Finding.warn("Storage pool " + poolName + " nearly full",
-                        usageString + " — run 'isx clean pool' to reclaim space", null);
-            }
+        var usageString = usage.format(poolName);
+        if (usage.isCritical()) {
+            return Finding.warn("Storage pool " + poolName + " nearly full",
+                    usageString + " — run 'isx clean pool' to reclaim space", null);
         }
         return Finding.ok("Storage pool " + poolName, usageString);
     }
@@ -1173,7 +1159,7 @@ public class DoctorCommand extends BaseCommand {
         long maxSize = maxResizeBytes(source, total);
 
         if (total >= MIN_POOL_SIZE) {
-            if (usage.percent() > 90) {
+            if (usage.isCritical()) {
                 long newSize = total * 2;
                 if (maxSize > 0 && newSize > maxSize) newSize = maxSize;
                 if (newSize <= total) {

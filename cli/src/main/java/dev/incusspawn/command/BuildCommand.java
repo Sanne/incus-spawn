@@ -1103,13 +1103,14 @@ public class BuildCommand extends BaseCommand {
                 var poolUsage = incus.getPoolUsageBytes(pool);
                 if (poolUsage != null) {
                     appendDiag(diag, "  " + poolUsage.format(pool));
-                    if (poolUsage.percent() >= IncusClient.PoolUsage.CRIT_PERCENT) {
+                    if (poolUsage.isCritical()) {
                         var hint = Platform.isMacOS()
                                 ? " or 'isx vm resize' to grow the appliance disk"
                                 : "";
                         // The cause, not one more measurement: a warning, as the report's other lines are notes,
                         // aside so it ends no paragraph between them
-                        var cause = "Likely cause: storage pool is " + poolUsage.percent() + "% full"
+                        var cause = "Likely cause: storage pool is " + poolUsage.percent() + "% full, "
+                                + String.format(java.util.Locale.ROOT, "%.1f GiB free", poolUsage.freeBytes() / (1024.0 * 1024 * 1024))
                                 + " — run 'isx clean pool' to reclaim space" + hint;
                         BuildOutput.warnAside(cause);
                         diag.append("  ").append(cause).append('\n');
