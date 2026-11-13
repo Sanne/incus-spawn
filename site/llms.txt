@@ -49,7 +49,7 @@ If a person asked you to install isx and set it up, follow [Install with your ag
 - [Branching](https://isx.run/docs#branching): creating workstations from templates, network modes, and fetching an agent's commits
 - [Installation](https://isx.run/docs#installation): platforms, updating and uninstalling
 - [Templates](https://isx.run/docs/templates): defining, building and rebuilding templates
-- [Agents](https://isx.run/docs/agents): Claude Code, Codex CLI, Pi, Gemini CLI, Bob Shell and GitHub Copilot CLI, agent skills and environment notes
+- [Agents](https://isx.run/docs/agents): Claude Code, Codex CLI, Pi, opencode, Gemini CLI, Bob Shell and GitHub Copilot CLI, agent skills and environment notes
 - [Tools](https://isx.run/docs/tools): built-in tools, and adding your own with YAML definitions
 - [Configuration](https://isx.run/docs/configuration): files, credential accounts (several per service, chosen per instance), exposed host ports for a service on your host such as Ollama, and caching
 - [Delegating from an agent on your host (MCP)](https://isx.run/docs/mcp): `isx mcp`, approved templates, Claude Code, Codex and Pi workers, delegated tasks, a coordinator in an instance
