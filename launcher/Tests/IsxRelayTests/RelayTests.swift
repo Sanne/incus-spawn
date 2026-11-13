@@ -249,6 +249,125 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(openDescriptors(), before, "the relay kept descriptors open")
     }
 
+    // What the launcher does when the Mac wakes: a connection may have died on either side
+    // while it slept, so every one is ended on both sides, and the relay goes on serving.
+    func testDroppingEndsEveryConnectionOnBothSides() throws {
+        let rig = try Rig()
+        defer { rig.close() }
+        let before = openDescriptors()
+        let count = 16
+
+        let clients = try (0..<count).map { _ in try rig.newClient() }
+        for client in clients { XCTAssertTrue(writeAll(client, Array("ping".utf8))) }
+        let guests = try (0..<count).map { try rig.guestEnd($0) }
+        for guest in guests { XCTAssertEqual(readSome(guest), Array("ping".utf8)) }
+        XCTAssertEqual(rig.relay.counts.held, count)
+
+        XCTAssertEqual(rig.relay.dropAll(), count)
+
+        for index in 0..<count {
+            XCTAssertTrue(seesTheEnd(clients[index], within: 1), "host end \(index) is still open")
+            XCTAssertTrue(seesTheEnd(guests[index], within: 1), "guest end \(index) is still open")
+        }
+        XCTAssertTrue(eventually { rig.relay.counts.held == 0 }, "held \(rig.relay.counts.held) after dropping")
+        for index in 0..<count {
+            close(clients[index])
+            close(guests[index])
+        }
+        let guest = rig.guest.state.withLock { $0 }
+        XCTAssertEqual(guest.hangUps, count, "every guest connection is hung up")
+        XCTAssertEqual(guest.strayHangUps, 0, "and only once")
+        XCTAssertEqual(openDescriptors(), before, "the relay kept descriptors open")
+        XCTAssertEqual(rig.relay.dropAll(), 0, "nothing is left to drop")
+
+        // The relay still serves.
+        let client = try rig.newClient()
+        defer { close(client) }
+        XCTAssertTrue(writeAll(client, Array("again".utf8)))
+        let again = try rig.guestEnd(count)
+        defer { close(again) }
+        XCTAssertEqual(readSome(again), Array("again".utf8))
+    }
+
+    // The launcher sees a wake up to two and a half seconds late. What isx connected in that
+    // time was accepted after the sleep, and is not cut: only the connections stamped before
+    // the limit are ended.
+    func testDroppingWithALimitKeepsWhatWasAcceptedAfterIt() throws {
+        let rig = try Rig()
+        defer { rig.close() }
+        let before = openDescriptors()
+        let early = 4, late = 3
+
+        // Four accepted before an hour's sleep, three after it.
+        var clients: [Int32] = [], guests: [Int32] = []
+        for index in 0..<(early + late) {
+            if index == early { rig.guest.state.withLock { $0.stamp = .seconds(3600) } }
+            let client = try rig.newClient()
+            clients.append(client)
+            XCTAssertTrue(writeAll(client, Array("ping".utf8)))
+            // One at a time, so each is stamped before the next stamp is set.
+            let guest = try rig.guestEnd(index)
+            guests.append(guest)
+            XCTAssertEqual(readSome(guest), Array("ping".utf8))
+        }
+        XCTAssertEqual(rig.relay.counts.held, early + late)
+
+        XCTAssertEqual(rig.relay.dropAll(stampedBefore: .seconds(1800)), early)
+
+        for index in 0..<early {
+            XCTAssertTrue(seesTheEnd(clients[index], within: 1), "host end \(index), accepted before the sleep, is still open")
+            XCTAssertTrue(seesTheEnd(guests[index], within: 1), "guest end \(index), accepted before the sleep, is still open")
+        }
+        XCTAssertTrue(eventually { rig.relay.counts.held == late }, "held \(rig.relay.counts.held) after dropping")
+        // The later ones still carry bytes, both ways.
+        for index in early..<(early + late) {
+            XCTAssertTrue(writeAll(clients[index], Array("more".utf8)))
+            XCTAssertEqual(readSome(guests[index]), Array("more".utf8), "connection \(index), accepted after the sleep, was cut")
+            XCTAssertTrue(writeAll(guests[index], Array("back".utf8)))
+            XCTAssertEqual(readSome(clients[index]), Array("back".utf8))
+        }
+        XCTAssertEqual(rig.relay.dropAll(stampedBefore: .seconds(1800)), 0, "nothing older is left")
+
+        for index in 0..<(early + late) {
+            close(clients[index])
+            close(guests[index])
+        }
+        XCTAssertTrue(eventually { rig.relay.counts.held == 0 })
+        XCTAssertTrue(eventually { rig.guest.state.withLock { $0.hangUps } == early + late }, "every guest connection is hung up")
+        XCTAssertEqual(openDescriptors(), before, "the relay kept descriptors open")
+    }
+
+    // The sleep came while the guest was being dialled: the connection was accepted before it,
+    // so it is ended when the dial returns, though the drop itself could not see it yet.
+    func testAConnectionDialledAcrossTheDropIsEndedWhenItsDialReturns() throws {
+        let rig = try Rig()
+        defer { rig.close() }
+        let answering = DispatchSemaphore(value: 0)
+        rig.guest.state.withLock { $0.answering = answering }
+
+        let early = try rig.newClient()
+        defer { close(early) }
+        XCTAssertTrue(eventually { rig.relay.counts.waiting == 1 })
+        XCTAssertEqual(rig.relay.dropAll(stampedBefore: .seconds(1800)), 0, "nothing is relayed yet")
+        answering.signal()
+        let earlyGuest = try rig.guestEnd(0)
+        defer { close(earlyGuest) }
+        XCTAssertTrue(seesTheEnd(early, within: 1), "the host end, accepted before the sleep, is still open")
+        XCTAssertTrue(seesTheEnd(earlyGuest, within: 1), "its guest end is still open")
+        XCTAssertTrue(eventually { rig.relay.counts == Relay.Counts(held: 0, total: 1) }, "\(rig.relay.counts)")
+
+        // One accepted after the wake is relayed as ever.
+        rig.guest.state.withLock { $0.stamp = .seconds(3600) }
+        let late = try rig.newClient()
+        defer { close(late) }
+        answering.signal()
+        let lateGuest = try rig.guestEnd(1)
+        defer { close(lateGuest) }
+        XCTAssertTrue(writeAll(late, Array("ping".utf8)))
+        XCTAssertEqual(readSome(lateGuest), Array("ping".utf8))
+        XCTAssertEqual(rig.relay.counts.held, 1)
+    }
+
     func testAClientIsClosedWhenTheGuestDoesNotAnswer() throws {
         let rig = try Rig()
         defer { rig.close() }
@@ -356,6 +475,8 @@ final class Guest: Sendable {
         /// When set, a dial waits for it before it answers.
         var answering: DispatchSemaphore?
         var log: [String] = []
+        /// What the relay's `stamp` reads for the next connections it accepts.
+        var stamp: Duration = .zero
     }
     let state = Mutex(State())
 
@@ -405,7 +526,8 @@ final class Rig: Sendable {
         relay = Relay(
             dial: { guest.dial() },
             hangUp: { guest.hangUp($0) },
-            log: { line in guest.state.withLock { $0.log.append(line) } })
+            log: { line in guest.state.withLock { $0.log.append(line) } },
+            stamp: { guest.state.withLock { $0.stamp } })
         listener = try Relay.listen(at: path)
         let relay = self.relay, listener = self.listener, served = self.served
         Thread.detachNewThread {
