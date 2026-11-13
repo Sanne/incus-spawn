@@ -93,4 +93,5 @@ Never call `String.matches`, `replaceAll`, `replaceFirst` or a regex `split` wit
 `IncusSpawn.run` and `ProxyMain.run` first call `VirtualThreadPollers.usePlatformThreads()`, which sets `jdk.pollerMode=1` (`SYSTEM_THREADS`) unless a mode was set already.
 The JDK's `sun.nio.ch.Poller` reads it once, when the first virtual thread waits on a socket, a pipe or a selector, so a new entry point calls it before anything else.
 In mode 1 platform `Read-Poller` and `Write-Poller` threads unpark a waiting reader, without the virtual sub-pollers of the Linux default (design/native-image.md "Socket wakeups come from platform threads").
+In a native image a sub-poller started during `Poller`'s static initializer can lose its wakeup for good: the class-initialization wait parks through `LockSupport` and spends the permit the master poller's unpark set.
 `VirtualThreadPollersTest` checks the mode in a JVM of its own.

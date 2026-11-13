@@ -461,16 +461,41 @@ sshd then saw `nc` close the connection, and ssh got the banner 35 s after it co
 The watchdog is itself a virtual thread that sleeps, so a carrier was free when it fired.
 Its close unparks the blocked reader from the closing thread itself (`Poller.stopPoll`), without a sub-poller.
 So what did not arrive was the poller's readiness wakeup, while a direct close did.
-The trace does not show why the sub-poller path did not deliver it in time: the banner did reach ssh 5 s after the close, so it shows a delay, not a loss.
-JDK-8371045 is one known way virtual sub-pollers can starve: with every carrier pinned by class initialization, no sub-poller runs.
-That starvation lasts as long as every carrier stays pinned, and it is not what happened here, since the watchdog ran.
 
-The same delay shows on a quiet host, without CI's load.
-Run against a fake Incus that answers at once, `isx ssh-proxy` in the default mode waited out a timer in 6 of 14,300 runs: 5 s, `OutputDrain`'s ceiling, which ends a drain only while a close frame waits unread, and 2 s, the stdin forwarder's join.
-With platform pollers it did in none of 14,300, at about 0.1 ms more per run (docs/dev/PERFORMANCE-NOTES.md "Virtual-thread pollers").
+The cause is in the native image, not in the JDK's pollers: a sub-poller loses its wakeup while `Poller` is still being initialized.
+A socket that sub-poller serves is then read only once something closes it, so this is a lost wakeup, never a late one.
+
+1. The first virtual thread to wait on a socket runs `Poller`'s static initializer, which starts the sub-pollers before it returns.
+2. A sub-poller starts on another carrier, registers with the master poller, and then meets a class-initialization check for `Poller`.
+   It parks until the initializer is done.
+3. In a native image that wait is a `ReentrantLock` condition (`ClassInitializationInfo.initCondition`).
+   It parks through `LockSupport`, so it uses the virtual thread's one park permit.
+   HotSpot waits inside the VM and leaves the permit alone.
+4. The initializer ends and unparks the sub-poller.
+   The first thread then registers its socket, and the master poller unparks the sub-poller too.
+   When the sub-poller has not run in between, the permit is already set and the second unpark adds nothing.
+5. The sub-poller resumes once, spends the permit on the class-initialization wait, and parks in `Poller.poll`.
+   The master poller has taken it off its list and its one-shot epoll registration is spent, so nothing unparks it again.
+
+The window is the time between the initializer's unpark and the sub-poller running, which is how long a carrier waits for a CPU.
+So it needs two carriers and too few free cores, which is a CI runner: `isx ssh-proxy` in the default mode stalled in none of 15,000 runs on 32 CPUs, in 12 of 15,000 held to two, and in 121 of 10,000 held to one.
+With platform pollers it stalled in none of 30,000 held to one CPU (docs/dev/PERFORMANCE-NOTES.md "Virtual-thread pollers").
+A HotSpot JVM told it has one processor did not stall in 3,000 runs.
+
+The steps were read from a native build with tracing patched into `Poller` and `VirtualThread`.
+Its trace shows the initializing thread's unpark, the master poller's unpark that finds the permit set, and the one resume.
+At the stall both the reader and its sub-poller are parked in `Poller.poll`, the sub-poller without a permit and off the master poller's list, and the scheduler has nothing queued.
+Which check the sub-poller waits at is inferred, not seen: most likely the call of the lambda in `subPollerLoop`.
+What delivered the banner in CI 5 s after the close is not established.
+JDK-8371045 is a different failure: there every carrier is pinned by class initialization and no sub-poller runs.
+
+A run against a fake Incus that answers at once ends such a stall at a timer: 5 s, `OutputDrain`'s ceiling, or 2 s, the stdin forwarder's join.
 
 So both entry points, `IncusSpawn.run` and `ProxyMain.run`, first call `VirtualThreadPollers.usePlatformThreads()`, which sets `jdk.pollerMode=1` (`SYSTEM_THREADS`).
 Its `Read-Poller` and `Write-Poller` platform threads block in `epoll_wait` and unpark the waiting reader themselves, which takes the virtual sub-pollers and the master poller out of the wakeup path.
+No virtual thread polls, so none holds a registration while it waits for `Poller`'s initializer.
+A virtual thread that meets `Poller` mid-initialization waits before it registers its socket, where a merged unpark costs nothing.
+Platform pollers add about 0.1 ms to a run.
 A woken reader still needs a free carrier to run, as it does in either mode.
 The JDK reads the property once, when the first virtual thread waits on a socket, a pipe or a selector, so the call comes before any command or proxy work runs.
 In the native image `sun.nio.ch.Poller` is initialized at run time, so the property set there decides it.
@@ -481,6 +506,8 @@ A mode already set, such as `-Djdk.pollerMode=2` on a JVM, is kept, to compare t
 What it gives up: the I/O wakeups no longer go through the virtual thread scheduler, which the JDK's default mode does for fairness under heavy socket load.
 Neither binary runs that load on virtual threads: the proxy's traffic is on Netty's event loops, and the CLI's relays move one connection's bytes.
 If a later JDK drops mode 1, its `Poller` fails to initialize and every socket wait on a virtual thread fails, which this test catches on the JDK bump.
+The native image's class-initialization wait and its monitors still park on the virtual thread's permit.
+Any JDK code that registers for a wakeup, then waits on one of them, then parks can lose that wakeup the same way; only the pollers' case is closed here.
 
 ## jjq rather than Jackson
 YAML definitions, `config.yaml` and every JSON isx reads or writes go through jjq (#1250, from #1249): `Jjq` holds one mapper with the generated `@JqMapped` mappings registered explicitly (no reflection, no `ServiceLoader`), YAML in `YamlOptions.STRICT` (duplicate keys fail), JSON through `JqValues.parseStrict`.
