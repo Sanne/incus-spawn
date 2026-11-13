@@ -73,6 +73,15 @@ public class OpencodeSetup implements ToolSetup {
         // No declared default, as with Pi: one would be resolved before the build, and every
         // provider would get a Claude model.
         params.put("model", model);
+
+        var small = new ToolDef.ParameterDef();
+        small.setType("string");
+        small.setDescription("Model ID for opencode's small tasks such as session titles; omitted, opencode's own choice, "
+                + "which setting model does not change");
+        small.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
+        small.setOptional(true);
+        small.setReconfigurable(true);
+        params.put("small-model", small);
         return params;
     }
 
@@ -228,16 +237,18 @@ public class OpencodeSetup implements ToolSetup {
         if (model == null && DEFAULT_PROVIDER.equals(provider)) model = DEFAULT_MODEL;
         // Unpinned, opencode picks an older Claude model than the one isx sets for Pi and Claude Code
         var modelLine = model == null ? "" : "  \"model\": \"" + provider + "/" + model + "\",\n";
+        var small = resolvedParams.get("small-model");
+        var smallLine = small == null ? "" : "  \"small_model\": \"" + provider + "/" + small + "\",\n";
         var providerLine = credentialFor(resolvedParams) != Credential.ANTHROPIC ? ""
                 : "  \"provider\": {\"anthropic\": {\"options\": {\"apiKey\": \"{env:" + ANTHROPIC_KEY.env() + "}\"}}},\n";
         return """
                 {
                   "$schema": "https://opencode.ai/config.json",
-                %s%s  "autoupdate": false,
+                %s%s%s  "autoupdate": false,
                   "share": "disabled",
                   "instructions": ["%s"],
                   "permission": {"read": "allow", "external_directory": "allow", "doom_loop": "allow"}
                 }
-                """.formatted(modelLine, providerLine, CONTEXT_PATH);
+                """.formatted(modelLine, smallLine, providerLine, CONTEXT_PATH);
     }
 }

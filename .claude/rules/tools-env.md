@@ -33,7 +33,7 @@ paths:
   `OpencodeSetup` is not a `PlatformSplitCli`: after its `--ignore-scripts` install it runs `opencode-ai`'s `postinstall.mjs` (`LINK_SCRIPT`), which replaces the stub launcher with the platform binary and fails when it cannot.
   The script runs the binary, so it gets a scratch `HOME` and `TMPDIR`: a root-owned `/tmp/opencode` would lock agentuser's opencode out.
 
-`OpencodeSetup` (`opencode`) writes `~/.config/opencode/opencode.json` in opencode 1.x's forms: `permission`, `autoupdate: false`, `share: disabled`, `instructions: ["/AGENTS.md"]` and a pinned `model` (`anthropic/claude-sonnet-5-5` by default).
+`OpencodeSetup` (`opencode`) writes `~/.config/opencode/opencode.json` in opencode 1.x's forms: `permission`, `autoupdate: false`, `share: disabled`, `instructions: ["/AGENTS.md"]` and a pinned `model` (`anthropic/claude-sonnet-5-5` by default), and a `small_model` only from the separate `small-model` parameter, never from `model` (#2220).
 Its `permission` allows only what opencode asks about by default, so the plan agent keeps its edit deny.
 Like Pi it has a `provider` parameter (`anthropic`, `openai`, `google`, or one isx does not manage) and no credential of its own.
 For `anthropic` it reads its own placeholder, `OPENCODE_ANTHROPIC_API_KEY` (claude namespace), through `provider.anthropic.options.apiKey: "{env:...}"`, never `ANTHROPIC_API_KEY`, which would change Claude Code's auth.
