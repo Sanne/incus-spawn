@@ -36,3 +36,13 @@ That test fails on 0.5.0.
 It also checks that a wrapped question of CJK, ZWJ-sequence and flag emoji renders every character and that Backspace deletes a whole emoji.
 That one passes on 0.5.0 as well: none of the 0.6.0 Unicode fixes changes what the AI Help input shows, so it guards the upgrade rather than proving it.
 Our own wrapping now measures terminal cells with `CharWidth` too (#1412): `HelpChatModalTest` checks that a wide answer and link label keep every character, and `SegmentWrapTest` that no break splits an emoji.
+
+## 0.7.0
+
+The runner's config sets `KeyboardProtocol.LEGACY`: 0.7.0 pushes kitty flags 5 by default, which would sit over the flags 0 that `LegacyKeyboardBackend` pushes.
+`TuiRunner` clears the screen before its first frame, so `Tui.openRunner` is gone.
+Ctrl+L stays, since tamboui clears again only on a resize.
+`KeyboardProtocol` stays too.
+Tamboui now reads Esc and Ctrl+C in the CSI u and modifyOtherKeys encodings, but it still delivers key releases as events and ignores a shifted alternate key, so Alt+Shift+1 would read as Alt+Shift+1 and not Alt+`!`.
+Probed by running `KeyboardProtocolTest` against tamboui's parser alone: five of ten tests failed.
+Still open from 0.6.0: Paragraph hanging indentation for `ModalRenderer.wrapText`, and `RenderClock` for the spinner.

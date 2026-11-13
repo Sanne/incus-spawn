@@ -399,26 +399,8 @@ public class Tui {
     /** The runner's settings, less its backend. */
     static TuiConfig.Builder runnerConfig() {
         return TuiConfig.builder()
+                .keyboardProtocol(dev.tamboui.terminal.KeyboardProtocol.LEGACY)
                 .tickRate(Duration.ofMillis(100));
-    }
-
-    /**
-     * Opens the runner on a cleared screen. Blank cells are never sent, so without the clear a
-     * terminal that does not give a fresh alternate screen shows its old output through them (#1681).
-     */
-    static TuiRunner openRunner(TuiConfig config) throws Exception {
-        var runner = TuiRunner.create(config);
-        try {
-            runner.terminal().clear();
-        } catch (RuntimeException e) {
-            try {
-                runner.close();
-            } catch (RuntimeException closing) {
-                e.addSuppressed(closing);
-            }
-            throw e;
-        }
-        return runner;
     }
 
     /** Draws the TUI until the user quits; overridable so a test can stand in for the terminal. */
@@ -507,7 +489,7 @@ public class Tui {
 
             ProxyLog.setSuppressStderr(true);
             try (var ignored = BuildOutput.bind(drawing);
-                 var runner = openRunner(runnerConfig().backend(new LegacyKeyboardBackend()).build())) {
+                 var runner = TuiRunner.create(runnerConfig().backend(new LegacyKeyboardBackend()).build())) {
                 runner.run(this::handleEvent, this::render);
             } catch (Exception e) {
                 // The runner is closed and the drawing binding with it: this reaches the terminal

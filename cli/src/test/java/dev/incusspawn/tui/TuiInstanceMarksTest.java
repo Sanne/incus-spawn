@@ -45,7 +45,7 @@ class TuiInstanceMarksTest {
 
     @BeforeEach
     void runner() throws Exception {
-        runner = TuiRunner.create(TuiConfig.builder().backend(new HeadlessBackend(80, 24))
+        runner = TuiRunner.create(TuiConfig.builder().backend(new HeadlessBackend(80, 24)).keyboardProtocol(dev.tamboui.terminal.KeyboardProtocol.LEGACY)
                 .shutdownHook(false).noTick().build());
     }
 
