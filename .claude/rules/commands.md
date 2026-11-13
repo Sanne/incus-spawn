@@ -233,6 +233,7 @@ The continuation sees `ISX_INIT_CONTINUED`, skips the banner, and `runLinuxSteps
 Every other command, `isx mcp` and the TUI included, continues through `GroupContinuation` (#2167), which `IncusSpawn.run` asks before aesh sees the command.
 It reads only the socket's permission (`IncusClient.socketDenied`, a `stat` and an `access(2)` per socket path) unless that refuses this process, and marks its child `ISX_GROUP_CONTINUED`.
 `init` is excluded, since its own continuation starts after Incus Installation; `GroupContinuationTest` pins both.
+Surefire sets `ISX_GROUP_CONTINUED` for every test JVM, since an in-process `IncusSpawn.run` there would otherwise re-run the surefire fork under `sg` (#2201).
 The permission-denied message names `sg incus-admin -c 'isx ...'` beside `newgrp` and a new login, for a session that can do neither.
 
 **When to bump `INIT_VERSION`**: increment it when adding a new infrastructure step to init that existing installations need (new dependency, firewall rule, systemd service, config field).
