@@ -126,6 +126,7 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   The leak's source is vfkit's relay, which waits for both directions to end and cannot tell the guest that the host closed (design/macos-and-vms.md "Where the vsock leak comes from", reproduced on Linux).
   The replacement is the relay in `launcher/` (Swift package, module `IsxRelay`, #2031): it ends a connection as soon as either side ends and closes both sides, and its accept loop goes on after a failed accept.
   It gives up half-close, which isx never sends, so do not add one to a tunnel client.
+  A script's `nc` is such a client on a Mac, whose `nc` always shuts its write side down after its input: the appliance's scripts call the agent with `appliance/agent-call.pl` instead (`test-agent-call.sh`).
   `isx-vm` (`launcher/Sources/isx-vm`) is the prototype that puts that relay in front of Virtualization.framework; `appliance/launcher-on-mac.sh` measures it against vfkit on a Mac (design/macos-and-vms.md "The launcher's machine").
   Until the launcher ships (#2031 stage 3) a Mac still runs vfkit, and every compensation above stays.
   Until then, too, `appliance/test-tunnel.sh` reports the leak under vfkit as `KNOWN` in its two forwarder-children checks and does not fail them (`TUNNEL_KNOWN_LEAK=vfkit`, set by `test-boot.sh` when the program it boots is vfkit); remove that exception with vfkit (`ci.md`).
