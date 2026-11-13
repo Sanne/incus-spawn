@@ -18,7 +18,7 @@ class McpConfigCommandTest {
     @Test
     void itPrintsTheStdioEntryAsJsonOnTheResultsStream() {
         var exit = new int[1];
-        var recorded = RecordingOutput.during(() -> exit[0] = McpCommand.Config.print("/home/u/.local/bin/isx"));
+        var recorded = RecordingOutput.during(() -> exit[0] = McpCommand.Config.print("/home/u/.local/bin/isx", McpLaunch.Form.PLAIN));
         assertEquals(0, exit[0]);
         var json = String.join("\n", recorded.resultLines());
         assertEquals("""
@@ -36,15 +36,30 @@ class McpConfigCommandTest {
 
     @Test
     void aPathThatNeedsEscapingStaysValidJson() {
-        var recorded = RecordingOutput.during(() -> McpCommand.Config.print("/opt/my \"isx\"\\bin/isx"));
+        var recorded = RecordingOutput.during(() -> McpCommand.Config.print("/opt/my \"isx\"\\bin/isx", McpLaunch.Form.PLAIN));
         var parsed = JqValues.parseStrict(String.join("\n", recorded.resultLines()));
         assertEquals("/opt/my \"isx\"\\bin/isx", parsed.getField("mcpServers").getField("isx").pathText("command", null), parsed::toJsonString);
+    }
+
+    /** On Linux with sg and the group, the entry is the one isx mcp register writes (#2189). */
+    @Test
+    void theSgFormIsTheEntryAsWellSoNoClientNeedsItSpelledOut() {
+        var recorded = RecordingOutput.during(() -> McpCommand.Config.print("/home/u/.local/bin/isx", McpLaunch.Form.SG));
+        assertEquals("""
+                {
+                  "mcpServers" : {
+                    "isx" : {
+                      "command" : "sg",
+                      "args" : [ "incus-admin", "-c", "exec /home/u/.local/bin/isx mcp" ]
+                    }
+                  }
+                }""", String.join("\n", recorded.resultLines()));
     }
 
     @Test
     void withoutAnInstalledIsxItFailsAndPrintsNoEntry() {
         var exit = new int[1];
-        var recorded = RecordingOutput.during(() -> exit[0] = McpCommand.Config.print(null));
+        var recorded = RecordingOutput.during(() -> exit[0] = McpCommand.Config.print(null, McpLaunch.Form.PLAIN));
         assertEquals(1, exit[0]);
         assertEquals(List.of(), recorded.resultLines());
         assertEquals(1, recorded.events(RecordingOutput.Kind.ERROR).size());
