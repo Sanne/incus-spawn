@@ -932,7 +932,10 @@ Rejected, for now:
   It also exposes the host kernel's io_uring code to the process that handles guest traffic.
   Where io_uring is disabled, Quarkus falls back to NIO, not to epoll.
   The current direction is epoll for now, with io_uring not pursued (#475, 2026-11-13).
-- **kqueue on macOS**: not measured yet, so not shipped.
+- **kqueue on macOS**: measured on Apple Silicon at 0.6 to 1.3% more throughput on the cached Maven path, consistent across runs, and 0.1 to 0.3% on `saturate` (#2215, 2026-11-13; docs/dev/PERFORMANCE-NOTES.md "kqueue on macOS (issue #2215)").
+  In a native image it needs its JNI library listed in the image's resources and JNI metadata of its own.
+  Without the metadata, or with metadata a Netty upgrade made stale, startup exits instead of falling back to NIO.
+  About 1% does not pay for that risk, so the proxy stays on NIO there.
 - **`required` instead of `if-available`**: a host that cannot load the library would then lose its proxy, not just the speedup.
 
 ## Host routes
