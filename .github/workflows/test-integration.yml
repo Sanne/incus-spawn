@@ -588,7 +588,9 @@ jobs:
       - name: Test the remote proxy data path (DNAT and masquerade)
         if: ${{ !cancelled() && steps.disk.outcome == 'success' }}
         run: |
+          chmod +x "$RUNNER_TEMP/bridge/isx-vsock-bridge"
           sudo env ACCEL="$ACCEL" BOOT_DEADLINE="$BOOT_DEADLINE" CONSOLE_LOG="$PWD/vm-console-remote.log" \
+            VSOCK_BRIDGE="$RUNNER_TEMP/bridge/isx-vsock-bridge" \
             appliance/test-proxy-remote.sh appliance/build
 
       - name: Upload console log
@@ -606,11 +608,12 @@ jobs:
   # (scripts/macos-role-build.sh, never released) against the appliance booted as isx boots it on
   # macOS, with stand-ins for vfkit, its NAT, the DHCP leases and the Keychain. A template build
   # that runs gh, a pinned branch, refused proofs, --mcp-client and the exposed-host-ports relay's
-  # caller rule, through the macOS code paths (appliance/test-macos-role.sh). Its own job, off the
-  # critical path: it starts once the uber-jars are built and ends before the slower integration
-  # jobs.
+  # caller rule, through the macOS code paths (appliance/test-macos-role.sh). The vsock ports are
+  # bridged by the launcher's relay (#2031), so isx's own requests cross the relay it is to ship.
+  # Its own job, off the critical path: it starts once the uber-jars and the bridge are built and
+  # ends before the slower integration jobs.
   macos-role:
-    needs: [uber-jar-smoke, build_appliance]
+    needs: [uber-jar-smoke, build_appliance, launcher-linux]
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
@@ -645,6 +648,12 @@ jobs:
           name: appliance-x86_64
           path: appliance/build/
 
+      - name: Download the vsock bridge
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-vsock-bridge-x86_64
+          path: ${{ runner.temp }}/bridge
+
       - name: Install QEMU and the stand-ins' tools
         run: |
           sudo .github/scripts/apt-install.sh qemu-system-x86 socat dnsmasq-base \
@@ -678,7 +687,9 @@ jobs:
 
       - name: isx and isx-proxy in their macOS roles
         run: |
+          chmod +x "$RUNNER_TEMP/bridge/isx-vsock-bridge"
           sudo env RUN_AS="$USER" KEEP_LOGS="$PWD/macos-role-logs" PATH="$PATH" \
+            VSOCK_BRIDGE="$RUNNER_TEMP/bridge/isx-vsock-bridge" \
             appliance/test-macos-role.sh appliance/build \
             "$RUNNER_TEMP/macos-role/isx-macos-role-test.jar" "$RUNNER_TEMP/macos-role/isx-proxy-macos-role-test.jar"
 

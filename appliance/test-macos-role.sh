@@ -10,8 +10,9 @@ set -uo pipefail
 #
 # Everything else is as on a Mac, with stand-ins for what only macOS has:
 #  - vfkit: QEMU boots the appliance with isx's kernel command line (isx.proxy=remote) and the MAC
-#    isx gives the VM. Its Incus and agent vsock ports are bridged by socat onto the sockets isx
-#    looks for, and vm.pid names QEMU, which VmManager.isRunning() accepts.
+#    isx gives the VM. Its Incus and agent vsock ports are bridged onto the sockets isx looks
+#    for, by the launcher's relay when VSOCK_BRIDGE names it (as CI does), else by socat, and
+#    vm.pid names QEMU, which VmManager.isRunning() accepts.
 #  - vfkit's NAT: a tap device holds the host's address, dnsmasq leases the VM an address and
 #    serves it DNS, and the host masquerades the VM's traffic to the internet, which the builds need.
 #    So every container reaches the proxy from the VM's address, as on a Mac.
@@ -44,6 +45,8 @@ set -uo pipefail
 #
 #   build-dir          holds vmlinuz and disk.img, booted with snapshot=on (left unchanged).
 #   BOOT_DEADLINE      seconds to wait for ISX READY (default 120).
+#   VSOCK_BRIDGE       path of isx-vsock-bridge (launcher/, #2031), to bridge the vsock ports with
+#                      the relay isx is to ship in place of vfkit's. Default: socat.
 #   KEEP_LOGS          directory to copy the console, proxy and build logs into.
 #   HOLD               when set, waits before cleaning up until the file it names is removed,
 #                      so the instances, the VM and the proxy can be looked at.
@@ -137,6 +140,8 @@ nat_rules() {
 keep_logs() {
     [ -n "${KEEP_LOGS:-}" ] || return 0
     mkdir -p "$KEEP_LOGS"
+    # The relay writes what it holds to bridge.log when asked.
+    if [ -n "${VSOCK_BRIDGE:-}" ]; then pkill -USR1 -u "$RUN_AS" -f "^$VSOCK_BRIDGE " 2>/dev/null && sleep 0.5; fi
     cp "$WORK"/*.log "$STATE"/proxy.log "$KEEP_LOGS"/ 2>/dev/null
     chmod -R a+r "$KEEP_LOGS" 2>/dev/null
 }
@@ -310,11 +315,18 @@ require '[ -n "$VM_IP" ]' "the VM leased an address on the host network (${VM_IP
 printf '{\n\tname=isx\n\tip_address=%s\n\thw_address=1,%s\n\tlease=0x7fffffff\n}\n' \
     "$VM_IP" "$(sed 's/\(^\|:\)0\([0-9a-f]\)/\1\2/g' <<< "$VM_MAC")" > "$LEASES"
 cp "$WORK/qemu.pid" "$STATE/vm.pid" && chown "$RUN_AS" "$STATE/vm.pid"
-for lane in incus:8443 agent:1025; do
-    as_user socat UNIX-LISTEN:"$STATE/vm.${lane%%:*}.sock",fork,backlog=128 VSOCK-CONNECT:"$CID":"${lane#*:}" \
-        > /dev/null 2>&1 &
+if [ -n "${VSOCK_BRIDGE:-}" ]; then
+    # The relay isx is to ship (#2031), so isx's own traffic crosses it here before it does on a Mac.
+    as_user "$VSOCK_BRIDGE" "$CID" "$STATE/vm.incus.sock"=8443 "$STATE/vm.agent.sock"=1025 \
+        > "$WORK/bridge.log" 2>&1 &
     PIDS+=($!)
-done
+else
+    for lane in incus:8443 agent:1025; do
+        as_user socat UNIX-LISTEN:"$STATE/vm.${lane%%:*}.sock",fork,backlog=128 VSOCK-CONNECT:"$CID":"${lane#*:}" \
+            > /dev/null 2>&1 &
+        PIDS+=($!)
+    done
+fi
 api_up() {
     local deadline=$(( $(date +%s) + 60 ))
     while [ "$(date +%s)" -lt "$deadline" ]; do

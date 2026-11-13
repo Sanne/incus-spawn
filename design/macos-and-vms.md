@@ -350,6 +350,7 @@ The regression test is `testAHostCloseReachesTheGuest`: the guest's end must see
 With the relay changed to vfkit's logic that test fails, and so do the guest-close test and the burst test, which finds 128 connections still held.
 `testAnAnswerArrivesFromAGuestThatClosesWhileTheHostStillSends` runs 400 rounds, which is what showed the macOS fault above in `launcher-macos`.
 Over a real vsock, `integration-tests` runs the unmodified `appliance/test-tunnel.sh` through the bridge, then requires that the bridge holds no connection and none is waiting.
+The `macos-role` job bridges with it too, so isx's own requests cross the relay: `isx init`, two template builds, branches and an MCP session.
 Linux differs from macOS in one place the tests allow for: Linux reserves a descriptor for `accept()` before it blocks, so at the limit an accept already waiting still takes one connection.
 
 What CI cannot show is the framework's half: that a close on its descriptor reaches the guest, and how the relay behaves under bursts, held connections and sleep on a Mac.

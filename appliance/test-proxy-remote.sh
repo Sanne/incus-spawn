@@ -26,6 +26,8 @@ set -uo pipefail
 #   BOOT_DEADLINE      seconds to wait for ISX READY (default 120; CI raises it under TCG).
 #   ACCEL              QEMU acceleration arguments (default: KVM when /dev/kvm is usable).
 #   CONSOLE_LOG        where to keep the VM's console (default: a temporary file).
+#   VSOCK_BRIDGE       path of isx-vsock-bridge (launcher/, #2031), to bridge the Incus vsock port
+#                      with the relay isx is to ship in place of vfkit's. Default: socat.
 #
 # Prints one PASS/FAIL line per check and exits non-zero if any check failed.
 
@@ -160,7 +162,11 @@ VM_IP=$(awk '{print $3}' "$WORK/leases" 2>/dev/null | head -1)
 require '[ -n "$VM_IP" ]' "the VM leased an address on the host network (${VM_IP:-none})"
 
 # The Incus API through the vsock forwarder, as isx reaches it on macOS.
-socat UNIX-LISTEN:"$WORK/incus.sock",fork,backlog=128 VSOCK-CONNECT:"$CID":8443 2>/dev/null &
+if [ -n "${VSOCK_BRIDGE:-}" ]; then
+    "$VSOCK_BRIDGE" "$CID" "$WORK/incus.sock"=8443 > /dev/null 2>&1 &
+else
+    socat UNIX-LISTEN:"$WORK/incus.sock",fork,backlog=128 VSOCK-CONNECT:"$CID":8443 2>/dev/null &
+fi
 PIDS+=($!)
 export INCUS_SOCKET="$WORK/incus.sock" INCUS_CONF="$WORK/incus-client"
 # Every call is bounded, so a request the tunnel loses fails its check instead of the job. And

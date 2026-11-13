@@ -16,7 +16,7 @@ paths:
   - "scripts/distro-vm*.sh"
   - "appliance/test-macos-role.sh"
   # The macOS launcher's Swift package: launcher-linux builds its relay into the bridge that
-  # integration-tests runs the tunnel checks through (#2031).
+  # integration-tests and macos-role reach the appliance through (#2031).
   - "launcher/**"
   # Verifies its downloads against the SHA256SUMS release.yml publishes (#2080).
   - "get-isx.sh"
@@ -58,7 +58,7 @@ Key jobs:
   Each boots its arch's appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with the launcher's relay (`isx-vsock-bridge` from `launcher-linux`, standing in for the macOS launcher) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below.
   A second boot runs `appliance/test-proxy-remote.sh`: the macOS proxy data path (#1585)
 - **`launcher-linux (x86_64)`, `launcher-linux (aarch64)`**: a matrix on `ubuntu-24.04` and `ubuntu-24.04-arm`, in the `swift:6.1-noble` container (#2031).
-  Each runs `swift test` on the launcher's package (`launcher/`), whose tests drive the relay over socket pairs, then builds `isx-vsock-bridge` with the Swift runtime linked in and uploads it for its arch's `integration-tests` leg.
+  Each runs `swift test` on the launcher's package (`launcher/`), whose tests drive the relay over socket pairs, then builds `isx-vsock-bridge` with the Swift runtime linked in and uploads it for its arch's `integration-tests` leg and, on x86_64, the `macos-role` job.
   The bridge is the relay in front of `AF_VSOCK`: it needs only the C and C++ runtime libraries a runner already has.
   The container is pinned by the digest of its multi-arch index, and the upstream watch does not track it, so a newer Swift is a bump by hand.
 - **`launcher-macos`** (`macos-15`): `swift test` on the same package with the runner's Xcode toolchain, so the relay's Darwin half (its threads, `SO_NOSIGPIPE`, how a closed listener ends `accept`) is compiled and tested on every PR.
@@ -183,6 +183,7 @@ Until one exists, the manual pre-release run of `appliance/test-boot.sh` and `ap
 The topology is `Unix socket → [tunnel] → AF_VSOCK → in-guest socat forwarder → incusd`, and only `[tunnel]` differs between a Mac and CI.
 `integration-tests` puts the launcher's own relay there: `isx-vsock-bridge 3 <socket>=<port> ...` (`launcher/Sources/isx-vsock-bridge`) listens on the paths isx looks for (`vm.incus.sock`, `vm.agent.sock`) and dials the guest over `AF_VSOCK` where the macOS launcher asks Virtualization.framework for a connection (#2031).
 So the code that decides when a connection ends is the code a Mac runs, and a relay that held a closed connection open, as vfkit's does, would fail the two forwarder checks here.
+The remote proxy boot and the `macos-role` job bridge with the same binary (`VSOCK_BRIDGE`, which both scripts take; without it they use `socat`, for a run by hand), so the `incus` client's and isx's own requests cross the relay too.
 After the tunnel checks the job sends the bridge `SIGUSR1` and requires `waiting 0 held 0` for every socket: the relay itself must hold no connection the checks closed.
 `appliance/test-tunnel.sh` (shared with `test-boot.sh`'s vfkit path) then checks: the Incus API through the forwarder; every `isx-agent` verb and its argument validation; that 16 and 32 concurrent connections are all accepted and every forwarder child exits afterwards (the baseline `isx doctor`'s leak count assumes); that requests are served past connections that sent nothing or 7 bytes, which incusd then closes near its 3s initial-read deadline (#1313); that the `socat -T 180` backstop reaps a silent connection no earlier than the floor; and no-reboot `forwarder-restart`.
 The backstop is timed against a test-only silent endpoint, since incusd no longer holds a silent connection: `isx.test_silent_vsock=8444` on the kernel cmdline makes `incus-spawn-vm-init` put the production forwarder in front of a guest socket that never answers, and the job bridges it like the other two.
@@ -204,7 +205,7 @@ It does **not** run `isx-proxy` or `isx`; the `macos-role` job does.
 
 **What the macOS-role job covers** (#1800).
 Released binaries take their platform role from the OS they run on, and nothing at run time changes it, so the job runs a test-only build: the uber-jars with `Platform.class` replaced by one pinned to macOS (`scripts/macos-role-build.sh`).
-`appliance/test-macos-role.sh` boots the appliance with `VmManager.kernelCmdline()`'s command line and the VM's MAC (`RemoteProxyTestCmdlineTest` fails when they part), on a tap network with DHCP, DNS and NAT, and bridges its vsock ports onto isx's sockets.
+`appliance/test-macos-role.sh` boots the appliance with `VmManager.kernelCmdline()`'s command line and the VM's MAC (`RemoteProxyTestCmdlineTest` fails when they part), on a tap network with DHCP, DNS and NAT, and bridges its vsock ports onto isx's sockets with the launcher's relay (#2031).
 Stand-ins replace what only macOS has: QEMU named in `vm.pid`, the lease in `/var/db/dhcpd_leases`, a `/usr/bin/security` whose admin domain trusts one CA, and `echo-server.py` as GitHub's API, trusted only through it.
 It runs `isx init`, builds `tpl-minimal` and a template that runs `gh` on its own account, branches it plain, pinned and `--mcp-client`, and checks who was served what, that no known proof was refused, and that a forged proof and the host's own request get no credential.
 It lists a port in `exposed-host-ports:` and checks the relay's macOS caller rule (#2135): a branch reaches it at `host.isx.internal`, the host and a peer in a network namespace are refused, and an unlisted port and a `--proxy-only` branch reach nothing.

@@ -162,7 +162,7 @@ Both binaries take their platform role from the OS they run on, and the role dec
 A runtime switch that selected macOS's role on Linux would be a switch that turns that check off, so released binaries have none, and CI runs a test-only build instead.
 `scripts/macos-role-build.sh` copies the `-Prelease` uber-jars and replaces their `Platform.class` with one compiled from `Platform.java` with its one `OS_NAME` line pinned to macOS, marked in the class and the manifest.
 `appliance/test-macos-role.sh` boots the appliance as isx boots it on macOS and runs those jars against it, with stand-ins for what only macOS has.
-QEMU stands in for vfkit: `vm.pid` names it and socat bridges its vsock ports, and a tap device with DHCP, DNS and NAT stands in for vfkit's network.
+QEMU stands in for vfkit: `vm.pid` names it and the launcher's relay bridges its vsock ports (`isx-vsock-bridge`, #2031; socat in a run by hand without it), and a tap device with DHCP, DNS and NAT stands in for vfkit's network.
 The VM's lease is written to `/var/db/dhcpd_leases` for `VmNetwork`, and a `/usr/bin/security` answers the Keychain's admin trust settings with the one CA the GitHub stand-in's certificate chains to.
 It checks what #1582 broke and the Linux jobs cannot reach: a template build that runs `gh` is served the template's account, a pinned branch its pin, no known instance's proof is refused, an `--mcp-client` branch reaches `isx mcp`, and a forged proof or the host's own request gets no credential.
 Breaking `proofMayIdentify`'s macOS branch fails its template build with #1582's error, and the job also found that every `--mcp-client` branch was refused its first call (`CallerCheck`).
