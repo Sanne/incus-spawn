@@ -2134,7 +2134,7 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * The built-in tools that are coding agents, by name: Claude Code, Codex, Pi, Gemini CLI, Bob Shell, Copilot CLI.
+     * The built-in tools that are coding agents, by name: Claude Code, Codex, Pi, opencode, Gemini CLI, Bob Shell, Copilot CLI.
      * Read per call, never held in a static field: that would initialize the run-time-initialized
      * {@code RuntimeConstants} while the native image is built and bake its host paths in.
      */

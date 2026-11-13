@@ -97,6 +97,7 @@ The policy applies to direct launches as well as the action, excludes plan mode,
 Each build writes the resolved template environment instructions to `~/.gemini/extensions/isx/GEMINI.md` when Gemini is installed, the context file of an `isx` extension, so the user's `~/.gemini/GEMINI.md` stays theirs (#1784).
 With `pi` they go to `/AGENTS.md`, which Pi reads from every working directory, so the user's `~/.pi/agent/AGENTS.md` stays theirs.
 They are stored once in `/etc/isx/agent-instructions.md`; Claude's `/etc/claude-code/CLAUDE.md` (only with the `claude` tool) and Pi's `/AGENTS.md` are hardlinks to it, a location in the home is a copy (`ToolSetup.environmentContextPath`, `AgentInstructions`).
+`opencode` names the same `/AGENTS.md` in the `instructions` of the `~/.config/opencode/opencode.json` it writes, and reads Claude's proof from its own `OPENCODE_ANTHROPIC_API_KEY`, so Claude Code's auth is left alone (`OpencodeSetup`, #2211).
 Codex gets them rendered as `additional_developer_instructions` in `/etc/codex/requirements.toml` (`ToolSetup.renderEnvironmentContext`), never `~/.codex/AGENTS.md`.
 Gemini API keys stay in host-side `gemini` accounts; the guest's `GEMINI_API_KEY` carries that namespace's proof, verified before the proxy injects `x-goog-api-key` at `generativelanguage.googleapis.com`.
 Google OAuth is outside this integration; see `.claude/rules/tools-env.md`.

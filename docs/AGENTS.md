@@ -172,6 +172,55 @@ tools:
       model: gpt-4.1
 ```
 
+## opencode
+
+[opencode](https://opencode.ai) is a provider-agnostic CLI coding agent.
+Like Pi, its default provider is `anthropic`, so it uses your Claude account: an API key, Claude Pro/Max OAuth or Vertex AI.
+Anthropic bills a Claude Pro or Max subscription used from opencode as extra usage, since opencode is not Claude Code.
+Add it to any template with `tools: [opencode]`:
+
+```yaml
+name: tpl-opencode-dev
+parent: tpl-minimal
+tools:
+  - opencode
+default-action: opencode
+```
+
+The default action opens opencode in the directory of your most recent session, and continues that session.
+The credential stays on the host, and the proxy adds it to opencode's requests as they leave the instance.
+opencode reads a proof from `OPENCODE_ANTHROPIC_API_KEY`, which its settings name, so Claude Code's own sign-in is left alone.
+
+### What the build sets up
+
+isx writes `~/.config/opencode/opencode.json`, which pins the model and turns off update checks and session sharing.
+It also allows what opencode would otherwise ask about: reading `.env` files, directories outside the project, and repeating a tool call.
+opencode's plan agent still cannot edit files.
+The settings load the [environment primer](#agent-environment-context) from `/AGENTS.md`, the file Pi reads.
+
+Skills isx installs in `~/.agents/skills` load in opencode as they do in Claude Code.
+Your own `~/.config/opencode/AGENTS.md` and project `AGENTS.md` files load as usual.
+Each build writes `opencode.json` again, so keep your own settings in a project `opencode.json`.
+opencode shows no isx footer: it has no place for one.
+
+### Parameters
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `provider` | `anthropic` | The API opencode talks to; also accepts `openai` and `google` |
+| `model` | `claude-sonnet-5-5` for `anthropic`, otherwise opencode's own | The model opencode uses |
+
+The `openai` provider uses your OpenAI key, as [Codex CLI](#codex-cli) does.
+The `google` provider is the Gemini API, and uses your Gemini key, as [Gemini CLI](#gemini-cli) does.
+A provider isx does not manage needs no credential from isx: opencode signs in to it itself.
+
+```yaml
+tools:
+  - opencode:
+      provider: openai
+      model: gpt-4.1
+```
+
 ## Gemini CLI
 
 Google's [Gemini CLI](https://geminicli.com/docs/get-started/installation/) signs in with a [Gemini API key](https://aistudio.google.com/apikey).
@@ -374,7 +423,7 @@ The primer says that the instance is disposable, `sudo` needs no password, the p
 It also lists the tools and repositories the template provides.
 
 The build stores it once, in `/etc/isx/agent-instructions.md`.
-With Claude Code it appears at `/etc/claude-code/CLAUDE.md`, and with Pi at `/AGENTS.md`, both links to that one file.
+With Claude Code it appears at `/etc/claude-code/CLAUDE.md`, and with Pi or opencode at `/AGENTS.md`, both links to that one file.
 With Gemini CLI, the `isx` extension's `~/.gemini/extensions/isx/GEMINI.md` gets a copy you own.
 
 Editing one of the links changes the stored file, so both agents read the edit, and the next build replaces every copy of the primer.

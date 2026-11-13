@@ -114,8 +114,8 @@ Claude Code signs in with the Claude credential you set up in `isx init`; `isx a
 Claude Code never sees the credential: the proxy adds the credential to each request after the request leaves the instance.
 If you did not install the services `isx init` offers, start them before building: `isx proxy start` on Linux, `isx vm start && isx proxy start` on macOS.
 
-For another agent, replace `claude` with `codex`, `pi`, `gemini-cli`, `bob` or `copilot`; see [Agents](#agents).
-Pi uses your Claude credential too, unless its `provider` names another API ([Pi](docs/AGENTS.md#pi-coding-agent)).
+For another agent, replace `claude` with `codex`, `pi`, `opencode`, `gemini-cli`, `bob` or `copilot`; see [Agents](#agents).
+Pi and opencode use your Claude credential too, unless their `provider` names another API ([Pi](docs/AGENTS.md#pi-coding-agent), [opencode](docs/AGENTS.md#opencode)).
 To give the agent a project, add `repos:` ([Declarative Repos](docs/TEMPLATES.md#declarative-repos)).
 Its commits come back to your host with `git fetch` ([Git Remotes](#git-remotes)).
 
@@ -137,11 +137,11 @@ What the proxy can sign in as:
 
 | Credential | Who uses it in the instance | What you give `isx init` |
 |------------|-----------------------------|--------------------------|
-| Anthropic API key | Claude Code (`claude`), Pi (`pi`) | the key |
-| Claude Pro or Max | Claude Code (`claude`), Pi (`pi`) | the token from `claude setup-token`; the proxy adds the OAuth bearer token |
-| Vertex AI | Claude Code (`claude`), Pi (`pi`) | your project and region; the proxy translates each request and signs it with the host's GCP credentials, which never enter the instance |
-| OpenAI API key | Codex CLI (`codex`), Pi (`pi`) | the key |
-| Gemini API key | Gemini CLI (`gemini-cli`), Pi (`pi`) | the key |
+| Anthropic API key | Claude Code (`claude`), Pi (`pi`), opencode (`opencode`) | the key |
+| Claude Pro or Max | Claude Code (`claude`), Pi (`pi`), opencode (`opencode`) | the token from `claude setup-token`; the proxy adds the OAuth bearer token |
+| Vertex AI | Claude Code (`claude`), Pi (`pi`), opencode (`opencode`) | your project and region; the proxy translates each request and signs it with the host's GCP credentials, which never enter the instance |
+| OpenAI API key | Codex CLI (`codex`), Pi (`pi`), opencode (`opencode`) | the key |
+| Gemini API key | Gemini CLI (`gemini-cli`), Pi (`pi`), opencode (`opencode`) | the key |
 | IBM API key | Bob Shell (`bob`) | the key |
 | GitHub token | `gh`, `git`, GitHub Copilot CLI (`copilot`) | the token |
 | Atlassian API token | the `atlassian-mcp` tool, for Jira and Confluence | your account email and the token |
@@ -312,13 +312,14 @@ isx build --out-of-sync              # rebuilds what changed since it was built
 ## Agents
 
 An agent is a tool in a template's `tools:` list, set up for unattended work.
-It signs in through the proxy with an account you configured in `isx init`, whose menu lists each credential under the tool that owns it, so Pi and Copilot have no entry of their own:
+It signs in through the proxy with an account you configured in `isx init`, whose menu lists each credential under the tool that owns it, so Pi, opencode and Copilot have no entry of their own:
 
 | Agent | Tool | Signs in with |
 |-------|------|---------------|
 | Claude Code | `claude` | an Anthropic API key, Claude Pro/Max, or Vertex AI |
 | Codex CLI | `codex` | an OpenAI API key |
 | Pi | `pi` | Claude's credentials, the OpenAI key or the Gemini key |
+| opencode | `opencode` | Claude's credentials, the OpenAI key or the Gemini key |
 | Gemini CLI | `gemini-cli` | a Gemini API key |
 | Bob Shell | `bob` | an IBM API key |
 | GitHub Copilot CLI | `copilot` | the GitHub token `gh` uses |

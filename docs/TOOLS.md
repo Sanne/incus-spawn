@@ -13,6 +13,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `claude` | Claude Code: AI coding assistant |
 | `gh` | GitHub: PAT for git operations |
 | `pi` | Pi: AI coding assistant |
+| `opencode` | opencode: AI coding assistant |
 | `gemini-cli` | Gemini CLI: Google coding assistant (proxied Gemini API key) |
 | `bob` | Bob Shell: IBM AI coding assistant |
 | `codex` | Codex CLI: OpenAI coding assistant |
@@ -626,7 +627,7 @@ From the CLI, `isx run <instance> --action <tool:action-id>` invokes one.
 Running `isx run <instance>` with no `--action` flag executes the template's default action.
 
 Actions can be declared in YAML tool definitions or programmatically by Java/CDI tools.
-The built-in `claude`, `pi`, `gemini-cli`, `bob` and `codex` tools each contribute a shell action that launches the agent when a template's `tools` list includes them.
+The built-in `claude`, `pi`, `opencode`, `gemini-cli`, `bob` and `codex` tools each contribute a shell action that launches the agent when a template's `tools` list includes them.
 
 #### Action entry fields
 
