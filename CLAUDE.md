@@ -367,7 +367,8 @@ Both native builds pass `-H:AbortOnMethodReachable=java.io.ObjectInputStream.rea
 
 **Virtual threads are woken by platform pollers** (#2129).
 `IncusSpawn.run` and `ProxyMain.run` first call `VirtualThreadPollers.usePlatformThreads()`, which sets `jdk.pollerMode=1` before any virtual thread waits on a socket.
-The JDK's Linux default delivers a socket's readiness through virtual sub-pollers, and in CI that wakeup did not reach `isx ssh-proxy` for 30 s, while a watchdog's direct close did.
+The JDK's Linux default delivers a socket's readiness through virtual sub-pollers, and in a native image one can lose its wakeup for good while `sun.nio.ch.Poller` is still being initialized.
+GraalVM's class-initialization wait spends the virtual thread's park permit, so the poller's unpark is lost and that sub-poller's sockets stay unread until closed: 30 s in CI for `isx ssh-proxy`, likelier the fewer free cores.
 Mode 1's platform `Read-Poller` and `Write-Poller` take the sub-pollers out of the wakeup path.
 A new entry point calls it first too (design/native-image.md "Socket wakeups come from platform threads").
 

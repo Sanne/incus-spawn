@@ -1107,3 +1107,25 @@ Both builds also had runs of 10 to 30 ms, 71 and 68 of the 10,000, so the mode d
   The 5 s ones are `OutputDrain`'s ceiling, which ends a drain only while a reader has not taken a close frame already in its socket.
   The 2 s ones are the stdin forwarder's `join(2000)` in `IncusApi.execWebSocket`.
   So in both a virtual thread waiting on a socket was not woken before a timer gave up on it, the same thing CI showed for 30 s (design/native-image.md "Socket wakeups come from platform threads").
+
+### Stalls by CPU count
+
+Measured on 2026-11-13 in a Linux box with 32 CPUs (AMD Ryzen 9 9950X3D2, kernel 7.3.3), native CLIs from Oracle GraalVM 25.0.5, unprofiled.
+The build is 8d489502 with one addition, an environment variable that picks the poller mode, so one binary ran both modes.
+Each run was `isx ssh-proxy x` against `bench/fake-incus-exec.py`, one after another, held to its CPUs with `taskset`; the fake Incus was not held.
+A stall is a run over 1 s; every one lasted 2.0 s, the stdin forwarder's join.
+
+| Poller mode | CPUs allowed | Runs | Stalls |
+|---|---|---|---|
+| default (`VTHREAD_POLLERS`) | 32 | 15,000 | 0 |
+| default | 2 | 15,000 | 12 |
+| default | 1 | 5,000 | 79 |
+| default, a second pass | 1 | 5,000 | 42 |
+| platform (`jdk.pollerMode=1`), by the variable | 1 | 15,000 | 0 |
+| platform, 8d489502 unchanged | 1 | 15,000 | 0 |
+
+- **Fewer free cores, more stalls:** the lost wakeup needs a sub-poller to wait for a CPU between two unparks, so the rate rises from none to about 1 in 80 as the cores go.
+  Held to one CPU the native image still counted two processors, so it kept two carriers, which the stall needs.
+- **JVM:** the JVM build with `-XX:ActiveProcessorCount=1 -Djdk.pollerMode=2` did not stall in 3,000 runs, six at a time.
+- **At the stall:** the stdin forwarder is parked in `Poller.poll` reading its handshake reply, and its sub-poller is parked there too, with no permit and off the master poller's list.
+  A build with tracing patched into `sun.nio.ch.Poller` and `java.lang.VirtualThread` (`-J--patch-module=java.base=<classes>` to the image builder) showed the order: the initializing thread's unpark, the master poller's unpark finding the permit set, one resume, then the park that never ends.
