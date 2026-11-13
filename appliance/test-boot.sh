@@ -16,6 +16,12 @@ set -euo pipefail
 # tunnel checks as vfkit: it reads the arguments this script gives vfkit
 # (launcher-on-mac.sh, #2031). HYPERVISOR_LOG=<file> keeps what that program
 # itself printed, which is otherwise discarded.
+#
+# WHILE_UP=<program> runs "<program> <incus-socket> <agent-socket> <silent-socket>"
+# on macOS once the guest is ready and before the tunnel checks, with the
+# hypervisor's pid in HYPERVISOR_PID. It is how a machine is measured between
+# its boot and its checks (measure-tunnel.sh). The program's exit status does
+# not change this script's result: the checks that follow say what it left.
 
 BUILD_DIR="${1:-$(dirname "$0")/build}"
 TIMEOUT="${2:-300}"
@@ -116,6 +122,12 @@ boot_vfkit() {
         sleep 0.1
         elapsed=$((elapsed + 1))
     done
+    if [ -n "${WHILE_UP:-}" ]; then
+        echo "  running $(basename "$WHILE_UP") while the guest is up"
+        # The status first: the $(basename) below would replace it.
+        HYPERVISOR_PID=$pid "$WHILE_UP" "$vsock_sock" "$agent_sock" "$silent_sock" \
+            || { local while_up_rc=$?; echo "  $(basename "$WHILE_UP") exited $while_up_rc"; }
+    fi
     # Probe the forwarded sockets regardless of ISX READY (the daemon is up well
     # before readiness; the probes poll on their own). Results go to VSOCK_RESULT,
     # NOT the serial LOGFILE: vfkit streams the boot log into LOGFILE concurrently,
