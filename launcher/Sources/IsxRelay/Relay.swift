@@ -90,8 +90,9 @@ public final class Relay: Sendable {
     ///   - dial: opens a connection to the guest and returns its descriptor, or a negative
     ///     number when the guest does not answer. It may block. The descriptor is a connected
     ///     stream socket, blocking or not: the relay never waits inside a read or a write of it.
-    ///   - hangUp: closes a descriptor `dial` returned. Called once for each, after the relay
-    ///     has let go of it.
+    ///   - hangUp: closes a descriptor `dial` returned, at once or later: isx-vm hands the
+    ///     close to its main queue, so `held` may fall a moment before the descriptor is free.
+    ///     Called once for each, after the relay has shut it down and let go of it.
     ///   - log: where an accept failure is reported.
     ///   - stamp: read once for each host connection, when it is accepted and before the guest
     ///     is dialled. `dropAll(stampedBefore:)` compares it. Called on the connection's thread.

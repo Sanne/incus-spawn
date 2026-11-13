@@ -432,6 +432,7 @@ The framework's objects are used on the main queue alone, the queue the machine 
 A relay's thread reaches the guest through `dial`, which asks the main queue and waits for it; nothing on the main queue waits for a relay.
 A connection that ends is closed there too: `hangUp` hands the close to the main queue and returns before it, since the relay has already shut the descriptor down.
 Apple's page for `VZVirtioSocketConnection.close()` names no queue, so the launcher keeps to its rule rather than lean on that silence.
+What it gives up: a guest descriptor stays open for a moment after the relay has counted its connection as ended, until the main queue reaches the close.
 
 ### The measurement and the rule
 
