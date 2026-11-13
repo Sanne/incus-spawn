@@ -1480,12 +1480,12 @@ public class InitCommand extends BaseCommand {
             var isx = isxPath();
             if (isx == null) {
                 BuildOutput.step("Could not find the installed isx binary; register it yourself:");
-                BuildOutput.stepNote(String.join(" ", claudeMcpAddCommand("<path to isx>")));
+                BuildOutput.stepNote(McpLaunch.display(claudeMcpAddCommand(mcpLaunch(McpLaunch.PLACEHOLDER))));
             } else if (registerClaudeMcp(isx)) {
                 BuildOutput.ok("Registered with Claude Code as '" + McpClientRegistration.SERVER_NAME + "' (all projects)");
             } else {
                 BuildOutput.step("Registering failed; register it yourself:");
-                BuildOutput.stepNote(String.join(" ", claudeMcpAddCommand(isx)));
+                BuildOutput.stepNote(McpLaunch.display(claudeMcpAddCommand(mcpLaunch(isx))));
             }
         }
         BuildOutput.stepNote("For another MCP client, add the entry '" + MCP_CONFIG_COMMAND + "' prints to its settings.");
@@ -1570,12 +1570,20 @@ public class InitCommand extends BaseCommand {
 
     /** Register {@code isx mcp} with Claude Code for every project; true on success. */
     boolean registerClaudeMcp(String isxPath) {
-        return runSilently(claudeMcpAddCommand(isxPath).toArray(String[]::new)) == 0;
+        return runSilently(claudeMcpAddCommand(mcpLaunch(isxPath)).toArray(String[]::new)) == 0;
     }
 
-    /** The command that registers {@code isx mcp} with Claude Code for every project, which the run, its advice and the plan all name. */
-    static List<String> claudeMcpAddCommand(String isxPath) {
-        return List.of("claude", "mcp", "add", "--scope", "user", McpClientRegistration.SERVER_NAME, "--", isxPath, "mcp");
+    /** The command a client runs to start {@code isx mcp} on this host, {@code sg} included where it helps (#2189). */
+    List<String> mcpLaunch(String isxPath) {
+        return new McpLaunch().command(isxPath);
+    }
+
+    /**
+     * The command that registers {@code launch} with Claude Code for every project, which the run,
+     * its advice, the plan and {@code isx mcp register} all name.
+     */
+    static List<String> claudeMcpAddCommand(List<String> launch) {
+        return McpCommand.Client.CLAUDE.addCommand(launch);
     }
 
     /** Run a host command for its exit code alone, showing nothing and reading no input. */
@@ -2180,7 +2188,7 @@ public class InitCommand extends BaseCommand {
         if (claude && !registered) {
             var isx = isxPath();
             offers.add(InitPlan.Change.run("Register isx mcp with Claude Code for every project", InitPlan.Who.NONE,
-                    String.join(" ", claudeMcpAddCommand(isx == null ? "<path to isx>" : isx))));
+                    McpLaunch.display(claudeMcpAddCommand(mcpLaunch(isx == null ? McpLaunch.PLACEHOLDER : isx)))));
         }
         if (!toApprove.isEmpty()) {
             // The person's step, which they can run alone, at a terminal (#2077)
