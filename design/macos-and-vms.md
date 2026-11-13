@@ -552,3 +552,17 @@ It was removed so that fixes stop landing on a path no user runs (#1695).
 PR #1754 removed it, so its diff shows the code: `startQemu` and `qemuDriveArgs` in `VmManager`, with `Backend.QEMU` and the Linux branch of `detectBackend`.
 `0434e17e` on `main` still has it, and `git log -S startQemu` finds the commit that removed it.
 That is the starting point, not the design: the mode would also need vsock wiring to the forwarder, a reachable entry point such as `isx vm` on Linux, and a CI job that boots it through isx.
+
+### An NVMe or host-cached root disk (#810)
+
+A VM's root disk stays on virtio-blk with Incus's default `io.cache=none`, which reaches the host's disk on every flush the guest issues.
+Measured under nested KVM, NVMe was no faster on a git clone, unpacked a tree 30-40% slower and does not change boot time (docs/dev/PERFORMANCE-NOTES.md "VM root disk: bus and host cache mode").
+It would also need NVMe built into the VM base image's own kernel, which has virtio-blk alone.
+`io.cache=writeback` sends the guest's reads and writes through the host's page cache.
+Under nested KVM direct reads got faster, a clone and an unpack did not, and deleting two trees got faster by about a quarter on btrfs and about a tenth on `dir`.
+That run does not settle what the cache modes change: the `none` rows already read 1M direct sequential data at 4-15 GB/s, so a cache below the guest was serving them (docs/dev/PERFORMANCE-NOTES.md "VM root disk: bus and host cache mode").
+Host caching gives up host memory to cache what each VM reads and writes, which free page reporting exists to return.
+`unsafe` also ignores the guest's flushes, so a host crash can lose writes the guest was told were on disk and corrupt its filesystem.
+Neither is taken as a default without a better measurement.
+They may be worth it in one place: a `/tmp` or scratch disk of its own, which needs no safe flush, or reads of a template's blocks that many branches share (#2198).
+NVMe is worth measuring again on bare metal or on ZFS, which #810 did not cover.

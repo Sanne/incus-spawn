@@ -796,6 +796,46 @@ What was decided (Sanne, 2026-10-10, on #1240):
   The LVM units have a user in a nested Incus with an LVM pool, and `upower` and `rtkit-daemon` come from templates, rtkit for GUI audio.
 - **Resuming a VM from a stateful snapshot is deferred**; it would need its own design.
 
+## VM root disk: bus and host cache mode (issue #810)
+
+isx puts every VM's root disk on virtio-blk with Incus's default `io.cache=none`.
+Neither an NVMe root disk nor a host-cached one was faster on the work a VM does, so both stay as they are (design/macos-and-vms.md "An NVMe or host-cached root disk").
+
+Measured on 2026-11-13 with `bench/vm-disk-bus.sh` inside an isx VM, so **under nested KVM**: the bench host is itself a VM on virtio-blk.
+That host had 8 vCPUs (AMD Ryzen 9 9950X3D2), Fedora 45, kernel 7.3 and Incus 6.23, and nothing else ran on it during the run.
+The guest was a stock Fedora 45 VM from `images:fedora/45` (4 vCPUs, 6 GiB, Secure Boot off): the isx base VM image's kernel has neither NVMe nor virtio-scsi.
+Pools: btrfs on a loop file, as `isx init` makes it, and `dir` as the baseline; ZFS and aarch64 were not measured.
+fio ran once per job on a 4 GiB file in the guest's root, O_DIRECT through libaio, so a difference under about 10% between rows is not significant.
+Clone (`git clone --no-local` of a 315 MB quarkus mirror with its checkout), unpack (`tar xf` of the quarkus tree, 57,665 entries) and rm (both trees) each end in `sync` and are medians of 3 runs, with the guest's caches dropped first.
+Boot is from the start request until an exec answers, median of 3.
+
+| pool | bus | io.cache | boot s | 4k rand read QD1 IOPS (µs) | 4k rand write QD1 IOPS (µs) | read QD32 IOPS | write QD32 IOPS | seq read MB/s | seq write MB/s | clone s | unpack s | rm s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| btrfs | virtio-scsi | none | 26.85 | 3855 (195) | 3741 (211) | 21796 | 21161 | 10115 | 4324 | 15.83 | 1.38 | 14.98 |
+| btrfs | virtio-blk | none | 25.56 | 4143 (183) | 3731 (217) | 20603 | 23140 | 9256 | 5746 | 15.42 | 1.35 | 13.32 |
+| btrfs | nvme | none | 25.52 | 4540 (161) | 3940 (193) | 27485 | 18325 | 7482 | 4215 | 15.92 | 1.87 | 13.58 |
+| dir | virtio-scsi | none | 26.17 | 5720 (112) | 5285 (135) | 19497 | 18458 | 12393 | 5697 | 15.60 | 1.30 | 10.21 |
+| dir | virtio-blk | none | 26.59 | 6371 (100) | 5814 (122) | 19574 | 19283 | 15566 | 3732 | 15.54 | 1.13 | 10.22 |
+| dir | nvme | none | 25.63 | 5807 (113) | 6003 (105) | 10142 | 10364 | 4074 | 3746 | 15.74 | 1.57 | 11.68 |
+| btrfs | virtio-blk | writeback | 26.55 | 6666 (91) | 5047 (146) | 54442 | 23966 | 16186 | 3276 | 16.45 | 1.38 | 9.84 |
+| btrfs | virtio-blk | unsafe | 27.05 | 6700 (91) | 5087 (145) | 54911 | 26016 | 13928 | 3629 | 15.80 | 1.25 | 8.92 |
+| dir | virtio-blk | writeback | 26.62 | 7252 (81) | 6521 (103) | 56906 | 38848 | 16580 | 3788 | 15.92 | 1.22 | 9.37 |
+| dir | virtio-blk | unsafe | 25.46 | 6626 (93) | 7708 (81) | 54231 | 55053 | 16007 | 2888 | 15.11 | 1.05 | 8.84 |
+
+- **The bus does not change boot time**: every row answered exec in 25.5-27 s, within run-to-run noise.
+- **A git clone takes the same time on every bus and cache mode**, about 15.5 s.
+- **nvme unpacks 30-40% slower than virtio-blk** on both pools (runs: 1.66-1.99 s against 1.34-1.40 s on btrfs), and on `dir` it halves the depth-32 random numbers and cuts sequential reads to a quarter (4074 against 15566 MB/s), while sequential writes are unchanged.
+- **virtio-scsi takes about 12 µs more per random read than virtio-blk** at queue depth 1: 112 against 100 µs on `dir`, and on btrfs 195 against 183 µs, about 6% and within the noise of one fio run.
+  Random writes differ by 13 µs on `dir` and are within noise on btrfs (211 against 217 µs).
+- **`writeback` and `unsafe` sped up direct random reads** about 2.6 times at depth 32, and only removing the trees got faster on the workloads: 13.3 s down to 9.8 s or 8.9 s on btrfs.
+  This run does not settle what they change.
+  The `none` rows already read 1M direct sequential data at 4-15 GB/s (7.5 and 4 GB/s on NVMe, 9-15 GB/s on virtio-scsi and virtio-blk), which no disk under nested KVM delivers, so a cache below the guest (the btrfs loop file, the outer VM) is serving them.
+  The clone, unpack and rm runs drop only the guest's caches, not those.
+  The cache modes and the buses' read numbers need a run where nothing below the guest caches, which is part of #2198.
+- The first clone after each boot took 27-30 s in every row; runs 2 and 3 took 13.7-16.5 s.
+
+Where `writeback` or `unsafe` may still pay, on a `/tmp` scratch disk or for reads of a template's blocks shared by many branches, is #2198.
+
 ## Branch setup: the static address (issue #801)
 
 A branch's setup script used to wait for systemd-networkd to configure the static address isx had already written into `/etc/systemd/network/10-eth0.network`.

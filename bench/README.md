@@ -606,6 +606,26 @@ copies, never to the VM they are copied from. It is plain `incus`, Linux only, a
 output, and so does a copy that has not answered exec after 300 s. What it found under nested KVM is in
 docs/dev/PERFORMANCE-NOTES.md "VM boot: where the wait goes".
 
+## A VM Root Disk's Bus and Cache Mode (`vm-disk-bus.sh`)
+
+`vm-disk-bus.sh` copies a stopped VM onto each pool asked for, sets the root disk's `io.bus` and
+`io.cache` on the copy, and measures inside the guest: boot until exec answers, fio (4k random
+at queue depth 1 and 32, 1M sequential), and a git clone, a tar unpack and their removal, each
+ending in `sync`. The guest needs fio and git, a bare repository at `/srv/quarkus.git` and a
+tarball at `/srv/tree.tar`, and a root found by label or UUID. To compare buses it has to boot
+on all three: a stock Fedora image does, the isx base VM image's kernel has virtio-blk alone.
+
+```shell
+bench/vm-disk-bus.sh benchbase                                       # every bus on the cow pool
+bench/vm-disk-bus.sh benchbase --pools=cow,default --caches=none,writeback
+bench/vm-disk-bus.sh benchbase --plan="cow:virtio-blk:none cow:nvme:none"
+```
+
+Each configuration takes about 5 minutes under nested KVM. The caches compete with
+whatever else the host runs, so run it with nothing else running. Every fio JSON and timing
+is kept under `--out`. What it found is in docs/dev/PERFORMANCE-NOTES.md "VM root disk: bus
+and host cache mode".
+
 ## File Layout
 
 ```
@@ -616,6 +636,7 @@ bench/
   trace-branch.sh         # Daemon-side timeline of one isx branch
   request-cost.sh         # What one Incus request costs, outside isx
   vm-boot.sh              # Where a VM's boot goes, firmware to exec
+  vm-disk-bus.sh          # A VM root disk's bus and cache mode, measured in the guest
   isxbench.py             # Shared helper: run a command to a usable shell prompt or a screen
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
