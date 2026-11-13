@@ -159,6 +159,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - macOS vsock robustness
   - Where the vsock leak comes from
   - The launcher's relay
+  - The launcher's machine
   - The macOS VM outlives whatever started it
   - VM Appliance
   - The VM image's boot chain (#1255)

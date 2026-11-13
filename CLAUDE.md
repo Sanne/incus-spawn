@@ -163,9 +163,11 @@ Three Maven modules under a parent POM:
   It drops no hardware the default ran on in practice: ARMv8.0 cores (Raspberry Pi 3/4) already fail `armv8.1-a`'s LSE check.
 
 **`launcher/` is a Swift package, outside the Maven build** (#2031, design/macos-and-vms.md "The launcher's relay").
-It will become `isx-vm`, the program that replaces vfkit on macOS; so far it holds the relay between a host Unix socket and a guest vsock port (`IsxRelay`) and `isx-vsock-bridge`, that relay in front of `AF_VSOCK` on Linux.
+It holds the relay between a host Unix socket and a guest vsock port (`IsxRelay`), `isx-vsock-bridge`, that relay in front of `AF_VSOCK` on Linux, and `isx-vm`, a prototype of the program that would replace vfkit on macOS.
 The relay ends a connection as soon as either side ends and closes both sides, which vfkit's does not, and it gives up half-close, so no tunnel client may send one.
 `swift test --package-path launcher` runs its tests (Swift 6); CI runs them on Linux and macOS and bridges the appliance's vsock ports with the bridge in `integration-tests`.
+`isx-vm` starts the VM on Virtualization.framework with that relay, reading the command line isx writes for vfkit; each of its settings is a decision of design/macos-and-vms.md "The launcher's machine".
+No release holds it: `launcher-macos` builds and signs it ad hoc with `com.apple.security.virtualization` alone, and `appliance/launcher-on-mac.sh <pr>` measures it against vfkit on the Mac runner, which is what the decision to replace vfkit is read from.
 A Mac still runs vfkit until the launcher ships.
 
 **PGO**: release binaries are built with profiles collected in the same release run (#1637, design/native-image.md "Profile-guided optimization").
