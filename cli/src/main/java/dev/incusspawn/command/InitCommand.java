@@ -1032,7 +1032,7 @@ public class InitCommand extends BaseCommand {
                 "Lets an agent on this machine (Claude Code or another MCP",
                 "client) use isx itself: create instances from templates",
                 "you approve here, run commands in them, and hand tasks",
-                "to the Claude Code, Codex or Pi inside them.",
+                "to the Claude Code, Codex, Pi or opencode inside them.",
                 "Agents can never approve templates themselves."}, this::setupMcp, this::planMcp);
     }
 
@@ -1500,7 +1500,7 @@ public class InitCommand extends BaseCommand {
             for (var name : candidates) {
                 var note = templateBuilt(name) ? "" : styled(DIM, " (not built yet: isx build " + name + ")");
                 if (!installsAny(defs.get(name), defs, DELEGATE_AGENTS)) {
-                    note += styled(DIM, " (create and exec only: delegate runs Claude Code, Codex or Pi)");
+                    note += styled(DIM, " (create and exec only: delegate runs Claude Code, Codex, Pi or opencode)");
                 }
                 // End of input keeps the existing answer: a closed terminal must not drop an approval.
                 var current = approved.contains(name);
@@ -2144,7 +2144,7 @@ public class InitCommand extends BaseCommand {
     }
 
     /** The tools {@code delegate} can run in an instance ({@code mcp.DelegateAgent}); a template with another agent gets create and exec only. */
-    private static final List<String> DELEGATE_AGENTS = List.of("claude", "codex", "pi");
+    private static final List<String> DELEGATE_AGENTS = List.of("claude", "codex", "pi", "opencode");
 
     /**
      * Templates that install a coding agent, whichever it is (#2178): an agent on the host uses

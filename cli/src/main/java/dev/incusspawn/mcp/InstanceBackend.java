@@ -65,7 +65,8 @@ interface InstanceBackend {
         DelegateAgent defaultAgent() {
             return tools.contains("claude") ? DelegateAgent.CLAUDE
                     : tools.contains("codex") ? DelegateAgent.CODEX
-                    : tools.contains("pi") ? DelegateAgent.PI : DelegateAgent.UNKNOWN;
+                    : tools.contains("pi") ? DelegateAgent.PI
+                    : tools.contains("opencode") ? DelegateAgent.OPENCODE : DelegateAgent.UNKNOWN;
         }
 
         List<DelegateAgent> agents() {

@@ -262,7 +262,7 @@ public final class Metadata {
      */
     public static final String MCP_IDEMPOTENCY_KEY = MCP_PREFIX + "idempotency-key";
     /**
-     * The delegate agent ({@code claude}, {@code codex} or {@code pi}) {@code delegate} made the instance
+     * The delegate agent ({@code claude}, {@code codex}, {@code pi} or {@code opencode}) {@code delegate} made the instance
      * for: a repeat under the same {@link #MCP_IDEMPOTENCY_KEY} with another agent is refused,
      * and one naming none gets this one. An {@code mcp-} key, so never carried by a copy.
      */

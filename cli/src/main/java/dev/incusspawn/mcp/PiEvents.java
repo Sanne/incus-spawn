@@ -34,19 +34,7 @@ final class PiEvents {
             }
             if (!(e instanceof JqObject event)) continue;
             switch (JsonRpc.text(event, "type", "")) {
-                case "isx.pi.result" -> {
-                    var success = JsonRpc.bool(event, "success", false);
-                    result = JqObject.builder(8)
-                            .put("subtype", success ? "success" : "error")
-                            .put("is_error", !success)
-                            .put("result", JsonRpc.text(event, "error", ""))
-                            .put("usage", event.getField("usage"))
-                            .put("turns", event.getField("turns"))
-                            .put("cost_usd", event.getField("cost_usd"))
-                            .put("report_bytes", event.getField("report_bytes"))
-                            .put("report_truncated", event.getField("report_truncated"))
-                            .build();
-                }
+                case "isx.pi.result" -> result = outcome(event);
                 case "tool_execution_start" -> recent.add("ran " + JsonRpc.text(event, "toolName", "a tool")
                         + describeArgs(event.getField("args")));
                 case "message_end" -> {
@@ -67,6 +55,24 @@ final class PiEvents {
         return new StreamJsonEvents.Summary(List.copyOf(recent.subList(from, recent.size())), messages, result);
     }
 
+    /**
+     * The result a runner's outcome record ({@code isx.pi.result}, {@code isx.opencode.result})
+     * stands for, in the shape {@link StreamJsonEvents.Summary#result} holds.
+     */
+    static JqValue outcome(JqObject event) {
+        var success = JsonRpc.bool(event, "success", false);
+        return JqObject.builder(8)
+                .put("subtype", success ? "success" : "error")
+                .put("is_error", !success)
+                .put("result", JsonRpc.text(event, "error", ""))
+                .put("usage", event.getField("usage"))
+                .put("turns", event.getField("turns"))
+                .put("cost_usd", event.getField("cost_usd"))
+                .put("report_bytes", event.getField("report_bytes"))
+                .put("report_truncated", event.getField("report_truncated"))
+                .build();
+    }
+
     private static String describeArgs(JqValue args) {
         for (var key : List.of("command", "path", "file_path", "pattern", "url")) {
             var v = JsonRpc.text(args, key, "");
@@ -75,7 +81,7 @@ final class PiEvents {
         return "";
     }
 
-    private static String snippet(String text) {
+    static String snippet(String text) {
         var oneLine = text.replace('\n', ' ');
         return oneLine.length() <= SNIPPET ? oneLine : oneLine.substring(0, SNIPPET) + "...";
     }

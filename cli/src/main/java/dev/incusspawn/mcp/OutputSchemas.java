@@ -26,7 +26,7 @@ final class OutputSchemas {
 
     /** Delegates run with full access inside their instance, whatever the agent (#1857). */
     private static final String PERMISSION_MODE = "Full access inside the instance: bypassPermissions for Claude, "
-            + "danger-full-access for Codex, full-access for Pi";
+            + "danger-full-access for Codex, full-access for Pi and opencode";
 
     private OutputSchemas() {}
 
@@ -37,7 +37,7 @@ final class OutputSchemas {
     }
 
     private static Schema delegateAgent() {
-        return Schema.object().choice("agent", null, true, "claude", "codex", "pi")
+        return Schema.object().choice("agent", null, true, "claude", "codex", "pi", "opencode")
                 .string("model", "Template configured model", false)
                 .bool("supports_model_preflight", null, true)
                 .string("permission_mode", PERMISSION_MODE, false)
@@ -172,7 +172,7 @@ final class OutputSchemas {
                 .string("task_id", null, true)
                 .string("instance", null, true)
                 .choice("kind", null, true, Tasks.AGENT)
-                .choice("agent", null, false, "claude", "codex", "pi", "unknown")
+                .choice("agent", null, false, "claude", "codex", "pi", "opencode", "unknown")
                 .integer("run", "The run (turn of the conversation) now going: 1 for the first", true)
                 .string("permission_mode", PERMISSION_MODE, true)
                 .string("approval_policy", "Codex always uses never", false)
@@ -237,10 +237,10 @@ final class OutputSchemas {
                 .stringList("recent", "What an agent did last", false)
                 .string("report", "An agent's final report", false)
                 .string("agent_stderr", "Failure diagnostic", false)
-                .integer("input_tokens", "Uncached input tokens, as Codex or Pi reported them", false)
-                .integer("output_tokens", "Output tokens, as Codex or Pi reported them", false)
-                .integer("cached_input_tokens", "Input tokens read from the provider's cache, as Codex or Pi reported them", false)
-                .integer("cache_creation_input_tokens", "Input tokens written to the provider's cache, as Pi reported them", false)
+                .integer("input_tokens", "Uncached input tokens, as Codex, Pi or opencode reported them", false)
+                .integer("output_tokens", "Output tokens, as Codex, Pi or opencode reported them", false)
+                .integer("cached_input_tokens", "Input tokens read from the provider's cache, as Codex, Pi or opencode reported them", false)
+                .integer("cache_creation_input_tokens", "Input tokens written to the provider's cache, as Pi or opencode reported them", false)
                 .integer("report_bytes", null, false)
                 .string("stdout", "A command's", false)
                 .string("stderr", "A command's", false)

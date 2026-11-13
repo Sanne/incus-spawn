@@ -38,7 +38,7 @@
                 "properties" : {
                   "agent" : {
                     "type" : "string",
-                    "enum" : [ "claude", "codex", "pi" ]
+                    "enum" : [ "claude", "codex", "pi", "opencode" ]
                   },
                   "model" : {
                     "description" : "Template configured model",
@@ -48,7 +48,7 @@
                     "type" : "boolean"
                   },
                   "permission_mode" : {
-                    "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
+                    "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi and opencode",
                     "type" : "string"
                   },
                   "approval_policy" : {
@@ -144,7 +144,7 @@
           "properties" : {
             "agent" : {
               "type" : "string",
-              "enum" : [ "claude", "codex", "pi" ]
+              "enum" : [ "claude", "codex", "pi", "opencode" ]
             },
             "model" : {
               "description" : "Template configured model",
@@ -154,7 +154,7 @@
               "type" : "boolean"
             },
             "permission_mode" : {
-              "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
+              "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi and opencode",
               "type" : "string"
             },
             "approval_policy" : {
@@ -245,7 +245,7 @@
                 "properties" : {
                   "agent" : {
                     "type" : "string",
-                    "enum" : [ "claude", "codex", "pi" ]
+                    "enum" : [ "claude", "codex", "pi", "opencode" ]
                   },
                   "model" : {
                     "description" : "Template configured model",
@@ -255,7 +255,7 @@
                     "type" : "boolean"
                   },
                   "permission_mode" : {
-                    "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
+                    "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi and opencode",
                     "type" : "string"
                   },
                   "approval_policy" : {
@@ -340,7 +340,7 @@
           "properties" : {
             "agent" : {
               "type" : "string",
-              "enum" : [ "claude", "codex", "pi" ]
+              "enum" : [ "claude", "codex", "pi", "opencode" ]
             },
             "model" : {
               "description" : "Template configured model",
@@ -350,7 +350,7 @@
               "type" : "boolean"
             },
             "permission_mode" : {
-              "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
+              "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi and opencode",
               "type" : "string"
             },
             "approval_policy" : {
@@ -480,14 +480,14 @@
       },
       "agent" : {
         "type" : "string",
-        "enum" : [ "claude", "codex", "pi", "unknown" ]
+        "enum" : [ "claude", "codex", "pi", "opencode", "unknown" ]
       },
       "run" : {
         "description" : "The run (turn of the conversation) now going: 1 for the first",
         "type" : "integer"
       },
       "permission_mode" : {
-        "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
+        "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi and opencode",
         "type" : "string"
       },
       "approval_policy" : {
@@ -710,19 +710,19 @@
         "type" : "string"
       },
       "input_tokens" : {
-        "description" : "Uncached input tokens, as Codex or Pi reported them",
+        "description" : "Uncached input tokens, as Codex, Pi or opencode reported them",
         "type" : "integer"
       },
       "output_tokens" : {
-        "description" : "Output tokens, as Codex or Pi reported them",
+        "description" : "Output tokens, as Codex, Pi or opencode reported them",
         "type" : "integer"
       },
       "cached_input_tokens" : {
-        "description" : "Input tokens read from the provider's cache, as Codex or Pi reported them",
+        "description" : "Input tokens read from the provider's cache, as Codex, Pi or opencode reported them",
         "type" : "integer"
       },
       "cache_creation_input_tokens" : {
-        "description" : "Input tokens written to the provider's cache, as Pi reported them",
+        "description" : "Input tokens written to the provider's cache, as Pi or opencode reported them",
         "type" : "integer"
       },
       "report_bytes" : {
@@ -780,14 +780,14 @@
       },
       "agent" : {
         "type" : "string",
-        "enum" : [ "claude", "codex", "pi", "unknown" ]
+        "enum" : [ "claude", "codex", "pi", "opencode", "unknown" ]
       },
       "run" : {
         "description" : "The run (turn of the conversation) now going: 1 for the first",
         "type" : "integer"
       },
       "permission_mode" : {
-        "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
+        "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi and opencode",
         "type" : "string"
       },
       "approval_policy" : {

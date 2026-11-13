@@ -214,7 +214,7 @@ final class TaskScripts {
             sb.append(requireFlock("echo '" + NO_FLOCK + "' >&4; " + recordExit(String.valueOf(run), "127") + "; exit 0")).append('\n');
             sb.append(CONVERSATION_LOCK).append("node -e ").append(ExecScript.quote(WorkerRunners.of(agent)))
                     .append(" \"$D\" ").append(run);
-            // Pi has no permission modes: its runs differ only by model.
+            // Pi and opencode have no permission modes: their runs differ only by model.
             if (agent == DelegateAgent.CODEX) sb.append(' ').append(ExecScript.quote(permissionMode));
             sb.append(' ').append(model);
             sb.append(" 2>&4\n");
@@ -711,7 +711,7 @@ final class TaskScripts {
                 + "sudo -n systemctl stop " + unit(taskId, "$n") + " 2>/dev/null; "
                 + "{ sudo -n bash -c " + quoted + " 2>/dev/null || bash -c " + quoted + "; }; "
                 // The run script saves its session once Claude Code exits, but the sweep may have
-                // killed it first; a Codex or Pi runner publishes its own as soon as it is known.
+                // killed it first; a runner publishes its own as soon as it is known.
                 + "case $(" + ifFile("$D/identity", "head -c 200") + ") in ''|'1 claude') "
                 + saveClaudeSession("$D/events-$n.jsonl") + ";; esac; "
                 // The sweep is over either way: the stamp goes, and the cancel keeps its own status.

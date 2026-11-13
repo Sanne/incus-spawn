@@ -4,7 +4,7 @@ How agents and orchestrators drive isx: the MCP server, and the ordinary command
 
 ## MCP server: delegating work to isx instances
 
-`isx mcp` lets an agent on the host -- the user's own Claude Code -- use isx the way the user does: create disposable instances from approved templates, run commands in them, and hand whole tasks to Claude Code, Codex or Pi inside one.
+`isx mcp` lets an agent on the host -- the user's own Claude Code -- use isx the way the user does: create disposable instances from approved templates, run commands in them, and hand whole tasks to Claude Code, Codex, Pi or opencode inside one.
 The host agent plans and reviews; instances do the work, with the same isolation and credential injection as any branch.
 
 Managed delegation selects the installed worker agent independently of the MCP client.
@@ -13,9 +13,11 @@ Existing Claude-only calls retain their defaults; mixed templates default to Cla
 The [Pi worker design](../docs/dev/MCP-PI-DELEGATION.md) records what differs for Pi.
 Pi resumes by an exact session ID isx chooses before launch, so nothing has to be captured; but `--session-id` silently creates a missing session, so a resume checks that the session header's creation time is run 1's.
 Pi has no sandbox or permission modes, so it always runs with every tool.
+The [opencode worker design](../docs/dev/MCP-OPENCODE-DELEGATION.md) records what differs for opencode, which comes last in the default order so that no template that delegated before changes its default.
+opencode names its own session, which the runner saves from the first event as Codex's does; it refuses a `--session` it cannot find instead of creating one, so a resume needs none of Pi's checks.
 
 **Workers run with full access, bounded by the instance (#1857).**
-Claude runs in `bypassPermissions`, Codex in `danger-full-access` with `approval_policy=never`, Pi with every tool, and none has a turn limit (`DelegateAgent.permissionMode`).
+Claude runs in `bypassPermissions`, Codex in `danger-full-access` with `approval_policy=never`, Pi with every tool, opencode with `--auto`, and none has a turn limit (`DelegateAgent.permissionMode`).
 `mcp.yaml` once had `delegate-permission-mode(s)`, `delegate-max-turns` and `codex.sandbox-mode(s)`, and a delegate's `max_turns`.
 They added policy surface and refusals that coupled the agents: Codex and Pi were refused while a Claude mode was restrictive or a turn ceiling set, since neither could honour it.
 The isolation boundary is the instance itself, its proxy account bounding what credentials reach, so a narrower mode inside it protected nothing the instance does not.
@@ -507,7 +509,7 @@ The pieces, and why each is the way it is:
   Each mismatch is said by one function, naming the list, file and key to change, wherever it surfaces: `isx branch` and the TUI branch, a refusal and `list_templates`' `scope_note`, the session log, `isx doctor`, and the TUI's instance details; `isx list` shows only `mcp_client`, since it loads no definitions.
   `coordinator:` is an object so per-caller limits can join it later as keys that only narrow `mcp.yaml`'s global values, the same intersection.
   It is deliberately apart from #1720's `drivers:`: that names host programs already running as the user with the full CLI, a guard rail on `isx destroy`; this restricts guests the proxy identified, a security boundary, and merging them would give `isx mcp` a reason to read `config.yaml`.
-- *How its Claude Code or Pi finds the server: registered from the stamp on every start (#1182).*
+- *How its Claude Code, Pi or opencode finds the server: registered from the stamp on every start (#1182).*
   Branching with `--mcp-client` is the only per-instance act.
   The exec that delivers each start's secret (`InstanceSecret.GUEST_SCRIPT`, root in the guest) also gets `ISX_MCP_CLIENT` (`InstanceSecret.guestEnv(secret, mcpCaller)`), which every start path reads from the instance it already holds, so it costs no request.
   `McpClientRegistration` compares it with a root-owned marker in the rootfs (`/var/lib/isx/mcp-client-registered`, holding a digest of the entry it registered, `ENTRY_VERSION`, so an isx that changes the entry re-registers existing coordinators on their next start), and checks that Claude Code's own config still holds the entry (`CONFIG_HAS_ENTRY`, so an entry the agent removed comes back; root reads that agent-owned file through `timeout -k 1 2 head -c 16MiB`, since the agent may swap in a FIFO or a vast sparse file and the readiness exec has no time limit of its own -- a read cut short answers "no entry", which costs a re-registration, never a hang).
@@ -525,12 +527,18 @@ The pieces, and why each is the way it is:
   The test only stats the path, so nothing the agent puts there can block root; a binary root sees as executable and the agent cannot run just fails its command, leaving the marker as any failure does.
   `pi mcp add` replaces an entry by that name, so unlike `add-json` it needs no removal first.
   Pi's entry is `--exposure direct`: Pi's default, `codemode`, declares no tool to the model and reaches them only from scripts, while driving isx is a coordinator's main job and the set is small.
+  opencode is reconciled the same way, against its own marker (`mcp-client-registered-opencode`, `OPENCODE_ENTRY_VERSION`) and its config, `~/.config/opencode/opencode.json`.
+  opencode has no command that removes a server, and its `mcp add` cannot turn off OAuth, so a short Node script run as the agent sets or deletes `mcp.isx` in that file (`OPENCODE_EDIT`).
+  It parses the file as JSON, which is what the build writes; a file a person gave comments is left as it is, and its marker absent, so the next start tries again.
+  The entry's header is `{file:/run/isx/instance-secret}`, which opencode reads when it loads its config, once per process, since it has nothing that runs per connection.
+  That gives up two things: an opencode started before a rotation would keep the old secret, and opencode does not start at all while the file is missing.
+  Neither costs in practice: a rotation is the start of a stopped instance, which no process outlives, and every way into the instance through isx or `ssh` delivers the secret first (#1975).
 - *The playbook is served, not installed.*
   `isx mcp` offers the coordination workflow (create, delegate, `wait_any`, `get_diff`, review, destroy; limits; orphans) as an MCP prompt, `coordinate` (`McpPrompt`), which Claude Code shows as a slash command; `INSTRUCTIONS` stays the tool contract every client reads.
   A skill file in the rootfs was rejected: copies would inherit it, and it would drift from the server it describes, where a prompt exists only where the server is reachable and changes with it.
   `McpPromptTest` fails if it names a tool the server does not have.
 - *The branch checks the result.*
-  After the start, `isx branch --mcp-client` runs one `initialize` and one `tools/list` from inside the guest against `mcp.isx.internal` (`McpClientCheck`: curl, with the secret in a root-only header file, never on a command line), ends that session, and prints the server's version and tool count or why it was not reached -- and whether Claude Code's own user config (`~/.claude.json`) or Pi's (`~/.pi/agent/mcp.json`) holds an entry for the endpoint, by the same tests the reconcile makes (`ANY_CONFIG_HAS_ENTRY`), read as a file because `claude mcp get` connects to the server and can hang.
+  After the start, `isx branch --mcp-client` runs one `initialize` and one `tools/list` from inside the guest against `mcp.isx.internal` (`McpClientCheck`: curl, with the secret in a root-only header file, never on a command line), ends that session, and prints the server's version and tool count or why it was not reached -- and whether Claude Code's own user config (`~/.claude.json`) or Pi's (`~/.pi/agent/mcp.json`) or opencode's (`~/.config/opencode/opencode.json`) holds an entry for the endpoint, by the same tests the reconcile makes (`ANY_CONFIG_HAS_ENTRY`), read as a file because `claude mcp get` connects to the server and can hang.
   A reachable endpoint with no registration is the very failure #1182 was filed for.
   What the guest returns (curl's errors, the server's version) passes through `OutputFormat.oneLine` before it is printed.
   It is a warning, never a failure: the branch is made either way, and the user sees a coordinator that cannot work while still there to fix it.

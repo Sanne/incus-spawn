@@ -9,6 +9,8 @@ enum DelegateAgent {
      * Pi has none of, so it names none.
      */
     PI("pi", "", "Pi"),
+    /** opencode spends Claude's, OpenAI's or Gemini's account by its template's provider (OpencodeSetup), as Pi does. */
+    OPENCODE("opencode", "", "opencode"),
     UNKNOWN("unknown", "", "an unknown agent");
 
     final String id;
@@ -27,6 +29,7 @@ enum DelegateAgent {
             case "claude" -> CLAUDE;
             case "codex" -> CODEX;
             case "pi" -> PI;
+            case "opencode" -> OPENCODE;
             default -> UNKNOWN;
         };
     }
@@ -48,23 +51,33 @@ enum DelegateAgent {
 
     /**
      * Whether its runs go through a guest-side runner ({@code codex-runner.cjs},
-     * {@code pi-runner.cjs}), which publishes {@code result-<run>.txt} and {@code outcome-<run>.json}.
+     * {@code pi-runner.cjs}, {@code opencode-runner.cjs}), which publishes {@code result-<run>.txt}
+     * and {@code outcome-<run>.json}.
      */
     boolean usesRunner() {
-        return this == CODEX || this == PI;
+        return this == CODEX || this == PI || this == OPENCODE;
+    }
+
+    /**
+     * Whether the agent names its own session, which the runner saves from its first event, and
+     * can recover from {@code events-1.jsonl} when a kill cut that short ({@code recover}).
+     */
+    boolean recoversSession() {
+        return this == CODEX || this == OPENCODE;
     }
 
     /**
      * What it runs under: full access, with no turn limit, since the instance is the boundary
      * (#1857). Claude's {@code --permission-mode}, Codex's sandbox (always with
-     * {@code approval_policy=never}), and for Pi, which has neither, every tool. Refused only for
+     * {@code approval_policy=never}), for Pi, which has neither, every tool, and for opencode
+     * {@code --auto}, which answers every permission it would ask about. Refused only for
      * an agent this isx does not know.
      */
     String permissionMode() {
         return switch (this) {
             case CLAUDE -> "bypassPermissions";
             case CODEX -> "danger-full-access";
-            case PI -> "full-access";
+            case PI, OPENCODE -> "full-access";
             case UNKNOWN -> throw unknown();
         };
     }
@@ -87,6 +100,8 @@ enum DelegateAgent {
                     + " && timeout 10 codex exec resume --help | grep -q -- --json";
             case PI -> "command -v pi >/dev/null && command -v node >/dev/null"
                     + " && timeout 10 pi --help | grep -q -- --session-id";
+            case OPENCODE -> "command -v opencode >/dev/null && command -v node >/dev/null"
+                    + " && timeout 10 opencode run --help | grep -q -- --auto";
             default -> "command -v claude >/dev/null";
         };
     }
@@ -97,6 +112,8 @@ enum DelegateAgent {
             case CODEX -> "Codex and Node with exec/resume JSON output are required in " + instance
                     + "; rebuild its template or upgrade the CLI.";
             case PI -> "Pi with --session-id and Node are required in " + instance
+                    + "; rebuild its template or upgrade the CLI.";
+            case OPENCODE -> "opencode with run --auto and Node are required in " + instance
                     + "; rebuild its template or upgrade the CLI.";
             default -> "Claude Code is required in " + instance + "; rebuild its template.";
         };
