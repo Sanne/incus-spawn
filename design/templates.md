@@ -442,7 +442,7 @@ Additional differences:
 - **Root disk on virtio-blk**: `prepareVmBuild` sets `io.bus=virtio-blk` on the root in the one write it makes, and branches copy the device (#1255).
   The base VM image's own kernel has no virtio-scsi, Incus's default; the stock Fedora kernel builds virtio-blk in, so an image built from it boots on either.
   Per random read at queue depth 1, virtio-blk measured 12 µs less than virtio-scsi on both pools, significant on `dir` and within noise on btrfs (#810, docs/dev/PERFORMANCE-NOTES.md "VM root disk: bus and host cache mode").
-  NVMe and a host-cached root (`io.cache=writeback` or `unsafe`) were measured and set aside (design/macos-and-vms.md "An NVMe or host-cached root disk").
+  isx sets no `io.cache`, so Incus runs the disk on `writeback` on btrfs and ZFS and on `none` on `dir`; NVMe and other cache modes were measured and set aside (design/macos-and-vms.md "An NVMe or host-cached root disk").
 - **Security config**: container-specific security settings (raw.idmap, nesting, setxattr interception) are skipped — VMs have their own kernel and don't need them
 - **No restart**: VMs don't need the container restart that applies security config changes
 - **Guest SELinux pinned to `disabled`** (#842): the VM base image ships no SELinux policy and a filesystem nothing ever labelled, but ordinary packages pull the policy in (`perl` -> `selinux-policy-targeted`), and its `%post` writes `SELINUX=enforcing`.

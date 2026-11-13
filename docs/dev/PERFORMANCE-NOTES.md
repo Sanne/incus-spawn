@@ -798,7 +798,9 @@ What was decided (Sanne, 2026-10-10, on #1240):
 
 ## VM root disk: bus and host cache mode (issue #810)
 
-isx puts every VM's root disk on virtio-blk with Incus's default `io.cache=none`.
+isx puts every VM's root disk on virtio-blk and leaves `io.cache` unset.
+Incus then picks the mode by the pool: `writeback` on btrfs and ZFS, `none` on `dir` ("VM disk cache mode, per context" below).
+The `none` rows on btrfs below set it explicitly, which isx never does.
 Neither an NVMe root disk nor a host-cached one was faster on the work a VM does, so both stay as they are (design/macos-and-vms.md "An NVMe or host-cached root disk").
 
 Measured on 2026-11-13 with `bench/vm-disk-bus.sh` inside an isx VM, so **under nested KVM**: the bench host is itself a VM on virtio-blk.
@@ -835,6 +837,88 @@ Boot is from the start request until an exec answers, median of 3.
 - The first clone after each boot took 27-30 s in every row; runs 2 and 3 took 13.7-16.5 s.
 
 Where `writeback` or `unsafe` may still pay, on a `/tmp` scratch disk or for reads of a template's blocks shared by many branches, is #2198.
+
+## VM disk cache mode, per context (issue #2198)
+
+**On a btrfs pool, isx VMs already run with `io.cache=writeback`, and no other mode is worth taking in any of the four contexts measured.**
+- **Incus's default is not `none` on btrfs.**
+  With `io.cache` unset, Incus 6.23 opens a VM's disk file without `O_DIRECT` when it sits on btrfs or ZFS: `writeback` with `aio=threads` (`addDriveConfig` in `driver_qemu.go`, "We've seen ZFS lock up and BTRFS checksum issues when using direct I/O on image files").
+  Measured on the qemu process: `/proc/<pid>/fdinfo` shows the root image's flags `02100002` when unset, `02140002` (`O_DIRECT`) only when `io.cache=none` is set.
+  isx sets no `io.cache`, so on the `cow` pool that `isx init` makes, every VM disk goes through the host's page cache today, and #810's `writeback` rows are today's configuration there.
+- **A `/tmp` of its own** helps only flush-heavy work, and not a build.
+- **Branches do not share the host's cache of their template's blocks.**
+  Each copy caches its own, and the cache outlives the VM.
+- **A template build on `unsafe`** installs packages about 15% faster than today's `writeback`, about 2.4 s per 700 MiB installed.
+
+Measured on 2026-11-13 with `bench/vm-disk-cache.sh benchbase all` inside an isx VM, so **under nested KVM**: 8 vCPUs (AMD Ryzen 9 9950X3D2), 16 GiB, Fedora 45, kernel 7.3, Incus 6.23, nothing else running.
+The pool was btrfs on a loop file as `isx init` makes it (`compress=zstd:1`), the loop device with direct I/O on.
+The guest was a stock Fedora 45 VM (4 vCPUs, 4 GiB, a 30 GiB ext4 root on virtio-blk) with `tmp.mount` masked, as isx's images have it.
+Each workload ran after dropping the guest's caches and, except across the copies of the branches context, `sync` and dropping the host's.
+Times are medians of 3 runs, in seconds; the first run after each boot was the slowest in most rows.
+The Maven build is a cold offline `mvn -q package -DskipTests` of incus-spawn itself.
+
+**`/tmp` on the root disk or on a block volume of its own**, all on btrfs:
+
+| /tmp on | io.cache | offline rpm install s | git clone s | tar unpack s | rm of the three s | Maven build s |
+|---|---|---|---|---|---|---|
+| root disk | unset: writeback (today) | 4.73 | 17.77 | 2.31 | 11.59 | 24.41 |
+| root disk | none | 3.63 | 16.80 | 2.02 | 16.82 | 26.71 |
+| own disk | none | 6.87 | 18.14 | 1.67 | 12.02 | 26.25 |
+| own disk | writeback | 4.94 | 16.45 | 2.05 | 8.61 | 24.82 |
+| own disk | unsafe | 2.30 | 14.91 | 1.03 | 8.24 | 24.97 |
+
+- The rpm install is 23 rpms (gcc-c++, clang, golang, 172 MiB) into an empty `rpm --root`; the clone, unpack and rm are #810's.
+- Against today's `/tmp` on the root (`writeback`), a disk of its own on `unsafe` halves the rpm install and the unpack, saves 16% on the clone and 29% on the rm, and nothing on the build.
+  Its own disk on `writeback` matches today's root except on the rm (8.61 s against 11.59 s), so the gains on the rpm install, the unpack and the clone come from `unsafe` dropping the flushes.
+- The extra device costs two requests at branch time (creating the volume and attaching it, 0.07 s together) and a format on first boot; the boot itself does not change (26-27.5 s).
+- The fresh filesystem makes the rm faster on `none` too (12.0 s against 16.8 s on the root), so part of the rm's gain is a new filesystem rather than the cache mode.
+- The `unset` row was measured at the end of the same window, with `--tmp-roots=default --caches=`, after review found the table lacked today's configuration.
+
+**Branches reading the same template blocks**, four copies started and measured one after the other, the host's caches dropped once before the first:
+
+| io.cache | branch | read all of /usr s | root image in host cache after the read and the build MiB | Maven build s |
+|---|---|---|---|---|
+| none | 1 | 31.33 | 725 | 25.09 |
+| none | 2 | 32.34 | 720 | 24.33 |
+| none | 3 | 33.44 | 727 | 24.80 |
+| none | 4 | 34.06 | 713 | 24.32 |
+| writeback | 1 | 30.75 | 2559 | 25.05 |
+| writeback | 2 | 32.85 | 2558 | 25.02 |
+| writeback | 3 | 33.48 | 2557 | 24.49 |
+| writeback | 4 | 34.05 | 2559 | 24.94 |
+
+- **The second to fourth branch read no faster than the first**, and each holds its own 2.5 GiB of its root image in the host's page cache (`fincore` on each copy's `root.img`).
+  On btrfs a copy's image is a separate file whose extents are shared, and the page cache is per file, so nothing a sibling read is reused.
+- **The cache outlives the stop.**
+  The host's `Cached` grew by about 2.5 GiB per `writeback` branch and did not fall when the branch stopped: 1.2 GiB before the first branch's read, 8.8 GiB before the fourth's.
+- Even with `none` set, about 720 MiB of each image stayed cached after the read, likely the extents btrfs stored compressed, whose direct reads it serves through the page cache.
+- The host's `Cached` column the script prints also counts the guest's own page cache, since Incus backs guest RAM with a memfd, which the kernel counts as shared memory; the image's own share is the `fincore` column.
+
+**A Maven build on the root disk, and the host memory it leaves:**
+
+| io.cache | Maven build s | root image in host cache MiB | after the host allocates 12.7 GiB MiB | that allocation s |
+|---|---|---|---|---|
+| none | 24.00 | 10 | 10 | 24.41 |
+| writeback | 24.51 | 539 | 285 | 27.01 |
+| unsafe | 25.33 | 530 | 231 | 27.67 |
+
+- The build takes the same time in every mode.
+- `writeback` leaves about 540 MiB of the image in the host's cache after a build, which the kernel reclaims only in part under pressure, and the host's allocation took 10% longer while it did.
+- QEMU's resident memory did not change under pressure (1874 MiB on `none`, about 2100 MiB on the others): there is no swap, and guest RAM is not reclaimable cache.
+
+**A template build on `unsafe`, made safe before use**: an offline `dnf install` of the same 23 rpms (707 MiB installed) on the root disk, a clean `incus stop`, `sync -f` on the pool, `io.cache` set to `none` and a boot that checks every package is installed:
+
+| io.cache during the install | dnf install s | stop s | host sync s | together s | packages missing after the boot |
+|---|---|---|---|---|---|
+| none | 15.17 | 1.69 | 0.05 | 16.87 | 0 |
+| writeback (today) | 16.26 | 1.66 | 0.04 | 18.02 | 0 |
+| unsafe | 13.81 | 1.54 | 0.37 | 15.75 | 0 |
+
+- `unsafe` saves about 2.4 s on the install against today's `writeback`, and the flush after the stop costs 0.37 s of it back.
+- Every run found all packages after the switch, but a clean shutdown cannot show what a host crash during the build would do: that is what the sync after the stop exists for.
+- The runs spread by under 0.2 s within each row.
+
+What this does not cover: bare metal, ZFS (which Incus also runs on `writeback`) and aarch64.
 
 ## Branch setup: the static address (issue #801)
 
