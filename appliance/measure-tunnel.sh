@@ -55,13 +55,9 @@ trap cleanup EXIT
 # shell 256 open files unless asked.
 ulimit -n 4096 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 
-# One agent verb per connection. See test-tunnel.sh for why ncat is called differently.
-AGENT_NC=(nc -w 8)
-if [[ "$(nc --version 2>&1)" == *Ncat* ]]; then
-    command -v timeout >/dev/null || { echo "nc is ncat, which needs timeout (coreutils) to bound agent calls" >&2; exit 2; }
-    AGENT_NC=(timeout 30 nc --no-shutdown)
-fi
-agent() { printf '%s\n' "$1" | "${AGENT_NC[@]}" -U "$AGENT_SOCK" 2>/dev/null | tr -d '\r'; }
+# One agent verb per connection, with the client test-tunnel.sh uses: it never shuts its
+# write side down, which the tunnel would not carry.
+agent() { perl "$HERE/agent-call.pl" "$AGENT_SOCK" "$1" 2>/dev/null | tr -d '\r'; }
 socat_count() { agent socat-count | tr -d '\n'; }
 api() { curl -s --max-time "${2:-10}" --unix-socket "$INCUS_SOCK" "http://localhost$1" 2>/dev/null; }
 # Milliseconds since the epoch. macOS ships bash 3.2, which has no EPOCHREALTIME.

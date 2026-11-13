@@ -63,19 +63,15 @@ children_exited() {
 expect() { if eval "$1"; then pass "$2"; else fail "$2${3:+ ($3)}"; fi; }
 
 # One agent verb per connection, as VmAgentClient speaks it: send the verb, then keep the
-# write side open until the agent hangs up. Shutting it down early hands every socat on the
-# way an EOF, after which each waits only its -t (0.5s) for the reply: forwarder-restart
-# answers after more than a second, so it would arrive at a closed connection. OpenBSD nc
-# (Ubuntu, macOS) leaves the write side open; nmap's ncat (Fedora's nc) shuts it down on
-# stdin EOF unless given --no-shutdown. ncat's -w bounds only the connect, and its -i waits
-# out its full timeout even after the agent hangs up, so timeout bounds the call instead: the
-# whole call rather than an idle gap, hence the longer limit.
-AGENT_NC=(nc -w 8)
-if [[ "$(nc --version 2>&1)" == *Ncat* ]]; then
-    command -v timeout >/dev/null || { echo "nc is ncat, which needs timeout (coreutils) to bound agent calls" >&2; exit 2; }
-    AGENT_NC=(timeout 30 nc --no-shutdown)
-fi
-agent() { printf '%s\n' "$1" | "${AGENT_NC[@]}" -U "$AGENT_SOCK" 2>/dev/null | tr -d '\r'; }
+# write side open until the agent hangs up. Shutting it down early sends an EOF, and the
+# tunnel does not carry a half-close: the launcher's relay ends the connection there, and
+# each socat on the way waits only its -t (0.5s) after one, while forwarder-restart answers
+# after more than a second. No nc keeps the write side open on every host (Apple's shuts it
+# down always, which a Mac under isx-vm showed, #2031), so the client is agent-call.pl, the
+# same program everywhere. It gives up after 8 s without a byte from the agent.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+command -v perl >/dev/null || { echo "test-tunnel.sh needs perl, for its agent client" >&2; exit 2; }
+agent() { perl "$HERE/agent-call.pl" "$AGENT_SOCK" "$1" 2>/dev/null | tr -d '\r'; }
 
 # Hold a connection to socket $1 that sends $2 (possibly nothing) and then nothing for $3
 # seconds; $HELD is the process holding it, which exits as soon as the far end closes. socat
@@ -373,9 +369,9 @@ fi
 # hang-up, so the check only tells a fixed agent from an unfixed one if the hang-up comes
 # within about half a second of the pkill (measured under KVM: an unfixed agent fails with
 # the hang-up 0.45s after the API went down, and passes at 0.55s). A slower hang-up is
-# reported, since the check then passes either way. The pipeline is spelled out rather than
-# run as `agent ... &`, so that $! is nc (or the timeout wrapping it) and the kill hangs up.
-printf 'forwarder-restart\n' | "${AGENT_NC[@]}" -U "$AGENT_SOCK" >/dev/null 2>&1 &
+# reported, since the check then passes either way. The client is started here rather than
+# as `agent ... &`, so that $! is the client itself and the kill hangs up.
+perl "$HERE/agent-call.pl" "$AGENT_SOCK" forwarder-restart >/dev/null 2>&1 &
 caller=$!
 sent=${EPOCHREALTIME:-}
 down=no
