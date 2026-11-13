@@ -79,10 +79,15 @@ The gauge reads whole-pool usage (`getPoolUsageBytes`); the per-row figures come
 Two deliberate honesty choices follow from the CoW model: (1) per-row usage is shown as **absolute used bytes**, never as a percentage of the instance's `root.size` — that limit is a thin-provisioned ceiling (defaults to 100 GB), not an allocation, so a percentage would be meaningless; (2) per-row figures are marked approximate (`~`).
 
 **When a pool counts as low or critical** (#2204): one rule in `IncusClient.PoolUsage` serves the gauge, the TUI's status warning, the clean dialog's resize tip, the build failure diagnostics and `isx doctor`.
-A pool is low (amber) at 75% used with under 50 GiB free, and critical (red, the status warning, the build's "likely cause" and doctor's warning) at 90% used with under 20 GiB free.
+A pool is low (amber) at 75% used with under 10 GiB free, and critical (red, the status warning, the build's "likely cause" and doctor's warning) at 90% used with under 5 GiB free.
 A percentage alone called a 1 TiB pool critical with 100 GiB still free, so users learned to ignore the warning and a failed build pointed at the pool.
-A floor alone would call a mostly empty small pool low, so both must hold, and on a pool under 200 GiB the percentage decides as before.
-20 GiB is about what one larger template build takes; the floors are not configurable, which a config key could change if anyone needs it.
+A floor alone would call a mostly empty small pool low, so both must hold.
+The percentage decides only on a pool under 40 GiB for low and under 50 GiB for critical; on a larger one the floor does.
+So a 100 GiB pool, the loop file's size, turns amber at 90% and red at 95%, where it used to at 75% and 90%, and doctor offers to enlarge it from 95%.
+The floors are small because work needs little: a branch writes tens of MiB, and a build that fetches dependencies its template did not seed writes a few GiB.
+They are not smaller because btrfs can refuse writes with a few GiB still reported free, since a metadata chunk needs unallocated space, and because deleting subvolumes to reclaim space needs some too.
+The 5 GiB keeps that margin and the 10 GiB gives notice before it; neither was measured against a filling pool.
+The floors are not configurable, which a config key could change if anyone needs it.
 
 The per-row number is hard because the only figure Incus exposes (`state.disk.<dev>.usage`) is btrfs *exclusive* bytes — blocks unique to that one subvolume — and exclusive **collapses to ~0 for any subvolume that has a CoW descendant**.
 So a template's real weight is invisible: the moment a child template or a branch exists, the parent's own layer stops being exclusive to it.
