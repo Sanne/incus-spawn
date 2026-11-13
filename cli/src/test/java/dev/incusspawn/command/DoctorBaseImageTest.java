@@ -78,6 +78,25 @@ class DoctorBaseImageTest {
                 f.remediation().description());
     }
 
+    /**
+     * A template on another line, another Fedora or channel, is a finding of its own (#1994): a
+     * rebuild moves it to the built-in's line, but it is neither older nor newer than that.
+     */
+    @Test
+    void aTemplateOnAnotherLineIsNamedApartFromTheOlderOnes() {
+        var daemon = new FakeIncusDaemon()
+                .container("tpl-minimal", stamps(Metadata.TYPE_BASE, "tpl-minimal", "fedora-44-20261021", CURRENT_SHA))
+                .container("tpl-java", stamps(Metadata.TYPE_BASE, "tpl-java", "fedora-44-next-20261101", "ee".repeat(32)))
+                .container("old", stamps(Metadata.TYPE_CLONE, "tpl-java", "fedora-44-20261015", "ee".repeat(32)));
+        var found = findings(daemon);
+        assertEquals(List.of("Base image older than fedora-44-20261021", "Base image on another line than fedora-44-20261021"),
+                found.stream().map(DoctorCommand.Finding::label).toList(), found.toString());
+        var other = found.get(1);
+        assertEquals(DoctorCommand.Status.NOTE, other.status());
+        assertEquals("(templates: tpl-java on fedora-44-next-20261101)", other.detail());
+        assertEquals("Rebuild to pick up image fixes: isx build tpl-java", other.remediation().description());
+    }
+
     @Test
     void aReleaseBeforeAKnownFixIsAWarningThatNamesTheFix() {
         // Releases before fedora-44-20261009 restart systemd-networkd every 30 seconds
@@ -239,8 +258,9 @@ class DoctorBaseImageTest {
     void theSharedChecksReadTheListingThroughTheDoctorsIncus() {
         // The built-in tpl-minimal, on a release before the one it names
         var expected = ImageDef.loadBuiltinByName("tpl-minimal").getImageTag();
+        var older = BaseImageAge.ReleaseTag.parse(expected).line() + "-20250101";
         var daemon = new FakeIncusDaemon().pool("cow", "btrfs")
-                .container("tpl-minimal", stamps(Metadata.TYPE_BASE, "tpl-minimal", "fedora-44-20261015", "ee".repeat(32)));
+                .container("tpl-minimal", stamps(Metadata.TYPE_BASE, "tpl-minimal", older, "ee".repeat(32)));
         var incus = daemon.client();
         var doctor = new DoctorCommand() {
             @Override
@@ -253,7 +273,7 @@ class DoctorBaseImageTest {
         var base = findings.stream().filter(f -> f.label().startsWith("Base image")).toList();
         assertEquals(List.of("Base image older than " + expected), base.stream().map(DoctorCommand.Finding::label).toList(),
                 findings.toString());
-        assertEquals("(templates: tpl-minimal on fedora-44-20261015)", base.getFirst().detail());
+        assertEquals("(templates: tpl-minimal on " + older + ")", base.getFirst().detail());
         assertFalse(base.getFirst().status().isProblem(), "a routine release is not an issue to address");
     }
 }

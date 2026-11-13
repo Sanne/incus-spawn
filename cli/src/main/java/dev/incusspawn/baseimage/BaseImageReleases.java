@@ -27,8 +27,9 @@ import java.util.regex.Pattern;
  * so the release list always comes from the same repository the build will
  * download from — the YAML {@code image_url} is the single source of truth.
  *
- * <p>The newest release is always {@code fetchReleases().get(0)} — the GitHub
- * releases API returns releases newest-first.
+ * <p>The GitHub releases API lists releases newest-first, but the first one may be of
+ * another Fedora release or a channel: what tracking follows is
+ * {@code BaseImageAge.trackedRelease}, the newest of the built-in's line (#1994).
  */
 public final class BaseImageReleases {
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");

@@ -72,7 +72,7 @@ Package deduplication: `BuildCommand` collects all ancestor packages and subtrac
 
 **Base image version tracking**: The root template (`tpl-minimal`) downloads a pre-baked base image from `Sanne/incus-spawn-images`, whose tag/checksums are baked into `minimal.yaml`.
 That built-in tag is only an **offline fallback**.
-When the root def is unpinned (`pinned: false`), `BuildCommand.resolveTrackedBaseImage()` (called at the top of `buildFromScratch` on the root def) fetches the newest release at build time via `baseimage/BaseImageReleases` and returns its tag + per-arch container/VM checksums for the download, so a plain build always tracks the latest base image.
+When the root def is unpinned (`pinned: false`), `BuildCommand.resolveTrackedBaseImage()` (called at the top of `buildFromScratch` on the root def) fetches the newest release of the built-in's line at build time via `baseimage/BaseImageReleases` (`BaseImageAge.newestOnLine`: never another Fedora or a channel, #1994) and returns its tag + per-arch container/VM checksums for the download, so a plain build always tracks the latest base image.
 It never rewrites the definition: `definition-sha` and `build-source` fingerprint it as loaded, the tracked tag goes in `build-source`'s `trackedImageTag`, and a newer release being published does not mark the root as changed (#1244).
 Any network/API failure falls back to the built-in tag with a `note()`.
 `isx update-base` only manages the *pin* -- pinning writes `~/.config/incus-spawn/base-image-pin.yaml` (`BaseImagePin`) with the selected release's `image`, URLs, tag and both `image_sha256`+`vm_image_sha256`; `--latest`/menu option 1 just deletes it to resume build-time tracking (it downloads nothing).

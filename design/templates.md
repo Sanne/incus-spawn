@@ -672,13 +672,25 @@ A stamp written at build would have left exactly those unknown.
 The comparison is with the instance's root definition as loaded, its base-image pin applied: what a rebuild would use offline.
 The image's fingerprint (`volatile.base_image`, a base image's tarball sha256) is compared before the tag.
 A release can re-publish an unchanged asset, and the import then reuses the image under the tag it was first imported with, which does not tell its age.
-Otherwise the tags are compared (`<distribution>-<release>-<yyyymmdd>`, release first): a newer one, such as a tracked build of a later release, is fine, and one that does not parse is unknown, a `NOTE`.
-A later release the same day carries `-2`, `-3` and so on (incus-spawn-images' `release-tag.sh`), which orders after that day's bare tag and before the next day.
+Otherwise the tags are compared.
+Every tag is `<distribution>-<release>[-<channel>]-<yyyymmdd>[-<n>]`, which incus-spawn-images' `release-tag.sh` generates and nobody types (#1994).
+A later release the same day carries `-2`, `-3` and so on, which orders after that day's bare tag and before the next day.
+The line is everything before the date: the distribution, the release and the channel, as `fedora-45` or `fedora-45-next`.
+A channel is lower-case letters only, so the line ends where the date starts, and the stable line has no channel.
+Tags order only within a line, by date and then that day's number; a newer one, such as a tracked build of a later release of the line, is fine.
+Two lines are neither older nor newer than each other, since a later branch is not always better (Sanne on #2194).
+An instance on another line, another Fedora or a channel, is a finding of its own, "on another line than" the release a rebuild would use, with the same rebuild plan.
+A tag that does not parse is unknown, a `NOTE`.
+`fedora-45-v1` is the one named exception (`BaseImageAge.LEGACY_TAG`): the first Fedora 45 release was published under that typed tag, and it reads as the stable `fedora-45` line built on 2026-11-04, before that day's first dated release.
+No other typed tag is published again, so nothing has to guess how one orders.
+What this gives up: moving a template from Fedora 44 to 45, or onto a channel, is always a person's step, and doctor no longer calls a Fedora 44 template older than a Fedora 45 built-in, only on another line.
+Nothing moves across lines by itself: an unpinned build and `isx update-base --latest` take the newest release of the built-in's own line, never the first one GitHub lists (`BaseImageAge.newestOnLine`), and a pin to another line is a note, not a warning.
 Doctor's remediation is a rebuild the user starts: an instance cannot be rebuilt, only branched again, and that is theirs to decide.
 An older base image is a `NOTE`, so publishing a routine release does not turn every host's `isx doctor` into a list of issues to address (Sanne's decision on #1664).
 It is a `WARN` only when the instance's release predates a known fix that a rebuild would bring: `BaseImageAge.KNOWN_FIXES`, which names the fix, such as the network watchdog of `fedora-44-20261009`.
 That list is written by hand, one entry per base-image fix worth a rebuild for everyone still on an older release.
-A release lacks a fix only on the fix's own release line (`fedora-44`), since a date on another release does not say which scripts it was built from.
+A release lacks a fix only on the fix's own line (`fedora-44`), since a date on another line does not say which scripts it was built from.
+A rebuild brings it when the release a rebuild would use is that fix or later on its line, or on another line, whose own known problems would be listed for that line.
 Each release is one finding, so a rebuild is planned once, and it is a `WARN` as soon as one member lacks a known fix, which the detail names with those members.
 A note's remediation is printed under it, since only an issue's is offered after the list.
 A project template is a copy of its parent, so it moves by `isx project create` again, which replaces it.

@@ -70,7 +70,8 @@ public class UpdateBaseCommand extends BaseCommand {
                 BuildOutput.error("could not fetch releases: " + failure(e));
                 return CommandResult.valueOf(1);
             }
-            outputFormat.print(BuildOutput.results(), releaseRecords(available, minimal.getImageTag(), minimal.isPinned()));
+            outputFormat.print(BuildOutput.results(), releaseRecords(available, latestOf(available, unpinned),
+                    minimal.getImageTag(), minimal.isPinned()));
             return CommandResult.SUCCESS;
         }
 
@@ -99,8 +100,9 @@ public class UpdateBaseCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
+        var latest = latestOf(available, unpinned);
         if (listOnly) {
-            printReleaseList(available, currentTag);
+            printReleaseList(available, latest, currentTag);
             return CommandResult.SUCCESS;
         }
 
@@ -111,11 +113,20 @@ public class UpdateBaseCommand extends BaseCommand {
 
         // --latest flag → track latest, remove any pin
         if (useLatest) {
-            return trackLatest(available.get(0).tag());
+            return trackLatest(latest);
         }
 
         // Interactive mode
-        return interactive(available, isPinned, unpinned, currentTag);
+        return interactive(available, latest, isPinned, unpinned, currentTag);
+    }
+
+    /**
+     * The tag tracking the latest follows: the newest release on the built-in's line (#1994), or
+     * the built-in's own tag when none is listed on it. Another Fedora or channel is pinned by tag.
+     */
+    static String latestOf(List<Release> available, ImageDef unpinned) {
+        var tracked = BaseImageAge.trackedRelease(available, Release::tag, unpinned.getImageTag());
+        return tracked == null ? unpinned.getImageTag() : tracked.tag();
     }
 
     CommandResult trackLatest(String latestTag) throws IOException {
@@ -162,7 +173,7 @@ public class UpdateBaseCommand extends BaseCommand {
                 .orElse(null);
         if (selected == null) {
             BuildOutput.error("release '" + OutputFormat.oneLine(tag) + "' not found.");
-            printReleaseList(available, current.getImageTag());
+            printReleaseList(available, latestOf(available, current), current.getImageTag());
             return CommandResult.valueOf(1);
         }
 
@@ -202,12 +213,11 @@ public class UpdateBaseCommand extends BaseCommand {
         return CommandResult.SUCCESS;
     }
 
-    private CommandResult interactive(List<Release> available, boolean isPinned, ImageDef unpinned, String currentTag)
-            throws IOException {
-        printReleaseList(available, currentTag);
+    private CommandResult interactive(List<Release> available, String latest, boolean isPinned, ImageDef unpinned,
+                                      String currentTag) throws IOException {
+        printReleaseList(available, latest, currentTag);
 
-        var latest = available.get(0);
-        if (latest.tag().equals(currentTag) && !isPinned) {
+        if (latest.equals(currentTag) && !isPinned) {
             BuildOutput.success("Already tracking the latest version");
             return CommandResult.SUCCESS;
         }
@@ -221,17 +231,17 @@ public class UpdateBaseCommand extends BaseCommand {
     }
 
     /** Asks whether to track the latest release or pin one, through {@code prompts}, and does it. */
-    CommandResult askWhatToDo(Prompts prompts, Release latest, List<Release> available, ImageDef unpinned)
+    CommandResult askWhatToDo(Prompts prompts, String latest, List<Release> available, ImageDef unpinned)
             throws IOException {
         prompts.say("What would you like to do?");
-        prompts.say("1) Track latest (" + latest.tag() + ") — always installs the newest release on build");
+        prompts.say("1) Track latest (" + latest + ") — always installs the newest release of its line on build");
         prompts.say("2) Pin a specific version");
         prompts.say("3) Cancel");
         var choice = prompts.ask("Choice [1-3]: ");
         if (choice == null) return CommandResult.SUCCESS;
 
         return switch (choice.strip()) {
-            case "1" -> trackLatest(latest.tag());
+            case "1" -> trackLatest(latest);
             case "2" -> {
                 var tag = prompts.ask("Enter version tag: ");
                 if (tag == null || tag.isBlank()) {
@@ -270,12 +280,11 @@ public class UpdateBaseCommand extends BaseCommand {
         }
     }
 
-    private void printReleaseList(List<Release> available, String currentTag) {
+    private void printReleaseList(List<Release> available, String latest, String currentTag) {
         var lines = new ArrayList<String>();
-        for (int i = 0; i < available.size(); i++) {
-            var r = available.get(i);
+        for (var r : available) {
             var markers = new ArrayList<String>();
-            if (i == 0) markers.add("latest");
+            if (r.tag().equals(latest)) markers.add("latest");
             if (r.tag().equals(currentTag)) markers.add("current");
             var suffix = markers.isEmpty() ? "" : "  [" + String.join(", ", markers) + "]";
             lines.add(r.tag() + "  " + r.date() + suffix);
@@ -287,19 +296,20 @@ public class UpdateBaseCommand extends BaseCommand {
      * The fields of {@code isx update-base --list --format=plain|json}, newest first, in order:
      * add to the end, never rename. {@code date} is the release's ISO-8601 publication date;
      * {@code pinned} marks the current release when it is pinned, so builds never move past it.
+     * {@code latest} marks the release tracking the latest follows: the newest on the built-in's
+     * line, never another Fedora or channel (#1994).
      * {@code listed} is whether the release is among those fetched (the newest published ones):
      * a current base image that is not -- older than all of them, unpublished, or deleted --
      * gets a record of its own, last, with {@code listed} false and no date, so a script always
      * finds the current one. Not being listed says nothing about its age.
      */
-    static List<Map<String, Object>> releaseRecords(List<Release> available, String currentTag, boolean pinned) {
+    static List<Map<String, Object>> releaseRecords(List<Release> available, String latest, String currentTag, boolean pinned) {
         var records = new ArrayList<Map<String, Object>>();
-        for (int i = 0; i < available.size(); i++) {
-            var r = available.get(i);
+        for (var r : available) {
             var record = new LinkedHashMap<String, Object>();
             record.put("tag", r.tag());
             record.put("date", r.date().isEmpty() ? null : r.date());
-            record.put("latest", i == 0);
+            record.put("latest", r.tag().equals(latest));
             record.put("current", r.tag().equals(currentTag));
             record.put("pinned", pinned && r.tag().equals(currentTag));
             record.put("listed", true);
@@ -309,7 +319,8 @@ public class UpdateBaseCommand extends BaseCommand {
             var record = new LinkedHashMap<String, Object>();
             record.put("tag", currentTag);
             record.put("date", null);
-            record.put("latest", false);
+            // The built-in itself is what tracking follows when nothing newer of its line is listed
+            record.put("latest", currentTag.equals(latest));
             record.put("current", true);
             record.put("pinned", pinned);
             record.put("listed", false);

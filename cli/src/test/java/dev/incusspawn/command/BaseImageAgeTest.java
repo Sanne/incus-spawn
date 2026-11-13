@@ -94,9 +94,11 @@ class BaseImageAgeTest {
         assertEquals("fedora-44-20261021", age.expectedTag());
     }
 
+    /** Another Fedora release is another line, neither older nor newer whatever its date (#1994). */
     @Test
-    void anEarlierFedoraReleaseIsOlderWhateverItsDate() {
-        assertEquals(Standing.OLDER, standing(container("tpl-java", "fedora-43-20261101", "ee".repeat(32))));
+    void anotherFedoraReleaseIsAnotherLine() {
+        assertEquals(Standing.OTHER_LINE, standing(container("tpl-java", "fedora-43-20261101", "ee".repeat(32))));
+        assertEquals(Standing.OTHER_LINE, standing(container("tpl-java", "fedora-44-next-20261001", "ee".repeat(32))));
     }
 
     @Test
@@ -113,7 +115,8 @@ class BaseImageAgeTest {
     void noTagOrOneThatDoesNotParseIsUnknown() {
         assertEquals(Standing.UNKNOWN, standing(container("tpl-java", null, "ee".repeat(32))));
         assertEquals(Standing.UNKNOWN, standing(container("tpl-java", "nightly", "ee".repeat(32))));
-        assertEquals(Standing.UNKNOWN, standing(container("tpl-java", "ubuntu-24-20261001", "ee".repeat(32))));
+        assertEquals(Standing.UNKNOWN, standing(container("tpl-java", "fedora-44-v2", "ee".repeat(32))));
+        assertEquals(Standing.OTHER_LINE, standing(container("tpl-java", "ubuntu-24-20261001", "ee".repeat(32))));
     }
 
     @Test
@@ -160,56 +163,124 @@ class BaseImageAgeTest {
     }
 
     @Test
-    void tagsCompareReleaseFirstThenDate() {
+    void tagsCompareByDateThenTheDaysNumberWithinALine() {
         assertTrue(BaseImageAge.compareTags("fedora-44-20261001", "fedora-44-20261021") < 0);
-        assertTrue(BaseImageAge.compareTags("fedora-45-20260101", "fedora-44-20261021") > 0);
         assertEquals(0, BaseImageAge.compareTags("fedora-44-20261021", "fedora-44-20261021"));
-        assertNull(BaseImageAge.compareTags("fedora-44-20261021", "centos-10-20261021"));
+        assertTrue(BaseImageAge.compareTags("fedora-44-20261021-2", "fedora-44-20261021") > 0);
+        assertTrue(BaseImageAge.compareTags("fedora-44-20261021-10", "fedora-44-20261021-9") > 0, "by number, not text");
+        assertTrue(BaseImageAge.compareTags("fedora-45-next-20261120", "fedora-45-next-20261111") > 0);
         assertNull(BaseImageAge.compareTags("fedora-44", "fedora-44-20261021"));
-        for (var bad : List.of("", "-", "fedora--20261001", "fedora-44-2026100", "fedora-99999999999999999999-20261010")) {
+        for (var bad : List.of("", "-", "fedora--20261001", "fedora-44-2026100", "fedora-99999999999999999999-20261010",
+                "fedora-45-v2", "fedora-45-rc1", "fedora-45-Next-20261111", "fedora-45-next2-20261111")) {
             assertNull(BaseImageAge.compareTags(bad, "fedora-44-20261021"), bad);
         }
     }
 
     /**
-     * An explicit release tag ({@code fedora-45-v1}, which incus-spawn-images' release workflow
-     * accepts) has no date, but its release still orders it against another release line (#1988).
+     * A line is the distribution, release and channel (#1994): tags of two lines never order,
+     * since a later branch is not always better, so nothing moves from one to another by itself.
      */
     @Test
-    void anExplicitTagOrdersAcrossReleasesButNotWithinItsOwn() {
-        assertTrue(BaseImageAge.compareTags("fedora-44-20261015", "fedora-45-v1") < 0);
-        assertTrue(BaseImageAge.compareTags("fedora-45-v1", "fedora-44-20261015") > 0);
-        assertTrue(BaseImageAge.compareTags("fedora-45-v1", "fedora-9-20250101") > 0, "by number, not text");
-        assertTrue(BaseImageAge.compareTags("fedora-44-v2", "fedora-45-v1") < 0);
-        assertTrue(BaseImageAge.compareTags("fedora-44-20261021-2", "fedora-45-v1") < 0);
-        assertNull(BaseImageAge.compareTags("fedora-45-v1", "fedora-45-20261104"), "same release, no date to compare");
-        assertNull(BaseImageAge.compareTags("fedora-45-v1", "fedora-45-v2"));
-        assertEquals(0, BaseImageAge.compareTags("fedora-45-v1", "fedora-45-v1"), "the same release is current");
-        assertNull(BaseImageAge.compareTags("fedora-45-v1", "centos-45-v1"));
-        assertNull(BaseImageAge.compareTags("fedora-45-v1", "fedora-45"));
-        assertTrue(BaseImageAge.sameLine("fedora-45-v1", "fedora-45-20261104"));
-        assertFalse(BaseImageAge.sameLine("fedora-45-v1", "fedora-44-20261104"));
+    void tagsOfTwoLinesDoNotOrder() {
+        assertNull(BaseImageAge.compareTags("fedora-45-20260101", "fedora-44-20261021"), "another Fedora");
+        assertNull(BaseImageAge.compareTags("fedora-45-next-20261120", "fedora-45-20261111"), "another channel");
+        assertNull(BaseImageAge.compareTags("fedora-44-20261021", "centos-10-20261021"));
+        assertEquals(Boolean.TRUE, BaseImageAge.sameLine("fedora-45-20261111-2", "fedora-45-20261104"));
+        assertEquals(Boolean.FALSE, BaseImageAge.sameLine("fedora-45-next-20261111", "fedora-45-20261111"));
+        assertEquals(Boolean.FALSE, BaseImageAge.sameLine("fedora-44-20261104", "fedora-45-20261104"));
+        assertNull(BaseImageAge.sameLine("nightly", "fedora-45-20261104"));
+        assertEquals("fedora-45-next", BaseImageAge.ReleaseTag.parse("fedora-45-next-20261120-2").line());
 
-        assertTrue(BuildCommand.isNewerRelease("fedora-45-v1", "fedora-9-20250101"));
-        assertFalse(BuildCommand.isNewerRelease("fedora-44-20261015", "fedora-45-v1"));
+        assertFalse(BuildCommand.isNewerRelease("fedora-45-20260101", "fedora-44-20261021"));
+        assertFalse(BuildCommand.isNewerRelease("fedora-45-next-20261120", "fedora-45-20261111"));
+        assertFalse(BuildCommand.isNewerRelease("nightly-b", "nightly-a"), "a tag of no known shape is never newer");
+    }
 
+    /**
+     * {@code fedora-45-v1}, published under a typed tag before every tag was generated, is the one
+     * named exception (#1994): the stable Fedora 45 line, built on 2026-11-04. So a pin to it is
+     * warned about once {@code fedora-45-20261111} is the built-in, and doctor calls a template
+     * built from it older, not incomparable.
+     */
+    @Test
+    void fedora45V1IsTheStableLineBuiltOnItsDay() {
+        assertTrue(BaseImageAge.compareTags("fedora-45-v1", "fedora-45-20261111") < 0);
+        assertTrue(BaseImageAge.compareTags("fedora-45-20261111", "fedora-45-v1") > 0);
+        assertTrue(BaseImageAge.compareTags("fedora-45-v1", "fedora-45-20261104") < 0, "before that day's first");
+        assertTrue(BaseImageAge.compareTags("fedora-45-v1", "fedora-45-20261103") > 0);
+        assertEquals(0, BaseImageAge.compareTags("fedora-45-v1", "fedora-45-v1"));
+        assertNull(BaseImageAge.compareTags("fedora-45-v1", "fedora-45-next-20261111"));
+        assertNull(BaseImageAge.compareTags("fedora-44-v1", "fedora-44-20261111"), "the exception is that one tag");
+
+        assertTrue(BuildCommand.isNewerRelease("fedora-45-20261111", "fedora-45-v1"));
+        assertFalse(BuildCommand.isNewerRelease("fedora-45-v1", "fedora-45-20261111"));
+
+        var defs = Map.of("tpl-minimal", def("""
+                name: tpl-minimal
+                image: fedora-45-base
+                image_url: https://example.org/{tag}/fedora-45-{arch}.tar.xz
+                image_tag: fedora-45-20261111
+                """));
+        var age = BaseImageAge.assess(container("tpl-minimal", "fedora-45-v1", "ee".repeat(32)), defs);
+        assertEquals(Standing.OLDER, age.standing());
+        var fix = new BaseImageAge.KnownFix("fedora-45-20261108", "a problem");
+        assertEquals(List.of(fix), BaseImageAge.missingFixes(age, List.of(fix)), "v1 predates a fix of its line");
+    }
+
+    /**
+     * A template on another Fedora still lacks a fix of its own line, and a rebuild moves it to
+     * the built-in's line, whose own known problems would be listed for it.
+     */
+    @Test
+    void aTemplateOnAnotherLineStillLacksTheFixesOfItsOwn() {
         var defs = Map.of("tpl-minimal", def("""
                 name: tpl-minimal
                 image: fedora-45-base
                 image_url: https://example.org/{tag}/fedora-45-{arch}.tar.xz
                 image_tag: fedora-45-v1
                 """));
-        assertEquals(Standing.OLDER,
-                BaseImageAge.assess(container("tpl-minimal", "fedora-44-20261015", "ee".repeat(32)), defs).standing());
-        var age = new BaseImageAge.Assessment(Standing.OLDER, "fedora-44-20261001", "fedora-45-v1");
+        var age = BaseImageAge.assess(container("tpl-minimal", "fedora-44-20261001", "ee".repeat(32)), defs);
+        assertEquals(Standing.OTHER_LINE, age.standing());
         assertEquals(List.of("fedora-44-20261009"),
                 BaseImageAge.missingFixes(age).stream().map(BaseImageAge.KnownFix::release).toList());
+        var after = BaseImageAge.assess(container("tpl-minimal", "fedora-44-20261021", "ee".repeat(32)), defs);
+        assertEquals(List.of(), BaseImageAge.missingFixes(after));
+    }
+
+    /** Unpinned builds and update-base --latest follow the built-in's line alone (#1994). */
+    @Test
+    void theNewestReleaseIsTakenFromTheBuiltInsLineOnly() {
+        // As GitHub lists them, newest first: another Fedora and a channel were published last
+        var listed = List.of("fedora-44-20261201", "fedora-45-next-20261125", "fedora-45-20261121",
+                "fedora-45-20261121-2", "fedora-45-20261111", "fedora-45-v1");
+        assertEquals("fedora-45-20261121-2", BaseImageAge.newestOnLine(listed, t -> t, "fedora-45-v1"));
+        assertEquals("fedora-45-next-20261125", BaseImageAge.newestOnLine(listed, t -> t, "fedora-45-next-20261101"));
+        assertNull(BaseImageAge.newestOnLine(listed, t -> t, "fedora-46-20270101"), "none on its line");
+        assertEquals("fedora-44-20261201", BaseImageAge.newestOnLine(listed, t -> t, "custom"), "a tag of no known shape: the first listed");
+        assertNull(BaseImageAge.newestOnLine(List.<String>of(), t -> t, "fedora-45-v1"));
     }
 
     /** A pin behind the built-in release is a warning with its remedy, never a step marked "Warning:" (#1703). */
     @Test
     @ExtendWith(IsolatedHome.class)
     void aPinBehindTheBuiltInReleaseIsAWarning() {
+        var builtin = ImageDef.loadBuiltinByName("tpl-minimal").getImageTag();
+        var line = BaseImageAge.ReleaseTag.parse(builtin).line();
+        var pinned = new ImageDef();
+        pinned.setName("tpl-minimal");
+        pinned.setImageTag(line + "-20250101");
+        pinned.setPinned(true);
+
+        var said = RecordingOutput.during(() -> BuildCommand.checkPinnedWarning(pinned));
+
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN, "Base image is pinned to " + line + "-20250101, but " + builtin + " is available.",
+                "Run 'isx update-base --latest' to update.")), said.events());
+    }
+
+    /** A pin to another line is said as a note, never urged as a warning (#1994). */
+    @Test
+    @ExtendWith(IsolatedHome.class)
+    void aPinToAnotherLineIsANote() {
         var pinned = new ImageDef();
         pinned.setName("tpl-minimal");
         pinned.setImageTag("fedora-9-20250101");
@@ -218,17 +289,14 @@ class BaseImageAgeTest {
         var said = RecordingOutput.during(() -> BuildCommand.checkPinnedWarning(pinned));
 
         var builtin = ImageDef.loadBuiltinByName("tpl-minimal").getImageTag();
-        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN, "Base image is pinned to fedora-9-20250101, but " + builtin + " is available.",
-                "Run 'isx update-base --latest' to update.")), said.events());
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.NOTE, "Base image is pinned to fedora-9-20250101, on another line than the built-in "
+                + builtin + ". 'isx update-base --latest' follows the built-in's line.")), said.events());
     }
 
     @Test
     void thePinnedImageWarningOrdersReleasesTheSameWay() {
-        assertTrue(BuildCommand.isNewerRelease("fedora-44-20261021", "fedora-9-20250101"));
-        assertFalse(BuildCommand.isNewerRelease("fedora-9-20250101", "fedora-44-20261021"));
         assertTrue(BuildCommand.isNewerRelease("fedora-44-20261021", "fedora-44-20261001"));
         assertFalse(BuildCommand.isNewerRelease("fedora-44-20261021", "fedora-44-20261021"));
-        assertTrue(BuildCommand.isNewerRelease("nightly-b", "nightly-a"), "another shape keeps the string order");
         assertTrue(BuildCommand.isNewerRelease("fedora-44-20261021-2", "fedora-44-20261021"), "a second release that day");
     }
 

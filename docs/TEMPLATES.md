@@ -42,12 +42,15 @@ isx update-base              # interactive — shows versions, prompts for actio
 isx update-base --list       # list available versions
 isx update-base --list --format=json  # the same for scripts (plain or json)
 isx update-base --latest     # track the newest release (remove any pin)
-isx update-base fedora-44-v2 # pin to a specific release tag
+isx update-base fedora-45-20261111  # pin to a specific release tag
 ```
 
 Tracking latest is the default and requires no action.
 When the base image is unpinned, `isx build tpl-minimal` resolves the newest release at build time and installs it.
 If isx cannot reach the release list, it uses the version built into the isx binary.
+
+Tracking follows the built-in's line, such as `fedora-45`.
+It never moves to another Fedora or to a channel such as `fedora-45-next` by itself.
 
 Pinning writes the release to `~/.config/incus-spawn/base-image-pin.yaml`, which changes only the base image `tpl-minimal` downloads.
 Everything else still comes from the built-in definition, or from your own `minimal.yaml`.
