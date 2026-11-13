@@ -54,6 +54,10 @@ setup() {
     if [ -n "${BODY:-}" ]; then printf '%s\n' "$BODY" > "$dir/fixtures/body"; else marker "${6:-x}" > "$dir/fixtures/body"; fi
     [ -z "${FAIL:-}" ] || touch "$dir/fixtures/fail-$FAIL"
     cp -r "$SRC/upstream/engine" "$dir/src/upstream/engine"
+    # publish loads each item's source type, for the order its versions compare in (SOURCE: the
+    # item's source type, default kernel-org; github-release orders base-image tags, #1994)
+    printf 'items:\n  kernel:\n    source:\n      type: %s\n' "${SOURCE:-kernel-org}" > "$dir/src/upstream/manifest.yaml"
+    mkdir -p "$dir/src/.github/scripts"; cp "$SRC/.github/scripts/base-image-sums.sh" "$dir/src/.github/scripts/"
     echo "$2" > "$dir/src/pin.txt"
     cd "$dir/src"
     git init -q -b main && git add -A && git -c user.name=t -c user.email=t@t commit -qm init
@@ -161,6 +165,10 @@ edit_line="$(grep 'gh pr edit 7' "$WORK/stale/calls")"
 [[ "$edit_line" != *"upstream-watch: kernel"* ]] || fail "stale: the marker was not stripped before closing"
 ACTION=none run ahead 7.2.10 7.2.10 "$OPEN7" '[]' 7.2.11
 [ "$(calls ahead 'gh pr close')" = 0 ] || fail "ahead: a PR ahead of main was closed"
+# By the item's own order (#1994): a PR for fedora-45-20261111 is ahead of a fedora-45-v1 pin, which
+# sort -V denies, so it stays open.
+SOURCE=github-release ACTION=none run ahead-dated fedora-45-v1 fedora-45-v1 "$OPEN7" '[]' fedora-45-20261111
+[ "$(calls ahead-dated 'gh pr close')" = 0 ] || fail "ahead-dated: a dated PR ahead of an explicit-tag pin was closed"
 # A stale branch carrying someone's commit is neither closed nor deleted: the run fails instead.
 ACTION=none run_failing stale-foreign 7.2.10 7.2.10 "$OPEN7" '[]' 7.2.10 someone@example.org
 [ "$(calls stale-foreign 'gh pr close')" = 0 ] && [ "$(calls stale-foreign 'gh pr edit')" = 0 ] || fail "stale-foreign: the PR was touched"
