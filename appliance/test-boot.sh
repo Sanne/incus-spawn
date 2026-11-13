@@ -10,6 +10,12 @@ set -euo pipefail
 #
 # SERIAL_LOG=<file> keeps the guest's serial console in <file>, which is
 # otherwise a temporary file deleted on exit (test-kernel-on-mac.sh, #2033).
+#
+# VFKIT=<program> boots with that program where vfkit would run, on macOS. It is
+# how the launcher's prototype, isx-vm, is put through the same boot and the same
+# tunnel checks as vfkit: it reads the arguments this script gives vfkit
+# (launcher-on-mac.sh, #2031). HYPERVISOR_LOG=<file> keeps what that program
+# itself printed, which is otherwise discarded.
 
 BUILD_DIR="${1:-$(dirname "$0")/build}"
 TIMEOUT="${2:-300}"
@@ -53,6 +59,9 @@ REMOTE
     fi
 fi
 
+VFKIT="${VFKIT:-vfkit}"
+# What ran, for the messages: vfkit, or the program given in its place.
+HYPERVISOR="$(basename "$VFKIT")"
 LOGFILE="${SERIAL_LOG:-$(mktemp)}"
 : > "$LOGFILE"
 VSOCK_RESULT=$(mktemp)
@@ -66,7 +75,7 @@ trap cleanup EXIT
 
 boot_vfkit() {
     BACKEND="vfkit"
-    echo "  backend: vfkit (Apple Virtualization.framework)"
+    echo "  backend: $HYPERVISOR (Apple Virtualization.framework)"
     # vfkit requires --initrd even though our kernel ignores it (CONFIG_BLK_DEV_INITRD=n)
     local dummy_initrd
     dummy_initrd=$(mktemp)
@@ -83,7 +92,7 @@ boot_vfkit() {
     local agent_sock="$VSOCK_DIR/agent.sock"
     # The test-only silent endpoint (isx.test_silent_vsock) that TUNNEL_BACKSTOP=1 times.
     local silent_sock="$VSOCK_DIR/silent.sock"
-    vfkit \
+    "$VFKIT" \
         --cpus 2 --memory 2048 \
         --kernel "$BUILD_DIR/vmlinuz" \
         --initrd "$dummy_initrd" \
@@ -95,7 +104,7 @@ boot_vfkit() {
         --device "virtio-vsock,port=1025,socketURL=$agent_sock,connect" \
         --device "virtio-vsock,port=8444,socketURL=$silent_sock,connect" \
         --restful-uri "tcp://localhost:0" \
-        > /dev/null 2>&1 &
+        > "${HYPERVISOR_LOG:-/dev/null}" 2>&1 &
     local pid=$!
     local elapsed=0
     while [ "$elapsed" -lt "$((TIMEOUT * 10))" ]; do
@@ -111,20 +120,20 @@ boot_vfkit() {
     # before readiness; the probes poll on their own). Results go to VSOCK_RESULT,
     # NOT the serial LOGFILE: vfkit streams the boot log into LOGFILE concurrently,
     # and interleaved appends from this shell were being lost.
-    # TUNNEL_SHUTDOWN: its last check asks the agent to shut the guest down (#881). vfkit must
-    # then exit by itself, after rcK ran; only a guest that did not is killed.
+    # TUNNEL_SHUTDOWN: its last check asks the agent to shut the guest down (#881). The
+    # hypervisor must then exit by itself, after rcK ran; only a guest that did not is killed.
     TUNNEL_SHUTDOWN=1 "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" "$silent_sock" > "$VSOCK_RESULT" 2>&1 \
         || TUNNEL_RC=$?
     local waited=0
     while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 300 ]; do sleep 0.1; waited=$((waited + 1)); done
     if kill -0 "$pid" 2>/dev/null; then
-        echo "  FAIL: vfkit still running 30s after the agent's shutdown" >> "$VSOCK_RESULT"
+        echo "  FAIL: $HYPERVISOR still running 30s after the agent's shutdown" >> "$VSOCK_RESULT"
         TUNNEL_RC=1
         kill "$pid" 2>/dev/null || true
     elif grep -q 'incus-spawn: shutting down' "$LOGFILE"; then
-        echo "  PASS: the guest ran rcK and powered off, and vfkit exited by itself" >> "$VSOCK_RESULT"
+        echo "  PASS: the guest ran rcK and powered off, and $HYPERVISOR exited by itself" >> "$VSOCK_RESULT"
     else
-        echo "  FAIL: vfkit exited without the guest running rcK" >> "$VSOCK_RESULT"
+        echo "  FAIL: $HYPERVISOR exited without the guest running rcK" >> "$VSOCK_RESULT"
         TUNNEL_RC=1
     fi
     wait "$pid" 2>/dev/null || true
@@ -187,7 +196,16 @@ echo "Booting appliance (timeout: ${TIMEOUT}s)..."
 echo "  disk:   $BUILD_DIR/disk.img ($(du -sh "$BUILD_DIR/disk.img" | cut -f1))"
 echo "  kernel: $BUILD_DIR/vmlinuz"
 
-if [ "$(uname -s)" = "Darwin" ] && command -v vfkit >/dev/null 2>&1; then
+if [ "$VFKIT" != "vfkit" ] && ! command -v "$VFKIT" >/dev/null 2>&1; then
+    # Never QEMU instead: the caller asked for one program's result.
+    echo "ERROR: VFKIT=$VFKIT is not a program that can be run" >&2
+    exit 1
+fi
+if [ "$VFKIT" != "vfkit" ] && [ "$(uname -s)" != "Darwin" ]; then
+    echo "ERROR: VFKIT=$VFKIT is for macOS; this host boots with QEMU" >&2
+    exit 1
+fi
+if [ "$(uname -s)" = "Darwin" ] && command -v "$VFKIT" >/dev/null 2>&1; then
     boot_vfkit
 else
     boot_qemu
