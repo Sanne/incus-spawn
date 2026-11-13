@@ -44,7 +44,7 @@ public enum RelayError: Error, CustomStringConvertible {
 }
 
 public final class Relay: Sendable {
-    public struct Counts: Sendable, Equatable {
+    public struct Counts: Sendable, Equatable, CustomStringConvertible {
         /// Host connections accepted whose guest connection is not open yet: each is inside `dial`.
         public var waiting: Int
         /// Connections being relayed now: one host connection and one guest connection each.
@@ -60,6 +60,11 @@ public final class Relay: Sendable {
             self.held = held
             self.total = total
             self.refused = refused
+        }
+
+        /// One line, the form a script reads after SIGUSR1.
+        public var description: String {
+            "waiting \(waiting) held \(held) total \(total) refused \(refused)"
         }
     }
 
