@@ -209,6 +209,7 @@ opencode shows no isx footer: it has no place for one.
 | --- | --- | --- |
 | `provider` | `anthropic` | The API opencode talks to; also accepts `openai` and `google` |
 | `model` | `claude-sonnet-5-5` for `anthropic`, otherwise opencode's own | The model opencode uses |
+| `small-model` | opencode's own | The model for small tasks such as session titles; setting `model` does not change it |
 
 The `openai` provider uses your OpenAI key, as [Codex CLI](#codex-cli) does.
 The `google` provider is the Gemini API, and uses your Gemini key, as [Gemini CLI](#gemini-cli) does.

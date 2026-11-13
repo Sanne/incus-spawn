@@ -89,6 +89,16 @@ class OpencodeSetupTest {
     }
 
     @Test
+    void smallModelIsPinnedOnlyWhenAskedFor() {
+        var onlyModel = config(Map.of("model", "claude-haiku-4-5"));
+        assertEquals("\"anthropic/claude-haiku-4-5\"", onlyModel.getField("model").toJsonString());
+        assertFalse(onlyModel.keys().contains("small_model"));
+        assertFalse(config(Map.of()).keys().contains("small_model"));
+        var both = config(Map.of("model", "claude-sonnet-5-5", "small-model", "claude-haiku-4-5"));
+        assertEquals("\"anthropic/claude-haiku-4-5\"", both.getField("small_model").toJsonString());
+    }
+
+    @Test
     void aProviderIsxDoesNotManageGetsNoCredential() {
         var params = resolved(Map.of("provider", "openrouter", "model", "some-model"));
         assertEquals(List.of(), env(params));
