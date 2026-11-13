@@ -10,6 +10,11 @@ set -euo pipefail
 #
 # SERIAL_LOG=<file> keeps the guest's serial console in <file>, which is
 # otherwise a temporary file deleted on exit (test-kernel-on-mac.sh, #2033).
+#
+# Under vfkit two of test-tunnel.sh's checks fail on vfkit's own leak (#785) and
+# are reported as KNOWN, not FAIL (its TUNNEL_KNOWN_LEAK=vfkit). That exception
+# is tracked in #2031 and goes when the isx launcher replaces vfkit.
+# TUNNEL_KNOWN_LEAK= (empty) keeps both checks strict.
 
 BUILD_DIR="${1:-$(dirname "$0")/build}"
 TIMEOUT="${2:-300}"
@@ -113,7 +118,9 @@ boot_vfkit() {
     # and interleaved appends from this shell were being lost.
     # TUNNEL_SHUTDOWN: its last check asks the agent to shut the guest down (#881). vfkit must
     # then exit by itself, after rcK ran; only a guest that did not is killed.
-    TUNNEL_SHUTDOWN=1 "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" "$silent_sock" > "$VSOCK_RESULT" 2>&1 \
+    # TUNNEL_KNOWN_LEAK: vfkit's own leak is reported, not failed, until the isx launcher
+    # replaces vfkit (#2031); a caller's empty value keeps the two checks strict.
+    TUNNEL_SHUTDOWN=1 TUNNEL_KNOWN_LEAK="${TUNNEL_KNOWN_LEAK-vfkit}" "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" "$silent_sock" > "$VSOCK_RESULT" 2>&1 \
         || TUNNEL_RC=$?
     local waited=0
     while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 300 ]; do sleep 0.1; waited=$((waited + 1)); done
@@ -263,10 +270,15 @@ check_absent "Kernel panic"                    "no kernel panic"
 check_absent "Call Trace:\|kernel BUG"         "no kernel oops/BUG"
 
 echo
-if [ "$FAIL" -eq 0 ]; then
+# A failure allowed as known is still listed, and counted here, so no run hides it (#2031).
+KNOWN=$(grep -c '^[[:space:]]*KNOWN:' "$VSOCK_RESULT" || true)
+if [ "$FAIL" -eq 0 ] && [ "$KNOWN" -gt 0 ]; then
+    echo "All $PASS checks passed, with $KNOWN known failures of vfkit allowed (KNOWN above, #2031)."
+elif [ "$FAIL" -eq 0 ]; then
     echo "All $PASS checks passed."
 else
     echo "$FAIL of $((PASS + FAIL)) checks failed."
+    [ "$KNOWN" -eq 0 ] || echo "$KNOWN known failures of vfkit were allowed besides (KNOWN above, #2031)."
     echo
     echo "Last 40 log lines:"
     tail -40 "$LOGFILE" | sed 's/\x1b\[[0-9;]*m//g'

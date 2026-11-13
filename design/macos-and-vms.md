@@ -212,6 +212,19 @@ forwarder children exit with their connections (count 52, baseline 4)
 their forwarder children exited with them (count 58, baseline 4)
 ```
 
+**Those two failures are allowed while a Mac runs vfkit** (#2031, decided 2026-11-13).
+Without that, every Mac boot of a kernel change failed on a leak that isx fixes by leaving vfkit, so `kernel-mac-verified` could not pass.
+`test-boot.sh` tells `test-tunnel.sh` that the bridge is vfkit (`TUNNEL_KNOWN_LEAK=vfkit`).
+Each of the two checks then prints a `KNOWN` line with its counts in place of `FAIL`, and the run passes.
+A `KNOWN` line names #785 for the fault and #2031 for the condition that removes it.
+`test-boot.sh` counts those lines beside its tally, and the Mac's kernel record lists them on every run, a failed one included, so no run hides the leak.
+The allowance is bounded: at most one child may be left for each request made since the baseline, which is what vfkit's leak gives.
+More children than that, fewer than the baseline, or no count at all still fails.
+This gives up the two checks' verdict on the guest's forwarder under vfkit: a forwarder that itself kept one child per request would pass there.
+`integration-tests` still runs both checks strictly on every PR, through the relay, against the same guest half.
+`TUNNEL_KNOWN_LEAK=` (empty) keeps them strict under vfkit, for a run that wants the baseline.
+No other check takes the variable, and P2 below has no exception.
+
 **The same counts come out on Linux, from the relay's logic alone** (2026-11-11, #2031).
 The v0.5.0 appliance was booted under QEMU with `vhost-vsock-pci`, as `integration-tests` boots it, and the unmodified `test-tunnel.sh` was run through different bridges:
 
@@ -279,6 +292,9 @@ Both are measured on a Mac with a relay that does close (#2031 stage 2).
   Closing both sides on the first EOF does not depend on that.
   The Linux reproduction above is a self-contained report for Code-Hex/vz and crc-org/vfkit; no report existed in vfkit, vz or tcpproxy when searched (2026-09-26).
   isx does not wait for it: a fix has to pass a vz release, a vfkit release and Homebrew, and isx pins no minimum vfkit version.
+- **One test exception goes with vfkit.**
+  `TUNNEL_KNOWN_LEAK` and the `KNOWN` outcome of `appliance/test-tunnel.sh`, with what sets and reads them in `test-boot.sh` and `test-kernel-on-mac.sh`, are removed in the change that makes the launcher the Mac's relay (stage 3).
+  Until then they are the only place where a vfkit leak is let pass.
 - **No compensation is retired because a fix shipped.**
   `/wait`-based completion, the request and handshake watchdogs and strict parsing are correct on any transport and stay.
   `socat -T 180`, the leak-layer diagnosis, the pool's TTL and `forwarder-restart` exist only because of P1 and P2.
