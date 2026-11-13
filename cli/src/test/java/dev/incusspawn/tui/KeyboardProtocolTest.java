@@ -169,6 +169,11 @@ class KeyboardProtocolTest {
     }
 
     @Test
+    void theRunnerConfigKeepsTamboui07FromPushingKittyFlags() {
+        assertEquals(dev.tamboui.terminal.KeyboardProtocol.LEGACY, Tui.runnerConfig().build().keyboardProtocol());
+    }
+
+    @Test
     void anUnknownKeyIsNotShiftTab() {
         assertFalse(ShiftTabBindings.isShiftTab(KeyEvent.ofKey(KeyCode.UNKNOWN)));
     }

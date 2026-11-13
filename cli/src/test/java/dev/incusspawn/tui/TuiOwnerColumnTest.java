@@ -5,7 +5,6 @@ import dev.incusspawn.command.IsolatedHome;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolDefLoader;
-import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
@@ -39,7 +38,7 @@ class TuiOwnerColumnTest {
     }
 
     private Tui tui(int width, boolean owned) throws Exception {
-        runner = TuiRunner.create(TuiConfig.builder().backend(new HeadlessBackend(width, 24)).keyboardProtocol(dev.tamboui.terminal.KeyboardProtocol.LEGACY)
+        runner = TuiRunner.create(Tui.runnerConfig().backend(new HeadlessBackend(width, 24))
                 .shutdownHook(false).noTick().build());
         var daemon = new FakeIncusDaemon()
                 .instance("ws", "container", "Stopped", Map.of(Metadata.TYPE, "branch", Metadata.PARENT, "tpl-minimal",

@@ -7,7 +7,6 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ToolDefLoader;
-import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
@@ -33,7 +32,7 @@ class TuiDeleteTargetTest {
 
     @BeforeEach
     void runner() throws Exception {
-        runner = TuiRunner.create(TuiConfig.builder().backend(new HeadlessBackend(80, 24)).keyboardProtocol(dev.tamboui.terminal.KeyboardProtocol.LEGACY)
+        runner = TuiRunner.create(Tui.runnerConfig().backend(new HeadlessBackend(80, 24))
                 .shutdownHook(false).noTick().build());
     }
 
