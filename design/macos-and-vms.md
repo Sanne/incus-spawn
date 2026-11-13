@@ -452,6 +452,10 @@ The script reads it from the values and prints the reading at the top of the rec
 A latency with connections held counts only when isx-vm held no fewer of them than vfkit, to the end of the sampling.
 If the close does not reach the guest, the framework itself loses it and no relay can fix that; the fallback is then a close sent in band, and the launcher is weighed on its other merits.
 
+The same load was first run on Linux through vfkit's relay logic, `socat` and the relay (docs/dev/PERFORMANCE-NOTES.md "The vsock tunnel's relay under load, on Linux").
+There the relay passes all 24 runs of `test-tunnel.sh` where vfkit's logic fails all 24, and a request through it costs no more than through `socat`.
+That measures the relay alone; what Virtualization.framework adds is the Mac's to show.
+
 What the script does not answer is whether macOS asks again for the Local Network and home folder permissions when `isx-vm` runs in vfkit's place: a prompt needs a person at the screen.
 A record of other counts than the defaults says so, and a measurement taken while the Mac was busy is not a basis for the decision.
 
