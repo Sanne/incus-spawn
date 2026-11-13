@@ -6,6 +6,7 @@ import dev.incusspawn.incus.Metadata;
 import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.List;
+import java.util.function.Function;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -27,18 +28,63 @@ public final class BaseImageAge {
     static final String FINGERPRINT = "volatile.base_image";
 
     /**
-     * A release tag: a distribution, its release (an int), then either the build date and
-     * {@code -2}, {@code -3} ... for a later release the same day, as incus-spawn-images'
-     * {@code release-tag.sh} names it ({@code fedora-44-20261021}), or anything else, as the
-     * explicit tag its release workflow accepts ({@code fedora-45-v1}, #1988), which has no date.
-     * The distribution's words start with a letter, so the release is the first number after them.
+     * A release tag, as incus-spawn-images' {@code release-tag.sh} names it (#1994):
+     * {@code <distribution>-<release>[-<channel>]-<yyyymmdd>[-<n>]}, as {@code fedora-45-20261111},
+     * {@code fedora-45-20261111-2} for a second release that day, or {@code fedora-45-next-20261120}
+     * on a channel. The distribution's words start with a letter, so the release is the first number
+     * after them; a channel is lower-case letters only, so the line ends where the date starts.
      */
-    private static final Pattern RELEASE_TAG =
-            Pattern.compile("([A-Za-z][^-]*(?:-[A-Za-z][^-]*)*)-(\\d{1,9})-(?:(\\d{8})(?:-(\\d{1,9}))?|.+)");
+    private static final Pattern RELEASE_TAG = Pattern.compile(
+            "([A-Za-z][^-]*(?:-[A-Za-z][^-]*)*)-(\\d{1,9})(?:-([a-z]+))?-(\\d{8})(?:-(\\d{1,9}))?");
+
+    /**
+     * The one release published under a typed tag before every tag was generated: the first
+     * Fedora 45 release, built on 2026-11-04, on the stable line. It orders before that day's
+     * first dated release; no other such tag is ever published again.
+     */
+    static final String LEGACY_TAG = "fedora-45-v1";
+    private static final ReleaseTag LEGACY = new ReleaseTag("fedora", 45, "", "20261104", 0);
+
+    /**
+     * A parsed release tag. Its line is the distribution, release and channel ({@code fedora-45},
+     * {@code fedora-45-next}): tags order by build date and that day's number only within a line,
+     * and a line is never newer or older than another, since a later branch is not always better.
+     *
+     * @param channel empty on the stable line
+     * @param serial  the release's number among those of its day: 1 without a suffix
+     */
+    public record ReleaseTag(String distribution, int release, String channel, String date, int serial) {
+        /** The tag parsed, or null when it is not of the scheme and not the legacy tag. */
+        public static ReleaseTag parse(String tag) {
+            if (tag == null) return null;
+            if (LEGACY_TAG.equals(tag)) return LEGACY;
+            var m = RELEASE_TAG.matcher(tag);
+            if (!m.matches()) return null;
+            return new ReleaseTag(m.group(1), Integer.parseInt(m.group(2)), m.group(3) == null ? "" : m.group(3),
+                    m.group(4), m.group(5) == null ? 1 : Integer.parseInt(m.group(5)));
+        }
+
+        /** The line, as {@code fedora-45} or {@code fedora-45-next}. */
+        public String line() {
+            return distribution + "-" + release + (channel.isEmpty() ? "" : "-" + channel);
+        }
+
+        /** The order of two tags of one line: build date, then that day's number; null across lines. */
+        public Integer compareWithin(ReleaseTag other) {
+            if (!line().equals(other.line())) return null;
+            int byDate = date.compareTo(other.date);
+            return byDate != 0 ? byDate : Integer.compare(serial, other.serial);
+        }
+    }
 
     private BaseImageAge() {}
 
-    public enum Standing { CURRENT, OLDER, NEWER, UNKNOWN }
+    /**
+     * {@code OTHER_LINE}: both tags parse but name different lines (another Fedora release or
+     * another channel), which a rebuild would move the instance off, but which is neither older nor
+     * newer. {@code UNKNOWN}: Incus recorded no tag, or one of the two does not parse.
+     */
+    public enum Standing { CURRENT, OLDER, NEWER, OTHER_LINE, UNKNOWN }
 
     /**
      * @param tag         the release the instance's base image came from, or null if Incus recorded none
@@ -59,19 +105,22 @@ public final class BaseImageAge {
 
     /**
      * The known fixes an instance lacks that a rebuild to the release it is assessed against would
-     * bring. It lacks one only on the fix's own release line ({@code fedora-44}) and before it: a
-     * date on another release says nothing about when that image was built from the fixed scripts.
+     * bring. It lacks one only on the fix's own line ({@code fedora-44}) and before it: a date on
+     * another line says nothing about which scripts that image was built from. A rebuild brings it
+     * when the release assessed against is that line's fix or later, or on another line: a known
+     * problem of the line a rebuild moves to would be listed for that line.
      */
     public static List<KnownFix> missingFixes(Assessment age) {
         return missingFixes(age, KNOWN_FIXES);
     }
 
     static List<KnownFix> missingFixes(Assessment age, List<KnownFix> fixes) {
-        if (age == null || age.standing() != Standing.OLDER) return List.of();
+        if (age == null || (age.standing() != Standing.OLDER && age.standing() != Standing.OTHER_LINE)) return List.of();
         return fixes.stream().filter(fix -> {
             var lacks = compareTags(age.tag(), fix.release());
+            if (lacks == null || lacks >= 0) return false;
             var brings = compareTags(age.expectedTag(), fix.release());
-            return lacks != null && lacks < 0 && sameLine(age.tag(), fix.release()) && brings != null && brings >= 0;
+            return brings == null ? sameLine(age.expectedTag(), fix.release()) == Boolean.FALSE : brings >= 0;
         }).toList();
     }
 
@@ -112,40 +161,63 @@ public final class BaseImageAge {
             return new Assessment(Standing.CURRENT, tag, expected);
         }
         var order = tag == null ? null : compareTags(tag, expected);
-        var standing = order == null ? Standing.UNKNOWN
+        var standing = order == null ? (sameLine(tag, expected) == Boolean.FALSE ? Standing.OTHER_LINE : Standing.UNKNOWN)
                 : order < 0 ? Standing.OLDER
                 : order > 0 ? Standing.NEWER
                 : Standing.CURRENT;
         return new Assessment(standing, tag, expected);
     }
 
-    /** Whether two release tags name the same distribution and release, as {@code fedora-44}. */
-    static boolean sameLine(String a, String b) {
-        var ma = RELEASE_TAG.matcher(a);
-        var mb = RELEASE_TAG.matcher(b);
-        return ma.matches() && mb.matches() && ma.group(1).equals(mb.group(1)) && ma.group(2).equals(mb.group(2));
+    /** Whether two release tags are of one line, as {@code fedora-45}; null when either does not parse. */
+    static Boolean sameLine(String a, String b) {
+        var ta = ReleaseTag.parse(a);
+        var tb = ReleaseTag.parse(b);
+        return ta == null || tb == null ? null : ta.line().equals(tb.line());
     }
 
     /**
-     * The order of two release tags of one distribution: release, build date, then the same day's
-     * number, where a tag without one is that day's first; null
-     * when either does not parse or they name different distributions.
-     * A tag without a date ({@code fedora-45-v1}) orders only against another release, or itself.
+     * The order of two release tags of one line: build date, then that day's number, where a tag
+     * without one is that day's first; null when either does not parse or they are of different
+     * lines (#1994), which are neither older nor newer than each other.
      */
     static Integer compareTags(String a, String b) {
-        var ma = RELEASE_TAG.matcher(a);
-        var mb = RELEASE_TAG.matcher(b);
-        if (!ma.matches() || !mb.matches() || !ma.group(1).equals(mb.group(1))) return null;
-        int byRelease = Integer.compare(Integer.parseInt(ma.group(2)), Integer.parseInt(mb.group(2)));
-        if (byRelease != 0) return byRelease;
-        if (a.equals(b)) return 0;
-        if (ma.group(3) == null || mb.group(3) == null) return null;
-        int byDate = ma.group(3).compareTo(mb.group(3));
-        return byDate != 0 ? byDate : Integer.compare(sameDay(ma.group(4)), sameDay(mb.group(4)));
+        var ta = ReleaseTag.parse(a);
+        var tb = ReleaseTag.parse(b);
+        return ta == null || tb == null ? null : ta.compareWithin(tb);
     }
 
-    /** A release's number among those of its day: {@code -2} is the second, no suffix the first. */
-    private static int sameDay(String suffix) {
-        return suffix == null ? 1 : Integer.parseInt(suffix);
+    /**
+     * The newest of {@code releases} on {@code builtinTag}'s line, which is what an unpinned build
+     * and {@code isx update-base --latest} follow (#1994): a release of another Fedora or another
+     * channel is never taken by itself. Null when none is on that line. When the built-in's tag
+     * is not of the scheme, the first release listed, as GitHub lists the newest first.
+     */
+    static <R> R newestOnLine(List<R> releases, Function<R, String> tagOf, String builtinTag) {
+        if (releases.isEmpty()) return null;
+        var line = ReleaseTag.parse(builtinTag);
+        if (line == null) return releases.getFirst();
+        R newest = null;
+        ReleaseTag newestTag = null;
+        for (var release : releases) {
+            var tag = ReleaseTag.parse(tagOf.apply(release));
+            if (tag == null || !line.line().equals(tag.line())) continue;
+            if (newestTag == null || tag.compareWithin(newestTag) > 0) {
+                newest = release;
+                newestTag = tag;
+            }
+        }
+        return newest;
+    }
+
+    /**
+     * The release tracking the latest takes over {@code builtinTag}: the newest on its line, as
+     * {@link #newestOnLine}, or null when none is listed there or the built-in is newer than any
+     * listed. An unpinned build and {@code isx update-base --latest} both read it.
+     */
+    static <R> R trackedRelease(List<R> releases, Function<R, String> tagOf, String builtinTag) {
+        var newest = newestOnLine(releases, tagOf, builtinTag);
+        if (newest == null) return null;
+        var order = compareTags(tagOf.apply(newest), builtinTag);
+        return order != null && order < 0 ? null : newest;
     }
 }

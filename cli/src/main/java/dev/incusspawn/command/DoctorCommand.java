@@ -2193,10 +2193,13 @@ public class DoctorCommand extends BaseCommand {
         record Older(List<Template> templates, List<String> projects, List<String> instances, Set<String> parents,
                      Map<BaseImageAge.KnownFix, List<String>> lacking) {}
         // One finding per release, so a rebuild is planned once; releases in their own order
-        var older = new TreeMap<String, Older>((a, b) -> {
+        Comparator<String> releaseOrder = (a, b) -> {
             var order = BaseImageAge.compareTags(a, b);
             return order != null && order != 0 ? order : a.compareTo(b);
-        });
+        };
+        var older = new TreeMap<String, Older>(releaseOrder);
+        // On another line than the release a rebuild would use (#1994): neither older nor newer
+        var otherLine = new TreeMap<String, Older>(releaseOrder);
         // The definitions whose template is on the release a rebuild would use, or a newer one
         var current = new HashSet<String>();
         var unrecorded = new ArrayList<String>();
@@ -2211,8 +2214,9 @@ public class DoctorCommand extends BaseCommand {
             // Not null: assess found its definition
             var definition = Metadata.templateOf(i.metadata().getField("config"));
             switch (age.standing()) {
-                case OLDER -> {
-                    var group = older.computeIfAbsent(age.expectedTag(), k -> new Older(new ArrayList<>(),
+                case OLDER, OTHER_LINE -> {
+                    var groups = age.standing() == BaseImageAge.Standing.OLDER ? older : otherLine;
+                    var group = groups.computeIfAbsent(age.expectedTag(), k -> new Older(new ArrayList<>(),
                             new ArrayList<>(), new ArrayList<>(), new LinkedHashSet<>(), new LinkedHashMap<>()));
                     for (var known : BaseImageAge.missingFixes(age)) {
                         group.lacking().computeIfAbsent(known, k -> new ArrayList<>()).add(name);
@@ -2239,7 +2243,7 @@ public class DoctorCommand extends BaseCommand {
         Comparator<String> parentsFirst = Comparator.comparingInt(
                 d -> depths.computeIfAbsent(d, k -> ImageDef.ancestors(defs.get(k), defs).size()));
         var findings = new ArrayList<Finding>();
-        older.forEach((release, group) -> {
+        java.util.function.BiConsumer<String, Map<String, Older>> report = (title, groups) -> groups.forEach((release, group) -> {
             var parts = new ArrayList<String>();
             var steps = new ArrayList<String>();
             // What has to be built: the older templates, and the template behind an instance or
@@ -2282,9 +2286,11 @@ public class DoctorCommand extends BaseCommand {
             group.lacking().forEach((known, names) -> parts.add("before " + known.release() + " "
                     + known.problem() + ": " + String.join(", ", names)));
             findings.add(new Finding(group.lacking().isEmpty() ? Status.NOTE : Status.WARN,
-                    "Base image older than " + OutputFormat.oneLine(release),
+                    title + OutputFormat.oneLine(release),
                     "(" + String.join("; ", parts) + ")", new Remediation(fix, false, null)));
         });
+        report.accept("Base image older than ", older);
+        report.accept("Base image on another line than ", otherLine);
         var notes = new ArrayList<String>();
         if (!unrecorded.isEmpty()) notes.add("release not recorded: " + String.join(", ", unrecorded));
         if (!incomparable.isEmpty()) notes.add("release not comparable: " + String.join(", ", incomparable));

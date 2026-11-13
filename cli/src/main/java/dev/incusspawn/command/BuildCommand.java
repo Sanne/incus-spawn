@@ -1802,10 +1802,9 @@ public class BuildCommand extends BaseCommand {
         var builtin = BaseImage.of(rootDef);
         var fallback = "; using built-in base image (" + builtin.tag() + ").";
         try {
-            var available = releases.fetchReleases();
-            if (available.isEmpty()) return builtin;
-            var latest = available.get(0);
-            if (latest.tag().equals(builtin.tag())) return builtin; // already newest
+            // The newest of the built-in's own line: never another Fedora or channel by itself
+            var latest = BaseImageAge.trackedRelease(releases.fetchReleases(), BaseImageReleases.Release::tag, builtin.tag());
+            if (latest == null || latest.tag().equals(builtin.tag())) return builtin;
 
             var checksums = releases.fetchChecksums(latest, rootDef.getImageUrl(), rootDef.getVmImageUrl());
             var arch = ImageDef.hostArch();
@@ -1863,17 +1862,20 @@ public class BuildCommand extends BaseCommand {
         if (pinnedTag != null && isNewerRelease(builtinTag, pinnedTag)) {
             BuildOutput.warn("Base image is pinned to " + OutputFormat.oneLine(pinnedTag) + ", but " + builtinTag + " is available.",
                     "Run 'isx update-base --latest' to update.");
+        } else if (pinnedTag != null && BaseImageAge.sameLine(builtinTag, pinnedTag) == Boolean.FALSE) {
+            // Another Fedora or channel is neither older nor newer (#1994): said, never urged
+            BuildOutput.note("Base image is pinned to " + OutputFormat.oneLine(pinnedTag) + ", on another line than the built-in "
+                    + builtinTag + ". 'isx update-base --latest' follows the built-in's line.");
         }
     }
 
     /**
      * Whether release tag {@code a} is newer than {@code b}, as {@link BaseImageAge} orders them:
-     * {@code fedora-44-...} is newer than {@code fedora-9-...}, which a string comparison denies.
-     * Tags of another shape fall back to the string order.
+     * only within one line (#1994). A tag of another line, or of no known shape, is never newer.
      */
     static boolean isNewerRelease(String a, String b) {
         var order = BaseImageAge.compareTags(a, b);
-        return order != null ? order > 0 : a.compareTo(b) > 0;
+        return order != null && order > 0;
     }
 
     private void ensureBaseImage(ImageDef imageDef, BaseImage base) {

@@ -200,9 +200,10 @@ public final class InstanceDetailView {
         var rows = new ArrayList<DetailRow>();
         if (tag == null && (age == null || age.standing() != BaseImageAge.Standing.UNKNOWN)) return rows;
         rows.add(new DetailRow("Base image:", tag == null ? "unknown" : OutputFormat.oneLine(tag)));
-        if (age != null && age.standing() == BaseImageAge.Standing.OLDER) {
+        if (age != null && (age.standing() == BaseImageAge.Standing.OLDER || age.standing() == BaseImageAge.Standing.OTHER_LINE)) {
             // Its template may be current already: doctor, which sees the listing, says what to do
-            rows.add(new DetailRow(null, "older than " + OutputFormat.oneLine(age.expectedTag())
+            rows.add(new DetailRow(null, (age.standing() == BaseImageAge.Standing.OLDER ? "older than " : "on another line than ")
+                    + OutputFormat.oneLine(age.expectedTag())
                     + ": 'isx doctor' says what to rebuild to pick up image fixes"));
             for (var known : BaseImageAge.missingFixes(age)) {
                 rows.add(new DetailRow(null, "before " + known.release() + " " + known.problem()));

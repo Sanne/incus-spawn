@@ -1538,6 +1538,33 @@ class BuildCommandTest {
     }
 
     /**
+     * An unpinned build follows the built-in's line alone (#1994): a release of another Fedora
+     * or of a channel, even the first GitHub lists, is never taken by itself.
+     */
+    @Test
+    void aTrackedBuildStaysOnTheBuiltInsLine() throws Exception {
+        var otherFedora = new BaseImageReleases.Release("fedora-45-20261111", "2026-11-11", "sums", null);
+        var channel = new BaseImageReleases.Release("fedora-44-next-20261105", "2026-11-05", "sums", null);
+        var sameLine = new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
+        var releases = mock(BaseImageReleases.class);
+        when(releases.fetchReleases()).thenReturn(List.of(otherFedora, channel, sameLine));
+        when(releases.fetchChecksums(eq(sameLine), anyString(), any())).thenReturn(new BaseImageReleases.Checksums(
+                Map.of("x86_64", "tracked-sha", "aarch64", "tracked-sha"), Map.of()));
+        var cmd = spy(new BuildCommand());
+        doReturn(releases).when(cmd).baseImageReleases(anyString());
+
+        assertEquals("fedora-44-20261020", cmd.resolveTrackedBaseImage(trackedRoot()).tag());
+
+        // Nothing newer on its line: the built-in, whatever else is listed
+        var onlyOthers = mock(BaseImageReleases.class);
+        when(onlyOthers.fetchReleases()).thenReturn(List.of(otherFedora, channel));
+        var cmd2 = spy(new BuildCommand());
+        doReturn(onlyOthers).when(cmd2).baseImageReleases(anyString());
+        assertEquals("fedora-44-20261009", cmd2.resolveTrackedBaseImage(trackedRoot()).tag());
+        verify(onlyOthers, never()).fetchChecksums(any(), anyString(), any());
+    }
+
+    /**
      * A newer release without the VM image the definition names (every release before #1255
      * lacks -vm-direct) leaves the VM on the built-in release: its tag and its checksum together.
      * Pairing the built-in checksum with the newer tag downloaded a file that could never match.

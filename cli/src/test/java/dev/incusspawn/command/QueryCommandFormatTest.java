@@ -502,7 +502,7 @@ class QueryCommandFormatTest {
                   "pinned" : true,
                   "listed" : true
                 } ]
-                """, json(UpdateBaseCommand.releaseRecords(releases, "fedora-44-20260901", true)));
+                """, json(UpdateBaseCommand.releaseRecords(releases, "fedora-44-20261001", "fedora-44-20260901", true)));
     }
 
     @Test
@@ -511,9 +511,11 @@ class QueryCommandFormatTest {
         assertEquals("""
                 fedora-44-20261001\t2026-10-01\ttrue\tfalse\tfalse\ttrue
                 fedora-44-20250101\t-\tfalse\ttrue\ttrue\tfalse
-                """, plain(UpdateBaseCommand.releaseRecords(releases, "fedora-44-20250101", true)));
+                """, plain(UpdateBaseCommand.releaseRecords(releases, "fedora-44-20261001", "fedora-44-20250101", true)));
         // No current tag recorded: nothing to add.
-        assertEquals(1, UpdateBaseCommand.releaseRecords(releases, null, false).size());
+        assertEquals(1, UpdateBaseCommand.releaseRecords(releases, "fedora-44-20261001", null, false).size());
+        // Nothing of its line listed: the unlisted built-in is what tracking follows (#1994)
+        assertEquals(true, UpdateBaseCommand.releaseRecords(releases, "fedora-45-v1", "fedora-45-v1", false).getLast().get("latest"));
     }
 
     // ── isx branch ──────────────────────────────────────────────────────────────

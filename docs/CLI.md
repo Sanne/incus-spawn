@@ -324,9 +324,11 @@ isx update-base [<release-tag>] [options]
 | `--latest` | Track the latest version (remove any pin) |
 | `--format=<format>` | With `--list` only: `table` (the default), `plain` or `json` |
 
-Pass a release tag, such as `fedora-44-v2`, to pin to that version.
+Pass a release tag, such as `fedora-45-20261111`, to pin to that version.
 The pin is written to `~/.config/incus-spawn/base-image-pin.yaml` and changes only the base image `tpl-minimal` downloads.
 For a tag of another Fedora release, such as `fedora-44-...` on an isx that ships Fedora 45, the pin uses that release's own image name and file names.
+
+`--latest` follows the newest release of the built-in's line, never another Fedora or a channel.
 
 ## `isx update-all`
 
@@ -1058,6 +1060,7 @@ It exits 1 when Incus is unreachable.
 
 | Field | Meaning |
 |-------|---------|
+| `latest` | The release tracking the latest follows: the newest of the built-in's line |
 | `pinned` | The current release is pinned, so builds stay on it |
 | `listed` | `false` for the current base image when it is not among the releases fetched |
 

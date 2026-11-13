@@ -50,6 +50,19 @@ class UpdateBaseCommandTest {
         return out[0];
     }
 
+    /** Tracking the latest follows the built-in's line, not the first release GitHub lists (#1994). */
+    @Test
+    void theLatestIsTheNewestOnTheBuiltInsLine() {
+        var builtin = new ImageDef();
+        builtin.setImageTag("fedora-45-v1");
+        var listed = List.of(new BaseImageReleases.Release("fedora-46-20270101", "2027-01-01", "u", null),
+                new BaseImageReleases.Release("fedora-45-next-20261120", "2026-11-20", "u", null),
+                new BaseImageReleases.Release("fedora-45-20261111", "2026-11-11", "u", null),
+                new BaseImageReleases.Release("fedora-45-v1", "2026-11-04", "u", null));
+        assertEquals("fedora-45-20261111", UpdateBaseCommand.latestOf(listed, builtin));
+        assertEquals("fedora-45-v1", UpdateBaseCommand.latestOf(listed.subList(0, 2), builtin), "none on its line: the built-in");
+    }
+
     @Test
     void aPinCarriesTheVmImageWithItsChecksums(@TempDir Path home) {
         var yaml = pin(home, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
@@ -404,10 +417,10 @@ class UpdateBaseCommandTest {
     void theTrackOrPinQuestionIsAskedThroughPrompts() throws Exception {
         var prompts = ScriptedPrompts.lines("3");
         var recorded = RecordingOutput.during(() -> assertEquals(0,
-                new UpdateBaseCommand().askWhatToDo(prompts, RELEASE, List.of(RELEASE), null).getResultValue()));
+                new UpdateBaseCommand().askWhatToDo(prompts, RELEASE.tag(), List.of(RELEASE), null).getResultValue()));
         assertEquals(List.of(
                 "What would you like to do?",
-                "1) Track latest (" + RELEASE.tag() + ") — always installs the newest release on build",
+                "1) Track latest (" + RELEASE.tag() + ") — always installs the newest release of its line on build",
                 "2) Pin a specific version",
                 "3) Cancel",
                 "? Choice [1-3]: "), prompts.conversation());
@@ -420,7 +433,7 @@ class UpdateBaseCommandTest {
         var prompts = ScriptedPrompts.lines("2", "");
         InitCommandTest.withHome(home, () -> {
             var recorded = RecordingOutput.during(() -> assertEquals(0,
-                    new UpdateBaseCommand().askWhatToDo(prompts, RELEASE, List.of(RELEASE), null).getResultValue()));
+                    new UpdateBaseCommand().askWhatToDo(prompts, RELEASE.tag(), List.of(RELEASE), null).getResultValue()));
             assertTrue(recorded.events(RecordingOutput.Kind.STEP).stream().anyMatch(e -> e.msg().equals("Aborted.")));
             assertFalse(Files.exists(BaseImagePin.file()));
         });
