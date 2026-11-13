@@ -1,8 +1,9 @@
 # Watched upstream artifacts (#2036). upstream/engine/upstream.sh on main reads this: upstream-watch.yml
-# proposes a bump PR for a mechanical item and an issue for a judgement item, and upstream-verify.yml
+# proposes a bump PR for a mechanical or review item and an issue for a judgement item, and upstream-verify.yml
 # checks every PR that touches an item's files against the publisher, regenerating an app PR whole.
 # design/upstream.md says why each key exists; UpstreamManifestTest and `upstream.sh validate` hold
-# its rules: class defaults to judgement, every item needs source and files, a mechanical one within and verify too,
+# its rules: class defaults to judgement, every item needs source and files, a mechanical or review one
+# within and verify too (a review item, #2210, gets the same proven PR, which the bot never merges),
 # verify.type must be what the source type provides, cooling is 24h or more unless the source is
 # first party, and there is no key that skips a check.
 repo: Sanne/incus-spawn

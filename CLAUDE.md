@@ -60,7 +60,8 @@ The same applies to a tool download added to `ToolDef` or a tool YAML, to the ap
 The `idea-backend` pin (`common/src/main/resources/tools/idea-backend.yaml`) is bumped by the watch the same way, from JetBrains' products API and the `.sha256` beside each tarball.
 
 **The upstream watch is the one place a pin moves by itself** (#2036).
-`upstream/manifest.yaml` declares each watched item, `upstream/engine` proposes a bump PR as the `isx-upstream[bot]` app for a `mechanical` item and an issue for a `judgement` one, `upstream-verify` re-derives every PR's pins from the publisher and requires an app PR to be exactly the engine's regeneration, and only such a PR may the bot merge.
+`upstream/manifest.yaml` declares each watched item, `upstream/engine` proposes a bump PR as the `isx-upstream[bot]` app for a `mechanical` or `review` item and an issue for a `judgement` one, `upstream-verify` re-derives every PR's pins from the publisher and requires an app PR to be exactly the engine's regeneration, and only such a PR of a `mechanical` item may the bot merge.
+A `review` item's PR is proven the same way and merged by Sanne alone (#2210).
 The mechanics and the threat model are in design/upstream.md, the CI jobs in `.claude/rules/ci.md`, and what Sanne sets up by hand in [docs/dev/UPSTREAM-SETUP.md](docs/dev/UPSTREAM-SETUP.md).
 
 **Latency on the branch/start/shell path is never noise.**

@@ -177,6 +177,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
 - [The upstream watch](design/upstream.md)
   - The model: a manifest, an engine, two workflows and a merge gate
   - The items
+  - The review class
   - Threat model
   - Why not Sanne's own token
   - Why not approving from Actions

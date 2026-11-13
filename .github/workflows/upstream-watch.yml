@@ -2,11 +2,12 @@ name: Upstream watch
 
 # The upstream watch (#2036, design/upstream.md): for every item of upstream/manifest.yaml, the engine
 # in upstream/engine asks the publisher for its releases, and either prepares a bump commit whose
-# every value is the publisher's, verified (a mechanical item), or writes an issue for a person (a
+# every value is the publisher's, verified (a mechanical or review item), or writes an issue for a person (a
 # judgement item, a new series, a pin the publisher no longer confirms). Prepared commits are pushed
 # and their PRs opened as the isx-upstream GitHub App, one PR per item on upstream/<item>; the
 # upstream-verify check then regenerates each PR from main's engine, and only a PR that is exactly
-# that may be approved and merged by the bot (isx-workflow, "Upstream bumps").
+# that may be approved and merged by the bot (isx-workflow, "Upstream bumps"), and a review item's
+# never by the bot: Sanne merges it.
 #
 # Isolation: schedule and workflow_dispatch only, never a PR, issue or comment event; main of
 # Sanne/incus-spawn only; the app's id and key are environment secrets of `upstream-watch`, whose

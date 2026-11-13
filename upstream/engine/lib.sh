@@ -51,6 +51,9 @@ item() {
 # item_list <item> <key>: a list of an item, one entry per line.
 item_list() { yq -r ".items[\"$1\"].$2 // [] | .[]" "$MANIFEST"; }
 item_class() { item "$1" class judgement; }
+# item_proposed <item>: the engine writes this item's bump as a PR. A mechanical one the bot may merge
+# once it is proven; a review one (#2210) is proven the same way and merged by Sanne alone.
+item_proposed() { local c; c="$(item_class "$1")"; [[ "$c" == mechanical || "$c" == review ]]; }
 item_source_type() { item "$1" source.type; }
 
 # duration_seconds <24h|7d|30m|0>: a cooling period in seconds; anything else fails.
