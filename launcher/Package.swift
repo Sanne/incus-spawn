@@ -16,6 +16,9 @@ var targets: [Target] = [
 // Virtualization.framework, by the launcher.
 targets.append(.executableTarget(name: "isx-vsock-bridge", dependencies: ["IsxRelay"]))
 #endif
+#if os(macOS)
+targets.append(.executableTarget(name: "isx-vm", dependencies: ["IsxRelay", "IsxVmCore"]))
+#endif
 
 let package = Package(
     name: "launcher",

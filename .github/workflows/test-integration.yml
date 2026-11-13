@@ -335,8 +335,11 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The same tests where the launcher will run. Nothing waits for this job: a macOS runner that
-  # is slow to come does not hold the Linux jobs.
+  # The same tests where the launcher will run, and the only place the launcher itself is
+  # compiled: isx-vm needs Virtualization.framework. A hosted Mac cannot start a machine, so
+  # the binary is built and signed here and run on the Mac runner, which takes it from this
+  # job (appliance/launcher-on-mac.sh). Nothing waits for this job: a macOS runner that is
+  # slow to come does not hold the Linux jobs.
   launcher-macos:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: macos-15
@@ -345,10 +348,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Test the relay
+      - name: Test the relay and the launcher's own parts
         run: |
           swift --version
           swift test --package-path launcher
+
+      # Fails unless the signature verifies and carries exactly the one entitlement.
+      - name: Build and sign isx-vm
+        run: |
+          bin=$(launcher/build-isx-vm.sh)
+          cp "$bin" "$RUNNER_TEMP/isx-vm"
+          # It starts and reads its arguments; a machine it cannot have here.
+          "$RUNNER_TEMP/isx-vm" --cpus 1 --memory 512 --device virtio-gpu 2>&1 | tee "$RUNNER_TEMP/refused.txt" || true
+          grep -qx "isx-vm: unknown device 'virtio-gpu'" "$RUNNER_TEMP/refused.txt"
+
+      # The measurement on the Mac runner runs this very binary, days after the job. Uploading
+      # recomputes nothing, so a failed upload is retried.
+      - name: Upload isx-vm
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: isx-vm-macos-aarch64
+          path: ${{ runner.temp }}/isx-vm
+          if-no-files-found: error
+          retention-days: 14
 
   # One job per appliance arch. aarch64 is what Apple Silicon Macs run, and has its own kernel
   # config and console. GitHub's arm64 runners expose no /dev/kvm, so that leg runs under TCG
