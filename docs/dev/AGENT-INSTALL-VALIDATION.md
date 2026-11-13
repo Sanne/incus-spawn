@@ -50,6 +50,7 @@ Record the run here, then add the agent's name to the page's "tested on a clean 
 | Claude Code | 2.1.322 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/pull/2192 |
 | Codex CLI | 0.167.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6835241625 |
 | Pi | 1.5.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6835241625 |
+| opencode | 1.19.5 | 0.5.1+86 | 2026-11-13 | https://github.com/Sanne/incus-spawn/pull/2217 |
 
 ## How clear the instructions were
 
