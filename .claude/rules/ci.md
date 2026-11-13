@@ -254,7 +254,7 @@ It gives `isx-vm` to isx as a copy named `vfkit` first on the `PATH`, restarts t
 `--sleep` also puts the Mac to sleep for a minute under each program, and needs `sudo -n pmset`.
 The record is a measurement, so it counts only from a Mac that was otherwise idle.
 
-The appliance cache key hashes `appliance/**` except `appliance/test-*.sh`, `appliance/*.md` and `appliance/kernel/vm*.config`, which never enter the image, and appends the kernel's fingerprint, so editing a test script or a VM kernel fragment does not force an appliance rebuild.
+The appliance cache key hashes `appliance/**` except `appliance/test-*.sh`, the launcher's measurement scripts (`measure-tunnel.sh`, `tunnel-hold.pl`, `launcher-on-mac.sh`), `appliance/*.md` and `appliance/kernel/vm*.config`, which never enter the image, and appends the kernel's fingerprint, so editing a test script, a measurement script or a VM kernel fragment does not force an appliance rebuild.
 Anything `build.sh` copies into the image (`root/`, `config.sh`, the kernel) must stay inside the hash.
 
 The kernel-source cache (`/tmp/kernel-cache/`) is keyed `kernel-source-<version>-<sha256>`, both read from `appliance/kernel/build-kernel.sh`.
