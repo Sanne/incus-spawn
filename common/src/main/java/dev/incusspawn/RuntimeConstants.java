@@ -6,6 +6,7 @@ import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.CopilotSetup;
 import dev.incusspawn.tool.GhSetup;
 import dev.incusspawn.tool.GeminiSetup;
+import dev.incusspawn.tool.OpencodeSetup;
 import dev.incusspawn.tool.PiSetup;
 import dev.incusspawn.tool.ToolSetup;
 
@@ -47,7 +48,7 @@ public final class RuntimeConstants {
      */
     public static final List<ToolSetup> CDI_TOOLS = List.of(
             new ClaudeSetup(), new GhSetup(), new PiSetup(), new BobSetup(), new CodexSetup(), new CopilotSetup(),
-            new GeminiSetup()
+            new GeminiSetup(), new OpencodeSetup()
     );
 
     private RuntimeConstants() {}

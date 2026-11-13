@@ -16,7 +16,7 @@ paths:
   The base image ships no system bus, so logind is opt-in per tool (#1520): a tool that lingers or installs a systemd user unit lists `dbus-broker` and `systemd-pam` in `packages:` and writes `/var/lib/systemd/linger/agentuser` directly (podman, headroom); `loginctl enable-linger` fails at build time, and `ToolDefValidator.lingersThroughLoginctl` warns on it, from the loader too.
   `ToolDefValidationTest` checks the built-ins.
   Environment variables are declared via `env:` entries and collected centrally by `GuestProvisioning.writeEnvFile()`.
-- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `CopilotSetup`, `GhSetup`, `PiSetup`, `BobSetup`, `GeminiSetup`).
+- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `CopilotSetup`, `GhSetup`, `PiSetup`, `BobSetup`, `GeminiSetup`, `OpencodeSetup`).
   Declare env vars via `envEntries(Map<String,String>)` method.
   Tools can declare a `feature()` to gate themselves behind an opt-in feature flag in `SpawnConfig.features` (no built-in tool does today -- `codex` graduated out of the `openai` flag).
 - npm CLIs install through `NpmGlobalInstall`.
@@ -30,6 +30,15 @@ paths:
   Codex 0.162.1 renders the profile name verbatim, so its name carries `Running unconstrained in isx [version] [container]` without a patched binary.
   `/etc/profile.d/isx-zz-codex-footer.sh` refreshes that name from `ISX_VERSION` and `ISX_CONTAINER` at login, preserving other settings and any user-selected permission profile.
   Pi's footer shows the same message through a root-owned extension, `/etc/isx/pi/isx-status.ts`, listed in `~/.pi/agent/settings.json`'s `extensions`; it reads both variables when Pi starts.
+  `OpencodeSetup` is not a `PlatformSplitCli`: after its `--ignore-scripts` install it runs `opencode-ai`'s `postinstall.mjs` (`LINK_SCRIPT`), which replaces the stub launcher with the platform binary and fails when it cannot.
+  The script runs the binary, so it gets a scratch `HOME` and `TMPDIR`: a root-owned `/tmp/opencode` would lock agentuser's opencode out.
+
+`OpencodeSetup` (`opencode`) writes `~/.config/opencode/opencode.json` in opencode 1.x's forms: `permission`, `autoupdate: false`, `share: disabled`, `instructions: ["/AGENTS.md"]` and a pinned `model` (`anthropic/claude-sonnet-5-5` by default).
+Its `permission` allows only what opencode asks about by default, so the plan agent keeps its edit deny.
+Like Pi it has a `provider` parameter (`anthropic`, `openai`, `google`, or one isx does not manage) and no credential of its own.
+For `anthropic` it reads its own placeholder, `OPENCODE_ANTHROPIC_API_KEY` (claude namespace), through `provider.anthropic.options.apiKey: "{env:...}"`, never `ANTHROPIC_API_KEY`, which would change Claude Code's auth.
+`openai` and `google` reuse Codex's `OPENAI_API_KEY` and Gemini's `GEMINI_API_KEY` placeholders.
+Its action resumes the latest top-level session in its directory, read from `~/.local/share/opencode/opencode.db` with `sqlite3`, as Bob's does.
 
 `GeminiSetup` (`gemini-cli`) installs `@google/gemini-cli` and writes `~/.gemini/settings.json` with optional `model.name`.
 It disables telemetry, usage statistics, self-updates and notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and inner sandboxing.

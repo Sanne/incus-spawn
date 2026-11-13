@@ -57,7 +57,7 @@ A container's wait looks for an address on `eth0` and starts its `systemd-networ
 A template whose network never comes up fails its update with the build's diagnostics, and no step that needs the network runs.
 
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
-Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent: Anthropic, OpenAI, Gemini API or Gemini on Vertex provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
+Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent: Anthropic, OpenAI, Gemini API or Gemini on Vertex provider), `opencode` (opencode: Anthropic, OpenAI or Gemini API provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
 
 Each image definition specifies:
 - `name` — container name (required)
@@ -319,6 +319,17 @@ The action retains `bash -lc gemini` so zmx launches in existing instances still
 Inherited-tool refresh sets the API-key auth selection while preserving the parent's model and other settings.
 Interactive Gemini requires this selection even when the environment supplies a key; headless Gemini can infer it from the environment.
 
+`OpencodeSetup` installs `opencode-ai` through `NpmGlobalInstall`, then runs the package's `postinstall.mjs`, which `--ignore-scripts` skipped (#2211).
+Until it runs, `opencode` is a stub that only says so; the script puts the platform package's binary in its place, installs that package itself when npm dropped it, and fails when it cannot.
+So opencode is not a `PlatformSplitCli`: that check's reinstall also skips the script, and would leave the stub.
+The script checks the binary by running it, which writes opencode's directories into `HOME` and `/tmp/opencode`, so it runs with both pointed at a scratch directory: a root-owned `/tmp/opencode` is one agentuser's opencode cannot write.
+`npm update -g` runs the script itself, as root, which leaves only directories in root's home, and the build empties `/tmp` before the template is saved.
+It writes `~/.config/opencode/opencode.json` in the forms opencode 1.x reads (`permission`, `autoupdate`): 1.19.5 refuses the newer `permissions` the published schema describes.
+Its permissions allow what opencode asks about by default (`.env` reads, external directories, the loop guard) rather than `"*": "allow"`, since a global rule comes after the plan agent's own and would give it edits.
+Unpinned, opencode 1.19.5 picks `claude-sonnet-4-6`, so the `anthropic` provider gets `claude-sonnet-5-5` as Pi does, and another provider opencode's own default.
+The `anthropic` key is read from `OPENCODE_ANTHROPIC_API_KEY` through the settings' `{env:...}` reference, a placeholder of the claude namespace: `ANTHROPIC_API_KEY` would switch Claude Code to API-key auth beside an OAuth account.
+opencode has no status line or footer a plugin can fill, so it shows no isx message.
+
 **Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`).
 A YAML tool with the same name replaces any earlier definition.
 Two tool files declaring the same `name:` within one directory are a same-directory conflict, reported by `ToolDefLoader.conflicts()` and treated exactly like image conflicts (see the images section above).
@@ -547,7 +558,7 @@ Content comes from `AgentContextGenerator` (module `common`), a pure function th
 Each installed tool declares where its agent reads it with `ToolSetup.environmentContextPath`, so no tool is matched by name.
 A location outside `/home/agentuser` is a hardlink to that file, so every agent reads the same inode.
 `ClaudeSetup` declares `/etc/claude-code/CLAUDE.md`, so a template without the `claude` tool has no managed policy.
-`PiSetup` declares `/AGENTS.md`.
+`PiSetup` declares `/AGENTS.md`, and `OpencodeSetup` the same file.
 One script does all of it in one exec, and records the locations in `/etc/isx/agent-instructions.paths`.
 
 What a hardlink needs, and how each is met:
@@ -586,6 +597,9 @@ It loads `AGENTS.md` from its agent directory (`~/.pi/agent`) and from every dir
 So the root's file reaches every Pi session, while the user's `~/.pi/agent/AGENTS.md` stays theirs and loads before it.
 The agent directory was rejected for the same reason Claude Code's user layer was: isx would overwrite a file the user owns.
 Pi links to the store, not to `/etc/claude-code/CLAUDE.md`, so it depends neither on the `claude` tool nor on where Claude Code keeps its managed policy.
+opencode finds the root's `AGENTS.md` by itself only outside a Git worktree, since it walks up no further than the worktree's root.
+So its settings name `/AGENTS.md` in `instructions`, and a template with both Pi and opencode keeps one file.
+The user's `~/.config/opencode/AGENTS.md` stays theirs.
 
 Images containing `codex` get the instructions in `CodexSetup.REQUIREMENTS_PATH` (`/etc/codex/requirements.toml`), root-owned and 0644 (#1783).
 Codex reads no Markdown outside the user's `~/.codex/AGENTS.md`, which isx must not write.
