@@ -323,7 +323,8 @@ Interactive Gemini requires this selection even when the environment supplies a 
 Until it runs, `opencode` is a stub that only says so; the script puts the platform package's binary in its place, installs that package itself when npm dropped it, and fails when it cannot.
 So opencode is not a `PlatformSplitCli`: that check's reinstall also skips the script, and would leave the stub.
 The script checks the binary by running it, which writes opencode's directories into `HOME` and `/tmp/opencode`, so it runs with both pointed at a scratch directory: a root-owned `/tmp/opencode` is one agentuser's opencode cannot write.
-`npm update -g` runs the script itself, as root, which leaves only directories in root's home, and the build empties `/tmp` before the template is saved.
+`npm update -g` runs the script itself, as root, so it too runs with `HOME` and `TMPDIR` pointed at a scratch directory (`NpmGlobalInstall.UPDATE_SCRIPT`, #2221).
+It keeps root's npm cache and `~/.npmrc`, and removes the scratch directory however npm ends, so root's home gains nothing for a branch to inherit.
 It writes `~/.config/opencode/opencode.json` in the forms opencode 1.x reads (`permission`, `autoupdate`): 1.19.5 refuses the newer `permissions` the published schema describes.
 Its permissions allow what opencode asks about by default (`.env` reads, external directories, the loop guard) rather than `"*": "allow"`, since a global rule comes after the plan agent's own and would give it edits.
 Unpinned, opencode 1.19.5 picks `claude-sonnet-4-6`, so the `anthropic` provider gets `claude-sonnet-5-5` as Pi does, and another provider opencode's own default.

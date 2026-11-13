@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.tool.NpmGlobalInstall;
 import dev.incusspawn.tool.NpmWaits;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
@@ -32,13 +33,13 @@ class NpmUpdateTest {
 
         assertTrue(NpmUpdate.run(incus, NAME));
 
-        verify(incus, never()).shellExec(NAME, "npm", "update", "-g");
+        verify(incus, never()).shellExec(NAME, "sh", "-c", NpmGlobalInstall.UPDATE_SCRIPT);
     }
 
     @Test
     void reportsAFailedUpdate() {
         var incus = incus();
-        when(incus.shellExec(NAME, "npm", "update", "-g")).thenReturn(new IncusClient.ExecResult(1, "", "npm error"));
+        when(incus.shellExec(NAME, "sh", "-c", NpmGlobalInstall.UPDATE_SCRIPT)).thenReturn(new IncusClient.ExecResult(1, "", "npm error"));
 
         assertFalse(NpmUpdate.run(incus, NAME));
     }
@@ -46,14 +47,14 @@ class NpmUpdateTest {
     @Test
     void retriesAnUpdateTheRegistryCannotServeYet() {
         var incus = incus();
-        when(incus.shellExec(NAME, "npm", "update", "-g")).thenReturn(
+        when(incus.shellExec(NAME, "sh", "-c", NpmGlobalInstall.UPDATE_SCRIPT)).thenReturn(
                 new IncusClient.ExecResult(1, "", "npm error code ETARGET\n"), OK);
 
         try (var waits = new NpmWaits()) {
             assertTrue(NpmUpdate.run(incus, NAME));
             assertEquals(1, waits.waited().size());
         }
-        verify(incus, times(2)).shellExec(NAME, "npm", "update", "-g");
+        verify(incus, times(2)).shellExec(NAME, "sh", "-c", NpmGlobalInstall.UPDATE_SCRIPT);
     }
 
     @Test

@@ -340,4 +340,32 @@ class NpmGlobalInstallTest {
         assertEquals(1, problems.size());
         assertTrue(problems.getFirst().endsWith("\n  npm error skipped"), problems.getFirst());
     }
+
+    @Test
+    void updateRunsInstallScriptsInAScratchHomeAndRemovesIt(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // A stub npm records the HOME it runs with and writes where an install script would
+        var bin = java.nio.file.Files.createDirectories(dir.resolve("bin"));
+        var npm = bin.resolve("npm");
+        java.nio.file.Files.writeString(npm, """
+                #!/bin/sh
+                [ "$1 $3" = "config cache" ] && { echo /the/cache; exit 0; }
+                [ "$1" = config ] && { echo /the/npmrc; exit 0; }
+                echo "$HOME $TMPDIR $npm_config_cache $npm_config_userconfig" > "$OUT"
+                mkdir -p "$HOME/.local/share/opencode"
+                """);
+        assertTrue(npm.toFile().setExecutable(true));
+        var out = dir.resolve("out");
+        var pb = new ProcessBuilder("sh", "-c", NpmGlobalInstall.UPDATE_SCRIPT);
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        pb.environment().put("HOME", dir.resolve("realhome").toString());
+        pb.environment().put("OUT", out.toString());
+        assertEquals(0, pb.start().waitFor());
+        var seen = java.nio.file.Files.readString(out).strip().split(" ");
+        assertNotEquals(dir.resolve("realhome").toString(), seen[0]);
+        assertEquals(seen[0], seen[1]);
+        assertEquals("/the/cache", seen[2]);
+        assertEquals("/the/npmrc", seen[3]);
+        assertFalse(java.nio.file.Files.exists(java.nio.file.Path.of(seen[0])));
+        assertFalse(java.nio.file.Files.exists(dir.resolve("realhome")));
+    }
 }
