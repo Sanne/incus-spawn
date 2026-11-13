@@ -18,6 +18,8 @@ Key design:
 - **Linux runs on Netty's native epoll transport** (#475; design/proxy.md "The socket transport: epoll on Linux").
   Socket errors arrive as Netty's `Errors.NativeIoException` with a negated errno, not as `java.net` exceptions: a port in use is one with `EADDRINUSE`, which `MitmProxy.isBindException` matches.
   A test of socket-error handling builds its `Vertx` with `ProxyTransport.vertx()`, since a plain `Vertx.vertx()` runs on NIO.
+- **macOS stays on NIO** (#2215): kqueue measured only about 1% faster, and in a native image it needs JNI metadata whose absence makes startup exit instead of falling back.
+  Socket errors there are `java.net` exceptions.
 - `authError` is set by credential injection, which only runs on **real container traffic** -- so on its own it makes the status wrong in both directions (a fixed failure still shown, a broken credential not yet noticed).
   `/health` therefore verifies the Vertex token itself via `claimAuthRevalidation()`, running `getVertexAccessToken()` through `executeBlocking` (it forks `gcloud`; never call it on the event loop from here).
   The gate declines in four cases and each one matters: **not `useVertex()`** (first line, before any lock or dispatch -- non-Vertex users must pay nothing); **a fresh cached token with no error** (`hasFreshVertexToken()`, read *outside* `authLock` -- taking `authLock` then the instance monitor while the traffic path takes them in the other order would risk deadlock); **a standing non-`VERTEX_AUTH_HINT` error** (OAuth needs `isx init`); and **the 10s throttle / in-flight flag** (a failing credential caches nothing, so every poll would otherwise fork `gcloud`).

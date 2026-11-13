@@ -1,0 +1,1094 @@
+{
+ "issue": 2215,
+ "date": "2026-11-13",
+ "host": "the Mac runner: Mac mini, Apple Silicon (Mac18,5), macOS 27.2; isx VM under vfkit, 2 CPUs; Hyperfoil 0.29.3 on the host",
+ "toolchain": "Oracle GraalVM 25.4.4.1.1 (JDK 25.0.4), no PGO, the pom's default flags for macOS aarch64",
+ "source": "both proxies built from one working tree, on origin/main at 4d1ff50c: the runs' gitSha b27cba56c plus its JNI metadata file, which .gitignore kept out of that commit; the same tree is commit 3d0fec256 on branch issue-2215-kqueue-measured (Sanne-ai-bot/incus-spawn), and the metadata is also kept here as proxy-kqueue-reachability-metadata.json. kqueue is built with the macos-kqueue-aarch64 profile, nio with it switched off (-P!macos-kqueue-aarch64); nio2 is a byte-identical copy of nio, a noise control",
+ "order": "interleaved: maven nio,kqueue,nio2,nio2,kqueue,nio,nio,kqueue,nio2 then saturate nio,kqueue,nio2,nio2,kqueue,nio; nothing else running on the Mac",
+ "binarySizeBytes": {
+  "nio": 83331048,
+  "kqueue": 84356216
+ },
+ "runs": [
+  {
+   "label": "2215-nio-maven-r1",
+   "timestamp": "2026-11-13T21:56:44Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4660,
+   "startupMs": 292,
+   "idleRssKb": 45456,
+   "peakRssKb": 75184,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 10854,
+    "meanReqPerSec": 1080.6,
+    "success2xxPct": 100.0,
+    "p50Us": 28966.9,
+    "p99Us": 56623.1,
+    "p999Us": 58458.1,
+    "mbPerSec": 677.5,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 10687,
+      "meanReqPerSec": 1067.1,
+      "success2xxPct": 100.0,
+      "p50Us": 7340.0,
+      "p99Us": 13762.6,
+      "p999Us": 16646.1,
+      "mbPerSec": 669.0
+     },
+     {
+      "phase": "c032",
+      "requestCount": 10854,
+      "meanReqPerSec": 1080.6,
+      "success2xxPct": 100.0,
+      "p50Us": 28966.9,
+      "p99Us": 56623.1,
+      "p999Us": 58458.1,
+      "mbPerSec": 677.5
+     },
+     {
+      "phase": "c064",
+      "requestCount": 10737,
+      "meanReqPerSec": 1067.0,
+      "success2xxPct": 100.0,
+      "p50Us": 58982.4,
+      "p99Us": 93847.6,
+      "p999Us": 117964.8,
+      "mbPerSec": 668.9
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "2215-kqueue-maven-r1",
+   "timestamp": "2026-11-13T21:57:27Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-kqueue",
+   "cliBinary": "cli",
+   "binarySizeBytes": 84356216,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4542,
+   "startupMs": 291,
+   "idleRssKb": 47088,
+   "peakRssKb": 77072,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 10875,
+    "meanReqPerSec": 1081.2,
+    "success2xxPct": 100.0,
+    "p50Us": 28573.7,
+    "p99Us": 56623.1,
+    "p999Us": 57933.8,
+    "mbPerSec": 677.9,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 10778,
+      "meanReqPerSec": 1076.2,
+      "success2xxPct": 100.0,
+      "p50Us": 7274.5,
+      "p99Us": 13566.0,
+      "p999Us": 16187.4,
+      "mbPerSec": 674.7
+     },
+     {
+      "phase": "c032",
+      "requestCount": 10875,
+      "meanReqPerSec": 1081.2,
+      "success2xxPct": 100.0,
+      "p50Us": 28573.7,
+      "p99Us": 56623.1,
+      "p999Us": 57933.8,
+      "mbPerSec": 677.9
+     },
+     {
+      "phase": "c064",
+      "requestCount": 10878,
+      "meanReqPerSec": 1081.1,
+      "success2xxPct": 100.0,
+      "p50Us": 58196.0,
+      "p99Us": 112197.6,
+      "p999Us": 116916.2,
+      "mbPerSec": 677.8
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "2215-nio2-maven-r1",
+   "timestamp": "2026-11-13T21:58:10Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio2",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4629,
+   "startupMs": 304,
+   "idleRssKb": 45424,
+   "peakRssKb": 75600,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 10822,
+    "meanReqPerSec": 1078.1,
+    "success2xxPct": 100.0,
+    "p50Us": 28966.9,
+    "p99Us": 56623.1,
+    "p999Us": 58196.0,
+    "mbPerSec": 675.9,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 10668,
+      "meanReqPerSec": 1065.3,
+      "success2xxPct": 100.0,
+      "p50Us": 7340.0,
+      "p99Us": 13762.6,
+      "p999Us": 17563.6,
+      "mbPerSec": 667.9
+     },
+     {
+      "phase": "c032",
+      "requestCount": 10822,
+      "meanReqPerSec": 1078.1,
+      "success2xxPct": 100.0,
+      "p50Us": 28966.9,
+      "p99Us": 56623.1,
+      "p999Us": 58196.0,
+      "mbPerSec": 675.9
+     },
+     {
+      "phase": "c064",
+      "requestCount": 10761,
+      "meanReqPerSec": 1069.3,
+      "success2xxPct": 100.0,
+      "p50Us": 58982.4,
+      "p99Us": 91226.1,
+      "p999Us": 117440.5,
+      "mbPerSec": 670.4
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "2215-nio2-maven-r2",
+   "timestamp": "2026-11-13T21:58:52Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio2",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4590,
+   "startupMs": 303,
+   "idleRssKb": 45408,
+   "peakRssKb": 75504,
+   "throughput": {
+    "phase": "c064",
+    "requestCount": 10705,
+    "meanReqPerSec": 1064.0,
+    "success2xxPct": 100.0,
+    "p50Us": 59244.5,
+    "p99Us": 110624.8,
+    "p999Us": 118489.1,
+    "mbPerSec": 667.1,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 10542,
+      "meanReqPerSec": 1052.8,
+      "success2xxPct": 100.0,
+      "p50Us": 7405.6,
+      "p99Us": 13893.6,
+      "p999Us": 18087.9,
+      "mbPerSec": 660.1
+     },
+     {
+      "phase": "c032",
+      "requestCount": 10681,
+      "meanReqPerSec": 1062.5,
+      "success2xxPct": 100.0,
+      "p50Us": 29360.1,
+      "p99Us": 56885.2,
+      "p999Us": 59768.8,
+      "mbPerSec": 666.1
+     },
+     {
+      "phase": "c064",
+      "requestCount": 10705,
+      "meanReqPerSec": 1064.0,
+      "success2xxPct": 100.0,
+      "p50Us": 59244.5,
+      "p99Us": 110624.8,
+      "p999Us": 118489.1,
+      "mbPerSec": 667.1
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "2215-kqueue-maven-r2",
+   "timestamp": "2026-11-13T21:59:34Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-kqueue",
+   "cliBinary": "cli",
+   "binarySizeBytes": 84356216,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4621,
+   "startupMs": 296,
+   "idleRssKb": 47104,
+   "peakRssKb": 77104,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 10862,
+    "meanReqPerSec": 1081.8,
+    "success2xxPct": 100.0,
+    "p50Us": 28704.8,
+    "p99Us": 56361.0,
+    "p999Us": 58720.3,
+    "mbPerSec": 678.2,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 10780,
+      "meanReqPerSec": 1076.4,
+      "success2xxPct": 100.0,
+      "p50Us": 7274.5,
+      "p99Us": 13566.0,
+      "p999Us": 17170.4,
+      "mbPerSec": 674.8
+     },
+     {
+      "phase": "c032",
+      "requestCount": 10862,
+      "meanReqPerSec": 1081.8,
+      "success2xxPct": 100.0,
+      "p50Us": 28704.8,
+      "p99Us": 56361.0,
+      "p999Us": 58720.3,
+      "mbPerSec": 678.2
+     },
+     {
+      "phase": "c064",
+      "requestCount": 10861,
+      "meanReqPerSec": 1079.6,
+      "success2xxPct": 100.0,
+      "p50Us": 58196.0,
+      "p99Us": 111673.3,
+      "p999Us": 117964.8,
+      "mbPerSec": 676.9
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "2215-nio-maven-r2",
+   "timestamp": "2026-11-13T22:00:16Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4603,
+   "startupMs": 298,
+   "idleRssKb": 45392,
+   "peakRssKb": 75904,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 10824,
+    "meanReqPerSec": 1075.6,
+    "success2xxPct": 100.0,
+    "p50Us": 28966.9,
+    "p99Us": 57147.4,
+    "p999Us": 58458.1,
+    "mbPerSec": 674.4,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 10640,
+      "meanReqPerSec": 1062.8,
+      "success2xxPct": 100.0,
+      "p50Us": 7372.8,
+      "p99Us": 13762.6,
+      "p999Us": 17694.7,
+      "mbPerSec": 666.3
+     },
+     {
+      "phase": "c032",
+      "requestCount": 10824,
+      "meanReqPerSec": 1075.6,
+      "success2xxPct": 100.0,
+      "p50Us": 28966.9,
+      "p99Us": 57147.4,
+      "p999Us": 58458.1,
+      "mbPerSec": 674.4
+     },
+     {
+      "phase": "c064",
+      "requestCount": 10727,
+      "meanReqPerSec": 1065.9,
+      "success2xxPct": 100.0,
+      "p50Us": 58982.4,
+      "p99Us": 95420.4,
+      "p999Us": 118489.1,
+      "mbPerSec": 668.3
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "2215-nio-maven-r3",
+   "timestamp": "2026-11-13T22:00:59Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4599,
+   "startupMs": 293,
+   "idleRssKb": 45376,
+   "peakRssKb": 75056,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 10725,
+    "meanReqPerSec": 1067.3,
+    "success2xxPct": 100.0,
+    "p50Us": 28966.9,
+    "p99Us": 57409.5,
+    "p999Us": 58720.3,
+    "mbPerSec": 669.1,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 10612,
+      "meanReqPerSec": 1059.8,
+      "success2xxPct": 100.0,
+      "p50Us": 7372.8,
+      "p99Us": 13828.1,
+      "p999Us": 17694.7,
+      "mbPerSec": 664.5
+     },
+     {
+      "phase": "c032",
+      "requestCount": 10725,
+      "meanReqPerSec": 1067.3,
+      "success2xxPct": 100.0,
+      "p50Us": 28966.9,
+      "p99Us": 57409.5,
+      "p999Us": 58720.3,
+      "mbPerSec": 669.1
+     },
+     {
+      "phase": "c064",
+      "requestCount": 10701,
+      "meanReqPerSec": 1063.2,
+      "success2xxPct": 100.0,
+      "p50Us": 58982.4,
+      "p99Us": 115343.4,
+      "p999Us": 118489.1,
+      "mbPerSec": 666.6
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "2215-kqueue-maven-r3",
+   "timestamp": "2026-11-13T22:01:41Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-kqueue",
+   "cliBinary": "cli",
+   "binarySizeBytes": 84356216,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4588,
+   "startupMs": 296,
+   "idleRssKb": 47136,
+   "peakRssKb": 77376,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 10877,
+    "meanReqPerSec": 1083.7,
+    "success2xxPct": 100.0,
+    "p50Us": 28704.8,
+    "p99Us": 56361.0,
+    "p999Us": 58720.3,
+    "mbPerSec": 679.4,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 10760,
+      "meanReqPerSec": 1074.4,
+      "success2xxPct": 100.0,
+      "p50Us": 7274.5,
+      "p99Us": 13566.0,
+      "p999Us": 17301.5,
+      "mbPerSec": 673.6
+     },
+     {
+      "phase": "c032",
+      "requestCount": 10877,
+      "meanReqPerSec": 1083.7,
+      "success2xxPct": 100.0,
+      "p50Us": 28704.8,
+      "p99Us": 56361.0,
+      "p999Us": 58720.3,
+      "mbPerSec": 679.4
+     },
+     {
+      "phase": "c064",
+      "requestCount": 10850,
+      "meanReqPerSec": 1078.2,
+      "success2xxPct": 100.0,
+      "p50Us": 58458.1,
+      "p99Us": 107479.0,
+      "p999Us": 118489.1,
+      "mbPerSec": 676.0
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "2215-nio2-maven-r3",
+   "timestamp": "2026-11-13T22:02:24Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio2",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4727,
+   "startupMs": 286,
+   "idleRssKb": 45360,
+   "peakRssKb": 75152,
+   "throughput": {
+    "phase": "c032",
+    "requestCount": 10878,
+    "meanReqPerSec": 1082.5,
+    "success2xxPct": 100.0,
+    "p50Us": 28835.8,
+    "p99Us": 56885.2,
+    "p999Us": 58196.0,
+    "mbPerSec": 678.7,
+    "ladder": [
+     {
+      "phase": "c008",
+      "requestCount": 10726,
+      "meanReqPerSec": 1071.4,
+      "success2xxPct": 100.0,
+      "p50Us": 7340.0,
+      "p99Us": 13303.8,
+      "p999Us": 16515.1,
+      "mbPerSec": 671.7
+     },
+     {
+      "phase": "c032",
+      "requestCount": 10878,
+      "meanReqPerSec": 1082.5,
+      "success2xxPct": 100.0,
+      "p50Us": 28835.8,
+      "p99Us": 56885.2,
+      "p999Us": 58196.0,
+      "mbPerSec": 678.7
+     },
+     {
+      "phase": "c064",
+      "requestCount": 10732,
+      "meanReqPerSec": 1066.5,
+      "success2xxPct": 100.0,
+      "p50Us": 58720.3,
+      "p99Us": 100139.0,
+      "p999Us": 117440.5,
+      "mbPerSec": 668.6
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "maven",
+   "benchmarkName": "proxy-maven",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-maven.hf.yaml",
+    "connections": 64
+   }
+  },
+  {
+   "label": "2215-nio-saturate-r1",
+   "timestamp": "2026-11-13T22:03:15Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4595,
+   "startupMs": 294,
+   "idleRssKb": 45376,
+   "peakRssKb": 63824,
+   "throughput": {
+    "phase": "c128",
+    "requestCount": 222258,
+    "meanReqPerSec": 22199.2,
+    "success2xxPct": 100.0,
+    "p50Us": 5701.6,
+    "p99Us": 6881.3,
+    "p999Us": 11599.9,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 221658,
+      "meanReqPerSec": 22156.9,
+      "success2xxPct": 100.0,
+      "p50Us": 671.7,
+      "p99Us": 1359.9,
+      "p999Us": 1523.7,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 221044,
+      "meanReqPerSec": 22088.9,
+      "success2xxPct": 100.0,
+      "p50Us": 2834.4,
+      "p99Us": 5668.9,
+      "p999Us": 5865.5,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 222258,
+      "meanReqPerSec": 22199.2,
+      "success2xxPct": 100.0,
+      "p50Us": 5701.6,
+      "p99Us": 6881.3,
+      "p999Us": 11599.9,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 221613,
+      "meanReqPerSec": 22132.5,
+      "success2xxPct": 100.0,
+      "p50Us": 11468.8,
+      "p99Us": 13566.0,
+      "p999Us": 23068.7,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "2215-kqueue-saturate-r1",
+   "timestamp": "2026-11-13T22:04:06Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-kqueue",
+   "cliBinary": "cli",
+   "binarySizeBytes": 84356216,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4628,
+   "startupMs": 294,
+   "idleRssKb": 47040,
+   "peakRssKb": 64576,
+   "throughput": {
+    "phase": "c016",
+    "requestCount": 221928,
+    "meanReqPerSec": 22181.7,
+    "success2xxPct": 100.0,
+    "p50Us": 671.7,
+    "p99Us": 1359.9,
+    "p999Us": 1515.5,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 221928,
+      "meanReqPerSec": 22181.7,
+      "success2xxPct": 100.0,
+      "p50Us": 671.7,
+      "p99Us": 1359.9,
+      "p999Us": 1515.5,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 221918,
+      "meanReqPerSec": 22174.1,
+      "success2xxPct": 100.0,
+      "p50Us": 2834.4,
+      "p99Us": 5636.1,
+      "p999Us": 5832.7,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 221620,
+      "meanReqPerSec": 22135.4,
+      "success2xxPct": 100.0,
+      "p50Us": 5734.4,
+      "p99Us": 6848.5,
+      "p999Us": 11599.9,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 221732,
+      "meanReqPerSec": 22140.0,
+      "success2xxPct": 100.0,
+      "p50Us": 11468.8,
+      "p99Us": 13631.5,
+      "p999Us": 23068.7,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "2215-nio2-saturate-r1",
+   "timestamp": "2026-11-13T22:04:57Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio2",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4688,
+   "startupMs": 298,
+   "idleRssKb": 45392,
+   "peakRssKb": 64112,
+   "throughput": {
+    "phase": "c016",
+    "requestCount": 220561,
+    "meanReqPerSec": 22042.9,
+    "success2xxPct": 100.0,
+    "p50Us": 675.8,
+    "p99Us": 1368.1,
+    "p999Us": 1523.7,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 220561,
+      "meanReqPerSec": 22042.9,
+      "success2xxPct": 100.0,
+      "p50Us": 675.8,
+      "p99Us": 1368.1,
+      "p999Us": 1523.7,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 220564,
+      "meanReqPerSec": 22038.8,
+      "success2xxPct": 100.0,
+      "p50Us": 2850.8,
+      "p99Us": 5701.6,
+      "p999Us": 5865.5,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 220399,
+      "meanReqPerSec": 22013.5,
+      "success2xxPct": 100.0,
+      "p50Us": 5734.4,
+      "p99Us": 7045.1,
+      "p999Us": 11665.4,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 220286,
+      "meanReqPerSec": 21997.8,
+      "success2xxPct": 100.0,
+      "p50Us": 11534.3,
+      "p99Us": 13631.5,
+      "p999Us": 23199.7,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "2215-nio2-saturate-r2",
+   "timestamp": "2026-11-13T22:05:48Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio2",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4634,
+   "startupMs": 300,
+   "idleRssKb": 45360,
+   "peakRssKb": 64160,
+   "throughput": {
+    "phase": "c128",
+    "requestCount": 220478,
+    "meanReqPerSec": 22023.6,
+    "success2xxPct": 100.0,
+    "p50Us": 5734.4,
+    "p99Us": 7012.4,
+    "p999Us": 11665.4,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 220358,
+      "meanReqPerSec": 22022.6,
+      "success2xxPct": 100.0,
+      "p50Us": 675.8,
+      "p99Us": 1368.1,
+      "p999Us": 1531.9,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 220447,
+      "meanReqPerSec": 22022.7,
+      "success2xxPct": 100.0,
+      "p50Us": 2850.8,
+      "p99Us": 5668.9,
+      "p999Us": 5865.5,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 220478,
+      "meanReqPerSec": 22023.6,
+      "success2xxPct": 100.0,
+      "p50Us": 5734.4,
+      "p99Us": 7012.4,
+      "p999Us": 11665.4,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 220261,
+      "meanReqPerSec": 21993.1,
+      "success2xxPct": 100.0,
+      "p50Us": 11534.3,
+      "p99Us": 13697.0,
+      "p999Us": 23199.7,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "2215-kqueue-saturate-r2",
+   "timestamp": "2026-11-13T22:06:40Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-kqueue",
+   "cliBinary": "cli",
+   "binarySizeBytes": 84356216,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4569,
+   "startupMs": 301,
+   "idleRssKb": 47104,
+   "peakRssKb": 64608,
+   "throughput": {
+    "phase": "c016",
+    "requestCount": 221259,
+    "meanReqPerSec": 22110.4,
+    "success2xxPct": 100.0,
+    "p50Us": 675.8,
+    "p99Us": 1359.9,
+    "p999Us": 1515.5,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 221259,
+      "meanReqPerSec": 22110.4,
+      "success2xxPct": 100.0,
+      "p50Us": 675.8,
+      "p99Us": 1359.9,
+      "p999Us": 1515.5,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 220532,
+      "meanReqPerSec": 22033.4,
+      "success2xxPct": 100.0,
+      "p50Us": 2850.8,
+      "p99Us": 5668.9,
+      "p999Us": 5865.5,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 220910,
+      "meanReqPerSec": 22051.3,
+      "success2xxPct": 100.0,
+      "p50Us": 5734.4,
+      "p99Us": 6914.0,
+      "p999Us": 11665.4,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 221281,
+      "meanReqPerSec": 22097.2,
+      "success2xxPct": 100.0,
+      "p50Us": 11534.3,
+      "p99Us": 13369.3,
+      "p999Us": 23199.7,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  },
+  {
+   "label": "2215-nio-saturate-r2",
+   "timestamp": "2026-11-13T22:07:31Z",
+   "gitSha": "b27cba56c",
+   "gitSubject": "fixup! Proxy: Netty's kqueue transport on macOS with Apple Silicon (#2215)",
+   "graalvm": "native-image 25.0.4.1.1 2026-08-18",
+   "platform": "Darwin arm64",
+   "proxyBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "cliBuiltWith": "native (GraalVM 25.4.4.1.1)",
+   "proxyBinary": "proxy-nio",
+   "cliBinary": "cli",
+   "binarySizeBytes": 83331048,
+   "cliBinarySizeBytes": 41495312,
+   "cliStartupUs": 4592,
+   "startupMs": 301,
+   "idleRssKb": 45408,
+   "peakRssKb": 63712,
+   "throughput": {
+    "phase": "c256",
+    "requestCount": 220785,
+    "meanReqPerSec": 22045.4,
+    "success2xxPct": 100.0,
+    "p50Us": 11534.3,
+    "p99Us": 13697.0,
+    "p999Us": 23199.7,
+    "mbPerSec": null,
+    "ladder": [
+     {
+      "phase": "c016",
+      "requestCount": 220472,
+      "meanReqPerSec": 22034.0,
+      "success2xxPct": 100.0,
+      "p50Us": 675.8,
+      "p99Us": 1368.1,
+      "p999Us": 1531.9,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c064",
+      "requestCount": 220133,
+      "meanReqPerSec": 21993.5,
+      "success2xxPct": 100.0,
+      "p50Us": 2850.8,
+      "p99Us": 5668.9,
+      "p999Us": 5865.5,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c128",
+      "requestCount": 219498,
+      "meanReqPerSec": 21910.4,
+      "success2xxPct": 100.0,
+      "p50Us": 5767.2,
+      "p99Us": 7241.7,
+      "p999Us": 11730.9,
+      "mbPerSec": null
+     },
+     {
+      "phase": "c256",
+      "requestCount": 220785,
+      "meanReqPerSec": 22045.4,
+      "success2xxPct": 100.0,
+      "p50Us": 11534.3,
+      "p99Us": 13697.0,
+      "p999Us": 23199.7,
+      "mbPerSec": null
+     }
+    ]
+   },
+   "loadTool": "hyperfoil",
+   "loadMode": "saturate",
+   "benchmarkName": "proxy-saturate",
+   "hyperfoilConfig": {
+    "image": "hyperfoil-0.29.3",
+    "definition": "proxy-saturate.hf.yaml",
+    "connections": 256
+   }
+  }
+ ]
+}

@@ -1057,9 +1057,54 @@ The raw runs are in [bench/data/proxy-transport-2026-11-13.json](../../bench/dat
 - **Memory on `maven`:** idle RSS 66, 68 and 70 MB, and peak RSS 110, 110 and 119 MB, for `nio`, `epoll` and `uring`.
 - **Startup:** 260 to 274 ms for all three.
 - **Spread:** runs of one binary agree within 1.5% for `uring` and within about 10% for `nio`.
-- **Not measured:** kqueue on macOS, aarch64, and the release toolchain with its PGO profile.
+- **Not measured:** kqueue on macOS (measured since, below), aarch64, and the release toolchain with its PGO profile.
 
 The proxy took epoll, and the current direction is epoll for now, with io_uring not pursued (design/proxy.md "The socket transport: epoll on Linux").
+
+### kqueue on macOS (issue #2215)
+
+Measured on 2026-11-13 on the Mac runner: a Mac mini with Apple Silicon (Mac18,5), macOS 27.2, the isx VM under vfkit with 2 CPUs, and nothing else running.
+Two native proxies were built with Oracle GraalVM 25.4 and no PGO, both from branch `issue-2215-kqueue-measured` at `3d0fec256` on the bot's fork (base `main` at `4d1ff50c`).
+`kqueue` adds `netty-transport-native-kqueue` (`osx-aarch_64`) with `quarkus.vertx.native-transport=if-available`, and `nio` is the same tree with that profile switched off.
+`nio2` is a byte-identical copy of `nio`, run as a noise control.
+`bench/run.sh` ran them interleaved, `maven` three times each and `saturate` twice each, with Hyperfoil on the host.
+Every run had 100% 2xx, and each proxy's startup line named the transport it ran on.
+The raw runs are in [bench/data/proxy-transport-macos-2026-11-13.json](../../bench/data/proxy-transport-macos-2026-11-13.json).
+
+`maven`, median req/s with the three runs, then p50 / p99 in ms:
+
+| Users | nio | nio2 | kqueue |
+|---|---|---|---|
+| 8 | 1063 (1067, 1063, 1060), 7.4 / 13.8 | 1065 (1065, 1053, 1071), 7.3 / 13.8 | 1076 (1076, 1076, 1074), 7.3 / 13.6, +1.3% |
+| 32 | 1076 (1081, 1076, 1067), 29.0 / 57.1 | 1078 (1078, 1062, 1082), 29.0 / 56.9 | 1082 (1081, 1082, 1084), 28.7 / 56.4, +0.6% |
+| 64 | 1066 (1067, 1066, 1063), 59.0 / 95.4 | 1067 (1069, 1064, 1066), 59.0 / 100.1 | 1080 (1081, 1080, 1078), 58.2 / 111.7, +1.3% |
+
+`saturate`, median req/s:
+
+| Users | nio | nio2 | kqueue |
+|---|---|---|---|
+| 16 | 22,095 | 22,033 | 22,146 (+0.2%) |
+| 64 | 22,041 | 22,031 | 22,104 (+0.3%) |
+| 128 | 22,055 | 22,019 | 22,093 (+0.2%) |
+| 256 | 22,089 | 21,995 | 22,119 (+0.1%) |
+
+- **Throughput on `maven`:** kqueue is 0.6 to 1.3% ahead, and the gain is consistent.
+  At 8 and at 64 users every kqueue run beats every `nio` and `nio2` run, while kqueue's own runs agree within 0.3%.
+  At 32 users the ranges overlap.
+- **Throughput on `saturate`:** 0.1 to 0.3% ahead, within the spread of the two NIO copies.
+- **Latency:** p50 is the same or slightly lower on kqueue. p99 at 64 users is 111.7 ms against 95.4 ms, but the `nio` runs' p99 there range from 93.8 to 115.3 ms and those of `nio2` from 91.2 to 110.6 ms, so the tails overlap.
+- **The load does not scale with users:** `maven` stays near 1,070 req/s from 8 to 64 users, at about 670 MB/s, and only the latency grows. What bounds it was not measured. Whatever it is, the socket transport is a small part of it on this Mac.
+- **Size and memory:** 83,331,048 bytes for `nio` and 84,356,216 for `kqueue` (+1.2%). Idle RSS is 45,392 against 47,104 KiB, and peak RSS on `maven` 75,184 against 77,104 KiB (`ps` on macOS). Startup is 293 against 296 ms.
+
+kqueue stays off on macOS, and the proxy there runs on NIO as before (design/proxy.md "The socket transport: epoll on Linux").
+The gain is real but about 1%, and epoll's on Linux was 3 to 15%.
+Against it stands what enabling kqueue takes in a native image, where Quarkus does nothing for kqueue as it does for epoll:
+- The JNI library (`META-INF/native/libnetty_transport_native_kqueue_aarch_64.jnilib`) has to be listed in `quarkus.native.resources.includes`. Without it the library is not in the image, and the proxy logs that it fell back to NIO.
+- With the library in but no JNI metadata, startup does not fall back: Vert.x's check for kqueue throws `NoClassDefFoundError: io/netty/channel/kqueue/KQueueStaticallyReferencedJniMethods`, and the proxy exits.
+  The metadata measured here is kept in [bench/data/proxy-kqueue-reachability-metadata.json](../../bench/data/proxy-kqueue-reachability-metadata.json).
+  It was recorded with the native-image agent over the bind and TLS tests, and is conditioned on `io.netty.channel.kqueue.Native`.
+  It would go in `proxy/src/main/resources/META-INF/native-image/dev.incusspawn/incus-spawn-proxy/reachability-metadata.json`, which needs `git add -f`, because `.gitignore` excludes `META-INF/`.
+- That metadata must keep up with Netty's native code. If a Netty upgrade made it stale, the proxy would exit at startup on every Mac instead of falling back to NIO.
 
 ## Java deserialization in the native images (issue #458)
 
