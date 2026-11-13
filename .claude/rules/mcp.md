@@ -206,7 +206,7 @@ The coordination playbook is the `coordinate` MCP prompt (`McpPrompt`, `prompts/
 Every start path's bit is pinned both ways, `1` for a coordinator and `0` otherwise (`McpClientRegistrationStartTest`, `InstanceListingMcpCallerTest` for the TUI listing).
 
 **Set up by `isx init` or `isx mcp setup`.**
-The "Agent Access over MCP" step (`InitCommand.setupMcp`, default off, skipped without a console) registers the server with `claude mcp add --scope user isx -- <isx> mcp` when the host has `claude`, and asks, per template whose chain installs a coding agent (`ToolSetup.codingAgent()`), whether to approve it (#2178).
+The "Agent Access over MCP" step (`InitCommand.setupMcp`, default off, skipped without a console) registers the server with `claude mcp add --scope user isx -- <launch>` when the host has `claude`, and asks, per template whose chain installs a coding agent (`ToolSetup.codingAgent()`), whether to approve it (#2178).
 A template with no agent `delegate` runs (`claude`, `codex` or `pi`) is marked create and exec only in its question.
 Without a host `claude` the approvals are the whole step, so approved templates alone count as set up, and the menu's `n` says to choose `t` and approve none (#2078).
 Either way, enabling it names `isx mcp config` for any other client.
@@ -215,7 +215,9 @@ Once registered with approved templates, a re-run asks one menu question instead
 It names the templates installing `claude` that are not approved, so a new one is not missed.
 `isx mcp setup` (`McpCommand.Setup`, `InitCommand.setupMcpAlone`, #2077) runs this step alone; it needs `Prompts.terminal()` (stdin and stdout a terminal), takes no template option, and without one exits 1 having loaded and written nothing.
 It shows the header of the same `mcp` `InitStep` init runs (`InitCommand.mcpStep`), and `isx init --plan` names it as the command for the approvals (`MCP_SETUP_COMMAND`, #2073).
-`isx mcp config` (`McpCommand.Config`) prints the stdio entry (`mcpServers.isx`: the resolved `isx` path, `args: ["mcp"]`) to `BuildOutput.results()` and writes nothing; `McpConfigCommandTest` pins its bytes.
+`<launch>` is `McpLaunch` (#2189): `<isx> mcp`, or on Linux, with the user in `incus-admin` per the group database and `sg` on the `PATH`, `sg incus-admin -c "exec <isx> mcp"`; without `sg` it stays plain, since `sg` is a safeguard and never a requirement.
+`isx mcp register claude|codex` (`McpCommand.Register`, `Registrar`) runs the client's `mcp remove isx` (Claude's user and local scopes: a local entry overrides the user one in its directory), then its `mcp add ... -- <launch>`, through `Privilege.check`; it warns to log in again only for the plain form while `IncusClient.socketDenied()`; `McpRegisterCommandTest` pins the commands.
+`isx mcp config` (`McpCommand.Config`) prints the stdio entry (`mcpServers.isx`: the launch's command and arguments) to `BuildOutput.results()` and writes nothing; `McpConfigCommandTest` pins its bytes.
 Bare `isx mcp` stays the server; the write stays in `InitCommand`, so `McpNoWritePathTest` holds.
 Whether isx is registered is read from Claude Code's `~/.claude.json` (`claudeMcpRegisteredInConfig`, the plan's check too), never with `claude mcp get`, which starts `isx mcp` and so its orphan sweep (#2099).
 A file it cannot read stops the step with a warning, as an unreadable `mcp.yaml` does.

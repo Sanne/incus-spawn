@@ -317,10 +317,19 @@ A template whose agent `delegate` cannot run is marked create and exec only, so 
 It needs stdin and stdout to be a terminal (`Prompts.terminal()`), stricter than init's console, so an agent cannot pipe its own answers in, and it takes no option naming a template.
 An agent with a shell can still do what its user can; the command only means the install path never asks an agent to approve anything.
 It is a subcommand of `isx mcp` because it sets up exactly what that server serves; bare `isx mcp`, which agents run, is unchanged.
-The approvals do not depend on Claude Code (#2078): a person approves templates whichever client they use, and only Claude Code is registered by isx, through its own CLI.
-Any other client is set up from `isx mcp config`, which prints the stdio entry as the `mcpServers` JSON most clients take, with the resolved `isx` path.
+The approvals do not depend on Claude Code (#2078): a person approves templates whichever client they use.
+`isx mcp register claude|codex` (#2189) registers the server through that client's own CLI (`claude mcp add --scope user`, `codex mcp add`), after removing an `isx` entry it may already have, in Claude's local scope too, which overrides the user scope in its directory.
+It exists because agents installing isx wrote the registration themselves and got the Linux form wrong: Claude Code twice registered the plain `isx mcp`, which a session from before `isx init`'s root script runs without `incus-admin`, so the Incus socket refused every call.
+The command chooses the form (`McpLaunch`), so an agent runs one command per client and never reads a table.
+On Linux, when the group database lists the user in `incus-admin` and `sg` is on the `PATH`, the launch is `sg incus-admin -c "exec <isx> mcp"`.
+`sg` is a safeguard, never a requirement (Sanne on #2189): Arch-family hosts do not ship it, and there the launch is the plain `<isx> mcp`, with a warning to log in again only when this process's socket check refuses it.
+The plain `isx mcp` also re-runs itself under `sg` when the socket refuses it (`GroupContinuation`, #2167), so the wrapper is a second safeguard that also covers a client which starts the server from another session.
+The wrapper keeps `incus-admin` as the primary group, unlike `GroupContinuation`'s inner `sg <primary>`, so the entry stays readable; the group is root's equal on the host, so files the server writes under it give its members nothing new.
+Init's registration, its advice and `isx init --plan` give the same command (`InitCommand.claudeMcpAddCommand`, built from `McpCommand.Client.CLAUDE`), so the plan no longer suggests a form `llms.txt` warns against.
+Any other client is set up from `isx mcp config`, which prints the same launch as the `mcpServers` JSON most clients take, with the resolved `isx` path.
 It prints rather than writes because another program's settings file is its own: isx does not know its format's other keys, and an entry it wrote would be one it must also find and undo.
-Codex and Gemini CLI have their own `mcp add` commands, which the docs name; isx does not run them, so registering stays a step the person does or confirms.
+Claude Code and Codex are different because their CLIs own those files, so isx writes nothing of theirs itself.
+What this gives up: a registration made on a host with `sg` names `sg`, and stops working if `sg` is later removed; `isx mcp register` run again then writes the plain form.
 `host-routes:` stays in `config.yaml`: it is proxy routing that a controller without MCP may use, and its template list answers who may reach a service, not which templates an agent may create instances from, so neither list is derived from the other.
 The split organizes the configuration; it is not a new security boundary, since both files belong to the same host user.
 

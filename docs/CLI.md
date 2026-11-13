@@ -774,10 +774,10 @@ A note on stderr says so after every answer, and stdout holds only the answer.
 ## `isx mcp`
 
 Serve isx to an agent on this host over the Model Context Protocol, on stdio.
-The agent starts it, not you:
+The agent starts it, not you, once `isx mcp register` registered it:
 
 ```shell
-claude mcp add isx -- isx mcp
+isx mcp register claude
 ```
 
 See [Delegating from an agent on your host](MCP.md#delegating-from-an-agent-on-your-host-mcp) for what it offers and how to approve templates.
@@ -797,6 +797,21 @@ isx mcp setup
 It needs a terminal, and takes no option naming a template.
 Without a terminal it does not change `mcp.yaml` and exits 1, since approving templates is a step for you, not for an agent.
 
+### `isx mcp register`
+
+Register `isx mcp` with Claude Code or Codex, through that agent's own `mcp add` command.
+
+```shell
+isx mcp register claude
+isx mcp register codex
+```
+
+It replaces an existing `isx` entry, and exits 1 when the agent is not installed or its command fails.
+
+On Linux the entry runs the server through `sg incus-admin` when the host has `sg` and you are in that group.
+An agent started before you joined the group then still reaches Incus.
+Without `sg` the entry is plain, and the agent reaches Incus once you start it again from a new login.
+
 ### `isx mcp config`
 
 Print the entry that starts `isx mcp`, as the `mcpServers` JSON most MCP clients take in their settings.
@@ -806,7 +821,8 @@ isx mcp config
 ```
 
 It names the installed `isx` by its full path and does not change any file.
-Paste it into the settings of an agent other than Claude Code, such as Cursor or Gemini CLI.
+On Linux its command is `sg` with `incus-admin`, as `isx mcp register` writes it, when the host has `sg` and you are in that group.
+Paste it into the settings of an agent other than Claude Code and Codex, such as Cursor or Gemini CLI.
 
 ## `isx completion`
 
