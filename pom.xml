@@ -110,6 +110,10 @@
                             <!-- Tests run inside an isx instance must not find its secret: InheritedProof -->
                             <isx.instance-secret-file>${project.build.directory}/no-instance-secret</isx.instance-secret-file>
                         </systemPropertyVariables>
+                        <environmentVariables>
+                            <!-- A test JVM is not isx, so GroupContinuation must never re-run it under sg (#2201) -->
+                            <ISX_GROUP_CONTINUED>1</ISX_GROUP_CONTINUED>
+                        </environmentVariables>
                     </configuration>
                 </plugin>
                 <plugin>
