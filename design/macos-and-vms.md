@@ -408,6 +408,8 @@ What it gives up: the wake is noticed up to two and a half seconds late, and the
 
 The framework's objects are used on the main queue alone, the queue the machine is made on.
 A relay's thread reaches the guest through `dial`, which asks the main queue and waits for it; nothing on the main queue waits for a relay.
+A connection that ends is closed there too: `hangUp` hands the close to the main queue and returns before it, since the relay has already shut the descriptor down.
+Apple's page for `VZVirtioSocketConnection.close()` names no queue, so the launcher keeps to its rule rather than lean on that silence.
 
 ### The measurement and the rule
 
