@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * The TUI leaves blank cells unwritten, so whatever the terminal held shows through them unless
- * the screen is cleared (#1681): once before the first frame, and again on Ctrl+L.
+ * the screen is cleared (#1681): once before the first frame, which tamboui does since 0.7.0, and again on Ctrl+L.
  */
 @ExtendWith({IsolatedHome.class, LinuxBranching.class})
 class TuiScreenClearTest {
@@ -36,7 +36,7 @@ class TuiScreenClearTest {
 
     @BeforeEach
     void runner() throws Exception {
-        runner = Tui.openRunner(Tui.runnerConfig().backend(screen).shutdownHook(false).noTick().build());
+        runner = TuiRunner.create(Tui.runnerConfig().backend(screen).shutdownHook(false).noTick().build());
     }
 
     @AfterEach

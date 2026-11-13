@@ -494,9 +494,9 @@ Two things that looked fine in Ghostty broke in Termius (#1681).
 **The screen is cleared before the first frame.**
 tamboui sends only the cells that differ from the previous frame, and its first frame is compared with a blank one, so a cell the TUI leaves blank is never sent.
 A terminal that keeps its old contents on entering the alternate screen showed them through those cells, such as the cursor gutter left of each table.
-`Tui.openRunner` clears the screen once the runner is open.
+tamboui clears the screen before its first frame, since 0.7.0 (#597).
 Ctrl+L clears it again in any mode, for output something else wrote over the TUI, after its reload so the screen is not blank meanwhile.
-tamboui clears on resize only, so this belongs upstream too; until then isx does it.
+tamboui clears again only on resize, so Ctrl+L is still isx's.
 
 **The theme uses no RGB colours.**
 tamboui writes an RGB colour as a 24-bit escape whatever the terminal supports, and Termius drew every one of them in the same green.
@@ -509,8 +509,9 @@ It is used everywhere rather than when `COLORTERM` is unset, because SSH does no
 **Keys are read in their legacy encoding.**
 Pi and Claude Code turn on the kitty keyboard protocol, and Pi also xterm's `modifyOtherKeys`.
 One that does not exit cleanly, or a multiplexer between, leaves the terminal sending Esc as `CSI 27 u` and Ctrl+C as `CSI 99;5 u`.
-tamboui reads neither, so Esc and Ctrl+C did nothing, and a dialog that closes only on them could not be left.
+tamboui before 0.7.0 read neither, so Esc and Ctrl+C did nothing, and a dialog that closes only on them could not be left.
 Only terminals that speak the protocol do this, which is why Esc worked in one terminal and not another.
+The runner's config says `KeyboardProtocol.LEGACY`, since tamboui 0.7.0 otherwise pushes kitty flags 5 and reads the keys in that encoding, and LEGACY pushes nothing itself.
 `LegacyKeyboardBackend` pushes kitty flags of zero on the TUI's alternate screen and pops them before it leaves, never touching the main screen's stack.
 What still arrives encoded, from a terminal that ignores the push or a multiplexer that keeps its own mode, `KeyboardProtocol` turns back into legacy bytes before tamboui parses them.
 It decodes `CSI code;mods u` and `CSI 27;mods;code ~`, drops key releases and keys with no legacy byte, and hands every other sequence on byte for byte.

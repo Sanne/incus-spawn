@@ -39,7 +39,7 @@ class TuiOwnerColumnTest {
     }
 
     private Tui tui(int width, boolean owned) throws Exception {
-        runner = TuiRunner.create(TuiConfig.builder().backend(new HeadlessBackend(width, 24))
+        runner = TuiRunner.create(TuiConfig.builder().backend(new HeadlessBackend(width, 24)).keyboardProtocol(dev.tamboui.terminal.KeyboardProtocol.LEGACY)
                 .shutdownHook(false).noTick().build());
         var daemon = new FakeIncusDaemon()
                 .instance("ws", "container", "Stopped", Map.of(Metadata.TYPE, "branch", Metadata.PARENT, "tpl-minimal",

@@ -14,7 +14,8 @@ paths:
 Code running after the runner has closed (the `pendingAction` switch, e.g. `ShellLaunch.shellInto`) prints through `BuildOutput`, which the TUI binds to a copying terminal there; the shell's auth-error title goes through `BuildOutput.windowTitle` (#1703).
 
 **The screen is cleared before the first frame and on Ctrl+L** (#1681, design/terminal.md "Terminals the TUI cannot assume").
-Open runners through `Tui.openRunner`, never `TuiRunner.create`; `TuiScreenClearTest` checks `openRunner` and Ctrl+L, not that the TUI calls it.
+tamboui does the first clear itself since 0.7.0, and `TuiScreenClearTest` checks it and Ctrl+L.
+**Every runner config sets `keyboardProtocol(LEGACY)`** (`Tui.runnerConfig()`, and the tests' own builders): tamboui 0.7.0 pushes kitty flags 5 by default, over the flags 0 that `LegacyKeyboardBackend` pushes, and a `HeadlessBackend` cannot write the push at all.
 
 **`TuiTheme` holds no RGB colours**, only named ANSI colours and `Color.indexed` entries (#1681); `TuiThemeTest` fails on one.
 
