@@ -555,14 +555,26 @@ That is the starting point, not the design: the mode would also need vsock wirin
 
 ### An NVMe or host-cached root disk (#810)
 
-A VM's root disk stays on virtio-blk with Incus's default `io.cache=none`, which reaches the host's disk on every flush the guest issues.
+A VM's root disk stays on virtio-blk, and isx sets no `io.cache` on it, so Incus picks the mode by the pool.
+On btrfs and ZFS that is `writeback`: Incus avoids `O_DIRECT` on a disk file there, citing btrfs checksum errors and ZFS lockups (docs/dev/PERFORMANCE-NOTES.md "VM disk cache mode, per context").
+On `dir` it is `none`, which reaches the host's disk on every flush the guest issues.
+So on the btrfs pool `isx init` makes, every VM already reads and writes through the host's page cache, and the guest's flushes still reach the disk.
 Measured under nested KVM, NVMe was no faster on a git clone, unpacked a tree 30-40% slower and does not change boot time (docs/dev/PERFORMANCE-NOTES.md "VM root disk: bus and host cache mode").
 It would also need NVMe built into the VM base image's own kernel, which has virtio-blk alone.
-`io.cache=writeback` sends the guest's reads and writes through the host's page cache.
-Under nested KVM direct reads got faster, a clone and an unpack did not, and deleting two trees got faster by about a quarter on btrfs and about a tenth on `dir`.
-That run does not settle what the cache modes change: the `none` rows already read 1M direct sequential data at 4-15 GB/s, so a cache below the guest was serving them (docs/dev/PERFORMANCE-NOTES.md "VM root disk: bus and host cache mode").
-Host caching gives up host memory to cache what each VM reads and writes, which free page reporting exists to return.
+isx does not override Incus's choice in either direction.
+Setting `none` on btrfs would take the `O_DIRECT` path Incus avoids for checksum errors.
+Setting `writeback` on `dir` gave direct reads more speed but no clone or unpack any faster, and costs host memory.
 `unsafe` also ignores the guest's flushes, so a host crash can lose writes the guest was told were on disk and corrupt its filesystem.
-Neither is taken as a default without a better measurement.
-They may be worth it in one place: a `/tmp` or scratch disk of its own, which needs no safe flush, or reads of a template's blocks that many branches share (#2198).
+
+Three places where `writeback` or `unsafe` might still pay were measured, and none is taken (#2198):
+- **A `/tmp` of its own on `unsafe`** halves an rpm install and a tar unpack written there against today's `/tmp`, and saves nothing on a Maven build.
+  It would add a volume, its attachment and a format to every VM branch, and it speeds up only work in `/tmp` that issues many flushes.
+- **Branches do not share their template's blocks in the host's cache.**
+  A copy's image is a separate file on btrfs, and the page cache is per file, so each branch caches its own copy of what it reads, and keeps it after it stops.
+  Reading all of `/usr` and a Maven build left 2.5 GiB of each of four branches' images cached, and the fourth read no faster than the first.
+  This is the cost of the `writeback` mode VMs already run on btrfs; `none` would avoid it but takes the path Incus avoids.
+- **A template build on `unsafe`, flushed after a clean stop and switched back before any branch,** saves about 2.4 s per 700 MiB of packages installed, and the flush costs 0.37 s of it.
+  A failed build is discarded anyway, but a host crash between the build's end and the flush would leave a corrupt template that looks built, so the flush would have to come before the build counts as done.
+  Whether that gain is worth the extra step is Sanne's decision on #2198.
+
 NVMe is worth measuring again on bare metal or on ZFS, which #810 did not cover.
