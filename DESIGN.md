@@ -88,6 +88,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Build-time initialization must not capture host paths
   - Java deserialization is not compiled in
   - Regular expressions are compiled once
+  - Socket wakeups come from platform threads
   - jjq rather than Jackson
   - Considered and deferred
 - [Templates, tools and builds](design/templates.md)

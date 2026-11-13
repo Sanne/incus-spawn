@@ -15,6 +15,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import dev.incusspawn.tui.Tui;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.VirtualThreadPollers;
 
 @QuarkusMain
 public class IncusSpawn implements QuarkusApplication {
@@ -32,6 +33,8 @@ public class IncusSpawn implements QuarkusApplication {
 
     @Override
     public int run(String... args) {
+        // Before any virtual thread waits on a socket: the poller mode is read once (#2129)
+        VirtualThreadPollers.usePlatformThreads();
         try {
             // A session that predates the user's incus-admin membership runs the command under sg (#2167)
             if (!Platform.isMacOS()) {

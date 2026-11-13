@@ -10,6 +10,9 @@ paths:
   - "cli/pom.xml"
   - "proxy/pom.xml"
   - "install.sh"
+  - "common/src/main/java/dev/incusspawn/util/VirtualThreadPollers.java"
+  - "cli/src/main/java/dev/incusspawn/IncusSpawn.java"
+  - "proxy/src/main/java/dev/incusspawn/proxy/ProxyMain.java"
 ---
 
 # Native Image: Build-Time Initialization
@@ -84,3 +87,10 @@ Do not gate on the type instead: `-H:AbortOnTypeReachable=java.io.ObjectInputStr
 Every regex in `main` is a `static final Pattern`, so a build-time-initialized class carries it compiled in the image heap (#1929).
 Never call `String.matches`, `replaceAll`, `replaceFirst` or a regex `split` with a pattern; use the constant's `matcher(...)` or `split(...)`.
 `PatternConstantGateTest` fails otherwise, unless the line says `// regex at run time: <why>`.
+
+## Socket wakeups come from platform threads (#2129)
+
+`IncusSpawn.run` and `ProxyMain.run` first call `VirtualThreadPollers.usePlatformThreads()`, which sets `jdk.pollerMode=1` (`SYSTEM_THREADS`) unless a mode was set already.
+The JDK's `sun.nio.ch.Poller` reads it once, when the first virtual thread waits on a socket, a pipe or a selector, so a new entry point calls it before anything else.
+In mode 1 platform `Read-Poller` and `Write-Poller` threads unpark a waiting reader, without the virtual sub-pollers of the Linux default (design/native-image.md "Socket wakeups come from platform threads").
+`VirtualThreadPollersTest` checks the mode in a JVM of its own.
