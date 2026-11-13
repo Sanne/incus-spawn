@@ -287,11 +287,12 @@ Both are measured on a Mac with a relay that does close (#2031 stage 2).
   It removes vfkit, vz and tcpproxy from the path, so P1, P2 and P5 are no longer another project's code.
   It lands in three stages: the relay, tested on Linux and used as CI's bridge; a prototype measured against vfkit on the Mac runner, which is a go or no-go; then the shipped launcher.
   The cost is a third macOS binary to build, sign with the `com.apple.security.virtualization` entitlement and ship, and the session handling `VmManager` does for vfkit today.
-- **The upstream reports are still worth filing.**
-  Adding `CloseWrite()` and `CloseRead()` to vz's `VirtioSocketConnection` fixes P1 for every vfkit user, if the framework turns `shutdown(SHUT_WR)` into a vsock shutdown.
+- **No report is filed with vfkit** (decided 2026-11-13).
+  isx is moving away from vfkit, so a fix there would not reach an isx user.
+  The fix is known all the same: adding `CloseWrite()` and `CloseRead()` to vz's `VirtioSocketConnection` fixes P1 for every vfkit user, if the framework turns `shutdown(SHUT_WR)` into a vsock shutdown.
   Closing both sides on the first EOF does not depend on that.
-  The Linux reproduction above is a self-contained report for Code-Hex/vz and crc-org/vfkit; no report existed in vfkit, vz or tcpproxy when searched (2026-09-26).
-  isx does not wait for it: a fix has to pass a vz release, a vfkit release and Homebrew, and isx pins no minimum vfkit version.
+  The Linux reproduction above is the record of the fault; no report existed in vfkit, vz or tcpproxy when searched (2026-09-26).
+  A fix would also have to pass a vz release, a vfkit release and Homebrew, and isx pins no minimum vfkit version.
 - **One test exception goes with vfkit.**
   `TUNNEL_KNOWN_LEAK` and the `KNOWN` outcome of `appliance/test-tunnel.sh`, with what sets and reads them in `test-boot.sh` and `test-kernel-on-mac.sh`, are removed in the change that makes the launcher the Mac's relay (stage 3).
   Until then they are the only place where a vfkit leak is let pass.
