@@ -362,6 +362,14 @@ jobs:
           "$RUNNER_TEMP/isx-vm" --cpus 1 --memory 512 --device virtio-gpu 2>&1 | tee "$RUNNER_TEMP/refused.txt" || true
           grep -qx "isx-vm: unknown device 'virtio-gpu'" "$RUNNER_TEMP/refused.txt"
 
+      # The scripts that measure it on the Mac runner call the appliance's agent with
+      # agent-call.pl. Apple's nc, which they used before, shuts its write side down after its
+      # input, and the relay ends the connection there: every agent call under isx-vm came back
+      # empty (#2031). This holds the client to its contract where a Mac's bash, perl and nc
+      # are; the test's note says what this runner's nc does.
+      - name: Test the tunnel checks' agent client
+        run: appliance/test-agent-call.sh
+
       # The measurement on the Mac runner runs this very binary, days after the job. Uploading
       # recomputes nothing, so a failed upload is retried.
       - name: Upload isx-vm
@@ -548,6 +556,12 @@ jobs:
           echo "::error::the vsock bridge did not start"
           cat "$RUNNER_TEMP/bridge.log"
           exit 1
+
+      # The agent client of the checks below, against a stand-in agent that answers late: it
+      # must not shut its write side down before the answer, which the relay would not carry
+      # (#2031). launcher-macos runs the same on a Mac's bash and perl.
+      - name: Test the tunnel checks' agent client
+        run: appliance/test-agent-call.sh
 
       - name: Test the tunnel (forwarder, agent verbs, silent clients, backstop, recovery)
         run: |

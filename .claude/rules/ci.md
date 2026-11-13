@@ -63,6 +63,8 @@ Key jobs:
   The container is pinned by the digest of its multi-arch index, and the upstream watch does not track it, so a newer Swift is a bump by hand.
 - **`launcher-macos`** (`macos-15`): `swift test` on the same package with the runner's Xcode toolchain, so the relay's Darwin half (its threads, `SO_NOSIGPIPE`, how a closed listener ends `accept`) is compiled and tested on every PR.
   It then builds `isx-vm`, the launcher's prototype, with `launcher/build-isx-vm.sh`, which signs it ad hoc and fails unless the signature carries `com.apple.security.virtualization` and nothing else, and checks that the binary starts and refuses a device it does not know.
+  It also runs `appliance/test-agent-call.sh`, as each `integration-tests` leg does before its tunnel checks: the agent client of `test-tunnel.sh` and `measure-tunnel.sh` (`appliance/agent-call.pl`) must not shut its write side down before the agent answered, which the relay would not carry.
+  The test needs no appliance (its agent is a stand-in on a Unix socket), and on macOS it runs under the bash and perl those scripts get on a Mac.
   It uploads the binary as `isx-vm-macos-aarch64` (14 days), which `appliance/launcher-on-mac.sh` measures on the Mac runner; no release holds it.
   It boots no VM: a hosted macOS runner has no Virtualization.framework guest to relay to.
 - **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy (and fails unless its log says it runs on the epoll transport, #475), builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`, `tpl-test-ssh`), then runs test scripts inside branched instances.
@@ -258,7 +260,7 @@ It gives `isx-vm` to isx as a copy named `vfkit` first on the `PATH`, restarts t
 `--sleep` also puts the Mac to sleep for a minute under each program, and needs `sudo -n pmset`.
 The record is a measurement, so it counts only from a Mac that was otherwise idle.
 
-The appliance cache key hashes `appliance/**` except `appliance/test-*.sh`, the launcher's measurement scripts (`measure-tunnel.sh`, `tunnel-hold.pl`, `launcher-on-mac.sh`), `appliance/*.md` and `appliance/kernel/vm*.config`, which never enter the image, and appends the kernel's fingerprint, so editing a test script, a measurement script or a VM kernel fragment does not force an appliance rebuild.
+The appliance cache key hashes `appliance/**` except `appliance/test-*.sh`, the tunnel scripts' agent client (`agent-call.pl`), the launcher's measurement scripts (`measure-tunnel.sh`, `tunnel-hold.pl`, `launcher-on-mac.sh`), `appliance/*.md` and `appliance/kernel/vm*.config`, which never enter the image, and appends the kernel's fingerprint, so editing a test script, a measurement script or a VM kernel fragment does not force an appliance rebuild.
 Anything `build.sh` copies into the image (`root/`, `config.sh`, the kernel) must stay inside the hash.
 
 The kernel-source cache (`/tmp/kernel-cache/`) is keyed `kernel-source-<version>-<sha256>`, both read from `appliance/kernel/build-kernel.sh`.

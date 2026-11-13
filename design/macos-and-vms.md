@@ -332,6 +332,10 @@ So the code that decides when a connection ends is the same in both places.
   A client that shut down its write side and waited for a reply would lose the reply.
   No client of the tunnel does that: `UnixSocketTransport` never half-closes, since Incus cancels a request on one, and `VmAgentClient` keeps its write side open until the agent hangs up.
   A new tunnel client must do the same.
+  The first run of `isx-vm` on a Mac met one that did not: the appliance's tunnel checks made their agent calls through `nc`, and Apple's `nc` shuts its write side down at the end of its input.
+  Every agent call under `isx-vm` came back empty, while under vfkit the same calls had always passed, since vfkit's relay does not carry that half-close to the guest.
+  The checks now call the agent with `appliance/agent-call.pl`, which keeps its write side open on every host, and `appliance/test-agent-call.sh` holds it to that in CI on Linux and macOS.
+  The relay was left as it is: one that passed the half-close on would still lose the answer of `forwarder-restart`, since the guest's `socat` waits only half a second after an EOF, and one that held the EOF back would be vfkit's relay again.
   In return the relay does not depend on the framework carrying `SHUT_WR`, which nobody has measured.
 - **The accept loop does not end on an error.**
   It retries `EINTR` and `ECONNABORTED` at once.
