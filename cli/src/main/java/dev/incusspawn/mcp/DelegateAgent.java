@@ -101,7 +101,7 @@ enum DelegateAgent {
             case PI -> "command -v pi >/dev/null && command -v node >/dev/null"
                     + " && timeout 10 pi --help | grep -q -- --session-id";
             case OPENCODE -> "command -v opencode >/dev/null && command -v node >/dev/null"
-                    + " && timeout 10 opencode run --help | grep -q -- --auto";
+                    + " && timeout 10 opencode run --help 2>&1 | grep -q -- --auto";
             default -> "command -v claude >/dev/null";
         };
     }
