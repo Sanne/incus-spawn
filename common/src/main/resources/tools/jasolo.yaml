@@ -1,0 +1,25 @@
+name: jasolo
+description: jasolo 0.2.0, an MCP server that reads the Java sources of dependencies
+parameters:
+  git_roots:
+    type: string
+    default: "${isx_repo_paths}"
+    description: "Comma-separated directories jasolo scans for git clones; by default the template's repositories"
+
+downloads:
+  - url: https://github.com/mkouba/jasolo/releases/download/0.2.0/jasolo-0.2.0-runner.jar
+    sha256: 70527551945d240649b306ccd175a09f9ecf5ae5c29d19ba452abfe9329cb157
+    destination_file: /opt/jasolo/jasolo.jar
+
+# jasolo refuses to start without its Maven repository, which nothing creates before a first build
+run_as_user:
+  - mkdir -p ~/.m2/repository
+
+verify: command -v java >/dev/null || { echo "jasolo needs a JDK (21 or newer) on PATH, such as tpl-java's" >&2; exit 1; }
+
+mcp:
+  - name: jasolo
+    description: Java sources of dependencies, from the template's clones and ~/.m2
+    command: [java, -jar, /opt/jasolo/jasolo.jar]
+    env:
+      JASOLO_GIT_ROOTS: "${param_git_roots}"

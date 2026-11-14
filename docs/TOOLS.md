@@ -19,6 +19,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `codex` | Codex CLI: OpenAI coding assistant |
 | `copilot` | GitHub Copilot CLI: AI coding assistant (shares `gh` token) |
 | `atlassian-mcp` | Atlassian MCP server for Jira and Confluence |
+| `jasolo` | jasolo MCP server: the Java sources of dependencies, from the template's clones and `~/.m2` |
 | `maven-3` | Apache Maven |
 | `mvnd` | Apache Maven Daemon |
 | `podman` | Podman container runtime configured for Testcontainers |
@@ -588,6 +589,24 @@ tools:
 
 The tool sets `ANTHROPIC_BASE_URL=http://localhost:8787` so Claude Code routes through the optimization proxy.
 The proxy runs as a systemd user service and starts automatically when the instance boots.
+
+### Java Sources of Dependencies (jasolo)
+
+The `jasolo` tool gives every coding agent in the instance the jasolo MCP server.
+An agent asks it for the source of a class in a dependency, at the version the project uses.
+It reads the template's own clones with `git show`, so a checkout is never touched.
+Otherwise it reads the `-sources.jar` files in `~/.m2/repository`.
+
+It needs a JDK 21 or newer on the `PATH`, which `tpl-java` and its children have.
+
+```yaml
+tools:
+  - jasolo
+```
+
+It scans every repository the template and its parents clone, with no configuration.
+Set its `git_roots` parameter to scan other directories instead, separated by commas.
+A version jasolo finds no tag or branch for in a clone is read from the sources jar.
 
 ### Tool Parameters
 
