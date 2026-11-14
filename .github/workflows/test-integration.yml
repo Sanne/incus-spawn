@@ -1186,8 +1186,8 @@ jobs:
   # broke loading on Arch (#1932). Three host shapes: stock Arch (no firewall: init installs
   # firewalld through pacman), Arch with ufw enabled, Ubuntu 24.04 with ufw enabled and its own
   # Incus 6.0. A failure stays inside the guest, so a broken host firewall cannot cut the runner
-  # off. Images are pinned by URL and the publisher's checksum (see .claude/rules/ci.md for the
-  # bump), and HostDistroWorkflowTest checks the pins.
+  # off. Images are pinned by URL and the publisher's checksum in scripts/distro-images.env, which
+  # the upstream watch bumps (.claude/rules/ci.md), and HostDistroWorkflowTest checks the pins.
   host-distro:
     needs: [build-native-cli, build-native-proxy]
     runs-on: ubuntu-24.04
@@ -1198,14 +1198,11 @@ jobs:
       matrix:
         include:
           - shape: arch
-            image_url: https://geo.mirror.pkgbuild.com/images/v20261101.620452/Arch-Linux-x86_64-cloudimg-20261101.620452.qcow2
-            image_sha256: 794eb4889b39e1f0ed7d5ae998b2a1ed2137db8cf8c3476cf2962c7437ecb003
+            image: ARCH
           - shape: arch-ufw
-            image_url: https://geo.mirror.pkgbuild.com/images/v20261101.620452/Arch-Linux-x86_64-cloudimg-20261101.620452.qcow2
-            image_sha256: 794eb4889b39e1f0ed7d5ae998b2a1ed2137db8cf8c3476cf2962c7437ecb003
+            image: ARCH
           - shape: ubuntu-ufw
-            image_url: https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img
-            image_sha256: 04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
+            image: UBUNTU
     env:
       VM: /tmp/distro-vm
       SHAPE: ${{ matrix.shape }}
@@ -1223,11 +1220,16 @@ jobs:
       - name: Install QEMU
         run: sudo .github/scripts/apt-install.sh qemu-system-x86 qemu-utils genisoimage
 
+      # The pins are in scripts/distro-images.env, not here: the upstream watch's app may not change a
+      # workflow file, so a pin in this one could never be bumped by it.
+      - name: Read the pinned cloud image
+        run: sed -n 's/^${{ matrix.image }}_\(IMAGE_[A-Z0-9_]*=.*\)$/\1/p' scripts/distro-images.env >> "$GITHUB_ENV"
+
       - name: Cache the cloud image
         uses: actions/cache@v5
         with:
           path: ~/.cache/distro-vm
-          key: distro-image-${{ matrix.image_sha256 }}
+          key: distro-image-${{ env.IMAGE_SHA256 }}
 
       - name: Download CLI native binary
         uses: actions/download-artifact@v6
@@ -1242,7 +1244,7 @@ jobs:
           path: native-proxy/
 
       - name: Boot the host
-        run: scripts/distro-vm.sh boot "$VM" "${{ matrix.image_url }}" "${{ matrix.image_sha256 }}"
+        run: scripts/distro-vm.sh boot "$VM" "$IMAGE_URL" "$IMAGE_SHA256"
 
       # Packages first, then a reboot: an upgraded Arch kernel has no modules for the one running
       - name: Prepare the host
