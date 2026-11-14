@@ -20,7 +20,7 @@ example-claude-sonnet: claude-sonnet-5-5
 example-claude-haiku: claude-haiku-5-5
 example-claude-haiku-4: claude-haiku-4-5
 example-openai: gpt-6-luna
-example-gemini-flash: gemini-3.7-flash
+example-gemini-flash: gemini-3.8-flash
 example-codex: gpt-6-sol
 example-codex-spark: gpt-5.3-codex-spark
 example-copilot-claude: claude-opus-5.5
