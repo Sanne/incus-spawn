@@ -1,5 +1,6 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.incus.Metadata;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.input.TextInputState;
@@ -30,6 +31,11 @@ final class PurposeDialog {
         return input.text().strip();
     }
 
+    /** Whether {@code ch} may be typed after {@code text}: no control character, and at most {@link Metadata#PURPOSE_MAX} characters. */
+    static boolean accepts(String text, char ch) {
+        return !dev.incusspawn.util.OutputFormat.isControl(ch) && text.codePointCount(0, text.length()) < Metadata.PURPOSE_MAX;
+    }
+
     /** A key while the dialog is open; Enter is the TUI's to confirm. */
     Outcome handleKey(KeyEvent key) {
         if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) return Outcome.CLOSE;
@@ -41,8 +47,8 @@ final class PurposeDialog {
         if (key.isKey(KeyCode.HOME))      { input.moveCursorToStart(); return Outcome.HANDLED; }
         if (key.isKey(KeyCode.END))       { input.moveCursorToEnd(); return Outcome.HANDLED; }
         if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-            // Free text, one line: a control character is left out, as Metadata.purposeProblem would refuse it
-            if (!Character.isISOControl(key.character())) input.insert(key.character());
+            // Free text, one line: what Metadata.purposeProblem would refuse is left out as it is typed
+            if (accepts(input.text(), key.character())) input.insert(key.character());
         }
         return Outcome.HANDLED;
     }

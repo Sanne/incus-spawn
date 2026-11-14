@@ -91,6 +91,9 @@ class TuiPurposeTest {
 
     @Test
     void aTerminalWithNoRoomOrNoPurposeHasNoColumnAndTheDetailsShowIt() throws Exception {
+        var short_ = tui(104, true, false);
+        assertFalse(screen(short_, 104).contains("PURPOSE"), "below 110 columns the minimums leave no room for it");
+        runner.close();
         var narrow = tui(80, true, false);
         assertFalse(screen(narrow, 80).contains("PURPOSE"));
         press(narrow, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.DOWN), KeyEvent.ofKey(KeyCode.F3));
@@ -125,12 +128,12 @@ class TuiPurposeTest {
     }
 
     @Test
-    void anOverlongPurposeIsRefusedAndNothingIsWritten() throws Exception {
+    void anOverlongPurposeStopsAtTheLimitWhileTyping() throws Exception {
         var tui = tui(120, false, false);
         press(tui, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar('p'));
         type(tui, "x".repeat(Metadata.PURPOSE_MAX + 1));
         press(tui, KeyEvent.ofKey(KeyCode.ENTER));
-        assertEquals("", purposeOf("mine"));
+        assertEquals("x".repeat(Metadata.PURPOSE_MAX), purposeOf("mine"));
     }
 
     @Test
