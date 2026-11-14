@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.SpawnConfig;
@@ -169,7 +170,8 @@ public class ClaudeSetup implements ToolSetup {
 
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("Claude model ID (e.g. claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5)");
+        model.setDescription("Claude model ID (e.g. " + ModelIds.get("example-claude-opus") + ", " + ModelIds.get("example-claude-sonnet")
+                + ", " + ModelIds.get("example-claude-haiku") + ")");
         model.setPattern("^claude-[a-z0-9][-a-z0-9.]*$");
         model.setOptional(true);
         model.setReconfigurable(true);
@@ -177,7 +179,7 @@ public class ClaudeSetup implements ToolSetup {
 
         var advisorModel = new ToolDef.ParameterDef();
         advisorModel.setType("string");
-        advisorModel.setDescription("Advisor model Claude Code consults (e.g. opus, or a Claude model ID such as claude-opus-5-5)");
+        advisorModel.setDescription("Advisor model Claude Code consults (e.g. opus, or a Claude model ID such as " + ModelIds.get("example-claude-opus") + ")");
         advisorModel.setPattern("^(opus|sonnet|haiku|claude-[a-z0-9][-a-z0-9.]*)$");
         advisorModel.setOptional(true);
         advisorModel.setReconfigurable(true);

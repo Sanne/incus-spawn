@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.ModelIds;
 import io.vertx.core.buffer.Buffer;
 
 import java.nio.charset.StandardCharsets;
@@ -57,7 +58,7 @@ class VertexBodyRewriter {
     static final int MAX_NAME_CHARS = 32;
     /** The Vertex front end answers a longer path with its own error page, before the API sees it. */
     static final int MAX_URL_PATH = 16_384;
-    static final String DEFAULT_MODEL = "claude-sonnet-4-6";
+    static final String DEFAULT_MODEL = ModelIds.get("vertex-rewriter-default");
     static final String ANTHROPIC_VERSION = "vertex-2023-10-16";
     /** How much of a dropped field's name is logged. */
     static final int LOGGED_NAME_BYTES = 64;

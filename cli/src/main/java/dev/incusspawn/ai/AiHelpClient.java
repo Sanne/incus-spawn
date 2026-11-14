@@ -1,5 +1,6 @@
 package dev.incusspawn.ai;
 
+import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqObject;
@@ -104,9 +105,9 @@ public class AiHelpClient {
         }
     }
 
-    public static final String ANTHROPIC_MODEL = "claude-sonnet-5-5";
-    public static final String VERTEX_MODEL = "claude-sonnet-5-5";
-    public static final String OPENAI_MODEL = "gpt-4o-mini";
+    public static final String ANTHROPIC_MODEL = ModelIds.get("ai-help-anthropic");
+    public static final String VERTEX_MODEL = ModelIds.get("ai-help-vertex");
+    public static final String OPENAI_MODEL = ModelIds.get("ai-help-openai");
     /** How hard Claude thinks before answering, on the Claude API and Vertex alike (see {@link #messagesBody}). */
     static final String EFFORT = "low";
     /** The Messages API version a Vertex request names in its body. */

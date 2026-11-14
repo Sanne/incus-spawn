@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
@@ -95,7 +96,7 @@ public class CodexSetup implements ToolSetup {
         // Neither parameter declares a default: see configureSettings().
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("OpenAI model ID (e.g. gpt-5.3-codex, gpt-5.3-codex-spark)");
+        model.setDescription("OpenAI model ID (e.g. " + ModelIds.get("example-codex") + ", " + ModelIds.get("example-codex-spark") + ")");
         model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
         model.setOptional(true);
         model.setReconfigurable(true);

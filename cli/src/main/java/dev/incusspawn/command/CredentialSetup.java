@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.Environment;
 import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.config.AccountResolver;
@@ -888,7 +889,7 @@ class CredentialSetup {
             var host = ProxyConfig.vertexHost(region);
             var url = "https://" + host + "/v1/projects/" + projectId
                     + "/locations/" + region
-                    + "/publishers/anthropic/models/claude-sonnet-5-5:rawPredict";
+                    + "/publishers/anthropic/models/" + ModelIds.get("vertex-probe") + ":rawPredict";
             var client = getHttpClient();
             var request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
