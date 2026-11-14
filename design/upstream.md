@@ -19,12 +19,13 @@ Four parts carry that:
 
 **The manifest** (`upstream/manifest.yaml`) declares every watched artifact, one item each, as a policy file.
 An item names its `class` (`mechanical`, `review`, or `judgement` by default), what a bump may move `within` (`series` or `any`), its `cooling` period, which `go:` label a `judgement` issue gets (`design` by default, or `build`), its `source.type`, its `verify.type`, the `files` and `fields` the bump rewrites, and the `gates` its PR needs beyond CI.
-`upstream.sh validate` and `UpstreamManifestTest` hold its rules: a mechanical or review item needs `within`, a source, a verifier and files; `verify.type` must be what the source type provides; a signed verifier's key must be a committed file and its fingerprint the one `update-kernel-pin.sh` pins; `fields` must be exactly what the source type reads; an unknown key fails, since there is no key that skips a check.
+`upstream.sh validate` and `UpstreamManifestTest` hold its rules: a mechanical or review item needs `within`, a source, a verifier and files; a mechanical item's verifier is `signed-sums` or `publisher-sums`; `verify.type` must be what the source type provides; a signed verifier's key must be a committed file and its fingerprint the one `update-kernel-pin.sh` pins; `fields` must be exactly what the source type reads; an unknown key fails, since there is no key that skips a check.
 
 **The engine** (`upstream/engine/upstream.sh`, with `lib.sh`, `pr.sh`, `app-token.sh` and one `source-<type>.sh` per source type) is a deterministic script that runs from `main`'s checkout only.
 `current`, `releases`, `check` and `apply` read and rewrite one item; `plan` decides every item (a prepared commit, an issue, or nothing) with no app credential; `issues` opens what `plan` wrote; `publish` pushes the prepared commits and opens or refreshes their PRs as the app; `verify-pr` and `verify-trees` are the check; `track` keeps the one `[upstream] watch failing` issue.
 Everything an upstream sends (a version, a tag, a URL, a sum) is data: it is matched against a shape before use and never reaches a shell line unquoted or a jq filter unbound.
 The three source types reuse what already verified a pin by hand: `kernel-org` is `appliance/kernel/update-kernel-pin.sh` (which gained `releases [<major>]` and `sum <version>`), `github-release` is `.github/scripts/base-image-sums.sh` and `verify-base-image-sums.sh`, and `jetbrains` reads the products API with a URL prefix allowlist and the `.sha256` beside each tarball.
+`github-asset` (#2210) is described under "The github-asset source type" below.
 
 **The watch** (`.github/workflows/upstream-watch.yml`) runs every six hours and on `workflow_dispatch` (an optional `item`, checked against the manifest's keys), in `Sanne/incus-spawn` from `main` only, as two jobs.
 It has no PR, issue or comment trigger, `persist-credentials: false`, `contents: read` and `issues: write`, no third-party action, and no `${{ }}` inside any `run:`.
@@ -59,6 +60,8 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `kernel` | `appliance/kernel/build-kernel.sh` (`KERNEL_VERSION`, `KERNEL_SHA256`) | kernel.org's signed `sha256sums.asc`, through `update-kernel-pin.sh` | `signed-sums`, the committed autosigner key and pinned fingerprint | mechanical | `series` | 24h | a new series, the series' EOL (`go:design`); gate `kernel-mac-verified` |
 | `base-image` | `common/src/main/resources/images/minimal.yaml` (tag, both URLs, four sums) | `Sanne/incus-spawn-images` releases, `SHA256SUMS` and `SHA256SUMS.v2` | `publisher-sums` | mechanical | `series` (one Fedora line) | 0 (first party) | a new Fedora line (`go:build`) |
 | `idea-backend` | `common/src/main/resources/tools/idea-backend.yaml` (`description`, both URLs and sums) | JetBrains products API, `.sha256` beside each tarball, URLs under `https://download.jetbrains.com/idea/` only | `publisher-sums` | mechanical | `any` | 48h | none; the tool installs whatever `idea-IU-*` unpacks to |
+| `starship` | `common/src/main/resources/tools/starship.yaml` (`description`, both URLs and sums) | `starship/starship` releases, the `.sha256` asset beside each tarball | `publisher-sums` | mechanical | `series` (the major) | 48h | a new major (`go:build`) |
+| `idea-index-plugin` | `common/src/main/resources/tools/idea-backend.yaml` (the plugin's `downloads:` entry) | `hechtcarmel/jetbrains-index-mcp-plugin` releases, GitHub's digest of the signed zip | `asset-digest` | review | `series` (the major) | 48h | a new major (`go:build`) |
 
 The `base-image` item takes over what `update-base-image.yml` did (#1678, #1862): every checksum comes from the release's own sums files for the asset each URL downloads, a release of another Fedora line is an issue rather than a PR, and `vm_image_url` moves to `-vm-direct` in the first release that has it for both arches and never back to the stock image (design/templates.md "Which base image an instance runs").
 Its series is a tag's whole line, its channel included (`src_series`, #1994), and it lists the stable channel's releases alone, so a channel is never proposed and never opens an issue.
@@ -68,6 +71,25 @@ A source type may define `src_order` (versions on stdin, oldest first) wherever 
 The images repo's `repository_dispatch` to this one, and its `INCUS_SPAWN_DISPATCH_TOKEN`, retire in favour of the six-hourly poll: the payload was only ever cross-checked against the release.
 `publisher-sums` proves consistency and transfer, not provenance, since the sums come from the same origin as the artifact; the manifest says so in the verifier's name rather than pretending otherwise.
 Items the design inventories for later phases (Maven and Apache artifacts, the siblings' `isx-ref` and engine pins, Alpine, the CI cloud images) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
+
+## The github-asset source type
+
+A tool YAML that downloads assets of one GitHub release is pinned by a `github-asset` item (#2210).
+The manifest names the `repo`, the `tag-prefix`, one asset name per label (`x86_64`, `aarch64` or `any`, with `{version}` standing for the version) and where the sum comes from.
+The version is read from the URLs in the tool YAML, so the YAML holds each pin once, and `versioned-description: true` also moves the version named in its `description`.
+Its series is the major version, so a new major opens an issue.
+A draft, a prerelease, a tag that is not numeric and a release that lacks one of the assets (or its `.sha256`) is never a candidate.
+Every URL is built from the repository, the tag and the asset name, and must be the one GitHub lists for that asset, so a feed cannot send the engine elsewhere.
+The engine downloads each asset again and checks that it hashes to the sum.
+`sums: sha256-asset` takes the sum from the `<asset>.sha256` beside it, and the verifier is `publisher-sums` (starship).
+`sums: github-digest` takes GitHub's digest of the uploaded asset, for a release that ships no sums, and the verifier is `asset-digest` (the IntelliJ index plugin).
+That digest is GitHub's record, not a sum the publisher signed, and the re-hash proves only that the two agree.
+So `validate` refuses it on a mechanical item and the bot never merges such a PR: the item is `class: review`.
+What this gives up: the plugin's pin lags until Sanne merges, and the download now happens on every `idea-backend` build, `index-mcp` or not, since a `downloads:` entry has no condition (the host caches it).
+
+Two items may name one file, as `idea-index-plugin` and `idea-backend` do.
+A bump then changes the file of both, so `upstream-verify` counts an item as changed only when a field it declares differs between the merge base and the head, and an app PR that changes the fields of two items fails.
+The regeneration check still compares the whole tree, so a change to anything else in the file fails as before.
 
 ## The review class
 

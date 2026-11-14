@@ -66,6 +66,9 @@ validate() {
         verify="$(item "$i" verify.type)"
         [[ -n "$verify" ]] || die "manifest: $class item $i has no verify.type"
         [[ "$verify" == "$(src_verifier)" ]] || die "manifest: item $i: verify.type $verify is not what source type $type provides ($(src_verifier))"
+        # What the bot may merge is proven by the publisher: a weaker verifier is for a review item.
+        [[ "$class" != mechanical || "$verify" == signed-sums || "$verify" == publisher-sums ]] \
+            || die "manifest: mechanical item $i: verify.type $verify is not signed-sums or publisher-sums, so a person must merge it (class: review)"
         if [[ "$verify" == signed-sums ]]; then
             fingerprint="$(item "$i" verify.fingerprint)"
             [[ -f "$ENGINE_ROOT/$(item "$i" verify.key)" ]] || die "manifest: item $i: verify.key is not a committed file"
@@ -407,7 +410,23 @@ _verify_trees() {
     echo "head=$wt_head" >> "$VERIFY_STATE"
     if [[ "$author" == "$(app_login)" && "$same" == yes ]]; then
         # The app's PR: the whole tree must be what main's engine writes for that version.
-        [[ ${#touched[@]} == 1 ]] || die "an upstream PR changes one item, this one changes: ${touched[*]}"
+        # Items may share a file (idea-backend and its index plugin): a bump touches both, so an item
+        # counts as changed only when a field it declares differs between the base and the head.
+        if [[ ${#touched[@]} -gt 1 ]]; then
+            wt_base="$(mktemp -d)"; rmdir "$wt_base"
+            echo "base=$wt_base" >> "$VERIFY_STATE"
+            git -C "$ENGINE_ROOT" worktree add -q --detach "$wt_base" "$base"
+            local narrowed=() f_head f_base
+            for i in "${touched[@]}"; do
+                load_source "$i"
+                f_head="$(TREE="$wt_head" src_fields)"; f_base="$(TREE="$wt_base" src_fields)"
+                [[ "$f_head" == "$f_base" ]] || narrowed+=("$i")
+            done
+            touched=("${narrowed[@]}")
+            git -C "$ENGINE_ROOT" worktree remove --force "$wt_base"
+            wt_base=""; sed -i '/^base=/d' "$VERIFY_STATE"
+        fi
+        [[ ${#touched[@]} == 1 ]] || die "an upstream PR changes one item, this one changes: ${touched[*]:-none of the fields of an item}"
         i="${touched[0]}"
         item_proposed "$i" || die "item $i is class $(item_class "$i"), so no PR of the app's may bump it"
         while read -r f; do
