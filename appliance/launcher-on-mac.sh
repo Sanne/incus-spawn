@@ -130,8 +130,10 @@ if [ "$UNDER_ISX" = 1 ]; then
     done
 fi
 
-read -r head author owner <<< "$(gh pr view "$PR" -R "$REPO" --json headRefOid,author,headRepositoryOwner \
-    --jq '"\(.headRefOid) \(.author.login) \(.headRepositoryOwner.login // "-")"')"
+pr_fields="$(gh pr view "$PR" -R "$REPO" --json headRefOid,author,headRepositoryOwner \
+    --jq '"\(.headRefOid) \(.author.login) \(.headRepositoryOwner.login // "-")"')" \
+    || die "could not read PR #$PR of $REPO with gh"
+read -r head author owner <<< "$pr_fields"
 if ! listed "$author" "$TRUSTED" || ! listed "$owner" "$TRUSTED"; then
     die "PR #$PR is by $author from $owner's repository: the Mac boots only PRs by and from $TRUSTED"
 fi
