@@ -15,9 +15,14 @@ set -uo pipefail
 #   RUNS=24            runs of test-tunnel.sh
 #   BURSTS="70 120"    sizes of the bursts of concurrent GET /1.0
 #   BURST_ROUNDS=5     bursts of each size
-#   HELD="0 200 400"   connections held open while latency is sampled
+#   HELD="0 150 400"   connections held open while latency is sampled. 400 is more than a
+#                      Mac's machine holds (the launcher's relays hold 192 at once): what is
+#                      measured there is how many were held and that the tunnel still answers
 #   REQUESTS=200       requests per latency sample
 #                      (RUNS=0, BURSTS="" or HELD="" leaves that phase out)
+#   HELD_PROBE=<file>  a program run while each count is held; the number it prints is that
+#                      count's `machine_fds` (launcher-on-mac.sh: what the machine's own
+#                      process has open)
 #   OUT=<dir>          keeps every log and `values` (key=value, what the summary is made
 #                      of) in <dir>, which is otherwise a temporary directory deleted on exit
 #
@@ -32,7 +37,7 @@ SILENT_SOCK="${3:-}"
 RUNS="${RUNS:-24}"
 BURSTS="${BURSTS-70 120}"
 BURST_ROUNDS="${BURST_ROUNDS:-5}"
-HELD="${HELD-0 200 400}"
+HELD="${HELD-0 150 400}"
 REQUESTS="${REQUESTS:-200}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
@@ -253,6 +258,24 @@ release() {
 for h in $HELD; do
     held=0
     if [ "$h" -gt 0 ]; then hold "$h"; held=$HELD_NOW; fi
+    if [ -n "${HELD_PROBE:-}" ]; then
+        probed=$("$HELD_PROBE" 2>/dev/null | tr -d ' \n')
+        [[ "$probed" =~ ^[0-9]+$ ]] && value "held_${h}_machine_fds" "$probed"
+    fi
+    if [ "$held" -lt "$h" ]; then
+        # The tunnel holds no more at once, so a new connection would wait for one of these to
+        # end: there is no latency to take, and every sample would be a timeout of 20 s.
+        release
+        echo "  $h held ($held accepted, $OPEN_AT_END still open at the end): the tunnel held no more at once, so no latency was taken"
+        value "held_${h}_accepted" "$held"
+        value "held_${h}_open_at_end" "$OPEN_AT_END"
+        value "held_${h}_full" 1
+        settled=$(settle_ms 120)
+        echo "    forwarder back to its listener after the $held were closed: ${settled:-never within 120s}${settled:+ms}"
+        value "held_${h}_settle_ms" "${settled:-never}"
+        answers || wedged "after holding $held of $h connections" "held_$h"
+        continue
+    fi
     # A new connection for every request: the dial, the request and the close.
     : > "$OUT/new-$h"
     failed=0

@@ -11,8 +11,9 @@ set -euo pipefail
 #                       its tunnel checks, which hold the two forwarder checks: a connection
 #                       the host closed leaves no forwarder child in the guest. A second boot
 #                       runs measure-tunnel.sh before those checks: 24 runs of test-tunnel.sh,
-#                       bursts of 70 and 120 requests, and the latency of a request with 0,
-#                       200 and 400 connections held.
+#                       bursts of 70 and 120 requests, and the latency of a request with 0
+#                       and 150 connections held. 400 are then asked for, more than the
+#                       machine holds: how many were held, and whether it still answers.
 #   under isx           the VM isx already has on this Mac is restarted with the hypervisor,
 #                       so what an upgrade would meet is what is booted. Then
 #                       bench/trace-branch.sh three times: a branch to its prompt, the
@@ -48,11 +49,34 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SELF="$SCRIPT_DIR/$(basename "$0")"
 
+# How many files the machine's own process has open. Virtualization.framework runs the machine
+# in a process of its own, for vfkit and isx-vm alike, which holds a descriptor for every vsock
+# connection and for the files of a share, and has room for 256: the one that does not fit
+# stops the machine (#2031). The newest such process is the machine this script booted last.
+# Prints nothing when it cannot tell.
+machine_fds() {
+    local pid n
+    # A machine that stopped under the load has no such process left, and the newest one would
+    # be another machine's, such as this Mac's own isx VM: no number, never that one's.
+    if [ -n "${HYPERVISOR_PID:-}" ] && ! kill -0 "$HYPERVISOR_PID" 2> /dev/null; then return 0; fi
+    pid="$(pgrep -n -f com.apple.Virtualization.VirtualMachine 2> /dev/null || true)"
+    [ -n "$pid" ] || return 0
+    n="$(lsof -p "$pid" 2> /dev/null | tail -n +2 | wc -l | tr -d ' ')"
+    [ "${n:-0}" -gt 0 ] && echo "$n"
+    return 0
+}
+
+# measure-tunnel.sh calls back here while it holds connections (HELD_PROBE below).
+if [ -n "${HELD_PROBE:-}" ]; then
+    machine_fds
+    exit 0
+fi
+
 # test-boot.sh calls back here while a machine is up (WHILE_UP below), with the three sockets:
 # measure it, then say what the hypervisor's own process holds after the load.
 if [ -n "${WHILE_UP_OUT:-}" ]; then
     rc=0
-    OUT="$WHILE_UP_OUT" "$SCRIPT_DIR/measure-tunnel.sh" "$@" || rc=$?
+    OUT="$WHILE_UP_OUT" HELD_PROBE="$SELF" "$SCRIPT_DIR/measure-tunnel.sh" "$@" || rc=$?
     {
         echo "measure_exit=$rc"
         echo "process_rss_kb=$(ps -o rss= -p "$HYPERVISOR_PID" | tr -d ' ')"
@@ -89,7 +113,7 @@ REACH_URL="${REACH_URL:-https://github.com/}"
 STATE="$HOME/.local/state/incus-spawn"
 # measure-tunnel.sh's counts, exported so both hypervisors get the same ones.
 export RUNS="${RUNS:-24}" BURSTS="${BURSTS-70 120}" BURST_ROUNDS="${BURST_ROUNDS:-5}"
-export HELD="${HELD-0 200 400}" REQUESTS="${REQUESTS:-200}"
+export HELD="${HELD-0 150 400}" REQUESTS="${REQUESTS:-200}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 listed() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }
@@ -419,6 +443,7 @@ under_isx() {
     local pid; pid="$(cat "$STATE/vm.pid" 2> /dev/null || true)"
     [ -n "$pid" ] || return 0
     note "$label" isx_process_rss_kb "$(ps -o rss= -p "$pid" | tr -d ' ')"
+    note "$label" isx_machine_fds "$(machine_fds)"
     if [ "$label" = isx-vm ]; then
         local log_from=$(( $(wc -c < "$STATE/vfkit.log") + 1 ))
         kill -USR1 "$pid" 2> /dev/null || true
@@ -470,6 +495,7 @@ $(row "the tunnel stopped answering (b)" wedged)
 $(for h in $HELD; do
     row "$h held: accepted" "held_${h}_accepted"
     row "$h held: still open at the end" "held_${h}_open_at_end"
+    row "$h held: the machine's own process, open files (it has room for 256)" "held_${h}_machine_fds"
     row "$h held: request on a new connection, median (c)" "held_${h}_new_median_ms" " ms"
     row "$h held: request on a new connection, 95th percentile" "held_${h}_new_p95_ms" " ms"
     row "$h held: request on a kept connection, median (c)" "held_${h}_kept_median_ms" " ms"
@@ -492,7 +518,8 @@ $(row "under isx: the shell ended after the prompt, median of three (e)" trace_e
 $(row "under isx: the destroy, median of three" trace_destroy_ms " ms")
 $(row "under isx: an instance gets an answer over HTTPS, through the VM's network" isx_network)
 $(row "under isx: an instance reads a file of the home, through the VM's share" isx_share)
-$(row "under isx: the hypervisor's own process at the end: memory" isx_process_rss_kb " kB")"
+$(row "under isx: the hypervisor's own process at the end: memory" isx_process_rss_kb " kB")
+$(row "under isx: the machine's own process at the end, open files (it has room for 256)" isx_machine_fds)"
 if [ "$SLEEP" = 1 ]; then
     table+="
 $(row "sleep (d): asleep for" wake_asleep_s " s")
@@ -509,6 +536,8 @@ table="$(printf '%s\n' "$table" | sed '/^$/d')"
 # latency is this script's reading, since two medians never agree to the digit: above vfkit's
 # by more than a tenth and by more than 0.2 ms (a branch: by more than a tenth).
 # And a latency with connections held counts only when isx-vm held no fewer of them than vfkit.
+# A count the tunnel did not hold whole has no latency (measure-tunnel.sh takes none): there
+# isx-vm must have kept open what it accepted, and is worse only where vfkit held the whole count.
 reading="$(awk -F= -v bursts="$BURSTS" -v held="$HELD" '
     FILENAME == ARGV[1] { a[$1] = $2; next } { b[$1] = $2 }
     function line(what, ok, detail) { printf "- %s: %s (%s)\n", what, ok ? "holds" : "does NOT hold", detail; if (!ok) bad = 1 }
@@ -532,6 +561,12 @@ reading="$(awk -F= -v bursts="$BURSTS" -v held="$HELD" '
         n = split(held, counts, " ")
         for (i = 1; i <= n; i++) {
             k = "held_" counts[i]
+            if (b[k "_full"] == "1") {
+                ok = ok && number(b[k "_accepted"]) && b[k "_open_at_end"] == b[k "_accepted"]
+                ok = ok && (a[k "_full"] == "1" || !number(a[k "_accepted"]))
+                detail = detail (i > 1 ? ", " : "") counts[i] " asked for: held " (number(a[k "_accepted"]) ? a[k "_accepted"] : "not measured") " and " b[k "_accepted"] " at once and no more (still open at the end " a[k "_open_at_end"] " and " b[k "_open_at_end"] "), so no latency"
+                continue
+            }
             # A latency taken with fewer connections held than vfkit had is not the same load.
             ok = ok && no_fewer(k "_accepted") && no_fewer(k "_open_at_end")
             ok = ok && latency(k "_new_median_ms", 0.2) && latency(k "_kept_median_ms", 0.2)
@@ -553,7 +588,7 @@ if [ "$verdict" = go ] && echo "$RESULTS" | grep -qE '^- (isx-vm|vfkit again).*:
 fi
 
 counts="RUNS=$RUNS BURSTS=\"$BURSTS\" BURST_ROUNDS=$BURST_ROUNDS HELD=\"$HELD\" REQUESTS=$REQUESTS"
-[ "$counts" = 'RUNS=24 BURSTS="70 120" BURST_ROUNDS=5 HELD="0 200 400" REQUESTS=200' ] \
+[ "$counts" = 'RUNS=24 BURSTS="70 120" BURST_ROUNDS=5 HELD="0 150 400" REQUESTS=200' ] \
     && counts="$counts (the defaults)" || counts="$counts (NOT the defaults)"
 body="### Launcher measurement on the Mac
 Reading: $verdict
@@ -569,6 +604,7 @@ Logs: kept on the Mac in $(printf '%s' "$SAVED" | scrub)
 The rule (#2031): go when (a) holds and (b) and (c) are no worse than vfkit.
 A latency counts as worse when it is above vfkit's by more than a tenth and by more than 0.2 ms.
 One with connections held also needs isx-vm to have held no fewer of them than vfkit.
+A count the tunnel did not hold whole has no latency: there isx-vm must have kept open what it accepted, and is worse only where vfkit held the whole count.
 $(echo "$reading" | grep -v '^reading=')
 
 $table

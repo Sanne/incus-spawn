@@ -461,7 +461,8 @@ Each half runs once under each program:
 
 - **The machine alone.**
   `test-boot.sh` boots the PR's appliance (`VFKIT=<program>`) and runs its tunnel checks, which hold the two forwarder checks: a connection the host closed leaves no forwarder child in the guest.
-  A second boot runs `appliance/measure-tunnel.sh` before those checks (`WHILE_UP`): 24 runs of `test-tunnel.sh`, bursts of 70 and 120 requests, and the latency of a request with 0, 200 and 400 connections held.
+  A second boot runs `appliance/measure-tunnel.sh` before those checks (`WHILE_UP`): 24 runs of `test-tunnel.sh`, bursts of 70 and 120 requests, and the latency of a request with 0 and 150 connections held.
+  It then asks for 400, more than the machine holds: the record says how many were held, how many descriptors the machine's own process had open, and whether the tunnel still answered once they were closed.
 - **Under isx.**
   The VM isx already has on that Mac is restarted under the program, so an existing VM is what boots.
   isx finds its hypervisor as `vfkit` on the `PATH`, so `isx-vm` is given to it as a copy of that name in a directory put first.
@@ -477,6 +478,8 @@ The rule is the design's: go when a host-side close reaches the guest, and failu
 The script reads it from the values and prints the reading at the top of the record.
 "No worse" for a latency is the script's own margin, since two medians never agree to the digit: above vfkit's by more than a tenth and by more than 0.2 ms (a branch: by more than a tenth).
 A latency with connections held counts only when isx-vm held no fewer of them than vfkit, to the end of the sampling.
+A count the tunnel did not hold whole has no latency, since a new connection would wait.
+There `isx-vm` must have kept open what it accepted, and it is worse only where vfkit held the whole count.
 If the close does not reach the guest, the framework itself loses it and no relay can fix that; the fallback is then a close sent in band, and the launcher is weighed on its other merits.
 
 The same load was first run on Linux through vfkit's relay logic, `socat` and the relay (docs/dev/PERFORMANCE-NOTES.md "The vsock tunnel's relay under load, on Linux").

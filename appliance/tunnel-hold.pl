@@ -8,6 +8,8 @@
 #
 # Prints "held <k>" once every connection was tried (k of them were accepted), holds them
 # until its stdin ends, and then prints "open <k>": how many the other side had not closed.
+# The first connection that is not accepted within 10 s ends the tries: a tunnel that holds no
+# more keeps the next one waiting, and each one after it would wait as long.
 # Used by measure-tunnel.sh and launcher-on-mac.sh (#2031).
 use strict; use Socket; use MIME::Base64;
 # A pong written to a connection the other side has just closed must not end this program
@@ -28,7 +30,7 @@ for (1 .. $n) {
     while ($head !~ /\r\n\r\n/ && select(my $r = $rin, undef, undef, 10) > 0) {
         sysread($s, $head, 4096, length $head) or last;
     }
-    next unless $head =~ m{^HTTP/1\.1 101 };
+    last unless $head =~ m{^HTTP/1\.1 101 };
     $held++;
     $sock{fileno $s} = $s;
     $buf{fileno $s} = $head =~ /\r\n\r\n(.+)\z/s ? $1 : "";
@@ -42,7 +44,9 @@ while (1) {
     vec($rin, $_, 1) = 1 for keys %sock;
     # An error is -1, which is true, and leaves stdin's bit set in $r: not the end of stdin.
     next if select(my $r = $rin, undef, undef, undef) <= 0;
-    last if vec($r, 0, 1);
+    # Stdin's end is acted on after this round's connections were read, so one the other side
+    # closed just before the hold ended is not counted as open.
+    my $ended = vec($r, 0, 1);
     for my $fd (keys %sock) {
         next unless vec($r, $fd, 1);
         my $s = $sock{$fd};
@@ -58,5 +62,6 @@ while (1) {
             syswrite($s, pack("CC", 0x8A, 0x80 | length $body) . "\0\0\0\0" . $body) if ($op & 0x0F) == 9 && $skip == 2;
         }
     }
+    last if $ended;
 }
 print "open ", scalar(keys %sock), "\n";

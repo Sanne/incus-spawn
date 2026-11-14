@@ -254,6 +254,7 @@ A green CI is not evidence that vfkit behaves.
 **The launcher is measured on the same Mac, and no check waits for it** (#2031).
 `appliance/launcher-on-mac.sh <pr>`, run from a checkout of the PR's head, takes `appliance-aarch64` and `isx-vm-macos-aarch64` from the head's `test-integration.yml` run and measures `isx-vm` against vfkit: `test-boot.sh` with each (`VFKIT=<program>`), `appliance/measure-tunnel.sh` inside a second boot (`WHILE_UP`), and under isx three runs of `bench/trace-branch.sh --isx=<installed isx>` on the VM that Mac already has.
 Under isx one instance also gets an answer over HTTPS and reads a file of the home through its inbox, which shows the VM's network and its share of the home under each program.
+The measurement asks for 400 held connections, more than the machine holds, and records how many descriptors the machine's own process has open (`com.apple.Virtualization.VirtualMachine`, which has room for 256).
 It posts a `### Launcher measurement on the Mac` record with the reading of the go/no-go rule (design/macos-and-vms.md "The measurement and the rule"), scrubbed like the kernel's, and keeps the logs in `~/.cache/incus-spawn/launcher-mac/pr-<n>/`.
 It refuses a PR whose author or head repository is not Sanne or the bot, for the kernel script's reason: it boots that PR's appliance and runs that PR's binary with the Mac user's home shared.
 It gives `isx-vm` to isx as a copy named `vfkit` first on the `PATH`, restarts the Mac's own VM under it, and puts the VM back under vfkit when it ends.
