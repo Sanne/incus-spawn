@@ -22,9 +22,10 @@ import static org.junit.jupiter.api.Assertions.*;
  * base image's kernel from the appliance fragments plus {@code vm.config} and
  * {@code vm-<arch>.config}, in that order, and the appliance build reads neither.
  *
- * <p>The script runs only up to its banner: a stub {@code curl} fails, so nothing is downloaded or
- * built. The fragments themselves are checked for what the VM image relies on with no boot loader
- * and no initrd.
+ * <p>Most tests run the script only up to its banner: a stub {@code curl} fails, so nothing is
+ * downloaded or built. The validation tests (#2005) stub the source and {@code make} instead, so the
+ * script checks the real fragments and runs to its end. The fragments themselves are checked for
+ * what the VM image relies on with no boot loader and no initrd.
  */
 @EnabledOnOs(value = OS.LINUX, architectures = {"amd64", "x86_64", "aarch64"})
 class KernelRoleTest {
@@ -142,6 +143,99 @@ class KernelRoleTest {
         for (var option : List.of("CONFIG_SCHED_SMT=y", "CONFIG_SCHED_CORE=y")) {
             assertTrue(shared.contains(option), "isx.config must set " + option);
         }
+    }
+
+    @Test
+    void vmRoleFailsWhenAnApplianceFragmentOptionDoesNotApply() throws Exception {
+        // #2005: the vm kernel relies on isx.config too (the conntrack and raw-table options of
+        // #2003), so an option of it that kconfig drops must fail the vm build, as a vm.config one does.
+        stubKernelBuild("CONFIG_NF_CONNTRACK_MARK");
+        var vm = runToTheEnd("vm", "x86_64");
+        assertNotEquals(0, vm.exit(), "an isx.config option the vm kernel lacks must fail its build:\n" + vm.log());
+        assertTrue(vm.log().contains("ERROR: CONFIG_NF_CONNTRACK_MARK did not apply"), vm.log());
+        assertFalse(vm.log().contains("==> Building"), "the build stops before compiling:\n" + vm.log());
+    }
+
+    @Test
+    void vmRoleFailsWhenAVmFragmentOptionDoesNotApply() throws Exception {
+        stubKernelBuild("CONFIG_9P_FS");
+        var vm = runToTheEnd("vm", "x86_64");
+        assertNotEquals(0, vm.exit(), vm.log());
+        assertTrue(vm.log().contains("ERROR: CONFIG_9P_FS did not apply"), vm.log());
+    }
+
+    @Test
+    void applianceRoleOnlyWarnsWhenAnOptionDoesNotApply() throws Exception {
+        stubKernelBuild("CONFIG_NF_CONNTRACK_MARK");
+        var appliance = runToTheEnd("appliance", "x86_64");
+        assertEquals(0, appliance.exit(), appliance.log());
+        assertTrue(appliance.log().contains("WARN: CONFIG_NF_CONNTRACK_MARK=y not in .config"), appliance.log());
+    }
+
+    @Test
+    void vmRoleBuildsWhenEveryOptionApplies() throws Exception {
+        stubKernelBuild(null);
+        for (var arch : ARCHES) {
+            var vm = runToTheEnd("vm", arch);
+            assertEquals(0, vm.exit(), vm.log());
+            assertTrue(vm.log().contains(" applied, 0 skipped"), vm.log());
+        }
+    }
+
+    @Test
+    void everyOptionIsInTheFragmentOfTheArchesItAppliesOn() throws IOException {
+        // The vm build fails on any option that does not apply, so a shared fragment holds no
+        // option that only one arch can take. CPU_MITIGATIONS is user-settable on x86_64 alone:
+        // arm64 forces it on, so an "=n" in isx.config failed every aarch64 vm build.
+        var shared = enabled(Files.readString(KERNEL_DIR.resolve("isx.config")));
+        assertFalse(shared.stream().anyMatch(l -> l.startsWith("CONFIG_CPU_MITIGATIONS=")),
+                "CPU_MITIGATIONS belongs in isx-x86_64.config");
+        assertTrue(enabled(Files.readString(KERNEL_DIR.resolve("isx-x86_64.config"))).contains("CONFIG_CPU_MITIGATIONS=n"));
+    }
+
+    private record Run(int exit, String log) {
+    }
+
+    /**
+     * Stubs what a real kernel build needs, so the script runs its validation against the
+     * fragments: a cached tarball that passes the checksum, a {@code tar} that extracts nothing, and
+     * a {@code make} whose configuration holds every option of the merged fragment but {@code drop}.
+     */
+    private void stubKernelBuild(String drop) throws IOException {
+        var pin = Pattern.compile("(?m)^KERNEL_SHA256=\"([0-9a-f]+)\"").matcher(Files.readString(SCRIPT));
+        assertTrue(pin.find());
+        var version = Pattern.compile("(?m)^KERNEL_VERSION=\"([^\"]+)\"").matcher(Files.readString(SCRIPT));
+        assertTrue(version.find());
+        Files.writeString(Files.createDirectories(dir.resolve("cache")).resolve("linux-" + version.group(1) + ".tar.xz"), "");
+        stub("sha256sum", "echo \"" + pin.group(1) + "  $1\"\n");
+        stub("tar", "exit 0\n");
+        var filter = drop == null ? "cat" : "grep -v '^" + drop + "='";
+        stub("make", """
+                for a in "$@"; do
+                    case "$a" in
+                        allnoconfig) grep '^CONFIG_' "$KCONFIG_ALLCONFIG" | grep -v '=n$' | %s > .config ;;
+                        bzImage) mkdir -p arch/x86/boot && touch arch/x86/boot/bzImage ;;
+                        Image) mkdir -p arch/arm64/boot && touch arch/arm64/boot/Image ;;
+                    esac
+                done
+                touch modules.builtin modules.builtin.modinfo
+                mkdir -p include/config && echo stub > include/config/kernel.release
+                """.formatted(filter));
+    }
+
+    private Run runToTheEnd(String role, String arch) throws IOException, InterruptedException {
+        var output = dir.resolve("output-" + role + "-" + arch + ".log");
+        var pb = new ProcessBuilder("/bin/bash", SCRIPT.toString(), role, dir.resolve("out").toString(), arch)
+                .redirectErrorStream(true).redirectOutput(output.toFile());
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        pb.environment().put("KERNEL_CACHE_DIR", dir.resolve("cache").toString());
+        pb.environment().put("CROSS_COMPILE", "stub-");
+        var process = pb.start();
+        var finished = process.waitFor(30, TimeUnit.SECONDS);
+        process.destroyForcibly();
+        var log = Files.readString(output);
+        assertTrue(finished, "the script hung:\n" + log);
+        return new Run(process.exitValue(), log);
     }
 
     private static List<String> enabled(String fragment) {
