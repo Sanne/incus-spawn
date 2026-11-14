@@ -31,7 +31,7 @@ usage() { sed -n '2,20p' "$0" >&2; exit 2; }
 # ---- validate -------------------------------------------------------------------------------------
 
 validate() {
-    local repo login i class within cooling secs type verify fingerprint files f gates judgement keys k
+    local repo login i class within cooling secs type verify fingerprint files f gates judgement keys k sf
     repo="$(manifest_repo)"
     [[ "$repo" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die "manifest: repo is not owner/name: '$repo'"
     login="$(app_login)"
@@ -67,13 +67,19 @@ validate() {
         [[ -n "$verify" ]] || die "manifest: $class item $i has no verify.type"
         [[ "$verify" == "$(src_verifier)" ]] || die "manifest: item $i: verify.type $verify is not what source type $type provides ($(src_verifier))"
         # What the bot may merge is proven by the publisher: a weaker verifier is for a review item.
-        [[ "$class" != mechanical || "$verify" == signed-sums || "$verify" == publisher-sums ]] \
-            || die "manifest: mechanical item $i: verify.type $verify is not signed-sums or publisher-sums, so a person must merge it (class: review)"
-        if [[ "$verify" == signed-sums ]]; then
-            fingerprint="$(item "$i" verify.fingerprint)"
+        [[ "$class" != mechanical || "$verify" == signed-sums || "$verify" == signed-file || "$verify" == publisher-sums ]] \
+            || die "manifest: mechanical item $i: verify.type $verify is not signed-sums, signed-file or publisher-sums, so a person must merge it (class: review)"
+        if [[ "$verify" == signed-sums || "$verify" == signed-file ]]; then
             [[ -f "$ENGINE_ROOT/$(item "$i" verify.key)" ]] || die "manifest: item $i: verify.key is not a committed file"
-            grep -q "^AUTOSIGNER_FPR=\"$fingerprint\"\$" "$ENGINE_ROOT/appliance/kernel/update-kernel-pin.sh" \
-                || die "manifest: item $i: verify.fingerprint is not the pinned one"
+            local fprs have_fprs
+            fprs="$({ item "$i" verify.fingerprint; item_list "$i" verify.fingerprints; } | grep . || true)"
+            [[ -n "$fprs" ]] || die "manifest: item $i: no verify.fingerprint or verify.fingerprints"
+            have_fprs="$(gpg --homedir "$UPSTREAM_CACHE" --batch --show-keys --with-colons "$ENGINE_ROOT/$(item "$i" verify.key)" 2> /dev/null \
+                | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }')"
+            for k in $fprs; do
+                [[ "$k" =~ ^[0-9A-F]{40}$ ]] || die "manifest: item $i: fingerprint '$k' is not 40 uppercase hex digits"
+                grep -qxF -- "$k" <<<"$have_fprs" || die "manifest: item $i: fingerprint $k is not the primary key of any key in $(item "$i" verify.key)"
+            done
         fi
         cooling="$(item "$i" cooling)"
         [[ -n "$cooling" ]] || die "manifest: $class item $i has no cooling"
@@ -82,8 +88,10 @@ validate() {
             die "manifest: item $i: cooling $cooling is under the 24h floor for a third-party source"
         fi
         # The fields the item declares are the ones its source rewrites: a drift fails here.
-        [[ "$(item_list "$i" fields | sort)" == "$(src_fields | cut -d= -f1 | sort)" ]] \
-            || die "manifest: item $i: fields differ from what source type $type reads: $(src_fields | cut -d= -f1 | tr '\n' ' ')"
+        # Read first: an unreadable pin must fail validate, and a die inside a comparison's $(...) would not.
+        sf="$(src_fields)"
+        [[ "$(item_list "$i" fields | sort)" == "$(cut -d= -f1 <<<"$sf" | sort)" ]] \
+            || die "manifest: item $i: fields differ from what source type $type reads: $(cut -d= -f1 <<<"$sf" | tr '\n' ' ')"
         for k in $(item_list "$i" gates); do
             [[ "$k" =~ ^[A-Za-z0-9._-]+$ ]] || die "manifest: item $i: gate '$k' is not a check name"
         done
@@ -393,8 +401,28 @@ verify_trees() {
     return "$rc"
 }
 
+# _narrow <base rev> <head worktree> <item...>: the items among them whose declared fields differ between
+# the base and the head. A tree whose fields cannot be read counts as changed (fail closed).
+_narrow() {
+    local base="$1" wt_head="$2" wt_base i f_head f_base
+    shift 2
+    wt_base="$(mktemp -d)"; rmdir "$wt_base"
+    echo "base=$wt_base" >> "$VERIFY_STATE"
+    git -C "$ENGINE_ROOT" worktree add -q --detach "$wt_base" "$base"
+    for i in "$@"; do
+        load_source "$i"
+        if f_head="$(TREE="$wt_head" src_fields 2> /dev/null)" && f_base="$(TREE="$wt_base" src_fields 2> /dev/null)" \
+            && [[ "$f_head" == "$f_base" ]]; then
+            continue
+        fi
+        echo "$i"
+    done
+    git -C "$ENGINE_ROOT" worktree remove --force "$wt_base"
+    sed -i '/^base=/d' "$VERIFY_STATE"
+}
+
 _verify_trees() {
-    local base="$1" head="$2" author="$3" same="$4" changed touched=() i f wt_head wt_base v_head v_base tree rc=0
+    local narrowed base="$1" head="$2" author="$3" same="$4" changed touched=() i f wt_head wt_base v_head v_base tree rc=0
     changed="$(git -C "$ENGINE_ROOT" diff --name-only "$base" "$head")"
     for i in $(items); do
         for f in $(item_list "$i" files); do
@@ -410,21 +438,12 @@ _verify_trees() {
     echo "head=$wt_head" >> "$VERIFY_STATE"
     if [[ "$author" == "$(app_login)" && "$same" == yes ]]; then
         # The app's PR: the whole tree must be what main's engine writes for that version.
-        # Items may share a file (idea-backend and its index plugin): a bump touches both, so an item
-        # counts as changed only when a field it declares differs between the base and the head.
+        # Items may share a file (idea-backend and its index plugin; the Incus and Alpine pins of
+        # appliance/build.sh): a bump touches both, so an item counts as changed only when a field it
+        # declares differs between the base and the head.
         if [[ ${#touched[@]} -gt 1 ]]; then
-            wt_base="$(mktemp -d)"; rmdir "$wt_base"
-            echo "base=$wt_base" >> "$VERIFY_STATE"
-            git -C "$ENGINE_ROOT" worktree add -q --detach "$wt_base" "$base"
-            local narrowed=() f_head f_base
-            for i in "${touched[@]}"; do
-                load_source "$i"
-                f_head="$(TREE="$wt_head" src_fields)"; f_base="$(TREE="$wt_base" src_fields)"
-                [[ "$f_head" == "$f_base" ]] || narrowed+=("$i")
-            done
-            touched=("${narrowed[@]}")
-            git -C "$ENGINE_ROOT" worktree remove --force "$wt_base"
-            wt_base=""; sed -i '/^base=/d' "$VERIFY_STATE"
+            narrowed="$(_narrow "$base" "$wt_head" "${touched[@]}")"
+            mapfile -t touched < <(grep . <<<"$narrowed" || true)
         fi
         [[ ${#touched[@]} == 1 ]] || die "an upstream PR changes one item, this one changes: ${touched[*]:-none of the fields of an item}"
         i="${touched[0]}"
@@ -455,6 +474,7 @@ _verify_trees() {
         [[ -n "$fields" ]] || die "$i: no fields after regeneration"
         while IFS== read -r k v; do
             [[ "${k,,}" != *sha256* ]] || is_sha256 "$v" || die "$i: regenerated $k is not a sha256: '$v'"
+            [[ "${k,,}" != *sha512* ]] || is_sha512 "$v" || die "$i: regenerated $k is not a sha512: '$v'"
         done <<<"$fields"
         tree="$(cd "$wt_base" && git add -A && git write-tree)"
         if ! git -C "$ENGINE_ROOT" diff --quiet "$tree" "$head"; then
@@ -466,6 +486,12 @@ _verify_trees() {
         return 0
     fi
     # Anyone else's bump: each touched item's fields must be the publisher's for the version pinned.
+    # A file an item shares with other work (test-integration.yml's neighbours, appliance/build.sh) is
+    # edited all the time: an item counts only when one of its fields differs from the base's, so an
+    # unrelated edit never re-proves a pin (whose publisher may since have deleted it).
+    narrowed="$(_narrow "$base" "$wt_head" "${touched[@]}")"
+    mapfile -t touched < <(grep . <<<"$narrowed" || true)
+    [[ ${#touched[@]} -gt 0 ]] || { echo "upstream-verify: no watched item's pins changed"; return 0; }
     for i in "${touched[@]}"; do
         UPSTREAM_REHASH=1 check "$i" "$wt_head"
     done

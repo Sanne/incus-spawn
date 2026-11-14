@@ -179,6 +179,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The model: a manifest, an engine, two workflows and a merge gate
   - The items
   - The github-asset source type
+  - The signed-file source type
   - The review class
   - Threat model
   - Why not Sanne's own token
