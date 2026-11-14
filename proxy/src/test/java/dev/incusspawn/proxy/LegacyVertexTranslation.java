@@ -31,7 +31,7 @@ final class LegacyVertexTranslation {
         if (!(tree instanceof JqObject root)) {
             return new Translation(originalPath, bodyBytes);
         }
-        var model = root.pathText("model", "claude-sonnet-4-6");
+        var model = root.pathText("model", dev.incusspawn.config.ModelIds.get("vertex-rewriter-default"));
         model = model.replaceFirst("-\\d{8}$", "");
         var streaming = root.keys().contains("stream") && root.getField("stream").asBoolean(false);
         var rebuilt = JqObject.builder(root.size() + 1);
