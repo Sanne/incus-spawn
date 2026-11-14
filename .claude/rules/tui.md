@@ -78,6 +78,10 @@ Otherwise it does one `incus.exists()`.
 `ShellLaunch.shellInto()` re-checks the status itself, covering an event still in transit.
 A failed existence check lets the action proceed rather than blocking the UI.
 
+**Purpose** (#2239): `p` on an instance opens `PurposeDialog`, one metadata write on a running or a stopped one (empty text unsets it), and the branch dialog's Purpose field, right after the name, goes to the copy request as `Metadata.PURPOSE` in `extraConfig`.
+The instance table's PURPOSE column (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`, 118, or `OWNER_COLUMN_MIN_WIDTH` when OWNER is not shown) is drawn only when some instance has a purpose, from the ninth cell of each row, `ListCommand.purposeCell`.
+`Tui.buildRowData` always makes nine cells and `MainScreen` keeps those of the columns it draws.
+
 **Credential accounts** (`a` on an instance, in the list or its F3 details).
 `AccountsModal`, extracted like `HelpChatModal` and snapshot-tested in `AccountsModalTest`, offers per namespace "default (<current default>)" then every usable account.
 A pin to an account that is gone stays selectable as "(not configured)" so opening and applying unchanged never re-points anything.

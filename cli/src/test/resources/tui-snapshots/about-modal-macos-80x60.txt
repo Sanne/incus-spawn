@@ -33,6 +33,7 @@
   ║   F9/9    Tool actions                                                   ║
   ║   F10/0   Quit                                                           ║
   ║   a       Credential accounts                                            ║
+  ║   p       Purpose of an instance                                         ║
   ║   C       Clean pool storage                                             ║
   ║   r       Refresh                                                        ║
   ║   w       Warnings                                                       ║
@@ -55,6 +56,5 @@
   ║                                                                          ║
   ║  F1/Esc Close   ? AI-assisted help                                       ║
   ╚══════════════════════════════════════════════════════════════════════════╝
-
 
 

@@ -2,10 +2,11 @@
 
 
 
-
         ╔ Branch from 'tpl-dev' ═══════════════════════════════════════╗
         ║ Name:                                                        ║
         ║ dev-1                                                        ║
+        ║ Purpose (optional):                                          ║
+        ║                                                              ║
         ║                                                              ║
         ║   CPU 4       RAM 13113MiB  Disk 100GB                       ║
         ║                                                              ║
@@ -16,7 +17,6 @@
         ║    [ ] Inbox /path/to/dir                                    ║
         ║  Enter Confirm   Esc Cancel   ↑↓/Tab Navigate   Space Toggle ║
         ╚══════════════════════════════════════════════════════════════╝
-
 
 
 

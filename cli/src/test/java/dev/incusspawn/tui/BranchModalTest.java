@@ -60,7 +60,7 @@ class BranchModalTest {
     void theRequestCarriesWhatTheFieldsSay() {
         var dialog = dialog(MachineType.CONTAINER);
         // Tab to GUI, toggle it; Tab past KVM to the network, cycle it once.
-        press(dialog, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar(' '),
+        press(dialog, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar(' '),
                 KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar(' '));
         var request = dialog.request("dev-2");
         assertEquals("dev-2", request.name());
@@ -71,9 +71,31 @@ class BranchModalTest {
         assertNull(request.kvm(), "an untouched box leaves KVM to the default, so create() says why it is off (#1254)");
     }
 
-    /** Tab from the name to a container dialog's MCP control box: past GUI, KVM and the network. */
+    /** Tab from the name to a container dialog's MCP control box: past the purpose, GUI, KVM and the network. */
     private static final KeyEvent[] TO_MCP_CONTROL = {KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB),
+            KeyEvent.ofKey(KeyCode.TAB),
             KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB)};
+
+    @Test
+    void thePurposeIsFreeTextAndGoesOnTheRequestAsItsOwnStamp() {
+        var dialog = dialog(MachineType.CONTAINER);
+        assertEquals(java.util.Map.of(), dialog.request("dev-2").extraConfig(), "an empty purpose stamps nothing");
+        press(dialog, KeyEvent.ofKey(KeyCode.TAB));
+        press(dialog, KeyEvent.ofChar('w'), KeyEvent.ofChar('a'), KeyEvent.ofChar('i'), KeyEvent.ofChar('t'),
+                KeyEvent.ofChar(' '), KeyEvent.ofChar('#'), KeyEvent.ofChar('7'));
+        assertEquals("wait #7", dialog.purpose());
+        assertEquals(java.util.Map.of(Metadata.PURPOSE, "wait #7"), dialog.request("dev-2").extraConfig());
+        assertEquals("dev-1", dialog.name(), "the name field is not changed");
+    }
+
+    @Test
+    void aVmsLimitsStillTakeTheirDigitsAfterThePurposeField() {
+        var dialog = vmDialog(new BranchModal.VmLimits("2", "4GiB", "20GiB"));
+        press(dialog, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar('8'));
+        var request = dialog.request("dev-2");
+        assertEquals(28, request.cpu());
+        assertEquals("4GiB", request.memory());
+    }
 
     @Test
     void anUntouchedMcpControlBoxSendsWhatItShows() {
@@ -160,8 +182,8 @@ class BranchModalTest {
     @Test
     void aVmsCpuLimitMustBeANumber() {
         var dialog = dialog(MachineType.VM);
-        // The CPU field follows the name; clear it and type a letter.
-        press(dialog, KeyEvent.ofKey(KeyCode.TAB));
+        // The CPU field follows the name and the purpose; clear it and type a letter.
+        press(dialog, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB));
         for (int i = 0; i < 4; i++) press(dialog, KeyEvent.ofKey(KeyCode.BACKSPACE));
         press(dialog, KeyEvent.ofChar('x'));
         var e = assertThrows(BranchFlow.BranchException.class, () -> dialog.request("dev-2"));

@@ -2,6 +2,7 @@ package dev.incusspawn.tui;
 
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.MachineType;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
@@ -40,6 +41,9 @@ final class BranchModal {
 
 
     private TextInputState branchNameInput;
+
+    /** {@code isx branch --purpose}: what the instance is for, optional free text (#2239). */
+    private TextInputState purposeInput;
 
     /** The branch dialog's credential account rows; empty when there is nothing to choose. */
     private BranchAccountChoices branchAccounts;
@@ -82,7 +86,10 @@ final class BranchModal {
     private int branchFieldIndex;
 
     /** The lines from the name to the inbox, blank ones included, before any account rows. */
-    private static final int FIELD_LINES = 10;
+    private static final int FIELD_LINES = 12;
+
+    /** The purpose field's index: right after the name, before a VM's limits. */
+    private static final int PURPOSE_FIELD = 1;
 
     private static final String MCP_LABEL = "MCP control (isx mcp)";
     private static final String INBOX_LABEL = "Inbox";
@@ -113,6 +120,7 @@ final class BranchModal {
         this.theme = theme;
         this.branchSourceName = sourceName;
         branchNameInput = new TextInputState(suggestedName);
+        purposeInput = new TextInputState("");
         branchGuiCheck = new CheckboxState(defaults.gui());
         branchGuiDefault = defaults.gui();
         branchKvmCheck = new CheckboxState(defaults.kvm());
@@ -152,6 +160,11 @@ final class BranchModal {
     /** The name typed so far, stripped. */
     String name() {
         return branchNameInput.text().strip();
+    }
+
+    /** The purpose typed so far, stripped; empty for none. */
+    String purpose() {
+        return purposeInput.text().strip();
     }
 
     /** The credential accounts pinned in the dialog, as {@link BranchAccountChoices#overrides()} gives them. */
@@ -237,6 +250,9 @@ final class BranchModal {
                 char ch = key.character();
                 if (branchFieldIndex == 0) {
                     if (Character.isLetterOrDigit(ch) || ch == '-') activeInput.insert(ch);
+                } else if (branchFieldIndex == PURPOSE_FIELD) {
+                    // Free text: what is not one printable line is left out, as Metadata.purposeProblem would refuse it
+                    if (!Character.isISOControl(ch)) activeInput.insert(ch);
                 } else if (branchFieldIndex == inboxPathFieldIndex()) {
                     if (Character.isLetterOrDigit(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
                         activeInput.insert(ch);
@@ -260,7 +276,7 @@ final class BranchModal {
     }
 
     private int guiFieldIndex() {
-        return branchSourceIsVm ? 4 : 1;
+        return branchSourceIsVm ? 5 : 2;
     }
 
     private int kvmFieldIndex() {
@@ -303,9 +319,10 @@ final class BranchModal {
     private TextInputState activeBranchInput() {
         if (branchFieldIndex == inboxPathFieldIndex() && branchInboxCheck.isChecked()) return branchInboxInput;
         return switch (branchFieldIndex) {
-            case 1 -> vmCpuInput;
-            case 2 -> vmMemoryInput;
-            case 3 -> vmDiskInput;
+            case PURPOSE_FIELD -> purposeInput;
+            case 2 -> vmCpuInput;
+            case 3 -> vmMemoryInput;
+            case 4 -> vmDiskInput;
             default -> branchNameInput;
         };
     }
@@ -351,6 +368,20 @@ final class BranchModal {
         } else {
             frame.renderWidget(Paragraph.from(Line.styled(
                     branchNameInput.text(), Style.EMPTY.fg(theme.textDim()).bg(modal.inputBg()))),
+                    rows.get(row++));
+        }
+
+        frame.renderWidget(Paragraph.from(Line.styled(
+                "Purpose (optional):", Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), rows.get(row++));
+        if (branchFieldIndex == PURPOSE_FIELD) {
+            TextInput.builder()
+                    .placeholder("what this instance is for")
+                    .style(Style.EMPTY.fg(theme.focusedLabel()).bg(modal.inputBg()))
+                    .build()
+                    .renderWithCursor(rows.get(row++), frame.buffer(), purposeInput, frame);
+        } else {
+            frame.renderWidget(Paragraph.from(Line.styled(
+                    purposeInput.text(), Style.EMPTY.fg(theme.textDim()).bg(modal.inputBg()))),
                     rows.get(row++));
         }
 
@@ -401,16 +432,16 @@ final class BranchModal {
         spans.add(Span.styled("  ", Style.EMPTY.bg(modal.bg())));
         spans.add(Span.styled("CPU ", labelStyle));
         if (branchSourceIsVm) {
-            modal.renderInlineField(spans, vmCpuInput.text(), false, branchFieldIndex == 1);
+            modal.renderInlineField(spans, vmCpuInput.text(), false, branchFieldIndex == 2);
         } else {
             modal.renderInlineField(spans, "(all)", true, false);
         }
         spans.add(Span.styled("  ", Style.EMPTY.bg(modal.bg())));
         spans.add(Span.styled("RAM ", labelStyle));
-        modal.renderInlineField(spans, vmMemoryInput.text(), !branchSourceIsVm, branchFieldIndex == 2);
+        modal.renderInlineField(spans, vmMemoryInput.text(), !branchSourceIsVm, branchFieldIndex == 3);
         spans.add(Span.styled("  ", Style.EMPTY.bg(modal.bg())));
         spans.add(Span.styled("Disk ", labelStyle));
-        modal.renderInlineField(spans, vmDiskInput.text(), !branchSourceIsVm, branchFieldIndex == 3);
+        modal.renderInlineField(spans, vmDiskInput.text(), !branchSourceIsVm, branchFieldIndex == 4);
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
@@ -472,7 +503,8 @@ final class BranchModal {
         var request = new BranchFlow.Request(source, name, gui,
                 kvm, branchNetworkMode(),
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
-                cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of(), mcpClient);
+                cpu, memory, disk, branchAccounts.overrides(), true,
+                purpose().isEmpty() ? java.util.Map.of() : java.util.Map.of(Metadata.PURPOSE, purpose()), mcpClient);
         return request;
     }
 
