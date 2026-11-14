@@ -24,7 +24,6 @@ import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.IncusException;
-import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.HostIntegration;
@@ -265,6 +264,8 @@ public class Tui {
     /** The purpose dialog (#2239); set when it opens, for {@link #purposeTarget}. */
     private PurposeDialog purposeDialog;
     private String purposeTarget;
+    /** The purpose when the dialog opened, to skip a write that changes nothing. */
+    private String purposeBefore;
     /** The new-template dialog; set when it opens, and read once more to create the template after it closes. */
     private NewTemplateModal newTemplate;
     String statusMessage;
@@ -1026,6 +1027,7 @@ public class Tui {
         }
         if (key.isChar('p') && !key.hasCtrl()) {
             purposeTarget = selected.name();
+            purposeBefore = selected.purpose();
             purposeDialog = new PurposeDialog(modal, selected.name(), selected.purpose());
             mode = Mode.PURPOSE;
             return true;
@@ -1181,7 +1183,7 @@ public class Tui {
     private boolean isInstanceActionKey(KeyEvent key, InstanceInfo selected) {
         return isDestroyKey(key) || key.isKey(KeyCode.F2) || key.isChar('n')
                 || key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4) || key.isKey(KeyCode.F6)
-                || key.isKey(KeyCode.F9) || key.isChar('a') || key.isChar('p') || (key.isKey(KeyCode.F7) && isRunning(selected));
+                || key.isKey(KeyCode.F9) || key.isChar('a') || (key.isChar('p') && !key.hasCtrl()) || (key.isKey(KeyCode.F7) && isRunning(selected));
     }
 
     private void openNewTemplateModal(String parentName) {
@@ -1264,7 +1266,7 @@ public class Tui {
         }
         var purposeProblem = branch.purpose().isEmpty() ? null : Metadata.purposeProblem(branch.purpose());
         if (purposeProblem != null) {
-            statusMessage = purposeProblem.substring(0, 1).toUpperCase() + purposeProblem.substring(1) + ".";
+            statusMessage = refusal(purposeProblem);
             mode = Mode.BROWSE;
             return true;
         }
@@ -1368,6 +1370,11 @@ public class Tui {
         };
     }
 
+    /** A {@code Metadata.purposeProblem} as a status sentence. */
+    private static String refusal(String problem) {
+        return problem.substring(0, 1).toUpperCase() + problem.substring(1) + ".";
+    }
+
     private boolean handlePurposeEvent(KeyEvent key, TableState tableState) {
         switch (purposeDialog.handleKey(key)) {
             case HANDLED -> { }
@@ -1386,14 +1393,14 @@ public class Tui {
         var problem = text.isEmpty() ? null : Metadata.purposeProblem(text);
         mode = Mode.BROWSE;
         if (problem != null) {
-            statusMessage = problem.substring(0, 1).toUpperCase() + problem.substring(1) + ".";
+            statusMessage = refusal(problem);
             return;
         }
+        if (text.equals(purposeBefore == null ? "" : purposeBefore)) return;
         if (vanished(purposeTarget)) return;
         try {
-            incus.updateFresh(purposeTarget, text.isEmpty()
-                    ? new InstanceUpdate().unset(Metadata.PURPOSE)
-                    : new InstanceUpdate().config(Metadata.PURPOSE, text));
+            if (text.isEmpty()) incus.configUnset(purposeTarget, Metadata.PURPOSE);
+            else incus.configSet(purposeTarget, Metadata.PURPOSE, text);
             statusMessage = (text.isEmpty() ? "Cleared the purpose of " : "Set the purpose of ") + purposeTarget;
         } catch (Exception e) {
             statusMessage = "Failed to set the purpose: " + e.getMessage();

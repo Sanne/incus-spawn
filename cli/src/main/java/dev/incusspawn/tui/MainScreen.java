@@ -320,10 +320,13 @@ final class MainScreen {
 
     /**
      * The narrowest table that shows PURPOSE (#2239), the inner width of a 120-column terminal, or
-     * of a 100-column one when no OWNER column is shown beside it. Narrower, the column is left out;
+     * of a 110-column one when no OWNER column is shown beside it. Narrower, the column is left out;
      * the instance details show the purpose either way.
      */
     static final int PURPOSE_COLUMN_MIN_WIDTH = 118;
+
+    /** The same without OWNER: the minimum widths need 101 cells, so it starts where they fit with room to spare. */
+    static final int PURPOSE_ALONE_MIN_WIDTH = 108;
 
     void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                       TableState tableState) {
@@ -382,7 +385,7 @@ final class MainScreen {
             headers.add("OWNER");
             cells.add(7);
         }
-        if (tui.anyPurpose && actualArea.width() >= (showOwner ? PURPOSE_COLUMN_MIN_WIDTH : OWNER_COLUMN_MIN_WIDTH)) {
+        if (tui.anyPurpose && actualArea.width() >= (showOwner ? PURPOSE_COLUMN_MIN_WIDTH : PURPOSE_ALONE_MIN_WIDTH)) {
             widths.add(Constraint.min(30));
             headers.add("PURPOSE");
             cells.add(8);

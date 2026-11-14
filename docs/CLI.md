@@ -272,7 +272,7 @@ The text is one line of at most 200 characters.
 
 `isx branch --purpose "<text>"` sets it when the instance is made.
 `isx list` shows it in a PURPOSE column of the table, and in a `purpose` field after the others in `plain` and `json`.
-The TUI shows it in the instance details and in a PURPOSE column of the instance list, from a 120-column terminal (100 when no instance has an owner).
+The TUI shows it in the instance details and in a PURPOSE column of the instance list, from a 120-column terminal (110 when no instance has an owner).
 
 In the TUI, `p` on an instance edits its purpose, and an empty text removes it.
 The branch dialog has a Purpose field.

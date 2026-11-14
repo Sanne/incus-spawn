@@ -251,8 +251,8 @@ final class BranchModal {
                 if (branchFieldIndex == 0) {
                     if (Character.isLetterOrDigit(ch) || ch == '-') activeInput.insert(ch);
                 } else if (branchFieldIndex == PURPOSE_FIELD) {
-                    // Free text: what is not one printable line is left out, as Metadata.purposeProblem would refuse it
-                    if (!Character.isISOControl(ch)) activeInput.insert(ch);
+                    // Free text: what Metadata.purposeProblem would refuse is left out as it is typed
+                    if (PurposeDialog.accepts(activeInput.text(), ch)) activeInput.insert(ch);
                 } else if (branchFieldIndex == inboxPathFieldIndex()) {
                     if (Character.isLetterOrDigit(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
                         activeInput.insert(ch);
