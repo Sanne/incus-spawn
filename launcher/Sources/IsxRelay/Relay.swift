@@ -16,9 +16,11 @@ import Synchronization
 #if canImport(Glibc)
 import Glibc
 private let sockStream = Int32(SOCK_STREAM.rawValue)
+private let descriptorLimit = __rlimit_resource_t(RLIMIT_NOFILE.rawValue)
 #else
 import Darwin
 private let sockStream = SOCK_STREAM
+private let descriptorLimit = RLIMIT_NOFILE
 #endif
 
 // The C library's, which `Relay.listen(at:)` hides inside the class.
@@ -43,16 +45,103 @@ public enum RelayError: Error, CustomStringConvertible {
     }
 }
 
+/// Room for connections to the guest: how many are open at once, for all the relays of a
+/// process that are given the same one.
+///
+/// On a Mac the machine runs in a process of Virtualization.framework's, which holds one
+/// descriptor for every vsock connection and has room for 256 descriptors in all. The
+/// connection that does not fit stops the machine, and that limit is another process's, so the
+/// launcher cannot raise it. It asks for no more connections than there is room for instead:
+/// a host connection beyond that waits, accepted and not dialled, until another one ends.
+public final class GuestRoom: @unchecked Sendable {
+    /// The most connections to the guest that are open at once.
+    public let connections: Int
+    // pthread's, not a `Mutex`: a caller sleeps until there is room, and a `Mutex` has no
+    // condition to wait for. Allocated, since neither may move once it is initialized.
+    private let lock = UnsafeMutablePointer<pthread_mutex_t>.allocate(capacity: 1)
+    private let freed = UnsafeMutablePointer<pthread_cond_t>.allocate(capacity: 1)
+    private var taken = 0
+    private var waiters = 0
+
+    public init(connections: Int) {
+        precondition(connections > 0, "room for no connection would keep every one waiting")
+        self.connections = connections
+        lock.initialize(to: pthread_mutex_t())
+        freed.initialize(to: pthread_cond_t())
+        pthread_mutex_init(lock, nil)
+        pthread_cond_init(freed, nil)
+    }
+
+    deinit {
+        pthread_cond_destroy(freed)
+        pthread_mutex_destroy(lock)
+        freed.deallocate()
+        lock.deallocate()
+    }
+
+    /// Takes room for one connection, and waits for it when there is none. False when
+    /// `stillWanted` said no before there was room, and nothing was taken then.
+    ///
+    /// `full` is called first by a caller that has to wait with nobody waiting ahead of it,
+    /// so a full room is said once and not by every connection it keeps waiting. It is called
+    /// without the lock: a line that cannot be written must not keep every other connection
+    /// from starting or ending. `stillWanted` is asked once a second while waiting, and once
+    /// more when there is room, with the lock held: it must not wait for anything.
+    func take(full: () -> Void, stillWanted: () -> Bool) -> Bool {
+        pthread_mutex_lock(lock)
+        guard taken >= connections else {
+            taken += 1
+            pthread_mutex_unlock(lock)
+            return true
+        }
+        let first = waiters == 0
+        waiters += 1
+        pthread_mutex_unlock(lock)
+        if first { full() }
+        pthread_mutex_lock(lock)
+        defer {
+            waiters -= 1
+            pthread_mutex_unlock(lock)
+        }
+        while true {
+            guard stillWanted() else {
+                // Room this caller was woken for goes to another that waits.
+                if taken < connections { pthread_cond_signal(freed) }
+                return false
+            }
+            if taken < connections {
+                taken += 1
+                return true
+            }
+            // By the wall clock, the one a condition counts by on every system: a clock that
+            // is set meanwhile moves one of these checks, and nothing else.
+            var until = timespec()
+            clock_gettime(CLOCK_REALTIME, &until)
+            until.tv_sec += 1
+            pthread_cond_timedwait(freed, lock, &until)
+        }
+    }
+
+    /// Gives back what `take` took, once the connection it was for is closed or was never made.
+    func give() {
+        pthread_mutex_lock(lock)
+        taken -= 1
+        pthread_cond_signal(freed)
+        pthread_mutex_unlock(lock)
+    }
+}
+
 public final class Relay: Sendable {
-    public struct Counts: Sendable, Equatable {
-        /// Host connections accepted whose guest connection is not open yet: each is inside `dial`.
+    public struct Counts: Sendable, Equatable, CustomStringConvertible {
+        /// Host connections accepted whose guest connection is not open yet: each is waiting
+        /// for room for it, or is inside `dial`.
         public var waiting: Int
         /// Connections being relayed now: one host connection and one guest connection each.
         public var held: Int
         /// Connections relayed since the start, the held ones included.
         public var total: Int
-        /// Host connections closed unanswered: the guest could not be dialled, or there was no
-        /// thread to relay on.
+        /// Host connections closed unanswered: the guest could not be dialled, there was no
+        /// thread to relay on, or the host's side ended while it waited for room.
         public var refused: Int
 
         public init(waiting: Int = 0, held: Int = 0, total: Int = 0, refused: Int = 0) {
@@ -61,29 +150,82 @@ public final class Relay: Sendable {
             self.total = total
             self.refused = refused
         }
+
+        /// One line, the form a script reads after SIGUSR1.
+        public var description: String {
+            "waiting \(waiting) held \(held) total \(total) refused \(refused)"
+        }
     }
 
     private let dial: @Sendable () -> Int32
     private let hangUp: @Sendable (Int32) -> Void
     private let log: @Sendable (String) -> Void
-    private let state = Mutex(Counts())
+    private let stamp: @Sendable () -> Duration
+    private let room: GuestRoom?
+    private struct State {
+        var counts = Counts()
+        /// The guest's descriptor of every connection being relayed, and the stamp taken when
+        /// the host's was accepted, by the host's descriptor. An entry leaves here before
+        /// either descriptor is closed, so both are open while it is here.
+        var live: [Int32: (guest: Int32, stamp: Duration)] = [:]
+        /// The highest limit `dropAll` was given: a connection stamped before it whose dial
+        /// had not returned then is ended when it does.
+        var dropBefore: Duration?
+    }
+    private let state = Mutex(State())
 
     /// - Parameters:
     ///   - dial: opens a connection to the guest and returns its descriptor, or a negative
     ///     number when the guest does not answer. It may block. The descriptor is a connected
     ///     stream socket, blocking or not: the relay never waits inside a read or a write of it.
-    ///   - hangUp: closes a descriptor `dial` returned. Called once for each, after the relay
-    ///     has let go of it.
-    ///   - log: where an accept failure is reported.
+    ///   - hangUp: closes a descriptor `dial` returned, at once or later: isx-vm hands the
+    ///     close to its main queue, so `held` may fall a moment before the descriptor is free.
+    ///     Called once for each, after the relay has shut it down and let go of it.
+    ///   - log: where an accept failure is reported, and a room that is full.
+    ///   - stamp: read once for each host connection, when it is accepted and before the guest
+    ///     is dialled. `dropAll(stampedBefore:)` compares it. Called on the connection's thread.
+    ///   - room: when given, `dial` is called only with room taken in it, which is given back
+    ///     after `hangUp` returned or when the dial failed. Without one, every connection is
+    ///     dialled as it is accepted.
     public init(dial: @escaping @Sendable () -> Int32,
                 hangUp: @escaping @Sendable (Int32) -> Void,
-                log: @escaping @Sendable (String) -> Void = { _ in }) {
+                log: @escaping @Sendable (String) -> Void = { _ in },
+                stamp: @escaping @Sendable () -> Duration = { .zero },
+                room: GuestRoom? = nil) {
         self.dial = dial
         self.hangUp = hangUp
         self.log = log
+        self.stamp = stamp
+        self.room = room
     }
 
-    public var counts: Counts { state.withLock { $0 } }
+    public var counts: Counts { state.withLock { $0.counts } }
+
+    /// Ends the connections being relayed now, as if both of their sides had closed, and
+    /// returns how many it ended. For a host that slept: a connection may have died on either
+    /// side meanwhile without this relay being told, and one that isx still holds would then
+    /// wait on a guest that no longer knows it. A connection still waiting in `dial` is left alone.
+    ///
+    /// With a limit only the connections stamped before it are ended, so that one accepted
+    /// after the wake, in the time the launcher took to notice it, is kept. Without one, all.
+    /// One stamped before the limit and still waiting in `dial` is not counted here, and is
+    /// ended as soon as its dial returns: the sleep came between its two halves.
+    @discardableResult
+    public func dropAll(stampedBefore limit: Duration? = nil) -> Int {
+        state.withLock { state in
+            if let limit { state.dropBefore = max(state.dropBefore ?? limit, limit) }
+            // Shut down, not closed: each connection's own thread wakes from poll(), sees the
+            // end and closes its two descriptors, once, as for any other end.
+            var dropped = 0
+            for (client, one) in state.live {
+                if let limit, one.stamp >= limit { continue }
+                shutdown(client, Int32(SHUT_RDWR))
+                shutdown(one.guest, Int32(SHUT_RDWR))
+                dropped += 1
+            }
+            return dropped
+        }
+    }
 
     /// Runs `body` on a thread of its own, or returns false when there is none to be had. Never
     /// a Dispatch queue: its pool is bounded, and a connection's thread waits in poll() for as
@@ -118,6 +260,31 @@ public final class Relay: Sendable {
         pthread_detach(thread)
         #endif
         return true
+    }
+
+    /// Raises this process's limit on open descriptors as far as it may go, and returns the
+    /// limit it then has. A connection holds two descriptors, and a program on macOS starts
+    /// with room for 256: without this the relay would hold some 120 connections and leave
+    /// every later one waiting in the backlog. vfkit gets the same from Go's runtime.
+    @discardableResult
+    public static func raiseDescriptorLimit() -> UInt64 {
+        var limit = rlimit()
+        guard getrlimit(descriptorLimit, &limit) == 0 else { return 0 }
+        var most = limit.rlim_max
+        #if canImport(Darwin)
+        // macOS's hard limit is "unlimited" by default, and it refuses a soft limit above
+        // kern.maxfilesperproc. 10240 is OPEN_MAX, which it always allows.
+        var perProcess: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        if sysctlbyname("kern.maxfilesperproc", &perProcess, &size, nil, 0) != 0 || perProcess <= 0 {
+            perProcess = 10240
+        }
+        most = min(most, rlim_t(perProcess))
+        #endif
+        guard most > limit.rlim_cur else { return UInt64(limit.rlim_cur) }
+        var raised = limit
+        raised.rlim_cur = most
+        return setrlimit(descriptorLimit, &raised) == 0 ? UInt64(most) : UInt64(limit.rlim_cur)
     }
 
     /// Listens on a Unix socket at `path`, for this user only, replacing a socket a killed
@@ -174,7 +341,7 @@ public final class Relay: Sendable {
                 reported = 0
                 if !Relay.detach({ self.relay(client) }) {
                     close(client)
-                    state.withLock { $0.refused += 1 }
+                    state.withLock { $0.counts.refused += 1 }
                     log("no thread for a connection, closed it")
                 }
                 continue
@@ -206,22 +373,60 @@ public final class Relay: Sendable {
     // uipc_rcvd() and then sleeps without looking at the socket's state again), so the relay
     // held a connection the guest had closed until the host closed it too.
     private func relay(_ client: Int32) {
-        state.withLock { $0.waiting += 1 }
+        state.withLock { $0.counts.waiting += 1 }
+        // Before the dial: a guest connection asked for before a sleep counts as made before it.
+        let accepted = stamp()
+        if let room {
+            // One whose host side ended while it waited is not dialled: what it had sent would
+            // reach the guest long after its sender gave up on the answer. And it stops
+            // waiting within a second, so callers that give up and try again do not add up.
+            let taken = room.take(
+                full: { log("\(room.connections) connections to the guest are open, the most there is room for: the next waits for one to end") },
+                stillWanted: { !Relay.hasEnded(client) })
+            guard taken else {
+                close(client)
+                state.withLock { $0.counts.waiting -= 1; $0.counts.refused += 1 }
+                return
+            }
+        }
         let guest = dial()
         guard guest >= 0 else {
+            room?.give()
             close(client)
-            state.withLock { $0.waiting -= 1; $0.refused += 1 }
+            state.withLock { $0.counts.waiting -= 1; $0.counts.refused += 1 }
             return
         }
-        state.withLock { $0.waiting -= 1; $0.held += 1; $0.total += 1 }
+        state.withLock {
+            $0.counts.waiting -= 1
+            $0.counts.held += 1
+            $0.counts.total += 1
+            $0.live[client] = (guest, accepted)
+            // `dropAll` ran while this one was in `dial`: ended as it would have been there, and
+            // closed below as for any other end.
+            if let limit = $0.dropBefore, accepted < limit {
+                shutdown(client, Int32(SHUT_RDWR))
+                shutdown(guest, Int32(SHUT_RDWR))
+            }
+        }
         Relay.noSigPipe(client)
         Relay.noSigPipe(guest)
         Relay.copyBothWays(client, guest)
+        // Before either descriptor is closed: `dropAll` must never shut down a number that
+        // already names another connection.
+        state.withLock { $0.live[client] = nil }
         // The guest is told now, whatever `hangUp` then does with the descriptor.
         shutdown(guest, Int32(SHUT_RDWR))
         close(client)
         hangUp(guest)
-        state.withLock { $0.held -= 1 }
+        room?.give()
+        state.withLock { $0.counts.held -= 1 }
+    }
+
+    // Whether the other side of `descriptor` has closed, whatever it sent before that is
+    // still unread. Asked without waiting.
+    private static func hasEnded(_ descriptor: Int32) -> Bool {
+        var polled = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+        return poll(&polled, 1, 0) > 0 && polled.revents & Int16(POLLHUP | POLLERR) != 0
     }
 
     private static let chunk = 65536

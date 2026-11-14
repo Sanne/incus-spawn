@@ -38,7 +38,7 @@ jobs:
         # kernel-fingerprint.sh names, whatever the hash leaves out (#1355).
         run: |
           fp=$(appliance/kernel/kernel-fingerprint.sh)
-          echo "key=appliance-x86_64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/*.md', '!appliance/kernel/vm*.config') }}-$fp" >> "$GITHUB_OUTPUT"
+          echo "key=appliance-x86_64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/measure-tunnel.sh', '!appliance/tunnel-hold.pl', '!appliance/agent-call.pl', '!appliance/launcher-on-mac.sh', '!appliance/*.md', '!appliance/kernel/vm*.config') }}-$fp" >> "$GITHUB_OUTPUT"
         env:
           INPUT_VERSION: ${{ inputs.version }}
 
@@ -143,7 +143,7 @@ jobs:
         # kernel-fingerprint.sh names, whatever the hash leaves out (#1355).
         run: |
           fp=$(appliance/kernel/kernel-fingerprint.sh)
-          echo "key=appliance-aarch64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/*.md', '!appliance/kernel/vm*.config') }}-$fp" >> "$GITHUB_OUTPUT"
+          echo "key=appliance-aarch64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/measure-tunnel.sh', '!appliance/tunnel-hold.pl', '!appliance/agent-call.pl', '!appliance/launcher-on-mac.sh', '!appliance/*.md', '!appliance/kernel/vm*.config') }}-$fp" >> "$GITHUB_OUTPUT"
         env:
           INPUT_VERSION: ${{ inputs.version }}
 

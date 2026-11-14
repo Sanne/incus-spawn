@@ -62,6 +62,10 @@ Key jobs:
   The bridge is the relay in front of `AF_VSOCK`: it needs only the C and C++ runtime libraries a runner already has.
   The container is pinned by the digest of its multi-arch index, and the upstream watch does not track it, so a newer Swift is a bump by hand.
 - **`launcher-macos`** (`macos-15`): `swift test` on the same package with the runner's Xcode toolchain, so the relay's Darwin half (its threads, `SO_NOSIGPIPE`, how a closed listener ends `accept`) is compiled and tested on every PR.
+  It then builds `isx-vm`, the launcher's prototype, with `launcher/build-isx-vm.sh`, which signs it ad hoc and fails unless the signature carries `com.apple.security.virtualization` and nothing else, and checks that the binary starts and refuses a device it does not know.
+  It also runs `appliance/test-agent-call.sh`, as each `integration-tests` leg does before its tunnel checks: the agent client of `test-tunnel.sh` and `measure-tunnel.sh` (`appliance/agent-call.pl`) must not shut its write side down before the agent answered, which the relay would not carry.
+  The test needs no appliance (its agent is a stand-in on a Unix socket), and on macOS it runs under the bash and perl those scripts get on a Mac.
+  It uploads the binary as `isx-vm-macos-aarch64` (14 days), which `appliance/launcher-on-mac.sh` measures on the Mac runner; no release holds it.
   It boots no VM: a hosted macOS runner has no Virtualization.framework guest to relay to.
 - **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy (and fails unless its log says it runs on the epoll transport, #475), builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`, `tpl-test-ssh`), then runs test scripts inside branched instances.
   `release.yml`'s native smoke step fails a Linux proxy binary that does not contain `EpollTransport`, since one without it still runs, on NIO.
@@ -159,7 +163,7 @@ Both arches boot under QEMU; this is worth stating precisely, because the runner
 | `test-integration.yml` → `integration-tests (aarch64)` (`ubuntu-24.04-arm`) | boots it under `qemu-system-aarch64` with **TCG** (the arm64 runners expose no `/dev/kvm`) and vsock; smoke test, tunnel checks and the `remote` proxy data path, but not the backstop (a fixed 3-minute wait that is arch-independent) or native `isx` (CI builds no arm64 CLI). vhost-vsock works under TCG, and the appliance reaches `ISX READY` in about 20s |
 | `build-appliance.yml` → `build_x86_64`, `build_aarch64` (`ubuntu-26.04`, `ubuntu-24.04-arm`) | builds, checks size and embedded version, caches, uploads. Never boots it |
 | `test-integration.yml` → `unit-tests-macos` (`macos-15`) | nothing: runs `mvn test` on the host, the macOS half of the Java code only |
-| `test-integration.yml` → `launcher-macos` (`macos-15`) | nothing: runs the launcher relay's tests over socket pairs, the Darwin half of the Swift code only |
+| `test-integration.yml` → `launcher-macos` (`macos-15`) | nothing: runs the launcher relay's tests over socket pairs, the Darwin half of the Swift code only, and builds and signs `isx-vm` without starting a machine |
 | `release.yml` native matrix (`macos-15`) | builds the native CLI/proxy for macOS 15 on Apple Silicon (Intel Macs are not shipped since Quarkus 4, #1693; `IntelMacNotShippedTest`) and smoke-tests the *binaries* -- `--version`, `--help`, completions, `templates list`; the release job then checks each one's recorded minimum macOS. Never starts a VM, and runs on `v*` tags and `workflow_dispatch` |
 
 **Runner labels are pinned, and retired ones are caught by a test.**
@@ -190,7 +194,7 @@ After the tunnel checks the job sends the bridge `SIGUSR1` and requires `waiting
 The backstop is timed against a test-only silent endpoint, since incusd no longer holds a silent connection: `isx.test_silent_vsock=8444` on the kernel cmdline makes `incus-spawn-vm-init` put the production forwarder in front of a guest socket that never answers, and the job bridges it like the other two.
 The smoke test checks the same STARTTLS behaviour in the guest, on the local socket, on both arches.
 The native `isx` then connects through the same socket: the runner has no native Incus, so `IncusApi.tryConnect` falls through to the vsock candidate exactly as on macOS.
-It does **not** prove vfkit, which loses a host-side close, nor Virtualization.framework's side of a connection: whether a close the relay makes on the framework's descriptor reaches the guest is measured on a Mac (#2031 stage 2).
+It does **not** prove vfkit, which loses a host-side close, nor Virtualization.framework's side of a connection: whether a close the relay makes on the framework's descriptor reaches the guest is measured on a Mac (`appliance/launcher-on-mac.sh`, below).
 The job runs in parallel with `isx-integration-tests-native`, which is longer, so the ~3 minutes of backstop wait adds no wall-clock to the workflow.
 
 **What the remote proxy boot covers** (#1585).
@@ -247,7 +251,17 @@ It takes the PR's head from the API rather than `github.event.pull_request.head.
 The **`kernel-mac-gate-steps`** job in `test-integration.yml` runs both scripts on a fixture repository with `gh` and the Mac faked (`.github/scripts/test-kernel-mac-gate.sh`).
 A green CI is not evidence that vfkit behaves.
 
-The appliance cache key hashes `appliance/**` except `appliance/test-*.sh`, `appliance/*.md` and `appliance/kernel/vm*.config`, which never enter the image, and appends the kernel's fingerprint, so editing a test script or a VM kernel fragment does not force an appliance rebuild.
+**The launcher is measured on the same Mac, and no check waits for it** (#2031).
+`appliance/launcher-on-mac.sh <pr>`, run from a checkout of the PR's head, takes `appliance-aarch64` and `isx-vm-macos-aarch64` from the head's `test-integration.yml` run and measures `isx-vm` against vfkit: `test-boot.sh` with each (`VFKIT=<program>`), `appliance/measure-tunnel.sh` inside a second boot (`WHILE_UP`), and under isx three runs of `bench/trace-branch.sh --isx=<installed isx>` on the VM that Mac already has.
+Under isx one instance also gets an answer over HTTPS and reads a file of the home through its inbox, which shows the VM's network and its share of the home under each program.
+The measurement asks for 400 held connections, more than the machine holds, and records how many descriptors the machine's own process has open (`com.apple.Virtualization.VirtualMachine`, which has room for 256).
+It posts a `### Launcher measurement on the Mac` record with the reading of the go/no-go rule (design/macos-and-vms.md "The measurement and the rule"), scrubbed like the kernel's, and keeps the logs in `~/.cache/incus-spawn/launcher-mac/pr-<n>/`.
+It refuses a PR whose author or head repository is not Sanne or the bot, for the kernel script's reason: it boots that PR's appliance and runs that PR's binary with the Mac user's home shared.
+It gives `isx-vm` to isx as a copy named `vfkit` first on the `PATH`, restarts the Mac's own VM under it, and puts the VM back under vfkit when it ends.
+`--sleep` also puts the Mac to sleep for a minute under each program, and needs `sudo -n pmset`.
+The record is a measurement, so it counts only from a Mac that was otherwise idle.
+
+The appliance cache key hashes `appliance/**` except `appliance/test-*.sh`, the tunnel scripts' agent client (`agent-call.pl`), the launcher's measurement scripts (`measure-tunnel.sh`, `tunnel-hold.pl`, `launcher-on-mac.sh`), `appliance/*.md` and `appliance/kernel/vm*.config`, which never enter the image, and appends the kernel's fingerprint, so editing a test script, a measurement script or a VM kernel fragment does not force an appliance rebuild.
 Anything `build.sh` copies into the image (`root/`, `config.sh`, the kernel) must stay inside the hash.
 
 The kernel-source cache (`/tmp/kernel-cache/`) is keyed `kernel-source-<version>-<sha256>`, both read from `appliance/kernel/build-kernel.sh`.

@@ -2,9 +2,12 @@
 // vsock ports of a QEMU guest, on Linux. CI's `integration-tests` runs it where a Mac runs the
 // launcher, so the relay isx ships is the one `appliance/test-tunnel.sh` is run through.
 //
-//   isx-vsock-bridge <guest-cid> <unix-socket>=<vsock-port> ...
+//   isx-vsock-bridge [--most <connections>] <guest-cid> <unix-socket>=<vsock-port> ...
 //
 // It prints one line once every socket is listening. SIGUSR1 prints each relay's counts.
+// With --most the relays have no more than that many connections to the guest open at once,
+// all of them together, as the launcher's do on a Mac (`GuestRoom`): QEMU needs no such limit,
+// and this is how the scripts that measure a full tunnel are run on Linux.
 import Dispatch
 import Glibc
 import IsxRelay
@@ -28,8 +31,18 @@ import IsxRelay
 signal(SIGPIPE, SIG_IGN)
 signal(SIGUSR1, SIG_IGN)
 
-let usage = "usage: isx-vsock-bridge <guest-cid> <unix-socket>=<vsock-port> ..."
-let arguments = CommandLine.arguments.dropFirst()
+// As the launcher does: two descriptors for each connection a relay holds.
+Relay.raiseDescriptorLimit()
+
+let usage = "usage: isx-vsock-bridge [--most <connections>] <guest-cid> <unix-socket>=<vsock-port> ..."
+var arguments = CommandLine.arguments.dropFirst()
+var room: GuestRoom?
+if arguments.first == "--most" {
+    guard arguments.count >= 2, let most = Int(arguments.dropFirst().first!), most > 0 else { fail(usage, status: 64) }
+    room = GuestRoom(connections: most)
+    arguments = arguments.dropFirst(2)
+}
+let shared = room
 guard arguments.count >= 2, let cid = UInt32(arguments.first!) else { fail(usage, status: 64) }
 
 @Sendable func dialVsock(cid: UInt32, port: UInt32) -> Int32 {
@@ -66,7 +79,8 @@ for argument in arguments.dropFirst() {
     let relay = Relay(
         dial: { dialVsock(cid: cid, port: port) },
         hangUp: { close($0) },
-        log: { message in write("isx-vsock-bridge: \(path): \(message)", to: STDERR_FILENO) })
+        log: { message in write("isx-vsock-bridge: \(path): \(message)", to: STDERR_FILENO) },
+        room: shared)
     do {
         bridged.append(Bridged(path: path, relay: relay, listener: try Relay.listen(at: path)))
     } catch {
@@ -86,8 +100,7 @@ for one in all {
 let report = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
 report.setEventHandler {
     for one in all {
-        let counts = one.relay.counts
-        say("\(one.path) waiting \(counts.waiting) held \(counts.held) total \(counts.total) refused \(counts.refused)")
+        say("\(one.path) \(one.relay.counts)")
     }
 }
 report.resume()
