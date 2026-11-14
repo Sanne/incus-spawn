@@ -7,7 +7,7 @@
 # What isx itself sends.
 ai-help-anthropic: claude-sonnet-5-5
 ai-help-vertex: claude-sonnet-5-5
-ai-help-openai: gpt-4o-mini
+ai-help-openai: gpt-6-luna
 vertex-probe: claude-sonnet-5-5
 vertex-rewriter-default: claude-sonnet-4-6
 # What a coding agent starts with when its tool names no model.
