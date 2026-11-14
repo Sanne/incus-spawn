@@ -9,7 +9,7 @@ ai-help-anthropic: claude-sonnet-5-5
 ai-help-vertex: claude-sonnet-5-5
 ai-help-openai: gpt-4o-mini
 vertex-probe: claude-sonnet-5-5
-vertex-rewriter-default: claude-sonnet-4-6
+vertex-rewriter-default: claude-sonnet-5-5
 # What a coding agent starts with when its tool names no model.
 pi-default: claude-sonnet-5-5
 opencode-default: claude-sonnet-5-5
