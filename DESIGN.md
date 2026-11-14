@@ -124,6 +124,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Shell completion asks the running binary
   - Keeping a long-lived TUI current
   - Warnings while the TUI owns the terminal
+  - The main screen's tabs
   - Terminals the TUI cannot assume
 - [Network](design/network.md)
   - Network Modes

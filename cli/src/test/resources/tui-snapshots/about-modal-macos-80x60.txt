@@ -20,6 +20,7 @@
   ║   Enter   Default instance action                                        ║
   ║   ?       AI Help — ask a question                                       ║
   ║   Tab     Switch panels             ⇧Tab         Reverse                 ║
+  ║   ←/→     Switch view               h/l          Same                    ║
   ║   F1/1    This dialog                                                    ║
   ║   F2/2    Shell into instance       ⇧F2/Alt+2    Join its task           ║
   ║   F3/3    View details                                                   ║

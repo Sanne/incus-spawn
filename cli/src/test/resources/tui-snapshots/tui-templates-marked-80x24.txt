@@ -1,4 +1,5 @@
  isx   1.2.3
+ [Overview]  Templates 3   Instances 0                          ←/→ Switch view
 ╭ Templates ───────────────────────────────────────────────────────────────────╮
 │  NAME                    BUILT                DISK     DESCRIPTION           │
 │  tpl-minimal             3 days ago           -        Minimal Fedora        │
@@ -13,7 +14,6 @@
 │                                                                              │
 │                                                                              │
 │  No instances. Select a template and press Enter to create one.              │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

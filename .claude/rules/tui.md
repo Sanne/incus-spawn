@@ -45,7 +45,13 @@ Of these, only `Tui.run` (for `IncusSpawn`) and `InstanceDetailView.mcpDetailRow
 `ShellLaunch` opens a shell from the TUI: the repairs an instance may owe first, the start, the shell with its auth-error title, and a branch made from the branch dialog before its shell.
 `ListingLoader` loads what the TUI shows (`reloadData`, `mergeInstances`, the disk model and its accounting checks, the pool gauge, the proxy and appliance status) and writes the rows into `Tui`, which keeps the selection and the live refresh.
 `isx list` is `ListCommand`, which prints the listing and never opens the TUI; both parse the Incus listing through `InstanceListing`.
-Two-panel layout (Templates + Instances) with modal dialogs for branching, renaming, and building.
+Two panels (Templates + Instances) with modal dialogs for branching, renaming, and building.
+**The main screen has tabs** (`Tui.View`, design/terminal.md "The main screen's tabs"): Overview stacks both panels as before tabs existed and is where the TUI opens, Templates and Instances each draw one panel at full height.
+Left and Right (`h`, `l`) move between tabs and stop at either end; Tab and Shift+Tab move the focus to the other panel, which in a one-panel tab shows the other such tab.
+Set the focus with `Tui.focus(Panel)` and the tab with `Tui.show(View)`, never the fields: the two keep the focused panel on screen.
+The tab bar (`MainScreen.renderTabs`) is one row under the header, the showing tab in brackets, each one-panel tab with its row count.
+A new tab is a `View` constant; one with rows of its own names no panel, and adds its rendering to `Tui.render`, its keys to `handleBrowseEvent` and its count to `MainScreen.tabLabel` (#2241's overview is the first).
+`TuiCharacterisationTest` snapshots each tab and pins the keys.
 The runner's backend is `LegacyKeyboardBackend`, never a bare `PanamaBackend`: it keeps keys in their legacy encoding when a program left the kitty keyboard protocol or `modifyOtherKeys` on, so Esc and Ctrl+C still close a dialog (`KeyboardProtocol`, design/terminal.md "Keys are read in their legacy encoding").
 An unknown key is never Shift+Tab (`ShiftTabBindings.isShiftTab` is Tab with Shift alone).
 
