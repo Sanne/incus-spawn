@@ -618,6 +618,8 @@ A person's purpose for an instance (#2239) is `user.incus-spawn.purpose`, a key 
 It is an ownership key, so no copy inherits it, and no template definition can set one: it is an instance-only concern (Sanne on #2239).
 It is untrusted text: one line of at most 200 characters on write, and `oneLine` when shown, cut to 60 characters in the `PURPOSE` table column, which appears only when an instance has one.
 `isx list`'s formats append `purpose`, and the TUI's instance details show it.
+The TUI's instance table has the same `PURPOSE` column, only when an instance has one and from 118 inner columns (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`), or from 98 when no `OWNER` column takes room beside it; a narrower table leaves it out and the details still show it.
+`p` on an instance edits the purpose and the branch dialog has a Purpose field, so a person never leaves the TUI to set one.
 
 **Orchestrators with no hooks: a tool's host half.**
 herdr keeps a list of SSH machines and has no lifecycle hooks, so nothing in it can call isx.

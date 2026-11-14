@@ -271,8 +271,8 @@ class TuiCharacterisationTest {
     @Test
     void branchFieldsAreWalkedWithTab() {
         var tui = tui();
-        // Name, then GUI, then KVM, which Space toggles.
-        press(tui, ENTER, TAB, TAB, KeyEvent.ofChar(' '));
+        // Name, purpose, GUI, then KVM, which Space toggles.
+        press(tui, ENTER, TAB, TAB, TAB, KeyEvent.ofChar(' '));
         assertEquals(Tui.Mode.BRANCH, tui.mode());
         var request = tui.branch.request("x");
         assertEquals(Boolean.TRUE, request.kvm());
@@ -537,10 +537,10 @@ class TuiCharacterisationTest {
     @ExtendWith(dev.incusspawn.lifecycle.MacOsBranching.class)
     void aKvmBranchRefusedOnMacOsKeepsItsRemedyInTheWarningLog() {
         var tui = tui();
-        // Name, then GUI, then KVM, which Space ticks.
+        // Name, purpose, GUI, then KVM, which Space ticks.
         press(tui, ENTER);
         typeText(tui, "-x");
-        press(tui, TAB, TAB, KeyEvent.ofChar(' '), ENTER);
+        press(tui, TAB, TAB, TAB, KeyEvent.ofChar(' '), ENTER);
         assertEquals(Tui.PendingAction.NONE, tui.pendingAction(), "the branch is refused");
         assertTrue(tui.statusMessage.startsWith("KVM passthrough is "), tui.statusMessage);
         assertTrue(tui.statusMessage.endsWith(". Press w for the rest."), tui.statusMessage);

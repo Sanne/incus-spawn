@@ -23,6 +23,7 @@ import dev.tamboui.widgets.table.TableState;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import java.util.stream.IntStream;
 import static dev.incusspawn.tui.UsageFormat.bar;
 import static dev.incusspawn.tui.UsageFormat.gibShort;
 import static dev.incusspawn.tui.UsageFormat.runningSummary;
@@ -317,6 +318,13 @@ final class MainScreen {
      */
     static final int OWNER_COLUMN_MIN_WIDTH = 98;
 
+    /**
+     * The narrowest table that shows PURPOSE (#2239), the inner width of a 120-column terminal, or
+     * of a 100-column one when no OWNER column is shown beside it. Narrower, the column is left out;
+     * the instance details show the purpose either way.
+     */
+    static final int PURPOSE_COLUMN_MIN_WIDTH = 118;
+
     void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                       TableState tableState) {
         boolean focused = tui.focusedPanel == Tui.Panel.INSTANCES;
@@ -365,11 +373,26 @@ final class MainScreen {
         var widths = new java.util.ArrayList<>(List.of(Constraint.min(10), Constraint.min(7),
                 Constraint.min(11), Constraint.min(10),
                 Constraint.length(10), Constraint.min(8), Constraint.length(6)));
-        if (tui.anyOwner && actualArea.width() >= OWNER_COLUMN_MIN_WIDTH) widths.add(Constraint.min(9));
+        var headers = new java.util.ArrayList<>(List.of("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK"));
+        // The cells of the columns drawn, from each row's: OWNER is the eighth, PURPOSE the ninth
+        var cells = new java.util.ArrayList<>(IntStream.range(0, headers.size()).boxed().toList());
+        boolean showOwner = tui.anyOwner && actualArea.width() >= OWNER_COLUMN_MIN_WIDTH;
+        if (showOwner) {
+            widths.add(Constraint.min(9));
+            headers.add("OWNER");
+            cells.add(7);
+        }
+        if (tui.anyPurpose && actualArea.width() >= (showOwner ? PURPOSE_COLUMN_MIN_WIDTH : OWNER_COLUMN_MIN_WIDTH)) {
+            widths.add(Constraint.min(30));
+            headers.add("PURPOSE");
+            cells.add(8);
+        }
+        var shownRows = cells.size() == tui.tableRows.get(0).cells().size() ? tui.tableRows
+                : tui.tableRows.stream().map(row -> Row.from(cells.stream().map(row.cells()::get).toList()).style(row.style())).toList();
         var tableBuilder = Table.builder()
-                .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK", "OWNER")
+                .header(Row.from(headers.toArray(String[]::new))
                         .style(Style.EMPTY.bold().fg(focused ? tui.theme.panelBorderFocused() : tui.theme.panelBorderUnfocused())))
-                .rows(tui.tableRows)
+                .rows(shownRows)
                 .widths(widths)
                 .highlightSymbol(focused ? "\u25b8 " : "  ")
                 // Always reserved, so renderMarks can draw into it

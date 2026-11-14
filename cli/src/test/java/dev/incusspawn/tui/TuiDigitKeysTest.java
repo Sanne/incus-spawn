@@ -229,7 +229,7 @@ class TuiDigitKeysTest {
         var owning = java.util.EnumSet.noneOf(Tui.Mode.class);
         for (var mode : Tui.Mode.values()) if (mode.ownsDigits()) owning.add(mode);
         assertEquals(java.util.EnumSet.of(Tui.Mode.BUILD_MENU, Tui.Mode.BRANCH, Tui.Mode.RENAME,
-                Tui.Mode.NEW_TEMPLATE, Tui.Mode.HELP_CHAT), owning,
+                Tui.Mode.PURPOSE, Tui.Mode.NEW_TEMPLATE, Tui.Mode.HELP_CHAT), owning,
                 "a mode with a text field or numbered options keeps its digits; a new one is added here");
     }
 

@@ -24,6 +24,7 @@ import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.HostIntegration;
@@ -226,7 +227,7 @@ public class Tui {
      */
     enum Mode {
         BROWSE(false), CONFIRM_DELETE(false), CONFIRM_MARKED_STOP(false), CONFIRM_STOP_FOR_RENAME(false),
-        CONFIRM_BUILD_FOR_BRANCH(false), BUILD_MENU(true), BRANCH(true), RENAME(true), TEMPLATE_DETAIL(false),
+        CONFIRM_BUILD_FOR_BRANCH(false), BUILD_MENU(true), BRANCH(true), RENAME(true), PURPOSE(true), TEMPLATE_DETAIL(false),
         INSTANCE_DETAIL(false), ACCOUNTS(false), INFO(false), ERROR(false), ACTIONS(false), NEW_TEMPLATE(true),
         CLEAN_CONFIRM(false), CLEAN_RESULT(false), HELP_CHAT(true), WARNINGS(false), TASK_PICKER(false);
 
@@ -261,6 +262,9 @@ public class Tui {
     private String renameSourceName;
     /** The rename dialog; set when it opens. */
     private RenameDialog rename;
+    /** The purpose dialog (#2239); set when it opens, for {@link #purposeTarget}. */
+    private PurposeDialog purposeDialog;
+    private String purposeTarget;
     /** The new-template dialog; set when it opens, and read once more to create the template after it closes. */
     private NewTemplateModal newTemplate;
     String statusMessage;
@@ -716,6 +720,7 @@ public class Tui {
             case CONFIRM_BUILD_FOR_BRANCH -> handleConfirmBuildForBranchEvent(key, tui);
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
+            case PURPOSE -> handlePurposeEvent(key, tableState);
             case NEW_TEMPLATE -> handleNewTemplateEvent(key, tui);
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
@@ -1019,6 +1024,12 @@ public class Tui {
             else stopInBackground(selected);
             return true;
         }
+        if (key.isChar('p') && !key.hasCtrl()) {
+            purposeTarget = selected.name();
+            purposeDialog = new PurposeDialog(modal, selected.name(), selected.purpose());
+            mode = Mode.PURPOSE;
+            return true;
+        }
         if (key.isKey(KeyCode.F6)) {
             renameSourceName = selected.name();
             if (isRunning(selected)) {
@@ -1170,7 +1181,7 @@ public class Tui {
     private boolean isInstanceActionKey(KeyEvent key, InstanceInfo selected) {
         return isDestroyKey(key) || key.isKey(KeyCode.F2) || key.isChar('n')
                 || key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4) || key.isKey(KeyCode.F6)
-                || key.isKey(KeyCode.F9) || key.isChar('a') || (key.isKey(KeyCode.F7) && isRunning(selected));
+                || key.isKey(KeyCode.F9) || key.isChar('a') || key.isChar('p') || (key.isKey(KeyCode.F7) && isRunning(selected));
     }
 
     private void openNewTemplateModal(String parentName) {
@@ -1250,6 +1261,12 @@ public class Tui {
                 mode = Mode.BROWSE;
                 return true;
             }
+        }
+        var purposeProblem = branch.purpose().isEmpty() ? null : Metadata.purposeProblem(branch.purpose());
+        if (purposeProblem != null) {
+            statusMessage = purposeProblem.substring(0, 1).toUpperCase() + purposeProblem.substring(1) + ".";
+            mode = Mode.BROWSE;
+            return true;
         }
         if (vanished(branchSourceName)) return true;
         pendingAction = PendingAction.BRANCH;
@@ -1349,6 +1366,39 @@ public class Tui {
             }
             case CONFIRM -> confirmRename(tableState);
         };
+    }
+
+    private boolean handlePurposeEvent(KeyEvent key, TableState tableState) {
+        switch (purposeDialog.handleKey(key)) {
+            case HANDLED -> { }
+            case CLOSE -> mode = Mode.BROWSE;
+            case CONFIRM -> confirmPurpose(tableState);
+        }
+        return true;
+    }
+
+    /**
+     * Enter in the purpose dialog: write the text on the instance, running or stopped, or remove the
+     * purpose when it is empty. One metadata write; a refusal stays on the status line (#2239).
+     */
+    private void confirmPurpose(TableState tableState) {
+        var text = purposeDialog.text();
+        var problem = text.isEmpty() ? null : Metadata.purposeProblem(text);
+        mode = Mode.BROWSE;
+        if (problem != null) {
+            statusMessage = problem.substring(0, 1).toUpperCase() + problem.substring(1) + ".";
+            return;
+        }
+        if (vanished(purposeTarget)) return;
+        try {
+            incus.updateFresh(purposeTarget, text.isEmpty()
+                    ? new InstanceUpdate().unset(Metadata.PURPOSE)
+                    : new InstanceUpdate().config(Metadata.PURPOSE, text));
+            statusMessage = (text.isEmpty() ? "Cleared the purpose of " : "Set the purpose of ") + purposeTarget;
+        } catch (Exception e) {
+            statusMessage = "Failed to set the purpose: " + e.getMessage();
+        }
+        refreshData(tableState);
     }
 
     /** Enter in the rename dialog: check the new name and rename the instance. */
@@ -1776,6 +1826,7 @@ public class Tui {
             }
             case BRANCH -> branch.render(frame, screen);
             case RENAME -> rename.render(frame, screen);
+            case PURPOSE -> purposeDialog.render(frame, screen);
             case NEW_TEMPLATE -> newTemplate.render(frame, screen);
             case TEMPLATE_DETAIL -> {
                 var template = selectedTemplate();
@@ -2800,6 +2851,7 @@ public class Tui {
             case CONFIRM_DELETE -> deleteConfirm.name() != null && !deleteConfirm.name().startsWith("--")
                     ? deleteConfirm.name() : null;
             case CONFIRM_STOP_FOR_RENAME, RENAME -> renameSourceName;
+            case PURPOSE -> purposeTarget;
             case BRANCH -> branchSourceName;
             case INSTANCE_DETAIL -> detailInstanceName;
             case ACCOUNTS -> accountsModal != null ? accountsModal.instance() : null;
@@ -2929,11 +2981,15 @@ public class Tui {
     /** Whether any instance is owned, by an isx mcp session or another tool (#1720): then the table may show OWNER. */
     volatile boolean anyOwner;
 
+    /** Whether any instance has a purpose (#2239): then the table may show PURPOSE. */
+    volatile boolean anyPurpose;
+
     private void buildRowData() {
         tableRows = new ArrayList<>();
         rowToEntry = new ArrayList<>();
         // From every instance, not the search's: the column must not come and go, and every other
         // column reflow, as a search narrows the list (review of #1820)
+        anyPurpose = (allEntries != null ? allEntries : entries).stream().anyMatch(e -> e.purpose() != null);
         anyOwner = (allEntries != null ? allEntries : entries).stream().anyMatch(e -> e.mcp() != null || e.owner() != null);
 
         // Sort: running first, then stopped, alphabetically within each group
@@ -2964,11 +3020,11 @@ public class Tui {
                 }
             }
 
-            // OWNER last: the table draws it only when the panel has room (MainScreen), and draws
-            // as many cells as it has columns
+            // OWNER and PURPOSE last: MainScreen keeps the cells of the columns it has room for
             tableRows.add(Row.from(entry.name(), entry.status(), entry.ipv4(),
                     parent, entry.runtime(), age, diskCell(entry.diskUsage()),
-                    dev.incusspawn.command.ListCommand.ownerCell(entry)).style(statusStyle));
+                    dev.incusspawn.command.ListCommand.ownerCell(entry),
+                    dev.incusspawn.command.ListCommand.purposeCell(entry)).style(statusStyle));
             rowToEntry.add(entry);
         }
     }
