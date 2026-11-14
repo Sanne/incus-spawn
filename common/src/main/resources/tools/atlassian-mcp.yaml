@@ -1,7 +1,5 @@
 name: atlassian-mcp
 description: Atlassian MCP server for Jira and Confluence
-requires:
-  - claude
 agent_note: |
   The Atlassian MCP server uses API tokens scoped to one Atlassian site.
   The `getAccessibleAtlassianResources` call returns empty with API tokens;
@@ -39,10 +37,8 @@ proxy:
       type: basic
       username: "${email}"
       password: "${api-token}"
-run_as_user:
-  - |
-    JSON=$(cat <<'MCPEOF'
-    {"type":"http","url":"https://mcp.atlassian.com/v2/mcp","headersHelper":"printf '{\"Authorization\":\"Bearer %s\"}' \"$ATLASSIAN_MCP_AUTH\""}
-    MCPEOF
-    )
-    claude mcp add-json atlassian "$JSON" --scope user
+mcp:
+  - name: atlassian
+    description: Jira and Confluence on the account's Atlassian site
+    url: https://mcp.atlassian.com/v2/mcp
+    bearer-token-env: ATLASSIAN_MCP_AUTH

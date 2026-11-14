@@ -45,6 +45,9 @@ public class OpencodeSetup implements ToolSetup {
     public boolean codingAgent() { return true; }
 
     @Override
+    public McpClient mcpClient() { return McpClients.OPENCODE; }
+
+    @Override
     public String name() { return "opencode"; }
 
     @Override

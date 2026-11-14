@@ -56,6 +56,7 @@ public class ToolDef extends FingerprintCache {
     private String agentNote;
     @io.hyperfoil.tools.jjq.mapper.JqConverter(dev.incusspawn.config.SkillsDefConverter.class)
     private ImageDef.SkillsDef skills = ImageDef.SkillsDef.EMPTY;
+    private List<McpEntry> mcp = List.of();
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -97,6 +98,8 @@ public class ToolDef extends FingerprintCache {
     public void setAgentNote(String agentNote) { this.agentNote = agentNote; }
     public ImageDef.SkillsDef getSkills() { return skills; }
     public void setSkills(ImageDef.SkillsDef skills) { this.skills = skills != null ? skills : ImageDef.SkillsDef.EMPTY; }
+    public List<McpEntry> getMcp() { return mcp; }
+    public void setMcp(List<McpEntry> mcp) { this.mcp = items(mcp); }
 
     /**
      * A list as mapped from YAML, without its empty items: a bare '-' (or '~') arrives as null
@@ -114,6 +117,7 @@ public class ToolDef extends FingerprintCache {
                 .each("env", env)
                 .each("actions", actions)
                 .each("package_repos", packageRepos)
+                .each("mcp", mcp)
                 .values("parameters", parameters)
                 .part("proxy", proxy)
                 .part("skills", skills);
@@ -151,6 +155,37 @@ public class ToolDef extends FingerprintCache {
         public void setExtractInContainer(boolean extractInContainer) { this.extractInContainer = extractInContainer; }
         public String getArch() { return arch; }
         public void setArch(String arch) { this.arch = arch; }
+    }
+
+    /**
+     * An MCP server the tool provides, registered with every agent in the image that supports one
+     * ({@link ToolSetup#mcpClient}): a stdio {@code command} with its {@code env}, or an HTTPS
+     * {@code url} whose bearer token an agent reads from {@code bearer-token-env} when it connects.
+     * Checked by {@link ToolDefValidator#invalidMcpServers}, which refuses a tool whose entry is not
+     * one of the two.
+     */
+    @JqMapped
+    public static class McpEntry extends MappedDefinition {
+        private String name;
+        private String description;
+        private List<String> command = List.of();
+        private Map<String, String> env = Map.of();
+        private String url;
+        @JqName("bearer-token-env")
+        private String bearerTokenEnv;
+
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public List<String> getCommand() { return command; }
+        public void setCommand(List<String> command) { this.command = command != null ? command : List.of(); }
+        public Map<String, String> getEnv() { return env; }
+        public void setEnv(Map<String, String> env) { this.env = env != null ? env : Map.of(); }
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
+        public String getBearerTokenEnv() { return bearerTokenEnv; }
+        public void setBearerTokenEnv(String bearerTokenEnv) { this.bearerTokenEnv = bearerTokenEnv; }
     }
 
     @JqMapped
@@ -492,6 +527,14 @@ public class ToolDef extends FingerprintCache {
         }
         if (skills.getRepo() != null) sb.append("skills-repo=").append(skills.getRepo()).append('\n');
         skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
+        // Registered with every agent in the image, so a changed entry is a changed image
+        for (var m : mcp) {
+            sb.append("mcp=").append(m.name).append(',').append(m.description).append(',')
+                    .append(String.join("\u0000", m.command)).append(',').append(m.url).append(',')
+                    .append(m.bearerTokenEnv).append(',');
+            new TreeMap<>(m.env).forEach((k, v) -> sb.append(k).append('=').append(v).append(';'));
+            sb.append('\n');
+        }
         parameters.entrySet().stream()
                 .sorted(java.util.Map.Entry.comparingByKey())
                 .forEach(e -> {

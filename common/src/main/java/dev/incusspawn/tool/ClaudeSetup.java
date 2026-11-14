@@ -37,6 +37,9 @@ public class ClaudeSetup implements ToolSetup {
     public boolean codingAgent() { return true; }
 
     @Override
+    public McpClient mcpClient() { return McpClients.CLAUDE; }
+
+    @Override
     public String name() {
         return "claude";
     }

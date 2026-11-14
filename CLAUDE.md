@@ -290,6 +290,12 @@ See `.claude/rules/commands.md` and design/terminal.md "Output for scripts".
 Downloads are cached on the host, then either extracted into the target, copied to the exact destination path, or processed both ways.
 VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock.
 
+**Tools declare MCP servers once, and every agent in the image gets them (#2206).**
+A tool's `mcp:` entries are a stdio `command` or an HTTPS `url`, with nothing specific to one agent; an agent takes them by implementing `ToolSetup.mcpClient()` (`McpClients`: Claude Code, Codex, Pi, opencode).
+`McpServerRegistration` registers the whole chain's servers with every such agent once per build, after every tool and every layer's clones, so tool order and the layer that installed an agent decide nothing; a new tool declares its server there rather than calling an agent's CLI from `run_as_user`, which only the Claude-only `headroom` and `idea-backend`'s loopback server still do.
+A credential reaches a server only as `bearer-token-env`, a variable each agent reads when it connects, and the loader requires it to be one of the tool's own `proxy.placeholders`, sent to one of its `proxy.auth` domains.
+`${isx_repo_paths}` names the template's clones (design/mcp.md "Tools declare MCP servers for every agent", `.claude/rules/tools-env.md`).
+
 **Secrets are declared, not listed.**
 `SecretRegistry` (`common/config/`) answers "where do secrets live in `config.yaml`" by collecting every tool's `ToolDef.ConfigEntry` that sets `secret: true` with a `config-path`.
 So a new credential becomes known to every secret-aware consumer by being declared on the tool (`ToolSetup.proxy()` or tool YAML), never by editing a list.

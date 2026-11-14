@@ -57,6 +57,11 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public java.util.List<McpServer> mcpServers(java.util.Map<String, String> resolvedParams) {
+        return def.getMcp().stream().map(e -> McpServer.of(e, resolvedParams)).toList();
+    }
+
+    @Override
     public ToolDef.ProxyDef proxy() {
         return def.getProxy();
     }

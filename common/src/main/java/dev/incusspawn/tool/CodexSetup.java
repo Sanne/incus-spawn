@@ -18,6 +18,9 @@ public class CodexSetup implements ToolSetup {
     public boolean codingAgent() { return true; }
 
     @Override
+    public McpClient mcpClient() { return McpClients.CODEX; }
+
+    @Override
     public String name() {
         return "codex";
     }
