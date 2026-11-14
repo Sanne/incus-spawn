@@ -162,6 +162,8 @@ public class ListCommand extends BaseCommand {
             record.put("owner_id", i.ownerId());
             // #1812: whether it may drive isx over MCP; what it may control needs definitions, which isx list loads none of
             record.put("mcp_client", i.mcpCaller());
+            // #2239: what a person wrote it is for
+            record.put("purpose", i.purpose());
             records.add(record);
         }
         return records;
@@ -173,18 +175,32 @@ public class ListCommand extends BaseCommand {
         // tool (#1720): without it, the format has no conversion for the last argument, which
         // printf ignores. AGE is padded when OWNER follows.
         var owned = items.stream().anyMatch(e -> e.mcp() != null || e.owner() != null);
-        var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  " + (owned ? "%-13s  %s%n" : "%s%n");
+        // PURPOSE (#2239) likewise only when an instance has one, as the last column
+        var purposed = items.stream().anyMatch(e -> e.purpose() != null);
+        var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  "
+                + (purposed ? "%-13s  %-13s  %s%n" : owned ? "%-13s  %s%n" : "%s%n");
 
-        out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "OWNER");
+        out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "OWNER", "PURPOSE");
         out.printf(fmt, "-".repeat(nameWidth), "----------", "---------------",
-                "--------------------", "----------", "---", "---");
+                "--------------------", "----------", "---", "---", "-------");
         for (var entry : items) {
             var age = entry.created().isEmpty() ? "-" : Metadata.ageDescription(entry.created());
             var parent = entry.parent().isEmpty() ? "-" : OutputFormat.oneLine(entry.parent());
             var ip = entry.ipv4().isEmpty() ? "-" : entry.ipv4();
-            out.printf(fmt, entry.name(), entry.status(), ip, parent, entry.runtime(), age, ownerCell(entry));
+            out.printf(fmt, entry.name(), entry.status(), ip, parent, entry.runtime(), age, ownerCell(entry),
+                    purposeCell(entry));
         }
         out.println();
+    }
+
+    /** The most of a purpose the table shows, so one long stamp does not push the rest off the line. */
+    static final int PURPOSE_CELL_MAX = 60;
+
+    /** What a person wrote the instance is for, in one line and cut to {@link #PURPOSE_CELL_MAX}; the full text is in plain and json. */
+    public static String purposeCell(InstanceInfo entry) {
+        if (entry.purpose() == null) return "-";
+        var text = OutputFormat.oneLine(entry.purpose());
+        return text.codePointCount(0, text.length()) <= PURPOSE_CELL_MAX ? text : text.substring(0, text.offsetByCodePoints(0, PURPOSE_CELL_MAX - 1)) + "…";
     }
 
     /**

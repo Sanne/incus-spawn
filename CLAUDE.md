@@ -353,6 +353,7 @@ The `mcp.yaml` keys that once narrowed them still load, have no effect and are n
 `isx branch --format=json` adds the SSH target and `project_root`, while `plain` stays the new name alone for `name=$(...)`.
 `isx start` and `isx stop` reuse `isx shell`'s preparation and the marked stop, and `isx ssh-proxy --start` lets an orchestrator's reconnect start a stopped instance; the Host block a plain `ssh` reads never starts one.
 `isx destroy --owner <tool>` deletes only for a tool `drivers:` in `config.yaml` lets destroy, and only while the instance still carries that owner; a plain destroy of an owned instance asks.
+A person's own note on an instance is `Metadata.PURPOSE` (`isx branch --purpose`, `isx purpose <name> [text]`, #2239): a key apart from `mcp-purpose`, an ownership key no copy inherits, never set by a template, untrusted text shown through `oneLine` (design/mcp.md).
 `isx list`'s `OWNER` column folds in `isx mcp`'s standing, and its formats append `owner` and `owner_id`.
 An orchestrator with hooks (Orca) needs no isx code: `integrations/orca/isx-orca-recipe` speaks its recipe contract over those commands, with `jq` (`OrcaRecipeScriptTest`, `docs/INTEGRATIONS.md`).
 An orchestrator with no hooks (herdr) is served by a tool's host half instead: a built-in `HostIntegration` keyed on the tool being in the instance's build, which registers the instance on its first start and removes it on destroy, never for a project-local or untrusted build (`.claude/rules/tools-env.md`).

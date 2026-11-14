@@ -357,7 +357,29 @@ public final class Metadata {
      * owner's ({@link #OWNER}). A copy belongs to whoever made the copy, so it never inherits one.
      */
     public static boolean isOwnershipKey(String key) {
-        return isMcpKey(key) || key.equals(OWNER) || key.equals(OWNER_ID);
+        return isMcpKey(key) || key.equals(OWNER) || key.equals(OWNER_ID) || key.equals(PURPOSE);
+    }
+
+    /**
+     * What a person wrote an instance is for ({@code isx branch --purpose}, {@code isx purpose}, #2239).
+     * Free text, shown wherever instances are listed, and an instance-only concern: no template
+     * gives one, and no copy inherits it (an {@link #isOwnershipKey ownership key}). Apart from
+     * {@link #MCP_PURPOSE}, which an {@code isx mcp} session writes, so no guest-driven coordinator
+     * rewrites it. Untrusted when read: a stamp can be set by hand, so it is shown through
+     * {@link dev.incusspawn.util.OutputFormat#oneLine}.
+     */
+    public static final String PURPOSE = PREFIX + "purpose";
+
+    /** The longest purpose, in characters. */
+    public static final int PURPOSE_MAX = 200;
+
+    /** Why {@code text} cannot be a purpose, or null when it can: not blank, one line, at most {@link #PURPOSE_MAX}. */
+    public static String purposeProblem(String text) {
+        if (text == null || text.isBlank()) return "a purpose is not blank";
+        var stripped = text.strip();
+        if (stripped.codePoints().anyMatch(dev.incusspawn.util.OutputFormat::isControl)) return "a purpose is one line of text, with no control characters";
+        if (stripped.codePointCount(0, stripped.length()) > PURPOSE_MAX) return "a purpose is at most " + PURPOSE_MAX + " characters";
+        return null;
     }
 
     /**

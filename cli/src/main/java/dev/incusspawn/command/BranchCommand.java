@@ -96,6 +96,10 @@ public class BranchCommand extends BaseCommand {
             + " orchestrator's workspace id (needs --owner)")
     String ownerId;
 
+    @Option(name = "purpose", description = "What this instance is for, in a line of text, shown by isx list and the TUI."
+            + " Change it later with isx purpose. Never inherited by its copies.")
+    String purpose;
+
     @OptionList(name = "account", completer = Completers.Account.class,
             description = "Credential account to use, as <namespace>=<account> "
                     + "(e.g. claude=work). Repeatable; overrides the template's choice.")
@@ -229,6 +233,7 @@ public class BranchCommand extends BaseCommand {
         var stamps = new LinkedHashMap<String, String>();
         if (owner != null) stamps.put(Metadata.OWNER, owner);
         if (ownerId != null) stamps.put(Metadata.OWNER_ID, ownerId);
+        if (purpose != null) stamps.put(Metadata.PURPOSE, purpose.strip());
         return stamps;
     }
 
@@ -238,6 +243,13 @@ public class BranchCommand extends BaseCommand {
         if (ownerProblem != null) {
             BuildOutput.error(ownerProblem);
             return null;
+        }
+        if (purpose != null) {
+            var purposeProblem = Metadata.purposeProblem(purpose);
+            if (purposeProblem != null) {
+                BuildOutput.error("--purpose: " + purposeProblem + ".");
+                return null;
+            }
         }
         var named = source != null ? source : detectSource();
         if (named == null) return null;

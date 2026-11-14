@@ -200,6 +200,9 @@ public final class InstanceListing {
         /** That tool's own handle for it ({@code --owner-id}), or null. */
         public String ownerId() { return stamp(Metadata.OWNER_ID); }
 
+        /** What a person wrote it is for ({@code isx purpose}, #2239), or null. */
+        public String purpose() { return stamp(Metadata.PURPOSE); }
+
         private String stamp(String key) {
             if (metadata == null) return null;
             var value = metadata.path("config").pathText(key, "");
