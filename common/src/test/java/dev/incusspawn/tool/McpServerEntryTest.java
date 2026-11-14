@@ -113,7 +113,7 @@ class McpServerEntryTest {
 
     @Test
     void theBuiltInsDeclareServersEveryAgentCanTake() throws Exception {
-        for (var name : List.of("atlassian-mcp")) {
+        for (var name : List.of("jasolo", "atlassian-mcp")) {
             try (var is = getClass().getClassLoader().getResourceAsStream("tools/" + name + ".yaml")) {
                 var tool = ToolDef.loadFromStream(is);
                 assertNull(ToolDefValidator.refusal(tool), name);

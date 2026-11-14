@@ -84,7 +84,7 @@ A build with no agent does not read the record: a copied rootfs never loses a to
 A stdio command not on agentuser's login PATH fails the build, and so do two tools declaring one server name.
 `ToolDefValidator.invalidMcpServers` refuses, where definitions load, an entry that is neither form, a URL that is not HTTPS, a name outside `McpServer.NAME` or the reserved `isx`, an `env` key `SecretRedactor.looksSecret` names, a `bearer-token-env` that is not one of the tool's own exported `proxy.placeholders`, and a bearer URL whose host is none of its `proxy.auth` domains.
 A credential travels only as that proof, which each agent reads when it connects and the proxy checks before it injects.
-`${isx_repo_paths}` in an entry's `command` or `env` becomes the chain's repository paths, comma-separated, and an empty variable is not set.
+`${isx_repo_paths}` in an entry's `command` or `env` becomes the chain's repository paths, comma-separated, and an empty variable is not set; `jasolo`'s `git_roots` defaults to it, so it scans the template's clones unconfigured.
 The entries are part of `contentFingerprint()`.
 
 Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user YAML -> search paths -> project-local YAML.
