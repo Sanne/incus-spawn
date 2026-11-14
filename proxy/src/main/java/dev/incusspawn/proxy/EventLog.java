@@ -41,6 +41,14 @@ final class EventLog implements AutoCloseable {
     record ModelCall(Instant at, String instance, String incarnation, String domain, String model,
                      int status, long durationMillis, long input, long output, long cacheRead, long cacheCreation) {}
 
+    /** A push GitHub accepted: the branches its commands name (#2241). */
+    record Push(Instant at, String instance, String incarnation, String repo, int status, long durationMillis,
+                java.util.List<String> refs, java.util.List<String> deleted) {}
+
+    /** A pull request GitHub answered a create for. */
+    record PullRequest(Instant at, String instance, String incarnation, String repo, long number, int status,
+                       long durationMillis) {}
+
     private final Path file;
     private final long maxFileBytes;
     private final BlockingQueue<String> queue = new ArrayBlockingQueue<>(QUEUE);
@@ -86,11 +94,50 @@ final class EventLog implements AutoCloseable {
                 .put("cache_read_input_tokens", c.cacheRead())
                 .put("cache_creation_input_tokens", c.cacheCreation())
                 .build().toJsonString();
+        offer(line);
+    }
+
+    private void offer(String line) {
         pending.incrementAndGet();
         if (closed || !queue.offer(line)) {
             pending.decrementAndGet();
             dropped.incrementAndGet();
         }
+    }
+
+    /** Queues a push; never blocks, and never throws. */
+    void push(Push p) {
+        var refs = io.hyperfoil.tools.jjq.value.JqArray.arrayBuilder();
+        for (var r : p.refs()) refs.add(r);
+        var deleted = io.hyperfoil.tools.jjq.value.JqArray.arrayBuilder();
+        for (var r : p.deleted()) deleted.add(r);
+        offer(JqObject.builder(9)
+                .put("t", p.at().toString())
+                .put("kind", "github")
+                .put("op", "push")
+                .put("instance", p.instance())
+                .put("incarnation", p.incarnation() == null ? "" : p.incarnation())
+                .put("repo", p.repo())
+                .put("status", p.status())
+                .put("ms", p.durationMillis())
+                .put("refs", refs.build())
+                .put("deleted_refs", deleted.build())
+                .build().toJsonString());
+    }
+
+    /** Queues a pull request opened; never blocks, and never throws. */
+    void pullRequest(PullRequest p) {
+        offer(JqObject.builder(9)
+                .put("t", p.at().toString())
+                .put("kind", "github")
+                .put("op", "pull_request")
+                .put("instance", p.instance())
+                .put("incarnation", p.incarnation() == null ? "" : p.incarnation())
+                .put("repo", p.repo())
+                .put("number", p.number())
+                .put("status", p.status())
+                .put("ms", p.durationMillis())
+                .build().toJsonString());
     }
 
     /** Waits until everything queued so far is written; for tests and a clean stop. */

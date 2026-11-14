@@ -300,7 +300,7 @@ final class ApiActivity {
         private final AtomicBoolean ended = new AtomicBoolean();
         private final AtomicLong requestBytes = new AtomicLong();
         private final AtomicLong responseBytes = new AtomicLong();
-        private volatile Exchange call;
+        private volatile Ends call;
         private volatile long endedAt;
 
         private Flow(String domain, boolean byProof) {
@@ -342,7 +342,7 @@ final class ApiActivity {
          * two readings would put the call's response after the last activity of its own domain.
          * A flow already over (its connection gone while the body was read) ends it now.
          */
-        void carries(Exchange call) {
+        void carries(Ends call) {
             this.call = call;
             // Each side writes before it reads the other's, so at least one ends the call; once only
             var at = endedAt;
@@ -367,8 +367,25 @@ final class ApiActivity {
         }
     }
 
+    /** A call a flow carries and ends on its own reading of the clock. */
+    interface Ends {
+        void end(long now);
+    }
+
+    /**
+     * The GitHub operation {@code domain} {@code method} {@code path} makes that the event log
+     * records, or null: for a known instance only, and when a log is set (#2241).
+     */
+    GitHubCall beginGitHub(String instance, String incarnation, String domain, String method, String path,
+                           boolean encoded) {
+        var log = events;
+        if (log == null || instance == null) return null;
+        var kind = GitHubCall.classify(domain, method, path, encoded);
+        return kind == null ? null : new GitHubCall(log, instance, incarnation, kind, path, clock.getAsLong());
+    }
+
     /** One model call. Ends once, however its response finishes: completed, failed or abandoned. */
-    final class Exchange {
+    final class Exchange implements Ends {
         private final Counters counters;
         private final AtomicBoolean ended = new AtomicBoolean();
         private final String instance;
@@ -413,7 +430,8 @@ final class ApiActivity {
             end(clock.getAsLong());
         }
 
-        private void end(long now) {
+        @Override
+        public void end(long now) {
             if (!ended.compareAndSet(false, true)) return;
             var read = tap;
             var usage = read == null ? null : read.finish();

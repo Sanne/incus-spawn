@@ -913,14 +913,23 @@ Until a resource to lease exists, only the read side ships; the health server st
 The proxy appends one JSON line to `~/.local/state/incus-spawn/events/events.jsonl` for each model call that ends, so what an instance did outlives a restart and the in-memory counts of `ApiActivity`.
 A line holds the time, the instance's name and incarnation, the domain, the model the response names, the HTTP status, the duration and the four token counts.
 It holds no request or response content.
-The first step covers model calls only.
-GitHub operations (a push, a pull request opened) are the next step, and so is the overview that reads the log.
+A GitHub operation an instance makes is a line too: a push (`op: push`, the repository, the branches its commands update in `refs` and delete in `deleted_refs`) or a pull request opened (`op: pull_request`, the repository and the number).
+The overview that reads the log is a later step.
 The log is an observation and never read back by the proxy to decide routing, so "The proxy holds no configuration of its own" stands.
 Writing costs the request path one `offer` onto a bounded queue; one platform thread does the file work, so a slow disk never delays a response.
 When the queue is full or the write fails a line is lost, and the next line written says how many were (`kind: dropped`).
 The log gives up completeness under load for a request path that never waits on it.
 Retention is by size alone: the file rolls over at 16 MiB and four older files are kept (`events.jsonl.1` to `.4`), about 80 MiB at most, with no timer and no state beyond the file.
 Both the directory and the files are owner-only.
+A push is `POST github.com/<owner>/<repo>[.git]/git-receive-pack`, and its branches are the commands at the head of the body, before the pack: the proxy keeps at most the first 8 KiB as the body streams past and never holds or pauses it.
+A pull request is `POST api.github.com/repos/<owner>/<repo>/pulls` or the `createPullRequest` mutation that `gh pr create` sends to `/graphql`, and its number is read from the first 32 KiB of the answer.
+Reading an answer needs it uncompressed, so those two requests go upstream with `Accept-Encoding: identity`, as a model call does.
+A GitHub line is written only when GitHub answered with success, so a refused or failed call costs the log nothing.
+It gives up two things.
+A push's success is the HTTP answer's: a ref GitHub rejected comes back inside a 200's report-status, which is not read, so the line says a push was accepted, not that every branch moved.
+A body with a `Content-Encoding` is not read, so such a push or GraphQL call has no line.
+The guest writes these requests itself, so it can add successful lines at the rate it can push, and a flood of them rolls older model calls out of the 80 MiB.
+Repository and branch names are the guest's text, cut at 255 characters and JSON-escaped.
 The incarnation is the listing's `created_at`, as for the counters (#1063), so a name branched again is a different instance in the log.
 Its cost on the request path is one queue offer and a JSON build at the call's end, which runs on the event loop and costs microseconds beside a model call that lasts seconds; it is not measured on a real Incus.
 
