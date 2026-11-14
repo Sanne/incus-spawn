@@ -613,6 +613,12 @@ The TUI's instance table shows the same `OWNER` column from a 100-column termina
 Each row carries the owner cell, and the table draws as many cells as it has columns, so the choice is made per frame, on a resize too, with no rebuild.
 Whether any instance is owned is read from every instance, not the search's matches, so the column does not come and go while typing a search.
 
+A person's purpose for an instance (#2239) is `user.incus-spawn.purpose`, a key of its own beside `mcp-purpose`, so a guest-driven coordinator never rewrites what the person wrote.
+`isx branch --purpose` stamps it on the copy request, and `isx purpose <name> [text|--clear]` changes it on a running or a stopped instance with one metadata write.
+It is an ownership key, so no copy inherits it, and no template definition can set one: it is an instance-only concern (Sanne on #2239).
+It is untrusted text: one line of at most 200 characters on write, and `oneLine` when shown, cut to 60 characters in the `PURPOSE` table column, which appears only when an instance has one.
+`isx list`'s formats append `purpose`, and the TUI's instance details show it.
+
 **Orchestrators with no hooks: a tool's host half.**
 herdr keeps a list of SSH machines and has no lifecycle hooks, so nothing in it can call isx.
 isx tells it instead: the `herdr` tool installs herdr in the template, and its host half (`HerdrIntegration`, a `HostIntegration`) runs `herdr machine add <name>` on the instance's first start and `herdr machine remove` when it is destroyed, when the host has `herdr`.

@@ -414,6 +414,7 @@ Shell completions are available for bash, zsh, fish and PowerShell via `isx comp
 | [`isx shell`](docs/CLI.md#isx-shell) | Open a shell in an instance |
 | [`isx start`](docs/CLI.md#isx-start) | Start an instance without opening a shell |
 | [`isx stop`](docs/CLI.md#isx-stop) | Stop a running instance |
+| [`isx purpose`](docs/CLI.md#isx-purpose) | Show or change what an instance is for |
 | [`isx run`](docs/CLI.md#isx-run) | Run an action on an instance |
 | [`isx destroy`](docs/CLI.md#isx-destroy) | Destroy an instance |
 | [`isx list`](docs/CLI.md#isx-list) | List instances, for people or for scripts |

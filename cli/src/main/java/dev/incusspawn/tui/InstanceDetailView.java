@@ -260,6 +260,8 @@ public final class InstanceDetailView {
         }
 
         var rows = new ArrayList<>(baseImageRows(BaseImageAge.tag(info.metadata()), baseImage));
+        // #2239: what a person wrote it is for; isx purpose <name> changes it
+        if (info.purpose() != null) rows.add(new DetailRow("Purpose:", OutputFormat.oneLine(info.purpose())));
         // #1053: no column for it in the instance table, which has no width to spare.
         rows.addAll(mcpDetailRows(info.mcp()));
         rows.addAll(mcpControlRows(info.mcpCaller(), mcpScope));

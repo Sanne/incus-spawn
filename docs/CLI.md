@@ -189,6 +189,7 @@ isx branch <name> [options]
 | `--account <ns>=<account>` | Use this [credential account](CONFIGURATION.md#credential-accounts) instead of the template's or the default; repeatable |
 | `--owner <name>` | Mark the instance as controlled by an external tool, a program outside isx that drives it, such as `orca`. A lowercase name; `mcp` is reserved. Copies of the instance never inherit the owner |
 | `--owner-id <id>` | The owner's own handle for the instance, such as an orchestrator's workspace id. Needs `--owner` |
+| `--purpose <text>` | A line of text on what the instance is for, shown by `isx list` and the TUI. Change it later with [`isx purpose`](#isx-purpose). Copies of the instance never inherit it |
 | `--mcp-client` | Let the instance drive isx over MCP at `https://mcp.isx.internal/mcp`, as a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). The default for a template whose `coordinator:` block says so: `isx-control-capability`, true when `control-over` lists templates. Copies of the instance never inherit this permission |
 | `--no-mcp-client` | Do not make the instance a coordinator, even if the template makes coordinators by default |
 | `--format=<format>` | `table` (the default), `plain` to print only the new name, or `json` to add how to reach it, with progress on stderr and no shell opened. See [Scripting isx](#isx-branch-fields) |
@@ -255,6 +256,26 @@ isx stop <instance>
 Stopping an instance that is already stopped succeeds, so a script can repeat it.
 A frozen instance cannot shut down, so `isx stop` refuses it with an error.
 If another isx process is starting or stopping it, `isx stop` waits for that first, for up to two minutes.
+
+## `isx purpose`
+
+Show or change a note on what an instance is for.
+
+```shell
+isx purpose <instance> [text]
+isx purpose <instance> --clear
+```
+
+With no text, it prints the current purpose.
+With text, it replaces the purpose, on a running or a stopped instance, and does not start it.
+The text is one line of at most 200 characters.
+
+`isx branch --purpose "<text>"` sets it when the instance is made.
+`isx list` shows it in a PURPOSE column of the table, and in a `purpose` field after the others in `plain` and `json`.
+The TUI shows it in the instance details.
+
+A purpose belongs to one instance: a branch of it does not inherit it, and a template cannot set one.
+It is separate from the purpose an `isx mcp` session gave.
 
 ## `isx run`
 
@@ -912,7 +933,7 @@ For a clean log, redirect both streams or set `NO_COLOR=1`.
 
 ### Fields of `isx list`
 
-`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state`, `mcp_purpose`, `base_image`, `owner`, `owner_id` and `mcp_client`, in that order.
+`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state`, `mcp_purpose`, `base_image`, `owner`, `owner_id`, `mcp_client` and `purpose`, in that order.
 `mcp_state` and `mcp_purpose` are `null` (`-`) unless an [`isx mcp`](MCP.md#delegating-from-an-agent-on-your-host-mcp) session made the instance.
 `mcp_purpose` is then what the agent said the instance is for, or `null`, and `mcp_state` is one of:
 
@@ -926,6 +947,7 @@ For a clean log, redirect both streams or set `NO_COLOR=1`.
 It is `null` when Incus recorded none, as for an instance built from an image of your own.
 A fix in a base image reaches only instances built after it, and `isx doctor` names the ones a rebuild would move to a newer release.
 
+`purpose` is what a person wrote with `isx branch --purpose` or `isx purpose`, or `null`.
 `owner` and `owner_id` are the external tool that controls the instance and its handle for it, as `isx branch --owner` and `--owner-id` stamped them, or `null`.
 The table shows the owner in its `OWNER` column, beside how an `isx mcp` session holds its instances.
 

@@ -150,7 +150,7 @@ public enum OutputFormat {
      * paragraph separators -- and the bidi embeddings, overrides and isolates (U+202A-U+202E,
      * U+2066-U+2069), which make a terminal draw the rest of the line out of order.
      */
-    static boolean isControl(int c) {
+    public static boolean isControl(int c) {
         return Character.isISOControl(c)
                 || c >= 0x2028 && c <= 0x202E || c >= 0x2066 && c <= 0x2069;
     }
