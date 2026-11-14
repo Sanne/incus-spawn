@@ -2123,12 +2123,18 @@ public class MitmProxy {
     private void streamApiRequest(HttpServerRequest clientReq, RequestContext ctx, long started) {
         var domain = ctx.domain();
         var exchange = beginModelCall(clientReq, ctx);
+        var github = beginGitHubCall(clientReq, ctx);
         var debug = debugExchange(clientReq, null);
         upstream.relayRequest(clientReq, domain, new Upstream.RelayHooks(
-                upReq -> prepareApiHead(clientReq, upReq, ctx, domain, false, exchange),
-                upResp -> onApiResponse(ctx, upResp, exchange, debug),
-                debug == null ? null : chunk -> capture(debug.original, chunk),
-                responseTap(exchange, debug)), started);
+                upReq -> prepareApiHead(clientReq, upReq, ctx, domain, false,
+                        exchange != null || (github != null && github.readsResponse())),
+                upResp -> {
+                    if (github != null) github.respond(upResp.statusCode());
+                    onApiResponse(ctx, upResp, exchange, debug);
+                },
+                tap(github == null ? null : github::request, debug == null ? null : chunk -> capture(debug.original, chunk)),
+                tap(github == null || !github.readsResponse() ? null : github::response, responseTap(exchange, debug))),
+                started);
     }
 
     /**
@@ -2136,10 +2142,10 @@ public class MitmProxy {
      * Completes false, having answered the client, when the credential could not be had.
      */
     private Future<Boolean> prepareApiHead(HttpServerRequest clientReq, HttpClientRequest upReq, RequestContext ctx,
-                                           String upstreamHost, boolean isVertexRequest, ApiActivity.Exchange exchange) {
+                                           String upstreamHost, boolean isVertexRequest, boolean readsAnswer) {
         copyRequestHeaders(clientReq, upReq, ctx.domain());
-        // A compressed answer would hide its token usage from apiActivity
-        if (exchange != null) upReq.putHeader("Accept-Encoding", "identity");
+        // A compressed answer would hide what the proxy reads of it (token usage, a pull request's number)
+        if (readsAnswer) upReq.putHeader("Accept-Encoding", "identity");
         return injectHeaders(upReq, ctx, upstreamHost, isVertexRequest).map(ok -> {
             if (ok) {
                 presentInheritedProofs(upReq.headers(), ctx);
@@ -2173,7 +2179,7 @@ public class MitmProxy {
         var upstreamHost = vertexHost(credentials);
         var debug = debugExchange(clientReq, null);
         upstream.relayRequest(clientReq, upstreamHost, uri, new Upstream.RelayHooks(
-                upReq -> prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, null),
+                upReq -> prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, false),
                 upResp -> {
                     if (upResp.statusCode() == 401) invalidateVertexToken();
                     if (debug != null) debug.logAtEnd(upResp);
@@ -2427,6 +2433,31 @@ public class MitmProxy {
         return exchange;
     }
 
+    /**
+     * A push or a pull request opened by a known instance, for the event log (#2241), ended with the
+     * request's flow; null for any other request. It reads at most the head of the body and of the answer.
+     */
+    private GitHubCall beginGitHubCall(HttpServerRequest clientReq, RequestContext ctx) {
+        var caller = ctx.caller();
+        if (caller == null) return null;
+        var encoded = clientReq.getHeader("Content-Encoding") != null;
+        var call = apiActivity.beginGitHub(caller.accounts().instanceName(), caller.incarnation(), ctx.domain(),
+                clientReq.method().name(), clientReq.path(), encoded);
+        if (call != null && ctx.flow() != null) ctx.flow().carries(call);
+        return call;
+    }
+
+    /** The two taps as one, either of which may be null. */
+    private static java.util.function.Consumer<Buffer> tap(java.util.function.Consumer<Buffer> a,
+                                                            java.util.function.Consumer<Buffer> b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return chunk -> {
+            a.accept(chunk);
+            b.accept(chunk);
+        };
+    }
+
     private Future<HttpClientRequest> requestWithAsyncDns(RequestOptions options) {
         return upstream.requestWithAsyncDns(options);
     }
@@ -2452,7 +2483,7 @@ public class MitmProxy {
             if (!watchdog.adopt(upReq)) return;
             Future<Boolean> head;
             try {
-                head = prepareApiHead(clientReq, upReq, ctx, requestOptions.getHost(), true, exchange);
+                head = prepareApiHead(clientReq, upReq, ctx, requestOptions.getHost(), true, exchange != null);
             } catch (RuntimeException e) {
                 // A header Vert.x refuses: answer now, as the relay does, not at the idle timeout
                 upReq.reset();
