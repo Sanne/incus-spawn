@@ -2417,7 +2417,8 @@ public class MitmProxy {
                 || !ApiActivity.isModelCall(clientReq.path())) {
             return null;
         }
-        var exchange = apiActivity.begin(caller.accounts().instanceName(), caller.incarnation(), caller.view());
+        var exchange = apiActivity.begin(caller.accounts().instanceName(), caller.incarnation(), caller.view())
+                .to(ctx.domain());
         if (ctx.flow() != null) ctx.flow().carries(exchange);
         // The flow ends it first; these stay as the backstop where nothing replaces them (on a
         // streamed request, the relay's watchdog sets the response's own end and close handlers)

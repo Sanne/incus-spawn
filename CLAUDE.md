@@ -236,6 +236,8 @@ An isx running inside an instance shares that instance's grant for a namespace o
 An `openai` account may be `type: chatgpt` (#1332, experimental, proxy side only so far): the ChatGPT session stays on the host, guests hold proof-bearing look-alikes, and `ChatGptRoute` serves an explicit allowlist of Codex operations.
 See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 
+**The event log** (#2241, first step of the instance overview): the proxy appends one JSON line per ended model call to `~/.local/state/incus-spawn/events/events.jsonl` (`EventLog`), holding no content and never read back to decide routing; the file rolls at 16 MiB keeping four (design/proxy.md "The event log").
+
 **Exposed host ports** (#2117): `exposed-host-ports:` in `config.yaml` lists loopback ports of the host that every instance with network reaches at `host.isx.internal:<port>`, relayed raw by the proxy (`HostPortRelay`) on the address it already listens on.
 Off by default and host-config only; there is no caller identity, since on macOS the relay cannot tell containers apart, but a source outside the bridge's subnet (macOS: not the VM's address) is refused (`RelayCallers`), and isx's own ports are refused, so the proxy-only ACL never admits one.
 The name is in bridge DNS only while a port is listed and is never intercepted (design/proxy.md "Exposed host ports").

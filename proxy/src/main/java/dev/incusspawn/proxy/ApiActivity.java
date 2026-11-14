@@ -36,6 +36,8 @@ final class ApiActivity {
     private final ConcurrentHashMap<String, Counters> byInstance = new ConcurrentHashMap<>();
     private final long startedAt;
     private final Traffic unattributed = new Traffic();
+    /** Where each ended model call is recorded (#2241); null records nothing. */
+    private volatile EventLog events;
 
     ApiActivity() {
         this(System::currentTimeMillis);
@@ -44,6 +46,11 @@ final class ApiActivity {
     ApiActivity(LongSupplier clock) {
         this.clock = clock;
         this.startedAt = clock.getAsLong();
+    }
+
+    /** Records every model call that ends from now on in {@code events}, null for none. */
+    void recordTo(EventLog events) {
+        this.events = events;
     }
 
     /**
@@ -81,13 +88,14 @@ final class ApiActivity {
      * listing {@code view} ({@code InstanceRegistry.resolve}).
      */
     Exchange begin(String instance, String incarnation, long view) {
+        var started = clock.getAsLong();
         return new Exchange(charge(instance, incarnation, view, c -> {
             synchronized (c) {
                 c.requests++;
                 c.inFlight++;
-                c.lastRequestAt = clock.getAsLong();
+                c.lastRequestAt = started;
             }
-        }));
+        }), instance, incarnation, started);
     }
 
     /**
@@ -363,14 +371,29 @@ final class ApiActivity {
     final class Exchange {
         private final Counters counters;
         private final AtomicBoolean ended = new AtomicBoolean();
+        private final String instance;
+        private final String incarnation;
+        private final long startedAt;
         private volatile UsageTap tap;
+        private volatile String domain = "";
+        private volatile int status;
 
-        private Exchange(Counters counters) {
+        private Exchange(Counters counters, String instance, String incarnation, long startedAt) {
             this.counters = counters;
+            this.instance = instance;
+            this.incarnation = incarnation;
+            this.startedAt = startedAt;
+        }
+
+        /** The intercepted domain the call goes to, as the event log names it. */
+        Exchange to(String domain) {
+            this.domain = domain;
+            return this;
         }
 
         /** Reads the usage out of the response about to be relayed, unless it has none to read. */
         void respond(int status, String contentType, String contentEncoding) {
+            this.status = status;
             if (status < 200 || status >= 300) return;
             // Asked for identity (MitmProxy.sendApiRequest); an upstream that compressed anyway is not read
             if (contentEncoding != null && !contentEncoding.isBlank() && !"identity".equalsIgnoreCase(contentEncoding)) {
@@ -398,6 +421,13 @@ final class ApiActivity {
                 counters.inFlight--;
                 counters.lastResponseAt = now;
                 if (usage != null) counters.usage.add(usage);
+            }
+            var log = events;
+            if (log != null) {
+                var u = usage == null ? new Usage() : usage;
+                log.modelCall(new EventLog.ModelCall(Instant.ofEpochMilli(now), instance, incarnation, domain,
+                        read == null ? null : read.model(), status, Math.max(0, now - startedAt),
+                        u.input, u.output, u.cacheRead, u.cacheCreation));
             }
         }
     }
@@ -445,6 +475,7 @@ final class ApiActivity {
         private final Usage usage = new Usage();
         private boolean overflow;
         private boolean seen;
+        private String model;
 
         UsageTap(boolean eventStream) {
             this.eventStream = eventStream;
@@ -463,6 +494,11 @@ final class ApiActivity {
                 }
             }
             append(chunk, from, length);
+        }
+
+        /** The model the response names, or null; a stream names it in {@code message_start}. */
+        String model() {
+            return model;
         }
 
         /** The usage read, or null if the response carried none this could read. */
@@ -513,12 +549,27 @@ final class ApiActivity {
             return false;
         }
 
+        /** A model name is the upstream's, shown beside the guest's: bounded, with no control character. */
+        private static String bounded(String name) {
+            var b = new StringBuilder();
+            name.codePoints().limit(100).forEach(cp -> b.appendCodePoint(Character.isISOControl(cp) ? ' ' : cp));
+            return b.toString();
+        }
+
         private void read(int offset, int length) {
             JqValue node;
             try {
                 node = Jjq.parseForeign(java.util.Arrays.copyOfRange(pending, offset, offset + length), "the API event");
             } catch (RuntimeException e) {
                 return;
+            }
+            if (model == null) {
+                for (var named : new JqValue[] {node.getField("model"), node.path("message").getField("model")}) {
+                    if (named != null && named.isString()) {
+                        model = bounded(named.asText());
+                        break;
+                    }
+                }
             }
             for (var candidate : new JqValue[] {node.getField("usage"), node.path("message").getField("usage")}) {
                 if (candidate.isObject()) {

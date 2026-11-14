@@ -199,6 +199,11 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/proxy-spool");
     }
 
+    /** The proxy's event log (#2241): one JSON line per model call; older files beside it as {@code .1} to {@code .4}. */
+    public static Path proxyEventLogFile() {
+        return home().resolve(".local/state/incus-spawn/events/events.jsonl");
+    }
+
     public static Path apiDebugDir() {
         return home().resolve(".local/state/incus-spawn/api-debug");
     }
