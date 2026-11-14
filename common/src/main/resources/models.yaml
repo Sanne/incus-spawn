@@ -19,7 +19,7 @@ example-claude-opus: claude-opus-5-5
 example-claude-sonnet: claude-sonnet-5-5
 example-claude-haiku: claude-haiku-5-5
 example-claude-haiku-4: claude-haiku-4-5
-example-openai: gpt-4.1
+example-openai: gpt-6-luna
 example-gemini-flash: gemini-3.7-flash
 example-codex: gpt-5.3-codex
 example-codex-spark: gpt-5.3-codex-spark
