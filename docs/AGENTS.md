@@ -169,7 +169,7 @@ Pi can also run against OpenAI, using the same key as [Codex CLI](#codex-cli):
 tools:
   - pi:
       provider: openai
-      model: gpt-4.1
+      model: gpt-6-luna
 ```
 
 ## opencode
@@ -219,7 +219,7 @@ A provider isx does not manage needs no credential from isx: opencode signs in t
 tools:
   - opencode:
       provider: openai
-      model: gpt-4.1
+      model: gpt-6-luna
 ```
 
 ## Gemini CLI
