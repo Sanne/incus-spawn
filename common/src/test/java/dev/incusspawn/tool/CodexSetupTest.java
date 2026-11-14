@@ -149,12 +149,12 @@ class CodexSetupTest {
         when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER),
-                Map.of("model", "gpt-5.3-codex"));
+                Map.of("model", "gpt-6-sol"));
 
         verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), argThat(arg ->
                         arg.contains(CodexSetup.CONFIG_PATH) &&
-                        arg.contains("model = \"gpt-5.3-codex\"") &&
+                        arg.contains("model = \"gpt-6-sol\"") &&
                         !arg.contains("model_reasoning_effort = ")));
     }
 
@@ -180,12 +180,12 @@ class CodexSetupTest {
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().reconfigure(new Container(incus, CONTAINER),
-                Map.of("model", "gpt-5.3-codex", "effort", "xhigh"));
+                Map.of("model", "gpt-6-sol", "effort", "xhigh"));
 
         verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), argThat(arg ->
                         arg.contains(CodexSetup.CONFIG_PATH) &&
-                        arg.contains("model = \"gpt-5.3-codex\"") &&
+                        arg.contains("model = \"gpt-6-sol\"") &&
                         arg.contains("model_reasoning_effort = \"xhigh\"")));
         verify(incus, never()).shellExec(eq(CONTAINER),
                 eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@openai/codex"));
@@ -218,7 +218,7 @@ class CodexSetupTest {
     @Test
     void parametersAcceptModelAndSupportedEfforts() {
         for (var effort : List.of("minimal", "low", "medium", "high", "xhigh")) {
-            var provided = Map.of("model", "gpt-5.3-codex", "effort", effort);
+            var provided = Map.of("model", "gpt-6-sol", "effort", effort);
             var result = ParameterResolver.resolve(new CodexSetup().parameters(), provided);
 
             assertFalse(result.hasErrors(), "Should accept effort: " + effort);
@@ -231,7 +231,7 @@ class CodexSetupTest {
         for (var provided : List.of(
                 Map.of("model", ""),
                 Map.of("model", "invalid model"),
-                Map.of("model", "gpt-5.3-codex\"\n[notice]"),
+                Map.of("model", "gpt-6-sol\"\n[notice]"),
                 Map.of("effort", ""),
                 Map.of("effort", "invalid"))) {
             var result = ParameterResolver.resolve(new CodexSetup().parameters(), provided);
