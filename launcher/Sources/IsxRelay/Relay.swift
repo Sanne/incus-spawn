@@ -45,16 +45,103 @@ public enum RelayError: Error, CustomStringConvertible {
     }
 }
 
+/// Room for connections to the guest: how many are open at once, for all the relays of a
+/// process that are given the same one.
+///
+/// On a Mac the machine runs in a process of Virtualization.framework's, which holds one
+/// descriptor for every vsock connection and has room for 256 descriptors in all. The
+/// connection that does not fit stops the machine, and that limit is another process's, so the
+/// launcher cannot raise it. It asks for no more connections than there is room for instead:
+/// a host connection beyond that waits, accepted and not dialled, until another one ends.
+public final class GuestRoom: @unchecked Sendable {
+    /// The most connections to the guest that are open at once.
+    public let connections: Int
+    // pthread's, not a `Mutex`: a caller sleeps until there is room, and a `Mutex` has no
+    // condition to wait for. Allocated, since neither may move once it is initialized.
+    private let lock = UnsafeMutablePointer<pthread_mutex_t>.allocate(capacity: 1)
+    private let freed = UnsafeMutablePointer<pthread_cond_t>.allocate(capacity: 1)
+    private var taken = 0
+    private var waiters = 0
+
+    public init(connections: Int) {
+        precondition(connections > 0, "room for no connection would keep every one waiting")
+        self.connections = connections
+        lock.initialize(to: pthread_mutex_t())
+        freed.initialize(to: pthread_cond_t())
+        pthread_mutex_init(lock, nil)
+        pthread_cond_init(freed, nil)
+    }
+
+    deinit {
+        pthread_cond_destroy(freed)
+        pthread_mutex_destroy(lock)
+        freed.deallocate()
+        lock.deallocate()
+    }
+
+    /// Takes room for one connection, and waits for it when there is none. False when
+    /// `stillWanted` said no before there was room, and nothing was taken then.
+    ///
+    /// `full` is called first by a caller that has to wait with nobody waiting ahead of it,
+    /// so a full room is said once and not by every connection it keeps waiting. It is called
+    /// without the lock: a line that cannot be written must not keep every other connection
+    /// from starting or ending. `stillWanted` is asked once a second while waiting, and once
+    /// more when there is room, with the lock held: it must not wait for anything.
+    func take(full: () -> Void, stillWanted: () -> Bool) -> Bool {
+        pthread_mutex_lock(lock)
+        guard taken >= connections else {
+            taken += 1
+            pthread_mutex_unlock(lock)
+            return true
+        }
+        let first = waiters == 0
+        waiters += 1
+        pthread_mutex_unlock(lock)
+        if first { full() }
+        pthread_mutex_lock(lock)
+        defer {
+            waiters -= 1
+            pthread_mutex_unlock(lock)
+        }
+        while true {
+            guard stillWanted() else {
+                // Room this caller was woken for goes to another that waits.
+                if taken < connections { pthread_cond_signal(freed) }
+                return false
+            }
+            if taken < connections {
+                taken += 1
+                return true
+            }
+            // By the wall clock, the one a condition counts by on every system: a clock that
+            // is set meanwhile moves one of these checks, and nothing else.
+            var until = timespec()
+            clock_gettime(CLOCK_REALTIME, &until)
+            until.tv_sec += 1
+            pthread_cond_timedwait(freed, lock, &until)
+        }
+    }
+
+    /// Gives back what `take` took, once the connection it was for is closed or was never made.
+    func give() {
+        pthread_mutex_lock(lock)
+        taken -= 1
+        pthread_cond_signal(freed)
+        pthread_mutex_unlock(lock)
+    }
+}
+
 public final class Relay: Sendable {
     public struct Counts: Sendable, Equatable, CustomStringConvertible {
-        /// Host connections accepted whose guest connection is not open yet: each is inside `dial`.
+        /// Host connections accepted whose guest connection is not open yet: each is waiting
+        /// for room for it, or is inside `dial`.
         public var waiting: Int
         /// Connections being relayed now: one host connection and one guest connection each.
         public var held: Int
         /// Connections relayed since the start, the held ones included.
         public var total: Int
-        /// Host connections closed unanswered: the guest could not be dialled, or there was no
-        /// thread to relay on.
+        /// Host connections closed unanswered: the guest could not be dialled, there was no
+        /// thread to relay on, or the host's side ended while it waited for room.
         public var refused: Int
 
         public init(waiting: Int = 0, held: Int = 0, total: Int = 0, refused: Int = 0) {
@@ -74,6 +161,7 @@ public final class Relay: Sendable {
     private let hangUp: @Sendable (Int32) -> Void
     private let log: @Sendable (String) -> Void
     private let stamp: @Sendable () -> Duration
+    private let room: GuestRoom?
     private struct State {
         var counts = Counts()
         /// The guest's descriptor of every connection being relayed, and the stamp taken when
@@ -93,17 +181,22 @@ public final class Relay: Sendable {
     ///   - hangUp: closes a descriptor `dial` returned, at once or later: isx-vm hands the
     ///     close to its main queue, so `held` may fall a moment before the descriptor is free.
     ///     Called once for each, after the relay has shut it down and let go of it.
-    ///   - log: where an accept failure is reported.
+    ///   - log: where an accept failure is reported, and a room that is full.
     ///   - stamp: read once for each host connection, when it is accepted and before the guest
     ///     is dialled. `dropAll(stampedBefore:)` compares it. Called on the connection's thread.
+    ///   - room: when given, `dial` is called only with room taken in it, which is given back
+    ///     after `hangUp` returned or when the dial failed. Without one, every connection is
+    ///     dialled as it is accepted.
     public init(dial: @escaping @Sendable () -> Int32,
                 hangUp: @escaping @Sendable (Int32) -> Void,
                 log: @escaping @Sendable (String) -> Void = { _ in },
-                stamp: @escaping @Sendable () -> Duration = { .zero }) {
+                stamp: @escaping @Sendable () -> Duration = { .zero },
+                room: GuestRoom? = nil) {
         self.dial = dial
         self.hangUp = hangUp
         self.log = log
         self.stamp = stamp
+        self.room = room
     }
 
     public var counts: Counts { state.withLock { $0.counts } }
@@ -283,8 +376,22 @@ public final class Relay: Sendable {
         state.withLock { $0.counts.waiting += 1 }
         // Before the dial: a guest connection asked for before a sleep counts as made before it.
         let accepted = stamp()
+        if let room {
+            // One whose host side ended while it waited is not dialled: what it had sent would
+            // reach the guest long after its sender gave up on the answer. And it stops
+            // waiting within a second, so callers that give up and try again do not add up.
+            let taken = room.take(
+                full: { log("\(room.connections) connections to the guest are open, the most there is room for: the next waits for one to end") },
+                stillWanted: { !Relay.hasEnded(client) })
+            guard taken else {
+                close(client)
+                state.withLock { $0.counts.waiting -= 1; $0.counts.refused += 1 }
+                return
+            }
+        }
         let guest = dial()
         guard guest >= 0 else {
+            room?.give()
             close(client)
             state.withLock { $0.counts.waiting -= 1; $0.counts.refused += 1 }
             return
@@ -311,7 +418,15 @@ public final class Relay: Sendable {
         shutdown(guest, Int32(SHUT_RDWR))
         close(client)
         hangUp(guest)
+        room?.give()
         state.withLock { $0.counts.held -= 1 }
+    }
+
+    // Whether the other side of `descriptor` has closed, whatever it sent before that is
+    // still unread. Asked without waiting.
+    private static func hasEnded(_ descriptor: Int32) -> Bool {
+        var polled = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+        return poll(&polled, 1, 0) > 0 && polled.revents & Int16(POLLHUP | POLLERR) != 0
     }
 
     private static let chunk = 65536
