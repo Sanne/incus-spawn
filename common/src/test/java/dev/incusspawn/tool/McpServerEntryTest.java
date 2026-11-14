@@ -175,4 +175,23 @@ class McpServerEntryTest {
         assertSame(McpClients.PI, new PiSetup().mcpClient());
         assertSame(McpClients.OPENCODE, new OpencodeSetup().mcpClient());
     }
+
+    @Test
+    void geminiCopilotAndBobGetEveryServerInTheirOwnFormWithTheTokenAsAReference() {
+        var mine = "{\"theme\": \"x\", \"mcpServers\": {\"mine\": {\"command\": \"m\"}, \"old\": {}}}";
+        assertSame(McpClients.GEMINI, new GeminiSetup().mcpClient());
+        assertSame(McpClients.COPILOT, new CopilotSetup().mcpClient());
+        assertSame(McpClients.BOB, new BobSetup().mcpClient());
+        var gemini = JqValues.parse(McpClients.mergeServers(mine, "p", List.of(STDIO, HTTP), List.of("old"),
+                McpClients::geminiEntry));
+        var servers = (JqObject) ((JqObject) gemini).get("mcpServers");
+        assertEquals(java.util.Set.of("mine", "jasolo", "atlassian"), new java.util.HashSet<>(servers.keys()));
+        assertTrue(gemini.toJsonString().contains("\"theme\":\"x\""));
+        var http = ((JqObject) servers.get("atlassian")).toJsonString();
+        assertTrue(http.contains("\"httpUrl\"") && http.contains("Bearer ${ATLASSIAN_MCP_AUTH}"), http);
+        var copilot = JqValues.parse(McpClients.mergeServers("{}", "p", List.of(STDIO, HTTP), List.of(),
+                McpClients::copilotEntry)).toJsonString();
+        assertTrue(copilot.contains("\"type\":\"local\"") && copilot.contains("\"type\":\"http\"")
+                && copilot.contains("\"tools\":[\"*\"]"), copilot);
+    }
 }

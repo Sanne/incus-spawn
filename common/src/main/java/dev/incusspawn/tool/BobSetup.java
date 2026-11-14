@@ -118,6 +118,11 @@ public class BobSetup implements ToolSetup {
         return List.of(EnvEntry.set("BOBSHELL_API_KEY", PLACEHOLDER_API_KEY));
     }
 
+    static final String SETTINGS_PATH = "/home/agentuser/.bob/settings/settings.json";
+
+    @Override
+    public McpClient mcpClient() { return McpClients.BOB; }
+
     @Override
     public void install(Container c, Map<String, String> resolvedParams) {
         installBinary(c);
@@ -140,7 +145,7 @@ public class BobSetup implements ToolSetup {
         var bobConfig = SpawnConfig.load().getBob();
 
         c.sh("mkdir -p /home/agentuser/.bob/settings");
-        c.writeFile("/home/agentuser/.bob/settings/settings.json",
+        c.writeFile(SETTINGS_PATH,
                 buildUserSettings(resolvedParams, bobConfig));
         c.writeFile("/home/agentuser/.bob/trustedFolders.json",
                 "{\"version\":1,\"folders\":{\"/home/agentuser\":\"TRUST_FOLDER\"}}");

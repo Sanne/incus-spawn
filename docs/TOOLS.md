@@ -643,7 +643,7 @@ Pass parameter values using the map form in image definitions (the `idea-backend
 ### MCP Servers
 
 A tool declares each MCP server it provides once, under `mcp:`.
-The build registers every server with every coding agent in the image: Claude Code, Codex, Pi and opencode.
+The build registers every server with every coding agent in the image, from Claude Code to Bob Shell.
 The order of the tools does not matter, and neither does the template that installed an agent.
 A child template that adds Codex gets its ancestors' servers too.
 
