@@ -363,7 +363,7 @@ Takes the two host-side Unix sockets (Incus and agent), however they were bridge
 
 ### The tunnel under load (`measure-tunnel.sh`)
 
-Takes the same sockets as `test-tunnel.sh` and measures where that one checks: how many of 24 runs of `test-tunnel.sh` fail, how many of the requests in bursts of 70 and 120 go unanswered or get an empty reply, the latency of `GET /1.0` on a new and on a kept connection while 0, 200 and 400 connections are held open (`tunnel-hold.pl` holds them as event streams), and how long the guest's forwarder children outlive their connections. It stops with exit code 3 when the tunnel no longer answers. It prints a summary and, with `OUT=<dir>`, keeps every log and a `values` file of `key=value` lines. It compares two programs carrying the tunnel, on a machine that does nothing else: its numbers are timings.
+Takes the same sockets as `test-tunnel.sh` and measures where that one checks: how many of 24 runs of `test-tunnel.sh` fail, how many of the requests in bursts of 70 and 120 go unanswered or get an empty reply, the latency of `GET /1.0` on a new and on a kept connection while 0 and 150 connections are held open (`tunnel-hold.pl` holds them as event streams), how many of 400 asked for are held at once (a Mac's machine holds fewer, and the launcher's relays hold 192: no latency is taken there, since a new connection would wait), and how long the guest's forwarder children outlive their connections. It stops with exit code 3 when the tunnel no longer answers. It prints a summary and, with `OUT=<dir>`, keeps every log and a `values` file of `key=value` lines. It compares two programs carrying the tunnel, on a machine that does nothing else: its numbers are timings.
 
 ### The launcher against vfkit (`launcher-on-mac.sh`)
 
