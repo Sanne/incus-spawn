@@ -123,7 +123,8 @@ public final class ProofCarriers {
         return new Presented(result, claimsProof);
     }
 
-    private static boolean matchesDomain(String declared, String domain) {
+    /** Whether {@code domain} is the auth entry domain {@code declared}, or under its {@code *.} wildcard. */
+    public static boolean matchesDomain(String declared, String domain) {
         return declared.equalsIgnoreCase(domain) || declared.startsWith("*.")
                 && domain.toLowerCase(java.util.Locale.ROOT).endsWith(declared.substring(1).toLowerCase(java.util.Locale.ROOT));
     }

@@ -155,6 +155,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - MCP server: delegating work to isx instances
   - Agents driving isx over MCP
   - External orchestrators: owners, start, stop and destroy
+  - Tools declare MCP servers for every agent
   - Considered and deferred
 - [macOS, the appliance and VMs](design/macos-and-vms.md)
   - Incus Daemon Connection

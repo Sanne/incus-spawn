@@ -989,8 +989,8 @@ class ToolDefTest {
             var def = ToolDef.loadFromStream(is);
 
             assertEquals("atlassian-mcp", def.getName());
-            assertEquals(List.of("claude"),
-                    def.getRequires().stream().map(ToolDef.ToolRef::getName).toList());
+            // Every agent in the image gets the server, so none is required (#2206)
+            assertEquals(List.of(), def.getRequires());
             assertNotNull(def.getProxy());
             assertEquals("atlassian", def.getProxy().getConfigNamespace());
 
@@ -1005,8 +1005,11 @@ class ToolDefTest {
             assertEquals(List.of("mcp.atlassian.com"), authEntries.get(0).getDomains());
             assertEquals("basic", authEntries.get(0).getType());
 
-            assertNotNull(def.getRunAsUser());
-            assertFalse(def.getRunAsUser().isEmpty());
+            assertEquals(List.of(), def.getRunAsUser());
+            var server = new YamlToolSetup(def).mcpServers(Map.of()).getFirst();
+            assertEquals("https://mcp.atlassian.com/v2/mcp", server.url());
+            // The proof the proxy checks, read by each agent as it connects
+            assertEquals("ATLASSIAN_MCP_AUTH", server.bearerTokenEnv());
 
             var setup = new YamlToolSetup(def);
             assertEquals(List.of(), new ProofCarriers(List.of(setup)).warnings(),

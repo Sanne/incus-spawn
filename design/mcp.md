@@ -667,6 +667,41 @@ A built-in `isx orca` (the contributor's branch) ties the surface to one tool's 
 MCP as the integration API would leave out every user and orchestrator that does not want MCP.
 A plugin system loaded at run time is not trivial in a native image, and nothing here needs code outside isx.
 
+## Tools declare MCP servers for every agent
+
+A tool declares the MCP servers it provides once, as `mcp:` entries (#2206).
+Each entry is either a stdio `command` with an `env`, or an HTTPS `url` with an optional `bearer-token-env`, and none of its keys belongs to one agent.
+An agent takes part by implementing `ToolSetup.mcpClient()` (`McpClients`), so a new agent gets every tool's servers, and a new tool reaches every agent, with no change to the other side.
+Claude Code, Codex, Pi and opencode implement it; Gemini CLI, Copilot and Bob do not yet, and a template whose servers no agent takes is warned about.
+jasolo, the first built-in that needs it, is an ordinary tool with one entry.
+
+**Chosen:** one build step, `McpServerRegistration`, run once per build in both build paths, after every tool's setup and every layer's repositories, over the tools of the whole template chain.
+It registers every server with every agent the image has, so the order of the tools and the layer that installed an agent decide nothing.
+A child template that adds Codex gets its ancestors' servers, and Codex or opencode rewriting its config whole during setup costs nothing, since the step runs after.
+Claude Code, Codex and Pi are driven through their own `mcp add` and `mcp remove`, as agentuser, so each CLI stays the authority on its own file.
+opencode's `mcp add` has no remove and rewrites the `opencode.json` of the directory it runs in, so isx merges its entries into the user config `OpencodeSetup` already writes.
+Pi gets `--exposure direct`, as `isx`'s own entry does, so the tools are declared to its model as Claude Code declares them; that choice is the adapter's, never the tool's.
+Root records what it registered in `/var/lib/isx/mcp-servers`, one `<agent> <server>` per line, so a later build removes a server no tool declares any more and leaves an entry isx did not make alone.
+A stdio command not on agentuser's PATH fails the build, since every agent would list a server that cannot start and say so only when a session tries it.
+
+**A credential never enters an entry.**
+An HTTP server reaches one only through `bearer-token-env`, a variable each agent reads when it connects: Claude Code's `headersHelper`, Codex's and Pi's `--bearer-token-env-var`, opencode's `{env:...}`.
+Pointed at the tool's proof placeholder, as `atlassian-mcp`'s is, that variable carries a proof the proxy checks before it injects the account's credential, as for any other tool.
+The loader refuses a `bearer-token-env` that is not one of the tool's own exported `proxy.placeholders`, or a URL whose host is none of its `proxy.auth` domains, so every token a server receives is a proof the proxy checks.
+It also refuses an entry whose `env` names a credential (`SecretRedactor.looksSecret`), an entry that is neither one form nor the other, a URL that is not HTTPS, and a server named `isx`, which the per-start coordinator registration owns.
+A project-local tool gains nothing by it: a stdio server runs inside the guest, as its `run_as_user` already could, and an HTTP one is reached through the proxy like every other guest request.
+
+**`${isx_repo_paths}`** in an entry's `command` or `env` becomes the paths of the chain's repositories, comma-separated, when the step runs, after every layer's clones.
+So jasolo scans the clones the template made for it with no configuration, and a child template that adds a repository rebuilds into a server that sees it.
+A variable left empty is not set, which is what an unset parameter means to a server.
+
+**Alternatives:**
+- *Each tool's `run_as_user` calling each agent's CLI*, as `atlassian-mcp` and pinchtab did: every tool repeats the code for every agent, a tool listed before an agent finds no CLI, and a server never reaches an agent a child template adds.
+- *Registering at each tool's own install*: the same two gaps, plus Codex and opencode losing the entries when their setup rewrites the config.
+- *Reconciling at every start*, as `McpClientRegistration` does for the coordinator entry: file tests on the branch, start and shell path for state the build already fixes; only the coordinator entry needs a start, for its rotating secret.
+- *isx writing every agent's file itself*: four file formats to track where three CLIs already offer a non-interactive add and remove.
+- *One shared `/etc/isx/mcp.json`*: none of the agents reads a system-wide list without a flag, so it would need launch wrappers.
+
 ## Considered and deferred
 
 ### MCP `ask` answered from the host

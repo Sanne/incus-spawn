@@ -245,6 +245,7 @@ public class ToolDefValidator {
         var invalidNamespace = invalidNamespace(def);
         if (invalidNamespace != null) refusals.add(invalidNamespace);
         refusals.addAll(invalidPathScopes(def));
+        refusals.addAll(invalidMcpServers(def));
         return refusals;
     }
 
@@ -270,6 +271,62 @@ public class ToolDefValidator {
             });
         }
         return errors;
+    }
+
+    /**
+     * Every {@code mcp:} entry that cannot be registered with an agent ({@link McpServer#problem}),
+     * every name declared twice, and every {@code bearer-token-env} that is not one of the tool's
+     * own {@code proxy.placeholders}, as an error: a token reaches a server only as a proof the
+     * proxy checks before it injects the account's credential. Such a tool is refused where definitions load:
+     * an agent would get a server other than the one declared, or none.
+     */
+    public static List<String> invalidMcpServers(ToolDef def) {
+        var errors = new ArrayList<String>();
+        var names = new java.util.HashSet<String>();
+        // The variables a start fills with this tool's proof, which the proxy checks before it injects
+        // (declared and exported, since a start only replaces a variable the build set)
+        var exported = YamlToolSetup.placeholderCandidates(def);
+        var placeholders = def.getProxy() == null ? java.util.Set.<String>of()
+                : def.getProxy().getPlaceholders().stream().filter(java.util.Objects::nonNull)
+                        .map(ToolDef.PlaceholderDef::getEnv).filter(exported::contains)
+                        .collect(java.util.stream.Collectors.toSet());
+        // The hosts the proxy injects this tool's credential for, where its proof is checked
+        var domains = def.getProxy() == null ? List.<String>of()
+                : def.getProxy().getAuth().stream().filter(java.util.Objects::nonNull)
+                        .flatMap(a -> a.getDomains().stream()).filter(java.util.Objects::nonNull).toList();
+        for (var entry : def.getMcp()) {
+            var problem = McpServer.problem(entry);
+            var label = entry.getName() == null ? "" : entry.getName();
+            if (problem != null) {
+                errors.add(OutputFormat.oneLine("mcp server '" + label + "' in '" + def.getName() + "': " + problem));
+            } else if (!names.add(entry.getName())) {
+                errors.add("mcp server '" + label + "' is declared twice in '" + def.getName() + "'");
+            } else if (entry.getEnv().keySet().stream().anyMatch(SecretRedactor::looksSecret)) {
+                errors.add(OutputFormat.oneLine("mcp server '" + label + "' in '" + def.getName()
+                        + "': env would write a credential into each agent's config;"
+                        + " use 'bearer-token-env' with a proxy placeholder instead"));
+            } else if (entry.getBearerTokenEnv() != null && !placeholders.contains(entry.getBearerTokenEnv())) {
+                errors.add(OutputFormat.oneLine("mcp server '" + label + "' in '" + def.getName() + "': bearer-token-env "
+                        + entry.getBearerTokenEnv() + " is not one of the tool's proxy.placeholders,"
+                        + " so no start fills it with a proof the proxy checks"));
+            } else if (entry.getBearerTokenEnv() != null && domains.stream().noneMatch(d ->
+                    dev.incusspawn.proxy.ProofCarriers.matchesDomain(d, urlHost(entry.getUrl())))) {
+                errors.add(OutputFormat.oneLine("mcp server '" + label + "' in '" + def.getName()
+                        + "': its url's host is none of the tool's proxy.auth domains,"
+                        + " so its proof would reach a server the proxy does not check it for"));
+            }
+        }
+        return errors;
+    }
+
+    /** The host of {@code url}, or {@code ""} when it has none. */
+    private static String urlHost(String url) {
+        try {
+            var host = java.net.URI.create(url).getHost();
+            return host == null ? "" : host;
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
     }
 
     /**

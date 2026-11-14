@@ -60,6 +60,9 @@ public class PiSetup implements ToolSetup {
     public boolean codingAgent() { return true; }
 
     @Override
+    public McpClient mcpClient() { return McpClients.PI; }
+
+    @Override
     public String name() {
         return "pi";
     }

@@ -58,6 +58,22 @@ public interface ToolSetup {
      */
     default ImageDef.SkillsDef skills() { return ImageDef.SkillsDef.EMPTY; }
 
+    /**
+     * The MCP servers this tool provides, for a template that sets {@code resolvedParams}: the
+     * build registers each with every agent in the image whose {@link #mcpClient} is not null,
+     * once every tool is set up. Empty for most tools; a YAML tool's {@code mcp:} entries.
+     */
+    default java.util.List<McpServer> mcpServers(java.util.Map<String, String> resolvedParams) {
+        return java.util.List.of();
+    }
+
+    /**
+     * How this agent takes the MCP servers the image's tools declare ({@link #mcpServers}), or
+     * null for a tool that is not an MCP client. An agent added here gets every tool's servers
+     * with no change to those tools.
+     */
+    default McpClient mcpClient() { return null; }
+
     /** Proxy definition for credential injection by the MITM proxy. Null if this tool has no proxy config. */
     default ToolDef.ProxyDef proxy() { return null; }
 

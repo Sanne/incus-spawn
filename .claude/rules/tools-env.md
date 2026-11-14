@@ -4,6 +4,7 @@ paths:
   - "common/src/main/resources/tools/**"
   - "common/src/main/java/dev/incusspawn/config/Env*.java"
   - "common/src/main/java/dev/incusspawn/lifecycle/*Integration*.java"
+  - "cli/src/main/java/dev/incusspawn/command/McpServerRegistration.java"
 ---
 
 # Tool System
@@ -72,6 +73,19 @@ An ancestor installed them, so their skills are already in the image, and re-fet
 Both fields are opt-in and most built-ins declare neither; `mvnd` carries a note because the bare name gives an agent no reason to prefer it over `mvn`, while `zmx`/`starship` need nothing.
 Don't restate the tool's `description`, and don't list what's installed -- the generated file already does that.
 Notes are best written reactively, after observing an agent get something wrong; speculative ones tend to spend context on advice nobody needed.
+
+**Tools declare MCP servers once** (#2206, design/mcp.md "Tools declare MCP servers for every agent").
+A tool's `mcp:` entries (`ToolDef.McpEntry`, `ToolSetup.mcpServers`, resolved into `McpServer`) are a stdio `command` with `env`, or an HTTPS `url` with `bearer-token-env`; no key belongs to one agent.
+`McpServerRegistration.register` runs once per build, in both build paths, after every tool's setup and every layer's clones, over the whole chain's tools (an ancestor's tool a layer reconfigures counts once, with the layer's parameters).
+It registers every server with every agent whose `ToolSetup.mcpClient()` is set (`McpClients`: Claude Code, Codex and Pi through their own `mcp add`/`mcp remove` as agentuser, opencode by a merge into `opencode.json`), so a tool declares its server there rather than calling an agent's CLI from `run_as_user` or its own install (`headroom`, Claude-only by design, and `idea-backend`'s loopback `http://` server, which `mcp:` does not take, still do).
+A new agent implements `mcpClient()`; nothing else changes.
+Root's record `/var/lib/isx/mcp-servers` (`<agent> <server>` lines) lets a later build remove a server no tool declares any more; an entry isx did not record is left alone.
+A build with no agent does not read the record: a copied rootfs never loses a tool, so only a child built from a parent image older than a definition that dropped its agent keeps that agent's entries, until the stale parent is rebuilt.
+A stdio command not on agentuser's login PATH fails the build, and so do two tools declaring one server name.
+`ToolDefValidator.invalidMcpServers` refuses, where definitions load, an entry that is neither form, a URL that is not HTTPS, a name outside `McpServer.NAME` or the reserved `isx`, an `env` key `SecretRedactor.looksSecret` names, a `bearer-token-env` that is not one of the tool's own exported `proxy.placeholders`, and a bearer URL whose host is none of its `proxy.auth` domains.
+A credential travels only as that proof, which each agent reads when it connects and the proxy checks before it injects.
+`${isx_repo_paths}` in an entry's `command` or `env` becomes the chain's repository paths, comma-separated, and an empty variable is not set.
+The entries are part of `contentFingerprint()`.
 
 Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user YAML -> search paths -> project-local YAML.
 Java CDI tools are used as fallback when no YAML tool matches.
