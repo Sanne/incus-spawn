@@ -892,7 +892,7 @@ jobs:
           parent: tpl-minimal
           tools:
             - codex:
-                model: gpt-5.3-codex
+                model: gpt-6-sol
                 effort: medium
           default-action: codex
           EOF

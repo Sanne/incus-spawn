@@ -93,7 +93,7 @@ By default Codex picks both the model and the reasoning effort.
 ```yaml
 tools:
   - codex:
-      model: gpt-5.3-codex
+      model: gpt-6-sol
       effort: high
 ```
 

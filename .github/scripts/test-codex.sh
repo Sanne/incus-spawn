@@ -69,7 +69,7 @@ assert "config.toml exists" test -f "$CONFIG"
 assert_eq "config.toml is owned by agentuser" "agentuser" \
     stat -c '%U' "$CONFIG"
 assert "template's model parameter reached the config" \
-    grep -q '^model = "gpt-5.3-codex"$' "$CONFIG"
+    grep -q '^model = "gpt-6-sol"$' "$CONFIG"
 assert "template's effort parameter reached the config" \
     grep -q '^model_reasoning_effort = "medium"$' "$CONFIG"
 assert "unattended approval policy" \
