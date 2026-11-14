@@ -60,6 +60,11 @@ validate() {
         load_source "$i"
         type="$(item_source_type "$i")"
         ! declare -F src_validate > /dev/null || src_validate
+        # A findings source (#2227) has no pin to propose, verify or cool: it must be class judgement.
+        if item_findings; then
+            [[ "$class" == judgement ]] || die "manifest: item $i: a findings source is class judgement, not $class"
+            continue
+        fi
         item_proposed "$i" || continue
         within="$(item "$i" within)"
         [[ "$within" == series || "$within" == any ]] || die "manifest: $class item $i: within must be series or any"
@@ -154,6 +159,7 @@ plan() {
         [[ -z "${UPSTREAM_ONLY:-}" || "$UPSTREAM_ONLY" == "$i" ]] || continue
         load_source "$i"
         TREE="$ENGINE_ROOT"
+        if item_findings; then plan_findings_isolated "$out" "$i"; continue; fi
         cur="$(src_current)"
         all="$(src_releases)"
         [[ -n "$all" ]] || die "$i: the publisher lists no release"
@@ -230,6 +236,46 @@ $(src_describe "$top" 2>/dev/null || true)" "$(item "$i" judgement design)"
         printf '%s\tpr\t%s\tprepared\n' "$i" "$cand" >> "$out/plan.tsv"
     done
     cat "$out/plan.tsv"
+}
+
+# plan_findings_isolated <out> <item>: plan_findings, but a failure of a findings source (a vendor page
+# that moved, a host that is down) fails this item alone: the run goes on, so no other item's bump is
+# held back, and the failure is reported as an issue of its own, once. Run in a subshell with errexit
+# on, since a function tested by || or if runs with it off and a die inside $(...) would be missed.
+plan_findings_isolated() {
+    local out="$1" i="$2" rc=0 why
+    set +e
+    ( set -e; plan_findings "$out" "$i" ) 2> "$out/$i.err" > /dev/null
+    rc=$?
+    set -e
+    (( rc != 0 )) || return 0
+    # Only a bounded line of plain characters goes into the issue: the message may quote a vendor's page.
+    why="$(grep -v '^$' "$out/$i.err" | tail -1 | tr -cd 'A-Za-z0-9 .,:;/_()=-' | cut -c1-300 || true)"
+    log "$i: the findings source failed, so this item alone is skipped: $why"
+    rm -f "$out/issues/$i-"*.json
+    issue_file "$out" "$i" source-failed "[upstream] $i: the watch cannot read its source" \
+        "The findings source of \`$i\` failed: \`$why\`
+
+The other items of the watch were planned as usual. A vendor page that changed format, or one that is down, stops \`$i\` alone: a box fixes the parser in \`upstream/engine/source-$(item_source_type "$i").sh\` against the page as it is now (#2227). The issue is opened once and the next good run does not reopen it." "$(item "$i" judgement design)"
+    printf '%s\tissue\tsource-failed\t%s\n' "$i" "$why" >> "$out/plan.tsv"
+}
+
+# plan_findings <out> <item>: one issue per finding of a findings source (#2227), unless an issue of that
+# title was closed. Read into a variable first: errexit does not see a process substitution fail.
+plan_findings() {
+    local out="$1" i="$2" found key title body n=0
+    found="$(src_findings)"
+    while IFS=$'\t' read -r key title body; do
+        [[ -n "$title" ]] || continue
+        if closed_issue_exists "$title"; then
+            printf '%s\tnone\t-\tanswered (closed): %s\n' "$i" "$key" >> "$out/plan.tsv"
+            continue
+        fi
+        issue_file "$out" "$i" "$key" "$title" "${body//\\n/$'\n'}" "$(item "$i" judgement design)"
+        printf '%s\tissue\t%s\tfinding\n' "$i" "$key" >> "$out/plan.tsv"
+        n=$((n + 1))
+    done <<<"$found"
+    (( n > 0 )) || printf '%s\tnone\t-\tno finding\n' "$i" >> "$out/plan.tsv"
 }
 
 # open_pr_carries <item> <version>: this repository's open PR on upstream/<item> names <version>
@@ -426,7 +472,16 @@ _verify_trees() {
     changed="$(git -C "$ENGINE_ROOT" diff --name-only "$base" "$head")"
     for i in $(items); do
         for f in $(item_list "$i" files); do
-            grep -qxF -- "$f" <<<"$changed" && { touched+=("$i"); break; }
+            grep -qxF -- "$f" <<<"$changed" || continue
+            # A findings item (#2227) pins nothing, so a person's edit of its file is an ordinary
+            # change; an app PR may never touch it.
+            load_source "$i"
+            if item_findings; then
+                [[ "$author" != "$(app_login)" ]] || die "an upstream PR may not change $f: item $i has no pin to bump"
+            else
+                touched+=("$i")
+            fi
+            break
         done
     done
     if [[ ${#touched[@]} == 0 ]]; then

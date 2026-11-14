@@ -358,3 +358,23 @@ items:
     files:
       - scripts/distro-images.env
     fields: [version, sha256.any]
+  models:
+    class: judgement
+    # A findings source: nothing is pinned, so there is no PR, no verifier and no cooling. Each
+    # declared model ID is checked against the deprecation page of the vendor it belongs to, and an
+    # issue is opened for one that is deprecated or retired, or that has a successor (#2227).
+    judgement: build
+    source:
+      type: model-deprecations
+      vendors:
+        anthropic:
+          url: https://platform.claude.com/docs/en/about-claude/model-deprecations.md
+          id-prefix: '^claude-'
+        openai:
+          url: https://developers.openai.com/api/docs/deprecations.md
+          id-prefix: '^(gpt-|o[0-9]-)'
+        google:
+          url: https://ai.google.dev/gemini-api/docs/deprecations
+          id-prefix: '^gemini-'
+    files:
+      - common/src/main/resources/models.yaml

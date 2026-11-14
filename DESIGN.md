@@ -180,6 +180,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The items
   - The github-asset source type
   - The signed-file source type
+  - The model-deprecations source type
   - The review class
   - Threat model
   - Why not Sanne's own token

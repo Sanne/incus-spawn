@@ -93,12 +93,28 @@ load_source() {
     # The optional hooks of the type loaded before this one must not carry over: plan asks for
     # src_extra_issues by name, and the kernel's would file its EOL issue under any later item;
     # newest asks for src_order, and the base image's would order the next item's versions.
-    unset -f src_extra_issues src_stale_issues src_validate src_order
+    unset -f src_extra_issues src_stale_issues src_validate src_order src_findings
     # shellcheck source=/dev/null
     . "$f"
+    # A findings source (#2227) pins nothing: it has no version, no bump and no verifier, only the
+    # findings the watch turns into issues, so it defines src_findings and none of the rest.
+    if declare -F src_findings > /dev/null; then return 0; fi
     for fn in src_current src_series src_releases src_released_at src_apply src_fields src_verifier src_first_party src_describe; do
         declare -F "$fn" > /dev/null || die "source type $type lacks $fn"
     done
+}
+
+# item_findings: the loaded source is a findings source (#2227): issues, never a pin or a PR.
+item_findings() { declare -F src_findings > /dev/null; }
+
+# closed_issue_exists <title>: an issue of exactly that title was closed, so a person has answered it
+# and the watch does not open it again. A read that fails counts as "no": ensure_issue still keeps
+# one open issue per title.
+closed_issue_exists() {
+    local n
+    n="$(gh issue list -R "$(manifest_repo)" --state closed --limit 100 --search "in:title \"$1\"" --json title 2> /dev/null \
+        | jq -r --arg t "$1" '[.[] | select(.title == $t)] | length' 2> /dev/null)" || return 1
+    [[ "$n" =~ ^[0-9]+$ && "$n" != 0 ]]
 }
 
 # fetch <url> <file>: one download, failing loudly. Tests put a curl on PATH that serves fixtures.
