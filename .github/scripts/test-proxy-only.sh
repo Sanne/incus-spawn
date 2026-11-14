@@ -89,10 +89,17 @@ no_egress_from_another_address() {
 
 # Any HTTP answer is the proxy's: an intercepted domain resolves to the gateway, and a 401 for
 # the missing credential still proves the connection got through.
+# Right after a restart the guest's address is configured before its resolver and the bridge's
+# neighbour entry for it are settled (#2234), so a positive check waits up to 30 s for the first
+# answer, like reaches_internet. Only this check waits: the no-egress checks never retry.
 reaches_proxy() {
-    local code
-    code=$(guest_exec "$1" -- curl -s -m 15 -o /dev/null -w '%{http_code}' "$PROBE_URL" || true)
-    [ -n "$code" ] && [ "$code" != 000 ]
+    local code deadline=$((SECONDS + 30))
+    while :; do
+        code=$(guest_exec "$1" -- curl -s -m 5 -o /dev/null -w '%{http_code}' "$PROBE_URL" || true)
+        [ -n "$code" ] && [ "$code" != 000 ] && return 0
+        [ "$SECONDS" -ge "$deadline" ] && return 1
+        sleep 2
+    done
 }
 resolves() { guest_exec "$1" -- getent hosts example.com >/dev/null; }
 no_direct_ipv4() { curl_fails_in_guest "$1" -- curl -s -m 5 -o /dev/null http://1.1.1.1/; }
