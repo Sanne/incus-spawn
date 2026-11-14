@@ -30,6 +30,12 @@ downloads:
     extract_in_container: true
     arch: aarch64
 
+  # The IDE Index MCP Server plugin, installed by run_as_user below when index-mcp is true. It is
+  # fetched on every build, and the upstream watch moves its pin (item idea-index-plugin).
+  - url: https://github.com/hechtcarmel/jetbrains-index-mcp-plugin/releases/download/5.20.3/jetbrains-index-mcp-plugin-5.20.3-signed.zip
+    sha256: 5a9aa89721817bf349e2d2f942af59c402feee9ab02f4fae2ad9361713fd1465
+    destination_file: /opt/index-mcp-plugin.zip
+
 run:
   - ln -snf /opt/idea-IU-* /opt/idea
 
@@ -50,10 +56,7 @@ run_as_user:
       IJ_CFG_DIR=~/.config/JetBrains/$(grep -o '"dataDirectoryName": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
       PLUGIN_DIR="$IJ_DATA_DIR/plugins"
       mkdir -p "$PLUGIN_DIR" "$IJ_CFG_DIR/options"
-      curl -fSL -o /tmp/index-mcp-plugin.zip https://github.com/hechtcarmel/jetbrains-index-mcp-plugin/releases/download/5.20.3/jetbrains-index-mcp-plugin-5.20.3-signed.zip
-      echo "5a9aa89721817bf349e2d2f942af59c402feee9ab02f4fae2ad9361713fd1465  /tmp/index-mcp-plugin.zip" | sha256sum -c --quiet
-      unzip -qo /tmp/index-mcp-plugin.zip -d "$PLUGIN_DIR"
-      rm -f /tmp/index-mcp-plugin.zip
+      unzip -qo /opt/index-mcp-plugin.zip -d "$PLUGIN_DIR"
       cat > "$IJ_CFG_DIR/options/mcp-plugin.xml" << 'MCPCFG'
     <application>
       <component name="McpPluginSettings">

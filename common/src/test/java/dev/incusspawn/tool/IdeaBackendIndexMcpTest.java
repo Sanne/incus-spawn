@@ -26,7 +26,7 @@ class IdeaBackendIndexMcpTest {
 
     private static final String CONTAINER = "test-container";
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
-    private static final List<String> STUBBED = List.of("curl", "sha256sum", "unzip", "claude");
+    private static final List<String> STUBBED = List.of("unzip", "claude");
 
     @TempDir
     Path home;
@@ -36,7 +36,7 @@ class IdeaBackendIndexMcpTest {
         var params = resolve(Map.of());
         assertEquals("false", params.get("index-mcp"));
 
-        var run = runIndexMcpStep(params, 0);
+        var run = runIndexMcpStep(params);
 
         assertEquals(0, run.exitCode(), run.output());
         assertEquals("", run.calls());
@@ -47,15 +47,14 @@ class IdeaBackendIndexMcpTest {
     void enabledInstallsTheCheckedPluginAndRegistersItOnTheConfiguredPort() throws Exception {
         var params = resolve(Map.of("index-mcp", "true"));
 
-        var run = runIndexMcpStep(params, 0);
+        var run = runIndexMcpStep(params);
 
         assertEquals(0, run.exitCode(), run.output());
         var calls = run.calls().lines().toList();
-        assertEquals(List.of("curl", "sha256sum", "unzip", "claude"), run.commands());
-        assertTrue(calls.get(1).contains(" -c"), calls.get(1));
+        assertEquals(List.of("unzip", "claude"), run.commands());
 
-        var registration = Pattern.compile("http://127\\.0\\.0\\.1:(\\d+)/index-mcp/streamable-http").matcher(calls.get(3));
-        assertTrue(calls.get(3).startsWith("claude mcp add ") && registration.find(), calls.get(3));
+        var registration = Pattern.compile("http://127\\.0\\.0\\.1:(\\d+)/index-mcp/streamable-http").matcher(calls.get(1));
+        assertTrue(calls.get(1).startsWith("claude mcp add ") && registration.find(), calls.get(1));
         var pluginXml = Files.readString(home.resolve(".config/JetBrains/IntelliJIdea2026.2/options/mcp-plugin.xml"));
         assertTrue(pluginXml.contains("name=\"serverPort\" value=\"" + registration.group(1) + "\""), pluginXml);
 
@@ -63,12 +62,19 @@ class IdeaBackendIndexMcpTest {
                 "verify checks the plugin");
     }
 
+    /**
+     * The plugin is a {@code downloads:} entry, so the build checks its sum before the step ever runs
+     * (and the upstream watch's {@code idea-index-plugin} item moves it), never a line of script.
+     */
     @Test
-    void aChecksumMismatchStopsBeforeUnzip() throws Exception {
-        var run = runIndexMcpStep(resolve(Map.of("index-mcp", "true")), 1);
-
-        assertNotEquals(0, run.exitCode(), run.output());
-        assertEquals(List.of("curl", "sha256sum"), run.commands());
+    void thePluginIsACheckedDownloadTheStepOnlyUnpacks() throws Exception {
+        var def = definition();
+        var plugin = def.getDownloads().stream().filter(d -> d.getUrl().contains("jetbrains-index-mcp-plugin")).toList();
+        assertEquals(1, plugin.size());
+        assertTrue(plugin.get(0).getSha256().matches("[0-9a-f]{64}"), plugin.get(0).getSha256());
+        assertEquals("/opt/index-mcp-plugin.zip", plugin.get(0).getDestinationFile());
+        assertNull(plugin.get(0).getArch());
+        assertFalse(String.join("\n", def.getRunAsUser()).contains("curl"), "the step downloads nothing");
     }
 
     private static ToolDef definition() throws Exception {
@@ -97,7 +103,7 @@ class IdeaBackendIndexMcpTest {
     }
 
     /** The run_as_user step that handles index-mcp, as install() hands it to the guest, run locally. */
-    private Run runIndexMcpStep(Map<String, String> params, int sha256sumExit) throws Exception {
+    private Run runIndexMcpStep(Map<String, String> params) throws Exception {
         var def = definition();
         def.setDownloads(List.of());
         var incus = mock(IncusClient.class);
@@ -112,15 +118,14 @@ class IdeaBackendIndexMcpTest {
         // Only the guest's paths change: the host's own IDE or /tmp must not decide the result
         var idea = Files.createDirectories(home.resolve("opt-idea"));
         Files.writeString(idea.resolve("product-info.json"), "{\"dataDirectoryName\": \"IntelliJIdea2026.2\"}");
-        step = step.replace("/opt/idea/", idea + "/").replace("/tmp/index-mcp-plugin.zip", home + "/index-mcp-plugin.zip");
+        step = step.replace("/opt/idea/", idea + "/").replace("/opt/index-mcp-plugin.zip", home + "/index-mcp-plugin.zip");
 
         var stubs = Files.createDirectories(home.resolve("stubs"));
         var calls = home.resolve("calls");
         Files.writeString(calls, "");
         for (var command : STUBBED) {
             var stub = stubs.resolve(command);
-            Files.writeString(stub, "#!/bin/sh\necho \"" + command + " $*\" >> \"$ISX_CALLS\"\n"
-                    + (command.equals("sha256sum") ? "cat > /dev/null\nexit " + sha256sumExit + "\n" : ""));
+            Files.writeString(stub, "#!/bin/sh\necho \"" + command + " $*\" >> \"$ISX_CALLS\"\n");
             assertTrue(stub.toFile().setExecutable(true));
         }
         var result = GuestShell.exec(home, Map.of("PATH", stubs + ":" + System.getenv("PATH"),

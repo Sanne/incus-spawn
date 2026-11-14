@@ -4,7 +4,7 @@
 # design/upstream.md says why each key exists; UpstreamManifestTest and `upstream.sh validate` hold
 # its rules: class defaults to judgement, every item needs source and files, a mechanical or review one
 # within and verify too (a review item, #2210, gets the same proven PR, which the bot never merges),
-# verify.type must be what the source type provides, cooling is 24h or more unless the source is
+# verify.type must be what the source type provides (signed-sums or publisher-sums for a mechanical item), cooling is 24h or more unless the source is
 # first party, and there is no key that skips a check.
 repo: Sanne/incus-spawn
 app:
@@ -58,3 +58,43 @@ items:
     files:
       - common/src/main/resources/tools/idea-backend.yaml
     fields: [description, url.x86_64, sha256.x86_64, url.aarch64, sha256.aarch64]
+  starship:
+    class: mechanical
+    # The major version: starship 2.0 would open an issue.
+    within: series
+    cooling: 48h
+    judgement: build
+    source:
+      type: github-asset
+      repo: starship/starship
+      tag-prefix: v
+      sums: sha256-asset
+      versioned-description: true
+      assets:
+        x86_64: starship-x86_64-unknown-linux-gnu.tar.gz
+        aarch64: starship-aarch64-unknown-linux-musl.tar.gz
+    verify:
+      type: publisher-sums
+    files:
+      - common/src/main/resources/tools/starship.yaml
+    fields: [description, url.x86_64, sha256.x86_64, url.aarch64, sha256.aarch64]
+  idea-index-plugin:
+    # A person merges it: the plugin must fit the IDEA build idea-backend installs, which no
+    # check here proves, and its release ships no sums (GitHub's digest is all there is).
+    class: review
+    within: series
+    cooling: 48h
+    judgement: build
+    source:
+      type: github-asset
+      repo: hechtcarmel/jetbrains-index-mcp-plugin
+      tag-prefix: ""
+      sums: github-digest
+      assets:
+        any: jetbrains-index-mcp-plugin-{version}-signed.zip
+    verify:
+      type: asset-digest
+    # Shares the file with idea-backend: upstream-verify tells the two apart by the fields each moves.
+    files:
+      - common/src/main/resources/tools/idea-backend.yaml
+    fields: [url.any, sha256.any]
