@@ -1,11 +1,15 @@
 # Watched upstream artifacts (#2036). upstream/engine/upstream.sh on main reads this: upstream-watch.yml
-# proposes a bump PR for a mechanical or review item and an issue for a judgement item, and upstream-verify.yml
-# checks every PR that touches an item's files against the publisher, regenerating an app PR whole.
-# design/upstream.md says why each key exists; UpstreamManifestTest and `upstream.sh validate` hold
-# its rules: class defaults to judgement, every item needs source and files, a mechanical or review one
-# within and verify too (a review item, #2210, gets the same proven PR, which the bot never merges),
-# verify.type must be what the source type provides (signed-sums or publisher-sums for a mechanical item), cooling is 24h or more unless the source is
-# first party, and there is no key that skips a check.
+# proposes a bump PR for a mechanical or review item and an issue for a judgement item, and
+# upstream-verify.yml checks every PR that touches an item's files against the publisher, regenerating
+# an app PR whole. design/upstream.md says why each key exists; UpstreamManifestTest and
+# `upstream.sh validate` hold its rules:
+# - class defaults to judgement, and every item needs source and files.
+# - A mechanical or review item also needs within and verify (a review item, #2210, gets the same
+#   proven PR, which the bot never merges).
+# - verify.type must be what the source type provides, and signed-sums, signed-file or
+#   publisher-sums for a mechanical item.
+# - cooling is 24h or more unless the source is first party.
+# - There is no key that skips a check.
 repo: Sanne/incus-spawn
 app:
   # The GitHub App that opens bump PRs (Sanne's; docs/dev/UPSTREAM-SETUP.md). Only a PR by this login,
@@ -119,3 +123,238 @@ items:
     files:
       - common/src/main/resources/tools/jasolo.yaml
     fields: [description, url.any, sha256.any]
+  maven-3:
+    class: mechanical
+    # 3.9.x only: Maven 3.10 or a new major would open an issue (Maven 4 is not in this listing).
+    within: series
+    cooling: 24h
+    judgement: build
+    source:
+      type: signed-file
+      note: >-
+        The Maven wrapper downloads its zip from Maven Central, which syncs a release some hours after Apache publishes it.
+        Merge this PR only once https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/<version>/ lists the zip, or `./mvnw` fails for everyone until it does.
+      index:
+        url: https://archive.apache.org/dist/maven/maven-3/
+        regex: '([0-9]+\.[0-9]+\.[0-9]+)/'
+      files:
+        any:
+          url: https://archive.apache.org/dist/maven/maven-3/{version}/binaries/apache-maven-{version}-bin.tar.gz
+          proof: artifact
+        # The zip the Maven wrapper downloads from Central, the same bytes as Apache's.
+        wrapper:
+          url: https://archive.apache.org/dist/maven/maven-3/{version}/binaries/apache-maven-{version}-bin.zip
+          proof: artifact
+      pins:
+        - file: common/src/main/resources/tools/maven-3.yaml
+          text: 'description: Apache Maven {version}'
+        - file: common/src/main/resources/tools/maven-3.yaml
+          label: any
+          text: |-
+            - url: https://archive.apache.org/dist/maven/maven-3/{version}/binaries/apache-maven-{version}-bin.tar.gz
+                sha256: {sum}
+                extract: /opt
+                links:
+                  /opt/apache-maven-{version}/bin/mvn: /usr/local/bin/mvn
+        - file: common/src/main/resources/tools/maven-3.yaml
+          text: |-
+            - name: MAVEN_HOME
+                value: /opt/apache-maven-{version}
+        - file: .mvn/wrapper/maven-wrapper.properties
+          text: |-
+            distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/{version}/apache-maven-{version}-bin.zip
+            distributionSha256Sum={sum:wrapper}
+    verify:
+      type: signed-file
+      # Apache's KEYS (https://downloads.apache.org/maven/KEYS) holds many keys: only the release
+      # manager's is accepted, from the signature of 3.9.16. Another manager is added here, by a person.
+      key: upstream/keys/apache-maven.asc
+      fingerprints:
+        - 84789D24DF77A32433CE1F079EB80E92EB2135B1
+    files:
+      - common/src/main/resources/tools/maven-3.yaml
+      - .mvn/wrapper/maven-wrapper.properties
+    fields: [version, sha256.any, sha256.wrapper]
+  mvnd:
+    class: mechanical
+    # 1.x only: a 2.0 would open an issue.
+    within: series
+    cooling: 24h
+    judgement: build
+    source:
+      type: signed-file
+      series-parts: 1
+      index:
+        url: https://archive.apache.org/dist/maven/mvnd/
+        regex: '([0-9]+\.[0-9]+\.[0-9]+)/'
+      files:
+        x86_64:
+          url: https://archive.apache.org/dist/maven/mvnd/{version}/maven-mvnd-{version}-linux-amd64.zip
+          proof: artifact
+        aarch64:
+          url: https://archive.apache.org/dist/maven/mvnd/{version}/maven-mvnd-{version}-linux-aarch64.zip
+          proof: artifact
+      pins:
+        - file: common/src/main/resources/tools/mvnd.yaml
+          label: x86_64
+          text: |-
+            - url: https://archive.apache.org/dist/maven/mvnd/{version}/maven-mvnd-{version}-linux-amd64.zip
+                sha256: {sum}
+                arch: x86_64
+                extract: /opt
+                links:
+                  /opt/maven-mvnd-{version}-linux-amd64/bin/mvnd: /usr/local/bin/mvnd
+        - file: common/src/main/resources/tools/mvnd.yaml
+          label: aarch64
+          text: |-
+            - url: https://archive.apache.org/dist/maven/mvnd/{version}/maven-mvnd-{version}-linux-aarch64.zip
+                sha256: {sum}
+                arch: aarch64
+                extract: /opt
+                links:
+                  /opt/maven-mvnd-{version}-linux-aarch64/bin/mvnd: /usr/local/bin/mvnd
+    verify:
+      type: signed-file
+      # The release manager of 1.0.6 (Apache's KEYS, https://downloads.apache.org/maven/KEYS).
+      key: upstream/keys/apache-mvnd.asc
+      fingerprints:
+        - 88BE34F94BDB2B5357044E2E3A387D43964143E3
+    files:
+      - common/src/main/resources/tools/mvnd.yaml
+    fields: [version, sha256.x86_64, sha256.aarch64]
+  incus:
+    class: mechanical
+    # The 7.0 LTS line only: the regex lists LTS releases (X.0.Y), so a new LTS opens an issue and a
+    # feature release (7.6) is never a candidate. A new Incus changes the appliance, so a Mac boot too.
+    within: series
+    cooling: 24h
+    judgement: design
+    source:
+      type: signed-file
+      index:
+        url: https://linuxcontainers.org/downloads/incus/
+        regex: 'incus-([0-9]+\.0\.[0-9]+)\.tar\.xz'
+      files:
+        any:
+          url: https://linuxcontainers.org/downloads/incus/incus-{version}.tar.xz
+          algo: sha512
+          proof: artifact
+      pins:
+        - file: appliance/build.sh
+          text: |-
+            INCUS_VERSION="{version}"
+            INCUS_SHA512="{sum}"
+    verify:
+      type: signed-file
+      # Stéphane Graber, as github.com/stgraber.gpg publishes it and appliance/build.sh names it.
+      key: upstream/keys/incus-stgraber.asc
+      fingerprints:
+        - 602F567663E593BCBD14F338C638974D64792D67
+    files:
+      - appliance/build.sh
+    fields: [version, sha512.any]
+    # appliance/build.sh is an input of the kernel's Mac boot, so the same check holds this PR.
+    gates: [kernel-mac-verified]
+  alpine-minirootfs:
+    class: mechanical
+    # 3.24.x only: the successors feed lists the latest stable release, so Alpine 3.25 opens an issue.
+    within: series
+    cooling: 24h
+    judgement: design
+    source:
+      type: signed-file
+      index:
+        url: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/
+        regex: 'alpine-minirootfs-(3\.24\.[0-9]+)-x86_64\.tar\.gz'
+      successors:
+        url: https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/latest-releases.yaml
+        regex: ' +version: ([0-9]+\.[0-9]+\.[0-9]+)'
+      files:
+        x86_64:
+          url: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-minirootfs-{version}-x86_64.tar.gz
+          proof: artifact
+        aarch64:
+          url: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-{version}-aarch64.tar.gz
+          proof: artifact
+      pins:
+        - file: appliance/build.sh
+          text: 'ALPINE_VERSION="{version}"'
+        - file: appliance/build.sh
+          text: |-
+            x86_64)  ALPINE_SHA256="{sum:x86_64}" ;;
+                aarch64) ALPINE_SHA256="{sum:aarch64}" ;;
+    verify:
+      type: signed-file
+      # Natanael Copa, as appliance/build.sh names it.
+      key: upstream/keys/alpine-ncopa.asc
+      fingerprints:
+        - 0482D84022F52DF1C4E7CD43293ACD0907D9495A
+    files:
+      - appliance/build.sh
+    fields: [version, sha256.x86_64, sha256.aarch64]
+    gates: [kernel-mac-verified]
+  arch-cloud-image:
+    class: mechanical
+    # Arch rolls: the newest dated image is the one wanted, so no series. Mirrors delete old images,
+    # which is why the pin moves at all.
+    within: any
+    cooling: 24h
+    judgement: build
+    source:
+      type: signed-file
+      index:
+        url: https://geo.mirror.pkgbuild.com/images/
+        regex: 'v([0-9]{8}\.[0-9]+)/'
+      files:
+        any:
+          url: https://geo.mirror.pkgbuild.com/images/v{version}/Arch-Linux-x86_64-cloudimg-{version}.qcow2
+          proof: sums
+          sums-url: https://geo.mirror.pkgbuild.com/images/v{version}/Arch-Linux-x86_64-cloudimg-{version}.qcow2.SHA256
+          sig-url: https://geo.mirror.pkgbuild.com/images/v{version}/Arch-Linux-x86_64-cloudimg-{version}.qcow2.SHA256.sig
+      pins:
+        - file: scripts/distro-images.env
+          text: |-
+            ARCH_IMAGE_URL=https://geo.mirror.pkgbuild.com/images/v{version}/Arch-Linux-x86_64-cloudimg-{version}.qcow2
+            ARCH_IMAGE_SHA256={sum}
+    verify:
+      type: signed-file
+      # The arch-boxes key (https://gitlab.archlinux.org/archlinux/arch-boxes), which signs with a
+      # subkey: the primary's fingerprint is the one pinned. The subkey expires 2027-09-26, and an
+      # expired signer fails closed until a person commits the renewed key.
+      key: upstream/keys/arch-linux.asc
+      fingerprints:
+        - 1B9A16984A4E8CB448712D2AE0B78BF4326C6F8F
+    files:
+      - scripts/distro-images.env
+    fields: [version, sha256.any]
+  ubuntu-cloud-image:
+    class: mechanical
+    # The noble release directory is dated and replaced by the next one, so no series.
+    within: any
+    cooling: 24h
+    judgement: build
+    source:
+      type: signed-file
+      index:
+        url: https://cloud-images.ubuntu.com/releases/noble/
+        regex: 'release-([0-9]{8}(?:\.[0-9]+)?)/'
+      files:
+        any:
+          url: https://cloud-images.ubuntu.com/releases/noble/release-{version}/ubuntu-24.04-server-cloudimg-amd64.img
+          proof: sums
+          sums-url: https://cloud-images.ubuntu.com/releases/noble/release-{version}/SHA256SUMS
+          sig-url: https://cloud-images.ubuntu.com/releases/noble/release-{version}/SHA256SUMS.gpg
+      pins:
+        - file: scripts/distro-images.env
+          text: |-
+            UBUNTU_IMAGE_URL=https://cloud-images.ubuntu.com/releases/noble/release-{version}/ubuntu-24.04-server-cloudimg-amd64.img
+            UBUNTU_IMAGE_SHA256={sum}
+    verify:
+      type: signed-file
+      # The UEC Image Automatic Signing Key (keyserver.ubuntu.com).
+      key: upstream/keys/ubuntu-cloud-images.asc
+      fingerprints:
+        - D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81
+    files:
+      - scripts/distro-images.env
+    fields: [version, sha256.any]

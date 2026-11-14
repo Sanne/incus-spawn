@@ -25,7 +25,7 @@ An item names its `class` (`mechanical`, `review`, or `judgement` by default), w
 `current`, `releases`, `check` and `apply` read and rewrite one item; `plan` decides every item (a prepared commit, an issue, or nothing) with no app credential; `issues` opens what `plan` wrote; `publish` pushes the prepared commits and opens or refreshes their PRs as the app; `verify-pr` and `verify-trees` are the check; `track` keeps the one `[upstream] watch failing` issue.
 Everything an upstream sends (a version, a tag, a URL, a sum) is data: it is matched against a shape before use and never reaches a shell line unquoted or a jq filter unbound.
 The three source types reuse what already verified a pin by hand: `kernel-org` is `appliance/kernel/update-kernel-pin.sh` (which gained `releases [<major>]` and `sum <version>`), `github-release` is `.github/scripts/base-image-sums.sh` and `verify-base-image-sums.sh`, and `jetbrains` reads the products API with a URL prefix allowlist and the `.sha256` beside each tarball.
-`github-asset` (#2210) is described under "The github-asset source type" below.
+`github-asset` and `signed-file` (#2210) are described under "The github-asset source type" and "The signed-file source type" below.
 
 **The watch** (`.github/workflows/upstream-watch.yml`) runs every six hours and on `workflow_dispatch` (an optional `item`, checked against the manifest's keys), in `Sanne/incus-spawn` from `main` only, as two jobs.
 It has no PR, issue or comment trigger, `persist-credentials: false`, `contents: read` and `issues: write`, no third-party action, and no `${{ }}` inside any `run:`.
@@ -63,6 +63,12 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `starship` | `common/src/main/resources/tools/starship.yaml` (`description`, both URLs and sums) | `starship/starship` releases, the `.sha256` asset beside each tarball | `publisher-sums` | mechanical | `series` (the major) | 48h | a new major (`go:build`) |
 | `idea-index-plugin` | `common/src/main/resources/tools/idea-backend.yaml` (the plugin's `downloads:` entry) | `hechtcarmel/jetbrains-index-mcp-plugin` releases, GitHub's digest of the signed zip | `asset-digest` | review | `series` (the major) | 48h | a new major (`go:build`) |
 | `jasolo` | `common/src/main/resources/tools/jasolo.yaml` (`description`, the jar's URL and sum) | `mkouba/jasolo` releases, GitHub's digest of the runner jar | `asset-digest` | review | `series` (the major) | 48h | a new major (`go:build`) |
+| `maven-3` | `common/src/main/resources/tools/maven-3.yaml` (description, URL, sum, link, `MAVEN_HOME`) and `.mvn/wrapper/maven-wrapper.properties` (the zip's URL and `distributionSha256Sum`) | Apache's `maven-3/` listing, the `.asc` of each file, signed by the release manager | `signed-file`, `upstream/keys/apache-maven.asc` | mechanical | `series` (3.9) | 24h | a new series (`go:build`) |
+| `mvnd` | `common/src/main/resources/tools/mvnd.yaml` (both URLs, sums and links) | Apache's `mvnd/` listing, the `.asc` of each zip | `signed-file`, `upstream/keys/apache-mvnd.asc` | mechanical | `series` (1.x) | 24h | a new major (`go:build`) |
+| `incus` | `appliance/build.sh` (`INCUS_VERSION`, `INCUS_SHA512`) | linuxcontainers.org's `downloads/incus/` listing of LTS releases (`X.0.Y`), the `.asc` of the tarball | `signed-file`, `upstream/keys/incus-stgraber.asc` | mechanical | `series` (7.0) | 24h | a new LTS (`go:design`); gate `kernel-mac-verified` |
+| `alpine-minirootfs` | `appliance/build.sh` (`ALPINE_VERSION`, both `ALPINE_SHA256`) | Alpine's `v3.24/releases/<arch>/` listing, the `.asc` of each tarball | `signed-file`, `upstream/keys/alpine-ncopa.asc` | mechanical | `series` (3.24) | 24h | a new minor, seen in the latest-stable feed (`go:design`); gate `kernel-mac-verified` |
+| `arch-cloud-image` | `scripts/distro-images.env` (`ARCH_IMAGE_URL`, `ARCH_IMAGE_SHA256`) | the Arch mirror's `images/` listing, the signed `.SHA256` of the image | `signed-file`, `upstream/keys/arch-linux.asc` | mechanical | `any` | 24h | none |
+| `ubuntu-cloud-image` | `scripts/distro-images.env` (`UBUNTU_IMAGE_URL`, `UBUNTU_IMAGE_SHA256`) | Canonical's `releases/noble/` listing, the `SHA256SUMS` signed by `SHA256SUMS.gpg` | `signed-file`, `upstream/keys/ubuntu-cloud-images.asc` | mechanical | `any` | 24h | none |
 
 The `base-image` item takes over what `update-base-image.yml` did (#1678, #1862): every checksum comes from the release's own sums files for the asset each URL downloads, a release of another Fedora line is an issue rather than a PR, and `vm_image_url` moves to `-vm-direct` in the first release that has it for both arches and never back to the stock image (design/templates.md "Which base image an instance runs").
 Its series is a tag's whole line, its channel included (`src_series`, #1994), and it lists the stable channel's releases alone, so a channel is never proposed and never opens an issue.
@@ -71,7 +77,7 @@ Its versions are ordered as isx orders release tags (`src_order`): by line, then
 A source type may define `src_order` (versions on stdin, oldest first) wherever `sort -V` is wrong for it; `newest` uses it, and `publish` loads each item's source type so `pr.sh` compares versions the same way.
 The images repo's `repository_dispatch` to this one, and its `INCUS_SPAWN_DISPATCH_TOKEN`, retire in favour of the six-hourly poll: the payload was only ever cross-checked against the release.
 `publisher-sums` proves consistency and transfer, not provenance, since the sums come from the same origin as the artifact; the manifest says so in the verifier's name rather than pretending otherwise.
-Items the design inventories for later phases (Maven and Apache artifacts, the siblings' `isx-ref` and engine pins, Alpine, the CI cloud images) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
+Items the design inventories for later phases (Actions pinned to commit SHAs, the siblings' `ISX_REF` and engine pins, the Maven plugins and libraries) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
 
 ## The github-asset source type
 
@@ -92,6 +98,55 @@ What this gives up: the plugin's pin lags until Sanne merges, and the download n
 Two items may name one file, as `idea-index-plugin` and `idea-backend` do.
 A bump then changes the file of both, so `upstream-verify` counts an item as changed only when a field it declares differs between the merge base and the head, and an app PR that changes the fields of two items fails.
 The regeneration check still compares the whole tree, so a change to anything else in the file fails as before.
+
+## The signed-file source type
+
+A download whose publisher signs it with OpenPGP is pinned by a `signed-file` item (#2210): Maven and mvnd (Apache), Incus (linuxcontainers.org), Alpine's minirootfs, and the Arch and Ubuntu cloud images the distro tests boot.
+The proof is a signature, so the verifier is `signed-file`, which `validate` accepts on a mechanical item beside `signed-sums` and `publisher-sums`.
+The manifest says where the versions are listed (`source.index`: a page and a regex with one capture group, matched against each link or line), which files the item pins (`source.files`, one label each), and where each pin sits in the tree (`source.pins`).
+The date on a version's line in the listing is its release date, so `cooling` counts from it.
+`series-parts` says how many dotted parts of a version name its series (default 2), and `successors` is a second page whose versions only show that another series exists: Alpine's latest-stable feed, so 3.25 opens an issue although the pinned listing is `v3.24/`.
+Incus lists LTS releases only (`X.0.Y`), so a feature release is never a candidate and a new LTS is the issue.
+
+A pin is a literal text of a file with `{version}` and `{sum}` (or `{sum:<label>}`) where the values are (`pins.pl`).
+Only the two placeholders are patterns, so nothing a publisher sends changes what a pin matches.
+Every occurrence is read and must agree, `count` says how many there must be, and every one is rewritten, so a version that appears in a description, a URL and an environment variable moves as one.
+`src_fields` reads the values back, so `upstream-verify` can tell which item a PR changes.
+
+Two proofs, chosen per file:
+- `artifact`: the `.asc` (or `sig-suffix`) is a signature of the file itself.
+  The engine downloads both, verifies, and hashes the file with `algo` (`sha256` or `sha512`, whichever the pin holds).
+  It never takes a `.sha256` or `.sha512` the publisher lists beside the file: those are unsigned.
+- `sums`: the signature is of the publisher's sums file, which gives the file's hash.
+  The file itself is never downloaded, since a cloud image is gigabytes.
+
+`verify_signed` (`lib.sh`) accepts a signature only when `gpgv` says it is good and its `VALIDSIG` names a primary key that is one of the item's `verify.fingerprints`.
+That check is the point: Apache's `KEYS` holds dozens of keys, so a good signature by any of them would prove nothing.
+Each item commits its own minimal key file under `upstream/keys/`, exported from the publisher's page with the provenance in a manifest comment, and `validate` requires every pinned fingerprint to be a primary key in it.
+A release manager that rotates, or an expired signing key (the Arch images' expires in 2027), fails closed with an issue until a person commits the new key, which is a PR and a reviewed record.
+The kernel's `signed-sums` check keeps its own extra rule, that the fingerprint is the one `update-kernel-pin.sh` pins, in `source-kernel-org.sh`.
+
+A signature is always checked, so `UPSTREAM_REHASH=0` has no effect here, and `plan` and `check` download each pinned `artifact` file every run: about 90 MB for the artifact items.
+That is the price of never trusting an unsigned sum.
+
+The Maven wrapper's `distributionSha256Sum` is new: the wrapper downloaded Central's zip with no check.
+The `wrapper` file of `maven-3` is Apache's signed zip, byte-identical to Central's, so the wrapper's sum is the signed one.
+The wrapper downloads from Central, which syncs some hours after Apache, so the item's `note` tells a reviewer in the PR to merge only once Central lists the version.
+
+The Arch and Ubuntu pins moved out of `test-integration.yml` into `scripts/distro-images.env`.
+The upstream app has no `workflows` permission, so a PR changing a workflow file could never be pushed by it, and granting one would let a stolen key rewrite any workflow.
+The job reads the file in a step, and `HostDistroWorkflowTest` checks the pairing there.
+
+`incus` and `alpine-minirootfs` pin different lines of `appliance/build.sh`, an input of the kernel's Mac boot, so their PRs carry the `kernel-mac-verified` gate and wait for a Mac boot like a kernel bump (isx-workflow's `bin/mac-pick.sh` picks a PR by that failing check, not by the item).
+
+Not every PR that touches `build.sh` or `distro-images.env` re-proves its pins.
+`upstream-verify` now counts an item as touched by a PR from a person only when a field it declares differs from the merge base, as it already did for an app PR.
+Without that, every unrelated edit of `appliance/build.sh` would ask the Incus, Alpine, Arch and Ubuntu publishers again, and a mirror that deleted an old Arch image would fail PRs that never touched the pin.
+A tree whose fields cannot be read counts as changed, so it fails closed.
+
+What this gives up: Maven 4, a different Apache line, is not watched, so a release of it opens no issue (the listing is `maven-3/`).
+Maven 3.10.0 is in the listing, so the first run opens an issue for the new series.
+The 3.9 line is bumped by the watch, and a person decides on 3.10.
 
 ## The review class
 
@@ -122,8 +177,8 @@ The merge script requires `class: mechanical` by name, so it refuses a review it
 
 | Threat | How it is closed |
 |---|---|
-| Compromised upstream or release feed | Where the publisher signs (kernel.org), the signature against a committed key is required and the feed only tells the engine *which* version to verify. Where it does not (JetBrains, the images releases), the URL allowlist and `within` bound what a feed can point at, `cooling` leaves time for an upstream yank, and the pin remains a public PR and a reviewed record. A publisher whose own signing key is compromised is beyond any watcher. |
-| Poisoned checksum source | Signed sums: closed by the signature. Same-origin sums: `upstream-verify` re-downloads artifact and sums from the publisher, never from the PR, so a sum not derived from the publisher fails; and a pinned version whose values the publisher no longer confirms becomes an issue, not a re-pin. |
+| Compromised upstream or release feed | Where the publisher signs (kernel.org, Apache, Incus, Alpine, Arch, Ubuntu), the signature against a committed key is required and the feed only tells the engine *which* version to verify. Where it does not (JetBrains, the images releases), the URL allowlist and `within` bound what a feed can point at, `cooling` leaves time for an upstream yank, and the pin remains a public PR and a reviewed record. A publisher whose own signing key is compromised is beyond any watcher. |
+| Poisoned checksum source | Signed sums, or a signature of the file itself: closed by the signature, from a key whose primary fingerprint the manifest pins. Same-origin sums: `upstream-verify` re-downloads artifact and sums from the publisher, never from the PR, so a sum not derived from the publisher fails; and a pinned version whose values the publisher no longer confirms becomes an issue, not a re-pin. |
 | Credential exfiltration | The app key is an environment secret only `main`'s `upstream-watch.yml` can reference; it is read in one step of a job that does not download anything, on another runner than the one that fetched publisher data, and the minted token is per run, per repository, one hour. The app has no ruleset bypass, so the worst a thief can do is open branches and PRs, and the bot merges only a PR that byte-matches the engine's regeneration. Sanne's own account's token (`BOT_TOKEN`) leaves Actions. |
 | A malicious PR or issue reaching the job | The watch has no PR, issue or comment trigger, reads no PR, issue or comment, and takes input only from the manifest on `main` and the publisher endpoints it names; `workflow_dispatch` input is checked against the manifest's keys; no `${{ }}` reaches a `run:` line. `upstream-verify` runs `main`'s engine, has no secret and never executes PR content. |
 | The bot approving outside the class | `bin/upstream-merge.sh` re-checks every gate from GitHub alone and refuses on the first failure; `upstream-verify` has already refused a PR that touches a second item, a file outside the item's, a judgement item or anything the regeneration did not write. The script itself refuses every class but `mechanical`, a `review` item's included. |

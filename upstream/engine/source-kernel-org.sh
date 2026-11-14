@@ -14,6 +14,14 @@ _kernel_pin() {
     printf '%s' "$v"
 }
 
+# The signer is the one update-kernel-pin.sh pins: validate checks the key file and fingerprint are
+# well formed, and this that the fingerprint is that script's.
+src_validate() {
+    [[ -n "$(item "$ITEM" verify.fingerprint)" ]] || return 0
+    grep -q "^AUTOSIGNER_FPR=\"$(item "$ITEM" verify.fingerprint)\"\$" "$PIN_SCRIPT" \
+        || die "manifest: item $ITEM: verify.fingerprint is not the pinned one"
+}
+
 src_current() { _kernel_pin KERNEL_VERSION; }
 src_series() { printf '%s' "$1" | cut -d. -f1-2; }
 # The pinned major's signed file, and the next major's once kernel.org publishes it: a missing

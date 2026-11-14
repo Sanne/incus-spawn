@@ -177,9 +177,10 @@ run:
 Y
 }
 idea_file 2026.2.4 "$S24X" "$S24A" > "$REPO/common/src/main/resources/tools/idea-backend.yaml"
-# The github-asset items are tested by test-github-asset.sh, on a manifest of their own.
+# The github-asset items are tested by test-github-asset.sh and the signed-file ones by
+# test-signed-file.sh, each on a manifest of its own.
 sed "s/fingerprint: [0-9A-F]*/fingerprint: $FPR/" "$SRC/upstream/manifest.yaml" \
-    | yq 'del(.items.starship) | del(.items.idea-index-plugin) | del(.items.jasolo)' > "$REPO/upstream/manifest.yaml"
+    | yq 'del(.items.starship) | del(.items.idea-index-plugin) | del(.items.jasolo) | del(.items.maven-3) | del(.items.mvnd) | del(.items.incus) | del(.items.alpine-minirootfs) | del(.items.arch-cloud-image) | del(.items.ubuntu-cloud-image)' > "$REPO/upstream/manifest.yaml"
 cd "$REPO" && git init -q -b main && git add -A && git -c user.name=t -c user.email=t@t commit -qm fixture
 git init -q --bare "$WORK/remote.git" && git remote add origin "$WORK/remote.git" && git push -q origin main
 git --git-dir="$WORK/remote.git" config uploadpack.allowAnySHA1InWant true

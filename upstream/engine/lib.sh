@@ -30,7 +30,9 @@ SHA256_RE='^[0-9a-f]{64}$'
 VERSION_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 ITEM_RE='^[a-z0-9][a-z0-9-]*$'
 
+SHA512_RE='^[0-9a-f]{128}$'
 is_sha256() { [[ "$1" =~ $SHA256_RE ]]; }
+is_sha512() { [[ "$1" =~ $SHA512_RE ]]; }
 is_version() { [[ "$1" =~ $VERSION_RE ]]; }
 
 # manifest <yq path>: a value of the manifest, "" when absent (yq prints null).
@@ -103,6 +105,29 @@ load_source() {
 fetch() {
     curl -fsSL --connect-timeout 10 --retry 3 --retry-all-errors "$1" -o "$2" \
         || die "failed to download $1"
+}
+
+# verify_signed <key file> <signature> <signed file> <fingerprint...> (#2210): the detached OpenPGP
+# signature is good for the file, made by a key of the committed key file whose primary fingerprint is
+# one of those given. gpgv exiting 0 is not enough: a key file may hold many keys (Apache's KEYS does),
+# so the signer is read from the status lines and must be a pinned one, and an expired, revoked or
+# unknown key fails.
+verify_signed() {
+    local key="$1" sig="$2" data="$3" home status ok=1 f
+    shift 3
+    home="$(mktemp -d)"
+    chmod 700 "$home"
+    gpg --homedir "$home" --batch --quiet --dearmor < "$key" > "$home/ring.gpg" 2> /dev/null || { rm -rf "$home"; die "$key is not an armored OpenPGP key"; }
+    status="$(GNUPGHOME="$home" gpgv --keyring "$home/ring.gpg" --status-fd 1 "$sig" "$data" 2> /dev/null)" || ok=0
+    rm -rf "$home"
+    (( ok )) || die "$sig is not a good signature of $(basename "$data") by a key of $key"
+    grep -q '^\[GNUPG:\] GOODSIG ' <<<"$status" || die "$sig has no good signature"
+    ! grep -qE '^\[GNUPG:\] (BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG) ' <<<"$status" || die "$sig is signed by an expired, revoked or unknown key"
+    for f in "$@"; do
+        # VALIDSIG <signing key> <date> <ts> <expiry> <version> <reserved> <algo> <hash> <class> <primary>
+        awk -v want="$f" '$1 == "[GNUPG:]" && $2 == "VALIDSIG" && toupper($12) == want { found = 1 } END { exit !found }' <<<"$status" && return 0
+    done
+    die "$sig is signed by a key that is not one of the pinned fingerprints"
 }
 
 # replace_once <file> <old> <new>: rewrites the one occurrence of <old> in <file>, as a literal, and

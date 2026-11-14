@@ -190,6 +190,29 @@ class UpstreamManifestTest {
         assertTrue(seen.contains("kernel"), "the kernel item verifies against signed sums: " + seen);
     }
 
+    /**
+     * {@code signed-file} trusts a signer by primary fingerprint, from a committed key file: a key
+     * file may hold many keys (Apache's KEYS does), so an item that listed none, or one that was
+     * no fingerprint, would leave the engine nothing to hold a signature against.
+     * {@code upstream.sh validate} also checks each is a primary key of the file.
+     */
+    @Test
+    void signedFileNamesACommittedKeyAndItsSigners() {
+        var seen = new ArrayList<String>();
+        proposedItems().forEach((name, item) -> {
+            var verify = item.path("verify");
+            if (!verify.pathText("type", "").equals("signed-file")) return;
+            seen.add(name);
+            var key = verify.pathText("key", "");
+            assertTrue(!key.isEmpty() && Files.isRegularFile(ROOT.resolve(key)),
+                    name + ": verify.key is not a committed file: '" + key + "'");
+            var fingerprints = strings(verify.path("fingerprints"));
+            assertFalse(fingerprints.isEmpty(), name + ": verify.fingerprints names no signer");
+            fingerprints.forEach(f -> assertTrue(f.matches("[0-9A-F]{40}"), name + ": '" + f + "' is not a 40 digit fingerprint"));
+        });
+        assertFalse(seen.isEmpty(), "no item verifies by signed-file");
+    }
+
     @Test
     void gatesAreCheckNames() {
         proposedItems().forEach((name, item) -> {
