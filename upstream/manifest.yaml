@@ -98,3 +98,24 @@ items:
     files:
       - common/src/main/resources/tools/idea-backend.yaml
     fields: [url.any, sha256.any]
+  jasolo:
+    # A person merges it: jasolo publishes no sums, so GitHub's digest is all there is, and the
+    # engine lets only a review item rely on that. A 0.x release may also rename the
+    # JASOLO_GIT_ROOTS the tool sets or change what it needs to start, which no CI job runs.
+    class: review
+    within: series
+    cooling: 48h
+    judgement: build
+    source:
+      type: github-asset
+      repo: mkouba/jasolo
+      tag-prefix: ""
+      sums: github-digest
+      versioned-description: true
+      assets:
+        any: jasolo-{version}-runner.jar
+    verify:
+      type: asset-digest
+    files:
+      - common/src/main/resources/tools/jasolo.yaml
+    fields: [description, url.any, sha256.any]

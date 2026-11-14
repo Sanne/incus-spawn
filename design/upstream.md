@@ -62,6 +62,7 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `idea-backend` | `common/src/main/resources/tools/idea-backend.yaml` (`description`, both URLs and sums) | JetBrains products API, `.sha256` beside each tarball, URLs under `https://download.jetbrains.com/idea/` only | `publisher-sums` | mechanical | `any` | 48h | none; the tool installs whatever `idea-IU-*` unpacks to |
 | `starship` | `common/src/main/resources/tools/starship.yaml` (`description`, both URLs and sums) | `starship/starship` releases, the `.sha256` asset beside each tarball | `publisher-sums` | mechanical | `series` (the major) | 48h | a new major (`go:build`) |
 | `idea-index-plugin` | `common/src/main/resources/tools/idea-backend.yaml` (the plugin's `downloads:` entry) | `hechtcarmel/jetbrains-index-mcp-plugin` releases, GitHub's digest of the signed zip | `asset-digest` | review | `series` (the major) | 48h | a new major (`go:build`) |
+| `jasolo` | `common/src/main/resources/tools/jasolo.yaml` (`description`, the jar's URL and sum) | `mkouba/jasolo` releases, GitHub's digest of the runner jar | `asset-digest` | review | `series` (the major) | 48h | a new major (`go:build`) |
 
 The `base-image` item takes over what `update-base-image.yml` did (#1678, #1862): every checksum comes from the release's own sums files for the asset each URL downloads, a release of another Fedora line is an issue rather than a PR, and `vm_image_url` moves to `-vm-direct` in the first release that has it for both arches and never back to the stock image (design/templates.md "Which base image an instance runs").
 Its series is a tag's whole line, its channel included (`src_series`, #1994), and it lists the stable channel's releases alone, so a channel is never proposed and never opens an issue.
@@ -82,9 +83,10 @@ A draft, a prerelease, a tag that is not numeric and a release that lacks one of
 Every URL is built from the repository, the tag and the asset name, and must be the one GitHub lists for that asset, so a feed cannot send the engine elsewhere.
 The engine downloads each asset again and checks that it hashes to the sum.
 `sums: sha256-asset` takes the sum from the `<asset>.sha256` beside it, and the verifier is `publisher-sums` (starship).
-`sums: github-digest` takes GitHub's digest of the uploaded asset, for a release that ships no sums, and the verifier is `asset-digest` (the IntelliJ index plugin).
+`sums: github-digest` takes GitHub's digest of the uploaded asset, for a release that ships no sums, and the verifier is `asset-digest` (the IntelliJ index plugin, and jasolo).
 That digest is GitHub's record, not a sum the publisher signed, and the re-hash proves only that the two agree.
 So `validate` refuses it on a mechanical item and the bot never merges such a PR: the item is `class: review`.
+jasolo is a review item for that reason alone, though Sanne asked for a mechanical one on #2206: it would become mechanical with `sums: sha256-asset` once its releases ship a `.sha256` beside the jar.
 What this gives up: the plugin's pin lags until Sanne merges, and the download now happens on every `idea-backend` build, `index-mcp` or not, since a `downloads:` entry has no condition (the host caches it).
 
 Two items may name one file, as `idea-index-plugin` and `idea-backend` do.
