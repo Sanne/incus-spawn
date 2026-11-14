@@ -896,6 +896,7 @@ Its routing and credentials are always derived, never held: the truth is the two
 Host configuration is re-read on the watcher or `SIGHUP` into one immutable `ConfigState`, and the stamps on `SIGUSR1`, on a TTL and on an address miss into the `InstanceRegistry` snapshot, which reads them from the one listing it already makes.
 So a restart -- which launchd's `KeepAlive` does often on macOS, and `isx` on drift -- or a reload rebuilds the same routing from the same truth, and a guest never loses a route because a process restarted; a reload that fails keeps the old state and fingerprint, so `/health` reports drift.
 The activity counters are the only state a restart resets, because they are observations, and each says since when it counts.
+The event log (below) records the same observations in a file, so they outlive a restart.
 
 Rejected: routes set by admin operations and held in memory (lost on every restart, and a reload's result would be ambiguous), or persisted by the proxy to a state file of its own (a third store duplicating instance lifetimes: an instance destroyed or copied while the proxy is down leaves it wrong).
 Secrets never go in stamps: a guest reads its own `user.*` keys through `/dev/incus`, so a stamp names a declared config entry, never a value (as `InstanceSecret` keeps only a hash).
@@ -907,6 +908,21 @@ The rules for what comes next, agreed with the decision on #935:
 - That surface is authenticated, not address-gated: the source address (`isHostCaller`) is enough for reads such as `/activity`, but a write needs a bearer secret in an owner-only file in the state directory, on a loopback listener or a JDK domain socket (Vert.x needs its native transport for domain-socket listeners, which the proxy has on Linux only).
 - Every grant expires: the proxy enforces the expiry on read, revoking is the fast path and expiry the safety net for a coordinator that dies, and a grant without one is refused.
 Until a resource to lease exists, only the read side ships; the health server stays read-only (`MitmProxy.healthRoute`).
+
+## The event log (#2241)
+The proxy appends one JSON line to `~/.local/state/incus-spawn/events/events.jsonl` for each model call that ends, so what an instance did outlives a restart and the in-memory counts of `ApiActivity`.
+A line holds the time, the instance's name and incarnation, the domain, the model the response names, the HTTP status, the duration and the four token counts.
+It holds no request or response content.
+The first step covers model calls only.
+GitHub operations (a push, a pull request opened) are the next step, and so is the overview that reads the log.
+The log is an observation and never read back by the proxy to decide routing, so "The proxy holds no configuration of its own" stands.
+Writing costs the request path one `offer` onto a bounded queue; one platform thread does the file work, so a slow disk never delays a response.
+When the queue is full or the write fails a line is lost, and the next line written says how many were (`kind: dropped`).
+The log gives up completeness under load for a request path that never waits on it.
+Retention is by size alone: the file rolls over at 16 MiB and four older files are kept (`events.jsonl.1` to `.4`), about 80 MiB at most, with no timer and no state beyond the file.
+Both the directory and the files are owner-only.
+The incarnation is the listing's `created_at`, as for the counters (#1063), so a name branched again is a different instance in the log.
+Its cost on the request path is one queue offer and a JSON build at the call's end, which runs on the event loop and costs microseconds beside a model call that lasts seconds; it is not measured on a real Incus.
 
 ## The socket transport: epoll on Linux
 On Linux the proxy runs Vert.x on Netty's native epoll transport, not Java NIO (#475).

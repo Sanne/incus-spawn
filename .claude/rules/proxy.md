@@ -504,6 +504,10 @@ Key design:
   `runQuiet()` returns `boolean` success; cleanup callers check and warn on failure.
   `clearRedirectRules()` returns `boolean` so callers like `ResetCommand` can propagate cleanup failures.
   The no-arg `uninstall()` is private — callers must pass an `IncusClient` so DNS cleanup can reach the bridge.
+- **The event log (#2241)**: `EventLog` appends a JSON line per ended model call (`ApiActivity.Exchange.end`, via `ApiActivity.recordTo`, set in `ProxyMain` only so tests write no file) to `Environment.proxyEventLogFile()`, never content, never read back by the proxy.
+  Writing is a bounded queue offer plus one writer thread; overflow and write failures are counted and reported by a `dropped` line; the file rolls at 16 MiB keeping four.
+  Design: design/proxy.md "The event log".
+  `EventLogTest` pins it.
 - **`/activity` (#898)** serves `ApiActivity`: per instance, Messages API creates only (`ApiActivity.isModelCall`), counted in `streamApiRequest` and `retainVertexRequest` (`beginModelCall`) and ended once on the client response's end or close, with tokens read from 2xx responses' `usage` by `UsageTap` as `pipeResponse` relays them (cumulative stream counts: keep the max per field).
   Counted calls go upstream with `Accept-Encoding: identity`; nothing else's headers change.
   Each instance's counters carry their own creation time (`counting_since`), never the proxy's start, and a read creates them for every instance the registry knows, so a known instance always has one.

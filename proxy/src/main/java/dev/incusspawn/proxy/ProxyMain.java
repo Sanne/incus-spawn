@@ -102,6 +102,8 @@ public class ProxyMain implements QuarkusApplication {
         // derives it -- so no later read escapes the fingerprint taken ahead of it (#837).
         var vertx = Arc.container().instance(Vertx.class).get();
         var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress, loaded);
+        // Model calls are recorded on the host (#2241); tests build a MitmProxy without this
+        proxy.apiActivity.recordTo(EventLog.atDefaultPlace());
         var creds = proxy.credentials();
 
         var build = BuildInfo.instance();
