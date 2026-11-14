@@ -76,6 +76,23 @@ final class Launcher: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
     private let machine: VZVirtualMachine
     private let guestSockets: VZVirtioSocketDevice?
     private let connections = GuestConnections()
+    /// How many connections to the guest the relays have open at once, all three together.
+    ///
+    /// The framework runs the machine in a process of its own
+    /// (`com.apple.Virtualization.VirtualMachine`), which holds a descriptor for each of them
+    /// and has room for 256 descriptors: with 248 held it had none left for the next, and the
+    /// machine stopped with "Internal Virtualization error" (#2031). That limit is not this
+    /// process's to raise. 192 is three quarters of it: the rest is what that process has
+    /// open anyway (8, if the 248 filled it), the files of the home's share, which it opens
+    /// too, the clock's own connection after a wake, and connections whose close is still on
+    /// its way.
+    ///
+    /// A relay gives room back after `hangUp` queued the close on the main queue, and the
+    /// dial that takes it is queued there later, so the close comes before the connect.
+    ///
+    /// What it gives up: the connection beyond 192 waits for another to end, whoever asks,
+    /// the next `isx` command included. Nothing isx does holds that many.
+    private let room = GuestRoom(connections: 192)
     private var served: [(path: String, relay: Relay)] = []
     private var watch = SleepWatch()
     /// Sets the guest's clock, one wake after another: its agent serves one client at a time.
@@ -183,7 +200,8 @@ final class Launcher: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
                 dial: { self.dial(port: port) },
                 hangUp: { self.connections.hangUp($0) },
                 log: { complain("\(path): \($0)") },
-                stamp: { clocks.ahead() })
+                stamp: { clocks.ahead() },
+                room: room)
             let listener: Int32
             do {
                 listener = try Relay.listen(at: path)
