@@ -134,6 +134,12 @@ public class CopilotSetup implements ToolSetup {
         NpmGlobalInstall.install(c, NPM_CLI);
     }
 
+    /** Where Copilot reads the MCP servers of the user. */
+    static final String MCP_CONFIG_PATH = "/home/agentuser/.copilot/mcp-config.json";
+
+    @Override
+    public McpClient mcpClient() { return McpClients.COPILOT; }
+
     private static final String COPILOT_SETTINGS_PATH = "/home/agentuser/.copilot/settings.json";
 
     /**

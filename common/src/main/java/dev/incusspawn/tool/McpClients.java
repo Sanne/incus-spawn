@@ -153,6 +153,97 @@ public final class McpClients {
         return JqValues.toPrettyJsonString(root.with("mcp", mcp)) + "\n";
     }
 
+    /** Gemini CLI: {@code mcpServers} in its {@code settings.json}, which expands {@code ${VAR}} when it loads the file. */
+    public static final McpClient GEMINI = jsonFile("gemini", GeminiSetup.CONFIG_PATH, false, McpClients::geminiEntry);
+
+    /** Bob Shell, a Gemini CLI fork: the same {@code mcpServers} in {@code ~/.bob/settings/settings.json}. */
+    public static final McpClient BOB = jsonFile("bob", BobSetup.SETTINGS_PATH, false, McpClients::geminiEntry);
+
+    static JqObject geminiEntry(McpServer server) {
+        var entry = JqObject.builder(4);
+        if (server.stdio()) {
+            stdio(entry, server);
+        } else {
+            entry.put("httpUrl", server.url());
+            bearerHeader(entry, server);
+        }
+        return entry.build();
+    }
+
+    /** Copilot CLI: {@code mcpServers} in {@code ~/.copilot/mcp-config.json}, a file it does not create until asked. */
+    public static final McpClient COPILOT = jsonFile("copilot", CopilotSetup.MCP_CONFIG_PATH, true, McpClients::copilotEntry);
+
+    static JqObject copilotEntry(McpServer server) {
+        var entry = JqObject.builder(5);
+        if (server.stdio()) {
+            entry.put("type", "local");
+            stdio(entry, server);
+        } else {
+            entry.put("type", "http").put("url", server.url());
+            bearerHeader(entry, server);
+        }
+        return entry.put("tools", JqArray.arrayBuilder().add("*").build()).build();
+    }
+
+    private static void stdio(JqObject.Builder entry, McpServer server) {
+        var args = JqArray.arrayBuilder();
+        server.command().subList(1, server.command().size()).forEach(args::add);
+        var env = JqObject.builder(server.env().size());
+        server.env().forEach(env::put);
+        entry.put("command", server.command().getFirst()).put("args", args.build()).put("env", env.build());
+    }
+
+    /** The bearer token as a reference to its variable, which the agent resolves when it connects. */
+    private static void bearerHeader(JqObject.Builder entry, McpServer server) {
+        if (server.bearerTokenEnv() == null) return;
+        entry.put("headers", JqObject.builder(1)
+                .put(AUTHORIZATION, "Bearer ${" + server.bearerTokenEnv() + "}").build());
+    }
+
+    /**
+     * An agent whose servers are the {@code mcpServers} object of one JSON file, merged as
+     * opencode's are: what isx did not register stays. {@code optional} files may be missing.
+     */
+    private static McpClient jsonFile(String agent, String path, boolean optional,
+                                      java.util.function.Function<McpServer, JqObject> entry) {
+        return new McpClient() {
+            @Override public String agent() { return agent; }
+
+            @Override public String addScript(McpServer server) {
+                throw new UnsupportedOperationException(agent + "'s entries are merged into its config");
+            }
+
+            @Override public String removeScript(String name) {
+                throw new UnsupportedOperationException(agent + "'s entries are merged into its config");
+            }
+
+            @Override public void apply(Container container, List<McpServer> servers, List<String> stale) {
+                if (servers.isEmpty() && stale.isEmpty()) return;
+                var read = container.sh(optional ? "if [ -f " + path + " ]; then cat " + path + "; fi"
+                        : "cat " + path);
+                if (!read.success()) {
+                    throw new IncusException("Could not read " + path + " to register MCP servers with " + agent);
+                }
+                var text = read.stdout().isBlank() ? "{}" : read.stdout();
+                container.shAsUser("agentuser", "mkdir -p \"$(dirname " + path + ")\"").assertSuccess("Failed to create the directory of " + path);
+                container.writeFile(path, mergeServers(text, path, servers, stale, entry));
+                container.chown(path, "agentuser:agentuser");
+            }
+        };
+    }
+
+    /** {@code config} with {@code servers} put into its {@code mcpServers} object, as {@code entry} renders them, and {@code stale} taken out. */
+    static String mergeServers(String config, String path, List<McpServer> servers, List<String> stale,
+                               java.util.function.Function<McpServer, JqObject> entry) {
+        if (!(Jjq.parseForeign(config, path) instanceof JqObject root)) {
+            throw new IncusException(path + " is not a JSON object");
+        }
+        var mcp = root.get("mcpServers") instanceof JqObject existing ? existing : JqObject.EMPTY;
+        for (var name : stale) mcp = mcp.without(name);
+        for (var server : servers) mcp = mcp.with(server.name(), entry.apply(server));
+        return JqValues.toPrettyJsonString(root.with("mcpServers", mcp)) + "\n";
+    }
+
     private static JqObject opencodeEntry(McpServer server) {
         var entry = JqObject.builder(4);
         if (server.stdio()) {

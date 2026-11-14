@@ -52,7 +52,7 @@ final class McpServerRegistration {
             if (!servers.isEmpty()) {
                 BuildOutput.warn("No agent in this template takes MCP servers",
                         "Not registered: " + servers.stream().map(s -> s.server().name()).collect(Collectors.joining(", ")),
-                        "Add claude, codex, pi or opencode to the template to use them");
+                        "Add claude, codex, pi, opencode, gemini-cli, copilot or bob to the template to use them");
             }
             // Without reading the record, which costs every agent-less build an exec: a record
             // names only agents installed in this rootfs, and a copied rootfs never loses a tool.

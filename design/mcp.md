@@ -678,7 +678,7 @@ A plugin system loaded at run time is not trivial in a native image, and nothing
 A tool declares the MCP servers it provides once, as `mcp:` entries (#2206).
 Each entry is either a stdio `command` with an `env`, or an HTTPS `url` with an optional `bearer-token-env`, and none of its keys belongs to one agent.
 An agent takes part by implementing `ToolSetup.mcpClient()` (`McpClients`), so a new agent gets every tool's servers, and a new tool reaches every agent, with no change to the other side.
-Claude Code, Codex, Pi and opencode implement it; Gemini CLI, Copilot and Bob do not yet, and a template whose servers no agent takes is warned about.
+Claude Code, Codex, Pi, opencode, Gemini CLI, Copilot and Bob implement it, and a template whose servers no agent takes is warned about.
 jasolo, the first built-in that needs it, is an ordinary tool with one entry.
 
 **Chosen:** one build step, `McpServerRegistration`, run once per build in both build paths, after every tool's setup and every layer's repositories, over the tools of the whole template chain.
@@ -686,12 +686,14 @@ It registers every server with every agent the image has, so the order of the to
 A child template that adds Codex gets its ancestors' servers, and Codex or opencode rewriting its config whole during setup costs nothing, since the step runs after.
 Claude Code, Codex and Pi are driven through their own `mcp add` and `mcp remove`, as agentuser, so each CLI stays the authority on its own file.
 opencode's `mcp add` has no remove and rewrites the `opencode.json` of the directory it runs in, so isx merges its entries into the user config `OpencodeSetup` already writes.
+Gemini CLI, Bob Shell and Copilot are merged the same way, into the `mcpServers` of `~/.gemini/settings.json`, `~/.bob/settings/settings.json` and `~/.copilot/mcp-config.json`, with every other key kept.
+Gemini's `gemini mcp add` would expand a token into the file, which the merge avoids.
 Pi gets `--exposure direct`, as `isx`'s own entry does, so the tools are declared to its model as Claude Code declares them; that choice is the adapter's, never the tool's.
 Root records what it registered in `/var/lib/isx/mcp-servers`, one `<agent> <server>` per line, so a later build removes a server no tool declares any more and leaves an entry isx did not make alone.
 A stdio command not on agentuser's PATH fails the build, since every agent would list a server that cannot start and say so only when a session tries it.
 
 **A credential never enters an entry.**
-An HTTP server reaches one only through `bearer-token-env`, a variable each agent reads when it connects: Claude Code's `headersHelper`, Codex's and Pi's `--bearer-token-env-var`, opencode's `{env:...}`.
+An HTTP server reaches one only through `bearer-token-env`, a variable each agent reads when it connects: Claude Code's `headersHelper`, Codex's and Pi's `--bearer-token-env-var`, opencode's `{env:...}`, and `Bearer ${VAR}` in the header of Gemini CLI, Bob Shell and Copilot, which resolve it when they connect.
 Pointed at the tool's proof placeholder, as `atlassian-mcp`'s is, that variable carries a proof the proxy checks before it injects the account's credential, as for any other tool.
 The loader refuses a `bearer-token-env` that is not one of the tool's own exported `proxy.placeholders`, or a URL whose host is none of its `proxy.auth` domains, so every token a server receives is a proof the proxy checks.
 It also refuses an entry whose `env` names a credential (`SecretRedactor.looksSecret`), an entry that is neither one form nor the other, a URL that is not HTTPS, and a server named `isx`, which the per-start coordinator registration owns.

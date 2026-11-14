@@ -151,6 +151,9 @@ public class GeminiSetup implements ToolSetup {
     }
 
     @Override
+    public McpClient mcpClient() { return McpClients.GEMINI; }
+
+    @Override
     public String environmentContextPath() { return CONTEXT_PATH; }
 
     /** The extension's directory and manifest, owned by agentuser, in one exec. */
