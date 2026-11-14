@@ -431,13 +431,116 @@ final class RelayTests: XCTestCase {
         var after = rlimit()
         XCTAssertEqual(getrlimit(descriptorLimit, &after), 0)
         XCTAssertEqual(UInt64(after.rlim_cur), raised)
-        // Enough for the measurement's 400 held connections and a burst of 120 beside them.
+        // Enough for the 192 connections isx-vm's relays hold at once, two descriptors each,
+        // and for the measurement's 400 asked for with a burst of 120 beside them.
         XCTAssertGreaterThanOrEqual(raised, min(UInt64(before.rlim_max), 2048))
         #if canImport(Glibc)
         XCTAssertEqual(after.rlim_cur, before.rlim_max)
         #endif
         // At the limit already, it changes nothing.
         XCTAssertEqual(Relay.raiseDescriptorLimit(), raised)
+    }
+
+    // What stopped the machine on the Mac (#2031): Virtualization.framework's own process has
+    // room for 256 descriptors and holds one for each connection to the guest, so the launcher
+    // asks for no more than it was given room for. The connection beyond that is accepted and
+    // waits undialled, and is dialled when another one ends.
+    func testNoMoreGuestConnectionsAreOpenThanThereIsRoomFor() throws {
+        let rig = try Rig(room: GuestRoom(connections: 2))
+        defer { rig.close() }
+        let first = try rig.newClient()
+        let second = try rig.newClient()
+        defer { close(second) }
+        XCTAssertTrue(eventually { rig.relay.counts == Relay.Counts(held: 2, total: 2) }, "\(rig.relay.counts)")
+
+        let third = try rig.newClient()
+        defer { close(third) }
+        XCTAssertTrue(writeAll(third, Array("kept".utf8)))
+        let fourth = try rig.newClient()
+        defer { close(fourth) }
+        XCTAssertTrue(eventually { rig.relay.counts.waiting == 2 }, "\(rig.relay.counts)")
+        usleep(100_000)
+        XCTAssertEqual(rig.relay.counts, Relay.Counts(waiting: 2, held: 2, total: 2))
+        XCTAssertEqual(rig.guest.state.withLock { $0.dials }, 2, "a connection was dialled with the room full")
+        // Said once, by the first that waits, and not by each one after it.
+        XCTAssertEqual(rig.guest.state.withLock { $0.log }, [
+            "2 connections to the guest are open, the most there is room for: the next waits for one to end",
+        ])
+
+        close(first)
+
+        XCTAssertTrue(eventually { rig.relay.counts == Relay.Counts(waiting: 1, held: 2, total: 3) }, "\(rig.relay.counts)")
+        XCTAssertEqual(rig.guest.state.withLock { $0.dials }, 3)
+        // The one that waited first, or the other: what it sent while it waited arrives.
+        let guest = try rig.guestEnd(2)
+        defer { close(guest) }
+        var arrived = readSome(guest, within: 0.2)
+        if arrived == nil {
+            XCTAssertTrue(writeAll(fourth, Array("kept".utf8)))
+            arrived = readSome(guest, within: 1)
+        }
+        XCTAssertEqual(arrived, Array("kept".utf8))
+        XCTAssertEqual(rig.guest.state.withLock { $0.hangUps }, 1)
+    }
+
+    // isx-vm serves three sockets, and the machine's process counts their connections together.
+    func testTheRoomIsSharedByEveryRelayGivenIt() throws {
+        let room = GuestRoom(connections: 1)
+        let api = try Rig(room: room)
+        defer { api.close() }
+        let agent = try Rig(room: room)
+        defer { agent.close() }
+        let held = try api.newClient()
+        XCTAssertTrue(eventually { api.relay.counts == Relay.Counts(held: 1, total: 1) }, "\(api.relay.counts)")
+
+        let waits = try agent.newClient()
+        defer { close(waits) }
+        XCTAssertTrue(eventually { agent.relay.counts == Relay.Counts(waiting: 1) }, "\(agent.relay.counts)")
+        usleep(100_000)
+        XCTAssertEqual(agent.guest.state.withLock { $0.dials }, 0, "the other relay dialled with the room full")
+
+        close(held)
+
+        XCTAssertTrue(eventually { agent.relay.counts == Relay.Counts(held: 1, total: 1) }, "\(agent.relay.counts)")
+    }
+
+    // A request whose sender gave up while it waited for room must not reach the guest later,
+    // when nobody reads its answer. And it stops waiting while the room is still full: a
+    // caller that gives up and tries again must not leave a thread and a descriptor each time.
+    func testAClientThatLeftWhileItWaitedForRoomIsNotDialled() throws {
+        let rig = try Rig(room: GuestRoom(connections: 1))
+        defer { rig.close() }
+        let held = try rig.newClient()
+        XCTAssertTrue(eventually { rig.relay.counts == Relay.Counts(held: 1, total: 1) }, "\(rig.relay.counts)")
+        let leaves = try rig.newClient()
+        XCTAssertTrue(writeAll(leaves, Array("late".utf8)))
+        let waits = try rig.newClient()
+        defer { close(waits) }
+        XCTAssertTrue(eventually { rig.relay.counts.waiting == 2 }, "\(rig.relay.counts)")
+
+        close(leaves)
+
+        XCTAssertTrue(eventually { rig.relay.counts == Relay.Counts(waiting: 1, held: 1, total: 1, refused: 1) }, "\(rig.relay.counts)")
+        close(held)
+        // The room goes to the one that still waits.
+        XCTAssertTrue(eventually { rig.relay.counts == Relay.Counts(held: 1, total: 2, refused: 1) }, "\(rig.relay.counts)")
+        XCTAssertEqual(rig.guest.state.withLock { $0.dials }, 2, "the guest was dialled for a client that had left")
+        XCTAssertTrue(writeAll(waits, Array("kept".utf8)))
+        XCTAssertEqual(readSome(try rig.guestEnd(1)), Array("kept".utf8))
+    }
+
+    func testRoomTakenForAGuestThatDoesNotAnswerIsGivenBack() throws {
+        let rig = try Rig(room: GuestRoom(connections: 1))
+        defer { rig.close() }
+        rig.guest.state.withLock { $0.refuses = true }
+        let refused = try rig.newClient()
+        defer { close(refused) }
+        XCTAssertTrue(eventually { rig.relay.counts == Relay.Counts(refused: 1) }, "\(rig.relay.counts)")
+        rig.guest.state.withLock { $0.refuses = false }
+
+        let client = try rig.newClient()
+        defer { close(client) }
+        XCTAssertTrue(eventually { rig.relay.counts == Relay.Counts(held: 1, total: 1, refused: 1) }, "\(rig.relay.counts)")
     }
 
     func testServingEndsWhenTheListenerIsGone() throws {
@@ -540,7 +643,7 @@ final class Rig: Sendable {
     /// Signalled when `serve` returns.
     let served = DispatchSemaphore(value: 0)
 
-    init() throws {
+    init(room: GuestRoom? = nil) throws {
         // Under /tmp and not the user's temporary directory, which on macOS is too long a path.
         var template = Array("/tmp/isx-relay-XXXXXX".utf8CString)
         guard mkdtemp(&template) != nil else { throw RelayError.system(call: "mkdtemp", path: "/tmp", errno: errno) }
@@ -551,7 +654,8 @@ final class Rig: Sendable {
             dial: { guest.dial() },
             hangUp: { guest.hangUp($0) },
             log: { line in guest.state.withLock { $0.log.append(line) } },
-            stamp: { guest.state.withLock { $0.stamp } })
+            stamp: { guest.state.withLock { $0.stamp } },
+            room: room)
         listener = try Relay.listen(at: path)
         let relay = self.relay, listener = self.listener, served = self.served
         Thread.detachNewThread {

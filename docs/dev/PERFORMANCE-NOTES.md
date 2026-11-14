@@ -1130,11 +1130,34 @@ A stall is a run over 1 s; every one lasted 2.0 s, the stdin forwarder's join.
 - **At the stall:** the stdin forwarder is parked in `Poller.poll` reading its handshake reply, and its sub-poller is parked there too, with no permit and off the master poller's list.
   A build with tracing patched into `sun.nio.ch.Poller` and `java.lang.VirtualThread` (`-J--patch-module=java.base=<classes>` to the image builder) showed the order: the initializing thread's unpark, the master poller's unpark finding the permit set, one resume, then the park that never ends.
 
+## The launcher's machine stops at 248 held connections, on a Mac (issue #2031)
+
+Measured on 2026-11-13 on the Mac runner (macOS 27.2, Mac18,5) by `appliance/launcher-on-mac.sh` with `isx-vm` of commit `695969b8`; the record is on PR #2197.
+`appliance/measure-tunnel.sh` held event streams of the Incus API through the tunnel and sampled a request beside them.
+
+| Connections asked for | Accepted | Still open at the end | Request on a new connection, median | On a kept connection, median |
+|---|---|---|---|---|
+| 0 | 0 | 0 | 0.288 ms | 0.116 ms |
+| 200 | 200 | 200 | 0.310 ms | 0.119 ms |
+| 400 | 248 | 0 | none answered | none answered |
+
+After the 248th connection the framework stopped the machine: `isx-vm`'s last line is "the machine stopped: Internal Virtualization error. The virtual machine stopped unexpectedly."
+`isx-vm` itself held 200 connections, which is 400 descriptors, so its own raised limit was not what ran out.
+248 is 8 below 256, the number of descriptors macOS gives a process that launchd starts.
+The framework runs the machine in such a process (`com.apple.Virtualization.VirtualMachine`), and that one holds a descriptor for each vsock connection.
+So the reading is that it had 8 open anyway and no room for the 249th connection; its count was not read on the Mac that day.
+Another project on the same framework reports that process limited to 256 descriptors, its machine stopping as leaked connections add up, and crash reports that name the descriptor limit (openai/tart issue 1410).
+vfkit's row is empty: its tunnel stopped answering before the held connections were measured.
+
+What follows is in design/macos-and-vms.md "The launcher's machine": the relays hold at most 192 connections to the guest at once.
+What this does not show is how many descriptors the share of the home takes in that process, which the next record on a Mac reads.
+
 ## The vsock tunnel's relay under load, on Linux (issue #2031)
 
 Measured on 2026-11-13 in a quiet window, in an isx VM under nested KVM (x86_64, 8 vCPUs, 16 GiB, QEMU 11.1.3), with the scripts as #2197 first proposed them.
 The question was whether the launcher's relay holds up under the load that makes vfkit's fail, and what a request costs through it.
 This says nothing of Virtualization.framework: that half is `appliance/launcher-on-mac.sh` on a Mac, and its record is on the PR.
+The counts held were 0, 200 and 400, the script's defaults then; they are 0, 150 and 400 since the Mac's machine was found to hold fewer than 256.
 
 The v0.5.0 appliance was booted under QEMU with `vhost-vsock-pci` (2 vCPUs, 2 GiB), anew for each bridge, and `appliance/measure-tunnel.sh` was run with its default counts through three bridges in turn:
 

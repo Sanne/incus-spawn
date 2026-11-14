@@ -406,6 +406,7 @@ Each setting is chosen for isx, and where it is vfkit's own that is a decision t
 | Stop | `SIGTERM` or `SIGINT` stops the machine at once | presses the power button, waits five seconds, then stops it | isx sends the signal only after the guest was asked and did not end. |
 | Guest clock | set after each wake, on a new connection to the guest agent | set after each wake, on one connection kept for the process's life | See below. |
 | Guest connections | each `VZVirtioSocketConnection` is kept while its descriptor is in use, and closed through the framework once | the descriptor is copied, the framework's own closed and the object let go | The framework closes a connection's descriptor when its object is closed or released, so the relay hands back exactly what it was given (`GuestConnections`). |
+| Guest connections at once | at most 192, the three relays together; the next waits for one to end (`GuestRoom`) | no limit | The framework's own process holds a descriptor for each and has room for 256; the one that does not fit stops the machine. See below. |
 
 The signature is ad hoc and carries one entitlement, `com.apple.security.virtualization`, which the framework requires before it starts a machine (`launcher/build-isx-vm.sh`, `launcher/isx-vm.entitlements`).
 It needs no certificate, key or Apple account, and CI makes it.
@@ -427,6 +428,24 @@ A second wake while the first is still being served sets the clock again afterwa
 The launcher learns of a wake from two clocks, one that counts the time asleep and one that does not (`SleepWatch`), read every two seconds.
 That needs no system notification, so no AppKit and no IOKit in a program with no other use for them.
 What it gives up: the wake is noticed up to two and a half seconds late, and the process wakes every two seconds to ask.
+
+**The relays have at most 192 connections to the guest open at once, all three together.**
+A host connection beyond that is accepted and waits, and is dialled when another one ends.
+The limit is not the launcher's own.
+Virtualization.framework runs the machine in a process of its own, `com.apple.Virtualization.VirtualMachine`, which holds one descriptor for every vsock connection.
+That process has room for 256 descriptors, and the connection that does not fit stops the machine.
+On the Mac `isx-vm` accepted 248 of 400 connections asked for, and the framework then stopped the machine with "Internal Virtualization error" (docs/dev/PERFORMANCE-NOTES.md "The launcher's machine stops at 248 held connections, on a Mac").
+`isx-vm`'s own limit was raised and had room, and it cannot raise another process's.
+vfkit runs the machine on the same framework and limits nothing, so the same load would stop its machine too; that was not measured, since vfkit's tunnel fails earlier.
+192 is three quarters of the 256.
+The rest is for what that process has open anyway (8, if the 248 filled it), for the files of the home's share, which it opens as well, for the clock's own connection after a wake, and for connections whose close is still on its way to the main queue.
+How many descriptors a busy share takes is not known: the measurement records that process's count, with connections held and after the share was read under isx.
+The room is one object for the process (`GuestRoom`), since the three sockets' connections are counted together in that other process.
+A connection that waits is counted as `waiting`, as one inside a dial is, and the relay says once that the room is full.
+One whose client left while it waited is closed without a dial and counted as `refused`: its request would otherwise reach the guest after its sender gave up on the answer.
+The relay notices within a second, while the room is still full, so callers that give up and try again do not each leave a thread and a descriptor behind.
+What the limit gives up: with 192 connections held, the next one waits for as long as they stay, whoever asks, the next `isx` command and `isx doctor` included.
+Refusing it at once was the alternative, and lost: a burst of short requests beyond the room would then fail where it now only takes longer, and isx holds nothing near 192 connections.
 
 The framework's objects are used on the main queue alone, the queue the machine is made on.
 A relay's thread reaches the guest through `dial`, which asks the main queue and waits for it; nothing on the main queue waits for a relay.

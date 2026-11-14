@@ -169,6 +169,7 @@ It holds the relay between a host Unix socket and a guest vsock port (`IsxRelay`
 The relay ends a connection as soon as either side ends and closes both sides, which vfkit's does not, and it gives up half-close, so no tunnel client may send one.
 `swift test --package-path launcher` runs its tests (Swift 6); CI runs them on Linux and macOS and bridges the appliance's vsock ports with the bridge in `integration-tests`.
 `isx-vm` starts the VM on Virtualization.framework with that relay, reading the command line isx writes for vfkit; each of its settings is a decision of design/macos-and-vms.md "The launcher's machine".
+Its relays have at most 192 guest connections open at once, all together, and the next one waits (`GuestRoom`): the framework's own machine process has room for 256 descriptors, and the connection that does not fit stops the machine.
 No release holds it: `launcher-macos` builds and signs it ad hoc with `com.apple.security.virtualization` alone, and `appliance/launcher-on-mac.sh <pr>` measures it against vfkit on the Mac runner, which is what the decision to replace vfkit is read from.
 A Mac still runs vfkit until the launcher ships.
 
