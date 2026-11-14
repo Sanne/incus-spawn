@@ -25,7 +25,7 @@ An item names its `class` (`mechanical`, `review`, or `judgement` by default), w
 `current`, `releases`, `check` and `apply` read and rewrite one item; `plan` decides every item (a prepared commit, an issue, or nothing) with no app credential; `issues` opens what `plan` wrote; `publish` pushes the prepared commits and opens or refreshes their PRs as the app; `verify-pr` and `verify-trees` are the check; `track` keeps the one `[upstream] watch failing` issue.
 Everything an upstream sends (a version, a tag, a URL, a sum) is data: it is matched against a shape before use and never reaches a shell line unquoted or a jq filter unbound.
 The three source types reuse what already verified a pin by hand: `kernel-org` is `appliance/kernel/update-kernel-pin.sh` (which gained `releases [<major>]` and `sum <version>`), `github-release` is `.github/scripts/base-image-sums.sh` and `verify-base-image-sums.sh`, and `jetbrains` reads the products API with a URL prefix allowlist and the `.sha256` beside each tarball.
-`github-asset` and `signed-file` (#2210) are described under "The github-asset source type" and "The signed-file source type" below.
+`github-asset` and `signed-file` (#2210) are described under "The github-asset source type" and "The signed-file source type" below, and `model-deprecations` (#2227) under "The model-deprecations source type".
 
 **The watch** (`.github/workflows/upstream-watch.yml`) runs every six hours and on `workflow_dispatch` (an optional `item`, checked against the manifest's keys), in `Sanne/incus-spawn` from `main` only, as two jobs.
 It has no PR, issue or comment trigger, `persist-credentials: false`, `contents: read` and `issues: write`, no third-party action, and no `${{ }}` inside any `run:`.
@@ -69,6 +69,7 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `alpine-minirootfs` | `appliance/build.sh` (`ALPINE_VERSION`, both `ALPINE_SHA256`) | Alpine's `v3.24/releases/<arch>/` listing, the `.asc` of each tarball | `signed-file`, `upstream/keys/alpine-ncopa.asc` | mechanical | `series` (3.24) | 24h | a new minor, seen in the latest-stable feed (`go:design`); gate `kernel-mac-verified` |
 | `arch-cloud-image` | `scripts/distro-images.env` (`ARCH_IMAGE_URL`, `ARCH_IMAGE_SHA256`) | the Arch mirror's `images/` listing, the signed `.SHA256` of the image | `signed-file`, `upstream/keys/arch-linux.asc` | mechanical | `any` | 24h | none |
 | `ubuntu-cloud-image` | `scripts/distro-images.env` (`UBUNTU_IMAGE_URL`, `UBUNTU_IMAGE_SHA256`) | Canonical's `releases/noble/` listing, the `SHA256SUMS` signed by `SHA256SUMS.gpg` | `signed-file`, `upstream/keys/ubuntu-cloud-images.asc` | mechanical | `any` | 24h | none |
+| `models` | `common/src/main/resources/models.yaml` (every model ID isx ships) | each vendor's keyless markdown deprecations page (Anthropic, OpenAI, Google) | none: a findings source pins nothing | judgement | none | none | a deprecated or retired ID, or a successor (`go:build`) |
 
 The `base-image` item takes over what `update-base-image.yml` did (#1678, #1862): every checksum comes from the release's own sums files for the asset each URL downloads, a release of another Fedora line is an issue rather than a PR, and `vm_image_url` moves to `-vm-direct` in the first release that has it for both arches and never back to the stock image (design/templates.md "Which base image an instance runs").
 Its series is a tag's whole line, its channel included (`src_series`, #1994), and it lists the stable channel's releases alone, so a channel is never proposed and never opens an issue.
@@ -147,6 +148,27 @@ A tree whose fields cannot be read counts as changed, so it fails closed.
 What this gives up: Maven 4, a different Apache line, is not watched, so a release of it opens no issue (the listing is `maven-3/`).
 Maven 3.10.0 is in the listing, so the first run opens an issue for the new series.
 The 3.9 line is bumped by the watch, and a person decides on 3.10.
+
+## The model-deprecations source type
+
+isx names AI models by ID, and a vendor retires or supersedes one without isx noticing (#2227).
+Every ID isx sends or suggests is declared in `common/src/main/resources/models.yaml`, one `key: id` per line, read through `ModelIds`.
+`ModelIdsGateTest` fails a model ID literal in any other source file, so a new one is declared the day it is added and the watch sees it.
+The `models` item reads each vendor's deprecations page, which needs no key (Anthropic's and Google's pages and OpenAI's `.md` are markdown).
+This is the first findings source: it defines `src_findings` and none of the pin functions, so it pins nothing, rewrites nothing and has no verifier, cooling or PR.
+The item is `class: judgement`, because a model is a choice (cost, quality, a Vertex region), and `validate` refuses any other class.
+`plan` opens one `go:build` issue per finding, titled `[upstream] models: <id> is deprecated`, `is retired` or `has a successor <id>`.
+A successor is the newest active ID of the same Claude family on Anthropic's page, or the replacement Google names for an ID it is not shutting down.
+For OpenAI, a deprecated ID is the finding and its replacement is in the body.
+An alias matches the vendor's dated snapshot (`gpt-4o-mini` and `gpt-4o-mini-2024-07-18`).
+An issue a person closed is not opened again, and a title is unique per finding, so the watch files each once.
+A retirement date inside a window is not flagged apart: the title is the signal (Sanne, #2227).
+A page is third-party text.
+Only tokens of an ID's shape and a date's shape are taken from it into an issue, and the page's other text never is.
+A page that yields no row, a state the parser does not know on Anthropic's page, and a page that cannot be fetched each fail this item alone: the run goes on, so no other item's bump is held back, and `plan` opens one `[upstream] models: the watch cannot read its source` issue, so a changed page is never read as "all clear".
+A declared ID no vendor's `id-prefix` covers fails `validate`, so a new vendor is added to the item before an ID of it is declared.
+What this gives up: Google's and OpenAI's pages are read for deprecations and replacements only, so a newer OpenAI or Gemini model that replaces nothing is not reported, and a model an account cannot reach is still only found by `ModelCheck` when it is used (#1012).
+A person's PR that edits `models.yaml` is an ordinary change; `upstream-verify` refuses an app PR that touches it.
 
 ## The review class
 
