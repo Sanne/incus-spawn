@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.incus.Container;
@@ -76,7 +77,7 @@ public class CopilotSetup implements ToolSetup {
         // so see settingsJson().
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("Copilot model ID (e.g. claude-opus-5.5, gpt-5.6-sol, auto)");
+        model.setDescription("Copilot model ID (e.g. " + ModelIds.get("example-copilot-claude") + ", " + ModelIds.get("example-copilot-gpt") + ", auto)");
         model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
         model.setOptional(true);
         model.setReconfigurable(true);

@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.incus.Container;
@@ -87,7 +88,7 @@ public class GeminiSetup implements ToolSetup {
     public Map<String, ToolDef.ParameterDef> parameters() {
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("Gemini model ID (e.g. gemini-4-argon); omitted to use the CLI default");
+        model.setDescription("Gemini model ID (e.g. " + ModelIds.get("example-gemini") + "); omitted to use the CLI default");
         model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
         model.setOptional(true);
         model.setReconfigurable(true);

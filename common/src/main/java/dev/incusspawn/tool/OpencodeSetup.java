@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
@@ -20,7 +21,7 @@ import java.util.Set;
 public class OpencodeSetup implements ToolSetup {
 
     static final String DEFAULT_PROVIDER = "anthropic";
-    static final String DEFAULT_MODEL = "claude-sonnet-5-5";
+    static final String DEFAULT_MODEL = ModelIds.get("opencode-default");
 
     static final String NPM_PACKAGE = "opencode-ai";
     static final String CONFIG_PATH = "/home/agentuser/.config/opencode/opencode.json";
@@ -68,7 +69,8 @@ public class OpencodeSetup implements ToolSetup {
 
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("Model ID (e.g. claude-sonnet-5-5, gpt-4.1, gemini-3.7-flash); omitted, "
+        model.setDescription("Model ID (e.g. " + ModelIds.get("example-claude-sonnet") + ", " + ModelIds.get("example-openai")
+                + ", " + ModelIds.get("example-gemini-flash") + "); omitted, "
                 + DEFAULT_MODEL + " for " + DEFAULT_PROVIDER + " and opencode's own default otherwise");
         model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
         model.setOptional(true);

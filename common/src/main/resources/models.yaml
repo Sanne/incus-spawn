@@ -1,0 +1,28 @@
+# Every AI model ID isx sends or suggests (#2227), the one file that holds them.
+# `ModelIds` reads it, ModelIdsGateTest fails a model ID written anywhere else in the sources,
+# and the upstream watch (item `models` of upstream/manifest.yaml) reads it to tell Sanne when
+# a vendor retires one or publishes a successor.
+# One `key: id` per line, no nesting: the watch reads every value.
+
+# What isx itself sends.
+ai-help-anthropic: claude-sonnet-5-5
+ai-help-vertex: claude-sonnet-5-5
+ai-help-openai: gpt-4o-mini
+vertex-probe: claude-sonnet-5-5
+vertex-rewriter-default: claude-sonnet-4-6
+# What a coding agent starts with when its tool names no model.
+pi-default: claude-sonnet-5-5
+opencode-default: claude-sonnet-5-5
+
+# Suggestions in help text and error messages.
+example-claude-opus: claude-opus-5-5
+example-claude-sonnet: claude-sonnet-5-5
+example-claude-haiku: claude-haiku-5-5
+example-claude-haiku-4: claude-haiku-4-5
+example-openai: gpt-4.1
+example-gemini-flash: gemini-3.7-flash
+example-codex: gpt-5.3-codex
+example-codex-spark: gpt-5.3-codex-spark
+example-copilot-claude: claude-opus-5.5
+example-copilot-gpt: gpt-5.6-sol
+example-gemini: gemini-4-argon

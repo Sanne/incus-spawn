@@ -2380,7 +2380,7 @@ public class MitmProxy {
     /**
      * Where a request already in Vertex's format (container running in Vertex mode with
      * ANTHROPIC_VERTEX_BASE_URL pointing here) goes: its own path, but for the @date suffix the
-     * Vertex SDK uses (e.g. claude-haiku-4-5@20251001), which the global endpoint rejects.
+     * Vertex SDK uses (a model ID with an @date suffix), which the global endpoint rejects.
      */
     private static String vertexFormatPath(String path) {
         return VERTEX_DATE_SUFFIX.matcher(path).replaceFirst("");
