@@ -124,6 +124,7 @@ final class AboutModal {
                 shortcutRow("Enter", "Default instance action", null, null),
                 shortcutRow("?", "AI Help — ask a question", null, null),
                 shortcutRow("Tab", "Switch panels", "⇧Tab", "Reverse"),
+                shortcutRow("←/→", "Switch view", "h/l", "Same"),
                 shortcutRow("F1/1", "This dialog", null, null),
                 shortcutRow("F2/2", "Shell into instance", "⇧F2/Alt+2", "Join its task"),
                 shortcutRow("F3/3", "View details", null, null),

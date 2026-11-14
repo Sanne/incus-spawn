@@ -1,4 +1,5 @@
  isx   1.2.3  ● 2 containers running
+ [Overview]  Templates 1   Instances 3                          ←/→ Switch view
 ╭ Templates ───────────────────────────────────────────────────────────────────╮
 │  NAME                    BUILT                DISK     DESCRIPTION           │
 │  tpl-minimal             unknown !            -        Minimal Fedora        │
@@ -9,7 +10,6 @@
 │ ●alpha       Running                 tpl-minimal container  -          -     │
 │▸ beta        Running                 tpl-minimal container  -          -     │
 │ ●gamma       Stopped                 tpl-minimal container  -          -     │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

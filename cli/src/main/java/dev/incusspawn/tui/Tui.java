@@ -297,6 +297,59 @@ public class Tui {
     enum Panel { TEMPLATES, INSTANCES }
     Panel focusedPanel = Panel.TEMPLATES;
 
+    /**
+     * The tabs of the main screen, in the order the tab bar shows them. Each names the panels it
+     * draws: the overview both, stacked as before tabs existed, the others one at full height. A
+     * view with rows of its own draws neither, and gets its own rendering and keys.
+     */
+    enum View {
+        OVERVIEW("Overview", Panel.TEMPLATES, Panel.INSTANCES),
+        TEMPLATES("Templates", Panel.TEMPLATES),
+        INSTANCES("Instances", Panel.INSTANCES);
+
+        final String label;
+        private final List<Panel> panels;
+
+        View(String label, Panel... panels) {
+            this.label = label;
+            this.panels = List.of(panels);
+        }
+
+        boolean shows(Panel panel) {
+            return panels.contains(panel);
+        }
+    }
+
+    /** The tab showing; every session of one TUI run keeps it. */
+    View view = View.OVERVIEW;
+
+    /** Switch to a tab. The focus follows when the tab does not draw the focused panel. */
+    void show(View target) {
+        view = target;
+        if (!target.panels.isEmpty() && !target.shows(focusedPanel)) focusedPanel = target.panels.get(0);
+    }
+
+    /**
+     * Focus a panel. A tab that does not draw it gives way to the one that draws it alone, so the
+     * focused panel is always on screen.
+     */
+    void focus(Panel panel) {
+        focusedPanel = panel;
+        if (!view.shows(panel)) view = panel == Panel.TEMPLATES ? View.TEMPLATES : View.INSTANCES;
+    }
+
+    /** Tab and Shift+Tab: the other panel, which in a one-panel tab is the other such tab. */
+    private void focusOtherPanel() {
+        focus(focusedPanel == Panel.TEMPLATES ? Panel.INSTANCES : Panel.TEMPLATES);
+    }
+
+    /** Left and Right: the neighbouring tab, stopping at either end. */
+    private void showNeighbour(int step) {
+        var views = View.values();
+        int target = view.ordinal() + step;
+        if (target >= 0 && target < views.length) show(views[target]);
+    }
+
     // Template panel data (top)
     Map<String, dev.incusspawn.config.ImageDef> imageDefs;
     List<TemplateInfo> templateEntries;
@@ -645,7 +698,7 @@ public class Tui {
 
         // If returning from a shell/branch, focus the target instance
         if (returnToInstance != null) {
-            focusedPanel = Panel.INSTANCES;
+            focus(Panel.INSTANCES);
             boolean found = false;
             for (int i = 0; i < rowToEntry.size(); i++) {
                 if (rowToEntry.get(i) != null && rowToEntry.get(i).name().equals(returnToInstance)) {
@@ -658,7 +711,7 @@ public class Tui {
             returnToInstance = null;
         } else {
             selectFirstDataRow(instanceTableState);
-            focusedPanel = Panel.TEMPLATES;
+            focus(Panel.TEMPLATES);
         }
     }
 
@@ -764,7 +817,17 @@ public class Tui {
         }
         // Tab or Shift+Tab: switch panels
         if (key.isKey(KeyCode.TAB) || ShiftTabBindings.isShiftTab(key)) {
-            focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
+            focusOtherPanel();
+            return true;
+        }
+        // Left and Right (h and l, beside j and k): switch tabs
+        boolean plain = !key.hasCtrl() && !key.hasAlt();
+        if (key.isKey(KeyCode.LEFT) || (plain && key.isChar('h'))) {
+            showNeighbour(-1);
+            return true;
+        }
+        if (key.isKey(KeyCode.RIGHT) || (plain && key.isChar('l'))) {
+            showNeighbour(1);
             return true;
         }
         // Refresh data. 'r' is the TUI-idiomatic binding (k9s/lazygit/btop);
@@ -1650,9 +1713,14 @@ public class Tui {
         int legendHeight = showLegend ? 1 : 0;
         int templateIdeal = templateEntries.size() + 3 + legendHeight;
         int instanceIdeal = entries.size() + 3;
-        int available = area.height() - footerHeight - headerHeight;
+        int tabsHeight = 1;
+        int available = area.height() - footerHeight - headerHeight - tabsHeight;
         int templatePanelHeight;
-        if (templateIdeal + instanceIdeal <= available) {
+        if (!view.shows(Panel.INSTANCES)) {
+            templatePanelHeight = available;
+        } else if (!view.shows(Panel.TEMPLATES)) {
+            templatePanelHeight = 0;
+        } else if (templateIdeal + instanceIdeal <= available) {
             templatePanelHeight = templateIdeal;
         } else {
             int minPanel = 5;
@@ -1663,15 +1731,17 @@ public class Tui {
         var chunks = Layout.vertical()
                 .constraints(
                         Constraint.length(headerHeight),
+                        Constraint.length(tabsHeight),
                         Constraint.length(templatePanelHeight),
                         Constraint.fill(),
                         Constraint.length(footerHeight))
                 .split(area);
 
         mainScreen.renderHeader(frame, chunks.get(0));
-        mainScreen.renderTemplateTable(frame, chunks.get(1));
-        mainScreen.renderInstanceTable(frame, chunks.get(2), tableState);
-        mainScreen.renderToolbar(frame, chunks.get(3), tableState, hasStatus);
+        mainScreen.renderTabs(frame, chunks.get(1));
+        if (view.shows(Panel.TEMPLATES)) mainScreen.renderTemplateTable(frame, chunks.get(2));
+        if (view.shows(Panel.INSTANCES)) mainScreen.renderInstanceTable(frame, chunks.get(3), tableState);
+        mainScreen.renderToolbar(frame, chunks.get(4), tableState, hasStatus);
 
         if (mode != Mode.BROWSE) {
             renderModal(frame, area, tableState);
@@ -2577,7 +2647,7 @@ public class Tui {
             return true;
         }
         if (key.isKey(KeyCode.TAB) || ShiftTabBindings.isShiftTab(key)) {
-            focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
+            focusOtherPanel();
             return true;
         }
         if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
@@ -2646,6 +2716,11 @@ public class Tui {
     private void selectLastDataRow(TableState state) {
         for (int i = rowToEntry.size() - 1; i >= 0; i--)
             if (rowToEntry.get(i) != null) { state.select(i); return; }
+    }
+
+    /** The instance under the cursor, or null. */
+    InstanceInfo selectedInstance() {
+        return selectedEntry(instanceTableState);
     }
 
     InstanceInfo selectedEntry(TableState state) {

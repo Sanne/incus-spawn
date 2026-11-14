@@ -31,8 +31,8 @@ import dev.incusspawn.command.InstanceListing.TemplateInfo;
 
 /**
  * The TUI's main screen below its dialogs: the header with the storage gauge, the templates and
- * instances tables, the legend, the search bar, the context line and the key bar. It draws what
- * {@link Tui} holds and changes none of it.
+ * instances tables, the legend, the tab bar, the search bar, the context line and the key bar. It
+ * draws what {@link Tui} holds and changes none of it.
  */
 final class MainScreen {
     private static final Pattern LINE_BREAKS = Pattern.compile("[\\n\\r]+");
@@ -169,6 +169,42 @@ final class MainScreen {
         if (fillerW > 0) spans.add(Span.styled(" ".repeat(fillerW), Style.EMPTY.bg(bg)));
         spans.addAll(gauge);
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
+    }
+
+    /** What the tab bar says of its keys, where there is room after the tabs. */
+    static final String TABS_HINT = "←/→ Switch view ";
+
+    /**
+     * The tab bar: every {@link Tui.View} in order, the showing one in brackets as well as in
+     * colour so it reads on a mono terminal. A tab that draws one list carries its row count,
+     * which is what says how much the other tabs hold while they are out of sight.
+     */
+    void renderTabs(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+        if (area.width() <= 0 || area.height() <= 0) return;
+        var spans = new ArrayList<Span>();
+        int width = 0;
+        for (var view : Tui.View.values()) {
+            boolean showing = view == tui.view;
+            var text = (showing ? " [" : "  ") + tabLabel(view) + (showing ? "]" : " ");
+            spans.add(Span.styled(text, showing
+                    ? Style.EMPTY.bold().fg(tui.theme.panelBorderFocused())
+                    : Style.EMPTY.fg(tui.theme.textDim())));
+            width += text.length();
+        }
+        int gap = area.width() - width - TABS_HINT.length();
+        if (gap >= 2) {
+            spans.add(Span.raw(" ".repeat(gap)));
+            spans.add(Span.styled(TABS_HINT, Style.EMPTY.fg(tui.theme.textDim())));
+        }
+        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
+    }
+
+    private String tabLabel(Tui.View view) {
+        return switch (view) {
+            case OVERVIEW -> view.label;
+            case TEMPLATES -> view.label + " " + tui.templateEntries.size();
+            case INSTANCES -> view.label + " " + tui.entries.size();
+        };
     }
 
     private enum BadgeKind { CONTAINER, VM }

@@ -204,6 +204,79 @@ class TuiCharacterisationTest {
         snapshot("main-second-rows", tui);
     }
 
+    private static final KeyEvent LEFT = KeyEvent.ofKey(KeyCode.LEFT);
+    private static final KeyEvent RIGHT = KeyEvent.ofKey(KeyCode.RIGHT);
+
+    @Test
+    void templatesTab() {
+        var tui = tui();
+        press(tui, RIGHT);
+        assertEquals(Tui.View.TEMPLATES, tui.view);
+        snapshot("tab-templates", tui);
+    }
+
+    @Test
+    void instancesTab() {
+        var tui = tui();
+        press(tui, RIGHT, RIGHT);
+        assertEquals(Tui.View.INSTANCES, tui.view);
+        assertEquals(Tui.Panel.INSTANCES, tui.focusedPanel, "the focus follows to the only panel drawn");
+        snapshot("tab-instances", tui);
+    }
+
+    @Test
+    void leftAndRightStopAtTheEnds() {
+        var tui = tui();
+        press(tui, LEFT);
+        assertEquals(Tui.View.OVERVIEW, tui.view);
+        press(tui, RIGHT, RIGHT, RIGHT);
+        assertEquals(Tui.View.INSTANCES, tui.view);
+        press(tui, KeyEvent.ofChar('h'), KeyEvent.ofChar('h'));
+        assertEquals(Tui.View.OVERVIEW, tui.view, "h and l are Left and Right");
+        press(tui, KeyEvent.ofChar('l'));
+        assertEquals(Tui.View.TEMPLATES, tui.view);
+    }
+
+    @Test
+    void theOverviewKeepsTheFocusItIsGiven() {
+        var tui = tui();
+        press(tui, RIGHT, RIGHT, LEFT, LEFT);
+        assertEquals(Tui.View.OVERVIEW, tui.view);
+        assertEquals(Tui.Panel.TEMPLATES, tui.focusedPanel, "the Templates tab was the last to set it");
+        press(tui, TAB);
+        assertEquals(Tui.View.OVERVIEW, tui.view, "Tab moves between the overview's panels as before");
+        assertEquals(Tui.Panel.INSTANCES, tui.focusedPanel);
+    }
+
+    @Test
+    void tabInAOnePanelTabShowsTheOtherPanelsTab() {
+        var tui = tui();
+        press(tui, RIGHT, TAB);
+        assertEquals(Tui.View.INSTANCES, tui.view);
+        assertEquals(Tui.Panel.INSTANCES, tui.focusedPanel);
+        press(tui, TAB);
+        assertEquals(Tui.View.TEMPLATES, tui.view);
+        assertEquals(Tui.Panel.TEMPLATES, tui.focusedPanel);
+    }
+
+    @Test
+    void theSelectionIsTheSameRowInEveryTab() {
+        var tui = tui();
+        press(tui, DOWN, TAB, DOWN, RIGHT);
+        assertEquals("tpl-dev", tui.selectedTemplate().name());
+        press(tui, RIGHT);
+        assertEquals("vm-1", tui.selectedInstance().name());
+    }
+
+    @Test
+    void leftAndRightMoveTheSearchCursorNotTheTab() {
+        var tui = tui();
+        press(tui, KeyEvent.ofChar('/'), RIGHT, LEFT);
+        assertEquals(Tui.View.OVERVIEW, tui.view);
+        typeText(tui, "hl");
+        assertEquals(Tui.View.OVERVIEW, tui.view, "h and l are text in the search bar");
+    }
+
     @Test
     void mainScreenWithoutInstances() {
         snapshot("main-empty", tui(false));

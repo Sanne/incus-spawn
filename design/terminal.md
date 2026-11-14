@@ -487,6 +487,44 @@ Deferring a warning keeps the common case free of a keypress, while progress and
 A TUI that never opens (init declined) prints the held warnings as it closes, so none is lost.
 Without a terminal there is nothing to wait on and no TUI to cover anything, so no pause.
 
+## The main screen's tabs
+
+The main screen has three tabs: Overview, Templates and Instances.
+Overview is the screen as it was before tabs: templates above, instances below.
+The other two each give one list the whole height.
+
+**Why tabs.**
+The stacked screen was designed for short lists.
+With many templates and many instances the two panels share the height in proportion to their lengths, so both scroll and neither shows much.
+A split that follows the focus was considered and rejected: rows would move on every Tab, and it has no place for a third list.
+A third one is coming, the overview of what was done in each instance (#2241), and a tab bar takes it without a new layout.
+
+**Overview stays, and the TUI opens on it.**
+People know the stacked screen, and with short lists it is still the best view, since it shows what is running beside what can be branched.
+Opening on it every time keeps the first screen predictable.
+The tab chosen is kept for the rest of that TUI run, across a shell or a build.
+
+**Keys.**
+Left and Right move between tabs, as do `h` and `l` beside the `j` and `k` that move between rows.
+They stop at either end instead of wrapping, so holding one always lands on the same tab.
+Digits were not free: a digit is its F-key ("Keyboards without F-keys").
+Tab and Shift+Tab keep their meaning, the other panel.
+In a tab that draws one panel the other panel is on the other such tab, so Tab shows that one.
+The search bar keeps Left and Right for its cursor.
+
+**One state, three views.**
+The selection, the marks and the search filter belong to the lists, not to a tab, so switching never loses a place.
+The focused panel is always on screen: an action that focuses the other panel, such as returning from a new branch's shell, shows the tab that draws it.
+
+**The tab bar costs one row.**
+It could not share the header band, which at 80 columns is already full with the version, the running count or a warning, and the storage gauge.
+The showing tab is in brackets as well as in colour, for terminals without colour.
+A one-panel tab carries its row count, which is what says how much a tab holds while it is out of sight.
+
+**What this gives up.**
+Every list has one row less than before, on every terminal.
+Two keys, `h` and `l`, are no longer free for an action.
+
 ## Terminals the TUI cannot assume
 
 Two things that looked fine in Ghostty broke in Termius (#1681).
