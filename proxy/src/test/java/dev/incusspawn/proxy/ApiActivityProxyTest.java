@@ -63,6 +63,10 @@ class ApiActivityProxyTest {
             new java.util.concurrent.CompletableFuture<>();
     /** The Accept-Encoding each upstream path was asked with. */
     static final Map<String, String> acceptEncodings = new ConcurrentHashMap<>();
+    /** The body each upstream path received, byte for byte. */
+    static final Map<String, byte[]> received = new ConcurrentHashMap<>();
+    static EventLog eventLog;
+    static Path eventFile;
 
     @BeforeAll
     static void start() throws Exception {
@@ -76,16 +80,27 @@ class ApiActivityProxyTest {
                 .requestHandler(ApiActivityProxyTest::answer);
         int upstreamPort = NpmCacheProxyTest.listen(upstream);
 
+        var githubAuth = new dev.incusspawn.tool.ToolDef.AuthDef();
+        githubAuth.setType("bearer");
+        githubAuth.setToken("${token}");
+        var toolProxies = List.of(
+                new ResolvedToolProxy("github", "github.com", githubAuth, Map.of("token", "ghs_real"), java.util.Set.of("github")),
+                new ResolvedToolProxy("github", "api.github.com", githubAuth, Map.of("token", "ghs_real"), java.util.Set.of("github")));
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
-                new ProxyCredentials("sk-ant-api03-real", "", false, "", "", List.of()));
+                new ProxyCredentials("sk-ant-api03-real", "", false, "", "", toolProxies));
         proxy.upstream.upstreamTrustAll = true;
         // The real clock, moving on every reading as a slow machine's does between two handlers (#1281)
         var last = new java.util.concurrent.atomic.AtomicLong();
         proxy.apiActivity = new ApiActivity(() -> last.updateAndGet(t -> Math.max(t + 1, System.currentTimeMillis())));
+        eventFile = tempHome.resolve("events.jsonl");
+        eventLog = new EventLog(eventFile);
+        proxy.apiActivity.recordTo(eventLog);
         ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
         healthPort = proxy.healthPort();
         proxy.overrideUpstream(ANTHROPIC, "127.0.0.1", upstreamPort);
+        proxy.overrideUpstream("github.com", "127.0.0.1", upstreamPort);
+        proxy.overrideUpstream("api.github.com", "127.0.0.1", upstreamPort);
 
         // The test client connects from 127.0.0.1, which the registry says is the worker
         listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
@@ -119,6 +134,23 @@ class ApiActivityProxyTest {
     }
 
     static void answer(HttpServerRequest req) {
+        if (req.method() == HttpMethod.POST && (req.path().endsWith("/git-receive-pack") || req.path().equals("/graphql"))) {
+            var accept = req.getHeader("Accept-Encoding");
+            acceptEncodings.put(req.path(), accept == null ? "" : accept);
+            req.body().onSuccess(body -> {
+                received.put(req.path(), body.getBytes());
+                var resp = req.response();
+                if (req.path().contains("/refused")) {
+                    resp.setStatusCode(500).end("no");
+                } else if (req.path().equals("/graphql")) {
+                    resp.putHeader("Content-Type", "application/json").end("{\"data\":{\"createPullRequest\":"
+                            + "{\"pullRequest\":{\"url\":\"https://github.com/o/r/pull/77\"}}}}");
+                } else {
+                    resp.end("000eunpack ok\n0000");
+                }
+            });
+            return;
+        }
         var accept = req.getHeader("Accept-Encoding");
         acceptEncodings.put(req.path(), accept == null ? "" : accept);
         var resp = req.response();
@@ -601,5 +633,59 @@ class ApiActivityProxyTest {
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
             registry.refresh();
         }
+    }
+
+    private static JqValue[] githubLines() throws Exception {
+        eventLog.flush();
+        return Files.readAllLines(eventFile).stream().map(JqValues::parseStrict)
+                .filter(v -> "github".equals(v.path("kind").asString("")))
+                .toArray(JqValue[]::new);
+    }
+
+    private static int postTo(String host, String uri, byte[] body, String contentType) throws Exception {
+        var options = new RequestOptions().setMethod(HttpMethod.POST)
+                .setServer(SocketAddress.inetSocketAddress(mitmPort, "127.0.0.1")).setHost(host).setPort(443).setURI(uri);
+        return client.request(options)
+                .compose(req -> req.putHeader("Accept-Encoding", "gzip, br").putHeader("Content-Type", contentType)
+                        .send(Buffer.buffer(body)))
+                .compose(resp -> resp.body().map(b -> resp.statusCode()))
+                .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void aPushAndAPullRequestOpenedThroughTheProxyAreEventLogLinesAndAFailureIsNot() throws Exception {
+        var before = githubLines().length;
+        var zero = "0".repeat(40);
+        var sha = "a".repeat(40);
+        var command = zero + " " + sha + " refs/heads/feature\0 report-status";
+        var head = String.format("%04x", command.length() + 4) + command + "0000PACK";
+        var pack = new byte[head.length() + 20_000];
+        java.util.Arrays.fill(pack, (byte) 0x9c);
+        System.arraycopy(head.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1), 0, pack, 0, head.length());
+
+        assertEquals(200, postTo("github.com", "/o/r.git/git-receive-pack", pack, "application/x-git-receive-pack-request"));
+        assertTrue(java.util.Arrays.equals(pack, received.get("/o/r.git/git-receive-pack")),
+                "the push reaches upstream byte for byte, past what the proxy reads");
+
+        var mutation = "{\"query\":\"mutation { createPullRequest(input: {title: \\\"t\\\"}) { pullRequest { url } } }\"}";
+        assertEquals(200, postTo("api.github.com", "/graphql", mutation.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                "application/json"));
+        assertEquals("identity", acceptEncodings.get("/graphql"));
+        assertEquals(mutation, new String(received.get("/graphql"), java.nio.charset.StandardCharsets.UTF_8));
+
+        assertEquals(500, postTo("github.com", "/o/refused.git/git-receive-pack", pack,
+                "application/x-git-receive-pack-request"));
+
+        var lines = githubLines();
+        assertEquals(before + 2, lines.length, "a push and a pull request, and none for the 500");
+        var push = lines[before];
+        assertEquals("push", push.path("op").asString(""));
+        assertEquals("o/r", push.path("repo").asString(""));
+        assertEquals(WORKER, push.path("instance").asString(""));
+        assertEquals("refs/heads/feature", push.toString().contains("\"refs\":[\"refs/heads/feature\"]") ? "refs/heads/feature" : push.toString());
+        var pr = lines[before + 1];
+        assertEquals("pull_request", pr.path("op").asString(""));
+        assertEquals("o/r", pr.path("repo").asString(""));
+        assertEquals(77, pr.path("number").asLong(0));
     }
 }

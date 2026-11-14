@@ -932,6 +932,8 @@ The guest writes these requests itself, so it can add successful lines at the ra
 Repository and branch names are the guest's text, cut at 255 characters and JSON-escaped.
 The incarnation is the listing's `created_at`, as for the counters (#1063), so a name branched again is a different instance in the log.
 Its cost on the request path is one queue offer and a JSON build at the call's end, which runs on the event loop and costs microseconds beside a model call that lasts seconds; it is not measured on a real Incus.
+A GitHub call costs more: each chunk of a push's body or a tapped answer copies up to 8 or 32 KiB on the event loop, every `/graphql` POST allocates about 40 KB of buffers whether or not it opens a pull request, and the end runs a regex over the head of the answer.
+This too is not measured on a real Incus.
 
 ## The socket transport: epoll on Linux
 On Linux the proxy runs Vert.x on Netty's native epoll transport, not Java NIO (#475).
