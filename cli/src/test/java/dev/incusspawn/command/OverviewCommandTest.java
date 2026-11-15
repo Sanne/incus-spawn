@@ -1,0 +1,120 @@
+package dev.incusspawn.command;
+
+import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.proxy.EventLogReader;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.ZoneOffset;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * {@code isx overview} (#2241): the instances beside what the proxy's event log says they did.
+ * {@code plain} and {@code json} are a contract with scripts, so these are golden outputs.
+ */
+class OverviewCommandTest {
+
+    private static final ZoneOffset ZONE = ZoneOffset.ofHours(2);
+    private static final String DEV1 = "2026-11-01T08:00:00.123456789Z";
+
+    @TempDir
+    Path dir;
+
+    private final FakeIncusDaemon daemon = new FakeIncusDaemon()
+            .container("tpl-java", Map.of(Metadata.TYPE, Metadata.TYPE_BASE))
+            .instance("dev-1", "container", "Running", Map.of(
+                    Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-java",
+                    Metadata.PURPOSE, "fix #12"))
+            .instance("dev-2", "container", "Stopped", Map.of(
+                    Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-java"))
+            .createdAt("dev-1", DEV1)
+            .createdAt("dev-2", "2026-11-02T08:00:00Z")
+            .lastUsedAt("dev-1", "2026-11-03T12:00:00Z")
+            .lastUsedAt("dev-2", "1970-01-01T00:00:00Z");
+
+    private EventLogReader.Log log() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        Files.writeString(file, String.join("\n",
+                "{\"t\":\"2026-11-01T09:00:00Z\",\"kind\":\"model\",\"instance\":\"dev-1\",\"incarnation\":\"" + DEV1 + "\","
+                        + "\"domain\":\"api.anthropic.com\",\"model\":\"m\",\"status\":200,\"ms\":1,\"input_tokens\":1200,"
+                        + "\"output_tokens\":300,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":0}",
+                "{\"t\":\"2026-11-03T10:00:00Z\",\"kind\":\"github\",\"op\":\"push\",\"instance\":\"dev-1\",\"incarnation\":\"" + DEV1 + "\","
+                        + "\"repo\":\"o/r\",\"status\":200,\"ms\":1,\"refs\":[\"refs/heads/fix\\u001b[31m\"],\"deleted_refs\":[]}",
+                "{\"t\":\"2026-11-03T10:01:00Z\",\"kind\":\"github\",\"op\":\"pull_request\",\"instance\":\"dev-1\",\"incarnation\":\"" + DEV1 + "\","
+                        + "\"repo\":\"o/r\",\"number\":12,\"status\":201,\"ms\":1}",
+                "{\"t\":\"2026-11-01T07:00:00Z\",\"kind\":\"model\",\"instance\":\"dev-2\",\"incarnation\":\"2026-10-01T00:00:00Z\","
+                        + "\"input_tokens\":99}") + "\n");
+        return EventLogReader.read(file);
+    }
+
+    private String overview(String format) throws Exception {
+        var cmd = new OverviewCommand();
+        cmd.format = format;
+        var read = log();
+        cmd.eventLog = () -> read;
+        var bytes = new ByteArrayOutputStream();
+        try (var out = new PrintStream(bytes, true, StandardCharsets.UTF_8)) {
+            cmd.print(daemon.client(), out, ZONE);
+        }
+        return bytes.toString(StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void plainIsOneRecordPerInstanceWithWhatTheLogSaw() throws Exception {
+        assertEquals("""
+                dev-1\trunning\tfix #12\t2026-11-03T14:00:00+02:00\t1\t1500\t1200\t300\t0\t0\t2026-11-01T11:00:00+02:00\t2026-11-03T12:01:00+02:00\to/r:fix [31m\to/r#12
+                dev-2\tstopped\t-\t-\t0\t0\t0\t0\t0\t0\t-\t-\t-\t-
+                """, overview("plain"), "dev-2's line is an earlier dev-2's, and it never started");
+    }
+
+    @Test
+    void jsonKeepsTheGuestsTextExactAndEscaped() throws Exception {
+        var json = overview("json");
+        assertTrue(json.contains("\"pushed_branches\" : [ \"o/r:fix\\u001B[31m\" ]"), json);
+        assertTrue(json.contains("\"pull_requests\" : [ \"o/r#12\" ]"), json);
+        assertFalse(json.contains("\u001b"), "no control character raw");
+    }
+
+    @Test
+    void theTableShowsTokensActiveDaysAndGitHubOnOneLineEach() throws Exception {
+        var table = overview(null);
+        var dev1 = table.lines().filter(l -> l.contains("dev-1")).findFirst().orElseThrow();
+        assertTrue(dev1.contains("1.5k"), dev1);
+        assertTrue(dev1.contains("Nov 1–Nov 3"), dev1);
+        assertTrue(dev1.contains("PR o/r#12, pushed fix [31m"), dev1);
+        assertFalse(table.contains("\u001b"));
+        var dev2 = table.lines().filter(l -> l.contains("dev-2")).findFirst().orElseThrow();
+        assertTrue(dev2.contains("never"), dev2);
+        assertFalse(table.contains("tpl-java"), "templates are not listed");
+        assertTrue(table.contains("Counted from the proxy's event log since Nov 1."), table);
+    }
+
+    @Test
+    void cellsAreCompactAndBounded() {
+        var effort = new EventLogReader.Effort(1, 2_500_000, 0, 0, 0, null, null, java.util.List.of(), java.util.List.of());
+        assertEquals("2.5M", OverviewCommand.tokensCell(effort));
+        assertEquals("-", OverviewCommand.tokensCell(EventLogReader.Effort.NONE));
+        var nearMillion = new EventLogReader.Effort(1, 999_960, 0, 0, 0, null, null, java.util.List.of(), java.util.List.of());
+        assertEquals("1.0M", OverviewCommand.tokensCell(nearMillion), "never 1000.0k");
+        var many = new EventLogReader.Effort(0, 0, 0, 0, 0, null, null,
+                java.util.stream.IntStream.range(0, 20).mapToObj(i -> new EventLogReader.Branch("o/r", "branch-" + i)).toList(),
+                java.util.List.of());
+        var cell = OverviewCommand.githubCell(many, 40);
+        assertEquals(40, cell.codePointCount(0, cell.length()));
+        assertTrue(cell.endsWith("…"));
+    }
+
+    @Test
+    void anEmptyLogSaysSo() {
+        assertEquals("The proxy's event log has no lines yet, so no tokens, pushes or pull requests are shown.",
+                OverviewCommand.coverage(EventLogReader.Log.EMPTY, ZONE));
+    }
+}

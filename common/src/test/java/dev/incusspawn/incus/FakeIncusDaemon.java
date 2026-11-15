@@ -395,6 +395,12 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /** Set when {@code instanceName} was created, which names its incarnation (#1063). */
+    public synchronized FakeIncusDaemon createdAt(String instanceName, String at) {
+        set(instanceName, "created_at", at);
+        return this;
+    }
+
     public synchronized FakeIncusDaemon network(String name, Map<String, String> config) {
         networks.put(name, JqObject.ofEntries("name", name, "config", tree(config)));
         return this;
