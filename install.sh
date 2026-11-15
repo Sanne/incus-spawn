@@ -220,8 +220,9 @@ if $NATIVE; then
         GRAALVM_LINE="25.5"
         graalvm_version() { [ -f "$1/release" ] || return 0; sed -n 's/^GRAALVM_VERSION="\(.*\)"$/\1/p' "$1/release"; }
         on_line() { case "$(graalvm_version "$1")" in "$GRAALVM_LINE"|"$GRAALVM_LINE".*) return 0 ;; esac; return 1; }
-        GRAALVM_HINT="  Download Oracle GraalVM $GRAALVM_LINE for macOS (aarch64) from https://www.graalvm.org/downloads/
-  (Homebrew's graalvm-jdk@25 is the 25.0 line), then set GRAALVM_HOME to its Contents/Home."
+        GRAALVM_HINT="  Install it with SDKMAN (sdk install java $GRAALVM_LINE.<patch>-graal, as sdk list java names it), or download Oracle GraalVM $GRAALVM_LINE
+  for macOS (aarch64) from https://www.graalvm.org/downloads/ and set GRAALVM_HOME to its Contents/Home.
+  Homebrew's graalvm-jdk casks are the 25.0 line."
         if [ -n "$GRAALVM_HOME" ]; then
             if [ ! -x "$GRAALVM_HOME/bin/native-image" ] || ! on_line "$GRAALVM_HOME"; then
                 echo "Error: GRAALVM_HOME is not a GraalVM $GRAALVM_LINE with native-image: $GRAALVM_HOME"
@@ -231,14 +232,23 @@ if $NATIVE; then
                 exit 1
             fi
         else
+            # JAVA_HOME first, then what macOS knows of, then SDKMAN's JDKs, which java_home does not list
             FOUND=""
-            for CANDIDATE in $(/usr/libexec/java_home -V 2>&1 | grep -i graal | awk '!seen[$NF]++ {print $NF}'); do
-                if [ -x "$CANDIDATE/bin/native-image" ] && on_line "$CANDIDATE"; then
+            while IFS= read -r CANDIDATE; do
+                [ -x "$CANDIDATE/bin/native-image" ] || continue
+                if on_line "$CANDIDATE"; then
                     GRAALVM_HOME="$CANDIDATE"
                     break
                 fi
-                FOUND="$FOUND $(graalvm_version "$CANDIDATE")"
-            done
+                CANDIDATE_VERSION=$(graalvm_version "$CANDIDATE")
+                case " $FOUND " in *" $CANDIDATE_VERSION "*) ;; *) FOUND="$FOUND $CANDIDATE_VERSION" ;; esac
+            done < <({
+                [ -n "$JAVA_HOME" ] && echo "$JAVA_HOME"
+                /usr/libexec/java_home -V 2>&1 | grep -i graal | awk '{print $NF}'
+                for SDK_JDK in "${SDKMAN_DIR:-$HOME/.sdkman}"/candidates/java/*/; do
+                    [ -d "$SDK_JDK" ] && echo "${SDK_JDK%/}"
+                done
+            } | awk '!seen[$0]++')
             if [ -z "$GRAALVM_HOME" ]; then
                 echo "Error: native builds on macOS need Oracle GraalVM $GRAALVM_LINE with native-image."
                 [ -n "$FOUND" ] && echo "  Found GraalVM${FOUND}, which is another line."
