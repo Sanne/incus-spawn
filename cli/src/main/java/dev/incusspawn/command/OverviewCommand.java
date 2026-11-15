@@ -72,17 +72,34 @@ public class OverviewCommand extends BaseCommand {
      * Everything the overview shows beside the listing: the event log, each instance's work state
      * read in its guest, and what became of its pull requests.
      */
-    public record Reading(EventLogReader.Log log, Map<String, WorkState> work,
+    public record Reading(EventLogReader.Log log, Map<String, GuestRead> guests,
                           Map<String, Map<EventLogReader.PullRequest, PullRequestStates.State>> pulls) {
         /**
          * Its work state; one the read did not cover (it appeared or started since) is not read
          * when stopped and unknown when running, never shown as stopped.
          */
         public WorkState workOf(InstanceInfo instance) {
-            var state = work.get(instance.name());
-            if (state != null) return state;
+            return guestOf(instance).work();
+        }
+
+        /** Its agent sessions, as {@link #workOf} for the work state. */
+        public AgentSessions sessionsOf(InstanceInfo instance) {
+            return guestOf(instance).sessions();
+        }
+
+        /**
+         * What was done in it, without a model ({@link AgentSessions.Summary}): never
+         * {@code untouched} while the event log saw it active.
+         */
+        public AgentSessions.Summary summaryOf(InstanceInfo instance) {
+            return AgentSessions.Summary.of(sessionsOf(instance), workOf(instance), effortOf(log, instance).any());
+        }
+
+        private GuestRead guestOf(InstanceInfo instance) {
+            var read = guests.get(instance.name());
+            if (read != null) return read;
             return "running".equalsIgnoreCase(instance.status())
-                    ? WorkState.unknown("not read since it started") : WorkState.NOT_READ;
+                    ? GuestRead.unknown("not read since it started") : GuestRead.NOT_READ;
         }
 
         /** What GitHub said of this pull request of the instance's; unknown when it was not asked or did not say. */
@@ -100,7 +117,7 @@ public class OverviewCommand extends BaseCommand {
                                java.util.function.Consumer<String> failed) {
         try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var pulls = pool.submit(() -> PullRequestStates.read(instances, log, config, github, failed));
-            var work = WorkState.readAll(incus, instances);
+            var work = GuestRead.readAll(incus, instances);
             try {
                 return new Reading(log, work, pulls.get());
             } catch (InterruptedException e) {
@@ -194,6 +211,13 @@ public class OverviewCommand extends BaseCommand {
             record.put("stashes", work.stashes());
             record.put("repos", work.repos().stream().map(WorkState.Repo::path).toList());
             record.put("unsaved_repos", work.unsavedRepos());
+            var summary = reading.summaryOf(i);
+            record.put("agent_sessions", summary.sessions());
+            record.put("headline", summary.headline());
+            record.put("headline_from", summary.from());
+            record.put("last_session", iso(summary.newest(), zone));
+            record.put("first_ask", summary.ask());
+            record.put("closing_message", summary.closing());
             records.add(record);
         }
         return records;
@@ -219,13 +243,14 @@ public class OverviewCommand extends BaseCommand {
             return;
         }
         var nameWidth = Math.max(20, instances.stream().mapToInt(e -> e.name().length()).max().orElse(20));
-        var fmt = "  %-" + nameWidth + "s  %-10s  %-14s  %-7s  %-15s  %-28s  %-40s  %s%n";
-        out.printf(fmt, "NAME", "STATUS", "LAST USED", "TOKENS", "ACTIVE", "WORK", "GITHUB", "PURPOSE");
-        out.printf(fmt, "-".repeat(nameWidth), "------", "---------", "------", "------", "----", "------", "-------");
+        var fmt = "  %-" + nameWidth + "s  %-10s  %-14s  %-7s  %-15s  %-28s  %-40s  %-" + ListCommand.PURPOSE_CELL_MAX + "s  %s%n";
+        out.printf(fmt, "NAME", "STATUS", "LAST USED", "TOKENS", "ACTIVE", "WORK", "GITHUB", "PURPOSE", "DONE");
+        out.printf(fmt, "-".repeat(nameWidth), "------", "---------", "------", "------", "----", "------", "-------", "----");
         for (var i : instances) {
             var effort = effortOf(log, i);
             out.printf(fmt, i.name(), i.status(), lastUsedCell(i), tokensCell(effort), activeCell(effort, zone),
-                    reading.workOf(i).cell(), githubCell(effort, statesOf(reading, i, effort), 40), ListCommand.purposeCell(i));
+                    reading.workOf(i).cell(), githubCell(effort, statesOf(reading, i, effort), 40), ListCommand.purposeCell(i),
+                    doneCell(reading.summaryOf(i), 80));
         }
         out.println();
         var note = coverage(log, zone);
@@ -248,6 +273,15 @@ public class OverviewCommand extends BaseCommand {
         if (n < 999_950) return String.format(Locale.ROOT, "%.1fk", n / 1_000.0);
         if (n < 999_950_000) return String.format(Locale.ROOT, "%.1fM", n / 1_000_000.0);
         return String.format(Locale.ROOT, "%.1fG", n / 1_000_000_000.0);
+    }
+
+    /**
+     * The DONE cell: what the newest agent session said it did, {@code newest of 3: …} when there
+     * were several, {@code untouched}, or why there is nothing to say; on one line, cut to
+     * {@code max} code points.
+     */
+    public static String doneCell(AgentSessions.Summary summary, int max) {
+        return AgentSessions.cut(OutputFormat.oneLine(summary.cell()), max);
     }
 
     /** How the overview names a day, in the table, its note and the TUI's title. */

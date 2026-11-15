@@ -1957,9 +1957,12 @@ public class Tui {
             }
             case INSTANCE_DETAIL -> {
                 var selected = selectedEntry(instanceTableState);
+                // The overview's last read, if there was one (#2241): pure, from the parked reading
+                var reading = overviewReading;
                 // Assessed from the same snapshot as its tag row: pure, and a few map lookups
                 if (selected != null) instanceDetail.render(frame, screen, selected, detailAccountUses,
-                        detailRegisteredWith, BaseImageAge.assess(selected.metadata(), imageDefs), detailMcpScope);
+                        detailRegisteredWith, BaseImageAge.assess(selected.metadata(), imageDefs), detailMcpScope,
+                        reading == null ? null : reading.summaryOf(selected));
             }
             case ACCOUNTS -> accountsModal.render(frame, screen);
             case INFO -> about.render(frame, screen);

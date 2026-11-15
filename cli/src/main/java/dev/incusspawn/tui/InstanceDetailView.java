@@ -88,8 +88,9 @@ public final class InstanceDetailView {
     /** Render the details of {@code selected}, with the credential accounts the TUI resolved for it. */
     void render(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen, InstanceInfo selected,
                 List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses, List<String> registeredWith,
-                BaseImageAge.Assessment baseImage, dev.incusspawn.config.McpScope mcpScope) {
-        var contentLines = buildInstanceDetailLines(selected, detailAccountUses, registeredWith, baseImage, mcpScope);
+                BaseImageAge.Assessment baseImage, dev.incusspawn.config.McpScope mcpScope,
+                dev.incusspawn.command.AgentSessions.Summary summary) {
+        var contentLines = buildInstanceDetailLines(selected, detailAccountUses, registeredWith, baseImage, mcpScope, summary);
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F2", "Shell");
         if (selected.mcp() != null) modal.addKey(hintSpans, "⇧F2", "Join task");
@@ -150,6 +151,36 @@ public final class InstanceDetailView {
         if (tools.isEmpty()) return rows;
         rows.add(new DetailRow("Registered:", String.join(", ", tools)));
         rows.add(new DetailRow(null, "isx added it there from the host, and removes it on destroy"));
+        return rows;
+    }
+
+    /** The most lines of a closing message the detail pane shows. */
+    static final int CLOSING_LINES = 20;
+
+    /**
+     * The detail pane's rows for what the overview read of the instance's agent sessions (#2241):
+     * what the person asked first and the newest closing message, with how many sessions there
+     * were and how old the newest is; none before the overview has read the instance. All of it is
+     * the guest's text, already scrubbed and bounded, shown a line at a time through
+     * {@link OutputFormat#oneLine}.
+     */
+    public static List<DetailRow> summaryRows(dev.incusspawn.command.AgentSessions.Summary summary, java.time.LocalDateTime now) {
+        var rows = new ArrayList<DetailRow>();
+        if (summary == null) return rows;
+        rows.add(new DetailRow("Done:", OutputFormat.oneLine(summary.cell())));
+        if (summary.newest() == null) return rows;
+        var at = java.time.LocalDateTime.ofInstant(summary.newest(), java.time.ZoneId.systemDefault());
+        rows.add(new DetailRow(null, "the agent's own words, from " + summary.sessions()
+                + (summary.sessions() == 1 ? " session" : " sessions, the newest") + " "
+                + Metadata.ageDescription(at.format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME), now)));
+        if (summary.ask() != null) rows.add(new DetailRow("  Asked:", OutputFormat.oneLine(summary.ask())));
+        if (summary.closing() != null) {
+            var lines = summary.closing().lines().filter(l -> !l.isBlank()).toList();
+            for (int i = 0; i < Math.min(lines.size(), CLOSING_LINES); i++) {
+                rows.add(new DetailRow(i == 0 ? "  Closing:" : null, OutputFormat.oneLine(lines.get(i))));
+            }
+            if (lines.size() > CLOSING_LINES) rows.add(new DetailRow(null, "… " + (lines.size() - CLOSING_LINES) + " more lines in isx overview --format=json"));
+        }
         return rows;
     }
 
@@ -220,7 +251,8 @@ public final class InstanceDetailView {
                                              List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses,
                                              List<String> registeredWith,
                                              BaseImageAge.Assessment baseImage,
-                                             dev.incusspawn.config.McpScope mcpScope) {
+                                             dev.incusspawn.config.McpScope mcpScope,
+                                             dev.incusspawn.command.AgentSessions.Summary summary) {
         var lines = new ArrayList<Line>();
         var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
         var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
@@ -267,6 +299,7 @@ public final class InstanceDetailView {
         rows.addAll(mcpControlRows(info.mcpCaller(), mcpScope));
         rows.addAll(ownerDetailRows(info.owner(), info.ownerId()));
         rows.addAll(registrationRows(registeredWith));
+        rows.addAll(summaryRows(summary, clock.get()));
         for (var row : rows) {
             lines.add(row.label() == null
                     ? Line.from(List.of(Span.styled(" ".repeat(16) + row.value(), dimStyle)))

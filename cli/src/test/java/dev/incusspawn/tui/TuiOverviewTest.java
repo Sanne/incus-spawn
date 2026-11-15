@@ -54,7 +54,8 @@ class TuiOverviewTest {
                 .createdAt("ws", WS)
                 .createdAt("mine", "2026-11-02T08:00:00Z")
                 .execOutput(dev.incusspawn.command.WorkState.HEADER,
-                        dev.incusspawn.command.WorkState.HEADER + "\nrepo 0 2 0 app\nend\n");
+                        dev.incusspawn.command.WorkState.HEADER + "\nrepo 0 2 0 app\nend\n"
+                                + dev.incusspawn.command.ClaudeSessions.HEADER + "\ntotal 1\nsession 1762164000 YQ==\nclose eyJ0eXBlIjoiYXNzaXN0YW50IiwibWVzc2FnZSI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJQb3J0ZWQgdGhlIHBhcnNlciJ9XX19\nend\n");
         var file = dir.resolve("events.jsonl");
         Files.writeString(file, String.join("\n",
                 "{\"t\":\"2026-11-01T12:00:00Z\",\"kind\":\"model\",\"instance\":\"ws\",\"incarnation\":\"" + WS + "\","
@@ -131,6 +132,9 @@ class TuiOverviewTest {
         assertTrue(work.lines().anyMatch(l -> l.contains("WORK") && l.contains("ACTIVE")), work);
         var ws = work.lines().filter(l -> l.contains(" ws ")).findFirst().orElseThrow();
         assertTrue(ws.contains("Nov 1–Nov 4"), ws);
+        assertTrue(work.lines().anyMatch(l -> l.contains("DONE")), "a 120-column terminal has room for DONE");
+        var mine = work.lines().filter(l -> l.contains(" mine ")).findFirst().orElseThrow();
+        assertTrue(mine.contains("Ported the parser"), mine);
 
         press(tui, KeyEvent.ofChar(' '), KeyEvent.ofKey(KeyCode.DOWN), KeyEvent.ofChar(' '), KeyEvent.ofKey(KeyCode.F8));
         var confirm = screen(tui, 120);

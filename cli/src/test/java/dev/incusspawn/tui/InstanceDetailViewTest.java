@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The F3 instance details on their own: which keys they keep, which they hand back, and how they look. */
 class InstanceDetailViewTest {
@@ -48,7 +49,7 @@ class InstanceDetailViewTest {
         var view = view();
         var uses = List.of(new AccountUsage.Use("github", "work", null, "", "", "", ""));
         TuiSnapshot.assertMatches("instance-detail-view-80x24",
-                TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses, List.of(), null, null)));
+                TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses, List.of(), null, null, null)));
     }
 
     @Test
@@ -58,7 +59,7 @@ class InstanceDetailViewTest {
                 "virtual-machine", "tpl-dev", "4", "8GiB", "50GiB", "", "", "x86_64",
                 "", "", "instance", "", "", "", -1, -1, "", false, null, false, null);
         TuiSnapshot.assertMatches("instance-detail-view-vm-80x24",
-                TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of(), List.of(), null, null)));
+                TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of(), List.of(), null, null, null)));
     }
 
     @Test
@@ -91,5 +92,19 @@ class InstanceDetailViewTest {
                         new InstanceDetailView.DetailRow(null, "isx added it there from the host, and removes it on destroy")),
                 InstanceDetailView.registrationRows(List.of("herdr")));
         assertEquals(List.of(), InstanceDetailView.registrationRows(List.of()));
+    }
+
+    @Test
+    void theAgentsClosingMessageIsShownALineAtATimeWithItsSource() {
+        var summary = new dev.incusspawn.command.AgentSessions.Summary("newest_session", "Done", "newest of 2: Done", 2,
+                java.time.LocalDateTime.of(2026, 10, 11, 10, 0).atZone(java.time.ZoneId.systemDefault()).toInstant(),
+                "Done\n\nFixed \u001b[31mit\n" + "line\n".repeat(30), "Fix it");
+        var rows = InstanceDetailView.summaryRows(summary, java.time.LocalDateTime.of(2026, 10, 11, 12, 0));
+        assertEquals(new InstanceDetailView.DetailRow("Done:", "newest of 2: Done"), rows.getFirst());
+        assertTrue(rows.get(1).value().startsWith("the agent's own words, from 2 sessions, the newest 2h"), rows.get(1).value());
+        assertEquals(new InstanceDetailView.DetailRow("  Asked:", "Fix it"), rows.get(2));
+        assertEquals(new InstanceDetailView.DetailRow(null, "Fixed  [31mit"), rows.get(4), "one line, with no control character");
+        assertEquals(3 + InstanceDetailView.CLOSING_LINES + 1, rows.size(), "a long message is cut, and says where the rest is");
+        assertTrue(InstanceDetailView.summaryRows(null, java.time.LocalDateTime.now()).isEmpty(), "nothing before the overview read it");
     }
 }
