@@ -88,9 +88,10 @@ A failed existence check lets the action proceed rather than blocking the UI.
 The instance table's PURPOSE column (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`, 118, or `PURPOSE_ALONE_MIN_WIDTH`, 108, when OWNER is not shown, since the minimum widths then need 101 cells) is drawn only when some instance has a purpose, from the ninth cell of each row, `ListCommand.purposeCell`.
 `Tui.buildRowData` always makes nine cells and `MainScreen` keeps those of the columns it draws.
 
-**The overview** (#2241): `o` on the instance table sets `Tui.overview`, the Work tab shows the same (`Tui.overviewShown()`), and `MainScreen.overviewColumns` draws NAME, STATUS, LAST USED, WORK, TOKENS, from 100 columns ACTIVE, GITHUB and, from 130, PURPOSE, the cells made by `OverviewCommand`'s cell methods from the parked `Tui.overviewLog` and `Tui.overviewReading`.
-`Tui.readOverview` reads the log, then the guests' `WorkState` and GitHub's `PullRequestStates` (`overviewGitHub`, `overviewConfig` are the seams), on `o`, on entering the Work tab and on `r` while the overview is shown, through `overviewExecutor` (a virtual thread; tests run it when they choose, `TuiOverviewTest`), never on a live refresh or in `render()`.
+**The overview** (#2241): `o` on the instance table sets `Tui.overview`, the Work tab shows the same (`Tui.overviewShown()`), and `MainScreen.overviewColumns` draws NAME, STATUS, LAST USED, WORK, TOKENS, from 100 columns ACTIVE, GITHUB, from 120 DONE and, from 150, PURPOSE, the cells made by `OverviewCommand`'s cell methods from the parked `Tui.overviewLog` and `Tui.overviewReading`.
+`Tui.readOverview` reads the log, then the guests' `GuestRead` (work state and agent sessions) and GitHub's `PullRequestStates` (`overviewGitHub`, `overviewConfig` are the seams), on `o`, on entering the Work tab and on `r` while the overview is shown, through `overviewExecutor` (a virtual thread; tests run it when they choose, `TuiOverviewTest`), never on a live refresh or in `render()`.
 Rows, marks and F8 are the table's own; the title says what the log covers (design/terminal.md "The overview of what each instance did").
+F3's details add the newest session's ask and closing message from the parked reading (`InstanceDetailView.summaryRows`).
 
 **Credential accounts** (`a` on an instance, in the list or its F3 details).
 `AccountsModal`, extracted like `HelpChatModal` and snapshot-tested in `AccountsModalTest`, offers per namespace "default (<current default>)" then every usable account.
