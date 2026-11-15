@@ -229,9 +229,9 @@ class TuiCharacterisationTest {
         var tui = tui();
         press(tui, LEFT);
         assertEquals(Tui.View.OVERVIEW, tui.view);
-        press(tui, RIGHT, RIGHT, RIGHT);
-        assertEquals(Tui.View.INSTANCES, tui.view);
-        press(tui, KeyEvent.ofChar('h'), KeyEvent.ofChar('h'));
+        press(tui, RIGHT, RIGHT, RIGHT, RIGHT);
+        assertEquals(Tui.View.WORK, tui.view);
+        press(tui, KeyEvent.ofChar('h'), KeyEvent.ofChar('h'), KeyEvent.ofChar('h'));
         assertEquals(Tui.View.OVERVIEW, tui.view, "h and l are Left and Right");
         press(tui, KeyEvent.ofChar('l'));
         assertEquals(Tui.View.TEMPLATES, tui.view);

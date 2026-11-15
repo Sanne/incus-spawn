@@ -305,12 +305,15 @@ public class Tui {
     /**
      * The tabs of the main screen, in the order the tab bar shows them. Each names the panels it
      * draws: the overview both, stacked as before tabs existed, the others one at full height. A
-     * view with rows of its own draws neither, and gets its own rendering and keys.
+     * view with rows of its own draws neither, and gets its own rendering and keys. Work is the
+     * instance table with the overview's columns (#2241), so its rows, marks and F8 are the
+     * table's own.
      */
     enum View {
         OVERVIEW("Overview", Panel.TEMPLATES, Panel.INSTANCES),
         TEMPLATES("Templates", Panel.TEMPLATES),
-        INSTANCES("Instances", Panel.INSTANCES);
+        INSTANCES("Instances", Panel.INSTANCES),
+        WORK("Work", Panel.INSTANCES);
 
         final String label;
         private final List<Panel> panels;
@@ -330,6 +333,8 @@ public class Tui {
 
     /** Switch to a tab. The focus follows when the tab does not draw the focused panel. */
     void show(View target) {
+        // Entering the Work tab is asking for its columns: they are read then, as on o
+        if (target == View.WORK && view != View.WORK) readOverview();
         view = target;
         if (!target.panels.isEmpty() && !target.shows(focusedPanel)) focusedPanel = target.panels.get(0);
     }
@@ -400,6 +405,20 @@ public class Tui {
     boolean overview;
     /** The event log the overview last read, or null until a read has finished. */
     volatile dev.incusspawn.proxy.EventLogReader.Log overviewLog;
+    /**
+     * The work states read in the guests and GitHub's answer, for the rows the read was started
+     * for, or null until both are in: they come after the log, which shows first.
+     */
+    volatile dev.incusspawn.command.OverviewCommand.Reading overviewReading;
+    /** GitHub, asked whether the pull requests were merged; tests answer for it. */
+    dev.incusspawn.command.PullRequestStates.GitHub overviewGitHub = dev.incusspawn.command.PullRequestStates.api();
+    /** The host's config, for each instance's GitHub account; tests give their own. */
+    java.util.function.Supplier<SpawnConfig> overviewConfig = SpawnConfig::load;
+
+    /** Whether the instance table shows the overview's columns: on {@code o}, or in the Work tab. */
+    boolean overviewShown() {
+        return overview || view == View.WORK;
+    }
     /** Reads the event log; tests give their own. */
     java.util.function.Supplier<dev.incusspawn.proxy.EventLogReader.Log> eventLogReader = dev.incusspawn.proxy.EventLogReader::read;
     /** The zone the overview's days and last use are shown in; tests fix it. */
@@ -858,7 +877,7 @@ public class Tui {
             // true is announced again rather than silently deduplicated.
             Warnings.forgetReported(drawing);
             refreshData(tableState);
-            if (overview) readOverviewLog();
+            if (overviewShown()) readOverview();
             return true;
         }
         if (!key.hasCtrl() && key.isChar(WarningsModal.KEY.charAt(0))) {
@@ -1037,8 +1056,13 @@ public class Tui {
         }
         // o: the overview's columns, or the table's own again (#2241)
         if (key.isChar('o') && !key.hasCtrl()) {
+            if (view == View.WORK) {
+                show(View.INSTANCES);
+                overview = false;
+                return true;
+            }
             overview = !overview;
-            if (overview) readOverviewLog();
+            if (overview) readOverview();
             return true;
         }
         // With marks, F8, F7 and Shift+F7 act on the marked instances and leave the cursor row alone
@@ -2816,14 +2840,20 @@ public class Tui {
     }
 
     /**
-     * Reads the event log off the UI thread, for the overview's columns; the table shows the last
-     * read, or that it is reading, until it is done. Only on {@code o} and {@code r}, never on a
-     * live refresh, so the log is read when a person asks.
+     * Reads the overview's columns off the UI thread: the event log first, shown as soon as it is
+     * read, then each running guest's work state and GitHub's answer. The table shows the last
+     * read, or that it is reading, until each is done. Only on {@code o}, entering the Work tab
+     * and {@code r}, never on a live refresh, so nothing is read or asked unless a person asks.
      */
-    private void readOverviewLog() {
+    private void readOverview() {
         var reader = eventLogReader;
+        var client = incus;
+        var github = overviewGitHub;
+        var configs = overviewConfig;
+        var rows = entries == null ? List.<InstanceInfo>of() : List.copyOf(entries);
         // Only the latest read is kept: an earlier one that ends later would show an older log
         var read = overviewReads.incrementAndGet();
+        overviewReading = null;
         overviewExecutor.execute(() -> {
             dev.incusspawn.proxy.EventLogReader.Log log;
             try {
@@ -2832,7 +2862,17 @@ public class Tui {
                 log = dev.incusspawn.proxy.EventLogReader.Log.EMPTY;
                 warningLog.add("Could not read the proxy's event log: " + e.getMessage());
             }
-            if (overviewReads.get() == read) overviewLog = log;
+            if (overviewReads.get() != read) return;
+            overviewLog = log;
+            needsRepaint.set(true);
+            dev.incusspawn.command.OverviewCommand.Reading reading;
+            try {
+                reading = dev.incusspawn.command.OverviewCommand.read(client, rows, log, configs.get(), github, warningLog::add);
+            } catch (RuntimeException e) {
+                warningLog.add("Could not read what the instances hold: " + e.getMessage());
+                reading = new dev.incusspawn.command.OverviewCommand.Reading(log, java.util.Map.of(), java.util.Map.of());
+            }
+            if (overviewReads.get() == read) overviewReading = reading;
             needsRepaint.set(true);
         });
     }
