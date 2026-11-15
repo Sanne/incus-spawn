@@ -625,4 +625,22 @@ All the pull requests of the instances on one account go in one GraphQL request,
 One GitHub could not see, or a failed request, leaves its state unknown, and the cell shows the pull request without one.
 Branch and repository names are the guest's text, so they are shown through `OutputFormat.oneLine`, cut to the cell, and the newest 50 of each are kept per instance.
 The TUI has no hint for `o` on its context line, which has no room left at 80 columns; the F1 dialog lists it, and the Work tab shows the same columns without a key to learn.
-At 80 columns ACTIVE gives way to WORK; it is drawn from 100 columns, and PURPOSE from 130.
+At 80 columns ACTIVE gives way to WORK; it is drawn from 100 columns, DONE from 120, and PURPOSE from 150.
+
+**What was done is the agents' own closing messages, read in the same exec** (#2241, part 3).
+`GuestRead` runs one script per running guest, in sections: the work state's first, then one per agent reader (`AgentSessions.GuestReader`), each in its own subshell and parsed on its own.
+So a session read that fails or overflows leaves WORK as it was read: the output bound is 64 KiB for the work section plus 1 MiB, and only the section it cut is `unknown`.
+Claude Code's reader (`ClaudeSessions`) lists `~/.claude/projects/*/*.jsonl`, regular files only and not a subagent's `agent-*.jsonl`, and reads the newest eight.
+From each it sends the person's first lines among the first 500 and the agent's last lines with text among the last 5,000, read from the end with `tac`, so a transcript of any length costs a bounded read; eight 224 MB transcripts took 56 ms.
+Each line is cut at 8 or 24 KiB and sent in base64, so no transcript text can frame the output.
+The script runs only in a guest, always Fedora, and uses GNU `find -printf`, `tac` and `base64 -w0`, so its tests that read sessions run on Linux hosts alone; on macOS the parsing and the summary are still tested.
+The script selects lines by substring only; the host decides on the parsed JSON's own fields (`Jjq.parseForeign`): the closing message is the last top-level `assistant` line, not a subagent's, with a `text` block.
+When the newest candidate does not parse, cut at the bound or not JSON, the closing message is unreadable, and an older message is never shown in its place.
+The ask is the same: when the first candidate does not parse, none is shown, never a later message.
+The text is scrubbed as a guest's output is (`SecretRedactor.scrubGuest`), cut to 4,000 code points (500 for the ask), and shown a line at a time through `OutputFormat.oneLine`.
+The DONE column shows the newest session's first line that says something, `newest of 3:` before it when there were several, and the instance details show the ask and up to 20 lines of the closing message with the session count and the newest one's age.
+No model is called yet: one session's message is shown as it is, and several are not merged, which is the next step of #2241.
+`untouched` is shown only when no session was found, every clone was read and holds nothing, the event log saw no activity, and no other agent's sessions are there (Codex's or Pi's session directories, or opencode's database, which are not read yet).
+So a read that failed, a stopped instance, or a Codex box never reads as untouched.
+Beside Claude Code's message, DONE names such an agent as not read, since it may have worked since.
+What this gives up: a closing message can overstate what the agent finished, and WORK beside it is the check; a person's work outside an agent is not described.
