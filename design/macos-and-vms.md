@@ -370,6 +370,12 @@ With the relay changed to vfkit's logic that test fails, and so do the guest-clo
 Over a real vsock, `integration-tests` runs the unmodified `appliance/test-tunnel.sh` through the bridge, then requires that the bridge holds no connection and none is waiting.
 The `macos-role` job bridges with it too, so isx's own requests cross the relay: `isx init`, two template builds, branches and an MCP session.
 Linux differs from macOS in one place the tests allow for: Linux reserves a descriptor for `accept()` before it blocks, so at the limit an accept already waiting still takes one connection.
+They also differ in how a listener closes under a blocked `accept()`.
+On Linux `shutdown()` ends that `accept()`; on macOS it does not, and `close()` waits for the `accept()` to return.
+A stack sample on a macOS runner caught that wait, which at times lasted over a minute: it was the hang of #2265.
+So the tests close a listener on a thread of their own and connect to it every 50 ms until the close returns, since a connection makes `accept()` return.
+The test's guest refuses every dial from then on, so a connection the relay accepts there leaves no guest end open and no dial waiting.
+The relay itself never closes its listener, but a launcher that stops serving a socket must not close it under `serve()` either.
 
 What CI cannot show is the framework's half: that a close on its descriptor reaches the guest, and how the relay behaves under bursts, held connections and sleep on a Mac.
 Stage 2 measures those against vfkit on the Mac runner before anything ships.

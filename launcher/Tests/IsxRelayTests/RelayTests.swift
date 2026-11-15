@@ -454,8 +454,24 @@ final class Rig: Sendable {
     }
 
     func close() {
+        // On Linux shutdown() ends serve()'s accept(). On macOS it does not, and close() waits
+        // for that accept() to return, which at times it did not do for over a minute: the hang
+        // of #2265. So the listener is closed on a thread of its own, and until that close
+        // returns, a connection every 50 ms makes the accept() return. The guest refuses every dial from
+        // here on, so a connection serve() accepts leaves no guest end open and no dial waiting.
+        guest.state.withLock { $0.answering = nil; $0.refuses = true }
         shutdown(listener, Int32(SHUT_RDWR))
-        _ = Foundation.close(listener)
+        let closed = DispatchSemaphore(value: 0)
+        let listener = self.listener
+        Thread.detachNewThread {
+            _ = Foundation.close(listener)
+            closed.signal()
+        }
+        while closed.wait(timeout: .now() + 0.05) == .timedOut {
+            let poke = socket(AF_UNIX, sockStream, 0)
+            _ = connect(poke)
+            _ = Foundation.close(poke)
+        }
         // Not before serve() has returned: where closing the listener ends accept() with an
         // error serve() retries, it would accept on whatever socket takes this descriptor's
         // number next, which is the next test's listener. Signalled again for whoever waits.
