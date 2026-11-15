@@ -46,11 +46,11 @@ Of these, only `Tui.run` (for `IncusSpawn`) and `InstanceDetailView.mcpDetailRow
 `ListingLoader` loads what the TUI shows (`reloadData`, `mergeInstances`, the disk model and its accounting checks, the pool gauge, the proxy and appliance status) and writes the rows into `Tui`, which keeps the selection and the live refresh.
 `isx list` is `ListCommand`, which prints the listing and never opens the TUI; both parse the Incus listing through `InstanceListing`.
 Two panels (Templates + Instances) with modal dialogs for branching, renaming, and building.
-**The main screen has tabs** (`Tui.View`, design/terminal.md "The main screen's tabs"): Overview stacks both panels as before tabs existed and is where the TUI opens, Templates and Instances each draw one panel at full height.
+**The main screen has tabs** (`Tui.View`, design/terminal.md "The main screen's tabs"): Overview stacks both panels as before tabs existed and is where the TUI opens, Templates and Instances each draw one panel at full height, and Work draws the instance panel with the overview's columns.
 Left and Right (`h`, `l`) move between tabs and stop at either end; Tab and Shift+Tab move the focus to the other panel, which in a one-panel tab shows the other such tab.
 Set the focus with `Tui.focus(Panel)` and the tab with `Tui.show(View)`, never the fields: the two keep the focused panel on screen.
 The tab bar (`MainScreen.renderTabs`) is one row under the header, the showing tab in brackets, each one-panel tab with its row count.
-A new tab is a `View` constant; one with rows of its own names no panel, and adds its rendering to `Tui.render`, its keys to `handleBrowseEvent` and its count to `MainScreen.tabLabel` (#2241's overview is the first).
+A new tab is a `View` constant; one with rows of its own names no panel, and adds its rendering to `Tui.render`, its keys to `handleBrowseEvent` and its count to `MainScreen.tabLabel` (none yet: #2241's Work tab is the instance panel, `Tui.overviewShown()`).
 `TuiCharacterisationTest` snapshots each tab and pins the keys.
 The runner's backend is `LegacyKeyboardBackend`, never a bare `PanamaBackend`: it keeps keys in their legacy encoding when a program left the kitty keyboard protocol or `modifyOtherKeys` on, so Esc and Ctrl+C still close a dialog (`KeyboardProtocol`, design/terminal.md "Keys are read in their legacy encoding").
 An unknown key is never Shift+Tab (`ShiftTabBindings.isShiftTab` is Tab with Shift alone).
@@ -88,8 +88,8 @@ A failed existence check lets the action proceed rather than blocking the UI.
 The instance table's PURPOSE column (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`, 118, or `PURPOSE_ALONE_MIN_WIDTH`, 108, when OWNER is not shown, since the minimum widths then need 101 cells) is drawn only when some instance has a purpose, from the ninth cell of each row, `ListCommand.purposeCell`.
 `Tui.buildRowData` always makes nine cells and `MainScreen` keeps those of the columns it draws.
 
-**The overview** (#2241): `o` on the instance table sets `Tui.overview`, and `MainScreen.overviewColumns` draws NAME, STATUS, LAST USED, TOKENS, ACTIVE, GITHUB and, from 110 columns, PURPOSE, the cells made by `OverviewCommand`'s cell methods from the parked `Tui.overviewLog`.
-The log is read by `Tui.readOverviewLog` on `o` and on `r` while the overview is shown, through `overviewExecutor` (a virtual thread; tests run it when they choose, `TuiOverviewTest`), never on a live refresh or in `render()`.
+**The overview** (#2241): `o` on the instance table sets `Tui.overview`, the Work tab shows the same (`Tui.overviewShown()`), and `MainScreen.overviewColumns` draws NAME, STATUS, LAST USED, WORK, TOKENS, from 100 columns ACTIVE, GITHUB and, from 130, PURPOSE, the cells made by `OverviewCommand`'s cell methods from the parked `Tui.overviewLog` and `Tui.overviewReading`.
+`Tui.readOverview` reads the log, then the guests' `WorkState` and GitHub's `PullRequestStates` (`overviewGitHub`, `overviewConfig` are the seams), on `o`, on entering the Work tab and on `r` while the overview is shown, through `overviewExecutor` (a virtual thread; tests run it when they choose, `TuiOverviewTest`), never on a live refresh or in `render()`.
 Rows, marks and F8 are the table's own; the title says what the log covers (design/terminal.md "The overview of what each instance did").
 
 **Credential accounts** (`a` on an instance, in the list or its F3 details).

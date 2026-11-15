@@ -239,7 +239,8 @@ An `openai` account may be `type: chatgpt` (#1332, experimental, proxy side only
 See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 
 **The event log** (#2241): the proxy appends one JSON line per ended model call, push and pull request opened to `~/.local/state/incus-spawn/events/events.jsonl` (`EventLog`), holding no content and never read back to decide routing; the file rolls at 16 MiB keeping four (design/proxy.md "The event log").
-`EventLogReader` (`common`) reads it back by incarnation, only on demand: for `isx overview` and for `o` on the TUI's instance table, never for `isx list` (design/terminal.md "The overview of what each instance did").
+`EventLogReader` (`common`) reads it back by incarnation, only on demand: for `isx overview` and for the TUI's Work tab and `o`, never for `isx list` (design/terminal.md "The overview of what each instance did").
+The same reads run a read-only script in each running guest for what its clones hold (`WorkState`, `unknown` whenever the read is not exact) and ask GitHub whether each pull request was merged, with the instance's own GitHub account or not at all (`PullRequestStates`).
 
 **Exposed host ports** (#2117): `exposed-host-ports:` in `config.yaml` lists loopback ports of the host that every instance with network reaches at `host.isx.internal:<port>`, relayed raw by the proxy (`HostPortRelay`) on the address it already listens on.
 Off by default and host-config only; there is no caller identity, since on macOS the relay cannot tell containers apart, but a source outside the bridge's subnet (macOS: not the VM's address) is refused (`RelayCallers`), and isx's own ports are refused, so the proxy-only ACL never admits one.
