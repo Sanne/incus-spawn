@@ -367,7 +367,7 @@ So the code that decides when a connection ends is the same in both places.
   A path too long for a socket address is an error, never truncated to another path.
 
 The package's tests drive the relay over socket pairs, with no VM (`swift test` in `launcher-linux`, the bundle under `xcrun xctest` in `launcher-macos`).
-A test that has not finished after 60 s ends the run and is named, since a test blocked in a read, a write or a close cannot be failed from another thread (#2265).
+A test of the relay that has not finished after 60 s ends the run and is named, since a test blocked in a read, a write or a close cannot be failed from another thread (#2265).
 The regression test is `testAHostCloseReachesTheGuest`: the guest's end must see the end within a second of the host closing.
 With the relay changed to vfkit's logic that test fails, and so do the guest-close test and the burst test, which finds 128 connections still held.
 `testAnAnswerArrivesFromAGuestThatClosesWhileTheHostStillSends` runs 400 rounds, which is what showed the macOS fault above in `launcher-macos`.
