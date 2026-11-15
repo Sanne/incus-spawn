@@ -178,9 +178,9 @@ Y
 }
 idea_file 2026.2.4 "$S24X" "$S24A" > "$REPO/common/src/main/resources/tools/idea-backend.yaml"
 # The github-asset items are tested by test-github-asset.sh and the signed-file ones by
-# test-signed-file.sh, each on a manifest of its own.
+# test-signed-file.sh, the maven-central ones by test-maven-central.sh, each on a manifest of its own.
 sed "s/fingerprint: [0-9A-F]*/fingerprint: $FPR/" "$SRC/upstream/manifest.yaml" \
-    | yq 'del(.items.starship) | del(.items.idea-index-plugin) | del(.items.jasolo) | del(.items.maven-3) | del(.items.mvnd) | del(.items.incus) | del(.items.alpine-minirootfs) | del(.items.arch-cloud-image) | del(.items.ubuntu-cloud-image) | del(.items.models) | del(.items.github-actions)' > "$REPO/upstream/manifest.yaml"
+    | yq 'del(.items.starship) | del(.items.idea-index-plugin) | del(.items.jasolo) | del(.items.maven-3) | del(.items.mvnd) | del(.items.incus) | del(.items.alpine-minirootfs) | del(.items.arch-cloud-image) | del(.items.ubuntu-cloud-image) | del(.items.models) | del(.items.github-actions) | del(.items.maven-plugins) | del(.items.aesh) | del(.items.jjq) | del(.items.json-schema-validator)' > "$REPO/upstream/manifest.yaml"
 cd "$REPO" && git init -q -b main && git add -A && git -c user.name=t -c user.email=t@t commit -qm fixture
 git init -q --bare "$WORK/remote.git" && git remote add origin "$WORK/remote.git" && git push -q origin main
 git --git-dir="$WORK/remote.git" config uploadpack.allowAnySHA1InWant true

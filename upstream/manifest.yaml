@@ -11,6 +11,8 @@
 # - cooling is 24h or more unless the source is first party.
 # - A github-action item (the workflows' Actions, tag-commit) is class judgement: the app has no
 #   workflows permission, so it could never push the bump.
+# - A maven-central item (central-exists) is never mechanical: Central's record of a release is not a
+#   signature, so a person merges every bump (#2210).
 # - There is no key that skips a check.
 repo: Sanne/incus-spawn
 app:
@@ -418,3 +420,130 @@ items:
       - .github/workflows/test-vm-kernel.yml
       - .github/workflows/upstream-verify.yml
       - .github/workflows/upstream-watch.yml
+  maven-plugins:
+    # The build plugins and the test library the poms pin, as one family (Maven Central, #2210). Class
+    # review, though the plan on #2210 had it mechanical: central-exists is Central's record of a
+    # release, not a signature, and the compiler and jandex plugins shape what the native build ships.
+    class: review
+    # Within each member's major: a new major opens an issue, and the other members still move.
+    within: series
+    # A bad release on Central is usually followed by a fixed one within days.
+    cooling: 72h
+    judgement: build
+    source:
+      type: maven-central
+      members:
+        compiler:
+          artifacts: [org.apache.maven.plugins:maven-compiler-plugin]
+          pins:
+            - file: pom.xml
+              text: '<compiler-plugin.version>{version}</compiler-plugin.version>'
+        surefire:
+          # Released together, under one version, and pinned by one property.
+          artifacts: [org.apache.maven.plugins:maven-surefire-plugin, org.apache.maven.plugins:maven-failsafe-plugin]
+          pins:
+            - file: pom.xml
+              text: '<surefire-plugin.version>{version}</surefire-plugin.version>'
+        exec:
+          artifacts: [org.codehaus.mojo:exec-maven-plugin]
+          pins:
+            - file: cli/pom.xml
+              text: |-
+                <artifactId>exec-maven-plugin</artifactId>
+                                <version>{version}</version>
+            - file: proxy/pom.xml
+              text: |-
+                <artifactId>exec-maven-plugin</artifactId>
+                                <version>{version}</version>
+        jandex:
+          artifacts: [io.smallrye:jandex-maven-plugin]
+          pins:
+            - file: common/pom.xml
+              text: |-
+                <artifactId>jandex-maven-plugin</artifactId>
+                                <version>{version}</version>
+        assertj:
+          artifacts: [org.assertj:assertj-core]
+          pins:
+            - file: common/pom.xml
+              text: |-
+                <artifactId>assertj-core</artifactId>
+                            <version>{version}</version>
+            - file: cli/pom.xml
+              text: |-
+                <artifactId>assertj-core</artifactId>
+                            <version>{version}</version>
+            - file: proxy/pom.xml
+              text: |-
+                <artifactId>assertj-core</artifactId>
+                            <version>{version}</version>
+    verify:
+      type: central-exists
+    files:
+      - pom.xml
+      - common/pom.xml
+      - cli/pom.xml
+      - proxy/pom.xml
+    fields: [compiler.version, surefire.version, exec.version, jandex.version, assertj.version]
+  aesh:
+    # A person merges it: aesh parses every isx command line and ships in the binary.
+    class: review
+    within: series
+    cooling: 72h
+    judgement: build
+    source:
+      type: maven-central
+      members:
+        aesh:
+          artifacts: [org.aesh:aesh, org.aesh:aesh-processor]
+          pins:
+            - file: pom.xml
+              text: '<aesh.version>{version}</aesh.version>'
+    verify:
+      type: central-exists
+    files:
+      - pom.xml
+      - cli/pom.xml
+    fields: [aesh.version]
+  jjq:
+    # A person merges it: jjq reads every definition and config.yaml, and ships in the binary. A 0.x
+    # minor may change its mappings, so the series is the major and a person reads each bump.
+    class: review
+    within: series
+    cooling: 72h
+    judgement: build
+    source:
+      type: maven-central
+      members:
+        jjq:
+          artifacts: [io.hyperfoil.tools:jjq-yaml, io.hyperfoil.tools:jjq-mapper, io.hyperfoil.tools:jjq-mapper-processor]
+          pins:
+            - file: pom.xml
+              text: '<jjq.version>{version}</jjq.version>'
+    verify:
+      type: central-exists
+    files:
+      - pom.xml
+      - common/pom.xml
+    fields: [jjq.version]
+  json-schema-validator:
+    # A test library, which the plan on #2210 puts in review: its version decides what the schema tests accept.
+    class: review
+    within: series
+    cooling: 72h
+    judgement: build
+    source:
+      type: maven-central
+      members:
+        json-schema-validator:
+          artifacts: [com.networknt:json-schema-validator]
+          pins:
+            - file: cli/pom.xml
+              text: |-
+                <artifactId>json-schema-validator</artifactId>
+                            <version>{version}</version>
+    verify:
+      type: central-exists
+    files:
+      - cli/pom.xml
+    fields: [json-schema-validator.version]
