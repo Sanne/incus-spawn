@@ -489,15 +489,15 @@ Without a terminal there is nothing to wait on and no TUI to cover anything, so 
 
 ## The main screen's tabs
 
-The main screen has three tabs: Overview, Templates and Instances.
+The main screen has four tabs: Overview, Templates, Instances and Work.
 Overview is the screen as it was before tabs: templates above, instances below.
-The other two each give one list the whole height.
+Templates and Instances each give one list the whole height, and Work is the instance list with the overview's columns ("The overview of what each instance did").
 
 **Why tabs.**
 The stacked screen was designed for short lists.
 With many templates and many instances the two panels share the height in proportion to their lengths, so both scroll and neither shows much.
 A split that follows the focus was considered and rejected: rows would move on every Tab, and it has no place for a third list.
-A third one is coming, the overview of what was done in each instance (#2241), and a tab bar takes it without a new layout.
+The overview of what was done in each instance (#2241) became the fourth, Work, without a new layout.
 
 **Overview stays, and the TUI opens on it.**
 People know the stacked screen, and with short lists it is still the best view, since it shows what is running beside what can be branched.
@@ -578,23 +578,51 @@ Ctrl+digit lost because terminals send most of them as control characters such a
 
 ## The overview of what each instance did
 With many instances running, a person cannot tell from the list which ones hold work (#2241).
-`isx overview` and `o` on the TUI's instance table show, beside each instance's status, purpose and last start, what the proxy's event log says it did.
+`isx overview`, the TUI's Work tab and `o` on its instance table show, beside each instance's status, purpose and last start, what the proxy's event log says it did.
 That is the tokens its model calls spent, the first and last day it was active, the branches it pushed and kept, and the pull requests it opened.
+Beside it they show what only the instance and GitHub know: what its clones hold, and whether each pull request is still open.
 The TUI's view is the instance table with other columns, so the rows, the marks and F8 are the table's own, and marked rows are destroyed together as anywhere else.
+The Work tab is that view in a tab, and `o` stays for a person already on the instance table (Sanne on #2264).
 
 `EventLogReader` (`common`) reads the log's five files, oldest first, and matches a line to an instance by its incarnation, the listing's `created_at` (#1063).
 A rename keeps an instance's lines, and a name branched again starts with none.
 A line the proxy wrote without an incarnation is matched by name, so it may be an earlier instance's of that name.
 The log keeps about 80 MiB, so the counts start at its oldest line, which the TUI's title and the line under the table name, with the lines the proxy lost.
 
-The log is read only when a person asks: on `isx overview`, on `o`, and on `r` while the overview is shown.
-In the TUI the read runs on a virtual thread, and the table shows `…` until it is done.
+The log is read only when a person asks: on `isx overview`, on `o`, on entering the Work tab, and on `r` while the overview is shown.
+The guests and GitHub are asked on the same occasions, never on a live refresh.
+In the TUI the read runs on a virtual thread, and the table shows `…` until it is done: the log's columns first, then WORK and the pull requests' states once every guest and GitHub answered.
 `isx list` never reads it, since completion runs it on every TAB.
 The read parses every line of up to 80 MiB, which was not measured on a full log.
 
-The overview shows only what went through the proxy, and never a state the log cannot establish.
-A row with no push may still hold commits never pushed or changes never committed, and a pull request shows as opened after it was merged.
+The overview never shows a state nobody established.
 A branch shows as pushed even when GitHub refused it (a non-fast-forward, a protected branch): the proxy logs a push on a 2xx answer and does not read the per-ref report-status inside it (design/proxy.md "The event log").
-Reading Git in each instance and asking GitHub about the pull requests are later steps of #2241.
+WORK does not have that gap, since it counts commits on no remote-tracking branch, and a refused push moves none.
+
+**The work state is read in the guest, and fails closed.**
+`WorkState` runs one fixed script in each running instance through `IncusClient.execProbe`: as agentuser, with no login shell, killed after 10 seconds, its output cut at 64 KiB.
+For each clone directly under the home directory or one level below, at most 50, it counts the entries of `git status --porcelain`, the commits `git rev-list HEAD --branches --not --remotes` lists, less those under a tag a remote's fetch refspec names and under the commit the clone was made at, and `git stash list`.
+Such a tag counts as kept because a shallow clone isx pinned to a tag keeps no remote-tracking branch, only the refspec `+refs/tags/<tag>:refs/tags/<tag>`, and its tag's history is no work.
+Every other tag is ignored, so commits an agent tagged but did not push still count (review of #2272).
+A named tag the clone no longer has, one the agent deleted, is left out of the count rather than failing it.
+A full clone isx prepared from a snapshot for a tag pin, which is what a tag pin without `depth` gets, keeps the broad refspec and no remote-tracking branch instead.
+For it the script reads the commit the clone checked out from the first `clone:` entry of HEAD's reflog, and leaves its history out, if the commit is still there.
+An agent's tag never matches that entry, so it saves nothing; a reflog expired or rewritten loses the entry, and the history then counts, which errs on `unsaved`.
+A clone with no remote at all counts every commit after its clone, so a clone isx prepared from a host checkout (`repos[].host-source`) counts its other exported branches, though the host still holds them.
+It fetches nothing, and `GIT_OPTIONAL_LOCKS=0` keeps `git status` from rewriting the index under an agent at work.
+The state is `unsaved` when any clone holds work, and `clean` only when every clone was read and holds none.
+A timeout, a failed exit, an answer cut short, a line that is not the script's, a count Git would not give or a 51st clone make it `unknown`.
+A stopped instance is `not read`: starting it would cost its boot and change its last use, for a question the person did not ask of it.
+What this gives up: a clone elsewhere, such as `/tmp` or `/workspace`, and work outside any clone are not seen.
+Every running instance is read in parallel, so the slowest one sets the wait.
+
+**Pull requests are asked about with the instance's own GitHub account** (Sanne on #2264).
+`PullRequestStates` resolves the account the proxy would use for the instance: its `account.github` stamp, else the namespace's default.
+A pin to a missing account, `inherit`, or no token means no request, so no other account learns which repositories an instance works in.
+The pull requests asked about are every one the event log recorded for the instance, including one the proxy passed through without injecting the account, because the guest did not present its GitHub proof.
+So the account may be asked about a repository it was never used for in that instance; GitHub answers only for what the account can see, and nothing of the answer reaches the guest.
+All the pull requests of the instances on one account go in one GraphQL request, the repositories and numbers as variables, never written into the query, and a name that is not GitHub's shape is not asked about.
+One GitHub could not see, or a failed request, leaves its state unknown, and the cell shows the pull request without one.
 Branch and repository names are the guest's text, so they are shown through `OutputFormat.oneLine`, cut to the cell, and the newest 50 of each are kept per instance.
-The TUI has no hint for `o` on its context line, which has no room left at 80 columns; the F1 dialog lists it.
+The TUI has no hint for `o` on its context line, which has no room left at 80 columns; the F1 dialog lists it, and the Work tab shows the same columns without a key to learn.
+At 80 columns ACTIVE gives way to WORK; it is drawn from 100 columns, and PURPOSE from 130.

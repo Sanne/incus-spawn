@@ -351,22 +351,37 @@ isx overview [options]
 It shows what the proxy saw each instance do, beside its status, purpose and last start.
 That is the tokens its model calls spent, the days it was active, the branches it pushed and the pull requests it opened.
 
+The WORK column says what destroying the instance would lose.
+It counts the uncommitted changes, unpushed commits and stashes of each Git clone in the home directory or one level below.
+A short script reads them in each running instance and changes nothing.
+A stopped instance shows `not read`, since nothing starts it, and a failed read shows `unknown`.
+
+A pull request shows whether it is still open, merged or closed.
+isx asks GitHub from the host, with the instance's own GitHub account, in one request per account.
+An instance with no usable GitHub account gets no request, and its pull requests show without a state.
+
 The proxy keeps this in an event log on the host of about 80 MiB, and the oldest activity drops out first.
 A line under the table says since when the log counts, and whether the proxy lost any lines.
 That note goes to stderr in `plain` and `json`.
 
-The overview shows only what went through the proxy.
-A quiet row can still hold commits that were never pushed, or changes that were never committed.
-A pull request shows as opened even after it was merged or closed.
+The columns from the event log show only what went through the proxy.
 A branch can show as pushed even when GitHub refused it, such as a push to a protected branch.
 
-In the TUI, `o` on the instance list shows the same columns.
+WORK does not see a clone outside the home directory, or files outside any clone.
+A clone isx copied from a checkout on the host has no remote, so commits on its other branches count as unpushed.
+
+In the TUI, the Work tab and `o` on the instance list show the same columns.
 There Space marks rows and F8 destroys the marked ones.
 
-In `plain` and `json` it prints these fields, in this order: `name`, `status`, `purpose`, `last_used`, `model_calls`, `tokens`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `first_active`, `last_active`, `pushed_branches` and `pull_requests`.
+In `plain` and `json` it prints these fields, in this order: `name`, `status`, `purpose`, `last_used`, `model_calls`, `tokens`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `first_active`, `last_active`, `pushed_branches`, `pull_requests`, `pull_request_states`, `work_state`, `uncommitted_changes`, `unpushed_commits`, `stashes`, `repos` and `unsaved_repos`.
 `tokens` is the sum of the four token counts.
 `pushed_branches` lists `<owner>/<repo>:<branch>` for each branch the instance pushed and kept.
 `pull_requests` lists `<owner>/<repo>#<number>`.
+
+`pull_request_states` gives each of them, in the same order, as `open`, `merged`, `closed` or `unknown`.
+`work_state` is `unsaved`, `clean`, `no_repos`, `unknown` or `not_read`.
+The three counts are summed over the clones read, and are `null` when the instance was not read.
+`repos` lists the clones read, by path under the home directory, and `unsaved_repos` those holding work.
 
 ## `isx update-base`
 
