@@ -223,16 +223,31 @@ if $NATIVE; then
         GRAALVM_HINT="  Install it with SDKMAN (sdk install java $GRAALVM_LINE.<patch>-graal, as sdk list java names it), or download Oracle GraalVM $GRAALVM_LINE
   for macOS (aarch64) from https://www.graalvm.org/downloads/ and set GRAALVM_HOME to its Contents/Home.
   Homebrew's graalvm-jdk casks are the 25.0 line."
+        GRAALVM_UNSET="  Or unset GRAALVM_HOME, and install.sh looks in JAVA_HOME, java_home -V and SDKMAN."
         if [ -n "$GRAALVM_HOME" ]; then
-            if [ ! -x "$GRAALVM_HOME/bin/native-image" ] || ! on_line "$GRAALVM_HOME"; then
-                echo "Error: GRAALVM_HOME is not a GraalVM $GRAALVM_LINE with native-image: $GRAALVM_HOME"
+            # A GRAALVM_HOME you set is the only home checked: no search runs past it
+            if ! on_line "$GRAALVM_HOME"; then
+                echo "Error: GRAALVM_HOME is not a GraalVM $GRAALVM_LINE: $GRAALVM_HOME"
                 HOME_VERSION=$(graalvm_version "$GRAALVM_HOME")
-                echo "  It is GraalVM ${HOME_VERSION:-of unknown version}."
+                if [ -n "$HOME_VERSION" ]; then
+                    echo "  It is GraalVM $HOME_VERSION."
+                else
+                    echo "  It has no release file naming a GRAALVM_VERSION: it is not a GraalVM home, or not its Contents/Home."
+                fi
                 echo "$GRAALVM_HINT"
+                echo "$GRAALVM_UNSET"
+                exit 1
+            fi
+            if [ ! -x "$GRAALVM_HOME/bin/native-image" ]; then
+                echo "Error: GRAALVM_HOME has no bin/native-image: $GRAALVM_HOME"
+                echo "  It is GraalVM $(graalvm_version "$GRAALVM_HOME"), but without native-image it cannot build isx."
+                echo "$GRAALVM_HINT"
+                echo "$GRAALVM_UNSET"
                 exit 1
             fi
         else
             # JAVA_HOME first, then what macOS knows of, then SDKMAN's JDKs, which java_home does not list
+            # '|| :' because the loop's break can kill awk with SIGPIPE, which the ERR trap would report
             FOUND=""
             while IFS= read -r CANDIDATE; do
                 [ -x "$CANDIDATE/bin/native-image" ] || continue
@@ -248,10 +263,14 @@ if $NATIVE; then
                 for SDK_JDK in "${SDKMAN_DIR:-$HOME/.sdkman}"/candidates/java/*/; do
                     [ -d "$SDK_JDK" ] && echo "${SDK_JDK%/}"
                 done
-            } | awk '!seen[$0]++')
+            } | awk '!seen[$0]++' || :)
             if [ -z "$GRAALVM_HOME" ]; then
                 echo "Error: native builds on macOS need Oracle GraalVM $GRAALVM_LINE with native-image."
-                [ -n "$FOUND" ] && echo "  Found GraalVM${FOUND}, which is another line."
+                case "$FOUND" in
+                    "") ;;
+                    " "*" "*) echo "  Found GraalVM${FOUND}, which are other lines." ;;
+                    *) echo "  Found GraalVM${FOUND}, which is another line." ;;
+                esac
                 echo "$GRAALVM_HINT"
                 exit 1
             fi
