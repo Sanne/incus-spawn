@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Extract kernel version and checksum
         id: kernel
@@ -52,7 +52,7 @@ jobs:
       # The same key as build-appliance.yml, so the two share one entry.
       - name: Restore cached kernel source
         id: kernel_cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: /tmp/kernel-cache/
           key: kernel-source-${{ steps.kernel.outputs.version }}-${{ steps.kernel.outputs.sha256 }}
@@ -67,7 +67,7 @@ jobs:
 
       - name: Cache kernel source
         if: steps.kernel_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: /tmp/kernel-cache/
           key: ${{ steps.kernel_cache.outputs.cache-primary-key }}
@@ -103,7 +103,7 @@ jobs:
 
       - name: Upload console logs and plots
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: vm-boot-${{ matrix.arch }}
           path: build/vm-boot/

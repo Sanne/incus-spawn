@@ -45,7 +45,7 @@ jobs:
       login: ${{ steps.app.outputs.login }}
       email: ${{ steps.app.outputs.email }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -113,13 +113,13 @@ jobs:
     runs-on: ubuntu-26.04
     environment: upstream-watch
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
           # publish compares a bump against the open PR's merge base, which a shallow clone lacks.
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: upstream-plan
           path: ${{ runner.temp }}/plan
@@ -148,7 +148,7 @@ jobs:
     if: always() && github.repository == 'Sanne/incus-spawn' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
