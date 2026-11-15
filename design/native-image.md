@@ -343,6 +343,7 @@ What an Intel Mac user meets instead of a broken download:
 
 Every build runs on one Oracle GraalVM innovation line: the `graalvm-version` of `release.yml`, set up by every workflow, and its floating builder image (`25i5-ol10` for 25.5) in `install.sh` and both modules' `quarkus.native.builder-image`.
 On macOS `install.sh` builds with the host's GraalVM, so it looks for that line (`GRAALVM_LINE`) by the `GRAALVM_VERSION` of each home's `release` file and refuses any other.
+It looks in `JAVA_HOME`, then in what `java_home -V` lists, then in SDKMAN's JDKs, which `java_home` does not list.
 Another line fails late and obscurely: GraalVM 25.0.4 stops at "[1/8] Initializing..." with a `NoSuchMethodError` from Quarkus's generated `Feature`, and Homebrew's `graalvm-jdk@25`, which the script used to suggest, is the 25.0 line.
 `InstallScriptGraalVmTest` keeps the copies equal.
 The native proxy is a TLS MITM built from the JDK's `javax.net.ssl`, `java.net` and `java.security`, so a JDK advisory against them is a reason to move the line, as the advisory of 2026-10-20 moved it from 25.4 to 25.5 (#2105).
