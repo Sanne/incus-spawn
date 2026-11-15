@@ -345,10 +345,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Test the relay
+      - name: Build the relay's tests
         run: |
           swift --version
-          swift test --package-path launcher
+          swift build --package-path launcher --build-tests
+
+      # The bundle runs directly, not under `swift test`, which holds every line until the run
+      # ends: a run that hung printed nothing after the build (#2265). The tests' own watchdog
+      # ends a test stuck for 60 s and names it; the step's limit ends a hang outside any test.
+      # The package has no Swift Testing tests, which only `swift test` would run.
+      - name: Test the relay
+        timeout-minutes: 10
+        run: xcrun xctest "$(swift build --package-path launcher --show-bin-path)/launcherPackageTests.xctest"
 
   # One job per appliance arch. aarch64 is what Apple Silicon Macs run, and has its own kernel
   # config and console. GitHub's arm64 runners expose no /dev/kvm, so that leg runs under TCG

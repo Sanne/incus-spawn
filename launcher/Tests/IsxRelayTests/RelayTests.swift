@@ -19,6 +19,18 @@ private let processUsage = RUSAGE_SELF
 #endif
 
 final class RelayTests: XCTestCase {
+    private var finished: DispatchSemaphore?
+
+    override func setUp() {
+        super.setUp()
+        finished = watchdog(name)
+    }
+
+    override func tearDown() {
+        finished?.signal()
+        super.tearDown()
+    }
+
     func testBytesCrossBothWays() throws {
         let rig = try Rig()
         defer { rig.close() }
@@ -451,6 +463,25 @@ final class Rig: Sendable {
         unlink(path)
         rmdir(directory)
     }
+}
+
+/// How long one test may take. The slowest passes in about 8 seconds on a macOS runner, so this
+/// leaves room for a failing one whose bounded waits all run out.
+let testLimit: Double = 60
+
+/// Ends the whole run when `test` has not signalled the semaphore returned within `testLimit`.
+/// A test thread blocked in a read, a write or a close cannot be failed from another thread, and
+/// the job would otherwise wait for its own time limit and say nothing (#2265). It writes with
+/// write(2) and leaves with _exit, so it takes no lock and runs no handler a stuck thread holds.
+func watchdog(_ test: String) -> DispatchSemaphore {
+    let finished = DispatchSemaphore(value: 0)
+    Thread.detachNewThread {
+        guard finished.wait(timeout: .now() + testLimit) == .timedOut else { return }
+        let line = Array("\n\(test) did not finish within \(Int(testLimit)) seconds: ending the run\n".utf8)
+        _ = line.withUnsafeBytes { write(2, $0.baseAddress!, $0.count) }
+        _exit(1)
+    }
+    return finished
 }
 
 func eventually(within seconds: Double = 5, _ condition: () -> Bool) -> Bool {
