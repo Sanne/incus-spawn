@@ -125,6 +125,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Keeping a long-lived TUI current
   - Warnings while the TUI owns the terminal
   - Terminals the TUI cannot assume
+  - The overview of what each instance did
 - [Network](design/network.md)
   - Network Modes
   - DNS: static resolv.conf + bridge dnsmasq

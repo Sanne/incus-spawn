@@ -339,6 +339,21 @@ public class Tui {
     private List<InstanceInfo> rowToEntry;
     private TableState instanceTableState;
 
+    /**
+     * Whether the instance table shows the overview's columns (#2241, {@code o}): last use, tokens,
+     * active days and GitHub, from the proxy's event log, in place of IP, parent, runtime, age and
+     * disk. The rows, the marks and F8 stay the table's own.
+     */
+    boolean overview;
+    /** The event log the overview last read, or null until a read has finished. */
+    volatile dev.incusspawn.proxy.EventLogReader.Log overviewLog;
+    /** Reads the event log; tests give their own. */
+    java.util.function.Supplier<dev.incusspawn.proxy.EventLogReader.Log> eventLogReader = dev.incusspawn.proxy.EventLogReader::read;
+    /** The zone the overview's days and last use are shown in; tests fix it. */
+    java.time.ZoneId overviewZone = java.time.ZoneId.systemDefault();
+    /** Where the read runs: never the UI thread, which a large log would stall; tests run it in place. */
+    java.util.concurrent.Executor overviewExecutor = r -> Thread.ofVirtual().name("isx-overview").start(r);
+
     // Storage-pool usage for the top gauge; refreshed in reloadData (not per-frame,
     // since it costs an API call). Null when no pool usage is available.
     IncusClient.PoolUsage poolUsage;
@@ -780,6 +795,7 @@ public class Tui {
             // true is announced again rather than silently deduplicated.
             Warnings.forgetReported(drawing);
             refreshData(tableState);
+            if (overview) readOverviewLog();
             return true;
         }
         if (!key.hasCtrl() && key.isChar(WarningsModal.KEY.charAt(0))) {
@@ -954,6 +970,12 @@ public class Tui {
         // Space: mark or unmark the instance for F8, F7 or Shift+F7 on several
         if (key.isChar(' ')) {
             if (!markedInstances.remove(selected.name())) markedInstances.add(selected.name());
+            return true;
+        }
+        // o: the overview's columns, or the table's own again (#2241)
+        if (key.isChar('o') && !key.hasCtrl()) {
+            overview = !overview;
+            if (overview) readOverviewLog();
             return true;
         }
         // With marks, F8, F7 and Shift+F7 act on the marked instances and leave the cursor row alone
@@ -2716,6 +2738,36 @@ public class Tui {
         var idx = templateTableState != null ? templateTableState.selected() : null;
         if (idx == null || idx < 0 || idx >= templateEntries.size()) return null;
         return templateEntries.get(idx);
+    }
+
+    /**
+     * Reads the event log off the UI thread, for the overview's columns; the table shows the last
+     * read, or that it is reading, until it is done. Only on {@code o} and {@code r}, never on a
+     * live refresh, so the log is read when a person asks.
+     */
+    private void readOverviewLog() {
+        var reader = eventLogReader;
+        // Only the latest read is kept: an earlier one that ends later would show an older log
+        var read = overviewReads.incrementAndGet();
+        overviewExecutor.execute(() -> {
+            dev.incusspawn.proxy.EventLogReader.Log log;
+            try {
+                log = reader.get();
+            } catch (RuntimeException e) {
+                log = dev.incusspawn.proxy.EventLogReader.Log.EMPTY;
+                warningLog.add("Could not read the proxy's event log: " + e.getMessage());
+            }
+            if (overviewReads.get() == read) overviewLog = log;
+            needsRepaint.set(true);
+        });
+    }
+
+    /** How many reads of the event log were started, so a read that ends after a later one is dropped. */
+    private final java.util.concurrent.atomic.AtomicLong overviewReads = new java.util.concurrent.atomic.AtomicLong();
+
+    /** The instance on this row of the table, or null. */
+    InstanceInfo instanceOnRow(int row) {
+        return rowToEntry != null && row < rowToEntry.size() ? rowToEntry.get(row) : null;
     }
 
     private void refreshData(TableState tableState) {

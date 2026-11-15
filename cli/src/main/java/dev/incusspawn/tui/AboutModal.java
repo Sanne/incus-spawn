@@ -137,7 +137,7 @@ final class AboutModal {
                 shortcutRow("F9/9", "Tool actions", null, null),
                 shortcutRow("F10/0", "Quit", null, null),
                 shortcutRow("a", "Credential accounts", null, null),
-                shortcutRow("p", "Purpose of an instance", null, null),
+                shortcutRow("p", "Purpose of an instance", "o", "Overview"),
                 shortcutRow("C", "Clean pool storage", null, null),
                 shortcutRow("r", "Refresh", null, null),
                 shortcutRow(WarningsModal.KEY, "Warnings", null, null),

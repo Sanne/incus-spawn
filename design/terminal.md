@@ -537,3 +537,26 @@ The search bar keeps them too.
 Mnemonic letters lost because the free letters do not match the labels (`r`, `a`, `c` and `n` are taken) and the bar has no room for a second key per item.
 Esc then a digit, as Midnight Commander offers, lost because tamboui folds Esc and a key into Alt only within 50 ms, and Esc already clears the marks.
 Ctrl+digit lost because terminals send most of them as control characters such as NUL and Esc.
+
+## The overview of what each instance did
+With many instances running, a person cannot tell from the list which ones hold work (#2241).
+`isx overview` and `o` on the TUI's instance table show, beside each instance's status, purpose and last start, what the proxy's event log says it did.
+That is the tokens its model calls spent, the first and last day it was active, the branches it pushed and kept, and the pull requests it opened.
+The TUI's view is the instance table with other columns, so the rows, the marks and F8 are the table's own, and marked rows are destroyed together as anywhere else.
+
+`EventLogReader` (`common`) reads the log's five files, oldest first, and matches a line to an instance by its incarnation, the listing's `created_at` (#1063).
+A rename keeps an instance's lines, and a name branched again starts with none.
+A line the proxy wrote without an incarnation is matched by name, so it may be an earlier instance's of that name.
+The log keeps about 80 MiB, so the counts start at its oldest line, which the TUI's title and the line under the table name, with the lines the proxy lost.
+
+The log is read only when a person asks: on `isx overview`, on `o`, and on `r` while the overview is shown.
+In the TUI the read runs on a virtual thread, and the table shows `…` until it is done.
+`isx list` never reads it, since completion runs it on every TAB.
+The read parses every line of up to 80 MiB, which was not measured on a full log.
+
+The overview shows only what went through the proxy, and never a state the log cannot establish.
+A row with no push may still hold commits never pushed or changes never committed, and a pull request shows as opened after it was merged.
+A branch shows as pushed even when GitHub refused it (a non-fast-forward, a protected branch): the proxy logs a push on a 2xx answer and does not read the per-ref report-status inside it (design/proxy.md "The event log").
+Reading Git in each instance and asking GitHub about the pull requests are later steps of #2241.
+Branch and repository names are the guest's text, so they are shown through `OutputFormat.oneLine`, cut to the cell, and the newest 50 of each are kept per instance.
+The TUI has no hint for `o` on its context line, which has no room left at 80 columns; the F1 dialog lists it.

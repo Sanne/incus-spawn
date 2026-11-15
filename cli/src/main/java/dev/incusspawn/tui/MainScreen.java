@@ -28,6 +28,7 @@ import static dev.incusspawn.tui.UsageFormat.bar;
 import static dev.incusspawn.tui.UsageFormat.gibShort;
 import static dev.incusspawn.tui.UsageFormat.runningSummary;
 import dev.incusspawn.command.InstanceListing.InstanceInfo;
+import dev.incusspawn.command.OverviewCommand;
 import dev.incusspawn.command.InstanceListing.TemplateInfo;
 
 /**
@@ -353,7 +354,7 @@ final class MainScreen {
 
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" Instances ")
+                .title(tui.overview ? overviewTitle() : " Instances ")
                 .borderStyle(Style.EMPTY.fg(borderColor)).build();
         frame.renderWidget(block, area);
         var inner = block.inner(area);
@@ -373,25 +374,35 @@ final class MainScreen {
             scrollArea = null;
         }
 
-        var widths = new java.util.ArrayList<>(List.of(Constraint.min(10), Constraint.min(7),
-                Constraint.min(11), Constraint.min(10),
-                Constraint.length(10), Constraint.min(8), Constraint.length(6)));
-        var headers = new java.util.ArrayList<>(List.of("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK"));
-        // The cells of the columns drawn, from each row's: OWNER is the eighth, PURPOSE the ninth
-        var cells = new java.util.ArrayList<>(IntStream.range(0, headers.size()).boxed().toList());
-        boolean showOwner = tui.anyOwner && actualArea.width() >= OWNER_COLUMN_MIN_WIDTH;
-        if (showOwner) {
-            widths.add(Constraint.min(9));
-            headers.add("OWNER");
-            cells.add(7);
+        List<Constraint> widths;
+        List<String> headers;
+        List<Row> shownRows;
+        if (tui.overview) {
+            var columns = overviewColumns(actualArea.width());
+            widths = columns.widths();
+            headers = columns.headers();
+            shownRows = columns.rows();
+        } else {
+            widths = new java.util.ArrayList<>(List.of(Constraint.min(10), Constraint.min(7),
+                    Constraint.min(11), Constraint.min(10),
+                    Constraint.length(10), Constraint.min(8), Constraint.length(6)));
+            headers = new java.util.ArrayList<>(List.of("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK"));
+            // The cells of the columns drawn, from each row's: OWNER is the eighth, PURPOSE the ninth
+            var cells = new java.util.ArrayList<>(IntStream.range(0, headers.size()).boxed().toList());
+            boolean showOwner = tui.anyOwner && actualArea.width() >= OWNER_COLUMN_MIN_WIDTH;
+            if (showOwner) {
+                widths.add(Constraint.min(9));
+                headers.add("OWNER");
+                cells.add(7);
+            }
+            if (tui.anyPurpose && actualArea.width() >= (showOwner ? PURPOSE_COLUMN_MIN_WIDTH : PURPOSE_ALONE_MIN_WIDTH)) {
+                widths.add(Constraint.min(30));
+                headers.add("PURPOSE");
+                cells.add(8);
+            }
+            shownRows = cells.size() == tui.tableRows.get(0).cells().size() ? tui.tableRows
+                    : tui.tableRows.stream().map(row -> Row.from(cells.stream().map(row.cells()::get).toList()).style(row.style())).toList();
         }
-        if (tui.anyPurpose && actualArea.width() >= (showOwner ? PURPOSE_COLUMN_MIN_WIDTH : PURPOSE_ALONE_MIN_WIDTH)) {
-            widths.add(Constraint.min(30));
-            headers.add("PURPOSE");
-            cells.add(8);
-        }
-        var shownRows = cells.size() == tui.tableRows.get(0).cells().size() ? tui.tableRows
-                : tui.tableRows.stream().map(row -> Row.from(cells.stream().map(row.cells()::get).toList()).style(row.style())).toList();
         var tableBuilder = Table.builder()
                 .header(Row.from(headers.toArray(String[]::new))
                         .style(Style.EMPTY.bold().fg(focused ? tui.theme.panelBorderFocused() : tui.theme.panelBorderUnfocused())))
@@ -433,6 +444,63 @@ final class MainScreen {
                     .position(tableState.offset());
             frame.renderStatefulWidget(scrollbar, scrollArea, scrollState);
         }
+    }
+
+    /** The narrowest table that shows PURPOSE beside the overview's columns: a 110-column terminal. */
+    static final int OVERVIEW_PURPOSE_MIN_WIDTH = 106;
+
+    private record Columns(List<Constraint> widths, List<String> headers, List<Row> rows) {}
+
+    /**
+     * The overview's columns (#2241, {@code o}): NAME and STATUS from the table's rows, then what
+     * the proxy's event log says each instance did, and PURPOSE where there is room. The cells are
+     * made from the log the TUI last read, so they follow it without a reload; a cell says
+     * {@code …} while the first read is under way.
+     */
+    private Columns overviewColumns(int width) {
+        var widths = new ArrayList<>(List.of(Constraint.min(10), Constraint.min(7), Constraint.length(12),
+                Constraint.length(7), Constraint.length(13), Constraint.min(20)));
+        var headers = new ArrayList<>(List.of("NAME", "STATUS", "LAST USED", "TOKENS", "ACTIVE", "GITHUB"));
+        boolean purpose = tui.anyPurpose && width >= OVERVIEW_PURPOSE_MIN_WIDTH;
+        if (purpose) {
+            widths.add(Constraint.min(24));
+            headers.add("PURPOSE");
+        }
+        var log = tui.overviewLog;
+        var zone = tui.overviewZone;
+        var rows = new ArrayList<Row>();
+        for (int i = 0; i < tui.tableRows.size(); i++) {
+            var row = tui.tableRows.get(i);
+            var instance = tui.instanceOnRow(i);
+            var cells = new ArrayList<>(List.of(row.cells().get(0), row.cells().get(1)));
+            if (instance == null) {
+                rows.add(row);
+                continue;
+            }
+            cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.lastUsedCell(instance)));
+            if (log == null) {
+                for (int c = 0; c < 3; c++) cells.add(dev.tamboui.widgets.table.Cell.from("\u2026"));
+            } else {
+                var effort = OverviewCommand.effortOf(log, instance);
+                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.tokensCell(effort)));
+                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.activeCell(effort, zone)));
+                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.githubCell(effort, 60)));
+            }
+            if (purpose) cells.add(row.cells().get(8));
+            rows.add(Row.from(cells).style(row.style()));
+        }
+        return new Columns(widths, headers, rows);
+    }
+
+    /** The overview's title: what its counts cover, read from the event log. */
+    private String overviewTitle() {
+        var log = tui.overviewLog;
+        if (log == null) return " Instances: overview, reading the proxy's event log (o: back) ";
+        if (!log.files() || log.since() == null) return " Instances: overview, the proxy's event log is empty (o: back) ";
+        var lost = log.droppedLines() + log.unreadableLines();
+        return " Instances: overview since "
+                + OverviewCommand.DAY.format(log.since().atZone(tui.overviewZone))
+                + (lost > 0 ? ", " + lost + (lost == 1 ? " line lost" : " lines lost") : "") + " (o: back) ";
     }
 
     private record KeyItem(Line line, int width) {}
