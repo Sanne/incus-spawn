@@ -1,0 +1,153 @@
+package dev.incusspawn.proxy;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.Instant;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/** The overview's reader against the lines the proxy's own {@link EventLog} writes (#2241). */
+class EventLogReaderTest {
+
+    @TempDir
+    Path dir;
+
+    private static final String FIRST = "2026-11-01T10:00:00.123456789Z";
+    private static final String AGAIN = "2026-11-03T09:00:00.5Z";
+
+    private static Instant day(int d, int hour) {
+        return Instant.parse(String.format("2026-11-%02dT%02d:00:00Z", d, hour));
+    }
+
+    private static EventLog.ModelCall call(Instant at, String name, String incarnation, long in, long out) {
+        return new EventLog.ModelCall(at, name, incarnation, "api.anthropic.com", "claude-x", 200, 10, in, out, 3, 2);
+    }
+
+    @Test
+    void readsTheTokensActiveDaysBranchesAndPullRequestsTheProxyWrote() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        try (var log = new EventLog(file)) {
+            log.modelCall(call(day(1, 10), "w", FIRST, 100, 20));
+            log.push(new EventLog.Push(day(1, 11), "w", FIRST, "o/r", 200, 5,
+                    List.of("refs/heads/main", "refs/heads/fix", "refs/tags/v1"), List.of()));
+            log.push(new EventLog.Push(day(1, 12), "w", FIRST, "o/r", 200, 5, List.of(), List.of("refs/heads/fix")));
+            log.pullRequest(new EventLog.PullRequest(day(2, 9), "w", FIRST, "o/r", 12, 201, 5));
+            log.modelCall(call(day(2, 10), "w", FIRST, 50, 10));
+            log.flush();
+        }
+        var effort = EventLogReader.read(file).of("w", FIRST);
+        assertEquals(2, effort.modelCalls());
+        assertEquals(150, effort.inputTokens());
+        assertEquals(30, effort.outputTokens());
+        assertEquals(150 + 30 + 2 * (3 + 2), effort.tokens());
+        assertEquals(day(1, 10), effort.first());
+        assertEquals(day(2, 10), effort.last());
+        assertEquals(List.of("o/r:main", "o/r:refs/tags/v1"), effort.branches().stream().map(Object::toString).toList(),
+                "a branch a later push deleted is not listed");
+        assertEquals(List.of("o/r#12"), effort.pullRequests().stream().map(Object::toString).toList());
+    }
+
+    @Test
+    void anInstanceIsItsIncarnationSoARenameKeepsItsLinesAndANameBranchedAgainStartsAfresh() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        try (var log = new EventLog(file)) {
+            log.modelCall(call(day(1, 10), "w", FIRST, 100, 0));
+            log.modelCall(call(day(3, 10), "w", AGAIN, 7, 0));
+            log.flush();
+        }
+        var read = EventLogReader.read(file);
+        assertEquals(100, read.of("renamed", FIRST).inputTokens(), "a rename keeps created_at");
+        assertEquals(7, read.of("w", AGAIN).inputTokens(), "the new w is not the old one");
+        assertFalse(read.of("w", "2026-12-01T00:00:00Z").any());
+    }
+
+    @Test
+    void aLineWithNoIncarnationIsMatchedByName() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        try (var log = new EventLog(file)) {
+            log.modelCall(call(day(1, 10), "w", "", 4, 0));
+            log.modelCall(call(day(2, 10), "w", FIRST, 6, 0));
+            log.flush();
+        }
+        var effort = EventLogReader.read(file).of("w", FIRST);
+        assertEquals(10, effort.inputTokens());
+        assertEquals(day(1, 10), effort.first());
+    }
+
+    @Test
+    void olderFilesAreReadTooAndTheLogSaysSinceWhenAndWhatItLost() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        try (var log = new EventLog(file, 600)) {
+            for (int i = 0; i < 12; i++) log.modelCall(call(day(1 + i, 1), "w", FIRST, 1, 0));
+            log.flush();
+        }
+        assertTrue(Files.exists(dir.resolve("events.jsonl.1")), "rolled");
+        Files.writeString(file, "{\"t\":\"2026-11-20T00:00:00Z\",\"kind\":\"dropped\",\"lines\":3}\n{\"t\":\"2026-11-2",
+                StandardOpenOption.APPEND);
+        var read = EventLogReader.read(file);
+        var effort = read.of("w", FIRST);
+        assertTrue(effort.modelCalls() < 12, "the oldest rolled out");
+        assertTrue(effort.modelCalls() > 2, "older files are read");
+        assertEquals(effort.first(), read.since());
+        assertEquals(3, read.droppedLines());
+        assertEquals(1, read.unreadableLines(), "the torn line is skipped");
+    }
+
+    @Test
+    void noLogIsNoEffortAndNoFiles() {
+        var read = EventLogReader.read(dir.resolve("events.jsonl"));
+        assertFalse(read.files());
+        assertNull(read.since());
+        assertSame(EventLogReader.Effort.NONE, read.of("w", FIRST));
+    }
+
+    @Test
+    void aLineCutInsideACharacterSpoilsItselfAloneAndTheLinesAfterItCount() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        var good = "{\"t\":\"2026-11-01T10:00:00Z\",\"kind\":\"model\",\"instance\":\"w\",\"incarnation\":\"" + FIRST
+                + "\",\"input_tokens\":1}\n";
+        var torn = "{\"t\":\"2026-11-01T10:00:00Z\",\"kind\":\"github\",\"repo\":\"o/caf".getBytes(StandardCharsets.UTF_8);
+        try (var out = Files.newOutputStream(file)) {
+            out.write(good.getBytes(StandardCharsets.UTF_8));
+            out.write(torn);
+            out.write(new byte[]{(byte) 0xC3, '\n'}); // the first byte of an é, then the line the next write began
+            out.write(good.getBytes(StandardCharsets.UTF_8));
+        }
+        var read = EventLogReader.read(file);
+        assertEquals(2, read.of("w", FIRST).modelCalls());
+        assertEquals(1, read.unreadableLines());
+    }
+
+    @Test
+    void aKindOfALaterIsxIsSkippedAndNoInstanceIsMadeOfIt() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        Files.writeString(file, "{\"t\":\"2026-11-01T10:00:00Z\",\"kind\":\"session\",\"instance\":\"w\",\"incarnation\":\""
+                + FIRST + "\"}\n{\"t\":\"2026-11-02T10:00:00Z\",\"kind\":\"model\",\"instance\":\"w\",\"input_tokens\":3}\n");
+        var effort = EventLogReader.read(file).of("w", FIRST);
+        assertEquals(3, effort.inputTokens());
+        assertEquals(Instant.parse("2026-11-02T10:00:00Z"), effort.first());
+    }
+
+    @Test
+    void theNewestBranchesAndPullRequestsAreKept() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        try (var log = new EventLog(file)) {
+            for (int i = 0; i <= EventLogReader.MAX_KEPT; i++) {
+                log.push(new EventLog.Push(day(1, 1), "w", FIRST, "o/r", 200, 1, List.of("refs/heads/b" + i), List.of()));
+                log.pullRequest(new EventLog.PullRequest(day(1, 1), "w", FIRST, "o/r", i, 201, 1));
+            }
+            log.flush();
+        }
+        var effort = EventLogReader.read(file).of("w", FIRST);
+        assertEquals(EventLogReader.MAX_KEPT, effort.branches().size());
+        assertEquals("b" + EventLogReader.MAX_KEPT, effort.branches().getLast().name(), "the latest push is shown");
+        assertEquals(EventLogReader.MAX_KEPT, effort.pullRequests().getLast().number());
+        assertEquals("b1", effort.branches().getFirst().name(), "the oldest went");
+    }
+}

@@ -914,7 +914,7 @@ The proxy appends one JSON line to `~/.local/state/incus-spawn/events/events.jso
 A line holds the time, the instance's name and incarnation, the domain, the model the response names, the HTTP status, the duration and the four token counts.
 It holds no request or response content.
 A GitHub operation an instance makes is a line too: a push (`op: push`, the repository, the branches its commands update in `refs` and delete in `deleted_refs`) or a pull request opened (`op: pull_request`, the repository and the number).
-The overview that reads the log is a later step.
+`isx overview` and the TUI's overview (`o`) read it back through `EventLogReader` in `common` (design/terminal.md "The overview of what each instance did").
 The log is an observation and never read back by the proxy to decide routing, so "The proxy holds no configuration of its own" stands.
 Writing costs the request path one `offer` onto a bounded queue; one platform thread does the file work, so a slow disk never delays a response.
 When the queue is full or the write fails a line is lost, and the next line written says how many were (`kind: dropped`).
