@@ -829,21 +829,20 @@ public final class VmManager {
      * network), giving users meaningful descriptions instead of a generic prompt.
      */
     private static String ensureVfkitAppBundle() throws IOException {
-        var macosDir = Environment.vfkitAppBundle().resolve("Contents/MacOS");
-        var plistFile = Environment.vfkitAppBundle().resolve("Contents/Info.plist");
+        return ensureVfkitAppBundle(Environment.vfkitAppBundle(), resolveVfkitPath());
+    }
+
+    static String ensureVfkitAppBundle(Path bundle, String vfkitPath) throws IOException {
+        var macosDir = bundle.resolve("Contents/MacOS");
+        var plistFile = bundle.resolve("Contents/Info.plist");
         var linkedBin = macosDir.resolve("vfkit");
 
-        var vfkitPath = resolveVfkitPath();
-
-        if (Files.exists(linkedBin) && Files.exists(plistFile)) {
-            if (Files.isSymbolicLink(linkedBin)) {
-                var target = Files.readSymbolicLink(linkedBin);
-                if (target.equals(Path.of(vfkitPath))) {
-                    return linkedBin.toString();
-                }
-            }
-            Files.delete(linkedBin);
+        if (Files.isSymbolicLink(linkedBin) && Files.exists(plistFile)
+                && Files.readSymbolicLink(linkedBin).equals(Path.of(vfkitPath))) {
+            return linkedBin.toString();
         }
+        // The link itself, not its target: a dangling link is not "exists" but still blocks the new link.
+        Files.deleteIfExists(linkedBin);
 
         Files.createDirectories(macosDir);
         Files.writeString(plistFile, """
