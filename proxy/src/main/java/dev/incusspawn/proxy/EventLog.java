@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicLong;
 final class EventLog implements AutoCloseable {
 
     static final long MAX_FILE_BYTES = 16L * 1024 * 1024;
-    static final int KEPT = 4;
+    static final int KEPT = EventLogReader.KEPT;
     static final int QUEUE = 4096;
 
     /** What a model call from an instance did. */
