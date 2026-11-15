@@ -184,6 +184,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The github-asset source type
   - The signed-file source type
   - The github-action source type
+  - The maven-central source type
   - The model-deprecations source type
   - The review class
   - Threat model

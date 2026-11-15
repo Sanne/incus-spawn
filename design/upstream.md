@@ -25,7 +25,7 @@ An item names its `class` (`mechanical`, `review`, or `judgement` by default), w
 `current`, `releases`, `check` and `apply` read and rewrite one item; `plan` decides every item (a prepared commit, an issue, or nothing) with no app credential; `issues` opens what `plan` wrote; `publish` pushes the prepared commits and opens or refreshes their PRs as the app; `verify-pr` and `verify-trees` are the check; `track` keeps the one `[upstream] watch failing` issue.
 Everything an upstream sends (a version, a tag, a URL, a sum) is data: it is matched against a shape before use and never reaches a shell line unquoted or a jq filter unbound.
 The three source types reuse what already verified a pin by hand: `kernel-org` is `appliance/kernel/update-kernel-pin.sh` (which gained `releases [<major>]` and `sum <version>`), `github-release` is `.github/scripts/base-image-sums.sh` and `verify-base-image-sums.sh`, and `jetbrains` reads the products API with a URL prefix allowlist and the `.sha256` beside each tarball.
-`github-asset` and `signed-file` (#2210) are described under "The github-asset source type" and "The signed-file source type" below, and `model-deprecations` (#2227) under "The model-deprecations source type".
+`github-asset`, `signed-file`, `github-action` and `maven-central` (#2210) are described under their own headings below, and `model-deprecations` (#2227) under "The model-deprecations source type".
 
 **The watch** (`.github/workflows/upstream-watch.yml`) runs every six hours and on `workflow_dispatch` (an optional `item`, checked against the manifest's keys), in `Sanne/incus-spawn` from `main` only, as two jobs.
 It has no PR, issue or comment trigger, `persist-credentials: false`, `contents: read` and `issues: write`, no third-party action, and no `${{ }}` inside any `run:`.
@@ -70,6 +70,10 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `arch-cloud-image` | `scripts/distro-images.env` (`ARCH_IMAGE_URL`, `ARCH_IMAGE_SHA256`) | the Arch mirror's `images/` listing, the signed `.SHA256` of the image | `signed-file`, `upstream/keys/arch-linux.asc` | mechanical | `any` | 24h | none |
 | `ubuntu-cloud-image` | `scripts/distro-images.env` (`UBUNTU_IMAGE_URL`, `UBUNTU_IMAGE_SHA256`) | Canonical's `releases/noble/` listing, the `SHA256SUMS` signed by `SHA256SUMS.gpg` | `signed-file`, `upstream/keys/ubuntu-cloud-images.asc` | mechanical | `any` | 24h | none |
 | `models` | `common/src/main/resources/models.yaml` (every model ID isx ships) | each vendor's keyless markdown deprecations page (Anthropic, OpenAI, Google) | none: a findings source pins nothing | judgement | none | none | a deprecated or retired ID, or a successor (`go:build`) |
+| `maven-plugins` | the four poms (`compiler-plugin.version`, `surefire-plugin.version`, which failsafe shares, and the exec, jandex and assertj versions) | Maven Central's listing of each artifact | `central-exists` | review | `series` (each member's major) | 72h | a member's new major (`go:build`) |
+| `aesh` | `pom.xml` (`aesh.version`, for aesh and its processor) | Maven Central's listings | `central-exists` | review | `series` (the major) | 72h | a new major (`go:build`) |
+| `jjq` | `pom.xml` (`jjq.version`, for jjq-yaml, jjq-mapper and its processor) | Maven Central's listings | `central-exists` | review | `series` (the major) | 72h | a new major (`go:build`) |
+| `json-schema-validator` | `cli/pom.xml` (the test dependency's version) | Maven Central's listing | `central-exists` | review | `series` (the major) | 72h | a new major (`go:build`) |
 | `github-actions` | every file under `.github/` with a `uses:` of a repository's action (each `owner/repo@<sha> # <tag>`) | each member's GitHub releases and tag refs, an annotated tag followed to its commit | `tag-commit` | judgement | none (a new major is listed apart) | 72h | every member with a newer cooled release, in one issue (`go:build`) |
 
 The `base-image` item takes over what `update-base-image.yml` did (#1678, #1862): every checksum comes from the release's own sums files for the asset each URL downloads, a release of another Fedora line is an issue rather than a PR, and `vm_image_url` moves to `-vm-direct` in the first release that has it for both arches and never back to the stock image (design/templates.md "Which base image an instance runs").
@@ -79,7 +83,7 @@ Its versions are ordered as isx orders release tags (`src_order`): by line, then
 A source type may define `src_order` (versions on stdin, oldest first) wherever `sort -V` is wrong for it; `newest` uses it, and `publish` loads each item's source type so `pr.sh` compares versions the same way.
 The images repo's `repository_dispatch` to this one, and its `INCUS_SPAWN_DISPATCH_TOKEN`, retire in favour of the six-hourly poll: the payload was only ever cross-checked against the release.
 `publisher-sums` proves consistency and transfer, not provenance, since the sums come from the same origin as the artifact; the manifest says so in the verifier's name rather than pretending otherwise.
-Items the design inventories for later phases (the siblings' `ISX_REF` and engine pins, the Maven plugins and libraries) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
+Items the design inventories for later phases (the siblings' `ISX_REF` and engine pins) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
 
 ## The github-asset source type
 
@@ -187,6 +191,43 @@ The issue's table is the one the run that opened it saw; `upstream.sh releases g
 The six-hourly run plans it like every item until the weekly run of build-side families exists.
 incus-spawn-images pins its own Actions the same way, by hand, until its watch (#2210, the siblings) reads them.
 
+## The maven-central source type
+
+A version the poms pin, of an artifact on Maven Central, is watched by a `maven-central` item (#2210): the build plugins and assertj, aesh, jjq and json-schema-validator.
+An item has `source.members`, and each member is a set of artifacts released together under one version.
+`artifacts` names every one the version drives, so aesh's version moves only to a release of both aesh and `aesh-processor`.
+`pins` are literal texts with `{version}`, as for `signed-file` (`pins.pl`): a property such as `<aesh.version>{version}</aesh.version>`, or an `artifactId` line with the `version` line below it.
+Every occurrence is read and must agree, and every one is rewritten, so assertj moves in all three poms at once.
+The poms are read with `yq` but never written with it, since it would not write the file back byte for byte.
+
+One member's version is the version (`3.19.1`).
+A family's names each member's version in the members' order, as `<key>.<version>` joined by `_`: `compiler.3.16.0_surefire.3.6.1_...`, compared member by member.
+Only a dotted number is a release, so `3.6.0-M1`, `4.0.0-beta-5` and `4.0.0.CR1` never count.
+Central's listing of an artifact dates each version by its directory, and a member's version is dated by the latest of its artifacts.
+A version that one of a member's artifacts lacks is no release of it: failsafe without the surefire of its number holds the member back.
+
+A family proposes each member's newest release past cooling within its major, never older than its pin.
+A member's new major opens the item's new-series issue beside that PR, so it never holds the other members back.
+`src_releases` gives two versions for that: every member in its major, and every member at its newest.
+A bump never moves a member back, whatever version it is given.
+
+`validate` also requires each property a pin defines to version only the member's artifacts, in every file of the item, and to appear in no other pom of the repository.
+A dependency added on `${jjq.version}` is then either declared, and checked on Central with the others, or fails `UpstreamManifestTest`.
+
+The verifier is `central-exists`: Central's listing names every artifact at its version, and the pom there hashes to the `.sha1` Central lists beside it.
+That is Central's record of a release, the check Maven itself makes when it downloads, and not the publisher's signature.
+It says nothing of what the code does, so `validate` refuses it on a mechanical item, and all four items are `class: review`.
+
+The design on #2210 had the plugin family mechanical, on the ground that a build plugin ships in no binary.
+It does reach one: the compiler plugin compiles what ships, and the jandex plugin writes the index without which the native image binds every Claude account `type:` to null (CLAUDE.md, "Module Structure").
+So the family is a review item until Sanne decides otherwise, and promoting it takes a verifier that proves the publisher.
+Every artifact on Central carries the publisher's OpenPGP signature (`.asc`), so a mechanical family could check it against committed keys, as `signed-file` does.
+That costs a key per publisher and fails closed when a release manager changes.
+
+What this gives up: a Maven bump waits for Sanne, so a plugin's pin lags as long as its PR stays open.
+Quarkus and Tamboui are not items: a new Quarkus moves the proxy's whole network stack and Tamboui's 0.x releases change its events, so each needs a person's judgement (the issue-only feeds of #2210).
+Plugins without a version of their own (`maven-jar-plugin`, `maven-resources-plugin`) take Quarkus's or Maven's, and are not watched.
+
 ## The model-deprecations source type
 
 isx names AI models by ID, and a vendor retires or supersedes one without isx noticing (#2227).
@@ -245,6 +286,7 @@ The merge script requires `class: mechanical` by name, so it refuses a review it
 | The engine or manifest changed by a PR | They are ordinary files: a PR touching them is never the app's regeneration of an item, so the gate refuses it, and the check runs `main`'s copy, so a PR cannot verify itself. |
 | A stolen app key reaching the Mac | `appliance/test-kernel-on-mac.sh` trusts the app login, since a kernel bump needs a Mac boot; but for an app PR the script itself refuses unless the `upstream-verify` check run at the very head it boots, by GitHub Actions, concluded `success` (and isx-workflow's `bin/mac-pick.sh` lists it only then), so only a kernel whose build is `main`'s engine's regeneration is ever booted with the verifier's credentials. |
 | A moved Action tag | Every Action is pinned to a commit, so moving a tag changes nothing a workflow runs. The watch re-reads each pinned tag on every run and opens the pin-mismatch issue when one points elsewhere; `upstream-verify` re-reads each tag a PR names. A tag the publisher moved before the pin was taken is beyond this check, which proves where a tag points, not what the code does. |
+| A Maven Central release | Central keeps a release for good and never lets it be replaced, and `central-exists` checks the pom against Central's sha1 again on every person's PR. It proves Central published the version, not what it does, so a person merges every such bump and `validate` refuses the verifier on a mechanical item. |
 | Replay or downgrade | Forward-only comparison in both the engine and the check, `within: series`, the declined marker; a sums file that lost entries never moves a pin back. |
 
 ## Why not Sanne's own token
