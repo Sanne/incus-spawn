@@ -35,17 +35,17 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Oracle GraalVM 25.5
-        uses: graalvm/setup-graalvm@v1
+        uses: graalvm/setup-graalvm@d6eca2595046623d69d636041513c80abf745406 # v1.6.9
         with:
           version: '25.5'
           java-version: '25'
           distribution: 'graalvm'
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.m2/repository
           key: maven-${{ hashFiles('**/pom.xml') }}
@@ -82,17 +82,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Oracle GraalVM 25.5
-        uses: graalvm/setup-graalvm@v1
+        uses: graalvm/setup-graalvm@d6eca2595046623d69d636041513c80abf745406 # v1.6.9
         with:
           version: '25.5'
           java-version: '25'
           distribution: 'graalvm'
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.m2/repository
           # Not maven-<os>-: the Linux jobs' restore-keys prefix `maven-` would match it.
@@ -120,7 +120,7 @@ jobs:
 
       - name: Upload test reports
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: surefire-reports-macos
           overwrite: true  # a re-run of the failed job must not lose its reports to a name clash
@@ -135,7 +135,7 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Run the upstream engine's fixture tests
         run: bash upstream/test/run.sh
@@ -147,7 +147,7 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Run the Mac kernel gate and record on a fixture repository
         run: bash .github/scripts/test-kernel-mac-gate.sh
@@ -160,17 +160,17 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Oracle GraalVM 25.5
-        uses: graalvm/setup-graalvm@v1
+        uses: graalvm/setup-graalvm@d6eca2595046623d69d636041513c80abf745406 # v1.6.9
         with:
           version: '25.5'
           java-version: '25'
           distribution: 'graalvm'
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.m2/repository
           key: maven-${{ hashFiles('**/pom.xml') }}
@@ -236,17 +236,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Oracle GraalVM 25.5
-        uses: graalvm/setup-graalvm@v1
+        uses: graalvm/setup-graalvm@d6eca2595046623d69d636041513c80abf745406 # v1.6.9
         with:
           version: '25.5'
           java-version: '25'
           distribution: 'graalvm'
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.m2/repository
           key: maven-${{ hashFiles('**/pom.xml') }}
@@ -267,17 +267,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Oracle GraalVM 25.5
-        uses: graalvm/setup-graalvm@v1
+        uses: graalvm/setup-graalvm@d6eca2595046623d69d636041513c80abf745406 # v1.6.9
         with:
           version: '25.5'
           java-version: '25'
           distribution: 'graalvm'
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.m2/repository
           key: maven-${{ hashFiles('**/pom.xml') }}
@@ -318,7 +318,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Test the relay
         run: swift test --package-path launcher
@@ -343,7 +343,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Build the relay's tests
         run: |
@@ -388,11 +388,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Restore appliance image
         id: cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: appliance/build/
           key: ${{ matrix.arch == 'aarch64' && needs.build_appliance.outputs.cache_key_aarch64 || needs.build_appliance.outputs.cache_key_x86_64 }}
@@ -400,7 +400,7 @@ jobs:
 
       - name: Download appliance artifact (fallback)
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: appliance-${{ matrix.arch }}
           path: appliance/build/
@@ -506,7 +506,7 @@ jobs:
           fi
 
       - name: Download the vsock bridge
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: isx-vsock-bridge-${{ matrix.arch }}
           path: ${{ runner.temp }}/bridge
@@ -561,7 +561,7 @@ jobs:
 
       - name: Download CLI native binary
         if: matrix.full
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: isx-native-cli
           path: native-cli/
@@ -603,7 +603,7 @@ jobs:
 
       - name: Upload console log
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: vm-console-log-${{ matrix.arch }}
           path: |
@@ -626,24 +626,24 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Oracle GraalVM 25.5
-        uses: graalvm/setup-graalvm@v1
+        uses: graalvm/setup-graalvm@d6eca2595046623d69d636041513c80abf745406 # v1.6.9
         with:
           version: '25.5'
           java-version: '25'
           distribution: 'graalvm'
 
       - name: Download uber-jars
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: uber-jars
           path: uber-jars/
 
       - name: Restore appliance image
         id: cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: appliance/build/
           key: ${{ needs.build_appliance.outputs.cache_key_x86_64 }}
@@ -651,13 +651,13 @@ jobs:
 
       - name: Download appliance artifact (fallback)
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: appliance-x86_64
           path: appliance/build/
 
       - name: Download the vsock bridge
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: isx-vsock-bridge-x86_64
           path: ${{ runner.temp }}/bridge
@@ -703,7 +703,7 @@ jobs:
 
       - name: Upload logs
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: macos-role-logs
           path: macos-role-logs/
@@ -715,7 +715,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Incus
         run: |
@@ -735,13 +735,13 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Download CLI native binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: isx-native-cli
           path: native-cli/
 
       - name: Download proxy native binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: isx-native-proxy
           path: native-proxy/
@@ -1216,7 +1216,7 @@ jobs:
       SHAPE: ${{ matrix.shape }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Enable KVM
         run: |
@@ -1234,19 +1234,19 @@ jobs:
         run: sed -n 's/^${{ matrix.image }}_\(IMAGE_[A-Z0-9_]*=.*\)$/\1/p' scripts/distro-images.env >> "$GITHUB_ENV"
 
       - name: Cache the cloud image
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.cache/distro-vm
           key: distro-image-${{ env.IMAGE_SHA256 }}
 
       - name: Download CLI native binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: isx-native-cli
           path: native-cli/
 
       - name: Download proxy native binary
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: isx-native-proxy
           path: native-proxy/
@@ -1330,7 +1330,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Incus (deliberately WITHOUT 'incus admin init')
         run: |
@@ -1350,19 +1350,19 @@ jobs:
           sg incus-admin -c "incus profile show default"
 
       - name: Install JDK 25
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           java-version: '25'
           distribution: 'oracle'
 
       - name: Download isx build
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: isx-quarkus-app
           path: quarkus-app/
 
       - name: Download proxy build
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: isx-proxy-quarkus-app
           path: proxy-quarkus-app/
