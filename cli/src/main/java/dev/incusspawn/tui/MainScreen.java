@@ -206,6 +206,7 @@ final class MainScreen {
             case OVERVIEW -> view.label;
             case TEMPLATES -> view.label + " " + tui.templateEntries.size();
             case INSTANCES -> view.label + " " + tui.entries.size();
+            case WORK -> view.label;
         };
     }
 
@@ -390,7 +391,7 @@ final class MainScreen {
 
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(tui.overview ? overviewTitle() : " Instances ")
+                .title(tui.overviewShown() ? overviewTitle() : " Instances ")
                 .borderStyle(Style.EMPTY.fg(borderColor)).build();
         frame.renderWidget(block, area);
         var inner = block.inner(area);
@@ -413,7 +414,7 @@ final class MainScreen {
         List<Constraint> widths;
         List<String> headers;
         List<Row> shownRows;
-        if (tui.overview) {
+        if (tui.overviewShown()) {
             var columns = overviewColumns(actualArea.width());
             widths = columns.widths();
             headers = columns.headers();
@@ -482,27 +483,37 @@ final class MainScreen {
         }
     }
 
-    /** The narrowest table that shows PURPOSE beside the overview's columns: a 110-column terminal. */
-    static final int OVERVIEW_PURPOSE_MIN_WIDTH = 106;
+    /** The narrowest table that shows PURPOSE beside the overview's columns: a 130-column terminal. */
+    static final int OVERVIEW_PURPOSE_MIN_WIDTH = 126;
+    /** The narrowest table that shows ACTIVE beside WORK: a 100-column terminal. */
+    static final int OVERVIEW_ACTIVE_MIN_WIDTH = 96;
 
     private record Columns(List<Constraint> widths, List<String> headers, List<Row> rows) {}
 
     /**
-     * The overview's columns (#2241, {@code o}): NAME and STATUS from the table's rows, then what
-     * the proxy's event log says each instance did, and PURPOSE where there is room. The cells are
-     * made from the log the TUI last read, so they follow it without a reload; a cell says
-     * {@code …} while the first read is under way.
+     * The overview's columns (#2241, {@code o} and the Work tab): NAME and STATUS from the table's
+     * rows, then what each guest's clones hold (WORK), what the proxy's event log says each
+     * instance did, and ACTIVE and PURPOSE where there is room. The cells are made from the last
+     * read, so they follow it without a reload; a cell says {@code …} while its read is under way.
      */
     private Columns overviewColumns(int width) {
+        boolean active = width >= OVERVIEW_ACTIVE_MIN_WIDTH;
         var widths = new ArrayList<>(List.of(Constraint.min(10), Constraint.min(7), Constraint.length(12),
-                Constraint.length(7), Constraint.length(13), Constraint.min(20)));
-        var headers = new ArrayList<>(List.of("NAME", "STATUS", "LAST USED", "TOKENS", "ACTIVE", "GITHUB"));
+                Constraint.min(12), Constraint.length(7)));
+        var headers = new ArrayList<>(List.of("NAME", "STATUS", "LAST USED", "WORK", "TOKENS"));
+        if (active) {
+            widths.add(Constraint.length(13));
+            headers.add("ACTIVE");
+        }
+        widths.add(Constraint.min(16));
+        headers.add("GITHUB");
         boolean purpose = tui.anyPurpose && width >= OVERVIEW_PURPOSE_MIN_WIDTH;
         if (purpose) {
             widths.add(Constraint.min(24));
             headers.add("PURPOSE");
         }
         var log = tui.overviewLog;
+        var reading = tui.overviewReading;
         var zone = tui.overviewZone;
         var rows = new ArrayList<Row>();
         for (int i = 0; i < tui.tableRows.size(); i++) {
@@ -514,13 +525,16 @@ final class MainScreen {
                 continue;
             }
             cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.lastUsedCell(instance)));
+            cells.add(dev.tamboui.widgets.table.Cell.from(reading == null ? "\u2026" : reading.workOf(instance).cell()));
             if (log == null) {
-                for (int c = 0; c < 3; c++) cells.add(dev.tamboui.widgets.table.Cell.from("\u2026"));
+                for (int c = active ? 0 : 1; c < 3; c++) cells.add(dev.tamboui.widgets.table.Cell.from("\u2026"));
             } else {
                 var effort = OverviewCommand.effortOf(log, instance);
                 cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.tokensCell(effort)));
-                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.activeCell(effort, zone)));
-                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.githubCell(effort, List.of(), 60)));
+                if (active) cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.activeCell(effort, zone)));
+                var states = reading == null ? List.<dev.incusspawn.command.PullRequestStates.State>of()
+                        : OverviewCommand.statesOf(reading, instance, effort);
+                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.githubCell(effort, states, 60)));
             }
             if (purpose) cells.add(row.cells().get(8));
             rows.add(Row.from(cells).style(row.style()));
@@ -531,12 +545,15 @@ final class MainScreen {
     /** The overview's title: what its counts cover, read from the event log. */
     private String overviewTitle() {
         var log = tui.overviewLog;
-        if (log == null) return " Instances: overview, reading the proxy's event log (o: back) ";
-        if (!log.files() || log.since() == null) return " Instances: overview, the proxy's event log is empty (o: back) ";
+        var name = tui.view == Tui.View.WORK ? " Work" : " Instances: overview";
+        var back = tui.view == Tui.View.WORK ? " " : " (o: back) ";
+        if (log == null) return name + ", reading the proxy's event log" + back;
+        var reading = tui.overviewReading == null ? ", reading the instances" : "";
+        if (!log.files() || log.since() == null) return name + ", the proxy's event log is empty" + reading + back;
         var lost = log.droppedLines() + log.unreadableLines();
-        return " Instances: overview since "
+        return name + " since "
                 + OverviewCommand.DAY.format(log.since().atZone(tui.overviewZone))
-                + (lost > 0 ? ", " + lost + (lost == 1 ? " line lost" : " lines lost") : "") + " (o: back) ";
+                + (lost > 0 ? ", " + lost + (lost == 1 ? " line lost" : " lines lost") : "") + reading + back;
     }
 
     private record KeyItem(Line line, int width) {}

@@ -52,7 +52,9 @@ class TuiOverviewTest {
                 .instance("mine", "container", "Running", Map.of(Metadata.TYPE, "branch", Metadata.PARENT, "tpl-minimal",
                         Metadata.PROFILE, "tpl-minimal"))
                 .createdAt("ws", WS)
-                .createdAt("mine", "2026-11-02T08:00:00Z");
+                .createdAt("mine", "2026-11-02T08:00:00Z")
+                .execOutput(dev.incusspawn.command.WorkState.HEADER,
+                        dev.incusspawn.command.WorkState.HEADER + "\nrepo 0 2 0 app\nend\n");
         var file = dir.resolve("events.jsonl");
         Files.writeString(file, String.join("\n",
                 "{\"t\":\"2026-11-01T12:00:00Z\",\"kind\":\"model\",\"instance\":\"ws\",\"incarnation\":\"" + WS + "\","
@@ -67,6 +69,7 @@ class TuiOverviewTest {
         };
         tui.eventLogReader = () -> EventLogReader.read(file);
         tui.overviewExecutor = reads::add;
+        tui.overviewGitHub = (token, pulls) -> Map.of();
         tui.overviewZone = java.time.ZoneOffset.UTC;
         tui.useDefinitions(new LinkedHashMap<>(), new ToolDefLoader(List.of()), List.of());
         tui.startSession(daemon.client(), new BackgroundTaskManager(Runnable::run), new FlockInstanceLockManager(),
@@ -99,11 +102,13 @@ class TuiOverviewTest {
         readsFinish();
         var read = screen(tui, 80);
         assertTrue(read.contains("overview since Nov 1"), read);
-        assertTrue(read.lines().anyMatch(l -> l.contains("TOKENS") && l.contains("ACTIVE") && l.contains("GITHUB")), read);
+        assertTrue(read.lines().anyMatch(l -> l.contains("WORK") && l.contains("TOKENS") && l.contains("GITHUB")), read);
+        assertFalse(read.contains("ACTIVE"), "no room for it at 80 columns beside WORK");
         var ws = read.lines().filter(l -> l.contains(" ws ")).findFirst().orElseThrow();
-        assertTrue(ws.contains("42.0k") && ws.contains("Nov 1–Nov 4") && ws.contains("PR o/r#7"), ws);
+        assertTrue(ws.contains("42.0k") && ws.contains("not read") && ws.contains("PR o/r#7"), ws);
         var mine = read.lines().filter(l -> l.contains(" mine ")).findFirst().orElseThrow();
         assertFalse(mine.contains("o/r"), mine);
+        assertTrue(mine.contains("2 unpushed"), "read in the running guest: " + mine);
         assertFalse(read.contains(" IP "), read);
 
         press(tui, KeyEvent.ofChar('o'));
@@ -111,6 +116,25 @@ class TuiOverviewTest {
         assertTrue(back.lines().anyMatch(l -> l.contains("NAME") && l.contains("IP") && l.contains("PARENT")), back);
         assertFalse(back.contains("TOKENS"), back);
         assertTrue(reads.isEmpty(), "leaving the overview reads nothing");
+    }
+
+    @Test
+    void theWorkTabShowsTheOverviewsColumnsReadOnEnteringIt() throws Exception {
+        var tui = tui(120);
+        for (int i = 0; i < 3; i++) press(tui, KeyEvent.ofKey(KeyCode.RIGHT));
+        assertEquals(Tui.View.WORK, tui.view);
+        assertEquals(1, reads.size(), "entering the tab reads, once");
+        readsFinish();
+        var work = screen(tui, 120);
+        assertTrue(work.contains("[Work]"), work);
+        assertTrue(work.contains("Work since Nov 1") && !work.contains("o: back"), work);
+        assertTrue(work.lines().anyMatch(l -> l.contains("WORK") && l.contains("ACTIVE")), work);
+        var ws = work.lines().filter(l -> l.contains(" ws ")).findFirst().orElseThrow();
+        assertTrue(ws.contains("Nov 1–Nov 4"), ws);
+
+        press(tui, KeyEvent.ofChar(' '), KeyEvent.ofKey(KeyCode.DOWN), KeyEvent.ofChar(' '), KeyEvent.ofKey(KeyCode.F8));
+        var confirm = screen(tui, 120);
+        assertTrue(confirm.contains("mine") && confirm.contains("ws") && confirm.contains("Destroy"), confirm);
     }
 
     @Test

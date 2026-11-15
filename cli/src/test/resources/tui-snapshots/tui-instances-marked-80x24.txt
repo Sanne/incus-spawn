@@ -1,5 +1,5 @@
  isx   1.2.3  ● 2 containers running
- [Overview]  Templates 1   Instances 3                          ←/→ Switch view
+ [Overview]  Templates 1   Instances 3   Work                   ←/→ Switch view
 ╭ Templates ───────────────────────────────────────────────────────────────────╮
 │  NAME                    BUILT                DISK     DESCRIPTION           │
 │  tpl-minimal             unknown !            -        Minimal Fedora        │
