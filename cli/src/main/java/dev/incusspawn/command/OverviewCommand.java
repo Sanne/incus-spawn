@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.command.InstanceListing.InstanceInfo;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
@@ -33,13 +34,15 @@ import static dev.incusspawn.command.InstanceListing.collectEntries;
  * calls spent, the days it was active, the branches it pushed and the pull requests it opened.
  *
  * <p>The log is read only here and in the TUI's overview, on demand, never by {@code isx list},
- * which costs one Incus request. What the log does not record (commits not pushed, changes not
- * committed, a pull request merged since) is not shown as a state: the columns say what the proxy
- * saw, never that nothing would be lost.
+ * which costs one Incus request. Beside the log it shows what only the instance knows, read in each
+ * running guest ({@link WorkState}: changes not committed, commits not pushed, stashes), and asks
+ * GitHub, with each instance's own account, whether its pull requests were merged
+ * ({@link PullRequestStates}). A stopped instance is not read, and a read that fails says
+ * {@code unknown}: the overview never says nothing would be lost when it could not look.
  */
 @CommandDefinition(
         name = "overview",
-        description = "Show what was done in each instance: tokens, active days, pushes and pull requests",
+        description = "Show what was done in each instance and what destroying it would lose",
         generateHelp = true
 )
 public class OverviewCommand extends BaseCommand {
@@ -58,6 +61,57 @@ public class OverviewCommand extends BaseCommand {
 
     /** The event log; tests read one of their own. */
     Supplier<EventLogReader.Log> eventLog = EventLogReader::read;
+
+    /** GitHub, asked whether the pull requests are still open; tests answer for it. */
+    PullRequestStates.GitHub github = PullRequestStates.api();
+
+    /** The host's config, for each instance's GitHub account. */
+    Supplier<SpawnConfig> config = SpawnConfig::load;
+
+    /**
+     * Everything the overview shows beside the listing: the event log, each instance's work state
+     * read in its guest, and what became of its pull requests.
+     */
+    public record Reading(EventLogReader.Log log, Map<String, WorkState> work,
+                          Map<String, Map<EventLogReader.PullRequest, PullRequestStates.State>> pulls) {
+        /**
+         * Its work state; one the read did not cover (it appeared or started since) is not read
+         * when stopped and unknown when running, never shown as stopped.
+         */
+        public WorkState workOf(InstanceInfo instance) {
+            var state = work.get(instance.name());
+            if (state != null) return state;
+            return "running".equalsIgnoreCase(instance.status())
+                    ? WorkState.unknown("not read since it started") : WorkState.NOT_READ;
+        }
+
+        /** What GitHub said of this pull request of the instance's; unknown when it was not asked or did not say. */
+        public PullRequestStates.State stateOf(InstanceInfo instance, EventLogReader.PullRequest pull) {
+            return pulls.getOrDefault(instance.name(), Map.of()).getOrDefault(pull, PullRequestStates.State.UNKNOWN);
+        }
+    }
+
+    /**
+     * Reads what the overview shows of {@code instances}: the log, then the guests' work states and
+     * GitHub's answer at once. {@code failed} hears what could not be read, as a warning.
+     */
+    public static Reading read(IncusClient incus, List<InstanceInfo> instances, EventLogReader.Log log,
+                               SpawnConfig config, PullRequestStates.GitHub github,
+                               java.util.function.Consumer<String> failed) {
+        try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var pulls = pool.submit(() -> PullRequestStates.read(instances, log, config, github, failed));
+            var work = WorkState.readAll(incus, instances);
+            try {
+                return new Reading(log, work, pulls.get());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return new Reading(log, work, Map.of());
+            } catch (java.util.concurrent.ExecutionException e) {
+                failed.accept("Could not ask GitHub whether pull requests were merged: " + e.getCause().getMessage());
+                return new Reading(log, work, Map.of());
+            }
+        }
+    }
 
     @Override
     protected CommandResult doExecute() throws Exception {
@@ -80,14 +134,14 @@ public class OverviewCommand extends BaseCommand {
                 .filter(i -> !Metadata.TYPE_BASE.equals(i.type()))
                 .filter(i -> wanted == null || wanted.equalsIgnoreCase(i.status()))
                 .toList();
-        var log = eventLog.get();
+        var reading = read(incus, instances, eventLog.get(), config.get(), github, BuildOutput::warn);
         switch (outputFormat) {
             case PLAIN, JSON -> {
-                outputFormat.print(out, records(instances, log, zone));
-                var note = coverage(log, zone);
+                outputFormat.print(out, records(instances, reading, zone));
+                var note = coverage(reading.log(), zone);
                 if (note != null) BuildOutput.note(note);
             }
-            case TABLE -> printTable(instances, log, out, zone);
+            case TABLE -> printTable(instances, reading, out, zone);
         }
     }
 
@@ -113,10 +167,11 @@ public class OverviewCommand extends BaseCommand {
     }
 
     /** The fields of {@code isx overview --format=plain|json}, in order: add to the end, never rename. */
-    static List<Map<String, Object>> records(List<InstanceInfo> instances, EventLogReader.Log log, ZoneId zone) {
+    static List<Map<String, Object>> records(List<InstanceInfo> instances, Reading reading, ZoneId zone) {
         var records = new ArrayList<Map<String, Object>>();
         for (var i : instances) {
-            var effort = effortOf(log, i);
+            var effort = effortOf(reading.log(), i);
+            var work = reading.workOf(i);
             var record = new LinkedHashMap<String, Object>();
             record.put("name", i.name());
             record.put("status", i.status().toLowerCase(Locale.ROOT));
@@ -132,9 +187,24 @@ public class OverviewCommand extends BaseCommand {
             record.put("last_active", iso(effort.last(), zone));
             record.put("pushed_branches", effort.branches().stream().map(Object::toString).toList());
             record.put("pull_requests", effort.pullRequests().stream().map(Object::toString).toList());
+            record.put("pull_request_states", PullRequestStates.fields(statesOf(reading, i, effort)));
+            record.put("work_state", work.state().field);
+            record.put("uncommitted_changes", work.uncommitted());
+            record.put("unpushed_commits", work.unpushed());
+            record.put("stashes", work.stashes());
+            record.put("repos", work.repos().stream().map(WorkState.Repo::path).toList());
+            record.put("unsaved_repos", work.unsavedRepos());
             records.add(record);
         }
         return records;
+    }
+
+    /**
+     * One state per pull request of {@code effort}, in its order, unknown where GitHub was not
+     * asked: matched by pull request, so a reading of an older log never labels another one.
+     */
+    public static List<PullRequestStates.State> statesOf(Reading reading, InstanceInfo instance, Effort effort) {
+        return effort.pullRequests().stream().map(pull -> reading.stateOf(instance, pull)).toList();
     }
 
     private static String iso(Instant at, ZoneId zone) {
@@ -142,19 +212,20 @@ public class OverviewCommand extends BaseCommand {
                 .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
     }
 
-    static void printTable(List<InstanceInfo> instances, EventLogReader.Log log, PrintStream out, ZoneId zone) {
+    static void printTable(List<InstanceInfo> instances, Reading reading, PrintStream out, ZoneId zone) {
+        var log = reading.log();
         if (instances.isEmpty()) {
             out.println("No isx instances found.");
             return;
         }
         var nameWidth = Math.max(20, instances.stream().mapToInt(e -> e.name().length()).max().orElse(20));
-        var fmt = "  %-" + nameWidth + "s  %-10s  %-14s  %-7s  %-15s  %-40s  %s%n";
-        out.printf(fmt, "NAME", "STATUS", "LAST USED", "TOKENS", "ACTIVE", "GITHUB", "PURPOSE");
-        out.printf(fmt, "-".repeat(nameWidth), "------", "---------", "------", "------", "------", "-------");
+        var fmt = "  %-" + nameWidth + "s  %-10s  %-14s  %-7s  %-15s  %-28s  %-40s  %s%n";
+        out.printf(fmt, "NAME", "STATUS", "LAST USED", "TOKENS", "ACTIVE", "WORK", "GITHUB", "PURPOSE");
+        out.printf(fmt, "-".repeat(nameWidth), "------", "---------", "------", "------", "----", "------", "-------");
         for (var i : instances) {
             var effort = effortOf(log, i);
             out.printf(fmt, i.name(), i.status(), lastUsedCell(i), tokensCell(effort), activeCell(effort, zone),
-                    githubCell(effort, 40), ListCommand.purposeCell(i));
+                    reading.workOf(i).cell(), githubCell(effort, statesOf(reading, i, effort), 40), ListCommand.purposeCell(i));
         }
         out.println();
         var note = coverage(log, zone);
@@ -191,13 +262,14 @@ public class OverviewCommand extends BaseCommand {
     }
 
     /**
-     * The pull requests it opened, then the branches it pushed, cut to {@code max} code points:
-     * {@code PR o/r#12, pushed main, fix-x}. Names are the guest's text, shown on one line.
+     * The pull requests it opened, each with what became of it when GitHub said, then the branches
+     * it pushed, cut to {@code max} code points: {@code PR o/r#12 (merged), pushed main fix-x}.
+     * Names are the guest's text, shown on one line.
      */
-    public static String githubCell(Effort effort, int max) {
+    public static String githubCell(Effort effort, List<PullRequestStates.State> states, int max) {
         var parts = new ArrayList<String>();
         if (!effort.pullRequests().isEmpty()) {
-            parts.add("PR " + String.join(" ", effort.pullRequests().stream().map(Object::toString).toList()));
+            parts.add("PR " + String.join(" ", PullRequestStates.labelled(effort.pullRequests(), states)));
         }
         if (!effort.branches().isEmpty()) {
             parts.add("pushed " + String.join(" ", effort.branches().stream().map(EventLogReader.Branch::name).toList()));

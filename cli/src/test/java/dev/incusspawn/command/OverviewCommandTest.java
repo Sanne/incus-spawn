@@ -38,7 +38,14 @@ class OverviewCommandTest {
             .createdAt("dev-1", DEV1)
             .createdAt("dev-2", "2026-11-02T08:00:00Z")
             .lastUsedAt("dev-1", "2026-11-03T12:00:00Z")
-            .lastUsedAt("dev-2", "1970-01-01T00:00:00Z");
+            .lastUsedAt("dev-2", "1970-01-01T00:00:00Z")
+            .execOutput(WorkState.HEADER, WORK);
+
+    /** What dev-1's guest answers: one clone with work in it, one clean. */
+    private static final String WORK = WorkState.HEADER + "\nrepo 3 1 0 app\nrepo 0 0 0 lib\nend\n";
+
+    /** The tokens GitHub was asked with, and what it was asked about. */
+    private final java.util.List<String> asked = new java.util.ArrayList<>();
 
     private EventLogReader.Log log() throws Exception {
         var file = dir.resolve("events.jsonl");
@@ -60,6 +67,15 @@ class OverviewCommandTest {
         cmd.format = format;
         var read = log();
         cmd.eventLog = () -> read;
+        cmd.config = () -> {
+            var config = new dev.incusspawn.config.SpawnConfig();
+            config.getGithub().setToken("host-token");
+            return config;
+        };
+        cmd.github = (token, pulls) -> {
+            asked.add(token + " " + pulls);
+            return Map.of(new EventLogReader.PullRequest("o/r", 12), PullRequestStates.State.MERGED);
+        };
         var bytes = new ByteArrayOutputStream();
         try (var out = new PrintStream(bytes, true, StandardCharsets.UTF_8)) {
             cmd.print(daemon.client(), out, ZONE);
@@ -70,9 +86,32 @@ class OverviewCommandTest {
     @Test
     void plainIsOneRecordPerInstanceWithWhatTheLogSaw() throws Exception {
         assertEquals("""
-                dev-1\trunning\tfix #12\t2026-11-03T14:00:00+02:00\t1\t1500\t1200\t300\t0\t0\t2026-11-01T11:00:00+02:00\t2026-11-03T12:01:00+02:00\to/r:fix [31m\to/r#12
-                dev-2\tstopped\t-\t-\t0\t0\t0\t0\t0\t0\t-\t-\t-\t-
-                """, overview("plain"), "dev-2's line is an earlier dev-2's, and it never started");
+                dev-1\trunning\tfix #12\t2026-11-03T14:00:00+02:00\t1\t1500\t1200\t300\t0\t0\t2026-11-01T11:00:00+02:00\t2026-11-03T12:01:00+02:00\to/r:fix [31m\to/r#12\tmerged\tunsaved\t3\t1\t0\tapp,lib\tapp
+                dev-2\tstopped\t-\t-\t0\t0\t0\t0\t0\t0\t-\t-\t-\t-\t-\tnot_read\t-\t-\t-\t-\t-
+                """, overview("plain"), "dev-2's line is an earlier dev-2's, it never started, and a stopped instance is not read");
+        assertEquals(java.util.List.of("host-token [o/r#12]"), asked, "one request, with the instance's account");
+        assertEquals(1, daemon.execs().size(), "only the running instance is read");
+    }
+
+    @Test
+    void jsonSaysWhatEachGuestHoldsAndWhatBecameOfItsPullRequests() throws Exception {
+        var json = overview("json");
+        assertTrue(json.contains("\"pull_request_states\" : [ \"merged\" ]"), json);
+        assertTrue(json.contains("\"work_state\" : \"unsaved\""), json);
+        assertTrue(json.contains("\"uncommitted_changes\" : 3"), json);
+        assertTrue(json.contains("\"work_state\" : \"not_read\""), json);
+        assertTrue(json.contains("\"unpushed_commits\" : null"), json);
+    }
+
+    @Test
+    void anInstancePinnedToAMissingAccountIsNotAskedAbout() throws Exception {
+        daemon.instance("dev-3", "container", "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
+                Metadata.PARENT, "tpl-java", Metadata.accountKey("github"), "gone"));
+        var instance = InstanceListing.collectEntries(daemon.client().listJsonConfig()).stream()
+                .filter(i -> i.name().equals("dev-3")).findFirst().orElseThrow();
+        var config = new dev.incusspawn.config.SpawnConfig();
+        config.getGithub().setToken("host-token");
+        assertNull(PullRequestStates.token(config, instance), "fails closed: never the default account");
     }
 
     @Test
@@ -89,10 +128,11 @@ class OverviewCommandTest {
         var dev1 = table.lines().filter(l -> l.contains("dev-1")).findFirst().orElseThrow();
         assertTrue(dev1.contains("1.5k"), dev1);
         assertTrue(dev1.contains("Nov 1–Nov 3"), dev1);
-        assertTrue(dev1.contains("PR o/r#12, pushed fix [31m"), dev1);
+        assertTrue(dev1.contains("PR o/r#12 (merged), pushed fix [31m"), dev1);
+        assertTrue(dev1.contains("3 uncommitted, 1 unpushed"), dev1);
         assertFalse(table.contains("\u001b"));
         var dev2 = table.lines().filter(l -> l.contains("dev-2")).findFirst().orElseThrow();
-        assertTrue(dev2.contains("never"), dev2);
+        assertTrue(dev2.contains("never") && dev2.contains("not read"), dev2);
         assertFalse(table.contains("tpl-java"), "templates are not listed");
         assertTrue(table.contains("Counted from the proxy's event log since Nov 1."), table);
     }
@@ -107,7 +147,7 @@ class OverviewCommandTest {
         var many = new EventLogReader.Effort(0, 0, 0, 0, 0, null, null,
                 java.util.stream.IntStream.range(0, 20).mapToObj(i -> new EventLogReader.Branch("o/r", "branch-" + i)).toList(),
                 java.util.List.of());
-        var cell = OverviewCommand.githubCell(many, 40);
+        var cell = OverviewCommand.githubCell(many, java.util.List.of(), 40);
         assertEquals(40, cell.codePointCount(0, cell.length()));
         assertTrue(cell.endsWith("…"));
     }
