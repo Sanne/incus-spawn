@@ -169,10 +169,11 @@ items:
     verify:
       type: signed-file
       # Apache's KEYS (https://downloads.apache.org/maven/KEYS) holds many keys: only the release
-      # manager's is accepted, from the signature of 3.9.16. Another manager is added here, by a person.
+      # manager's is accepted, from the signature of 3.9.16, and Tamas Cservenak's, from the signature of 3.10.0. Another manager is added here, by a person.
       key: upstream/keys/apache-maven.asc
       fingerprints:
         - 84789D24DF77A32433CE1F079EB80E92EB2135B1
+        - 88BE34F94BDB2B5357044E2E3A387D43964143E3
     files:
       - common/src/main/resources/tools/maven-3.yaml
       - .mvn/wrapper/maven-wrapper.properties
