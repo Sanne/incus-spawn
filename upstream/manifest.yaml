@@ -378,3 +378,41 @@ items:
           id-prefix: '^gemini-'
     files:
       - common/src/main/resources/models.yaml
+  github-actions:
+    # The Actions every workflow uses, as one family: each is pinned to the commit its release tag
+    # names, and the issue lists every member with a newer release. Class judgement, Sanne on #2210
+    # ("go with option 2"): the upstream app has no workflows permission, so it cannot push the bump;
+    # a box writes it with `upstream.sh apply github-actions <version>` and Sanne merges it.
+    class: judgement
+    judgement: build
+    # A bad Action release is usually pulled within days.
+    cooling: 72h
+    source:
+      type: github-action
+      members:
+        checkout: actions/checkout
+        cache: actions/cache
+        upload-artifact: actions/upload-artifact
+        download-artifact: actions/download-artifact
+        github-script: actions/github-script
+        setup-java: actions/setup-java
+        setup-graalvm: graalvm/setup-graalvm
+        gitleaks-action: gitleaks/gitleaks-action
+        wrangler-action: cloudflare/wrangler-action
+    # Every file with a uses: of a repository's action; WorkflowActionsPinnedTest fails when one is missing.
+    files:
+      - .github/actions/upload-artifact-retry/action.yml
+      - .github/workflows/build-appliance.yml
+      - .github/workflows/docs-gates.yml
+      - .github/workflows/gitleaks.yml
+      - .github/workflows/kernel-mac-verified.yml
+      - .github/workflows/kernel-pin-signed.yml
+      - .github/workflows/macos-keychain-trust.yml
+      - .github/workflows/pages.yml
+      - .github/workflows/preview-deploy.yml
+      - .github/workflows/preview.yml
+      - .github/workflows/release.yml
+      - .github/workflows/test-integration.yml
+      - .github/workflows/test-vm-kernel.yml
+      - .github/workflows/upstream-verify.yml
+      - .github/workflows/upstream-watch.yml
