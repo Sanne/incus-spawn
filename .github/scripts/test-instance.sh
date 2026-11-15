@@ -48,12 +48,13 @@ assert_eq() {
 # reported with its status and Server header: Maven Central sometimes refuses a runner's
 # address with a 403, which the proxy relays unchanged, and that is not a TLS failure (#1810).
 # Such an answer is retried first, FETCH_ATTEMPTS times in all: Maven Central's rate limit (429)
-# and its passing 403s and 404s clear within seconds (#2063). Each wait is the answer's
-# Retry-After in seconds, else 5 then 10 seconds, capped at FETCH_MAX_DELAY. A failed
-# connection is not retried, since that one is the proxy's.
+# and its passing 403s and 404s clear, though Cloudflare's 429 to a runner has outlasted 30 s
+# without a Retry-After (#2063, #2268). Each wait is the answer's Retry-After in seconds, else
+# 5 s doubling each time, capped at FETCH_MAX_DELAY: about two minutes in all by default when no
+# answer names a Retry-After. A failed connection is not retried, since that one is the proxy's.
 fetch_matching() {
-    local url="$1" pattern="$2" dir status server delay attempt=1
-    local attempts="${FETCH_ATTEMPTS:-3}" max_delay="${FETCH_MAX_DELAY:-30}"
+    local url="$1" pattern="$2" dir status server retry_after delay attempt=1 waited=0
+    local attempts="${FETCH_ATTEMPTS:-6}" max_delay="${FETCH_MAX_DELAY:-60}"
     dir=$(mktemp -d)
     while :; do
         if ! status=$(curl -sS -D "$dir/headers" -o "$dir/body" -w '%{http_code}' "$url"); then
@@ -61,20 +62,24 @@ fetch_matching() {
             return 1
         fi
         [ "$status" = 200 ] && break
+        # Retry-After in seconds; an HTTP-date, or any other form, takes the default wait.
+        retry_after=$(grep -i '^retry-after:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//; s/ *$//')
         if [ "$attempt" -ge "$attempts" ]; then
             server=$(grep -i '^server:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')
-            echo "HTTP $status (Server: ${server:-none}) for $url after $attempt attempts: the TLS handshake with the proxy succeeded, an answer without the upstream Server header is the proxy's own"
+            echo "HTTP $status (Server: ${server:-none}, Retry-After: ${retry_after:-none}) for $url after $attempt attempts and ${waited}s of waiting: the TLS handshake with the proxy succeeded, an answer without the upstream Server header is the proxy's own"
             rm -rf "$dir"
             return 1
         fi
-        # Retry-After in seconds; an HTTP-date, or any other form, takes the default wait.
-        delay=$(grep -i '^retry-after:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r ')
+        delay="$retry_after"
         case "$delay" in
-            ''|*[!0-9]*) delay=$((5 * attempt)) ;;
+            ''|*[!0-9]*) delay=$((5 << (attempt - 1))) ;;
             ?????*) delay="$max_delay" ;;
         esac
+        # Base 10, so a Retry-After of 08 or 09 is not read as a bad octal number
+        delay=$((10#$delay))
         [ "$delay" -gt "$max_delay" ] && delay="$max_delay"
         sleep "$delay"
+        waited=$((waited + delay))
         attempt=$((attempt + 1))
     done
     local found=0

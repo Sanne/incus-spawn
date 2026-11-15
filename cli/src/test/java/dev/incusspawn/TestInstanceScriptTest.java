@@ -19,7 +19,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * The helpers of {@code .github/scripts/test-instance.sh}, sourced without running its checks.
  * Maven Central sometimes answers a CI runner with a 403, which the proxy relays unchanged:
  * the check must say so, with the status and Server header, rather than fail silently (#1810).
- * A refusal is retried first, since Maven Central's rate limit (429) passes within seconds (#2063).
+ * A refusal is retried first, for about two minutes: Maven Central's rate limit (429) passes,
+ * though not always within 30 s (#2063, #2268).
  */
 class TestInstanceScriptTest {
 
@@ -28,6 +29,8 @@ class TestInstanceScriptTest {
     private HttpServer server;
     private final AtomicInteger limitedRequests = new AtomicInteger();
     private final AtomicInteger refused = new AtomicInteger();
+    private final AtomicInteger throttledRequests = new AtomicInteger();
+    private final AtomicInteger octalRequests = new AtomicInteger();
 
     @BeforeEach
     void startServer() throws IOException {
@@ -42,6 +45,30 @@ class TestInstanceScriptTest {
             if (limitedRequests.getAndIncrement() == 0) {
                 exchange.getResponseHeaders().add("Server", "cloudflare");
                 exchange.getResponseHeaders().add("Retry-After", "1");
+                exchange.sendResponseHeaders(429, -1);
+            } else {
+                byte[] body = "<artifactId>junit</artifactId>".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+            exchange.close();
+        });
+        // Throttled four times without a Retry-After, as Cloudflare answered a runner for over 30 s (#2268)
+        server.createContext("/throttled", exchange -> {
+            if (throttledRequests.getAndIncrement() < 4) {
+                exchange.getResponseHeaders().add("Server", "cloudflare");
+                exchange.sendResponseHeaders(429, -1);
+            } else {
+                byte[] body = "<artifactId>junit</artifactId>".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+            exchange.close();
+        });
+        // A Retry-After with a leading zero, which shell arithmetic would read as octal
+        server.createContext("/octal", exchange -> {
+            if (octalRequests.getAndIncrement() == 0) {
+                exchange.getResponseHeaders().add("Retry-After", "08");
                 exchange.sendResponseHeaders(429, -1);
             } else {
                 byte[] body = "<artifactId>junit</artifactId>".getBytes(StandardCharsets.UTF_8);
@@ -68,10 +95,10 @@ class TestInstanceScriptTest {
     void anUpstreamRefusalIsReportedWithItsStatusAndServer() throws Exception {
         var result = fetchMatching("/refused", "<artifactId>junit</artifactId>");
         assertEquals(1, result.exitCode, result.output);
-        assertTrue(result.output.contains("HTTP 403 (Server: AkamaiGHost)"), result.output);
+        assertTrue(result.output.contains("HTTP 403 (Server: AkamaiGHost, Retry-After: none)"), result.output);
         assertTrue(result.output.contains("the TLS handshake with the proxy succeeded"), result.output);
-        assertTrue(result.output.contains("after 3 attempts"), result.output);
-        assertEquals(3, refused.get(), result.output);
+        assertTrue(result.output.contains("after 6 attempts"), result.output);
+        assertEquals(6, refused.get(), result.output);
     }
 
     @Test
@@ -79,6 +106,32 @@ class TestInstanceScriptTest {
         var result = fetchMatching("/limited", "<artifactId>junit</artifactId>");
         assertEquals(0, result.exitCode, result.output);
         assertEquals(2, limitedRequests.get(), result.output);
+    }
+
+    @Test
+    void aRateLimitThatOutlastsTheFirstRetriesIsStillWaitedOut() throws Exception {
+        var result = fetchMatching("/throttled", "<artifactId>junit</artifactId>");
+        assertEquals(0, result.exitCode, result.output);
+        assertEquals(5, throttledRequests.get(), result.output);
+    }
+
+    @Test
+    void eachWaitWithoutARetryAfterDoublesUpToTheCap() throws Exception {
+        // sleep is shadowed by a function that only says how long it would wait
+        var result = run("http://127.0.0.1:" + server.getAddress().getPort() + "/refused",
+                "<artifactId>junit</artifactId>", "sleep() { echo \"slept $1\"; }; ", "60");
+        assertEquals(1, result.exitCode, result.output);
+        assertTrue(result.output.contains("slept 5\nslept 10\nslept 20\nslept 40\nslept 60\n"), result.output);
+        assertTrue(result.output.contains("after 6 attempts and 135s of waiting"), result.output);
+    }
+
+    @Test
+    void aRetryAfterWithALeadingZeroIsReadInBaseTen() throws Exception {
+        var result = run("http://127.0.0.1:" + server.getAddress().getPort() + "/octal",
+                "<artifactId>junit</artifactId>", "sleep() { echo \"slept $1\"; }; ", "60");
+        assertEquals(0, result.exitCode, result.output);
+        assertTrue(result.output.contains("slept 8"), result.output);
+        assertEquals(2, octalRequests.get(), result.output);
     }
 
     @Test
@@ -147,14 +200,18 @@ class TestInstanceScriptTest {
 
     // No coreutils timeout(1): macOS does not ship it, and the unit tests run there too.
     private Result run(String url, String pattern) throws Exception {
+        // Every retry's wait, Retry-After included, is capped at 0 s, so the tests do not sleep.
+        return run(url, pattern, "", "0");
+    }
+
+    private Result run(String url, String pattern, String prelude, String maxDelay) throws Exception {
         Path output = Files.createTempFile("fetch-matching", ".log");
         try {
             var builder = new ProcessBuilder("bash", "--norc", "--noprofile", "-c",
-                    "source \"$1\" && fetch_matching \"$2\" \"$3\"", "test", SCRIPT.toString(), url, pattern)
+                    "source \"$1\" && " + prelude + "fetch_matching \"$2\" \"$3\"", "test", SCRIPT.toString(), url, pattern)
                     .redirectErrorStream(true).redirectOutput(output.toFile());
             builder.environment().keySet().removeIf(name -> name.toLowerCase().endsWith("_proxy"));
-            // Every retry's wait, Retry-After included, is capped at 0 s, so the tests do not sleep.
-            builder.environment().put("FETCH_MAX_DELAY", "0");
+            builder.environment().put("FETCH_MAX_DELAY", maxDelay);
             var process = builder.start();
             boolean finished = process.waitFor(30, TimeUnit.SECONDS);
             process.destroyForcibly();
