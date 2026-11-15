@@ -418,6 +418,7 @@ Shell completions are available for bash, zsh, fish and PowerShell via `isx comp
 | [`isx run`](docs/CLI.md#isx-run) | Run an action on an instance |
 | [`isx destroy`](docs/CLI.md#isx-destroy) | Destroy an instance |
 | [`isx list`](docs/CLI.md#isx-list) | List instances, for people or for scripts |
+| [`isx overview`](docs/CLI.md#isx-overview) | Show what was done in each instance |
 | [`isx update-base`](docs/CLI.md#isx-update-base) | Check for and install base image updates |
 | [`isx update-all`](docs/CLI.md#isx-update-all) | Update packages and repos in all templates |
 | [`isx templates`](docs/CLI.md#isx-templates) | Manage template definitions |

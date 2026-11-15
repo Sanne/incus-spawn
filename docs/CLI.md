@@ -334,6 +334,40 @@ It does not list templates: `isx templates` lists those.
 On macOS it starts the VM if the VM is stopped, except with `-q`, which shell completion runs.
 See [Scripting isx](#scripting-isx) for the `plain` and `json` formats and the fields.
 
+## `isx overview`
+
+Show what was done in each instance, to tell the ones worth keeping from the ones to destroy.
+
+```shell
+isx overview [options]
+```
+
+| Option | What it does |
+|--------|--------------|
+| `--format=<format>` | `table` (the default, for people), `plain` or `json` (for scripts) |
+| `--plain` | Same as `--format=plain` |
+| `--status=<status>` | Only instances that are `running` or `stopped` |
+
+It shows what the proxy saw each instance do, beside its status, purpose and last start.
+That is the tokens its model calls spent, the days it was active, the branches it pushed and the pull requests it opened.
+
+The proxy keeps this in an event log on the host of about 80 MiB, and the oldest activity drops out first.
+A line under the table says since when the log counts, and whether the proxy lost any lines.
+That note goes to stderr in `plain` and `json`.
+
+The overview shows only what went through the proxy.
+A quiet row can still hold commits that were never pushed, or changes that were never committed.
+A pull request shows as opened even after it was merged or closed.
+A branch can show as pushed even when GitHub refused it, such as a push to a protected branch.
+
+In the TUI, `o` on the instance list shows the same columns.
+There Space marks rows and F8 destroys the marked ones.
+
+In `plain` and `json` it prints these fields, in this order: `name`, `status`, `purpose`, `last_used`, `model_calls`, `tokens`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `first_active`, `last_active`, `pushed_branches` and `pull_requests`.
+`tokens` is the sum of the four token counts.
+`pushed_branches` lists `<owner>/<repo>:<branch>` for each branch the instance pushed and kept.
+`pull_requests` lists `<owner>/<repo>#<number>`.
+
 ## `isx update-base`
 
 Check for base image updates and install them.
@@ -878,7 +912,7 @@ The zsh, fish and PowerShell scripts mark each namespace's default account; bash
 
 Query commands print `plain` and `json` output that a script can rely on, and exit codes that say what happened.
 
-Query commands take `--format=table|plain|json`: `isx init --plan`, `isx list`, `isx templates [list]`, `isx templates validate`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
+Query commands take `--format=table|plain|json`: `isx init --plan`, `isx list`, `isx overview`, `isx templates [list]`, `isx templates validate`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
 
 ### Formats
 

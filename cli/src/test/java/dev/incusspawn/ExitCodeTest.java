@@ -54,6 +54,8 @@ class ExitCodeTest {
                 {"--quiet prints names only", "list", "-q", "--format=json"},
                 {"--plain is --format=plain", "list", "--plain", "--format=json"},
                 // Every command that takes --format rejects a value it does not know alike.
+                {"unknown format 'yaml'", "overview", "--format=yaml"},
+                {"unknown status 'frozen'", "overview", "--status=frozen"},
                 {"unknown format 'yaml'", "templates", "--format=yaml"},
                 {"unknown format 'yaml'", "templates", "list", "--format=yaml"},
                 {"unknown format 'yaml'", "tools", "--format=yaml"},

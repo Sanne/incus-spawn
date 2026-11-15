@@ -76,7 +76,7 @@ public class ListCommand extends BaseCommand {
      * Starts a set-up VM that is stopped. A VM never set up (no data disk) is left alone: that
      * would download the appliance and first-boot it, which is 'isx init''s job, not a listing's.
      */
-    private static boolean startStoppedVm() {
+    static boolean startStoppedVm() {
         if (!Platform.isMacOS() || VmManager.isRunning() || !Files.exists(Environment.vmDataImage())) return true;
         return VmManager.ensureRunning();
     }
@@ -132,7 +132,7 @@ public class ListCommand extends BaseCommand {
         return !all.isEmpty();
     }
 
-    private static String statusFilter(String status) {
+    static String statusFilter(String status) {
         if (status == null) return null;
         var value = status.strip().toLowerCase(java.util.Locale.ROOT);
         if (!value.equals("running") && !value.equals("stopped")) {
