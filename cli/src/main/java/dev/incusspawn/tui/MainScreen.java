@@ -483,8 +483,10 @@ final class MainScreen {
         }
     }
 
-    /** The narrowest table that shows PURPOSE beside the overview's columns: a 130-column terminal. */
-    static final int OVERVIEW_PURPOSE_MIN_WIDTH = 126;
+    /** The narrowest table that shows PURPOSE beside the overview's columns and DONE: a 150-column terminal. */
+    static final int OVERVIEW_PURPOSE_MIN_WIDTH = 146;
+    /** The narrowest table that shows DONE, what the newest agent session said it did: a 120-column terminal. */
+    static final int OVERVIEW_DONE_MIN_WIDTH = 116;
     /** The narrowest table that shows ACTIVE beside WORK: a 100-column terminal. */
     static final int OVERVIEW_ACTIVE_MIN_WIDTH = 96;
 
@@ -493,7 +495,8 @@ final class MainScreen {
     /**
      * The overview's columns (#2241, {@code o} and the Work tab): NAME and STATUS from the table's
      * rows, then what each guest's clones hold (WORK), what the proxy's event log says each
-     * instance did, and ACTIVE and PURPOSE where there is room. The cells are made from the last
+     * instance did, and ACTIVE, DONE (what the newest agent session said it did) and PURPOSE where
+     * there is room. The cells are made from the last
      * read, so they follow it without a reload; a cell says {@code …} while its read is under way.
      */
     private Columns overviewColumns(int width) {
@@ -507,6 +510,11 @@ final class MainScreen {
         }
         widths.add(Constraint.min(16));
         headers.add("GITHUB");
+        boolean done = width >= OVERVIEW_DONE_MIN_WIDTH;
+        if (done) {
+            widths.add(Constraint.min(20));
+            headers.add("DONE");
+        }
         boolean purpose = tui.anyPurpose && width >= OVERVIEW_PURPOSE_MIN_WIDTH;
         if (purpose) {
             widths.add(Constraint.min(24));
@@ -536,6 +544,8 @@ final class MainScreen {
                         : OverviewCommand.statesOf(reading, instance, effort);
                 cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.githubCell(effort, states, 60)));
             }
+            if (done) cells.add(dev.tamboui.widgets.table.Cell.from(
+                    reading == null ? "\u2026" : OverviewCommand.doneCell(reading.summaryOf(instance), 120)));
             if (purpose) cells.add(row.cells().get(8));
             rows.add(Row.from(cells).style(row.style()));
         }

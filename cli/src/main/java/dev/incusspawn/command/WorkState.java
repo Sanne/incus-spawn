@@ -1,25 +1,19 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.command.InstanceListing.InstanceInfo;
-import dev.incusspawn.incus.IncusClient;
-
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.regex.Pattern;
 
 /**
  * What a running instance's Git clones hold that destroying it would lose (#2241): changes not
  * committed, commits on no remote-tracking branch, and stashes. Read by one fixed script run in
- * the guest as agentuser, which only reads: it fetches nothing, and {@code GIT_OPTIONAL_LOCKS=0}
- * keeps {@code git status} from rewriting the index under an agent at work.
+ * the guest as agentuser (the first section of {@link GuestRead}'s), which only reads: it
+ * fetches nothing, and {@code GIT_OPTIONAL_LOCKS=0} keeps {@code git status} from rewriting the
+ * index under an agent at work.
  *
  * <p>The answer is the guest's own and it fails closed: a stopped instance is not read (nothing
  * starts one for this), and a read that times out, fails, is cut short or does not parse says
@@ -180,38 +174,6 @@ public record WorkState(State state, List<Repo> repos, String why) {
 
     private static int count(String text) {
         return text.equals("x") ? -1 : Integer.parseInt(text);
-    }
-
-    /** The instance's work state: read in the guest when it runs, {@link #NOT_READ} when it does not. */
-    static WorkState read(IncusClient incus, InstanceInfo instance) {
-        if (!"running".equalsIgnoreCase(instance.status())) return NOT_READ;
-        var out = new Bounded(MAX_OUTPUT);
-        try {
-            int exit = incus.execProbe(instance.name(), AGENT_UID, AGENT_HOME, SCRIPT, out, LIMIT);
-            return parse(exit, out.text(), out.cut);
-        } catch (RuntimeException e) {
-            return unknown("it did not answer: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Every instance's work state by name, read in parallel, so the slowest instance and not their
-     * sum sets the wait. A stopped one costs no request.
-     */
-    public static Map<String, WorkState> readAll(IncusClient incus, List<InstanceInfo> instances) {
-        var states = new LinkedHashMap<String, WorkState>();
-        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
-            var reads = new LinkedHashMap<String, Future<WorkState>>();
-            for (var instance : instances) reads.put(instance.name(), pool.submit(() -> read(incus, instance)));
-            reads.forEach((name, read) -> {
-                try {
-                    states.put(name, read.get());
-                } catch (Exception e) {
-                    states.put(name, unknown("it did not answer: " + e.getMessage()));
-                }
-            });
-        }
-        return states;
     }
 
     /**
