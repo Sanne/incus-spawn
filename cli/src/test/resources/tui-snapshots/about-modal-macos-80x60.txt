@@ -34,7 +34,7 @@
   ║   F9/9    Tool actions                                                   ║
   ║   F10/0   Quit                                                           ║
   ║   a       Credential accounts                                            ║
-  ║   p       Purpose of an instance                                         ║
+  ║   p       Purpose of an instance    o            Overview                ║
   ║   C       Clean pool storage                                             ║
   ║   r       Refresh                                                        ║
   ║   w       Warnings                                                       ║
