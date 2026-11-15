@@ -129,7 +129,7 @@ items:
     fields: [description, url.any, sha256.any]
   maven-3:
     class: mechanical
-    # 3.9.x only: Maven 3.10 or a new major would open an issue (Maven 4 is not in this listing).
+    # 3.10.x only: a later 3.x series or a new major would open an issue (Maven 4 is not in this listing).
     within: series
     cooling: 24h
     judgement: build

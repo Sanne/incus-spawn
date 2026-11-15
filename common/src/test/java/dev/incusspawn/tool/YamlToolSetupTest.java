@@ -154,8 +154,8 @@ class YamlToolSetupTest {
 
     @Test
     void progressFileNameNeverRejectsAUrl() {
-        assertEquals("apache-maven-3.9.16-bin.tar.gz", YamlToolSetup.fileName(
-                "https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz"));
+        assertEquals("apache-maven-3.10.1-bin.tar.gz", YamlToolSetup.fileName(
+                "https://archive.apache.org/dist/maven/maven-3/3.10.1/binaries/apache-maven-3.10.1-bin.tar.gz"));
         assertEquals("tool.zip", YamlToolSetup.fileName("https://example.com/tool.zip?sig=a/b#frag"));
         // Malformed URLs are DownloadCache's to reject, with the tool named in the error.
         assertEquals("bad {name}.tgz", YamlToolSetup.fileName("https://example.com/bad {name}.tgz"));
