@@ -70,6 +70,7 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `arch-cloud-image` | `scripts/distro-images.env` (`ARCH_IMAGE_URL`, `ARCH_IMAGE_SHA256`) | the Arch mirror's `images/` listing, the signed `.SHA256` of the image | `signed-file`, `upstream/keys/arch-linux.asc` | mechanical | `any` | 24h | none |
 | `ubuntu-cloud-image` | `scripts/distro-images.env` (`UBUNTU_IMAGE_URL`, `UBUNTU_IMAGE_SHA256`) | Canonical's `releases/noble/` listing, the `SHA256SUMS` signed by `SHA256SUMS.gpg` | `signed-file`, `upstream/keys/ubuntu-cloud-images.asc` | mechanical | `any` | 24h | none |
 | `models` | `common/src/main/resources/models.yaml` (every model ID isx ships) | each vendor's keyless markdown deprecations page (Anthropic, OpenAI, Google) | none: a findings source pins nothing | judgement | none | none | a deprecated or retired ID, or a successor (`go:build`) |
+| `github-actions` | every file under `.github/` with a `uses:` of a repository's action (each `owner/repo@<sha> # <tag>`) | each member's GitHub releases and tag refs, an annotated tag followed to its commit | `tag-commit` | judgement | none (a new major is listed apart) | 72h | every member with a newer cooled release, in one issue (`go:build`) |
 
 The `base-image` item takes over what `update-base-image.yml` did (#1678, #1862): every checksum comes from the release's own sums files for the asset each URL downloads, a release of another Fedora line is an issue rather than a PR, and `vm_image_url` moves to `-vm-direct` in the first release that has it for both arches and never back to the stock image (design/templates.md "Which base image an instance runs").
 Its series is a tag's whole line, its channel included (`src_series`, #1994), and it lists the stable channel's releases alone, so a channel is never proposed and never opens an issue.
@@ -78,7 +79,7 @@ Its versions are ordered as isx orders release tags (`src_order`): by line, then
 A source type may define `src_order` (versions on stdin, oldest first) wherever `sort -V` is wrong for it; `newest` uses it, and `publish` loads each item's source type so `pr.sh` compares versions the same way.
 The images repo's `repository_dispatch` to this one, and its `INCUS_SPAWN_DISPATCH_TOKEN`, retire in favour of the six-hourly poll: the payload was only ever cross-checked against the release.
 `publisher-sums` proves consistency and transfer, not provenance, since the sums come from the same origin as the artifact; the manifest says so in the verifier's name rather than pretending otherwise.
-Items the design inventories for later phases (Actions pinned to commit SHAs, the siblings' `ISX_REF` and engine pins, the Maven plugins and libraries) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
+Items the design inventories for later phases (the siblings' `ISX_REF` and engine pins, the Maven plugins and libraries) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
 
 ## The github-asset source type
 
@@ -149,6 +150,43 @@ What this gives up: Maven 4, a different Apache line, is not watched, so a relea
 Maven 3.10.0 is in the listing, so the first run opens an issue for the new series.
 The 3.9 line is bumped by the watch, and a person decides on 3.10.
 
+## The github-action source type
+
+Every GitHub Action the workflows use is pinned to a commit, with the release tag it was read from beside it: `actions/checkout@<40 hex> # v6.1.0` (#2210).
+A tag can be moved to other code, and a commit cannot.
+That matters most where an action holds a credential or builds what users install: `wrangler-action` gets the Cloudflare token, and `setup-graalvm` runs in the release build.
+The first pins are the commits the floating major tags (`v6`, `v5`) pointed at on 2026-11-15, each named by the exact release tag at that commit, so CI runs the same code as before.
+
+The Actions are one item, a family: `source.members` maps a short key to each action's repository, and the item moves all of them as one version.
+The version names each member's tag in the members' order, as `<key>.<tag>` joined by `_`: `checkout.v6.1.0_cache.v5.1.0_...`.
+So one issue covers every member, and `src_order` compares two versions member by member.
+`src_current` reads every external `uses:` line of the item's files, a local `./` action and a `docker://` image apart.
+It fails on a tag in place of a commit, on a missing or malformed tag comment, on an action that is not a member, on one member at two commits or tags, and on a member no file uses.
+Since `src_fields` reads the same lines, a PR that adds any of those fails `upstream-verify`, behind `WorkflowActionsPinnedTest`.
+
+The verifier is `tag-commit`: each commit must be the one its tag points at on GitHub when it is read, an annotated tag followed to its commit.
+It proves where the tag pointed, not what the action's code does.
+A tag the publisher moved fails `check`, so `plan` opens the pin-mismatch issue rather than following it.
+A release counts once 72 hours have passed since GitHub published it, and a draft, a prerelease and a tag that is not `v<numbers>` never count.
+The proposed version is each member's newest such release, never older than its pin.
+
+The family is `class: judgement`, and `validate` refuses any other class for this source type.
+Sanne's answer on #2210, once the conflict below was put on the issue:
+
+> go with option 2
+
+The design had made the family a `mechanical` item, which the app would push and the bot merge.
+The upstream app has no `workflows` permission, so it could never push a change to a workflow file, and granting one would let a stolen key rewrite any workflow, `upstream-verify.yml` included.
+So `plan` opens one issue, `[upstream] github-actions: newer releases available`, which lists each member that moves and marks a new major.
+It gives the `upstream.sh apply github-actions <version>` command for the newest release within each pinned major, and for the newest outright.
+A box writes the PR with that command, `upstream-verify` re-reads every tag on it, and Sanne merges it.
+The title names no version, so a member's next release does not open a second issue beside the open one (`src_issue_title`).
+
+What this gives up: an Action bump waits for a box and for Sanne, so a pin lags as long as the issue stays open.
+The issue's table is the one the run that opened it saw; `upstream.sh releases github-actions` gives the current target.
+The six-hourly run plans it like every item until the weekly run of build-side families exists.
+incus-spawn-images pins its own Actions the same way, by hand, until its watch (#2210, the siblings) reads them.
+
 ## The model-deprecations source type
 
 isx names AI models by ID, and a vendor retires or supersedes one without isx noticing (#2227).
@@ -206,6 +244,7 @@ The merge script requires `class: mechanical` by name, so it refuses a review it
 | The bot approving outside the class | `bin/upstream-merge.sh` re-checks every gate from GitHub alone and refuses on the first failure; `upstream-verify` has already refused a PR that touches a second item, a file outside the item's, a judgement item or anything the regeneration did not write. The script itself refuses every class but `mechanical`, a `review` item's included. |
 | The engine or manifest changed by a PR | They are ordinary files: a PR touching them is never the app's regeneration of an item, so the gate refuses it, and the check runs `main`'s copy, so a PR cannot verify itself. |
 | A stolen app key reaching the Mac | `appliance/test-kernel-on-mac.sh` trusts the app login, since a kernel bump needs a Mac boot; but for an app PR the script itself refuses unless the `upstream-verify` check run at the very head it boots, by GitHub Actions, concluded `success` (and isx-workflow's `bin/mac-pick.sh` lists it only then), so only a kernel whose build is `main`'s engine's regeneration is ever booted with the verifier's credentials. |
+| A moved Action tag | Every Action is pinned to a commit, so moving a tag changes nothing a workflow runs. The watch re-reads each pinned tag on every run and opens the pin-mismatch issue when one points elsewhere; `upstream-verify` re-reads each tag a PR names. A tag the publisher moved before the pin was taken is beyond this check, which proves where a tag points, not what the code does. |
 | Replay or downgrade | Forward-only comparison in both the engine and the check, `within: series`, the declined marker; a sums file that lost entries never moves a pin back. |
 
 ## Why not Sanne's own token

@@ -9,6 +9,8 @@
 # - verify.type must be what the source type provides, and signed-sums, signed-file or
 #   publisher-sums for a mechanical item.
 # - cooling is 24h or more unless the source is first party.
+# - A github-action item (the workflows' Actions, tag-commit) is class judgement: the app has no
+#   workflows permission, so it could never push the bump.
 # - There is no key that skips a check.
 repo: Sanne/incus-spawn
 app:

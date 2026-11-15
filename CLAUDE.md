@@ -64,6 +64,7 @@ The `jasolo` pin (`common/src/main/resources/tools/jasolo.yaml`) is proposed by 
 **The upstream watch is the one place a pin moves by itself** (#2036).
 `upstream/manifest.yaml` declares each watched item, `upstream/engine` proposes a bump PR as the `isx-upstream[bot]` app for a `mechanical` or `review` item and an issue for a `judgement` one, `upstream-verify` re-derives every PR's pins from the publisher and requires an app PR to be exactly the engine's regeneration, and only such a PR of a `mechanical` item may the bot merge.
 A `review` item's PR is proven the same way and merged by Sanne alone (#2210).
+Every GitHub Action is pinned to a commit with its release tag beside it (`owner/repo@<sha> # vX.Y.Z`, `WorkflowActionsPinnedTest`); the `github-actions` item is `judgement`, since the app has no `workflows` permission, so the watch opens an issue and a box writes the bump with `upstream.sh apply`.
 Every AI model ID isx sends or suggests is declared in `common/src/main/resources/models.yaml` and read through `ModelIds`, never written in a source file (`ModelIdsGateTest`); the `models` item reads it and opens an issue for a deprecated, retired or superseded ID (#2227).
 The mechanics and the threat model are in design/upstream.md, the CI jobs in `.claude/rules/ci.md`, and what Sanne sets up by hand in [docs/dev/UPSTREAM-SETUP.md](docs/dev/UPSTREAM-SETUP.md).
 
