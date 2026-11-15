@@ -69,7 +69,8 @@ Key jobs:
   It boots no VM: a hosted macOS runner has no Virtualization.framework guest to relay to.
   It builds the tests and runs the bundle with `xcrun xctest`, never through `swift test`, which holds the output until the run ends, so a run that hung printed nothing (#2265).
   Apple's xctest writes each line as it goes, so the last `started` line names a test that hangs.
-  Each test runs under a watchdog that names it and ends the run after 60 s; the step's 10-minute limit ends a hang outside any test.
+  Each of the relay's tests runs under a watchdog that names it and ends the run after 60 s; the step's 10-minute limit ends a hang outside any test.
+  The tests of the launcher's own parts (`IsxVmCoreTests`) have no watchdog, so a hang there waits for that limit too, named by its `started` line.
 - **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy (and fails unless its log says it runs on the epoll transport, #475), builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`, `tpl-test-ssh`), then runs test scripts inside branched instances.
   `release.yml`'s native smoke step fails a Linux proxy binary that does not contain `EpollTransport`, since one without it still runs, on NIO.
   `test-proxy-only.sh` is the only real check of the proxy-only boundary (#1137): branches of `tpl-minimal` (no iptables) and `tpl-test-vm` must reach the proxy and nothing else after `isx branch`, after `incus restart`, and on a `--no-start` branch first started by `incus start`.

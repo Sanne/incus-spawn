@@ -354,8 +354,9 @@ jobs:
           swift build --package-path launcher --build-tests
 
       # The bundle runs directly, not under `swift test`, which holds every line until the run
-      # ends: a run that hung printed nothing after the build (#2265). The tests' own watchdog
-      # ends a test stuck for 60 s and names it; the step's limit ends a hang outside any test.
+      # ends: a run that hung printed nothing after the build (#2265). The relay's tests' own
+      # watchdog ends one stuck for 60 s and names it; the step's limit ends a hang outside any
+      # test, and one in a test of the launcher's own parts, which have no watchdog.
       # The package has no Swift Testing tests, which only `swift test` would run.
       - name: Test the relay and the launcher's own parts
         timeout-minutes: 10
