@@ -159,7 +159,7 @@ Environment variables support four merge strategies:
 env:
   # Simple set (default strategy):
   - name: MAVEN_HOME
-    value: /opt/apache-maven-3.9.16
+    value: /opt/apache-maven-3.10.1
 
   # Set only if not already defined:
   - name: DOCKER_HOST

@@ -24,7 +24,7 @@ class ToolVerifierTest {
         // #1742: a verify is a command the definition wrote, as root or as the user
         var incus = mock(IncusClient.class);
         when(incus.execInContainer(CONTAINER, "agentuser", "mvn --version"))
-                .thenReturn(new IncusClient.ExecResult(0, "Apache Maven 3.9.16\n", ""));
+                .thenReturn(new IncusClient.ExecResult(0, "Apache Maven 3.10.1\n", ""));
         when(incus.shellExec(eq(CONTAINER), any(String[].class))).thenReturn(new IncusClient.ExecResult(1, "", "no zmx\n"));
         var recorded = new java.util.ArrayList<String>();
         var container = new Container(incus, CONTAINER, RecordingOutput.QUIET,
@@ -41,7 +41,7 @@ class ToolVerifierTest {
     void verifiesInTheImageEnvironmentAndReportsTheVersion() throws Exception {
         var incus = mock(IncusClient.class);
         when(incus.execInContainer(CONTAINER, "agentuser", "mvn --version"))
-                .thenReturn(new IncusClient.ExecResult(0, "Apache Maven 3.9.16\nMaven home: /opt\n", ""));
+                .thenReturn(new IncusClient.ExecResult(0, "Apache Maven 3.10.1\nMaven home: /opt\n", ""));
 
         var out = RecordingOutput.during(() -> ToolVerifier.verifyAll(new Container(incus, CONTAINER),
                 List.of(new ToolVerifier.Check("maven-3", "mvn --version"))));
@@ -56,7 +56,7 @@ class ToolVerifierTest {
                 new Event(Kind.STEP_START, "maven-3", List.of()),
                 new Event(Kind.STEP_PROGRESS, "mvn --version", List.of()),
                 new Event(Kind.STEP_DONE, null, List.of()),
-                new Event(Kind.STEP_NOTE, "Apache Maven 3.9.16", List.of()),
+                new Event(Kind.STEP_NOTE, "Apache Maven 3.10.1", List.of()),
                 new Event(Kind.GROUP_END, null, List.of())), out.events());
     }
 
