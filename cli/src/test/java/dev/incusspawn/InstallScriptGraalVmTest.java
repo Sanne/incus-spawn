@@ -40,6 +40,8 @@ class InstallScriptGraalVmTest {
 
     private static final Pattern GRAALVM_BASE =
             Pattern.compile("^\\s*GRAALVM_BASE=\"([^\"]+)\"", Pattern.MULTILINE);
+    private static final Pattern GRAALVM_LINE =
+            Pattern.compile("^\\s*GRAALVM_LINE=\"([^\"]+)\"", Pattern.MULTILINE);
 
     @Test
     void builderImagesFollowTheReleasedLinuxGraalVm() throws IOException {
@@ -58,6 +60,19 @@ class InstallScriptGraalVmTest {
             assertEquals(image, properties.getProperty("quarkus.native.builder-image"),
                     path + ": the default builder image must be the released Linux GraalVM");
         }
+    }
+
+    /**
+     * On macOS, {@code install.sh --native} runs the host's GraalVM, and Homebrew's {@code graalvm-jdk@25}
+     * is the 25.0 LTS line: Quarkus's generated Feature then fails on a missing builder method.
+     * So the script looks for the released line and refuses any other.
+     */
+    @Test
+    void macOsBuildsLookForTheReleasedGraalVm() throws IOException {
+        var matcher = GRAALVM_LINE.matcher(Files.readString(INSTALL_SCRIPT));
+        assertTrue(matcher.find(), "install.sh must define GRAALVM_LINE");
+        assertEquals(macOsReleaseGraalVmVersion(), matcher.group(1),
+                "install.sh must look for the macOS graalvm-version of release.yml");
     }
 
     @Test
@@ -120,16 +135,24 @@ class InstallScriptGraalVmTest {
     }
 
     private static String linuxReleaseGraalVmVersion() throws IOException {
+        return releaseGraalVmVersion("linux", "Linux");
+    }
+
+    private static String macOsReleaseGraalVmVersion() throws IOException {
+        return releaseGraalVmVersion("macos", "macOS");
+    }
+
+    private static String releaseGraalVmVersion(String os, String name) throws IOException {
         var include = JqYaml.parse(Files.readString(RELEASE_WORKFLOW))
                 .path("jobs").path("build").path("strategy").path("matrix").path("include");
         var versions = new HashSet<String>();
         for (var entry : include.arrayValue()) {
-            if ("linux".equals(entry.path("os").asText())) {
+            if (os.equals(entry.path("os").asText())) {
                 versions.add(entry.path("graalvm-version").asText());
             }
         }
-        assertFalse(versions.isEmpty(), "release.yml must build Linux binaries with a graalvm-version");
-        assertEquals(1, versions.size(), "release.yml must build every Linux binary with one graalvm-version");
+        assertFalse(versions.isEmpty(), "release.yml must build " + name + " binaries with a graalvm-version");
+        assertEquals(1, versions.size(), "release.yml must build every " + name + " binary with one graalvm-version");
         return versions.iterator().next();
     }
 }
