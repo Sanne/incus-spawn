@@ -151,7 +151,7 @@ check() {
 # (a worktree of HEAD with the bump committed as the app) and the issues to open in <out>/issues/.
 # Needs APP_LOGIN and APP_EMAIL for the commits; fetches with no app credential.
 plan() {
-    local out="$1" i within cur cands cand all top series judgement reason
+    local out="$1" i within cur cands cand all top series judgement reason title
     [[ -n "${APP_LOGIN:-}" && -n "${APP_EMAIL:-}" ]] || die "plan needs APP_LOGIN and APP_EMAIL"
     mkdir -p "$out/issues"
     : > "$out/plan.tsv"
@@ -180,7 +180,11 @@ A release published again under its name, or a sums source that changed: a perso
         fi
         if ! item_proposed "$i"; then
             if is_newer "$top" "$cur"; then
-                issue_file "$out" "$i" "$top" "[upstream] $i: $top available" \
+                # A family (github-action, #2210) names one issue for every move of its members, so a
+                # member's next release does not open a second issue beside the first.
+                title="[upstream] $i: $top available"
+                ! declare -F src_issue_title > /dev/null || title="$(src_issue_title)"
+                issue_file "$out" "$i" "$top" "$title" \
                     "\`$i\` pins \`$cur\`; the publisher lists \`$top\`. The item is \`class: judgement\`: a box implements the bump and Sanne merges it (#2036).
 
 $(src_describe "$top" 2>/dev/null || true)" "$(item "$i" judgement design)"

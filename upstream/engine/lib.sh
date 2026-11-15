@@ -93,7 +93,7 @@ load_source() {
     # The optional hooks of the type loaded before this one must not carry over: plan asks for
     # src_extra_issues by name, and the kernel's would file its EOL issue under any later item;
     # newest asks for src_order, and the base image's would order the next item's versions.
-    unset -f src_extra_issues src_stale_issues src_validate src_order src_findings
+    unset -f src_extra_issues src_stale_issues src_validate src_order src_issue_title src_findings
     # shellcheck source=/dev/null
     . "$f"
     # A findings source (#2227) pins nothing: it has no version, no bump and no verifier, only the
