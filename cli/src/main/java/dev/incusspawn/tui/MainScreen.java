@@ -520,7 +520,7 @@ final class MainScreen {
                 var effort = OverviewCommand.effortOf(log, instance);
                 cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.tokensCell(effort)));
                 cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.activeCell(effort, zone)));
-                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.githubCell(effort, 60)));
+                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.githubCell(effort, List.of(), 60)));
             }
             if (purpose) cells.add(row.cells().get(8));
             rows.add(Row.from(cells).style(row.style()));
