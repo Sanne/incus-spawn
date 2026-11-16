@@ -2,6 +2,10 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.tool.ToolDef;
+import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.tool.ToolDefValidator;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.util.OutputFormat;
@@ -11,6 +15,8 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.io.PrintStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,7 +30,8 @@ import java.util.function.UnaryOperator;
         generateHelp = true,
         groupCommands = {
                 ToolsCommand.ListSub.class,
-                ToolsCommand.Show.class
+                ToolsCommand.Show.class,
+                ToolsCommand.Validate.class
         }
 )
 public class ToolsCommand extends BaseCommand {
@@ -245,6 +252,153 @@ public class ToolsCommand extends BaseCommand {
                 for (var domain : a.getDomains()) {
                     line(out, "    " + domain + " (" + a.getType() + ")");
                 }
+            }
+        }
+    }
+
+    // ── validate ────────────────────────────────────────────────────────────────
+
+    @CommandDefinition(name = "validate", description = "Check a tool definition without building it",
+            generateHelp = true)
+    public static class Validate extends BaseCommand {
+
+        @Argument(required = true, completer = Completers.Tool.class,
+                description = "A tool definition file, or a tool's name")
+        String target;
+
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
+        String format;
+
+        /** One thing the check found: an error, which a build fails or skips on, or a warning. */
+        record Finding(boolean error, String message) {
+            String severity() { return error ? "error" : "warning"; }
+        }
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
+            // Read now, not the process's cached tools, so a file just written counts
+            var loader = new ToolDefLoader(SpawnConfig.load().getSearchPaths());
+            var findings = new ArrayList<Finding>();
+            String name = null;
+            String path;
+            Path file;
+            try {
+                file = Path.of(target);
+            } catch (java.nio.file.InvalidPathException e) {
+                file = null;
+            }
+            if (file != null && Files.exists(file) && !Files.isDirectory(file)) {
+                path = file.toString();
+                name = checkFile(file, loader, findings);
+            } else {
+                var tool = loader.allToolSetups().get(target);
+                var failures = loader.loadFailures().stream()
+                        .filter(f -> f.likelyName().equals(target)).toList();
+                if (tool == null && failures.isEmpty()) {
+                    BuildOutput.error("No tool or file named '" + cell(target) + "'.",
+                            "Run 'isx tools list' to see the tools.");
+                    return CommandResult.valueOf(1);
+                }
+                if (!failures.isEmpty()) {
+                    // Files of this name the loader skipped, every one, since the build refuses on each;
+                    // the tool listed, if any, is another layer's
+                    path = failures.getFirst().file().toString();
+                    for (var failure : failures) name = checkFile(failure.file(), loader, findings);
+                } else {
+                    path = loader.getSource(target);
+                    name = tool.name();
+                    if (!"built-in".equals(path)) {
+                        name = checkFile(Path.of(path), loader, findings);
+                    } else if (tool instanceof YamlToolSetup yaml) {
+                        check(yaml.toolDef(), loader, findings);
+                    }
+                    // A tool in isx's own code has no definition to check
+                }
+            }
+            var valid = findings.stream().noneMatch(Finding::error);
+            if (outputFormat == OutputFormat.PLAIN) {
+                var lines = new ArrayList<Map<String, Object>>();
+                for (var f : findings) {
+                    var line = new LinkedHashMap<String, Object>();
+                    line.put("kind", f.severity());
+                    line.put("text", f.message());
+                    lines.add(line);
+                }
+                outputFormat.print(BuildOutput.results(), lines);
+            } else if (outputFormat == OutputFormat.JSON) {
+                outputFormat.printOne(BuildOutput.results(), record(name, path, valid, findings));
+            } else {
+                findings.stream().filter(Finding::error).forEach(f -> BuildOutput.error(cell(f.message())));
+                findings.stream().filter(f -> !f.error()).forEach(f -> BuildOutput.warn(cell(f.message())));
+                if (findings.isEmpty()) BuildOutput.ok("Tool is valid");
+            }
+            return valid ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+        }
+
+        /**
+         * The fields of {@code isx tools validate --format=json}, in order: add to the end, never
+         * rename. {@code name} is the name the definition gives, or null when it gives none.
+         */
+        static Map<String, Object> record(String name, String path, boolean valid, List<Finding> findings) {
+            var record = new LinkedHashMap<String, Object>();
+            record.put("name", name);
+            record.put("path", path);
+            record.put("valid", valid);
+            record.put("findings", findings.stream().map(f -> {
+                var finding = new LinkedHashMap<String, Object>();
+                finding.put("severity", f.severity());
+                finding.put("message", f.message());
+                return (Object) finding;
+            }).toList());
+            return record;
+        }
+
+        /** Checks the tool file {@code file}; the name it gives, or null. */
+        private static String checkFile(Path file, ToolDefLoader loader, List<Finding> findings) {
+            var result = ToolDefValidator.validate(file);
+            result.errors().forEach(e -> findings.add(new Finding(true, e)));
+            result.warnings().forEach(w -> findings.add(new Finding(false, w)));
+            if (result.hasErrors()) return nameIn(file);
+            try (var in = Files.newInputStream(file)) {
+                var def = ToolDef.loadFromStream(in);
+                checkRequires(def, loader, findings);
+                ToolDefValidator.embeddedTokens(def).forEach(w -> findings.add(new Finding(false, w)));
+                return def.getName();
+            } catch (java.io.IOException e) {
+                // The validator read it a moment ago, and reported what it found
+                return null;
+            }
+        }
+
+        /** The name {@code file} gives, or null when it does not parse or gives none. */
+        private static String nameIn(Path file) {
+            try (var in = Files.newInputStream(file)) {
+                return ToolDef.loadFromStream(in).getName();
+            } catch (java.io.IOException | RuntimeException e) {
+                return null;
+            }
+        }
+
+        /** Checks a built-in definition as {@link #checkFile} checks a file. */
+        private static void check(ToolDef def, ToolDefLoader loader, List<Finding> findings) {
+            var errors = new ArrayList<String>();
+            var warnings = new ArrayList<String>();
+            ToolDefValidator.validateDef(def, errors, warnings);
+            errors.forEach(e -> findings.add(new Finding(true, e)));
+            warnings.forEach(w -> findings.add(new Finding(false, w)));
+            if (errors.isEmpty()) checkRequires(def, loader, findings);
+        }
+
+        /** An error for each tool {@code def} requires that isx does not know: a build skips it. */
+        private static void checkRequires(ToolDef def, ToolDefLoader loader, List<Finding> findings) {
+            var known = loader.allToolSetups().keySet();
+            for (var required : def.getRequires()) {
+                var name = required.getName();
+                if (name == null || known.contains(name) || name.equals(def.getName())) continue;
+                findings.add(new Finding(true, OutputFormat.oneLine("'" + def.getName() + "' requires '" + name
+                        + "', which is not a tool isx knows, so isx build skips it; 'isx tools list' lists the tools")));
             }
         }
     }

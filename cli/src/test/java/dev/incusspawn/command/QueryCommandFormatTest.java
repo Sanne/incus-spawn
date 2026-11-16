@@ -151,6 +151,23 @@ class QueryCommandFormatTest {
                 plain(List.of(record)));
     }
 
+    @Test
+    void toolsValidateJsonFields() throws Exception {
+        var record = ToolsCommand.Validate.record("example", "/tools/example.yaml", false,
+                List.of(new ToolsCommand.Validate.Finding(true, "download entry in 'example' is missing a 'url'")));
+        assertEquals("""
+                {
+                  "name" : "example",
+                  "path" : "/tools/example.yaml",
+                  "valid" : false,
+                  "findings" : [ {
+                    "severity" : "error",
+                    "message" : "download entry in 'example' is missing a 'url'"
+                  } ]
+                }
+                """, json(record));
+    }
+
     // ── isx account ─────────────────────────────────────────────────────────────
 
     private static final List<AccountCommand.NamespaceListing> ACCOUNTS = List.of(
