@@ -187,9 +187,10 @@ done
 # the lock file 'isx proxy' takes, and the CLI's own log and API debug captures (a TUI or 'isx mcp'
 # left running writes them). The proxy's logs stay in: a test proxy that escaped its mount
 # namespace would write them.
+# One "<sha256>  <path>" line per file, so a failed check can name what differed.
 real_state() { find "$REAL_CONFIG_DIR" "$HOME/.local/state/incus-spawn" -name api-debug -prune \
     -o -type f ! -name proxy.lock ! -name client.log -print0 \
-    | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1; }
+    | sort -z | xargs -0 sha256sum 2>/dev/null; }
 python3 - "$CONFIG_DIR/config.yaml" "$ACCOUNT" <<'PY' || die "could not add the chatgpt account to the test config"
 import sys, yaml
 path, account = sys.argv[1:3]
@@ -469,7 +470,10 @@ gx rm -f /root/isx-minted.txt
 # --- 10. The user's own state ---
 echo ""
 echo "[10] The user's own isx config is untouched"
-check "nothing in $REAL_CONFIG_DIR changed" test "$(real_state)" = "$REAL_STATE_BEFORE"
+REAL_STATE_AFTER=$(real_state)
+check "nothing in $REAL_CONFIG_DIR or ~/.local/state/incus-spawn changed" test "$REAL_STATE_AFTER" = "$REAL_STATE_BEFORE"
+# A failure of the check above (#2285) names the files that differ in the log, from the same reading
+[ "$REAL_STATE_AFTER" = "$REAL_STATE_BEFORE" ] || { echo "    changed under the user's isx directories (diff of sha256 listings):"; diff <(printf '%s\n' "$REAL_STATE_BEFORE") <(printf '%s\n' "$REAL_STATE_AFTER") | sed 's/^/    /'; }
 check_not "no ChatGPT session was written there" test -e "$REAL_CONFIG_DIR/openai/$ACCOUNT/session.json"
 
 # --- 11. Nothing left the machine ---
