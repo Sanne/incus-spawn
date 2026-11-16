@@ -1542,7 +1542,7 @@ class TaskScriptsTest {
             var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             while (!Files.exists(home.resolve("pi-ready")) && System.nanoTime() < deadline) Thread.sleep(10);
             var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
-            assertTrue(who.attended());
+            assertFalse(who.attended(), "with no terminal it is no one's, for orphan cleanup");
             assertEquals(person.pid(), who.holderOf(DelegateAgent.PI, "any-session", cwd));
             assertNull(who.holderOf(DelegateAgent.CLAUDE, null, cwd), "a Pi in the directory cannot resume a Claude conversation");
             assertNull(who.holderOf(DelegateAgent.PI, "any-session", "/elsewhere"));
@@ -1788,7 +1788,8 @@ class TaskScriptsTest {
     @Test
     void presenceRecognizesBothAgentsAndQualifiesSessionIds() {
         var presence = Presence.parse(List.of("codex 71 /codex", "resume 71 same-id", "claude 72 /claude", "resume 72 same-id"));
-        assertTrue(presence.attended());
+        assertFalse(presence.attended(), "no agent is on a terminal");
+        assertTrue(Presence.parse(List.of("tty 72", "claude 72 /claude")).attended());
         assertEquals(71L, presence.holderOf(DelegateAgent.CODEX, "same-id", "/other"));
         assertEquals(72L, presence.holderOf(DelegateAgent.CLAUDE, "same-id", "/other"));
         assertEquals(71L, presence.holderOf(DelegateAgent.CODEX, null, "/codex"));
