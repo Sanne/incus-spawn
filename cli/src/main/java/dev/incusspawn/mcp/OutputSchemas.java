@@ -271,6 +271,18 @@ final class OutputSchemas {
                 .build();
     }
 
+    static JqObject reclaimTask() {
+        return Schema.object()
+                .string("task_id", null, true)
+                .string("instance", null, true)
+                .choice("kind", null, true, KINDS)
+                .string("agent", "Worker agent; unknown for unsupported persisted metadata", false)
+                .choice("state", "After the reclaim: finished once its holder exited", true, TASK_STATES)
+                .bool("reclaimed", "An agent held its conversation and exited; false when none held it", true)
+                .integer("reclaimed_pid", "The agent that held it", false)
+                .build();
+    }
+
     static JqObject cancelTask() {
         return Schema.object()
                 .string("task_id", null, true)

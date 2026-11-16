@@ -42,6 +42,8 @@ class DelegationToolsTest {
     private volatile boolean failLaunch;
     /** When set, the status script reports a person's Claude Code on the task's conversation. */
     private volatile boolean attached;
+    /** What the guest's reclaim script prints; a reclaim of pid 77 lets the person go. */
+    private volatile String reclaimAnswer = "reclaimed 77";
     /** When set, the events a finished agent's status reports instead of {@link #EVENTS}. */
     private volatile String finishedEvents;
     /** What the tasks listing of an adopted instance answers. */
@@ -129,11 +131,15 @@ class DelegationToolsTest {
                 return "## /home/agentuser\n3\t1\tsrc/A.java\0-\t-\tlogo.png\0\n---\n"
                         + (script.contains("--src-prefix") ? "diff --git a/src/A.java b/src/A.java\n+fixed\n" : "");
             }
+            if (script.contains("pid %s by")) {
+                if (reclaimAnswer.startsWith("reclaimed")) attached = false;
+                return reclaimAnswer + "\n";
+            }
             if (failStatus && script.contains("echo run=")) throw new IllegalStateException("exec failed");
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
             if (taskState.equals("unknown")) return "run=1\nkind=agent\nstate=unknown\n---\n\n---stderr\n";
             var who = attached ? "cwd=/home/agentuser\nsession_id=s1\npresence=claude 77 /elsewhere\n"
-                    + "presence=resume 77 s1\n" : savedSession == null ? (claudeSession == null || taskState.equals("running") ? "" : "session_id=" + claudeSession + "\n" + (claudeSessionGone ? "session_gone=1\n" : "")) : "identity=1 " + savedAgent + "\nsession_id=" + savedSession + "\n";
+                    + "presence=resume 77 s1\npresence=tty 77\npresence=input 77 1700000000\n" : savedSession == null ? (claudeSession == null || taskState.equals("running") ? "" : "session_id=" + claudeSession + "\n" + (claudeSessionGone ? "session_gone=1\n" : "")) : "identity=1 " + savedAgent + "\nsession_id=" + savedSession + "\n";
             return taskState.equals("running")
                     ? "run=1\nkind=agent\nstate=running\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
@@ -225,6 +231,10 @@ class DelegationToolsTest {
         // As last seen: the agent's end was read; the cancel did not read how the command ended.
         assertEquals(Map.of(task, "finished", command.path("task_id").asText(), "unknown"),
                 taskStates(structured(call("list_instances", "{}")).path("instances")));
+        attached = true;
+        var reclaimed = structured(call("reclaim_task", "{\"task_id\":\"" + task + "\"}"));
+        assertEquals(77, reclaimed.path("reclaimed_pid").asInt(0));
+        assertEquals("finished", reclaimed.path("state").asText());
         structured(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}"));
 
         taskState = "finished";
@@ -719,6 +729,42 @@ class DelegationToolsTest {
         attached = false;
         assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}")
                 .path("isError").asBoolean(false));
+    }
+
+    @Test
+    void anAttachedTaskReportsItsHoldersTerminalAndCanBeReclaimed() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        attached = true;
+        var status = structured(call("task_status", "{\"task_id\":\"" + task + "\"}"));
+        assertEquals("attached", status.path("state").asText(), "however long ago the input was");
+        assertTrue(status.path("attached_tty").asBoolean(false));
+        assertEquals("2023-11-14T22:13:20Z", status.path("attached_last_input_at").asText());
+
+        // A holder that does not exit on SIGHUP: refused, and the task stays attached.
+        reclaimAnswer = "alive 77";
+        var refused = call("reclaim_task", "{\"task_id\":\"" + task + "\"}");
+        assertEquals("wrong_state", refused.path("_meta").path(ToolResult.ERROR_META).path("code").asText());
+        assertTrue(text(refused).contains("did not exit") && text(refused).contains("nothing harder"), text(refused));
+        assertTrue(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"go\"}").path("isError").asBoolean(false));
+
+        reclaimAnswer = "running";
+        assertEquals("wrong_state", call("reclaim_task", "{\"task_id\":\"" + task + "\"}")
+                .path("_meta").path(ToolResult.ERROR_META).path("code").asText());
+
+        reclaimAnswer = "reclaimed 77";
+        var reclaimed = structured(call("reclaim_task", "{\"task_id\":\"" + task + "\",\"attached_pid\":77}"));
+        assertTrue(backend.scripts.stream().anyMatch(sc -> sc.contains("pid %s by") && sc.contains("[ \"$h\" = 77 ]")),
+                "only the holder the caller was shown");
+        assertTrue(reclaimed.path("reclaimed").asBoolean(false));
+        assertEquals("finished", reclaimed.path("state").asText());
+        var sent = backend.scripts.stream().filter(sc -> sc.contains("pid %s by")).toList().getLast();
+        assertTrue(sent.contains("isx mcp session "), "who reclaimed is recorded in the guest");
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}").path("isError").asBoolean(false));
+
+        reclaimAnswer = "none";
+        var nobody = structured(call("reclaim_task", "{\"task_id\":\"" + task + "\"}"));
+        assertFalse(nobody.path("reclaimed").asBoolean(true));
     }
 
     @Test

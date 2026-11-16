@@ -809,6 +809,40 @@
     "required" : [ "task_id", "instance", "kind", "run", "permission_mode" ],
     "additionalProperties" : false
   },
+  "reclaim_task" : {
+    "type" : "object",
+    "properties" : {
+      "task_id" : {
+        "type" : "string"
+      },
+      "instance" : {
+        "type" : "string"
+      },
+      "kind" : {
+        "type" : "string",
+        "enum" : [ "agent", "command" ]
+      },
+      "agent" : {
+        "description" : "Worker agent; unknown for unsupported persisted metadata",
+        "type" : "string"
+      },
+      "state" : {
+        "description" : "After the reclaim: finished once its holder exited",
+        "type" : "string",
+        "enum" : [ "running", "finished", "attached", "lost", "unknown" ]
+      },
+      "reclaimed" : {
+        "description" : "An agent held its conversation and exited; false when none held it",
+        "type" : "boolean"
+      },
+      "reclaimed_pid" : {
+        "description" : "The agent that held it",
+        "type" : "integer"
+      }
+    },
+    "required" : [ "task_id", "instance", "kind", "state", "reclaimed" ],
+    "additionalProperties" : false
+  },
   "cancel_task" : {
     "type" : "object",
     "properties" : {
