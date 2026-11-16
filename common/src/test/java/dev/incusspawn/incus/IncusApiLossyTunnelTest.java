@@ -4,6 +4,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import dev.incusspawn.util.RecordingOutput;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -101,6 +104,54 @@ class IncusApiLossyTunnelTest {
         server.exitCode = 5;
         assertEquals(5, exec(api()).exitCode());
         assertEquals(4, server.waits.get(), "a Running answer must be re-polled, not taken as the result");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"gone", "Stopped", "Stopping"})
+    @Timeout(10)
+    void anOperationLostWithItsInstanceIsNoNews(String state) {
+        // Stopping or deleting an instance takes its exec operation with it: /wait answers 404.
+        server.waitHttpStatus = 404;
+        server.instanceStatus = state.equals("gone") ? null : state;
+        var said = RecordingOutput.during(() -> assertEquals(-1, exec(api()).exitCode()));
+        assertEquals(List.of(), said.warnings(), "the instance's own end explains the lost operation");
+        assertEquals(1, server.requestCount("GET /1.0/instances/c1"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Running", "Error", "Frozen"})
+    @Timeout(10)
+    void anOperationLostUnderAnInstanceStillUpIsWarnedOf(String state) {
+        server.waitHttpStatus = 404;
+        server.instanceStatus = state;
+        var said = RecordingOutput.during(() -> assertEquals(-1, exec(api()).exitCode()));
+        assertEquals(1, said.warnings().size(), "nothing explains the lost operation: " + said.warnings());
+        assertTrue(said.warnings().getFirst().contains("exec operation lost (HTTP 404"), said.warnings().getFirst());
+    }
+
+    @Test
+    @Timeout(10)
+    void aTimedExecLostWithItsInstanceIsNoNewsEither() {
+        server.waitHttpStatus = 404;
+        server.instanceStatus = null;
+        var said = RecordingOutput.during(() -> assertEquals(-1, api().execStreamWithin("c1", List.of("true"),
+                null, null, null, null, null, null, java.time.Duration.ofSeconds(30))));
+        assertEquals(List.of(), said.warnings());
+        assertEquals(1, server.requestCount("GET /1.0/instances/c1"), "read with its bound");
+    }
+
+    @Test
+    @Timeout(15)
+    void aTimedExecDoesNotWaitOutAStalledInstanceRead() {
+        server.waitHttpStatus = 404;
+        server.instanceStatus = null;
+        server.instanceStallMillis = 10_000; // past the grace, short of UnixSocketTransport.DEFAULT_TIMEOUT_SECONDS
+        long start = System.nanoTime();
+        var said = RecordingOutput.during(() -> assertEquals(-1, api().execStreamWithin("c1", List.of("true"),
+                null, null, null, null, null, null, java.time.Duration.ofSeconds(30))));
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        assertTrue(elapsedMs < 6000, "the instance read has the kill's grace, no more: " + elapsedMs + "ms");
+        assertEquals(1, said.warnings().size(), "an unread instance explains nothing: " + said.warnings());
     }
 
     private IncusException execPastItsLimit() {

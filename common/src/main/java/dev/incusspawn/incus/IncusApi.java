@@ -1349,7 +1349,8 @@ class IncusApi {
      * it has had {@link #KILL_GRACE_SECONDS} to be reported finished. The kill may not end the
      * operation -- a child the process left holding its output keeps it open -- so the wait
      * never depends on it: the caller is free by {@code limit} plus the grace, and the few seconds
-     * a {@code /wait} request may overrun its poll, either way. (Starting the exec and opening its
+     * a {@code /wait} request may overrun its poll, either way; an operation lost with a 404 adds
+     * one instance read of at most the grace. (Starting the exec and opening its
      * sockets, before this, are bounded by the transport's own timeouts.)
      */
     private int waitForExecOp(String instance, String opPath, long limit, IncusTransport.WsConnection control) {
@@ -1383,7 +1384,7 @@ class IncusApi {
                 if (!waitResp.isSuccess()) {
                     // An instance stopped or deleted under its command takes the operation with it;
                     // that is no news to the user, and there is no exit code to be had either way.
-                    if (waitResp.statusCode() == 404 && !instanceRunning(instance)) return -1;
+                    if (waitResp.statusCode() == 404 && instanceStoppedOrGone(instance, limit != 0)) return -1;
                     BuildOutput.warn("exec operation lost (HTTP " + waitResp.statusCode()
                             + " on " + opPath + "/wait) — exit code unknown");
                     return -1;
@@ -1410,15 +1411,25 @@ class IncusApi {
         }
     }
 
-    /** Whether {@code instance} exists and is running; a failed read counts as running, so the caller warns. */
-    private boolean instanceRunning(String instance) {
+    /**
+     * Whether {@code instance} is gone, stopped or stopping, which explains an exec operation lost
+     * under it. Any other state ({@code Error}, {@code Frozen}) explains nothing, and a failed read
+     * counts as no explanation either, so the caller warns. {@code bounded}, the read is given
+     * {@link #KILL_GRACE_SECONDS}, so a stalled daemon cannot hold a timed exec past its limit for
+     * the transport's own timeout. It reads the instance, not its {@code /state}: the status is
+     * there too, and {@code /state} asks a VM's agent for its processes and network, which a VM
+     * shutting down may not answer.
+     */
+    private boolean instanceStoppedOrGone(String instance, boolean bounded) {
         try {
-            var resp = get("/1.0/instances/" + instance + "/state");
-            if (resp.statusCode() == 404) return false;
-            if (!resp.isSuccess()) return true;
-            return "Running".equalsIgnoreCase(resp.body().getField("metadata").pathText("status", "Running"));
+            var path = "/1.0/instances/" + instance;
+            var resp = bounded ? requestWithTimeout("GET", path, null, (int) KILL_GRACE_SECONDS) : get(path);
+            if (resp.statusCode() == 404) return true;
+            if (!resp.isSuccess()) return false;
+            var status = resp.body().getField("metadata").pathText("status", "");
+            return "Stopped".equalsIgnoreCase(status) || "Stopping".equalsIgnoreCase(status);
         } catch (RuntimeException e) {
-            return true;
+            return false;
         }
     }
 
