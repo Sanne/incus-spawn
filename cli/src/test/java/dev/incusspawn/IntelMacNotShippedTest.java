@@ -43,17 +43,19 @@ class IntelMacNotShippedTest {
         assertFalse(INTEL_MAC_ASSET.matcher(release).find(), "release.yml still names an Intel macOS binary");
     }
 
-    /** The guard the tap step runs before it rewrites a formula, taken from release.yml itself. */
+    /** The script release.yml's tap step rewrites a formula with (update-homebrew-formula.sh). */
+    private static final Path TAP_SCRIPT = Path.of("../.github/scripts/update-homebrew-formula.sh");
+
+    /** The guard the tap script runs before it rewrites a formula, taken from the script itself. */
     private static String tapGuard() throws IOException {
-        for (var step : JqYaml.parse(Files.readString(RELEASE)).path("jobs").path("release").path("steps").asList()) {
-            if (!"Update Homebrew tap".equals(step.pathText("name", ""))) continue;
-            for (var line : step.pathText("run", "").split("\n")) {
-                if (line.strip().startsWith("if grep -q 'macos-x86_64")) {
-                    return line.strip() + "\n  echo refused; exit 1\nfi\necho accepted\n";
-                }
+        assertTrue(Files.readString(RELEASE).contains(".github/scripts/update-homebrew-formula.sh"),
+                "release.yml's tap step no longer rewrites the formula with update-homebrew-formula.sh");
+        for (var line : Files.readString(TAP_SCRIPT).split("\n")) {
+            if (line.strip().startsWith("if grep -q 'macos-x86_64")) {
+                return line.strip() + "\n  echo refused; exit 1\nfi\necho accepted\n";
             }
         }
-        return fail("the tap step no longer refuses a formula that still serves Intel Macs");
+        return fail("the tap script no longer refuses a formula that still serves Intel Macs");
     }
 
     private static String runGuard(Path dir, String formula) throws Exception {

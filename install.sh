@@ -372,6 +372,18 @@ fi
 # Install git remote helper shim for isx:// URLs
 atomic_install "$SCRIPT_DIR/common/src/main/resources/git-remote-isx" "$INSTALL_DIR/git-remote-isx"
 
+# On macOS isx runs its VM with isx-vm, the launcher (#2031), whichever mode built isx: compiled
+# from launcher/ and signed ad hoc with the one entitlement it needs, by build-isx-vm.sh, with the
+# Swift of the Xcode command line tools. isx looks for it beside itself.
+if [ "$(uname -s)" = "Darwin" ]; then
+    echo "Building isx-vm..."
+    if ! VM_BIN="$("$SCRIPT_DIR/launcher/build-isx-vm.sh")"; then
+        echo "Error: isx-vm could not be built. It needs the Xcode command line tools: xcode-select --install"
+        exit 1
+    fi
+    atomic_install "$VM_BIN" "$INSTALL_DIR/isx-vm"
+fi
+
 # ── Never write a Homebrew prefix ─────────────────────────────────────────
 # A Homebrew prefix is machine state: /opt/homebrew serves every account on a
 # Mac. Older versions of this script relinked its isx, isx-proxy and

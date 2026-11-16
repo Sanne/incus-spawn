@@ -82,8 +82,9 @@ class WorkflowRunnerLabelsTest {
 
         var expected = HOMEBREW_MACOS.get(target);
         assertNotNull(expected, "add macOS " + target + "'s Homebrew name to HOMEBREW_MACOS");
-        var declared = MACOS_MIN.matcher(Files.readString(release));
-        assertTrue(declared.find(), "release.yml's Homebrew step no longer sets MACOS_MIN");
+        // release.yml's tap step runs it on the formula
+        var declared = MACOS_MIN.matcher(Files.readString(Path.of("../.github/scripts/update-homebrew-formula.sh")));
+        assertTrue(declared.find(), "update-homebrew-formula.sh no longer sets MACOS_MIN");
         assertEquals(expected, declared.group(1), "the binaries target macOS " + target
                 + ", so the formula must declare depends_on macos: :" + expected);
 
