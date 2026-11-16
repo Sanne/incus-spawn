@@ -162,17 +162,24 @@ The check is made when a message is sent, so a person joining in the following s
 
 **A task leaves `attached` only on an event, never because time passed** (#1995).
 `attached` answers two questions.
-Is the conversation in use: a leftover `claude --resume` holds the conversation's lock whether anyone types or not, so a `finished` reported after an idle threshold would let `send_message` through to fail on the lock, or, for a holder matched by its directory alone, run a second agent on the conversation.
+Is the conversation in use: a leftover `claude --resume` holds the conversation's lock whether anyone types or not.
+So a `finished` reported after an idle threshold would let `send_message` through to fail on the lock, or, for a holder matched by its directory alone, run a second agent on the conversation.
 Is a person here: that matters only to orphan cleanup, where a wrong yes keeps an instance longer and loses nothing.
-So `task_status` reports facts and no verdict: `attached_tty`, whether the holder has a controlling pty, and `attached_last_input_at`, that pty's access time, which the kernel moves on input and not on output, at about 8 s granularity.
+So `task_status` reports facts and no verdict: `attached_tty`, whether the holder has a controlling pty, and `attached_last_input_at`, that pty's access time.
+The kernel moves that time on input and not on output, at about 8 s granularity.
 The probe prints them as their own line kind (`input <pid> <epoch>`), so the readers of its other lines are unchanged.
 Leaving `attached` is an explicit act: `reclaim_task`, or `isx shell <instance> --task <id> --take` for a person, which shows the holder's pid and last input and asks first.
-One guest exec (`Reclaim.script`) refuses while a run of the task is going, finds the holder as `Presence` does (and, for `--take` or a `reclaim_task` given `attached_pid`, only the pid its caller was shown), appends who and when to the task directory's `reclaimed`, sends SIGHUP, and waits up to 10 s for the holder to exit and then for the conversation's lock.
+One guest exec (`Reclaim.script`) does it all.
+It refuses while a run of the task is going, and finds the holder as `Presence` does: for `--take`, or a `reclaim_task` given `attached_pid`, only the pid its caller was shown.
+It appends who and when to the task directory's `reclaimed`, sends SIGHUP, and waits up to 10 s for the holder to exit and then for the conversation's lock.
 A holder that does not exit is refused as `wrong_state`, and nothing harder is sent: the caller decides what to do next.
-Any holder may be reclaimed, with or without a tty; the conversation stays on disk for `--resume`, so a wrong reclaim costs a person a restart of their agent and whatever they had typed and not sent.
-What this gives up: an unattended coordinator still needs a rule for when to reclaim, likely a threshold on `attached_last_input_at`, and a poor one can interrupt a person who is reading and not typing.
+Any holder may be reclaimed, with or without a tty.
+The conversation stays on disk for `--resume`, so a wrong reclaim costs a person a restart of their agent and whatever they had typed and not sent.
+What this gives up: an unattended coordinator still needs a rule for when to reclaim, likely a threshold on `attached_last_input_at`.
+A poor one can interrupt a person who is reading and not typing.
 That timeout belongs to the coordinator (Sanne/isx-workflow#69), where it is a decision an actor takes and logs, and isx's own state stays a function of what exists in the guest.
-A dead ssh client in front of `isx shell` is not visible to isx; sshd's `ClientAliveInterval` on the host covers it, and a silent link to Incus already tears the guest session down (#1996).
+A dead ssh client in front of `isx shell` is not visible to isx; sshd's `ClientAliveInterval` on the host covers it.
+A silent link to Incus already tears the guest session down (#1996).
 
 **Joining a task is a mode of `isx shell`.**
 `isx shell <instance> --task [<id>]` opens the task's conversation instead of a login shell (#1509).
