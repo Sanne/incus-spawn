@@ -50,9 +50,7 @@ jobs:
         with:
           path: ~/.m2/repository
           key: maven-unit-tests-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-unit-tests-
-            maven-
+          restore-keys: maven-unit-tests-
 
       # ZshCompletionTest drives a real zsh and skips without one, which the runner does not ship;
       # AgentReadersTest reads opencode's sessions with sqlite3, and skips that read without it.
@@ -100,7 +98,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.m2/repository
-          # Not maven-<os>-: the Linux jobs' restore key `maven-` would match it.
+          # Not maven-<job>-: unit-tests' restore key `maven-unit-tests-` would match maven-unit-tests-macos-.
           key: macos-maven-unit-tests-macos-${{ hashFiles('**/pom.xml') }}
           restore-keys: macos-maven-unit-tests-macos-
 
@@ -180,9 +178,7 @@ jobs:
         with:
           path: ~/.m2/repository
           key: maven-uber-jar-smoke-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-uber-jar-smoke-
-            maven-
+          restore-keys: maven-uber-jar-smoke-
 
       - name: Build uber-jars
         run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' package -Prelease -DskipTests
@@ -259,9 +255,7 @@ jobs:
         with:
           path: ~/.m2/repository
           key: maven-build-native-cli-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-build-native-cli-
-            maven-
+          restore-keys: maven-build-native-cli-
 
       - name: Build CLI native image
         run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' package -Dnative -DskipTests -Dnative.optimization=-Ob -pl cli -am
@@ -293,9 +287,7 @@ jobs:
         with:
           path: ~/.m2/repository
           key: maven-build-native-proxy-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-build-native-proxy-
-            maven-
+          restore-keys: maven-build-native-proxy-
 
       - name: Build proxy native image
         run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' package -Dnative -DskipTests -Dnative.optimization=-Ob -pl proxy -am

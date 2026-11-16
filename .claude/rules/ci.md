@@ -282,7 +282,7 @@ Each Maven job keeps a cache of its own, `maven-<job>-<hash of the poms>` (`maco
 After an exact hit the script builds offline, so a Maven Central 429 cannot fail the job; without one it builds online, and the job saves what it downloaded.
 If an offline build fails for a missing artifact it warns that the cache was incomplete and builds again online, and any other failure (a test) is returned as it is.
 Online, the resolver retries 429 as well as 503, up to 8 times with pauses of up to 60 s (the defaults retry 503 alone, 3 times).
-The Linux jobs also restore the old `maven-` prefix, so a first run starts from a partial cache.
+A job restores only its own caches, never another job's, so its cache holds what it needs and no copy of the others' (each would be a superset of them all, against the repository's cache quota).
 `MavenCiScriptTest` holds the script and that every Maven cache step is its job's own and its build goes through the script.
 `release.yml` keeps no Maven cache and does not use the script.
 
