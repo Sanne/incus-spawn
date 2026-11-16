@@ -66,11 +66,11 @@ class ToolsValidateTest {
     }
 
     @Test
-    void anUnknownRequiredToolIsAnError() throws Exception {
+    void anUnknownRequiredToolIsAWarning() throws Exception {
         var run = validate(file("name: mine\nrequires:\n  - sshd\n  - nonesuch\n").toString(), "plain");
-        assertEquals(1, run.exit());
-        assertEquals(List.of("error\t'mine' requires 'nonesuch', which is not a tool isx knows, so isx build skips it;"
-                + " 'isx tools list' lists the tools"), run.out().resultLines());
+        assertEquals(0, run.exit());
+        assertEquals(List.of("warning\t'mine' requires 'nonesuch', which is not a tool isx knows, so isx build refuses"
+                + " a template that uses it until it is defined; 'isx tools list' lists the tools"), run.out().resultLines());
     }
 
     @Test

@@ -129,6 +129,7 @@ On macOS `isx init` needs no administrator, so `--no-sudo` has no effect there.
 
 Build or rebuild a template image.
 While another isx builds or updates the same template, the build is refused.
+A template that lists a tool isx does not know is refused too, before anything is built.
 
 ```shell
 isx build [<template>...] [options]
@@ -506,8 +507,10 @@ It takes a file, `-` for stdin, or the name of a template you have.
 It runs the same check as `isx templates new --from` and exits 1 when the definition has an error.
 
 The check resolves each entry under `tools` as `isx build` does, with the tools it requires.
-A tool isx does not know is an error on that entry, since the build would leave it out.
-So are parameters the tool refuses and errors in the tool files it uses.
+Parameters the tool refuses and errors in the tool files it uses are errors on that entry.
+
+A tool isx does not know is a warning, so you can save a template before you define its tools.
+`isx build` refuses the template until the tool is defined.
 A tool behind a feature you have not enabled is a warning.
 
 A tool file that did not load is a warning on `tools` when the template does not use it, since `isx build` refuses every build until it is fixed.
@@ -571,7 +574,8 @@ isx tools show <name>
 
 Check a tool definition without building it.
 It takes a tool file, or the name of a tool you have.
-A tool file that does not parse, an entry a build would fail on, and a required tool isx does not know are errors, and the command then exits 1.
+A tool file that does not parse and an entry a build would fail on are errors, and the command then exits 1.
+A required tool isx does not know is a warning, since you may define it later.
 
 ```shell
 isx tools validate <file-or-name>
