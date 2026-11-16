@@ -141,7 +141,7 @@ A new command that deletes `vmStateDir()` does the same; `isx reset` and `isx vm
 A kept disk is only as intact as the VM's stop.
 `VmManager.stop()` returns a `StopResult`, and `isx vm stop --require-clean` exits 4 when the VM was `SIGNALLED` rather than shut down (every stop of an appliance from before #881), which `uninstall.sh` turns into its warning.
 A caller about to delete the disks stops with `stopToDelete()`, which does not warn and does not ask the guest.
-`stopLocked` asks the guest first, through the agent's `shutdown` verb (`VmAgentClient.shutdown()`), and waits up to 30 s for the hypervisor to exit by itself: vfkit's own stop request does nothing in this guest, so without the verb every stop is a hard power-off that loses up to five minutes of btrfs changes (`commit=300`; appliance/DESIGN.md "Stop sequence").
+`stopLocked` asks the guest first, through the agent's `shutdown` verb (`VmAgentClient.shutdown()`), and waits up to 30 s for the launcher to exit by itself: the launcher's own stop cuts the disks off, so without the verb every stop is a hard power-off that loses up to five minutes of btrfs changes (`commit=300`; appliance/DESIGN.md "Stop sequence").
 The exit status is opt-in so `isx vm stop && ...` keeps working.
 
 **Remediations act through isx, never name an `incus` command (#986).**

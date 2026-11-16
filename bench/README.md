@@ -658,6 +658,25 @@ bench/vm-disk-cache.sh benchbase branches --branches=4 --caches=none,writeback
 The whole run takes about an hour under nested KVM, with nothing else running on the host.
 Every timing is kept under `--out`.
 
+## The Mac's VM Under vfkit and Under `isx-vm` (`vm-launcher-compare.sh`)
+
+Compares the Mac's own VM under two isx builds: one that runs vfkit (the previous release) and one
+that runs `isx-vm`, the launcher that replaced it (#2031). Each round restarts the VM under each
+build in turn, in alternating order, and measures the start and the stop, idle memory and CPU of the
+launcher and of Virtualization.framework's machine process, that process's descriptors, a branch to
+its prompt (`trace-branch.sh`), exec, disk, share and network throughput in an instance, and the
+tunnel under load (`appliance/measure-tunnel.sh` on the VM's sockets).
+
+```shell
+bench/vm-launcher-compare.sh --old=/opt/homebrew/bin/isx --new=$HOME/.local/bin/isx --rounds=5
+bench/vm-launcher-compare.sh --old=... --new=... --sleep   # also a minute's sleep under each (sudo -n pmset)
+```
+
+It prints each metric's median, range and sample count for both builds, and flags the new build
+where its median is a tenth worse and the ranges do not overlap. Raw values and logs stay in
+`~/.cache/incus-spawn/launcher-compare/<time>/`. It changes the Mac's VM and leaves it under the new
+build. Run it on an otherwise idle Mac, on mains power.
+
 ## File Layout
 
 ```
