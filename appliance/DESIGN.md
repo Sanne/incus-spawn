@@ -172,7 +172,7 @@ BusyBox init handles PID 1 responsibilities (zombie reaping, signal forwarding) 
 
 ### Clock Synchronization
 
-The VM has no hardware RTC. Three layers keep the guest clock accurate:
+A VM's RTC is emulated and not trusted to be right: vfkit has none, and QEMU's keeps the host's time at start. Three layers keep the guest clock accurate:
 
 1. **Boot-time seed**: The kernel cmdline carries `isx.time=<epoch>` (stamped by the host at VM start). `rcS` sets the system clock from this immediately, so TLS works before NTP is reachable.
 
