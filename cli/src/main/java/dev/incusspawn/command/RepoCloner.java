@@ -1169,7 +1169,9 @@ class RepoCloner {
             command.append(" && { for ref in $(").append(git)
                     .append(" for-each-ref --format='%(refname)' refs/remotes/origin/); do ")
                     .append("[ \"$ref\" = refs/remotes/origin/HEAD ] && continue; ")
-                    .append(git).append(" update-ref \"refs/heads/${ref#refs/remotes/origin/}\" \"$ref\" || exit 1; done; }")
+                    .append(git).append(" update-ref \"refs/heads/${ref#refs/remotes/origin/}\" \"$ref\"")
+                    // The host still holds these tips; overview excludes them from the unpushed count (#2273).
+                    .append(" && ").append(git).append(" update-ref \"refs/isx/host/${ref#refs/remotes/origin/}\" \"$ref\" || exit 1; done; }")
                     .append(" && ").append(git).append(" remote remove origin");
         }
         return command.toString();

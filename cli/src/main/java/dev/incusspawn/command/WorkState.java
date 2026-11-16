@@ -81,6 +81,8 @@ public record WorkState(State state, List<Repo> repos, String why) {
      * the first {@code clone:} entry of HEAD's reflog: a full clone pinned to a tag keeps the broad
      * refspec and no remote-tracking branch, and its tag's history is no work either. A clone whose
      * reflog no longer says (expired, or rewritten) counts that history, which errs on unsaved.
+     * A clone copied from a host checkout holds the tips it was given under {@code refs/isx/host/}
+     * (#2273), which the host still holds, so they count as saved like a remote-tracking branch.
      */
     public Integer unpushed() {
         return sum(Repo::unpushed);
@@ -132,7 +134,7 @@ public record WorkState(State state, List<Repo> repos, String why) {
               done
               g=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) && o=$(sed -n '1s/^[0-9a-f]* \\([0-9a-f]\\{40,64\\}\\) .*[[:blank:]]clone: .*/\\1/p' "$g/logs/HEAD" 2>/dev/null) || o=
               [ -n "$o" ] && git -C "$1" cat-file -e "$o^{commit}" 2>/dev/null && t="$t $o"
-              u=$(git -C "$1" rev-list --count $h --branches --not --remotes $t 2>/dev/null) || u=x
+              u=$(git -C "$1" rev-list --count $h --branches --not --remotes --glob=refs/isx/host/\\* $t 2>/dev/null) || u=x
               if s=$(git -C "$1" stash list 2>/dev/null); then k=$(printf '%%s' "$s" | grep -c '^'); else k=x; fi
               p=${1#"$HOME"/}
               printf 'repo %%s %%s %%s %%s\\n' "$c" "$u" "$k" "${p%%/}"
