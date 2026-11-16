@@ -629,12 +629,28 @@ At 80 columns ACTIVE gives way to WORK; it is drawn from 100 columns, DONE from 
 
 **What was done is the agents' own closing messages, read in the same exec** (#2241, part 3).
 `GuestRead` runs one script per running guest, in sections: the work state's first, then one per agent reader (`AgentSessions.GuestReader`), each in its own subshell and parsed on its own.
-So a session read that fails or overflows leaves WORK as it was read: the output bound is 64 KiB for the work section plus 1 MiB, and only the section it cut is `unknown`.
-Claude Code's reader (`ClaudeSessions`) lists `~/.claude/projects/*/*.jsonl`, regular files only and not a subagent's `agent-*.jsonl`, and reads the newest eight.
+So a session read that fails or overflows leaves WORK as it was read: the output bound is 64 KiB for the work section plus 1 MiB per reader, and only the section it cut is not read.
+A reader that failed names its agent as not read, and the other agents' sessions still show (`AgentSessions.merge`); only when no reader answered are the sessions `unknown`.
+The newest eight sessions of all the agents together are kept, and every session is counted, so what a merge is given stays bounded.
+Claude Code, Codex and Pi keep a JSON Lines transcript per session, and one reader serves all three (`JsonlSessions`), each agent saying where its files are and which lines may be what.
+Claude Code's (`ClaudeSessions`) lists `~/.claude/projects/*/*.jsonl`, regular files only and not a subagent's `agent-*.jsonl`.
+Codex's (`CodexSessions`, verified with Codex 0.169.0) lists `~/.codex/sessions/<year>/<month>/<day>/rollout-*.jsonl`, and not `archived_sessions`.
+Pi's (`PiSessions`, verified with Pi 1.5.2) lists `~/.pi/agent/sessions/*/*.jsonl`, and also sends each file's first line, its header, which names where the session ran.
+When Codex's or Pi's directory holds files but no session where its reader looks, that agent is not read, since a setting or another version may keep them elsewhere.
+Claude Code's projects directory also holds memory files, so the same does not apply there.
+Each reads the newest eight.
 From each it sends the person's first lines among the first 500 and the agent's last lines with text among the last 5,000, read from the end with `tac`, so a transcript of any length costs a bounded read; eight 224 MB transcripts took 56 ms.
 Each line is cut at 8 or 24 KiB and sent in base64, so no transcript text can frame the output.
 The script runs only in a guest, always Fedora, and uses GNU `find -printf`, `tac` and `base64 -w0`, so its tests that read sessions run on Linux hosts alone; on macOS the parsing and the summary are still tested.
-The script selects lines by substring only; the host decides on the parsed JSON's own fields (`Jjq.parseForeign`): the closing message is the last top-level `assistant` line, not a subagent's, with a `text` block.
+The script selects lines by substring only; the host decides on the parsed JSON's own fields (`Jjq.parseForeign`): the closing message is the last top-level `assistant` message, not a subagent's, with text.
+Codex sends its own context as `user` messages too, the environment and a repository's `AGENTS.md`, so its ask is a message whose `content_item_kinds` are `user.text` alone, or, in a rollout that names no kinds, one that does not open with that context's markers.
+The script already leaves those lines out, since an `AGENTS.md` longer than the bound would otherwise be the first candidate and leave no ask.
+Its closing message is the last `assistant` message, never `task_complete`'s `last_agent_message`, which a turn interrupted after a completed one leaves at the older report.
+opencode keeps its sessions in `~/.local/share/opencode/opencode.db`, so its reader (`OpencodeSessions`, verified with opencode 1.19.5) asks `sqlite3 -readonly`, which `OpencodeSetup` installs.
+A database is read by its fields, so the query selects: sessions with no `parent_id` (one with a parent is a subagent's), archived ones included, and the text parts of the first `user` and the last `assistant` message.
+Neither is a compaction's summary, nor a part opencode made up (`synthetic`) or set aside (`ignored`).
+Each value is cut in the query to one code point past what is kept and sent in hex.
+A database `sqlite3` cannot read (none installed, a schema the query does not know, a damaged file), or the JSON `storage` of an opencode from before its database, makes opencode not read.
 When the newest candidate does not parse, cut at the bound or not JSON, the closing message is unreadable, and an older message is never shown in its place.
 The ask is the same: when the first candidate does not parse, none is shown, never a later message.
 The text is scrubbed as a guest's output is (`SecretRedactor.scrubGuest`), cut to 4,000 code points (500 for the ask), and shown a line at a time through `OutputFormat.oneLine`.
@@ -662,7 +678,7 @@ An overview of every instance removes the files of instances no longer listed; o
 Files are written whole through a rename and readable by the host user alone.
 At most four calls run at once, and in the TUI the exact columns are shown before any call ends.
 What this gives up: the first overview after an instance's work changed waits for its call, up to the transport's two minutes; a model's summary can be wrong, and the exact columns beside it are the check.
-`untouched` is shown only when no session was found, every clone was read and holds nothing, the event log saw no activity, and no other agent's sessions are there (Codex's or Pi's session directories, or opencode's database, which are not read yet).
-So a read that failed, a stopped instance, or a Codex box never reads as untouched.
-Beside Claude Code's message, DONE names such an agent as not read, since it may have worked since.
+`untouched` is shown only when no session was found, every clone was read and holds nothing, the event log saw no activity, and every agent's sessions were read.
+So a read that failed, a stopped instance, or an opencode database that could not be read never reads as untouched.
+Beside the newest message, DONE names such an agent as not read, since it may have worked since.
 What this gives up: a closing message can overstate what the agent finished, and WORK beside it is the check; a person's work outside an agent is not described.

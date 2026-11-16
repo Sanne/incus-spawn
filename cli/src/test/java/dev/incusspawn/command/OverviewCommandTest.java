@@ -41,10 +41,12 @@ class OverviewCommandTest {
             .lastUsedAt("dev-2", "1970-01-01T00:00:00Z")
             .execOutput(WorkState.HEADER, WORK);
 
-    /** What dev-1's guest answers: one clone with work in it, one clean, and one Claude Code session. */
+    /** What dev-1's guest answers: one clone with work in it, one clean, and one Claude Code session, and none of another agent. */
     private static final String WORK = WorkState.HEADER + "\nrepo 3 1 0 app\nrepo 0 0 0 lib\nend\n"
             + ClaudeSessions.HEADER + "\ntotal 1\nsession 1793700000 cC9zLmpzb25s\n"
-            + "close eyJ0eXBlIjoiYXNzaXN0YW50IiwiaXNTaWRlY2hhaW4iOmZhbHNlLCJtZXNzYWdlIjp7ImNvbnRlbnQiOlt7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IkZpeGVkIHRoZSBwYXJzZXIuXG5QUiAjMTIgaXMgb3Blbi4ifV19fQ==\nend\n";
+            + "close eyJ0eXBlIjoiYXNzaXN0YW50IiwiaXNTaWRlY2hhaW4iOmZhbHNlLCJtZXNzYWdlIjp7ImNvbnRlbnQiOlt7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IkZpeGVkIHRoZSBwYXJzZXIuXG5QUiAjMTIgaXMgb3Blbi4ifV19fQ==\nend\n"
+            + CodexSessions.HEADER + "\ntotal 0\nend\n" + PiSessions.HEADER + "\ntotal 0\nend\n"
+            + OpencodeSessions.HEADER + "\ntotal 0\nend\n";
 
     /** The tokens GitHub was asked with, and what it was asked about. */
     private final java.util.List<String> asked = new java.util.ArrayList<>();

@@ -31,7 +31,7 @@ paths:
 On a push, root jobs are gated so feature-branch pushes only run on forks (not upstream, where the PR trigger covers them).
 Key jobs:
 
-- **`unit-tests`**: `mvn package` (no Incus required), with zsh installed so `ZshCompletionTest` runs rather than skips
+- **`unit-tests`**: `mvn package` (no Incus required), with zsh and sqlite3 installed so `ZshCompletionTest` and `AgentReadersTest`'s opencode read run rather than skip
 - **`unit-tests-macos`**: `mvn test` on `macos-15` (a standard arm64 runner), so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970). arm64 only, by decision (#974); the reasoning is in design/testing.md "Testing".
   Its Git tests are paced by process starts there: `GitPreparationTest` runs its tests concurrently and `releasesFixture` is built once per JVM, which keep the job inside its 20-minute timeout (#1839).
   It sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`, which enables `KeychainTrustMacTest`: it adds CAs to the runner's System keychain, which only a discarded runner may do (#1467).

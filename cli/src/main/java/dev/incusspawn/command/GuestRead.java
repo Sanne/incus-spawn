@@ -19,10 +19,15 @@ import java.util.concurrent.Future;
  */
 public record GuestRead(WorkState work, AgentSessions sessions) {
 
-    static final List<AgentSessions.GuestReader> READERS = List.of(new ClaudeSessions());
+    static final List<AgentSessions.GuestReader> READERS =
+            List.of(new ClaudeSessions(), new CodexSessions(), new PiSessions(), new OpencodeSessions());
 
-    /** The whole output kept: the work state's own bound, then room for every reader's newest sessions. */
-    static final int MAX_OUTPUT = WorkState.MAX_OUTPUT + 1024 * 1024;
+    /**
+     * The whole output kept: the work state's own bound, then room for each reader's newest
+     * sessions, which for a transcript reader is at most about 860 KiB of base64 (Pi's, which also
+     * sends each file's first line).
+     */
+    static final int MAX_OUTPUT = WorkState.MAX_OUTPUT + READERS.size() * 1024 * 1024;
 
     static final String SCRIPT = script();
 
@@ -51,7 +56,9 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
         boolean workCut = firstReader == lines.size() ? cut : workText.length() > WorkState.MAX_OUTPUT;
         var work = WorkState.parse(exit, workText, workCut);
         var read = new ArrayList<AgentSessions>();
+        var agents = new ArrayList<String>();
         for (int r = 0; r < READERS.size(); r++) {
+            agents.add(READERS.get(r).agent());
             int start = starts.get(r);
             if (start < 0) {
                 read.add(AgentSessions.unknown(cut ? "its answer was too long" : "its answer was cut short"));
@@ -63,7 +70,7 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
             read.add(last && cut ? AgentSessions.unknown("its answer was too long")
                     : READERS.get(r).parse(lines.subList(start, end)));
         }
-        return new GuestRead(work, AgentSessions.merge(read));
+        return new GuestRead(work, AgentSessions.merge(agents, read));
     }
 
     /** One instance: read in the guest when it runs, {@link #NOT_READ} when it does not. */
