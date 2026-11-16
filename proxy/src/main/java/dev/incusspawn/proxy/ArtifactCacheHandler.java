@@ -23,6 +23,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -30,9 +33,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.SequencedMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -220,6 +225,13 @@ class ArtifactCacheHandler {
     /** One attempt at the fetch; {@code resend} lets it make one more on a new request. */
     private void fetchCacheAndServe(HttpServerRequest clientReq, long started, String domain,
                                     Path cacheFile, String ref, Verification verification, boolean resend) {
+        fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, verification, resend, 0);
+    }
+
+    /** {@code throttled} counts the 429s this fetch has already waited out. */
+    private void fetchCacheAndServe(HttpServerRequest clientReq, long started, String domain,
+                                    Path cacheFile, String ref, Verification verification, boolean resend,
+                                    int throttled) {
         var options = new RequestOptions()
                 .setMethod(clientReq.method())
                 .setHost(domain)
@@ -243,6 +255,11 @@ class ArtifactCacheHandler {
 
                 if (statusCode == 200) {
                     new CachingDownload(clientReq, domain, started, upResp, cacheFile, ref, verification).start();
+                } else if (statusCode == 429 && !REGISTRY_DOMAINS.contains(domain)
+                        && waitOutThrottle(clientReq, started, domain, upResp, ref, throttled,
+                                () -> fetchCacheAndServe(clientReq, started, domain, cacheFile, ref,
+                                        verification, resend, throttled + 1))) {
+                    // Asked again when the domain's schedule says, within the client's budget (#2302)
                 } else if (statusCode >= 300 && statusCode < 400) {
                     // Follow redirect manually — Vert.x setFollowRedirects carries
                     // the original Host header, which breaks cross-domain redirects
@@ -256,7 +273,7 @@ class ArtifactCacheHandler {
                 if (resend && !clientReq.response().closed() && Upstream.closedUnanswered(err)) {
                     // A pooled connection upstream closed as the fetch went out on it (#1923)
                     ProxyLog.trace("Upstream closed fetching " + ref + ", sending again: " + err.getMessage());
-                    fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, verification, false);
+                    fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, verification, false, throttled);
                     return;
                 }
                 ProxyLog.warn("Upstream error fetching " + ref + ": " + err.getMessage());
@@ -266,6 +283,86 @@ class ArtifactCacheHandler {
             ProxyLog.warn("Connect error fetching " + ref + ": " + err.getMessage());
             upstream.sendError(clientReq.response(), 502, "Upstream connection failed");
         });
+    }
+
+    // The wait before asking again after a 429 with no Retry-After: this, doubled for each earlier 429 of the fetch
+    private static final long THROTTLE_BASE_MILLIS = 2_000;
+    // Never less: "Retry-After: 0" would otherwise ask again every slot, until the budget ends
+    private static final long THROTTLE_MIN_WAIT_MILLIS = 1_000;
+    // Between two fetches of a domain waiting out the same throttling, so the wait's end is not a burst
+    private static final long THROTTLE_SPACING_MILLIS = 250;
+    // The shortest read timeout of a client we serve: Gradle's socket timeout, 30s by default
+    // (org.gradle.internal.http.socketTimeout); Maven's and npm's are minutes
+    static final long CLIENT_READ_TIMEOUT_MILLIS = 30_000;
+    // What a 429's wait leaves the client at least, for the ask after it
+    private static final long THROTTLE_MIN_LEFT_MILLIS = 5_000;
+    /** When each domain's next fetch waiting out a 429 may ask again (nanoTime), one schedule per domain. */
+    private final ConcurrentHashMap<String, Long> throttleSchedule = new ConcurrentHashMap<>();
+
+    /**
+     * Upstream answered a cache miss 429: waits, then runs {@code again}, and returns true; or returns
+     * false when {@link #throttleDelay} finds no wait that fits, or the client has left, so the 429 is
+     * relayed as it is, its {@code Retry-After} with it.
+     */
+    private boolean waitOutThrottle(HttpServerRequest clientReq, long started, String domain,
+                                    HttpClientResponse upResp, String ref, int throttled, Runnable again) {
+        if (clientReq.response().closed()) return false;
+        var delay = throttleDelay(domain, started, upResp.getHeader("Retry-After"), throttled);
+        if (delay < 0) return false;
+        // Over h2 the reset reaches this response as an error; it is the one we asked for
+        upResp.exceptionHandler(ignored -> {});
+        upResp.request().reset();
+        ProxyLog.trace("Upstream throttled " + ref + " (429), asking again in " + delay + "ms");
+        vertx.setTimer(delay, t -> {
+            if (clientReq.response().closed()) return;
+            again.run();
+        });
+        return true;
+    }
+
+    /**
+     * How long a fetch that upstream answered 429 waits before asking again, its slot on the domain's
+     * schedule reserved; or -1, nothing reserved, when the wait does not end in time. The wait is
+     * upstream's {@code Retry-After}, else a backoff, and at least the domain's schedule, which spaces
+     * the fetches waiting on one domain instead of letting them ask at once. It ends in time when it
+     * leaves {@link #THROTTLE_MIN_LEFT_MILLIS} before the client's silence budget and before
+     * {@link #CLIENT_READ_TIMEOUT_MILLIS}, both counted from the client's request ({@code started}).
+     */
+    long throttleDelay(String domain, long started, String retryAfter, int throttled) {
+        var now = System.nanoTime();
+        var advised = retryAfterMillis(retryAfter);
+        var wait = Math.max(THROTTLE_MIN_WAIT_MILLIS,
+                advised >= 0 ? advised : THROTTLE_BASE_MILLIS << Math.min(throttled, 4));
+        var limit = Math.min(upstream.silenceLeftMillis(started),
+                CLIENT_READ_TIMEOUT_MILLIS - TimeUnit.NANOSECONDS.toMillis(now - started)) - THROTTLE_MIN_LEFT_MILLIS;
+        // Checked before the schedule too: a huge Retry-After would overflow the nanoTime arithmetic below
+        if (wait > limit) return -1;
+        var slot = new long[] {-1};
+        throttleSchedule.compute(domain, (d, next) -> {
+            var at = next == null ? now + TimeUnit.MILLISECONDS.toNanos(wait)
+                    : Math.max(now + TimeUnit.MILLISECONDS.toNanos(wait), next);
+            var delay = TimeUnit.NANOSECONDS.toMillis(at - now);
+            // A slot that does not fit is not reserved, so it does not delay the fetches that can
+            if (delay > limit) return next;
+            slot[0] = delay;
+            return at + TimeUnit.MILLISECONDS.toNanos(THROTTLE_SPACING_MILLIS);
+        });
+        return slot[0];
+    }
+
+    /** A {@code Retry-After} in milliseconds, whole seconds or an HTTP date; -1 when absent or unreadable. */
+    static long retryAfterMillis(String value) {
+        if (value == null) return -1;
+        var text = value.trim();
+        try {
+            if (!text.isEmpty() && text.chars().allMatch(Character::isDigit)) {
+                return text.length() > 9 ? Long.MAX_VALUE / 4 : Long.parseLong(text) * 1000;
+            }
+            var date = ZonedDateTime.parse(text, DateTimeFormatter.RFC_1123_DATE_TIME);
+            return Math.max(0, date.toInstant().toEpochMilli() - System.currentTimeMillis());
+        } catch (DateTimeParseException e) {
+            return -1;
+        }
     }
 
     private static final int MAX_REDIRECTS = 10;
@@ -931,7 +1028,8 @@ class ArtifactCacheHandler {
             // A copy to fall back on is served at once during a backoff, as for Maven/Gradle; with none, the registry is still asked
             var lookup = state.cached() && inBackoff(domain)
                     ? Future.succeededFuture(NpmLookup.unreachable())
-                    : fetchNpmVersion(domain, packageName, version, started);
+                    : fetchNpmVersion(domain, packageName, version, started,
+                            state.cached() ? () -> false : () -> !clientReq.response().closed());
             // Ordered by when upstream was asked, not by when the request came in: the queue above can be long
             return lookup.compose(l -> vertx.executeBlocking(
                     () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, l.answer(), l.askedAt())));
@@ -995,7 +1093,7 @@ class ArtifactCacheHandler {
         // Checked when it runs, not when it is queued: past the cap it may start after a backoff began.
         // Timed from then too, not from the request it followed: no client waits on it.
         inBackground(cacheFile, () -> inBackoff(domain) ? Future.succeededFuture()
-                : fetchNpmVersion(domain, packageName, version, System.nanoTime())
+                : fetchNpmVersion(domain, packageName, version, System.nanoTime(), () -> false)
                         .compose(l -> l.answer().unreachable() ? Future.succeededFuture() : vertx.executeBlocking(() -> {
                             reconcileNpmCopy(cacheFile, ref, l.answer(), l.askedAt());
                             return null;
@@ -1130,22 +1228,43 @@ class ArtifactCacheHandler {
      * <p>
      * A 5xx is asked once more while over half the client's silence budget is left, so the
      * tarball's head still has time: without a digest the tarball is relayed uncached, and a
-     * relayed body that stalls cannot be resumed (#925, #929). A 429 is not: asked again at
-     * once, it would only be refused again.
+     * relayed body that stalls cannot be resumed (#925, #929). A 429 is not asked again at once,
+     * where it would only be refused again: while {@code clientWaits} (no copy to serve meanwhile),
+     * it is asked again after the wait {@link #throttleDelay} gives, on the domain's schedule (#2302).
      * <p>
      * Each ask joins one of the same version already in flight (#1567), but the retry is each
      * caller's own, decided on its own budget, so a joined caller does not depend on the first one's client.
      */
-    Future<NpmLookup> fetchNpmVersion(String domain, String packageName, String version, long started) {
+    Future<NpmLookup> fetchNpmVersion(String domain, String packageName, String version, long started,
+                                      BooleanSupplier clientWaits) {
+        return fetchNpmVersion(domain, packageName, version, started, clientWaits, 0);
+    }
+
+    private Future<NpmLookup> fetchNpmVersion(String domain, String packageName, String version, long started,
+                                              BooleanSupplier clientWaits, int throttled) {
         var path = "/" + packageName.replace("/", "%2F") + "/" + version;
         Supplier<Future<NpmLookup>> ask = () -> npmLookups.join(domain + path, () -> {
             var asked = Instant.now();
             return fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES).map(answer -> new NpmLookup(answer, asked));
         });
-        return ask.get().compose(lookup -> lookup.answer().status() >= 500
-                && upstream.silenceLeftMillis(started) > TimeUnit.SECONDS.toMillis(upstream.clientSilenceBudgetSeconds) / 2
-                ? ask.get()
-                : Future.succeededFuture(lookup));
+        return ask.get().compose(lookup -> {
+            var status = lookup.answer().status();
+            if (status >= 500
+                    && upstream.silenceLeftMillis(started) > TimeUnit.SECONDS.toMillis(upstream.clientSilenceBudgetSeconds) / 2) {
+                return ask.get();
+            }
+            var delay = status == 429 && clientWaits.getAsBoolean()
+                    ? throttleDelay(domain, started, lookup.answer().header("Retry-After"), throttled) : -1;
+            if (delay < 0) return Future.succeededFuture(lookup);
+            ProxyLog.trace("Upstream throttled " + domain + path + " (429), asking again in " + delay + "ms");
+            var again = Promise.<NpmLookup>promise();
+            vertx.setTimer(delay, t -> {
+                // Not asked again for a client that left meanwhile
+                if (!clientWaits.getAsBoolean()) again.complete(lookup);
+                else fetchNpmVersion(domain, packageName, version, started, clientWaits, throttled + 1).onComplete(again);
+            });
+            return again.future();
+        });
     }
 
     /**
@@ -1247,6 +1366,12 @@ class ArtifactCacheHandler {
         /** Upstream says the document does not exist (any more). */
         boolean gone() {
             return status == 404 || status == 410;
+        }
+
+        /** The first of upstream's {@link #headers} named {@code name}, or null. */
+        String header(String name) {
+            return headers.stream().filter(h -> h.getKey().equalsIgnoreCase(name))
+                    .map(Map.Entry::getValue).findFirst().orElse(null);
         }
 
         /** Whether this answer may evict a cached artifact on its own. */

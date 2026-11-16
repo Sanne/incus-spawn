@@ -634,7 +634,7 @@ Only an unreachable upstream serves an older one.
   A Vertex model call, which the proxy sends itself once the body is in, gets a watchdog from then (#1059): through the token fetch, a 401's retry and the answer, which may be a stream.
   A real stream from the API had never gone more than about a minute between chunks when this was measured, so 110s does not cut any stream that would have lived; what changes is that the cut is logged and upstream is let go.
   A relay cannot resume, so a shasum lookup answered with a `5xx` is asked once more, while over half the client's budget is left, before the tarball falls back to a relay (`fetchNpmVersion`).
-  A `429` is not, since asked again at once it would be refused again.
+  A `429` is not asked again at once, where it would be refused again: when there is no cached copy to serve meanwhile, it is asked again after the wait "Wait out a 429 on a cache miss" describes (#2302), and when that wait does not fit, the tarball is relayed.
   The npm fallback logs that it relays, so a codex install that fails without a stall or resume line in the proxy log points at it directly.
   A relayed request's body is paused as the request is routed, before the proxy waits on anything (#1164), and streamed upstream once the connection is ready (`pipeRequest`, #1175), with backpressure both ways.
   Vert.x drops a body that arrives with nothing reading it, and then refuses to read the request at all, but queues a paused one.
@@ -650,6 +650,18 @@ Only an unreachable upstream serves an older one.
   A client that sends `Expect: 100-continue` (curl above 1 MB) gets upstream's `100`: the relay sends upstream the head at once instead of on the first body byte, which the client withheld until its own timeout, about a second per upload.
   A request with a body is therefore never served from a cache (all of them are keyed by path alone).
   A relay whose client left before its body was all sent resets its upstream request, also when it left while the body was paused, which gives the connection back to the pool instead of holding it for good.
+- *Wait out a 429 on a cache miss* (#2302).
+  A Maven, Gradle or npm miss that upstream answers `429` is asked again after upstream's `Retry-After`, whole seconds or an HTTP date, or after 2s doubled for each earlier 429 of that fetch when it sent none.
+  The wait is never under a second, so a `Retry-After: 0` does not ask again every slot.
+  An npm miss asks for the version document first, and a `429` there is waited out the same way when there is no cached copy to serve meanwhile; a background confirmation never waits.
+  The client hears nothing meanwhile, so the wait must end 5s before the client's silence budget and 5s before 30s from its request, Gradle's default socket timeout and the shortest read timeout of the clients served (Maven's and npm's are minutes).
+  A Gradle client asked to wait longer would otherwise give up on its own and see a read timeout instead of the `429`.
+  A wait that does not end in time is not made: the client gets the `429` with upstream's `Retry-After`, which the relay already copies, so a client that retries waits the right time.
+  An npm version document is then relayed without its digest as before, and its tarball relayed uncached.
+  One schedule per domain spaces the fetches waiting on it 250ms apart, so a cold build's misses do not all ask again the moment the wait ends.
+  A new miss does not consult that schedule before its first ask, so it draws its own `429`; the domain's backoff (#2301, "Offline" below) does not hold it back either, since it has no copy to serve.
+  It gives up a build that would have failed in a second waiting up to 25s before failing the same way.
+  OCI registries, redirects and resumes are unchanged.
 - *Offline.*
   Only when upstream cannot be reached (connect/DNS/TLS failure, an exchange that broke on an established connection, or a 5xx or 429, i.e. cases where the client would otherwise get an error) are cached artifacts and stored sidecars served unconfirmed.
   A broken exchange is retried once first, since a pooled keep-alive connection may simply have died while idle; a timeout is not, which would double the wait on a black-holed network.
@@ -1120,10 +1132,10 @@ The proxy needs no root, already watches `config.yaml`, and holds no state of it
 When a registry or an API rate-limits a request and the proxy has nothing better to offer, the client gets upstream's own answer.
 That is the `429`, its `Retry-After` and rate-limit headers, and its body.
 Build tools, `git`, `gh` and the agents decide how long to wait from those, so an answer the proxy rewrote would make them retry too early or give up.
-The proxy absorbs a `429` only by serving a cached copy in its place.
+The proxy absorbs a `429` only by serving a cached copy in its place, or on a cache miss by waiting and asking again while the client's budget allows ("Wait out a 429 on a cache miss", #2302).
 
 Every relayed domain passes the answer on whole: `Upstream.copyResponseHead` copies the status and every header but `Connection` and `Transfer-Encoding`.
-So does a Maven or Gradle cache miss that upstream does not answer with a `200` or a redirect, through `Upstream.relayResponse`.
+So does a Maven or Gradle cache miss that upstream does not answer with a `200` or a redirect, through `Upstream.relayResponse`, a `429` once its wait no longer fits.
 The Vertex translations relay Vertex's status and headers the same way, in Vertex's form, which may lack the headers the client's SDK reads for Anthropic or Gemini.
 
 Two answers are written by the proxy, and both keep upstream's retry headers (`Upstream.retryHeaders`: `Retry-After`, `RateLimit*` and `X-RateLimit-*`).
