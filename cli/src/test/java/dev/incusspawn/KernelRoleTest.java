@@ -224,18 +224,7 @@ class KernelRoleTest {
     }
 
     private Run runToTheEnd(String role, String arch) throws IOException, InterruptedException {
-        var output = dir.resolve("output-" + role + "-" + arch + ".log");
-        var pb = new ProcessBuilder("/bin/bash", SCRIPT.toString(), role, dir.resolve("out").toString(), arch)
-                .redirectErrorStream(true).redirectOutput(output.toFile());
-        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
-        pb.environment().put("KERNEL_CACHE_DIR", dir.resolve("cache").toString());
-        pb.environment().put("CROSS_COMPILE", "stub-");
-        var process = pb.start();
-        var finished = process.waitFor(30, TimeUnit.SECONDS);
-        process.destroyForcibly();
-        var log = Files.readString(output);
-        assertTrue(finished, "the script hung:\n" + log);
-        return new Run(process.exitValue(), log);
+        return exec(SCRIPT, role, dir.resolve("out").toString(), arch);
     }
 
     private static List<String> enabled(String fragment) {
@@ -248,7 +237,13 @@ class KernelRoleTest {
     }
 
     private String run(Path script, String... args) throws IOException, InterruptedException {
-        var output = dir.resolve("output.log");
+        var run = exec(script, args);
+        assertNotEquals(0, run.exit(), "the stub curl fails, so the script cannot succeed:\n" + run.log());
+        return run.log();
+    }
+
+    private Run exec(Path script, String... args) throws IOException, InterruptedException {
+        var output = Files.createTempFile(dir, "output-", ".log");
         var command = new ArrayList<>(List.of("/bin/bash", script.toString()));
         command.addAll(List.of(args));
         var pb = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(output.toFile());
@@ -261,8 +256,7 @@ class KernelRoleTest {
         process.destroyForcibly();
         var log = Files.readString(output);
         assertTrue(finished, "the script hung:\n" + log);
-        assertNotEquals(0, process.exitValue(), "the stub curl fails, so the script cannot succeed:\n" + log);
-        return log;
+        return new Run(process.exitValue(), log);
     }
 
     private void stub(String name, String body) throws IOException {
