@@ -816,6 +816,7 @@ Within that interval a token that has expired, or that the backend has just refu
 Such a caller is handed a generation committed since it read the session only when that generation's token works too, and is answered 401 once the account's session is another one or gone.
 A refusal is a 401 to a backend request or to a WebSocket handshake, and is kept per token (the session at one generation), so a late 401 for a token a refresh has already replaced does not mark the current one; a refresh that succeeds clears the session's earlier ones.
 A rate limit or server error from OpenAI reaches the guest as one too (429, 502), so Codex retries rather than treating its session as dead.
+The 429 keeps OpenAI's `Retry-After` and rate-limit headers ("A throttled answer reaches the client as upstream sent it").
 The answer is committed only if the file still holds the session and generation the refresh started from.
 A refresh overtaken by another write of the same session is answered from that write.
 After a sign-in again it is discarded, its new refresh token revoked, and the request fails with no new-session proof; after removal it is discarded too, and the proxy never creates a session file.
@@ -1102,6 +1103,25 @@ Rejected, on both platforms: firewall rules.
 On Linux a DNAT to `127.0.0.1` needs `route_localnet` on the bridge, which removes a kernel protection for loopback; on macOS it needs an appliance rule and a `pf` redirect, which isx does not touch.
 Both need root for every change to the list, leave state outside isx to restore at boot, and silently override what already listens on a port, where a bind fails loudly.
 The proxy needs no root, already watches `config.yaml`, and holds no state of its own.
+
+## A throttled answer reaches the client as upstream sent it (#2309)
+When a registry or an API rate-limits a request and the proxy has nothing better to offer, the client gets upstream's own answer.
+That is the `429`, its `Retry-After` and rate-limit headers, and its body.
+Build tools, `git`, `gh` and the agents decide how long to wait from those, so an answer the proxy rewrote would make them retry too early or give up.
+The proxy absorbs a `429` only by serving a cached copy in its place.
+
+Every relayed domain passes the answer on whole: `Upstream.copyResponseHead` copies the status and every header but `Connection` and `Transfer-Encoding`.
+So does a Maven or Gradle cache miss that upstream does not answer with a `200` or a redirect, through `Upstream.relayResponse`.
+The Vertex translations relay Vertex's status and headers the same way, in Vertex's form, which may lack the headers the client's SDK reads for Anthropic or Gemini.
+
+Two answers are written by the proxy, and both keep upstream's retry headers (`Upstream.retryHeaders`: `Retry-After`, `RateLimit*` and `X-RateLimit-*`).
+A checksum or signature request on a Maven or Gradle domain that has no stored copy gets upstream's status and body, up to the sidecar size bound, with its `Content-Type` and those retry headers (`SidecarAnswer.headers`).
+This holds for a `5xx` too, since nothing differs but the status.
+A ChatGPT token refresh refused with a `429` keeps the proxy's own JSON body, which Codex classifies by its `code`.
+A refresh refused with a `5xx` becomes the proxy's `502`, without upstream's headers.
+OpenAI's body is not passed on, since it answered a request that carried the host's refresh token.
+
+The proxy's own throttle of ChatGPT refreshes answers `503` without `Retry-After`: it is the proxy's answer, not upstream's.
 
 ## Vertex AI: container in Vertex mode vs standard mode
 We initially ran containers in standard (non-Vertex) mode with proxy-side API translation — the container sent `/v1/messages` and the proxy rewrote to Vertex `rawPredict`.

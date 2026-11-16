@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
@@ -78,6 +79,7 @@ class ChatGptRouteTest {
     static final AtomicInteger refreshes = new AtomicInteger();
     static volatile String refreshError;
     static volatile int refreshErrorStatus = 400;
+    static volatile Map<String, String> refreshErrorHeaders = Map.of();
     static volatile boolean refreshAnswersEmpty;
     /** The last backend request the stub answered: its body's length and its headers. */
     record Received(int bodyLength, io.vertx.core.MultiMap headers) {}
@@ -157,6 +159,7 @@ class ChatGptRouteTest {
         refreshes.set(0);
         refreshError = null;
         refreshErrorStatus = 400;
+        refreshErrorHeaders = Map.of();
         refreshAnswersEmpty = false;
         holdBackend = CompletableFuture.completedFuture(null);
         refreshHeads.clear();
@@ -265,6 +268,7 @@ class ChatGptRouteTest {
                         if (refreshAnswersEmpty) {
                             resp.end("{}");
                         } else if (refreshError != null) {
+                            refreshErrorHeaders.forEach(resp::putHeader);
                             resp.setStatusCode(refreshErrorStatus).end("{\"error\":{\"code\":\"" + refreshError + "\"}}");
                         } else {
                             var fresh = mint(mintedTtlSeconds);
@@ -295,7 +299,8 @@ class ChatGptRouteTest {
 
     // --- A container's client: raw HTTP/1.1 over TLS, so every byte of the request is the test's ---
 
-    record Reply(int status, String body) {}
+    /** {@code headers}: by lower-case name, the last of each. */
+    record Reply(int status, String body, Map<String, String> headers) {}
 
     static Reply send(String host, String sni, String rawHead, String body) throws Exception {
         var tls = SSLContext.getInstance("TLS");
@@ -334,8 +339,11 @@ class ChatGptRouteTest {
         }
         long length = -1;
         var chunked = false;
+        var headers = new java.util.HashMap<String, String>();
         for (var header = line(in); !header.isEmpty(); header = line(in)) {
             var lower = header.toLowerCase(Locale.ROOT);
+            var colon = header.indexOf(':');
+            if (colon > 0) headers.put(lower.substring(0, colon), header.substring(colon + 1).strip());
             if (lower.startsWith("content-length:")) length = Long.parseLong(lower.substring(15).strip());
             if (lower.startsWith("transfer-encoding:") && lower.contains("chunked")) chunked = true;
         }
@@ -346,7 +354,7 @@ class ChatGptRouteTest {
         } else {
             body.write(length >= 0 ? in.readNBytes((int) length) : in.readAllBytes());
         }
-        return new Reply(status, body.toString(StandardCharsets.UTF_8));
+        return new Reply(status, body.toString(StandardCharsets.UTF_8), headers);
     }
 
     /** One CRLF-terminated line, without its terminator. */
@@ -888,6 +896,22 @@ class ChatGptRouteTest {
         // Within the interval, an expired token is not handed out as if refreshed: try again later
         assertEquals(503, refresh(proofs().refreshToken()).status());
         assertEquals(1, refreshes.get());
+    }
+
+    @Test
+    void aThrottledRefreshTellsCodexWhenToTryAgain() throws Exception {
+        sessionId = store.create(ACCOUNT, mint(-10)).sessionId();
+        bind(SECRET, sessionId);
+        refreshError = "rate_limit_exceeded";
+        refreshErrorStatus = 429;
+        refreshErrorHeaders = Map.of("Retry-After", "17", "X-RateLimit-Remaining-Requests", "0");
+
+        var reply = refresh(proofs().refreshToken());
+        assertEquals(429, reply.status(), reply.body());
+        assertEquals("17", reply.headers().get("retry-after"), "upstream's, so Codex waits as long as OpenAI asked");
+        assertEquals("0", reply.headers().get("x-ratelimit-remaining-requests"));
+        assertTrue(reply.body().contains("server_error"), "the proxy's own answer, which Codex classifies: " + reply.body());
+        assertNull(proxy.authError, "nothing tells the user to sign in again");
     }
 
     @Test

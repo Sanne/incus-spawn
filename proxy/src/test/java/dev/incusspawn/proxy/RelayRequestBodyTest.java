@@ -110,6 +110,11 @@ class RelayRequestBodyTest {
             req.response().setStatusCode(413).putHeader("Connection", "close").end("too large");
             return;
         }
+        if (req.path().startsWith("/throttled/")) {
+            req.response().setStatusCode(429).putHeader("Retry-After", "17").putHeader("RateLimit-Remaining", "0")
+                    .putHeader("Connection", "close").end("slow down");
+            return;
+        }
         if (req.path().startsWith("/stream/")) {
             var body = Buffer.buffer();
             req.handler(chunk -> {
@@ -317,6 +322,19 @@ class RelayRequestBodyTest {
                 + "Content-Length: 100000\r\n\r\n"
                 + "only the start of it"));
         assertTrue(reply.startsWith("HTTP/1.1 502"), reply);
+    }
+
+    /** A relayed domain's 429 reaches the client as upstream sent it: a client waits as long as its headers say (#2309). */
+    @Test
+    void throttledAnswerIsRelayedWithItsRetryHeaders() throws Exception {
+        var host = "ghcr.io";
+        var reply = exchange(host, Buffer.buffer("GET /throttled/v2/app/manifests/latest HTTP/1.1\r\n"
+                + "Host: " + host + "\r\nConnection: close\r\n\r\n"));
+        assertTrue(reply.startsWith("HTTP/1.1 429"), reply);
+        var head = reply.toLowerCase(java.util.Locale.ROOT);
+        assertTrue(head.contains("\r\nretry-after: 17\r\n"), reply);
+        assertTrue(head.contains("\r\nratelimit-remaining: 0\r\n"), reply);
+        assertTrue(reply.endsWith("slow down"), reply);
     }
 
     /** Upstream's answer to an upload it refuses early reaches the client before the upload ends. */

@@ -22,10 +22,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.SequencedMap;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -1218,14 +1221,19 @@ class ArtifactCacheHandler {
      * upstream answered with something we cannot use (an oversized body, a redirect
      * we will not follow), so it confirms nothing and nothing is served from the
      * cache on its strength. {@code fromHeader}: the checksum came from a
-     * server-computed header rather than a separately uploaded sidecar.
+     * server-computed header rather than a separately uploaded sidecar. {@code headers}: those of
+     * upstream's own that go out with its status when the client gets it (#2309), on an error alone.
      */
-    record SidecarAnswer(int status, byte[] body, boolean fromHeader) {
+    record SidecarAnswer(int status, byte[] body, boolean fromHeader, List<Map.Entry<String, String>> headers) {
         static final SidecarAnswer UNREACHABLE = new SidecarAnswer(-1, null);
         static final SidecarAnswer UNUSABLE = new SidecarAnswer(0, null);
 
         SidecarAnswer(int status, byte[] body) {
             this(status, body, false);
+        }
+
+        SidecarAnswer(int status, byte[] body, boolean fromHeader) {
+            this(status, body, fromHeader, List.of());
         }
 
         /**
@@ -1239,11 +1247,6 @@ class ArtifactCacheHandler {
         /** Upstream says the document does not exist (any more). */
         boolean gone() {
             return status == 404 || status == 410;
-        }
-
-        /** The status to answer with when nothing can be served. */
-        int errorStatus() {
-            return status >= 500 || status == 429 ? status : 502;
         }
 
         /** Whether this answer may evict a cached artifact on its own. */
@@ -1749,13 +1752,14 @@ class ArtifactCacheHandler {
      * What a sidecar request is answered with: a body, or an error with its message. An unreachable
      * upstream on the first ask is left to each caller, which serves its own stored copy if it has one.
      */
-    record SidecarReply(int status, byte[] body, String error, boolean unreachable) {
+    record SidecarReply(int status, byte[] body, List<Map.Entry<String, String>> headers, String error,
+                        boolean unreachable) {
         static SidecarReply of(int status, byte[] body) {
-            return new SidecarReply(status, body, null, false);
+            return new SidecarReply(status, body, List.of(), null, false);
         }
 
         static SidecarReply error(int status, String message) {
-            return new SidecarReply(status, null, message, false);
+            return new SidecarReply(status, null, List.of(), message, false);
         }
     }
 
@@ -1778,7 +1782,7 @@ class ArtifactCacheHandler {
                     } else if (reply.error() != null) {
                         upstream.sendError(resp, reply.status(), reply.error());
                     } else {
-                        sendSidecar(resp, reply.status(), reply.body());
+                        sendSidecar(resp, reply.status(), reply.body(), reply.headers());
                     }
                 });
     }
@@ -1794,8 +1798,12 @@ class ArtifactCacheHandler {
         var artifact = target.artifact();
         var lookedUp = Instant.now();
         return fetchSidecar(domain, path).compose(answer -> {
+            if (answer == SidecarAnswer.UNREACHABLE) {
+                return Future.succeededFuture(new SidecarReply(502, null, List.of(), "Upstream unreachable", !askedAgain));
+            }
             if (answer.unreachable()) {
-                return Future.succeededFuture(new SidecarReply(answer.errorStatus(), null, "Upstream unreachable", !askedAgain));
+                // Throttled or failing: what the client gets, when no stored copy stands in, is upstream's own answer
+                return Future.succeededFuture(new SidecarReply(answer.status(), answer.body(), answer.headers(), null, !askedAgain));
             }
             if (answer == SidecarAnswer.UNUSABLE) {
                 return Future.succeededFuture(SidecarReply.error(502, "Unusable upstream answer"));
@@ -1891,9 +1899,19 @@ class ArtifactCacheHandler {
     }
 
     private static void sendSidecar(HttpServerResponse resp, int status, byte[] body) {
+        sendSidecar(resp, status, body, List.of());
+    }
+
+    /** {@code headers}: upstream's, kept by {@link #readSmallBody} for an error; a Content-Type among them replaces ours. */
+    private static void sendSidecar(HttpServerResponse resp, int status, byte[] body,
+                                    List<Map.Entry<String, String>> headers) {
         if (resp.ended() || resp.closed()) return;
         resp.setStatusCode(status);
-        resp.putHeader("Content-Type", "text/plain");
+        if (headers.stream().noneMatch(header -> header.getKey().equalsIgnoreCase("Content-Type"))) {
+            resp.putHeader("Content-Type", "text/plain");
+        }
+        // Added, not set: a header upstream repeats (RateLimit-Policy, say) keeps every value
+        headers.forEach(header -> resp.headers().add(header.getKey(), header.getValue()));
         resp.end(Buffer.buffer(body == null ? new byte[0] : body));
     }
 
@@ -2026,21 +2044,40 @@ class ArtifactCacheHandler {
     private static Future<SidecarAnswer> readSmallBody(HttpClientResponse resp, int maxBytes, Runnable read) {
         var promise = Promise.<SidecarAnswer>promise();
         var body = Buffer.buffer();
+        var status = resp.statusCode();
+        // An error goes to the client with these when nothing stands in for it: when to retry, and what its body is
+        var headers = status >= 500 || status == 429 ? errorHeaders(resp) : List.<Map.Entry<String, String>>of();
         resp.handler(chunk -> {
             read.run();
             if (body.length() + chunk.length() > maxBytes) {
                 resp.handler(null);
-                // An oversized sidecar is unusable; an oversized error page is still that error
-                promise.tryComplete(resp.statusCode() == 200
-                        ? SidecarAnswer.UNUSABLE : new SidecarAnswer(resp.statusCode(), null));
+                // An oversized sidecar is unusable; an oversized error page is still that error, without
+                // its body, so without the type that described it
+                promise.tryComplete(status == 200
+                        ? SidecarAnswer.UNUSABLE : new SidecarAnswer(status, null, false, withoutType(headers)));
                 resp.request().reset();
             } else {
                 body.appendBuffer(chunk);
             }
         });
-        resp.endHandler(v -> promise.tryComplete(new SidecarAnswer(resp.statusCode(), body.getBytes())));
+        resp.endHandler(v -> promise.tryComplete(new SidecarAnswer(status, body.getBytes(), false, headers)));
         resp.exceptionHandler(promise::tryFail);
         return promise.future();
+    }
+
+    /** {@link Upstream#retryHeaders}, and the type of the body they come with. */
+    private static List<Map.Entry<String, String>> errorHeaders(HttpClientResponse resp) {
+        var type = resp.getHeader("Content-Type");
+        var retry = Upstream.retryHeaders(resp.headers());
+        if (type == null) return retry;
+        var headers = new ArrayList<Map.Entry<String, String>>(retry.size() + 1);
+        headers.add(Map.entry("Content-Type", type));
+        headers.addAll(retry);
+        return List.copyOf(headers);
+    }
+
+    private static List<Map.Entry<String, String>> withoutType(List<Map.Entry<String, String>> headers) {
+        return headers.stream().filter(header -> !header.getKey().equalsIgnoreCase("Content-Type")).toList();
     }
 
     private void deleteUnverifiedLegacyCaches() {
