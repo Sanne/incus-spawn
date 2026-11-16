@@ -215,10 +215,21 @@ PY
 ACCOUNT_ID=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['account_id'])" "$WORK/minted.json")
 
 # Only one proxy can serve the bridge: the user's stops for the test, and starts again on exit
-curl -sf -m 2 "http://$GATEWAY:18080/health" >/dev/null && USER_PROXY_WAS_UP=1
+# One request: health_pid fails when nothing answered, and prints nothing when the proxy reports no pid
+USER_PROXY_PID=$(health_pid 2>/dev/null) && USER_PROXY_WAS_UP=1
 isx proxy stop >/dev/null 2>&1 || true
-sleep 1
-# After the user's proxy stopped: whatever it wrote on the way out is not the test's doing
+# A proxy run by hand is only sent SIGTERM, and it goes on writing its logs until it exits, which
+# can take seconds (#2285): wait for the process itself, up to 30 s, not for a fixed time
+if [ -n "$USER_PROXY_PID" ]; then
+    for _ in $(seq 1 120); do ps -p "$USER_PROXY_PID" >/dev/null || break; sleep 0.25; done
+    if ps -p "$USER_PROXY_PID" >/dev/null; then
+        echo "WARNING: the user's proxy (PID $USER_PROXY_PID) is still running 30 s after 'isx proxy stop'" >&2
+    fi
+else
+    # No pid to wait for: give it a moment
+    sleep 1
+fi
+# After the user's proxy exited: whatever it wrote on the way out is not the test's doing
 REAL_STATE_BEFORE=$(real_state)
 # The test proxy sees the test's directories where the user's are: in a mount namespace of its
 # own, they are bind-mounted over ~/.config/incus-spawn and ~/.local/state/incus-spawn. Java takes
