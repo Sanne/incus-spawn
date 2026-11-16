@@ -15,7 +15,8 @@ import java.util.regex.Pattern;
  * never decide whether destroying it loses anything, which is {@link WorkState}'s.
  *
  * <p>A {@link GuestReader} reads one agent's sessions in the guest, as a section of the overview's
- * one script ({@link GuestRead}); Claude Code's is {@link ClaudeSessions}. What the summary is made
+ * one script ({@link GuestRead}): {@link ClaudeSessions}, {@link CodexSessions}, {@link PiSessions}
+ * and {@link OpencodeSessions}. What the summary is made
  * of is this record, whatever read it, so a later reader (a content log in the proxy) feeds the
  * same {@link Summary}.
  *
@@ -43,6 +44,9 @@ public record AgentSessions(State state, int total, List<Session> sessions, List
 
     /** One agent's sessions, read by a section of the guest's script. */
     public interface GuestReader {
+        /** The agent whose sessions it reads, as {@link Session#agent} names it. */
+        String agent();
+
         /** The line that opens its section of the output. */
         String header();
 
@@ -59,20 +63,35 @@ public record AgentSessions(State state, int total, List<Session> sessions, List
         return new AgentSessions(State.UNKNOWN, 0, List.of(), List.of(), why);
     }
 
-    /** Several readers' sessions as one: newest first, unknown when any one is. */
-    static AgentSessions merge(List<AgentSessions> all) {
-        if (all.isEmpty()) return unknown("no reader answered");
+    /**
+     * Several readers' sessions as one, newest first and the newest {@link JsonlSessions#MAX_SESSIONS}
+     * alone, with every session counted. A reader whose read failed is named among
+     * {@link #otherAgents}, as sessions that may be there and were not read, so the others still
+     * show and the instance never reads as untouched; only when no reader answered is the whole
+     * read unknown.
+     */
+    static AgentSessions merge(List<String> agents, List<AgentSessions> all) {
         var sessions = new ArrayList<Session>();
         var others = new ArrayList<String>();
         int total = 0;
-        for (var one : all) {
-            if (one.state != State.READ) return one;
+        AgentSessions failed = null;
+        boolean anyRead = false;
+        for (int i = 0; i < all.size(); i++) {
+            var one = all.get(i);
+            if (one.state != State.READ) {
+                if (failed == null) failed = one;
+                if (!others.contains(agents.get(i))) others.add(agents.get(i));
+                continue;
+            }
+            anyRead = true;
             total += one.total;
             sessions.addAll(one.sessions);
-            others.addAll(one.otherAgents);
+            for (var other : one.otherAgents) if (!others.contains(other)) others.add(other);
         }
+        if (!anyRead) return failed != null ? failed : unknown("no reader answered");
         sessions.sort(Comparator.comparing(Session::modified).reversed());
-        return new AgentSessions(State.READ, total, List.copyOf(sessions), List.copyOf(others), null);
+        var newest = sessions.subList(0, Math.min(sessions.size(), JsonlSessions.MAX_SESSIONS));
+        return new AgentSessions(State.READ, total, List.copyOf(newest), List.copyOf(others), null);
     }
 
     /** The longest closing message kept, in code points, beyond what any summary shows. */

@@ -51,9 +51,10 @@ jobs:
           key: maven-${{ hashFiles('**/pom.xml') }}
           restore-keys: maven-
 
-      # ZshCompletionTest drives a real zsh and skips without one, which the runner does not ship.
-      - name: Install zsh
-        run: sudo .github/scripts/apt-install.sh zsh
+      # ZshCompletionTest drives a real zsh and skips without one, which the runner does not ship;
+      # AgentReadersTest reads opencode's sessions with sqlite3, and skips that read without it.
+      - name: Install zsh and sqlite3
+        run: sudo .github/scripts/apt-install.sh zsh sqlite3
 
       - name: Build and test
         run: mvn package

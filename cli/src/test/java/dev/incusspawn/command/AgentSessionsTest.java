@@ -69,11 +69,10 @@ class AgentSessionsTest {
                 USER.formatted("Port the parser"),
                 ASSISTANT.formatted("false", "\\u001b[31mPorted\\u001b[0m, token " + token + " used")) + "\n");
         Files.setLastModifiedTime(newer, FileTime.from(Instant.parse("2026-11-12T10:00:00Z")));
-        // Another agent's sessions are there but not read: never untouched
+        // A file where Codex keeps no rollout is not a session, and Codex may keep them another way: never untouched
         Files.createDirectories(home.resolve(".codex/sessions")).resolve("x.jsonl").toFile().createNewFile();
-        // opencode keeps its sessions in one database, sometimes beside a storage directory: named once
+        // opencode's sessions that cannot be read: there may be some, so never untouched
         Files.createDirectories(home.resolve(".local/share/opencode/storage")).resolve("s").toFile().createNewFile();
-        Files.writeString(home.resolve(".local/share/opencode/opencode.db"), "");
 
         var read = run(home);
         var sessions = read.sessions();
@@ -183,18 +182,20 @@ class AgentSessionsTest {
         assertEquals("report " + (ClaudeSessions.MAX_SESSIONS + 2), sessions.sessions().getFirst().closing());
     }
 
-    private record Read(WorkState work, AgentSessions sessions) {
+    record Read(WorkState work, AgentSessions sessions) {
         Summary summary(boolean active) {
             return Summary.of(sessions, work, active);
         }
     }
 
     /** The overview's whole script, run here as the guest runs it. */
-    private static Read run(Path home) throws Exception {
+    static Read run(Path home) throws Exception {
         var out = new ByteArrayOutputStream();
         var process = new ProcessBuilder("sh", "-c", GuestRead.SCRIPT).directory(home.toFile());
         process.environment().put("HOME", home.toString());
-        process.environment().remove("CLAUDE_CONFIG_DIR");
+        for (var override : List.of("CLAUDE_CONFIG_DIR", "CODEX_HOME", "PI_CODING_AGENT_DIR", "XDG_DATA_HOME")) {
+            process.environment().remove(override);
+        }
         var p = process.redirectError(ProcessBuilder.Redirect.DISCARD).start();
         p.getInputStream().transferTo(out);
         assertTrue(p.waitFor(30, TimeUnit.SECONDS));
