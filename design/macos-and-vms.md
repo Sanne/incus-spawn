@@ -431,6 +431,8 @@ The guest does not run while its host sleeps, so its clock is behind by the time
 The launcher sends the host's time to the guest agent (`guest-set-time`), on a connection of its own for each wake, tried up to five times a second apart since the guest is waking too.
 vfkit keeps one connection for all wakes and stops setting the clock for good when that one cannot be made.
 The clock is set for one wake at a time, on a serial queue, since the guest agent serves one client at a time.
+On a Mac this does not set the clock yet, under either program: the appliance's agent exits at boot, so nothing answers on its port, and the launcher's log says so (#2282).
+After a sleep of 62 s the guest was 59 s behind 10 s after the wake, with vfkit as with `isx-vm` (docs/dev/PERFORMANCE-NOTES.md "The launcher's machine with 192 connections held, and after a sleep, on a Mac").
 A second wake while the first is still being served sets the clock again afterwards, since the guest stood still once more.
 The launcher learns of a wake from two clocks, one that counts the time asleep and one that does not (`SleepWatch`), read every two seconds.
 That needs no system notification, so no AppKit and no IOKit in a program with no other use for them.
@@ -447,6 +449,7 @@ vfkit runs the machine on the same framework and limits nothing, so the same loa
 192 is three quarters of the 256.
 The rest is for what that process has open anyway (8, if the 248 filled it), for the files of the home's share, which it opens as well, for the clock's own connection after a wake, and for connections whose close is still on its way to the main queue.
 How many descriptors a busy share takes is not known: the measurement records that process's count, with connections held and after the share was read under isx.
+With the limit the machine stayed up on the Mac with 192 held, and between 47 and 56 of the 256 were left, since the count read that day is an upper bound (the same section of the notes).
 The room is one object for the process (`GuestRoom`), since the three sockets' connections are counted together in that other process.
 A connection that waits is counted as `waiting`, as one inside a dial is, and the relay says once that the room is full.
 One whose client left while it waited is closed without a dial and counted as `refused`: its request would otherwise reach the guest after its sender gave up on the answer.
