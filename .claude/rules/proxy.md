@@ -407,7 +407,8 @@ Key design:
   Past the tiers, only an unreachable upstream (`SidecarAnswer.unreachable()`: connect failure, 5xx or 429) serves unconfirmed.
   A refused connect starts a 30s per-domain backoff, and a 429 one as long as its `Retry-After` up to 60s, else 30s (`Upstream.startBackoff`, #2301).
   It ends on time, or on an answer to a request sent after its latest start that is not a 429, or is a 429 with `Retry-After: 0`.
-  A `429` or `5xx` on a relayed domain or a Maven/Gradle miss reaches the client as upstream sent it (#2309, design/proxy.md "A throttled answer reaches the client as upstream sent it").
+  A Maven, Gradle or npm miss answered `429` is first waited out on the domain's schedule within the client's budget, at most until 5s before Gradle's 30s read timeout (`ArtifactCacheHandler.throttleDelay`, #2302).
+  A `429` or `5xx` on a relayed domain or a Maven/Gradle miss reaches the client as upstream sent it, a miss's `429` only when that wait does not fit (#2309, design/proxy.md "A throttled answer reaches the client as upstream sent it").
   Where the proxy writes the answer, it keeps only what a client needs to wait: a sidecar with no stored copy keeps upstream's status, body, `Content-Type` and `Upstream.retryHeaders` (`SidecarAnswer.headers`), and a ChatGPT refresh's `429` keeps `Upstream.retryHeaders` beside the proxy's own body (its `5xx` becomes the proxy's `502`).
   `X-Checksum-SHA1` is what makes Maven skip its `.sha1` request.
   For a copy served on a trusted confirmation (`serveTrusted`) it is the stored checksum, and sidecar requests get the stored copy too, or Maven would pay the round trip the tiers save.

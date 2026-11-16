@@ -177,6 +177,13 @@ class ArtifactCacheProxyTest {
     static final AtomicInteger rangesDropped = new AtomicInteger();
     /** Range requests left to answer 503, like an overloaded CDN. */
     static final AtomicInteger rangesToRefuse = new AtomicInteger();
+    /** GETs left to answer 429, with {@link #throttleRetryAfter} when set, as a rate-limited Central does (#2302). */
+    static final AtomicInteger getsToThrottle = new AtomicInteger();
+    static volatile String throttleRetryAfter;
+    /** When each throttled GET was answered (nanoTime). */
+    static final List<Long> throttledAt = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** When the last GET of a jar came in (nanoTime), throttled or not. */
+    static volatile long lastJarGetAt;
     /** Error answers (4xx, 5xx) left to stall halfway through their body. */
     static final AtomicInteger errorsToStall = new AtomicInteger();
     /**
@@ -252,6 +259,15 @@ class ArtifactCacheProxyTest {
                 vertx.setTimer(headDelayMs, t -> reply(req, key));
                 return;
             }
+        }
+        if (req.method() == HttpMethod.GET && req.path().endsWith(".jar")) lastJarGetAt = System.nanoTime();
+        if (req.method() == HttpMethod.GET && req.getHeader("Range") == null
+                && getsToThrottle.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            throttledAt.add(System.nanoTime());
+            var throttle = req.response().setStatusCode(429);
+            if (throttleRetryAfter != null) throttle.putHeader("Retry-After", throttleRetryAfter);
+            throttle.end();
+            return;
         }
         if (req.method() == HttpMethod.GET && hold(getsToIgnore, req)) {
             return;
@@ -474,6 +490,10 @@ class ArtifactCacheProxyTest {
     static void resetHoldBudgets() {
         headsToStall.set(0);
         getsToIgnore.set(0);
+        getsToThrottle.set(0);
+        throttleRetryAfter = null;
+        throttledAt.clear();
+        lastJarGetAt = 0;
         getsToCut.set(0);
         errorsToStall.set(0);
     }
@@ -1817,6 +1837,97 @@ class ArtifactCacheProxyTest {
         // watchdog's job, and the client still gets every byte (#1116)
         assertEquals(List.of(), rangesWhilePaused.getNow(null), "a healthy upstream was not reset");
         assertEquals(List.of(), rangesJustAfter.get(5, TimeUnit.SECONDS), "resumed with a stale idle clock");
+    }
+
+    @Test
+    void cacheMissThrottledIsAskedAgainAfterRetryAfter() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        getsToThrottle.set(1);
+        throttleRetryAfter = "1";
+        var start = System.nanoTime();
+
+        var response = get(CENTRAL, JAR);
+
+        assertEquals(200, response.status());
+        assertEquals("v1", response.text());
+        assertEquals(1, throttledAt.size());
+        assertTrue(System.nanoTime() - start >= TimeUnit.MILLISECONDS.toNanos(900), "waited Retry-After");
+        awaitFile(cached(CENTRAL, JAR), "v1");
+    }
+
+    @Test
+    void retryAfterIsReadAsSecondsOrDate() {
+        assertEquals(3_000, ArtifactCacheHandler.retryAfterMillis(" 3 "));
+        assertEquals(-1, ArtifactCacheHandler.retryAfterMillis(null));
+        assertEquals(-1, ArtifactCacheHandler.retryAfterMillis("soon"));
+        assertEquals(0, ArtifactCacheHandler.retryAfterMillis("Wed, 21 Oct 2015 07:28:00 GMT"));
+        assertTrue(ArtifactCacheHandler.retryAfterMillis("99999999999999") > 1_000_000_000L);
+    }
+
+    @Test
+    void cacheMissThrottledWithoutRetryAfterBacksOff() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        getsToThrottle.set(1);
+        var start = System.nanoTime();
+
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertTrue(System.nanoTime() - start >= TimeUnit.MILLISECONDS.toNanos(1_900), "waited the base backoff");
+    }
+
+    @Test
+    void cacheMissThrottledPastAGradleTimeoutRelaysTheRetryAfter() throws Exception {
+        // 26s fits the silence budget (110s) but not Gradle's 30s socket timeout with 5s to spare
+        publishJar(CENTRAL, JAR, "v1");
+        getsToThrottle.set(1);
+        throttleRetryAfter = "26";
+
+        var answer = sendAsync(CENTRAL, JAR, resp -> Future.succeededFuture(
+                resp.statusCode() + " " + resp.getHeader("Retry-After")))
+                .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+
+        assertEquals("429 26", answer);
+    }
+
+    @Test
+    void overflowingRetryAfterIsNotGivenTheDomainsNextSlot() {
+        // With a slot already reserved, its nanoseconds wrapped negative and took the next one, asking again at once
+        var cache = proxy.artifactCache;
+        var domain = "overflow.example";
+        assertTrue(cache.throttleDelay(domain, System.nanoTime(), "1", 0) >= 0, "a wait that fits is scheduled");
+
+        assertEquals(-1, cache.throttleDelay(domain, System.nanoTime(), "99999999999999", 0));
+    }
+
+    @Test
+    void cacheMissThrottledBeyondTheBudgetRelaysTheRetryAfter() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        getsToThrottle.set(5);
+        throttleRetryAfter = "600";
+
+        var answer = sendAsync(CENTRAL, JAR, resp -> Future.succeededFuture(
+                resp.statusCode() + " " + resp.getHeader("Retry-After")))
+                .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+
+        assertEquals("429 600", answer);
+        assertEquals(1, throttledAt.size(), "not asked again, the wait cannot fit");
+    }
+
+    @Test
+    void throttledMissesOfOneDomainAreSpacedApart() throws Exception {
+        for (var i = 0; i < 3; i++) publishJar(CENTRAL, "/maven2/g/a" + i + "/1/a" + i + "-1.jar", "v" + i);
+        getsToThrottle.set(3);
+        throttleRetryAfter = "1";
+
+        var all = new java.util.ArrayList<Future<Response>>();
+        for (var i = 0; i < 3; i++) all.add(getAsync(CENTRAL, "/maven2/g/a" + i + "/1/a" + i + "-1.jar"));
+        for (var f : all) assertEquals(200, f.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS).status());
+
+        // 3 throttled, then 3 asked again, one slot after the other: the last at least
+        // Retry-After and two spacings of 250ms after the first 429, not all at once after 1s
+        assertEquals(3, throttledAt.size());
+        assertTrue(lastJarGetAt - throttledAt.get(0) >= TimeUnit.MILLISECONDS.toNanos(1_450),
+                "spaced: " + TimeUnit.NANOSECONDS.toMillis(lastJarGetAt - throttledAt.get(0)) + "ms");
+        assertEquals(6, hits.entrySet().stream().filter(e -> e.getKey().startsWith("GET")).mapToInt(e -> e.getValue().get()).sum());
     }
 
     @Test

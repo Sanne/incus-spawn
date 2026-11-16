@@ -83,6 +83,8 @@ class NpmCacheProxyTest {
     /** The status those answers carry, and how long each takes. */
     static volatile int unavailableStatus;
     static volatile long unavailableDelayMillis;
+    /** The Retry-After those answers carry, if any. */
+    static volatile String unavailableRetryAfter;
 
     @BeforeAll
     static void start() throws Exception {
@@ -139,6 +141,8 @@ class NpmCacheProxyTest {
         }
         var failures = unavailable.get(path);
         if (failures != null && failures.getAndDecrement() > 0) {
+            var retryAfter = unavailableRetryAfter;
+            if (retryAfter != null) req.response().putHeader("Retry-After", retryAfter);
             if (unavailableDelayMillis > 0) {
                 vertx.setTimer(unavailableDelayMillis, t -> req.response().setStatusCode(unavailableStatus).end("unavailable"));
             } else {
@@ -193,6 +197,7 @@ class NpmCacheProxyTest {
         unavailable.clear();
         unavailableStatus = 503;
         unavailableDelayMillis = 0;
+        unavailableRetryAfter = null;
         synchronized (gathered) {
             gathered.clear();
         }
@@ -343,14 +348,31 @@ class NpmCacheProxyTest {
     }
 
     @Test
-    void lookupThatIsThrottledIsNotAskedAgainAtOnce() throws Exception {
+    void lookupThatIsThrottledIsAskedAgainAfterItsRetryAfter() throws Exception {
+        // Without a copy to serve, the tarball would otherwise be relayed uncached (#2302)
         var path = publish("throttled");
         unavailable.put("/throttled/1.0.0", new AtomicInteger(1));
         unavailableStatus = 429;
+        unavailableRetryAfter = "1";
+        var start = System.nanoTime();
 
         assertEquals(new Response(200, "tarball of throttled"), get(path, 10));
 
-        assertEquals(1, hits.get("/throttled/1.0.0").get());
+        assertTrue(System.nanoTime() - start >= TimeUnit.MILLISECONDS.toNanos(900), "not asked again at once");
+        assertEquals(2, hits.get("/throttled/1.0.0").get());
+        awaitCached(path);
+    }
+
+    @Test
+    void lookupThatIsThrottledPastTheClientsTimeoutRelaysTheTarballUncached() throws Exception {
+        var path = publish("throttled-long");
+        unavailable.put("/throttled-long/1.0.0", new AtomicInteger(1));
+        unavailableStatus = 429;
+        unavailableRetryAfter = "60";
+
+        assertEquals(new Response(200, "tarball of throttled-long"), get(path, 10));
+
+        assertEquals(1, hits.get("/throttled-long/1.0.0").get(), "a wait past Gradle's 30s timeout is not made");
         assertFalse(Files.exists(cached(path)));
     }
 
@@ -450,10 +472,10 @@ class NpmCacheProxyTest {
         stalledLookup = lookup;
         var cache = proxy.artifactCache;
         var spent = System.nanoTime() - TimeUnit.SECONDS.toNanos(proxy.upstream.clientSilenceBudgetSeconds);
-        var exhausted = cache.fetchNpmVersion(REGISTRY, "retried", "1.0.0", spent);
+        var exhausted = cache.fetchNpmVersion(REGISTRY, "retried", "1.0.0", spent, () -> true);
         ArtifactCacheProxyTest.await("the first lookup to be held", () -> stalled.size() == 1);
         var joined = cache.npmLookups.joined();
-        var fresh = cache.fetchNpmVersion(REGISTRY, "retried", "1.0.0", System.nanoTime());
+        var fresh = cache.fetchNpmVersion(REGISTRY, "retried", "1.0.0", System.nanoTime(), () -> true);
         assertEquals(joined + 1, cache.npmLookups.joined(), "the second caller joined the first one's ask");
 
         stalledLookup = null;
