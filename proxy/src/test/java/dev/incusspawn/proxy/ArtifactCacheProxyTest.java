@@ -2428,6 +2428,29 @@ class ArtifactCacheProxyTest {
         assertEquals(refusals + 1, proxy.upstream.throttles.snapshot().get(CENTRAL).refusals());
     }
 
+    /** #2303: a redirect target's 429 is its own, and its 200 ends it; the domain that redirected never refused. */
+    @Test
+    void redirectTargetsThrottleIsBookedUnderItsOwnNameAndEndsOnItsAnswer() throws Exception {
+        var jar = "/maven2/org/example/redirected/1.0/redirected-1.0.jar";
+        var target = "/cdn/redirected-1.0.jar";
+        var bytes = "r1".getBytes(StandardCharsets.UTF_8);
+        routes.put(CENTRAL + " " + jar, new Reply(302, null, "https://" + GRADLE_DOWNLOADS + target));
+        routes.put(GRADLE_DOWNLOADS + " " + target, new Reply(429, null, null));
+        var before = proxy.upstream.throttles.snapshot().get(GRADLE_DOWNLOADS);
+        var refusals = before == null ? 0 : before.refusals();
+
+        assertEquals(429, get(CENTRAL, jar).status());
+        var limited = proxy.upstream.throttles.snapshot().get(GRADLE_DOWNLOADS);
+        assertEquals(refusals + 1, limited.refusals());
+        assertTrue(limited.refusing());
+        var central = proxy.upstream.throttles.snapshot().get(CENTRAL);
+        assertTrue(central == null || !central.refusing(), "the domain that redirected answered");
+
+        routes.put(GRADLE_DOWNLOADS + " " + target, new Reply(200, bytes, null, hex("SHA-1", bytes)));
+        assertEquals("r1", get(CENTRAL, jar).text());
+        assertFalse(proxy.upstream.throttles.snapshot().get(GRADLE_DOWNLOADS).refusing(), "the target answered again");
+    }
+
     @Test
     void headerlessHeadNeverLetsTheSidecarEvictOnCentral() throws Exception {
         publishJar(CENTRAL, JAR, "v1");

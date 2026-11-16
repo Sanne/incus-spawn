@@ -875,6 +875,7 @@ class Upstream {
             copyBufferedRequestHeaders(clientReq, upReq, domain);
             upReq.putHeader("Content-Length", String.valueOf(body.length()));
             upReq.send(body).onSuccess(upResp -> {
+                throttles.answered(domain, upResp.statusCode());
                 copyResponseHead(upResp, clientReq.response());
                 pipeResponse(upResp, clientReq.response(), null);
             }).onFailure(e -> {
@@ -936,7 +937,6 @@ class Upstream {
 
     /** Relays upstream's response, head and body, as {@link #relayBody} does the body. */
     void relayResponse(HttpServerRequest clientReq, String domain, HttpClientResponse upResp, long since) {
-        throttles.answered(domain, upResp.statusCode());
         copyResponseHead(upResp, clientReq.response());
         relayBody(clientReq, domain, new ResponseHold(upResp), since);
     }

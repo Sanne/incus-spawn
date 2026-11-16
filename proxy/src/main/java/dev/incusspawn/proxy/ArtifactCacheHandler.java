@@ -240,7 +240,8 @@ class ArtifactCacheHandler {
 
             upReq.send().onSuccess(upResp -> {
                 var statusCode = upResp.statusCode();
-                if (statusCode == 200) upstream.throttles.answered(domain, statusCode);
+                // Every answer, a redirect included: the domain answered, whatever its target says
+                upstream.throttles.answered(domain, statusCode);
 
                 if (statusCode == 200) {
                     new CachingDownload(clientReq, domain, started, upResp, cacheFile, ref, verification).start();
@@ -325,7 +326,8 @@ class ArtifactCacheHandler {
 
             redReq.send().onSuccess(redResp -> {
                 var statusCode = redResp.statusCode();
-                if (statusCode == 200) upstream.throttles.answered(redirectHost, statusCode);
+                // The target's own limit, under its own name, not the domain that redirected there
+                upstream.throttles.answered(redirectHost, statusCode);
                 if (statusCode == 200) {
                     new CachingDownload(clientReq, domain, started, redResp, cacheFile, ref, verification).start();
                 } else if (statusCode >= 300 && statusCode < 400) {
@@ -682,12 +684,15 @@ class ArtifactCacheHandler {
         private void resumed(HttpClientResponse resp, long resumeAt) {
             if (failed) {
                 resp.request().reset();
-            } else if (resp.statusCode() == 206 && resumesAt(resp, resumeAt)) {
+                return;
+            }
+            // Under the host the resume asked, a redirect's target included, not the domain the client named
+            upstream.throttles.answered(resp.request().authority().host(), resp.statusCode());
+            if (resp.statusCode() == 206 && resumesAt(resp, resumeAt)) {
                 attach(resp);
                 resumeWhenWritable();
             } else {
                 resp.request().reset();
-                upstream.throttles.answered(domain, resp.statusCode());
                 if (resp.statusCode() >= 500 || resp.statusCode() == 429) {
                     // An overloaded upstream, as a stall often is: tried again like a failed connect
                     broken(new IOException("upstream answered " + resp.statusCode()), true);

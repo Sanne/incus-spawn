@@ -530,6 +530,12 @@ Key design:
   Bytes and last activity move at start and end only.
   A flow in flight keeps an unlisted instance's counters from the prune.
   Fields are only added.
+- **Upstream 429s on `/activity` (#2303)**: `throttled` is `Upstream.throttles` (`Throttles`), per upstream host and the host's, not an instance's: refusals, copies served unconfirmed for one, first and last, and `refusing`.
+  It is fed by `Upstream.send` and `relayBuffered` (every relay), `sendProbe`, the cache miss's fetch, each redirect it follows and a resume.
+  A redirect target's answer is booked under the target's own name and a resume's under the host it asked, the redirect itself an answer of the redirecting domain.
+  A new path that asks upstream calls `throttles.answered` too, once per answer.
+  Only a status below 400 ends a refusal; the proxy logs the start and the end, never each 429, and holds at most `Throttles.MAX_DOMAINS` hosts.
+  `isx doctor` warns for `RECENT_THROTTLE` after the last 429, whatever `refusing` says, since a domain nobody asked again still reads as refusing.
 - **The health server only reads** (`MitmProxy.healthRoute`): `GET` and `HEAD` only (405 otherwise), `/activity` and `/credential-proofs` a 404 for non-host callers whatever the method.
   It is the listener every container reaches: never add a write endpoint to it.
 - **The proxy holds no configuration of its own** (design/proxy.md, #935): routing is derived from host config and `user.incus-spawn.*` stamps, so restart and reload rebuild it.

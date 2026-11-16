@@ -338,7 +338,7 @@ public class ProxyCommand extends BaseCommand {
                     out.printf(DOMAIN_ROW, name(r), r.get("domain"), r.get("requests"), r.get("in_flight"),
                             size(r.get("request_bytes")), size(r.get("response_bytes")), ago(r.get("last_activity_at"), now));
                 }
-                printPlacement(activity, out);
+                printPlacement(activity, now, out);
                 return;
             }
             out.printf(ROW, "INSTANCE", "REQUESTS", "IN FLIGHT", "SENT", "RECEIVED", "LAST ACTIVITY", "MODEL CALLS",
@@ -348,11 +348,11 @@ public class ProxyCommand extends BaseCommand {
                         size(r.get("response_bytes")), ago(r.get("last_activity_at"), now),
                         dash(r.get("model_requests")), dash(r.get("output_tokens")));
             }
-            printPlacement(activity, out);
+            printPlacement(activity, now, out);
         }
 
         /** How well the proxy tells its callers apart (#1586), under the table; nothing when nothing is wrong. */
-        private static void printPlacement(ProxyActivity activity, PrintStream out) {
+        private static void printPlacement(ProxyActivity activity, Instant now, PrintStream out) {
             var placement = activity.placement();
             var lines = new ArrayList<String>();
             if (placement.refusedProofs() > 0 || placement.refusedAddressMisses() > 0) {
@@ -367,9 +367,10 @@ public class ProxyCommand extends BaseCommand {
             if (placement.registryStale()) lines.add("Instance listing failed or not answering: proofs are refused until one succeeds");
             for (var domain : new TreeSet<>(activity.throttled().keySet())) {
                 var t = activity.throttled().get(domain);
-                lines.add("Upstream rate limit: %s answered 429 %d time(s), %d cached copy(ies) served unconfirmed, %s"
-                        .formatted(OutputFormat.oneLine(domain), t.refusals(), t.servedUnconfirmed(),
-                                t.refusing() ? "refusing now" : "answering again"));
+                // A domain nobody asked since its 429 still reads as refusing, so the last one's age is said too
+                lines.add("Upstream rate limit: %s answered 429 %d time(s), the last %s, %d cached copy(ies) served unconfirmed, %s"
+                        .formatted(OutputFormat.oneLine(domain), t.refusals(), ago(t.lastAt().toString(), now),
+                                t.servedUnconfirmed(), t.refusing() ? "refusing at its last answer" : "answering again"));
             }
             if (lines.isEmpty()) return;
             out.println();
