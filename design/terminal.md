@@ -611,7 +611,7 @@ An agent's tag never matches that entry, so it saves nothing; a reflog expired o
 A clone with no remote at all counts every commit after its clone.
 A clone isx prepared from a host checkout (`repos[].host-source`) keeps each exported tip as `refs/isx/host/<branch>`, which the script excludes like a remote-tracking branch, since the host still holds those commits (#2273).
 So it counts only the commits made in the guest since the copy.
-An instance built before that has no such refs until rebuilt, and counts its whole history.
+An instance built before that has no such refs until rebuilt, and counts the commits of its other exported branches that HEAD did not hold at the copy.
 It fetches nothing, and `GIT_OPTIONAL_LOCKS=0` keeps `git status` from rewriting the index under an agent at work.
 The state is `unsaved` when any clone holds work, and `clean` only when every clone was read and holds none.
 A timeout, a failed exit, an answer cut short, a line that is not the script's, a count Git would not give or a 51st clone make it `unknown`.
