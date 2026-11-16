@@ -177,7 +177,7 @@ Three of the four layers between isx and the guest are open source, and the one 
 | P2 | vfkit stops serving `vm.incus.sock` while the agent socket on the same vsock device works. `connect()` succeeds, then no byte arrives, and the guest never sees the connection. Only a VM restart recovers. | #253, #676, #791, #1874 | `LeakLayer.VFKIT` detection; fail fast with "run `isx vm restart`" |
 | P3 | Exec WebSocket close frames do not arrive, and an interactive shell's teardown stalls about 8 s. | #254 | completion from the operation's `/wait`; the adaptive drain and force-close; keepalive pings on every fd |
 | P4 | Streams go half-open across macOS sleep and resume. Reads block forever and shells die. | #248, #253 | keepalive pings; the event stream's silence limit (50 s); request watchdogs; reconnect in `InstanceEventWatcher` |
-| P5 | vfkit's `--timesync` does not reliably set the guest clock after wake. The guest clock ran 32 h behind. | #204, #290 | chrony in the guest; the `isx.time` seed at boot |
+| P5 | The guest clock ran 32 h behind after a wake. #204 and #290 blamed vfkit's `--timesync`, but the guest agent never listened (it bound to the host's CID), so vfkit had nothing to reach (#2282). | #204, #290, #2282 | chrony in the guest; the `isx.time` seed at boot; the agent on any CID, with `/dev/rtc0` in the kernel |
 
 ### A close from isx never reaches the guest (P1)
 

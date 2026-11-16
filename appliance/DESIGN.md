@@ -160,7 +160,7 @@ BusyBox init handles PID 1 responsibilities (zombie reaping, signal forwarding) 
 5. Enable the swap disk (`/dev/vdb`, `mkswap` on first boot), discarding its old pages once (`swapon --discard=once`), when the disk is attached: both isx backends attach it, CI's `vm.sh` test boot does not
 6. Mount the data disk (`/dev/vdc`, `mkfs.btrfs` on first boot) on `/var/lib/incus` with the root disk's options, then grow it to the device size, when the disk is attached (as for swap)
 7. Bring up loopback and DHCP on the first network interface (`udhcpc`)
-8. Seed clock from kernel cmdline (`isx.time`) and start `qemu-ga` for vfkit timesync
+8. Seed clock from kernel cmdline (`isx.time`) and start `qemu-ga` for the host's `guest-set-time`
 9. Start `chronyd` for NTP clock sync (see [Clock Synchronization](#clock-synchronization))
 10. Start `dbus-daemon` (required by Incus)
 11. Start `lxcfs` (required by Incus for /proc virtualization)
@@ -176,9 +176,14 @@ The VM has no hardware RTC. Three layers keep the guest clock accurate:
 
 1. **Boot-time seed**: The kernel cmdline carries `isx.time=<epoch>` (stamped by the host at VM start). `rcS` sets the system clock from this immediately, so TLS works before NTP is reachable.
 
-2. **QEMU Guest Agent (vfkit)**: `qemu-ga` listens on virtio-vsock port 1024. vfkit's `--timesync` is supposed to send `guest-set-time` on host wake, but does not do so reliably after macOS sleep. This layer is kept as a best-effort complement.
+2. **QEMU Guest Agent**: `qemu-ga` listens on virtio-vsock port 1024, on any CID, since a guest has no transport at the host's address.
+   The host sends `guest-set-time` on a wake: vfkit's `--timesync` or `isx-vm`.
+   The agent then runs `hwclock -w`, which needs `/dev/rtc0`, so the kernel sets `CONFIG_RTC_INTF_DEV`; without it the clock is set and the reply is an error.
+   Until #2282 the agent was started on CID 2, never bound, and exited at every boot, so no host ever reached it.
+   Whether vfkit's `--timesync` sets the clock reliably after a macOS sleep is therefore not yet known.
+   `rcS` reports the agent only when it runs.
 
-3. **chrony (NTP)**: `chronyd` polls `pool.ntp.org` and steps the clock whenever the offset exceeds 1 second (`makestep 1 -1`). After a host sleep, the guest network recovers within ~30 seconds (udhcpc DHCP), then chrony detects the drift and corrects it within a few seconds via `iburst`. This is the primary post-resume clock correction mechanism and works regardless of vfkit behavior.
+3. **chrony (NTP)**: `chronyd` polls `pool.ntp.org` and steps the clock whenever the offset exceeds 1 second (`makestep 1 -1`). After a host sleep, the guest network recovers within ~30 seconds (udhcpc DHCP), then chrony detects the drift and corrects it within a few seconds via `iburst`. This is the primary post-resume clock correction mechanism and works whether or not the host reaches the agent.
 
 On QEMU with KVM, `kvmclock` (CONFIG_PARAVIRT_CLOCK) keeps the guest in sync natively. chrony provides an additional safety net and handles non-KVM QEMU scenarios.
 

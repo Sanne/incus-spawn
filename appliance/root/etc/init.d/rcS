@@ -88,12 +88,19 @@ if [ -n "$HOST_TIME" ]; then
     date -s "@$HOST_TIME" >/dev/null 2>&1
 fi
 
-# qemu-guest-agent over virtio-vsock keeps the clock synced with the host,
-# including after sleep/resume. vfkit sends guest-set-time via --timesync.
+# qemu-guest-agent over virtio-vsock lets the host set the clock after a sleep:
+# vfkit's --timesync and isx-vm both send guest-set-time. It listens on any CID,
+# since a guest has no transport at the host's address (2) and the bind would fail.
 VSOCK_PORT=$(sed -En 's/.*isx\.ga_vsock=([^ ]+).*/\1/p' /proc/cmdline)
 if [ -n "$VSOCK_PORT" ] && [ -x /usr/bin/qemu-ga ]; then
-    qemu-ga -m vsock-listen -p "2:$VSOCK_PORT" -l /var/log/qemu-ga.log -d 2>/dev/null || true
-    echo "incus-spawn: guest agent on vsock port $VSOCK_PORT ($(date -Iseconds))"
+    qemu-ga -m vsock-listen -p "4294967295:$VSOCK_PORT" -l /var/log/qemu-ga.log >/dev/null 2>&1 &
+    GA_PID=$!
+    sleep 0.2
+    if kill -0 "$GA_PID" 2>/dev/null; then
+        echo "incus-spawn: guest agent on vsock port $VSOCK_PORT ($(date -Iseconds))"
+    else
+        echo "incus-spawn: guest agent NOT running on vsock port $VSOCK_PORT: $(tail -n 3 /var/log/qemu-ga.log 2>/dev/null | tr '\n' ' ')"
+    fi
 fi
 
 #-- NTP clock sync (corrects drift after host sleep/resume) --#
