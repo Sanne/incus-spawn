@@ -15,6 +15,12 @@ name: Upstream watch
 # nothing, on another runner than the one that fetched publisher data; nothing from an upstream
 # reaches a `run:` line through `${{ }}`; the checkouts keep no credential; issues are opened with
 # the run's own token.
+#
+# Sibling repositories (#2210, design/upstream.md "Sibling repositories"): each job runs once per
+# watched repository, its leg for a sibling with that sibling's checkout as the watched tree and the
+# engine at the incus-spawn commit the sibling pins in upstream/engine.ref, the engine its own
+# upstream-verify runs, so a regeneration is planned and checked by the same code. The token a leg
+# mints is limited to that leg's repository. A sibling's issues are opened here and name it.
 
 on:
   schedule:
@@ -22,7 +28,11 @@ on:
   workflow_dispatch:
     inputs:
       item:
-        description: 'One item of upstream/manifest.yaml to plan (default: all)'
+        description: 'One item of upstream/manifest.yaml to plan (default: all, in every repository)'
+        required: false
+        default: ''
+      repo:
+        description: 'The one repository to plan, whose manifest holds the item (default: Sanne/incus-spawn with an item, every repository without)'
         required: false
         default: ''
 
@@ -34,6 +44,10 @@ concurrency:
   group: upstream-watch
   cancel-in-progress: false
 
+env:
+  # The watched repositories: this one and its siblings, as each job's matrix lists them.
+  TARGETS: Sanne/incus-spawn Sanne/incus-spawn-images
+
 jobs:
   # Planning downloads and untars publisher data, so it runs with no credential of Sanne's in reach:
   # steps of one job share a runner, and ordering them is not isolation. The plan (the decisions,
@@ -41,6 +55,12 @@ jobs:
   plan:
     if: github.repository == 'Sanne/incus-spawn' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { repo: Sanne/incus-spawn, name: incus-spawn }
+          - { repo: Sanne/incus-spawn-images, name: incus-spawn-images }
     outputs:
       login: ${{ steps.app.outputs.login }}
       email: ${{ steps.app.outputs.email }}
@@ -48,9 +68,70 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # main's whole history on a sibling's leg, against which its engine pin is checked; this
+          # repository's own leg stays shallow, so its prepared bundles do not carry all of main.
+          fetch-depth: ${{ matrix.repo == github.repository && 1 || 0 }}
+
+      - name: Check out the watched sibling
+        if: matrix.repo != github.repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repo }}
+          path: _target
+          persist-credentials: false
+
+      - name: Read the engine the sibling pins
+        id: pin
+        if: matrix.repo != github.repository
+        run: |
+          set -euo pipefail
+          ref="$(tr -d '\n' < _target/upstream/engine.ref)"
+          [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::upstream/engine.ref is not a commit"; exit 1; }
+          # A checkout by commit also reaches a fork's commits: only main's history may run here.
+          git merge-base --is-ancestor "$ref" origin/main 2> /dev/null \
+            || { echo "::error::upstream/engine.ref is not a commit on incus-spawn's main"; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          # publish checks that the sibling still pins this engine when it runs.
+          mkdir -p "$RUNNER_TEMP/plan"
+          echo "$ref" > "$RUNNER_TEMP/plan/engine.ref"
+
+      - name: Check out that engine
+        if: matrix.repo != github.repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pin.outputs.ref }}
+          path: _engine
+          persist-credentials: false
+
+      # ENGINE and UPSTREAM_REPO_ROOT for every later step: main's engine on this repository, or the
+      # pinned one on the sibling's checkout.
+      - name: Locate the engine and the watched tree
+        env:
+          REPO: ${{ matrix.repo }}
+          SELF: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$REPO" == "$SELF" ]]; then
+            echo "ENGINE=$GITHUB_WORKSPACE/upstream/engine/upstream.sh" >> "$GITHUB_ENV"
+            echo "UPSTREAM_REPO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          else
+            # An engine from before #2210 would ignore UPSTREAM_REPO_ROOT and plan this repository's manifest.
+            grep -q UPSTREAM_REPO_ROOT _engine/upstream/engine/lib.sh \
+              || { echo "::error::$REPO pins an engine without sibling support"; exit 1; }
+            echo "ENGINE=$GITHUB_WORKSPACE/_engine/upstream/engine/upstream.sh" >> "$GITHUB_ENV"
+            echo "UPSTREAM_REPO_ROOT=$GITHUB_WORKSPACE/_target" >> "$GITHUB_ENV"
+          fi
 
       - name: Validate the manifest
-        run: upstream/engine/upstream.sh validate
+        env:
+          # A git-main-paths item asks GitHub whether its repository is a fork (#2210).
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          "$ENGINE" validate
+          repo="$(yq -r '.repo' "$UPSTREAM_REPO_ROOT/upstream/manifest.yaml")"
+          [[ "$repo" == "$REPO" ]] || { echo "::error::the manifest of $REPO names $repo"; exit 1; }
 
       # The app's user id, for commits GitHub attributes to it (the ruleset asks an extra approval
       # for unattributed changes). A public read, with the run's own token.
@@ -62,6 +143,9 @@ jobs:
           set -euo pipefail
           login="$(yq -r '.app.login' upstream/manifest.yaml)"
           [[ "$login" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || { echo "::error::manifest app.login is not an app login"; exit 1; }
+          # One app opens every repository's PRs: a sibling's manifest names the same login.
+          [[ "$(yq -r '.app.login' "$UPSTREAM_REPO_ROOT/upstream/manifest.yaml")" == "$login" ]] \
+            || { echo "::error::the watched manifest names another app"; exit 1; }
           enc="${login//\[/%5B}"; enc="${enc//\]/%5D}"
           id="$(gh api "users/$enc" --jq .id)"
           [[ "$id" =~ ^[0-9]+$ ]] || { echo "::error::no user id for $login"; exit 1; }
@@ -77,28 +161,43 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APP_LOGIN: ${{ steps.app.outputs.login }}
           APP_EMAIL: ${{ steps.app.outputs.email }}
+          # Issues, closed ones included, are this repository's, a sibling's too.
+          GH_REPO: ${{ github.repository }}
           ONLY: ${{ inputs.item }}
+          ONLY_REPO: ${{ inputs.repo }}
+          REPO: ${{ matrix.repo }}
         run: |
           set -euo pipefail
-          if [[ -n "$ONLY" ]]; then
-            yq -e ".items[\"$ONLY\"]" upstream/manifest.yaml > /dev/null 2>&1 \
-              || { echo "::error::no item '$ONLY' in upstream/manifest.yaml"; exit 1; }
-            export UPSTREAM_ONLY="$ONLY"
+          if [[ -n "$ONLY" || -n "$ONLY_REPO" ]]; then
+            selected="${ONLY_REPO:-Sanne/incus-spawn}"
+            [[ " $TARGETS " == *" $selected "* ]] || { echo "::error::'$selected' is not a watched repository: $TARGETS"; exit 1; }
+            if [[ "$selected" == "$REPO" ]]; then
+              if [[ -n "$ONLY" ]]; then
+                yq -e ".items[\"$ONLY\"]" "$UPSTREAM_REPO_ROOT/upstream/manifest.yaml" > /dev/null 2>&1 \
+                  || { echo "::error::no item '$ONLY' in $REPO's upstream/manifest.yaml"; exit 1; }
+                export UPSTREAM_ONLY="$ONLY"
+              fi
+            else
+              # Another repository's item: this one plans nothing ("-" names no item).
+              export UPSTREAM_ONLY=-
+            fi
           fi
-          upstream/engine/upstream.sh plan "$RUNNER_TEMP/plan"
+          "$ENGINE" plan "$RUNNER_TEMP/plan"
 
       - name: Open issues for what needs a person
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           PLAN: ${{ runner.temp }}/plan
-        run: upstream/engine/upstream.sh issues "$PLAN"
+        run: '"$ENGINE" issues "$PLAN"'
 
       - name: Hand the plan to the publish job
         uses: ./.github/actions/upload-artifact-retry
         with:
-          name: upstream-plan
+          name: upstream-plan-${{ matrix.name }}
           path: |
             ${{ runner.temp }}/plan/plan.tsv
+            ${{ runner.temp }}/plan/engine.ref
             ${{ runner.temp }}/plan/*.json
             ${{ runner.temp }}/plan/*.bundle
           retention-days: 1
@@ -107,11 +206,24 @@ jobs:
   # fetches nothing from an upstream: it pushes the prepared commits and opens or refreshes their
   # PRs, through a one-hour installation token minted here for this repository, with contents and
   # pull_requests write only.
+  # A sibling's leg pushes from the sibling's checkout with a token limited to it; the token is
+  # minted by main's app-token.sh in a step of its own, and the pinned engine publishes with the
+  # token alone. Each leg runs whatever another
+  # repository's plan did, so a failing sibling holds back no bump of this repository's: a leg whose
+  # own plan failed has no artifact, and fails at its download, before any token is minted.
   publish:
     needs: plan
-    if: github.repository == 'Sanne/incus-spawn' && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && github.repository == 'Sanne/incus-spawn' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-26.04
     environment: upstream-watch
+    env:
+      REPO: ${{ matrix.repo }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { repo: Sanne/incus-spawn, name: incus-spawn }
+          - { repo: Sanne/incus-spawn-images, name: incus-spawn-images }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -119,26 +231,84 @@ jobs:
           # publish compares a bump against the open PR's merge base, which a shallow clone lacks.
           fetch-depth: 0
 
+      - name: Check out the watched sibling
+        if: matrix.repo != github.repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repo }}
+          path: _target
+          persist-credentials: false
+          fetch-depth: 0
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: upstream-plan
+          name: upstream-plan-${{ matrix.name }}
           path: ${{ runner.temp }}/plan
 
-      - name: Push the bumps and open their PRs as the app
+      # The engine is the one the sibling's default branch pins, never one the plan names: the plan
+      # job handled publisher data, so its artifact is data, and it never chooses code that runs
+      # with the token. The plan's engine is only compared, so a merge into the sibling between the
+      # two jobs fails the leg instead of handing the plan to another engine.
+      - name: Read the engine the sibling pins
+        id: pin
+        if: matrix.repo != github.repository
         env:
-          UPSTREAM_APP_ID: ${{ secrets.UPSTREAM_APP_ID }}
-          UPSTREAM_APP_PRIVATE_KEY: ${{ secrets.UPSTREAM_APP_PRIVATE_KEY }}
-          REPO: ${{ github.repository }}
-          APP_LOGIN: ${{ needs.plan.outputs.login }}
-          APP_EMAIL: ${{ needs.plan.outputs.email }}
           PLAN: ${{ runner.temp }}/plan
         run: |
           set -euo pipefail
-          GH_TOKEN="$(upstream/engine/app-token.sh "$REPO")"
-          echo "::add-mask::$GH_TOKEN"
-          export GH_TOKEN
-          unset UPSTREAM_APP_PRIVATE_KEY UPSTREAM_APP_ID
-          upstream/engine/upstream.sh publish "$PLAN"
+          ref="$(tr -d '\n' < _target/upstream/engine.ref)"
+          [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::upstream/engine.ref is not a commit"; exit 1; }
+          # A checkout by commit also reaches a fork's commits: only main's history may run here.
+          git merge-base --is-ancestor "$ref" origin/main 2> /dev/null \
+            || { echo "::error::upstream/engine.ref is not a commit on incus-spawn's main"; exit 1; }
+          [[ "$(tr -d '\n' < "$PLAN/engine.ref")" == "$ref" ]] \
+            || { echo "::error::the sibling's engine pin moved since the plan; the next run plans again"; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Check out that engine
+        if: matrix.repo != github.repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pin.outputs.ref }}
+          path: _engine
+          persist-credentials: false
+
+      - name: Locate the engine and the watched tree
+        env:
+          SELF: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$REPO" == "$SELF" ]]; then
+            echo "ENGINE=$GITHUB_WORKSPACE/upstream/engine/upstream.sh" >> "$GITHUB_ENV"
+            echo "UPSTREAM_REPO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          else
+            # An engine from before #2210 would ignore UPSTREAM_REPO_ROOT and plan this repository's manifest.
+            grep -q UPSTREAM_REPO_ROOT _engine/upstream/engine/lib.sh \
+              || { echo "::error::$REPO pins an engine without sibling support"; exit 1; }
+            echo "ENGINE=$GITHUB_WORKSPACE/_engine/upstream/engine/upstream.sh" >> "$GITHUB_ENV"
+            echo "UPSTREAM_REPO_ROOT=$GITHUB_WORKSPACE/_target" >> "$GITHUB_ENV"
+          fi
+
+      # The key is in this step alone, which runs main's app-token.sh and nothing else: on a sibling's
+      # leg the engine is code another repository's pin chose, so it must never share a process tree
+      # with the key (an unset variable stays readable in the parent's /proc/<pid>/environ). It
+      # gets the token only, limited to this leg's repository and to contents and pull_requests.
+      - name: Mint the app's token for this repository
+        env:
+          UPSTREAM_APP_ID: ${{ secrets.UPSTREAM_APP_ID }}
+          UPSTREAM_APP_PRIVATE_KEY: ${{ secrets.UPSTREAM_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          token="$(upstream/engine/app-token.sh "$REPO")"
+          echo "::add-mask::$token"
+          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Push the bumps and open their PRs as the app
+        env:
+          APP_LOGIN: ${{ needs.plan.outputs.login }}
+          APP_EMAIL: ${{ needs.plan.outputs.email }}
+          PLAN: ${{ runner.temp }}/plan
+        run: '"$ENGINE" publish "$PLAN"'
 
   # One issue for a failing run, opened on the first failure and closed by the next good one: the
   # run's status is both jobs', judged once, after both, so a plan that passed never closes the
