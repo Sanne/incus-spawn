@@ -52,9 +52,7 @@ jobs:
         with:
           path: ~/.m2/repository
           key: maven-docs-gates-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-docs-gates-
-            maven-
+          restore-keys: maven-docs-gates-
 
       - name: Run the docs gates
         run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' -B -ntp -pl common,cli -am test -Dgroups=docs
