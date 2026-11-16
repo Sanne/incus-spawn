@@ -49,7 +49,7 @@ class InstanceDetailViewTest {
         var view = view();
         var uses = List.of(new AccountUsage.Use("github", "work", null, "", "", "", ""));
         TuiSnapshot.assertMatches("instance-detail-view-80x24",
-                TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses, List.of(), null, null, null)));
+                TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses, List.of(), null, null, List.of(), null)));
     }
 
     @Test
@@ -59,7 +59,7 @@ class InstanceDetailViewTest {
                 "virtual-machine", "tpl-dev", "4", "8GiB", "50GiB", "", "", "x86_64",
                 "", "", "instance", "", "", "", -1, -1, "", false, null, false, null);
         TuiSnapshot.assertMatches("instance-detail-view-vm-80x24",
-                TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of(), List.of(), null, null, null)));
+                TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of(), List.of(), null, null, List.of(), null)));
     }
 
     @Test
@@ -101,10 +101,53 @@ class InstanceDetailViewTest {
                 "Done\n\nFixed \u001b[31mit\n" + "line\n".repeat(30), "Fix it");
         var rows = InstanceDetailView.summaryRows(summary, java.time.LocalDateTime.of(2026, 10, 11, 12, 0));
         assertEquals(new InstanceDetailView.DetailRow("Done:", "newest of 2: Done"), rows.getFirst());
-        assertTrue(rows.get(1).value().startsWith("the agent's own words, from 2 sessions, the newest 2h"), rows.get(1).value());
-        assertEquals(new InstanceDetailView.DetailRow("  Asked:", "Fix it"), rows.get(2));
-        assertEquals(new InstanceDetailView.DetailRow(null, "Fixed  [31mit"), rows.get(4), "one line, with no control character");
-        assertEquals(3 + InstanceDetailView.CLOSING_LINES + 1, rows.size(), "a long message is cut, and says where the rest is");
+        assertEquals(InstanceDetailView.BLANK, rows.get(1), "a blank line between the sections");
+        assertTrue(rows.get(2).value().startsWith("the agent's own words, from 2 sessions, the newest 2h"), rows.get(2).value());
+        assertEquals(new InstanceDetailView.DetailRow("Asked:", "Fix it"), rows.get(3), "every label at the same indent");
+        assertEquals(InstanceDetailView.BLANK, rows.get(4));
+        assertEquals(new InstanceDetailView.DetailRow("Closing:", "Done"), rows.get(5));
+        assertEquals(new InstanceDetailView.DetailRow("", "Fixed  [31mit"), rows.get(6), "one line, with no control character");
+        assertEquals(5 + InstanceDetailView.CLOSING_LINES + 1, rows.size(), "a long message is cut, and says where the rest is");
         assertTrue(InstanceDetailView.summaryRows(null, java.time.LocalDateTime.now()).isEmpty(), "nothing before the overview read it");
+    }
+
+    @Test
+    void theDetailsLinkEachPullRequestAndWrapALongMessageUnderItsValue() {
+        var effort = new dev.incusspawn.proxy.EventLogReader.Effort(0, 0, 0, 0, 0, null, null,
+                List.of(new dev.incusspawn.proxy.EventLogReader.Branch("Sanne/incus-spawn", "fix-x")),
+                List.of(new dev.incusspawn.proxy.EventLogReader.PullRequest("Sanne/incus-spawn", 2287),
+                        new dev.incusspawn.proxy.EventLogReader.PullRequest("not a repo", 3)));
+        var github = InstanceDetailView.githubRows(effort, List.of(dev.incusspawn.command.PullRequestStates.State.MERGED));
+        assertEquals(List.of(
+                new InstanceDetailView.DetailRow("Pull requests:", "https://github.com/Sanne/incus-spawn/pull/2287 (merged)",
+                        "https://github.com/Sanne/incus-spawn/pull/2287"),
+                new InstanceDetailView.DetailRow("", "not a repo#3"),
+                new InstanceDetailView.DetailRow("Pushed:", "Sanne/incus-spawn:fix-x")), github);
+        assertTrue(InstanceDetailView.githubRows(null, List.of()).isEmpty(), "nothing before the overview read the log");
+
+        var summary = new dev.incusspawn.command.AgentSessions.Summary("newest_session", "Done", "Done", 1,
+                java.time.LocalDateTime.of(2026, 10, 11, 10, 0).atZone(java.time.ZoneId.systemDefault()).toInstant(),
+                "Done", "word ".repeat(40).strip());
+        var buffer = TuiSnapshot.render(80, 50, f -> view().render(f, f.area(), instance(), List.of(), List.of(), null, null,
+                github, summary));
+        var lines = TuiSnapshot.toText(buffer).lines().toList();
+        int y = 0;
+        while (!lines.get(y).contains("Pull requests:")) y++;
+        int value = lines.get(y).indexOf("https://");
+        assertEquals(java.util.Optional.of("https://github.com/Sanne/incus-spawn/pull/2287"),
+                buffer.get(value, y).style().hyperlink().map(dev.tamboui.style.Hyperlink::url), "a click opens the page");
+        assertTrue(lines.get(y).contains("(merged)"), lines.get(y));
+        int done = lines.indexOf(lines.stream().filter(l -> l.contains("Done:")).findFirst().orElseThrow());
+        int asked = lines.indexOf(lines.stream().filter(l -> l.contains("Asked:")).findFirst().orElseThrow());
+        int closing = lines.indexOf(lines.stream().filter(l -> l.contains("Closing:")).findFirst().orElseThrow());
+        int label = lines.get(y).indexOf("Pull requests:");
+        assertEquals(List.of(label, label, label), List.of(lines.get(done).indexOf("Done:"),
+                lines.get(asked).indexOf("Asked:"), lines.get(closing).indexOf("Closing:")), "every label at one indent");
+        assertTrue(lines.get(done + 1).replace("\u2551", "").isBlank(), "a blank line after Done: " + lines.get(done + 1));
+        assertTrue(lines.get(closing - 1).replace("\u2551", "").isBlank(), "a blank line before Closing: " + lines.get(closing - 1));
+        assertEquals(value, lines.get(asked).indexOf("word"));
+        assertEquals(value, lines.get(asked + 1).indexOf("word"), "the rest of a long ask under its value: " + lines.get(asked + 1));
+        assertTrue(lines.get(asked + 1).substring(lines.get(asked + 1).indexOf('\u2551') + 1, value).isBlank(), lines.get(asked + 1));
+        assertTrue(lines.get(y - 1).replace("\u2551", "").isBlank(), "a blank line before the pull requests: " + lines.get(y - 1));
     }
 }

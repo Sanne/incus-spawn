@@ -93,6 +93,7 @@ GITHUB is `OverviewCommand.githubParts` fitted by `fitGithub` (each reference wh
 `Tui.readOverview` reads the log, then the guests' `GuestRead` (work state and agent sessions) and GitHub's `PullRequestStates` (`overviewGitHub`, `overviewConfig` are the seams), on `o`, on entering the Work tab and on `r` while the overview is shown, through `overviewExecutor` (a virtual thread; tests run it when they choose, `TuiOverviewTest`), never on a live refresh or in `render()`.
 Rows, marks and F8 are the table's own; the title says what the log covers (design/terminal.md "The overview of what each instance did").
 F3's details add the newest session's ask and closing message from the parked reading (`InstanceDetailView.summaryRows`).
+They also list the pull requests and pushed branches from the parked log (`InstanceDetailView.githubRows`, #2292); every `DetailRow` is wrapped under its value's start by `rowLines`, a row with a `url` a hyperlink, and `BLANK` separates the sections.
 
 **Credential accounts** (`a` on an instance, in the list or its F3 details).
 `AccountsModal`, extracted like `HelpChatModal` and snapshot-tested in `AccountsModalTest`, offers per namespace "default (<current default>)" then every usable account.

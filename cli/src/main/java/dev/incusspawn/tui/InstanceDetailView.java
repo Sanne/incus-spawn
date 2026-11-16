@@ -85,12 +85,18 @@ public final class InstanceDetailView {
         return Outcome.UNHANDLED;
     }
 
-    /** Render the details of {@code selected}, with the credential accounts the TUI resolved for it. */
+    /**
+     * Render the details of {@code selected}, with the credential accounts the TUI resolved for it,
+     * and what the overview's last read said it did on GitHub and in its agent sessions.
+     */
     void render(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen, InstanceInfo selected,
                 List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses, List<String> registeredWith,
                 BaseImageAge.Assessment baseImage, dev.incusspawn.config.McpScope mcpScope,
-                dev.incusspawn.command.AgentSessions.Summary summary) {
-        var contentLines = buildInstanceDetailLines(selected, detailAccountUses, registeredWith, baseImage, mcpScope, summary);
+                List<DetailRow> github, dev.incusspawn.command.AgentSessions.Summary summary) {
+        // The widest a line can be: the screen less the margin, the borders, the padding and a scrollbar
+        int wrapWidth = screen.width() - 9;
+        var contentLines = buildInstanceDetailLines(selected, detailAccountUses, registeredWith, baseImage, mcpScope,
+                github, summary, wrapWidth);
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F2", "Shell");
         if (selected.mcp() != null) modal.addKey(hintSpans, "⇧F2", "Join task");
@@ -128,8 +134,46 @@ public final class InstanceDetailView {
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
-    /** A row of the detail pane; a null label explains the row above. */
-    public record DetailRow(String label, String value) {}
+    /**
+     * A row of the detail pane, its value a link to {@code url} when there is one. A null label
+     * explains the row above, dimmed; an empty one goes on with the value above, and with an
+     * empty value it is a blank line between sections.
+     */
+    public record DetailRow(String label, String value, String url) {
+        public DetailRow(String label, String value) {
+            this(label, value, null);
+        }
+    }
+
+    /** The blank line between two sections of rows. */
+    static final DetailRow BLANK = new DetailRow("", "");
+
+    /** The width of a row's label, where every value starts. */
+    static final int LABEL_WIDTH = 16;
+
+    /**
+     * The detail pane's rows for what the proxy's event log says the instance did on GitHub
+     * (#2292): each pull request it opened, linked to its page with what became of it when GitHub
+     * said, and the branches it pushed; none before the overview has read the log, or when there
+     * is nothing to show.
+     */
+    public static List<DetailRow> githubRows(dev.incusspawn.proxy.EventLogReader.Effort effort,
+                                             List<dev.incusspawn.command.PullRequestStates.State> states) {
+        var rows = new ArrayList<DetailRow>();
+        if (effort == null) return rows;
+        var pulls = effort.pullRequests();
+        for (int i = 0; i < pulls.size(); i++) {
+            var url = pulls.get(i).url();
+            var shown = url == null ? OutputFormat.oneLine(pulls.get(i).toString()) : url;
+            rows.add(new DetailRow(i == 0 ? "Pull requests:" : "",
+                    dev.incusspawn.command.PullRequestStates.labelled(shown, states, i), url));
+        }
+        var branches = effort.branches();
+        for (int i = 0; i < branches.size(); i++) {
+            rows.add(new DetailRow(i == 0 ? "Pushed:" : "", OutputFormat.oneLine(branches.get(i).toString())));
+        }
+        return rows;
+    }
 
     /** The detail pane's rows for an instance an external tool controls (#1720); none for any other. */
     public static List<DetailRow> ownerDetailRows(String owner, String ownerId) {
@@ -168,24 +212,28 @@ public final class InstanceDetailView {
     public static List<DetailRow> summaryRows(dev.incusspawn.command.AgentSessions.Summary summary, java.time.LocalDateTime now) {
         var rows = new ArrayList<DetailRow>();
         if (summary == null) return rows;
+        // Every label at the same indent, and a blank line between the sections (#2292)
         rows.add(new DetailRow("Done:", OutputFormat.oneLine(summary.cell())));
         var merge = summary.merged();
         if (merge != null) {
+            rows.add(BLANK);
             rows.add(new DetailRow(null, "a model's merge of the agents' own words, " + merge.sources(now)));
-            rows.add(new DetailRow("  Finished:", OutputFormat.oneLine(merge.done())));
-            rows.add(new DetailRow("  State:", OutputFormat.oneLine(merge.current())));
-            rows.add(new DetailRow("  Pending:", OutputFormat.oneLine(merge.pending()) + " (inferred)"));
+            rows.add(new DetailRow("Finished:", OutputFormat.oneLine(merge.done())));
+            rows.add(new DetailRow("State:", OutputFormat.oneLine(merge.current())));
+            rows.add(new DetailRow("Pending:", OutputFormat.oneLine(merge.pending()) + " (inferred)"));
         }
         if (summary.newest() == null) return rows;
         var at = java.time.LocalDateTime.ofInstant(summary.newest(), java.time.ZoneId.systemDefault());
+        rows.add(BLANK);
         rows.add(new DetailRow(null, "the agent's own words, from " + summary.sessions()
                 + (summary.sessions() == 1 ? " session" : " sessions, the newest") + " "
                 + Metadata.ageDescription(at.format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME), now)));
-        if (summary.ask() != null) rows.add(new DetailRow("  Asked:", OutputFormat.oneLine(summary.ask())));
+        if (summary.ask() != null) rows.add(new DetailRow("Asked:", OutputFormat.oneLine(summary.ask())));
         if (summary.closing() != null) {
             var lines = summary.closing().lines().filter(l -> !l.isBlank()).toList();
+            if (summary.ask() != null && !lines.isEmpty()) rows.add(BLANK);
             for (int i = 0; i < Math.min(lines.size(), CLOSING_LINES); i++) {
-                rows.add(new DetailRow(i == 0 ? "  Closing:" : null, OutputFormat.oneLine(lines.get(i))));
+                rows.add(new DetailRow(i == 0 ? "Closing:" : "", OutputFormat.oneLine(lines.get(i))));
             }
             if (lines.size() > CLOSING_LINES) rows.add(new DetailRow(null, "… " + (lines.size() - CLOSING_LINES) + " more lines in isx overview --format=json"));
         }
@@ -260,7 +308,9 @@ public final class InstanceDetailView {
                                              List<String> registeredWith,
                                              BaseImageAge.Assessment baseImage,
                                              dev.incusspawn.config.McpScope mcpScope,
-                                             dev.incusspawn.command.AgentSessions.Summary summary) {
+                                             List<DetailRow> github,
+                                             dev.incusspawn.command.AgentSessions.Summary summary,
+                                             int wrapWidth) {
         var lines = new ArrayList<Line>();
         var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
         var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
@@ -307,13 +357,17 @@ public final class InstanceDetailView {
         rows.addAll(mcpControlRows(info.mcpCaller(), mcpScope));
         rows.addAll(ownerDetailRows(info.owner(), info.ownerId()));
         rows.addAll(registrationRows(registeredWith));
-        rows.addAll(summaryRows(summary, clock.get()));
-        for (var row : rows) {
-            lines.add(row.label() == null
-                    ? Line.from(List.of(Span.styled(" ".repeat(16) + row.value(), dimStyle)))
-                    : Line.from(List.of(Span.styled(String.format("%-16s", row.label()), labelStyle),
-                            Span.styled(row.value(), lineStyle))));
+        // What it did on GitHub and in its agent sessions, each a section of its own (#2292)
+        if (!github.isEmpty()) {
+            rows.add(BLANK);
+            rows.addAll(github);
         }
+        var sessions = summaryRows(summary, clock.get());
+        if (!sessions.isEmpty()) {
+            rows.add(BLANK);
+            rows.addAll(sessions);
+        }
+        for (var row : rows) lines.addAll(rowLines(row, wrapWidth - LABEL_WIDTH, labelStyle, lineStyle, dimStyle));
 
         lines.add(Line.styled("", lineStyle));
 
@@ -397,6 +451,41 @@ public final class InstanceDetailView {
                 Span.styled("Profile:        ", labelStyle),
                 Span.styled(info.profile(), lineStyle))));
 
+        return lines;
+    }
+
+    /**
+     * The lines of one row: its label, then its value wrapped at {@code valueWidth} cells, each
+     * line after the first under the value's start (#2292), so a long message stays visible and
+     * aligned. A link stays whole, and a click on it opens its page.
+     */
+    static List<Line> rowLines(DetailRow row, int valueWidth, Style labelStyle, Style lineStyle, Style dimStyle) {
+        var style = row.label() == null ? dimStyle : lineStyle;
+        var segments = new ArrayList<dev.incusspawn.util.TerminalLink.Segment>();
+        if (row.url() != null && row.value().startsWith(row.url())) {
+            segments.add(new dev.incusspawn.util.TerminalLink.Segment.Link(row.url(), row.url()));
+            var rest = row.value().substring(row.url().length());
+            if (!rest.isEmpty()) segments.add(new dev.incusspawn.util.TerminalLink.Segment.Text(rest));
+        } else {
+            segments.add(new dev.incusspawn.util.TerminalLink.Segment.Text(row.value()));
+        }
+        var wrapped = SegmentWrap.wrap(segments, Math.max(20, valueWidth));
+        if (wrapped.isEmpty()) wrapped = List.of(List.of());
+        var lines = new ArrayList<Line>();
+        for (int i = 0; i < wrapped.size(); i++) {
+            var spans = new ArrayList<Span>();
+            spans.add(i == 0 && row.label() != null && !row.label().isEmpty()
+                    ? Span.styled(String.format("%-" + LABEL_WIDTH + "s", row.label()), labelStyle)
+                    : Span.styled(" ".repeat(LABEL_WIDTH), lineStyle));
+            for (var segment : wrapped.get(i)) {
+                spans.add(switch (segment) {
+                    case dev.incusspawn.util.TerminalLink.Segment.Link link ->
+                            Span.styled(link.label(), style.underlined().hyperlink(link.url()));
+                    case dev.incusspawn.util.TerminalLink.Segment.Text text -> Span.styled(text.text(), style);
+                });
+            }
+            lines.add(Line.from(spans));
+        }
         return lines;
     }
 
