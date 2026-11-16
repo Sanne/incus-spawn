@@ -229,6 +229,32 @@ clones_from_github() {
         git -C /tmp/clone log --oneline -1 | grep -q . && rm -rf /tmp/clone'
 }
 
+# The exit code of test-instance.sh when its only failures were 429s from Maven Central
+THROTTLED_EXIT=75
+
+# Maven Central rate-limits a whole runner at times, past every retry in the instance (#2278).
+# When the instance's only failures are such 429s, this host asks Maven Central itself, without
+# the proxy and from the same address: a 429 here too is the runner being throttled, so the check
+# passes with a warning in the run's summary; any other answer means only the proxied requests
+# were refused, which is the proxy's fault.
+instance_checks_pass() {
+    local rc=0
+    guest_exec "$INSTANCE" -- bash /tmp/test-instance.sh --core || rc=$?
+    [ "$rc" -eq "$THROTTLED_EXIT" ] || return "$rc"
+    local url=${MAVEN_CONTROL_URL:-https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom} status
+    status=$(curl -sS -m 30 -o /dev/null -w '%{http_code}' "$url") || status=none
+    if [ "$status" = 429 ]; then
+        echo "::warning title=Maven Central throttled this runner::HTTP 429 through the proxy and directly from the host: the Maven downloads were not checked on this leg"
+        return 0
+    fi
+    if [ "$status" = none ]; then
+        echo "The host could not reach Maven Central directly either, so the proxied 429s cannot be told apart from a proxy fault"
+        return 1
+    fi
+    echo "Maven Central answered the host directly with HTTP $status while every proxied request got 429: the proxy's fault"
+    return 1
+}
+
 instance() {
     echo "=== A branch, through the bridge ==="
     isx branch "$INSTANCE" --from tpl-minimal
@@ -238,7 +264,7 @@ instance() {
     incus file push "$HERE/test-instance.sh" "$INSTANCE/tmp/"
     # Sections 1 to 6b less GitHub's interception: Maven through the proxy, sudo, systemd, /tmp on
     # disk, DNS, login shell, agent context. The later ones need the native job's fixtures.
-    check "the instance checks pass" guest_exec "$INSTANCE" -- bash /tmp/test-instance.sh --core
+    check "the instance checks pass" instance_checks_pass
     finish
 }
 
@@ -308,6 +334,9 @@ lifecycle() {
     check "isx doctor finds nothing failing" isx doctor
     finish
 }
+
+# Sourcing defines the functions above for tests of them, and runs no phase.
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
 
 phase=${1:-}
 [ $# -gt 0 ] && shift

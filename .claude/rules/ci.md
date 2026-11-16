@@ -77,13 +77,13 @@ Key jobs:
   It needs Incus's nftables firewall driver on the runner
 - **`host-distro (arch)`, `host-distro (arch-ufw)`, `host-distro (ubuntu-ufw)`**: isx on hosts as users install them (#1972).
   Each boots its distribution's own cloud image as a KVM guest on the hosted runner (`scripts/distro-vm.sh`: a copy-on-write overlay, a cloud-init NoCloud seed for the user `tester`, ssh over QEMU's user-mode network) and runs `.github/scripts/test-host-distro.sh` in it, one phase per ssh login, with the native binaries from `build-native-*`.
-  The phases: packages and a reboot, then ufw enabled on the `-ufw` shapes; `isx init </dev/null` installing Incus from the distribution's repository (on Arch, without `sg`, it stops for a new login and the next ssh session finishes it, exit 75 between them); the host after init (ufw still loads and stays enabled, or firewalld runs; a loopback listener answers; an HTTPS reply comes back; a second init changes nothing); `isx proxy install` as a user service with `isx doctor` clean; `isx build tpl-minimal`; a branch with NAT, a GitHub clone and `test-instance.sh --core`; `isx shell` to the prompt (`bench/isxbench.py`'s `run_to_prompt`); `test-proxy-only.sh` without the VM; and `isx stop`, `isx start`, `isx destroy` with `isx doctor` again.
+  The phases: packages and a reboot, then ufw enabled on the `-ufw` shapes; `isx init </dev/null` installing Incus from the distribution's repository (on Arch, without `sg`, it stops for a new login and the next ssh session finishes it, exit 75 between them); the host after init (ufw still loads and stays enabled, or firewalld runs; a loopback listener answers; an HTTPS reply comes back; a second init changes nothing); `isx proxy install` as a user service with `isx doctor` clean; `isx build tpl-minimal`; a branch with NAT, a GitHub clone and `test-instance.sh --core` (its Maven checks throttled by Maven Central pass with a warning when the host is throttled too, #2278); `isx shell` to the prompt (`bench/isxbench.py`'s `run_to_prompt`); `test-proxy-only.sh` without the VM; and `isx stop`, `isx start`, `isx destroy` with `isx doctor` again.
   Stock Arch has no firewall, so init installs firewalld through pacman; the runner's own shape, ufw off and firewalld installed by init, is `isx-integration-tests-native`'s.
   Ubuntu 24.04's Incus 6.0 lacks `network_bridge_acl_devices`, so there the proxy-only phase only checks that a `--proxy-only` branch is refused and leaves nothing running (#1979).
   Images are pinned in the matrix by dated URL and the publisher's SHA-256 and cached by that checksum; `HostDistroWorkflowTest` checks the pins, the cache key and the artifacts.
   To bump one, take the new URL and its sum from the publisher, never a log: Arch's dated directory under `https://geo.mirror.pkgbuild.com/images/` with its `.SHA256` file, and Ubuntu's `https://cloud-images.ubuntu.com/releases/noble/release-<date>/` with its `SHA256SUMS`.
   Arch's `pacman -Syu` brings the image current, so its pin ages well until the mirror drops the dated directory.
-  `test-instance.sh --core` skips GitHub's interception (no credential there) and stops after section 6b; `test-proxy-only.sh` takes `PROXY_ONLY_VM_TEMPLATE` (empty skips the VM) and `PROXY_ONLY_PROBE_URL`.
+  `test-instance.sh --core` skips GitHub's interception (no credential there) and stops after section 6b; sourcing `test-host-distro.sh` defines its functions without running a phase, which `TestHostDistroScriptTest` uses; `test-proxy-only.sh` takes `PROXY_ONLY_VM_TEMPLATE` (empty skips the VM) and `PROXY_ONLY_PROBE_URL`.
   Run inside an isx instance, `DISTRO_VM_TRUST=<its CA>` adds that instance's proxy CA to the guest's trust store.
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
@@ -311,6 +311,11 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
   Its Maven downloads go through `fetch_matching`, which reports an non-200 answer (Maven Central sometimes refuses a runner with a 403) with the status and `Server` header, and its TLS checks pass on any HTTP answer, so a refusal fails section 1 alone (#1810).
   It first retries such an answer, six attempts in all, waiting its `Retry-After` or 5 s doubling each time, at most 60 s, about two minutes in all without a `Retry-After` (#2063).
   Maven Central's rate limit (429) and its passing refusals clear, but Cloudflare's 429 has outlasted 30 s without a `Retry-After` (#2268).
+  A 429 has also outlasted all six attempts, Maven Central throttling the runner itself (#2278).
+  When every failed check was such a 429, the script exits 75 instead of 1, and `assert_fetch` counts those checks.
+  The host-distro jobs then ask Maven Central from the host without the proxy (`instance_checks_pass` in `test-host-distro.sh`).
+  A 429 there too passes the check with a `::warning::` in the run's summary; any other answer fails it as the proxy's fault, and no answer fails it too.
+  The other jobs that run the script still fail on 75.
   Sourcing the script defines its helpers without running checks, which `TestInstanceScriptTest` uses.
   After it, the "Test container" step writes a file to `/tmp`, runs `incus restart` and checks the file is still there, waiting at most 60 s for `local-fs.target`.
 - **`test-airgap.sh`**: runs on the host.

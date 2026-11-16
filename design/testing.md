@@ -80,6 +80,14 @@ host-distro's check that an HTTPS reply comes back through the host's firewall a
 Any status from any of them passes, since a reply from any host proves the firewall passes it, and the log names which one answered when github.com did not.
 `NetRetryScriptTest` drives both against stand-in commands, and checks the workflows and scripts call them.
 
+**Maven Central throttling the runner is told apart from a proxy fault.**
+Maven Central has answered a runner with HTTP 429 past all six of `test-instance.sh`'s attempts, about two minutes of waiting (#2278).
+When every failed check was such a 429, the script exits 75 instead of 1.
+The host-distro jobs then ask Maven Central from the host, without the proxy and from the same address (`instance_checks_pass` in `test-host-distro.sh`).
+A 429 there too passes the check with a `::warning::`, so the leg did not check the Maven downloads.
+Any other answer, or no answer, fails it, and the other jobs that run the script still fail on 75.
+`TestInstanceScriptTest` and `TestHostDistroScriptTest` drive both scripts against a stand-in server.
+
 **An exec Incus could not attach is tried again.**
 On an Arch host, incusd answered an exec into a container that had just started, 150 ms after another exec had run, with `Failed to retrieve PID of executing child process` and exit 255, and host-distro's proxy-only phase failed with no change to blame (#2084).
 That message means its forkexec helper could not attach to the guest (liblxc's attach failed), so the command never ran, and running it again is safe whatever it does.

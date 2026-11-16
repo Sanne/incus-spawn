@@ -77,6 +77,11 @@ class TestInstanceScriptTest {
             }
             exchange.close();
         });
+        server.createContext("/always-throttled", exchange -> {
+            exchange.getResponseHeaders().add("Server", "cloudflare");
+            exchange.sendResponseHeaders(429, -1);
+            exchange.close();
+        });
         server.createContext("/pom", exchange -> {
             byte[] body = "<artifactId>junit</artifactId>".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
@@ -99,6 +104,36 @@ class TestInstanceScriptTest {
         assertTrue(result.output.contains("the TLS handshake with the proxy succeeded"), result.output);
         assertTrue(result.output.contains("after 6 attempts"), result.output);
         assertEquals(6, refused.get(), result.output);
+    }
+
+    /**
+     * A 429 that outlasts every retry is told apart from other failures (#2278): the host then asks
+     * Maven Central directly, so a throttled runner is not reported as a proxy fault.
+     */
+    @Test
+    void aRateLimitThatOutlastsEveryRetryIsReportedAsThrottled() throws Exception {
+        var result = run("http://127.0.0.1:" + server.getAddress().getPort() + "/always-throttled",
+                "<artifactId>junit</artifactId>");
+        assertEquals(75, result.exitCode, result.output);
+        assertTrue(result.output.contains("HTTP 429"), result.output);
+    }
+
+    @Test
+    void aReportWhoseOnlyFailuresAreThrottledExits75() throws Exception {
+        var throttled = shell("source \"$1\" && TESTS=3 PASS=1 FAIL=2 THROTTLED=2 ERRORS='  - one\\n  - two\\n' && report");
+        assertEquals(75, throttled.exitCode, throttled.output);
+        assertTrue(throttled.output.contains("Maven Central's rate limit"), throttled.output);
+        var mixed = shell("source \"$1\" && TESTS=3 PASS=1 FAIL=2 THROTTLED=1 ERRORS='  - one\\n  - two\\n' && report");
+        assertEquals(1, mixed.exitCode, mixed.output);
+    }
+
+    @Test
+    void aThrottledFetchIsCountedAsAFailureAndAsThrottled() throws Exception {
+        String url = "http://127.0.0.1:" + server.getAddress().getPort();
+        var result = shell("source \"$1\" && FETCH_MAX_DELAY=0 && assert_fetch 'throttled' " + url
+                + "/always-throttled x && assert_fetch 'refused' " + url + "/refused x"
+                + " && echo \"FAIL=$FAIL THROTTLED=$THROTTLED\"");
+        assertTrue(result.output.contains("FAIL=2 THROTTLED=1"), result.output);
     }
 
     @Test
@@ -185,8 +220,10 @@ class TestInstanceScriptTest {
     }
 
     private Result shell(String command) throws Exception {
-        var process = new ProcessBuilder("bash", "--norc", "--noprofile", "-c", command, "test", SCRIPT.toString())
-                .redirectErrorStream(true).start();
+        var builder = new ProcessBuilder("bash", "--norc", "--noprofile", "-c", command, "test", SCRIPT.toString())
+                .redirectErrorStream(true);
+        builder.environment().keySet().removeIf(name -> name.toLowerCase().endsWith("_proxy"));
+        var process = builder.start();
         var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertTrue(process.waitFor(30, TimeUnit.SECONDS), "the script hung:\n" + output);
         return new Result(process.exitValue(), output);
