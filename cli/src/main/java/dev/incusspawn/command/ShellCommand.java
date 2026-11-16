@@ -19,6 +19,7 @@ import org.aesh.command.option.Option;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.function.Function;
 
 @CommandDefinition(
         name = "shell",
@@ -33,6 +34,10 @@ public class ShellCommand extends BaseCommand {
     @Option(name = "task", hasValue = false,
             description = "Join a delegated task's agent conversation instead of opening a shell")
     boolean task;
+
+    @Option(name = "take", hasValue = false,
+            description = "With --task: if a person's agent holds the conversation, end it (SIGHUP) and join instead; asks first")
+    boolean take;
 
     @Option(name = "session",
             description = "Enter this zmx or tmux session, created if missing, instead of the instance's default one")
@@ -50,6 +55,10 @@ public class ShellCommand extends BaseCommand {
     protected CommandResult doExecute() throws Exception {
         if (taskId != null && !task) {
             BuildOutput.error("a task id needs --task.", "isx shell " + name + " --task " + taskId);
+            return CommandResult.valueOf(1);
+        }
+        if (take && !task) {
+            BuildOutput.error("--take takes a task's conversation back, so it needs --task.", "isx shell " + name + " --task --take");
             return CommandResult.valueOf(1);
         }
         var shellSession = shellSession(session, noAttach, task, BuildOutput.bound());
@@ -130,6 +139,12 @@ public class ShellCommand extends BaseCommand {
             return null;
         }
         var outcome = TaskJoin.resolve(entries, taskId);
+        if (take && outcome instanceof TaskJoin.Outcome.Busy busy && busy.entry().takeable()) {
+            var prompts = Prompts.terminal();
+            if (prompts == null) throw new NoTerminalForShellException(name);
+            return take(busy.entry(), name, Instant.now(), prompts, entry -> TaskJoin.take(incus, name, entry), BuildOutput.bound())
+                    ? busy.entry() : null;
+        }
         if (outcome instanceof TaskJoin.Outcome.Join join) {
             BuildOutput.step("Joining " + join.entry().id() + " (" + join.entry().agent() + ") in " + name + ".");
             return join.entry();
@@ -138,6 +153,26 @@ public class ShellCommand extends BaseCommand {
                 ? recent(incus, busy.entry()) : List.<String>of();
         explain(outcome, name, Instant.now(), recent, BuildOutput.bound());
         return null;
+    }
+
+    /**
+     * {@code --take}: shows who holds {@code entry}'s conversation and asks before ending their
+     * agent with {@code reclaim} (null once the conversation is free, else why not). True to join.
+     */
+    static boolean take(TaskJoin.Entry entry, String name, Instant now, Prompts prompts,
+                        Function<TaskJoin.Entry, String> reclaim, Output out) {
+        out.step("A person's agent holds " + entry.id() + "'s conversation in " + name + ": " + TaskJoin.holder(entry, now) + ".");
+        if (!askYesNo(prompts, "End it with SIGHUP and join " + entry.id() + "? Whatever they typed and did not send is lost.", false)) {
+            out.step("Aborted.");
+            return false;
+        }
+        var why = reclaim.apply(entry);
+        if (why != null) {
+            out.error(why);
+            return false;
+        }
+        out.step("Took " + entry.id() + "'s conversation back; joining it (" + entry.agent() + ") in " + name + ".");
+        return true;
     }
 
     /**

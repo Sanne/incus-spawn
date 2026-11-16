@@ -35,10 +35,16 @@ public final class TaskJoin {
      * ({@code running}, {@code finished}, {@code lost} or {@code unknown}); {@code startedAt} is
      * when its current run started, null if unknown; {@code instruction} the first line of its
      * first prompt, as one line safe to print; {@code attachedPid} the coding agent of a person
-     * already in its conversation, or null.
+     * already in its conversation, or null, with whether it has a controlling terminal
+     * ({@code attachedTty}) and when that terminal last had input (null without one).
      */
     public record Entry(String id, String agent, String state, Instant startedAt, String instruction,
-                        String sessionId, String cwd, Long attachedPid) {
+                        String sessionId, String cwd, Long attachedPid, boolean attachedTty, Instant attachedLastInputAt) {
+
+        /** An entry nobody is attached to. */
+        public Entry(String id, String agent, String state, Instant startedAt, String instruction, String sessionId, String cwd) {
+            this(id, agent, state, startedAt, instruction, sessionId, cwd, null, false, null);
+        }
 
         /** Whether its conversation can be resumed at all: a known agent, a saved session and a directory. */
         boolean resumable() {
@@ -56,6 +62,14 @@ public final class TaskJoin {
         /** Whether it is a task a person could mean: resumable, or a known agent's run still going. */
         boolean joinable() {
             return resumable() || DelegateAgent.parse(agent) != DelegateAgent.UNKNOWN && busy();
+        }
+
+        /**
+         * Whether {@code isx shell --take} may end the agent that holds it: a person's agent holds a
+         * resumable conversation whose run is over (finished, or cut off).
+         */
+        public boolean takeable() {
+            return attachedPid != null && ("finished".equals(state) || "lost".equals(state)) && resumable();
         }
 
         /** Whether its current run is going, as systemd says. */
@@ -137,9 +151,10 @@ public final class TaskJoin {
             var session = SESSION_ID.matcher(sid).matches() ? sid : null;
             var cwd = f.getOrDefault("cwd", "").strip();
             // As task_status decides attached: an agent resuming the session, or working where it did.
+            var holder = session == null ? null : who.holderOf(agent, session, cwd);
             entries.add(new Entry(id, agent.id, state, started,
                     shorten(OutputFormat.oneLine(f.getOrDefault("prompt", "").strip())),
-                    session, cwd, session == null ? null : who.holderOf(agent, session, cwd)));
+                    session, cwd, holder, holder != null && who.onTerminal(holder), holder == null ? null : who.lastInput(holder)));
         });
         return entries;
     }
@@ -240,15 +255,45 @@ public final class TaskJoin {
             case Outcome.None none -> "No delegated task to join in " + instance + ".";
             case Outcome.NotFound missing -> "No delegated task " + missing.id() + " to join in " + instance
                     + "; to list them: isx shell " + instance + " --task";
-            case Outcome.Busy busy -> busy.entry().attachedPid() != null
-                    ? "A person is already in " + busy.entry().id() + "'s conversation (agent pid " + busy.entry().attachedPid()
-                            + "); a second would write to it at the same time."
-                    : busy.entry().running()
+            case Outcome.Busy busy when busy.entry().attachedPid() != null -> "A person is already in " + busy.entry().id()
+                    + "'s conversation (" + (busy.entry().takeable() ? holder(busy.entry(), Instant.now()) : "agent pid " + busy.entry().attachedPid())
+                    + "); a second would write to it at the same time."
+                    + (busy.entry().takeable() ? " To end their agent and join instead: " + hostCommand(instance, busy.entry().id()) + " --take" : "");
+            case Outcome.Busy busy -> busy.entry().running()
                     ? busy.entry().id() + " is mid-turn, and joining now would race its run on one conversation; join it once the turn ends."
                     : "Cannot tell whether " + busy.entry().id() + " is still running (systemd did not answer), so not joining it.";
             case Outcome.Join join -> null;
             case Outcome.Several several -> null;
         };
+    }
+
+    /**
+     * The agent holding {@code entry}'s conversation, for a person deciding whether to take it:
+     * its pid, and when its terminal last had input, or that it has none.
+     */
+    public static String holder(Entry entry, Instant now) {
+        if (!entry.attachedTty()) return "agent pid " + entry.attachedPid() + ", with no terminal";
+        return "agent pid " + entry.attachedPid() + ", last input "
+                + (entry.attachedLastInputAt() == null ? "unknown" : age(entry.attachedLastInputAt(), now));
+    }
+
+    /**
+     * Ends the agent holding {@code entry}'s conversation with SIGHUP ({@link Reclaim}), only if it
+     * is still the one {@code entry} names, and records it in the task's directory as
+     * {@code isx shell --take}. Null once the conversation is free, else why not.
+     */
+    public static String take(IncusClient incus, String instance, Entry entry) {
+        var out = new ByteArrayOutputStream();
+        int exit;
+        try {
+            exit = probe(incus, instance, Reclaim.script(entry.id(), DelegateAgent.parse(entry.agent()), "isx shell --take",
+                    entry.attachedPid(), Reclaim.WAIT_SECONDS), out, READ_LIMIT.multipliedBy(2).plusSeconds(2L * Reclaim.WAIT_SECONDS));
+        } catch (RuntimeException e) {
+            return "Could not reach " + instance + ": " + OutputFormat.oneLine(String.valueOf(e.getMessage()));
+        }
+        if (exit != 0) return "Could not take " + entry.id() + "'s conversation back in " + instance + " (exit " + exit + ").";
+        var why = Reclaim.parse(out.toString(StandardCharsets.UTF_8)).refusal(entry.id());
+        return why == null ? null : "Did not take it back: " + why;
     }
 
     /** The hint plain {@code isx shell} prints before the prompt, or null when there is nothing to join. */
