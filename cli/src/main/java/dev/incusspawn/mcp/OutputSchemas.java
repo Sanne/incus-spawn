@@ -189,6 +189,9 @@ final class OutputSchemas {
                 .integer("exit_code", null, false)
                 .integer("run", null, true)
                 .integer("attached_pid", "The coding agent of a person in its conversation", false)
+                .bool("attached_tty", "With attached_pid: whether that agent has a controlling terminal", false)
+                .string("attached_last_input_at", "ISO-8601, with attached_tty: when its terminal last had input "
+                        + "(about 8 s granularity); output does not move it", false)
                 .string("session_id", "The saved agent conversation ID", false)
                 .bool("resumable", "A supported agent with a saved conversation ID it can still resume", false)
                 .string("join_command", "When resumable: the host command a person runs to join its conversation", false)

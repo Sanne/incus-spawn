@@ -1160,7 +1160,11 @@ final class McpTools {
         node.put("state", status.state());
         if (status.exit() != null) node.put("exit_code", status.exit());
         node.put("run", status.run());
-        if (status.attachedPid() != null) node.put("attached_pid", status.attachedPid());
+        if (status.attachedPid() != null) {
+            node.put("attached_pid", status.attachedPid());
+            node.put("attached_tty", status.attachedTty());
+            if (status.attachedLastInputAt() != null) node.put("attached_last_input_at", status.attachedLastInputAt().toString());
+        }
         String joinCommand = null;
         if (Tasks.AGENT.equals(task.kind())) {
             if (status.sessionId() != null) node.put("session_id", status.sessionId());
@@ -1180,6 +1184,8 @@ final class McpTools {
         if (status.attachedPid() != null) {
             sb.append("\nattached: a person is in this conversation (agent, pid ").append(status.attachedPid())
                     .append("); send_message is refused until they leave.");
+            sb.append("\nattached_tty: ").append(status.attachedTty());
+            if (status.attachedLastInputAt() != null) sb.append("\nattached_last_input_at: ").append(status.attachedLastInputAt());
         }
         if (Tasks.AGENT.equals(task.kind())) {
             var summary = summarize(task, status.output(), 8);

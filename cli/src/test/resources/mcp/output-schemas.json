@@ -537,6 +537,14 @@
         "description" : "The coding agent of a person in its conversation",
         "type" : "integer"
       },
+      "attached_tty" : {
+        "description" : "With attached_pid: whether that agent has a controlling terminal",
+        "type" : "boolean"
+      },
+      "attached_last_input_at" : {
+        "description" : "ISO-8601, with attached_tty: when its terminal last had input (about 8 s granularity); output does not move it",
+        "type" : "string"
+      },
       "session_id" : {
         "description" : "The saved agent conversation ID",
         "type" : "string"
