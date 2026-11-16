@@ -126,6 +126,15 @@ class TaskJoinTest {
     }
 
     @Test
+    void aPersonIsGivenCommandsOfTheirOwnWhenATakeIsRefused() {
+        assertTrue(new Reclaim(Reclaim.Outcome.RUNNING, null).personRefusal("t1-abcd", "box").endsWith("isx shell box --task t1-abcd"));
+        assertTrue(new Reclaim(Reclaim.Outcome.OTHER, 9L).personRefusal("t1-abcd", "box").endsWith("isx shell box --task t1-abcd --take"));
+        var unreadable = new Reclaim(Reclaim.Outcome.UNREADABLE, null).personRefusal("t1-abcd", "box");
+        assertTrue(unreadable.endsWith("isx shell box --task t1-abcd") && !unreadable.contains("task_status"), unreadable);
+        assertTrue(!new Reclaim(Reclaim.Outcome.RUNNING, null).personRefusal("t1-abcd", "box").contains("cancel_task"));
+    }
+
+    @Test
     void onlyAFinishedResumableConversationIsTakeable() {
         var held = new TaskJoin.Entry("t1-abcd", "claude", "finished", null, "", "s1", "/a", 42L, true, null);
         assertTrue(held.takeable());
