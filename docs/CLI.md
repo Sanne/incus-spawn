@@ -1200,7 +1200,7 @@ One record per instance the proxy knows, by name, then one whose `instance` is `
 The last eight fields describe the proxy, not one instance: they are set on the unattributed record alone, and are `null` on the others.
 The table ends with the refused proofs and a failed listing when there are any, and the unplaced instances when there are address misses.
 
-It also names each domain that answered 429, with its counts, and `isx doctor` warns about one that is limiting the host or did within the last 30 minutes.
+It also names each domain that answered 429, with its counts, and `isx doctor` warns for 30 minutes after a domain's last 429.
 
 With `--by-domain`, one record per instance and domain: `instance`, `domain`, `counting_since`, `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes`.
 `domain` is an intercepted domain, a subdomain counted under it, or `(other)`.

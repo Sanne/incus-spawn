@@ -2502,6 +2502,7 @@ public class MitmProxy {
                 upReq.putHeader("Content-Length", String.valueOf(spool.size()));
                 upReq.response().onSuccess(upResp -> {
                     if (watchdog.cut) return;
+                    upstream.throttles.answered(requestOptions.getHost(), upResp.statusCode());
                     if (!isRetry && upResp.statusCode() == 401) {
                         ProxyLog.trace("Vertex 401: invalidating cached token and retrying");
                         invalidateVertexToken();

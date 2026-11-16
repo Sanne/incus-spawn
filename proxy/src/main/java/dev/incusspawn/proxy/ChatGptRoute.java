@@ -559,8 +559,11 @@ final class ChatGptRoute {
                 upReq.putHeader("Accept-Encoding", "identity");
                 upReq.putHeader("Content-Type", "application/json");
                 upReq.putHeader("Content-Length", String.valueOf(body.length()));
-                return upReq.send(body).compose(upResp -> upResp.body().map(b -> new RefreshAnswer(upResp.statusCode(), b,
-                                upResp.statusCode() == 429 ? Upstream.retryHeaders(upResp.headers()) : List.of())))
+                return upReq.send(body).compose(upResp -> {
+                            proxy.upstream.throttles.answered(AUTH, upResp.statusCode());
+                            return upResp.body().map(b -> new RefreshAnswer(upResp.statusCode(), b,
+                                    upResp.statusCode() == 429 ? Upstream.retryHeaders(upResp.headers()) : List.of()));
+                        })
                         .compose(answer -> vertx.executeBlocking(() -> settle(session, answer), false),
                                 // Sent but its answer lost: OpenAI may have rotated the token. The record of
                                 // the attempt stays, and the next refresh says so if it is refused.
@@ -669,6 +672,7 @@ final class ChatGptRoute {
         var options = new RequestOptions().setMethod(HttpMethod.POST).setHost(AUTH).setPort(443).setURI("/oauth/revoke");
         proxy.upstream.requestWithAsyncDns(options)
                 .compose(upReq -> upReq.putHeader("Content-Type", "application/json").send(body))
+                .onSuccess(upResp -> proxy.upstream.throttles.answered(AUTH, upResp.statusCode()))
                 .onFailure(e -> ProxyLog.warn("Could not revoke a discarded ChatGPT refresh token: " + e.getMessage()));
     }
 

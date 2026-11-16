@@ -925,7 +925,7 @@ Until a resource to lease exists, only the read side ships; the health server st
 ## Upstream rate limits are counted per domain (#2303)
 A registry that answers 429 to the host's address makes a build inside an instance slow or failing, behind isx's proxy, so the user reasonably suspects isx.
 `Throttles` (`Upstream.throttles`) counts, per domain, the 429s upstream answered to any request the proxy made, the cached copies served unconfirmed because of one, when the first and last came, and whether the domain's latest answer was one.
-It sees every answer through four seams: a relayed response (a buffered one included), a cache miss's fetch and each redirect it follows, a probe (`sendProbe`, which covers sidecars, HEADs and the npm version lookup) and a resume.
+It sees every answer through four seams: a relayed response (a buffered one, a Vertex call and ChatGPT's token refresh and revoke included), a cache miss's fetch and each redirect it follows, a probe (`sendProbe`, which covers sidecars, HEADs and the npm version lookup) and a resume.
 A redirect target's answer is booked under the target's name, and the redirect itself is the redirecting domain's answer, so a CDN's limit is not misnamed as the registry's.
 This includes GitHub, the model APIs and the container registries, since a count costs nothing and passing their 429s on unchanged is #2309's.
 A domain that has not answered 429 is not listed, and at most 128 domains are held, so a redirect to many hosts cannot grow the map.
