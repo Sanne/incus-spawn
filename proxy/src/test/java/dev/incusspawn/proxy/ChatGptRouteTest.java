@@ -673,7 +673,7 @@ class ChatGptRouteTest {
             refuseTheCurrentToken();
         }
 
-        var outcome = proxy.chatGpt.newerOrLater(stale);
+        var outcome = proxy.chatGpt.newerOrLater(stale, 1);
         assertEquals(status, outcome.status());
         assertEquals(status == 200 ? store.read(ACCOUNT).tokens() : null, outcome.tokens());
         assertEquals(1, refreshes.get());
@@ -688,7 +688,7 @@ class ChatGptRouteTest {
         if (signedInAgain) store.create(ACCOUNT, mint(3600));
         else store.remove(ACCOUNT);
 
-        var outcome = proxy.chatGpt.newerOrLater(stale);
+        var outcome = proxy.chatGpt.newerOrLater(stale, 1);
         assertEquals(401, outcome.status(), "not a retryable 503: the proofs will never work again");
         assertNull(outcome.tokens());
         assertFalse(proxy.chatGpt.refuses(ACCOUNT, sessionId), "nothing kept about a session that is gone");
@@ -893,8 +893,12 @@ class ChatGptRouteTest {
         assertEquals(502, reply.status(), reply.body());
         assertTrue(reply.body().contains("server_error"), reply.body());
         assertNull(proxy.authError, "nothing tells the user to sign in again");
-        // Within the interval, an expired token is not handed out as if refreshed: try again later
-        assertEquals(503, refresh(proofs().refreshToken()).status());
+        // Within the interval, an expired token is not handed out as if refreshed: try again later,
+        // when the throttle lets a refresh through, so a client that waits as told is not throttled again
+        var throttled = refresh(proofs().refreshToken());
+        assertEquals(503, throttled.status());
+        var retryAfter = Integer.parseInt(throttled.headers().get("retry-after"));
+        assertTrue(retryAfter > 25 && retryAfter <= 30, "the rest of the 30 s window: " + retryAfter);
         assertEquals(1, refreshes.get());
     }
 
@@ -912,6 +916,18 @@ class ChatGptRouteTest {
         assertEquals("0", reply.headers().get("x-ratelimit-remaining-requests"));
         assertTrue(reply.body().contains("server_error"), "the proxy's own answer, which Codex classifies: " + reply.body());
         assertNull(proxy.authError, "nothing tells the user to sign in again");
+    }
+
+    @Test
+    void theThrottlesRetryAfterIsTheRestOfItsWindowRoundedUp() throws Exception {
+        var stale = store.read(ACCOUNT);
+        refuseTheCurrentToken();
+        for (var wait : List.of(new long[]{29_001, 30}, new long[]{1_000, 1}, new long[]{1, 1})) {
+            var outcome = proxy.chatGpt.newerOrLater(stale, wait[0]);
+            assertEquals(503, outcome.status());
+            assertEquals(List.of(Map.entry("Retry-After", String.valueOf(wait[1]))), outcome.retryHeaders(),
+                    "after " + wait[0] + " ms");
+        }
     }
 
     @Test
