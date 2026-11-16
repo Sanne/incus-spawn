@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Boot the appliance image and verify it reaches ISX READY state.
 #
-# On macOS: uses vfkit (Apple Virtualization.framework)
+# On macOS: uses isx-vm, isx's launcher (Apple Virtualization.framework)
 # On Linux: uses QEMU (with KVM if available)
 #
 # Usage:  ./test-boot.sh [build-dir] [timeout-seconds]
@@ -11,18 +11,10 @@ set -euo pipefail
 # SERIAL_LOG=<file> keeps the guest's serial console in <file>, which is
 # otherwise a temporary file deleted on exit (test-kernel-on-mac.sh, #2033).
 #
-# Under vfkit two of test-tunnel.sh's checks fail on vfkit's own leak (#785) and
-# are reported as KNOWN, not FAIL (its TUNNEL_KNOWN_LEAK=vfkit). That exception
-# is tracked in #2031 and goes when the isx launcher replaces vfkit.
-# TUNNEL_KNOWN_LEAK= (empty) keeps both checks strict.
-#
-# VFKIT=<program> boots with that program where vfkit would run, on macOS. It is
-# how the launcher's prototype, isx-vm, is put through the same boot and the same
-# tunnel checks as vfkit: it reads the arguments this script gives vfkit
-# (launcher-on-mac.sh, #2031). HYPERVISOR_LOG=<file> keeps what that program
-# itself printed, which is otherwise discarded. The exception above is vfkit's
-# alone: under another program both checks are strict unless the caller says
-# otherwise.
+# ISX_VM=<program> is the launcher to boot with, on macOS. Without it the
+# launcher is built from this checkout (launcher/build-isx-vm.sh), so a check
+# runs the launcher of the same commit as its scripts. HYPERVISOR_LOG=<file>
+# keeps what the launcher itself printed, which is otherwise discarded.
 #
 # WHILE_UP=<program> runs "<program> <incus-socket> <agent-socket> <silent-socket>"
 # on macOS once the guest is ready and before the tunnel checks, with the
@@ -72,9 +64,8 @@ REMOTE
     fi
 fi
 
-VFKIT="${VFKIT:-vfkit}"
-# What ran, for the messages: vfkit, or the program given in its place.
-HYPERVISOR="$(basename "$VFKIT")"
+ISX_VM="${ISX_VM:-}"
+HYPERVISOR=isx-vm
 LOGFILE="${SERIAL_LOG:-$(mktemp)}"
 : > "$LOGFILE"
 VSOCK_RESULT=$(mktemp)
@@ -86,18 +77,14 @@ TUNNEL_RC=0
 cleanup() { [ -n "${SERIAL_LOG:-}" ] || rm -f "$LOGFILE"; rm -f "$VSOCK_RESULT"; if [ -n "$VSOCK_DIR" ]; then rm -rf "$VSOCK_DIR"; fi; }
 trap cleanup EXIT
 
-boot_vfkit() {
-    BACKEND="vfkit"
+boot_launcher() {
+    BACKEND="launcher"
     echo "  backend: $HYPERVISOR (Apple Virtualization.framework)"
-    # vfkit requires --initrd even though our kernel ignores it (CONFIG_BLK_DEV_INITRD=n)
-    local dummy_initrd
-    dummy_initrd=$(mktemp)
-    echo | cpio -o -H newc 2>/dev/null | gzip > "$dummy_initrd"
     # Forward the in-guest Incus socket to a host Unix socket over vsock, the
     # same way isx does (VmManager). isx.vsock_incus tells vm-init to start the
     # socat forwarder on that vsock port. We do NOT set isx.smoke_test here: the
     # smoke test redirects its output to a serial console that does not exist
-    # under vfkit (which uses hvc0), so it blocks boot before ISX READY. The
+    # under the launcher (which uses hvc0), so it blocks boot before ISX READY. The
     # vsock probe below verifies the daemon directly instead, which is the path
     # that actually matters on macOS.
     VSOCK_DIR=$(mktemp -d)
@@ -105,18 +92,18 @@ boot_vfkit() {
     local agent_sock="$VSOCK_DIR/agent.sock"
     # The test-only silent endpoint (isx.test_silent_vsock) that TUNNEL_BACKSTOP=1 times.
     local silent_sock="$VSOCK_DIR/silent.sock"
-    "$VFKIT" \
+    # A MAC of its own each boot, as vfkit gave one: a fixed one would share a NAT lease with
+    # any other VM booted with it, such as vm.sh's or a second boot of this script.
+    "$ISX_VM" \
         --cpus 2 --memory 2048 \
         --kernel "$BUILD_DIR/vmlinuz" \
-        --initrd "$dummy_initrd" \
-        --kernel-cmdline "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0 isx.vsock_incus=8443 isx.agent_vsock=1025 isx.test_silent_vsock=8444" \
-        --device virtio-blk,path="$BUILD_DIR/disk.img" \
-        --device virtio-net,nat \
-        --device virtio-serial,logFilePath="$LOGFILE" \
-        --device "virtio-vsock,port=8443,socketURL=$vsock_sock,connect" \
-        --device "virtio-vsock,port=1025,socketURL=$agent_sock,connect" \
-        --device "virtio-vsock,port=8444,socketURL=$silent_sock,connect" \
-        --restful-uri "tcp://localhost:0" \
+        --cmdline "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0 isx.vsock_incus=8443 isx.agent_vsock=1025 isx.test_silent_vsock=8444" \
+        --disk "$BUILD_DIR/disk.img" \
+        --nat "$(printf '4a:53:58:%02x:%02x:%02x' $((RANDOM % 256)) $((RANDOM % 256)) $((RANDOM % 256)))" \
+        --console "$LOGFILE" \
+        --vsock "8443=$vsock_sock" \
+        --vsock "1025=$agent_sock" \
+        --vsock "8444=$silent_sock" \
         > "${HYPERVISOR_LOG:-/dev/null}" 2>&1 &
     local pid=$!
     local elapsed=0 ready=0
@@ -140,16 +127,11 @@ boot_vfkit() {
     fi
     # Probe the forwarded sockets regardless of ISX READY (the daemon is up well
     # before readiness; the probes poll on their own). Results go to VSOCK_RESULT,
-    # NOT the serial LOGFILE: vfkit streams the boot log into LOGFILE concurrently,
+    # NOT the serial LOGFILE: the launcher streams the boot log into LOGFILE concurrently,
     # and interleaved appends from this shell were being lost.
     # TUNNEL_SHUTDOWN: its last check asks the agent to shut the guest down (#881). The
     # hypervisor must then exit by itself, after rcK ran; only a guest that did not is killed.
-    # TUNNEL_KNOWN_LEAK: vfkit's own leak is reported, not failed, until the isx launcher
-    # replaces vfkit (#2031); a caller's empty value keeps the two checks strict. The leak
-    # is the relay's in vfkit, so no other program gets the exception by default.
-    local known_leak=""
-    [ "$HYPERVISOR" = vfkit ] && known_leak=vfkit
-    TUNNEL_SHUTDOWN=1 TUNNEL_KNOWN_LEAK="${TUNNEL_KNOWN_LEAK-$known_leak}" "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" "$silent_sock" > "$VSOCK_RESULT" 2>&1 \
+    TUNNEL_SHUTDOWN=1 "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" "$silent_sock" > "$VSOCK_RESULT" 2>&1 \
         || TUNNEL_RC=$?
     local waited=0
     while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 300 ]; do sleep 0.1; waited=$((waited + 1)); done
@@ -164,7 +146,6 @@ boot_vfkit() {
         TUNNEL_RC=1
     fi
     wait "$pid" 2>/dev/null || true
-    rm -f "$dummy_initrd"
 }
 
 boot_qemu() {
@@ -223,17 +204,18 @@ echo "Booting appliance (timeout: ${TIMEOUT}s)..."
 echo "  disk:   $BUILD_DIR/disk.img ($(du -sh "$BUILD_DIR/disk.img" | cut -f1))"
 echo "  kernel: $BUILD_DIR/vmlinuz"
 
-if [ "$VFKIT" != "vfkit" ] && ! command -v "$VFKIT" >/dev/null 2>&1; then
-    # Never QEMU instead: the caller asked for one program's result.
-    echo "ERROR: VFKIT=$VFKIT is not a program that can be run" >&2
+if [ -n "$ISX_VM" ] && [ "$(uname -s)" != "Darwin" ]; then
+    echo "ERROR: ISX_VM=$ISX_VM is for macOS; this host boots with QEMU" >&2
     exit 1
 fi
-if [ "$VFKIT" != "vfkit" ] && [ "$(uname -s)" != "Darwin" ]; then
-    echo "ERROR: VFKIT=$VFKIT is for macOS; this host boots with QEMU" >&2
-    exit 1
-fi
-if [ "$(uname -s)" = "Darwin" ] && command -v "$VFKIT" >/dev/null 2>&1; then
-    boot_vfkit
+if [ "$(uname -s)" = "Darwin" ]; then
+    if [ -z "$ISX_VM" ]; then
+        # Never QEMU instead: a Mac's result is the launcher's.
+        ISX_VM="$("$(dirname "$0")/../launcher/build-isx-vm.sh")" \
+            || { echo "ERROR: isx-vm could not be built (launcher/build-isx-vm.sh)" >&2; exit 1; }
+    fi
+    command -v "$ISX_VM" >/dev/null 2>&1 || { echo "ERROR: ISX_VM=$ISX_VM is not a program that can be run" >&2; exit 1; }
+    boot_launcher
 else
     boot_qemu
 fi
@@ -277,10 +259,10 @@ check "incusd started"                         "incus daemon launched"
 check "incus-spawn-vm-init: ready"             "vm-init completed"
 check "ISX READY"                              "appliance reached ISX READY"
 
-# On vfkit the daemon is verified through the forwarded vsock socket (the macOS
+# On the launcher the daemon is verified through the forwarded vsock socket (the macOS
 # isx path). On qemu (Linux) that forwarding is not wired up, so use the
 # in-guest smoke test, which CI runs the same way.
-if [ "$BACKEND" = "vfkit" ]; then
+if [ "$BACKEND" = "launcher" ]; then
     echo
     echo "-- vsock tunnel (isx.vsock_incus=8443, isx.agent_vsock=1025) --"
     check "vsock forwarder on port 8443"       "in-guest vsock forwarder started"
@@ -308,15 +290,10 @@ check_absent "Kernel panic"                    "no kernel panic"
 check_absent "Call Trace:\|kernel BUG"         "no kernel oops/BUG"
 
 echo
-# A failure allowed as known is still listed, and counted here, so no run hides it (#2031).
-KNOWN=$(grep -c '^[[:space:]]*KNOWN:' "$VSOCK_RESULT" || true)
-if [ "$FAIL" -eq 0 ] && [ "$KNOWN" -gt 0 ]; then
-    echo "All $PASS checks passed, with $KNOWN known failures of vfkit allowed (KNOWN above, #2031)."
-elif [ "$FAIL" -eq 0 ]; then
+if [ "$FAIL" -eq 0 ]; then
     echo "All $PASS checks passed."
 else
     echo "$FAIL of $((PASS + FAIL)) checks failed."
-    [ "$KNOWN" -eq 0 ] || echo "$KNOWN known failures of vfkit were allowed besides (KNOWN above, #2031)."
     echo
     echo "Last 40 log lines:"
     tail -40 "$LOGFILE" | sed 's/\x1b\[[0-9;]*m//g'

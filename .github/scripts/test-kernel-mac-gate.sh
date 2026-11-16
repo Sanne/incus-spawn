@@ -6,7 +6,7 @@
 # verifier's newest success for the merge's fingerprint, on the head or a commit a verifier's
 # record names; that a stale merge, an unclassified file in appliance/kernel/ and an API error
 # fail; and that the record carries what the build says it built, marks a failed boot or the
-# wrong kernel as failure and names the failures a boot allowed as known (#2031), and that the Mac refuses, before posting anything, to run from anything
+# wrong kernel as failure, and that the Mac refuses, before posting anything, to run from anything
 # but a clean origin/main, under a login the check does not take, without strings, or on a PR not by
 # and from Sanne or the bot (#1385). Needs bash, git and jq.
 set -euo pipefail
@@ -55,14 +55,6 @@ cp "$REPO_DIR/appliance/test-kernel-on-mac.sh" "$SRC/appliance/"
 cat > "$SRC/appliance/test-boot.sh" <<'EOF'
 #!/bin/bash
 echo booting "$@"
-# A boot under vfkit has two checks allowed as known, each on a KNOWN line (#2031), and passes
-# unless another check failed.
-if [ -n "${FAKE_BOOT_KNOWN:-}" ]; then
-    echo "  PASS: 32 concurrent API requests all answered (32/32)"
-    echo "  KNOWN: forwarder children exit with their connections (count 52, baseline 4): vfkit does not pass the host's close on (#785), allowed until the isx launcher replaces vfkit (#2031)"
-    echo "  KNOWN: their forwarder children exited with them (count 58, baseline 4): vfkit does not pass the host's close on (#785), allowed until the isx launcher replaces vfkit (#2031)"
-    [ "${FAKE_BOOT_EXIT:-0}" != 0 ] || echo "All 9 checks passed, with 2 known failures of vfkit allowed (KNOWN above, #2031)."
-fi
 if [ "${FAKE_BOOT_EXIT:-0}" != 0 ]; then
     echo "  the first line of a long log"
     for i in $(seq 60); do echo "  serial line $i"; done
@@ -73,7 +65,6 @@ if [ "${FAKE_BOOT_EXIT:-0}" != 0 ]; then
     echo
     echo "Last 40 log lines:"
     echo "ERROR: a line the guest wrote"
-    echo "  KNOWN: a line the guest wrote"
     [ -z "${SERIAL_LOG:-}" ] || echo "the guest's whole console" > "$SERIAL_LOG"
 fi
 exit "${FAKE_BOOT_EXIT:-0}"
@@ -209,6 +200,9 @@ printf '#!/bin/bash\necho 15.6\n' > "$WORK/bin/sw_vers"
 printf '#!/bin/bash\necho Mac16,10\n' > "$WORK/bin/sysctl"
 printf '#!/bin/bash\n[ "$1 $2" = "-a 256" ] && sha256sum "$3"\n' > "$WORK/bin/shasum"
 printf '#!/bin/bash\n[ "$1" = --version ] && echo "isx 0.3.11"\nexit 0\n' > "$WORK/bin/isx"
+# test-boot.sh is faked, so the launcher it builds is never built: swift and codesign are only looked for.
+printf '#!/bin/bash\nexit 0\n' > "$WORK/bin/swift"
+printf '#!/bin/bash\nexit 0\n' > "$WORK/bin/codesign"
 chmod +x "$WORK/bin/"*
 # The Mac's checkout of main: a full clone of origin, which serves main and the PR's merge.
 git -c advice.detachedHead=false clone -q --no-local "$WORK/origin.git" "$WORK/mac"
@@ -271,27 +265,6 @@ done
 [ ! -e "$WORK/rec-good/home/.cache/incus-spawn/kernel-mac" ] || fail "good: logs were saved"
 # What the record posts is what the gate accepts.
 expect recorded "$(gate recorded "$BUMP" "$M_BUMP" "[$(record_of Sanne-ai-bot "$BUMP" "$FP")]" "$(booted)")" PASS
-
-# A boot that passed with failures allowed as known says so, and names them, in its record (#2031).
-FAKE_BOOT_KNOWN=1 record known 7.2.10 0
-[ "$(cat "$WORK/rec-known/exit")" = 0 ] || { cat "$WORK/rec-known/out" >&2; fail "known: the record failed"; }
-comment=$(posted known 'pr comment')
-for want in "Result: success" "test-boot.sh: pass, with 2 known failures of vfkit allowed (#2031)" "test-boot.sh, known failures allowed:" \
-        "KNOWN: forwarder children exit with their connections (count 52, baseline 4)" \
-        "KNOWN: their forwarder children exited with them (count 58, baseline 4)" "test-with-isx.sh: pass"; do
-    [[ "$comment" == *"$want"* ]] || fail "known: the record lacks '$want': $comment"
-done
-[[ "$comment" != *"PASS: 32 concurrent"* ]] || fail "known: the record quotes a passed check: $comment"
-[[ "$(posted known "statuses/$BUMP")" == *"state=success"* ]] || fail "known: the status is not success"
-[[ "$(posted good 'pr comment')" != *"known failures"* ]] || fail "good: the record names known failures a boot without any"
-# A boot that failed another check still names them, and takes none from the guest's console.
-FAKE_BOOT_KNOWN=1 record known-fails 7.2.10 1
-comment=$(posted known-fails 'pr comment')
-for want in "Result: failure" "test-boot.sh: FAIL (exit 1)" "test-boot.sh, known failures allowed:" \
-        "KNOWN: their forwarder children exited with them (count 58, baseline 4)" "test-boot.sh, failing checks:"; do
-    [[ "$comment" == *"$want"* ]] || fail "known-fails: the record lacks '$want': $comment"
-done
-[[ "$comment" != *"KNOWN: a line the guest wrote"*"last 40 lines"* ]] || fail "known-fails: the record takes a known failure from the guest's console: $comment"
 
 record boot-fails 7.2.10 1
 [ "$(cat "$WORK/rec-boot-fails/exit")" != 0 ] || fail "boot-fails: a failed boot exited 0"

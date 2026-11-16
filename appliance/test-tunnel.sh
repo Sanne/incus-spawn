@@ -5,7 +5,7 @@ set -uo pipefail
 # forwarder, and every verb of the in-guest control agent (isx-agent).
 #
 # Takes the two host-side Unix sockets, however they were bridged to the guest's vsock
-# ports: vfkit on macOS (test-boot.sh), or the launcher's relay under QEMU on Linux (CI:
+# ports: the launcher, isx-vm, on macOS (test-boot.sh), or its relay under QEMU on Linux (CI:
 # isx-vsock-bridge, launcher/).
 # The guest half under test is the same either way; only the bridge differs.
 #
@@ -17,24 +17,12 @@ set -uo pipefail
 #                      silent endpoint: a silent connection must outlive the long-poll floor and
 #                      then be reaped. Needs <silent-socket>. Adds about three minutes: the
 #                      backstop is 180s.
-#   TUNNEL_KNOWN_LEAK=vfkit
-#                      the bridge is vfkit, whose relay never tells the guest that the host
-#                      closed a connection (#785). The two checks that every forwarder child
-#                      exits with its connection then fail, and are reported as KNOWN, not
-#                      FAIL, while no more children are left than requests were made.
-#                      test-boot.sh sets it for its vfkit boot. Tracked in #2031: remove it,
-#                      and KNOWN with it, when the isx launcher replaces vfkit.
 #
-# Prints one PASS/FAIL line per check, or KNOWN for a failure TUNNEL_KNOWN_LEAK allows, and
-# exits non-zero if any check failed.
+# Prints one PASS/FAIL line per check, and exits non-zero if any check failed.
 
 INCUS_SOCK="${1:?usage: test-tunnel.sh <incus-socket> <agent-socket>}"
 AGENT_SOCK="${2:?usage: test-tunnel.sh <incus-socket> <agent-socket>}"
 SILENT_SOCK="${3:-}"
-case "${TUNNEL_KNOWN_LEAK:-}" in
-    ""|vfkit) ;;
-    *) echo "TUNNEL_KNOWN_LEAK=$TUNNEL_KNOWN_LEAK: the only bridge with a known leak is vfkit" >&2; exit 2 ;;
-esac
 
 # Mirrors isx-start-vsock-forwarder's -T. The reap is checked against both edges: not before
 # the floor (the /wait long-poll and the client watchdog rely on it), and not long after it.
@@ -42,23 +30,12 @@ BACKSTOP_SECONDS=180
 
 PASS=0
 FAIL=0
-KNOWN=0
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
-# The forwarder's children ($1, as socat-count gave it) must be back at the baseline; $3 names
-# the check. Under vfkit (TUNNEL_KNOWN_LEAK, above) the leak of #785 leaves up to one child for
-# each of the $2 requests made since the baseline, which is reported and not failed. More than
-# that, fewer than the baseline, or no count at all, fails under any bridge.
+# The forwarder's children ($1, as socat-count gave it) must be back at the baseline; $2 names
+# the check. No count at all fails too.
 children_exited() {
-    if [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" = "$baseline" ]; then
-        pass "$3"
-    elif [ "${TUNNEL_KNOWN_LEAK:-}" = vfkit ] && [[ "$1" =~ ^[0-9]+$ ]] && [[ "$baseline" =~ ^[0-9]+$ ]] \
-            && [ "$1" -gt "$baseline" ] && [ "$1" -le $((baseline + $2)) ]; then
-        echo "  KNOWN: $3: vfkit does not pass the host's close on (#785), allowed until the isx launcher replaces vfkit (#2031)"
-        KNOWN=$((KNOWN + 1))
-    else
-        fail "$3"
-    fi
+    if [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" = "$baseline" ]; then pass "$2"; else fail "$2"; fi
 }
 expect() { if eval "$1"; then pass "$2"; else fail "$2${3:+ ($3)}"; fi; }
 
@@ -236,15 +213,14 @@ ok=$(burst 32)
 expect '[ "$ok" -eq 32 ]' "32 concurrent API requests all answered ($ok/32)"
 
 settled=$(settle_count "$baseline")
-# 48: the two bursts.
-children_exited "$settled" 48 "forwarder children exit with their connections (count $settled, baseline $baseline)"
+children_exited "$settled" "forwarder children exit with their connections (count $settled, baseline $baseline)"
 
 echo
 echo "-- Silent and partial clients (incusd STARTTLS peek) --"
 # incusd peeks the first 8 bytes of every new local connection for a STARTTLS upgrade. Before
 # lxc/incus@2cb2549 (backported by build.sh, #1313) it did so in its accept loop with no
 # deadline, so one connection that sent fewer than 8 bytes stalled every new API connection,
-# for up to the forwarder's 180s when vfkit lost the client's close (#791 B.1). Now each
+# for up to the forwarder's 180s when the tunnel lost the client's close (vfkit's did, #791 B.1). Now each
 # connection is classified on its own under a 3s read deadline: a request is served next to a
 # held connection well inside that deadline (a request that waited for it would take at least
 # 3s), and incusd then closes the held one itself, which frees its forwarder child. The held
@@ -290,15 +266,13 @@ expect '[ "$ok" -eq 3 ] && [ "$open" -eq 8 ] && [ "$served" -lt 2500 ]' \
 for p in "${pids[@]}"; do closed=$(wait_gone 12 "$p"); [ -n "$closed" ] || break; done
 expect '[ -n "$closed" ] && [ "$closed" -le 7000 ]' "incusd closed all 8 (${closed:-not closed}ms)"
 settled=$(settle_count "$baseline")
-# 54: the two bursts, and this section's six requests. The ten held connections are not among
-# them: incusd closed those, and a close the guest makes does cross vfkit.
-children_exited "$settled" 54 "their forwarder children exited with them (count $settled, baseline $baseline)"
+children_exited "$settled" "their forwarder children exited with them (count $settled, baseline $baseline)"
 
 if [ "${TUNNEL_BACKSTOP:-0}" = "1" ]; then
     echo
     echo "-- Inactivity backstop (socat -T $BACKSTOP_SECONDS) --"
     # The connection the backstop exists for: one that never sends a byte and whose close is
-    # lost crossing vfkit. incusd now closes such a connection itself after 3s (above), so the
+    # lost crossing a tunnel, as vfkit lost it. incusd now closes such a connection itself after 3s (above), so the
     # backstop is timed against the test-only silent endpoint instead: the production forwarder
     # invocation in front of a guest socket that accepts and never answers, with no timeout of
     # its own. The forwarder child's exit closes the connection here, so the hold timing it is
@@ -415,12 +389,9 @@ if [ "${TUNNEL_SHUTDOWN:-0}" = 1 ]; then
 fi
 
 echo
-[ "$KNOWN" -eq 0 ] || echo "$KNOWN tunnel checks failed as known of vfkit and were allowed (#2031)."
-if [ "$FAIL" -eq 0 ] && [ "$KNOWN" -eq 0 ]; then
+if [ "$FAIL" -eq 0 ]; then
     echo "All $PASS tunnel checks passed."
-elif [ "$FAIL" -eq 0 ]; then
-    echo "The other $PASS tunnel checks passed."
 else
-    echo "$FAIL of $((PASS + FAIL + KNOWN)) tunnel checks failed."
+    echo "$FAIL of $((PASS + FAIL)) tunnel checks failed."
     exit 1
 fi

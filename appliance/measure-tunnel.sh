@@ -2,7 +2,7 @@
 set -uo pipefail
 
 # Measure the appliance's host-facing tunnel under load, for comparing two programs that
-# carry it: vfkit and the launcher's prototype on macOS (launcher-on-mac.sh, #2031), or two
+# carry it: the VM under two isx builds on macOS (bench/vm-launcher-compare.sh, #2031), or two
 # bridges under QEMU on Linux.
 #
 # test-tunnel.sh says whether the tunnel works. This says how often it fails and what it
@@ -18,11 +18,15 @@ set -uo pipefail
 #   HELD="0 150 400"   connections held open while latency is sampled. 400 is more than a
 #                      Mac's machine holds (the launcher's relays hold 192 at once): what is
 #                      measured there is how many were held and that the tunnel still answers
+#   ROOM=<n>           the most connections the tunnel holds at once, when it has a limit (192
+#                      for the launcher's GuestRoom; unset, none, as for a bridge under QEMU).
+#                      A count held at that many is full as well: a new connection would wait
+#                      for a held one to end, so no latency is taken there either
 #   REQUESTS=200       requests per latency sample
 #                      (RUNS=0, BURSTS="" or HELD="" leaves that phase out)
 #   HELD_PROBE=<file>  a program run while each count is held; the number it prints is that
-#                      count's `machine_fds` (launcher-on-mac.sh: what the machine's own
-#                      process has open)
+#                      count's `machine_fds` (vm-launcher-compare.sh: what the machine's
+#                      own process has open)
 #   OUT=<dir>          keeps every log and `values` (key=value, what the summary is made
 #                      of) in <dir>, which is otherwise a temporary directory deleted on exit
 #
@@ -39,6 +43,7 @@ BURSTS="${BURSTS-70 120}"
 BURST_ROUNDS="${BURST_ROUNDS:-5}"
 HELD="${HELD-0 150 400}"
 REQUESTS="${REQUESTS:-200}"
+ROOM="${ROOM:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 for tool in curl perl nc; do
@@ -262,9 +267,10 @@ for h in $HELD; do
         probed=$("$HELD_PROBE" 2>/dev/null | tr -d ' \n')
         [[ "$probed" =~ ^[0-9]+$ ]] && value "held_${h}_machine_fds" "$probed"
     fi
-    if [ "$held" -lt "$h" ]; then
+    if [ "$held" -lt "$h" ] || { [ -n "$ROOM" ] && [ "$held" -ge "$ROOM" ]; }; then
         # The tunnel holds no more at once, so a new connection would wait for one of these to
-        # end: there is no latency to take, and every sample would be a timeout of 20 s.
+        # end: there is no latency to take, and every sample would be a timeout of 20 s. At
+        # the relay's room every held connection was accepted, and the next one still waits.
         release
         echo "  $h held ($held accepted, $OPEN_AT_END still open at the end): the tunnel held no more at once, so no latency was taken"
         value "held_${h}_accepted" "$held"

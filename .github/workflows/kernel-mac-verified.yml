@@ -2,7 +2,7 @@ name: Kernel Mac verification
 
 # The kernel-mac-verified check (#1355, ci.md): a PR that changes the macOS appliance kernel's
 # inputs merges only with a Mac boot recorded for exactly those inputs, since no CI runner can
-# boot under vfkit (#791). It runs on every PR, so it can be a required check, and passes at once
+# boot a machine under the launcher (#791). It runs on every PR, so it can be a required check, and passes at once
 # when the kernel is untouched.
 #
 # pull_request_target, not pull_request: a required check must not run the PR's own copy of
