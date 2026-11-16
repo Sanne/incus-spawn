@@ -626,7 +626,13 @@ The pull requests asked about are every one the event log recorded for the insta
 So the account may be asked about a repository it was never used for in that instance; GitHub answers only for what the account can see, and nothing of the answer reaches the guest.
 All the pull requests of the instances on one account go in one GraphQL request, the repositories and numbers as variables, never written into the query, and a name that is not GitHub's shape is not asked about.
 One GitHub could not see, or a failed request, leaves its state unknown, and the cell shows the pull request without one.
-Branch and repository names are the guest's text, so they are shown through `OutputFormat.oneLine`, cut to the cell, and the newest 50 of each are kept per instance.
+Branch and repository names are the guest's text, so they are shown through `OutputFormat.oneLine`, and the newest 50 of each are kept per instance.
+A pull request is shown as its `owner/repo#number`, never cut through, since a cut name does not say which pull request it is (Sanne on #2292).
+The GITHUB cell holds whole references only: a pull request without room for its state shows without it, and the ones after the last that fits are counted as `+3`.
+Only a first reference wider than the whole cell is cut.
+The TUI's GITHUB column is as wide as its widest row needs, up to 40 cells and what the other columns leave at their least.
+There a pull request links to its page with an OSC 8 hyperlink, so a click opens it in a terminal that supports links.
+The link is made only when the name has GitHub's shape (`EventLogReader.PullRequest.url()`), the shape `PullRequestStates` asks about, so no other guest text becomes a link.
 The TUI has no hint for `o` on its context line, which has no room left at 80 columns; the F1 dialog lists it, and the Work tab shows the same columns without a key to learn.
 At 80 columns ACTIVE gives way to WORK; it is drawn from 100 columns, DONE from 120, and PURPOSE from 150.
 

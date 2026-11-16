@@ -150,4 +150,15 @@ class EventLogReaderTest {
         assertEquals(EventLogReader.MAX_KEPT, effort.pullRequests().getLast().number());
         assertEquals("b1", effort.branches().getFirst().name(), "the oldest went");
     }
+
+    @Test
+    void onlyAPullRequestOfGitHubsShapeLinksToItsPage() {
+        assertEquals("https://github.com/Sanne/incus-spawn/pull/2287",
+                new EventLogReader.PullRequest("Sanne/incus-spawn", 2287).url());
+        for (var repo : List.of("o/r/../x", "o/..", "o/.", "o r/x", "o/r?x", "\u001b]8;;x/r", "o", "o.x/r")) {
+            assertNull(new EventLogReader.PullRequest(repo, 1).url(), repo);
+        }
+        assertNull(new EventLogReader.PullRequest("o/r", 0).url(), "no number");
+        assertNull(new EventLogReader.PullRequest("o/r", 1L << 40).url(), "beyond GitHub's numbers");
+    }
 }

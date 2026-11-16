@@ -146,7 +146,7 @@ class OverviewCommandTest {
         var dev1 = table.lines().filter(l -> l.contains("dev-1")).findFirst().orElseThrow();
         assertTrue(dev1.contains("1.5k"), dev1);
         assertTrue(dev1.contains("Nov 1–Nov 3"), dev1);
-        assertTrue(dev1.contains("PR o/r#12 (merged), pushed fix [31m"), dev1);
+        assertTrue(dev1.contains("o/r#12 (merged), pushed fix [31m"), dev1);
         assertTrue(dev1.contains("3 uncommitted, 1 unpushed"), dev1);
         assertFalse(table.contains("\u001b"));
         var dev2 = table.lines().filter(l -> l.contains("dev-2")).findFirst().orElseThrow();
@@ -166,8 +166,24 @@ class OverviewCommandTest {
                 java.util.stream.IntStream.range(0, 20).mapToObj(i -> new EventLogReader.Branch("o/r", "branch-" + i)).toList(),
                 java.util.List.of());
         var cell = OverviewCommand.githubCell(many, java.util.List.of(), 40);
-        assertEquals(40, cell.codePointCount(0, cell.length()));
-        assertTrue(cell.endsWith("…"));
+        assertEquals("pushed branch-0 branch-1 branch-2 +17", cell, "each branch whole, the rest counted");
+        var pulls = new EventLogReader.Effort(0, 0, 0, 0, 0, null, null, java.util.List.of(),
+                java.util.List.of(new EventLogReader.PullRequest("Sanne/incus-spawn", 2287),
+                        new EventLogReader.PullRequest("Sanne/incus-spawn", 2289)));
+        var merged = java.util.List.of(PullRequestStates.State.MERGED, PullRequestStates.State.OPEN);
+        assertEquals("Sanne/incus-spawn#2287 (merged) +1", OverviewCommand.githubCell(pulls, merged, 40));
+        assertEquals("Sanne/incus-spawn#2287 +1", OverviewCommand.githubCell(pulls, merged, 30),
+                "the state gives way before the repository and number");
+        assertEquals("Sanne/incus-spawn… +1", OverviewCommand.githubCell(pulls, merged, 21),
+                "only a first reference wider than the whole cell is cut");
+        var wide = new EventLogReader.Effort(0, 0, 0, 0, 0, null, null,
+                java.util.List.of(new EventLogReader.Branch("o/r", "修复修复修复修复"), new EventLogReader.Branch("o/r", "x")),
+                java.util.List.of());
+        assertEquals("pushed 修复修复修复修复 x", OverviewCommand.githubCell(wide, java.util.List.of(), 26));
+        assertEquals("pushed 修复修复修复… x", OverviewCommand.githubCell(wide, java.util.List.of(), 24),
+                "measured in terminal cells, as the table draws it");
+        assertEquals("Sanne/incus-spawn#2287 (merged) Sanne/incus-spawn#2289 (open)",
+                OverviewCommand.githubCell(pulls, merged, 80));
     }
 
     @Test

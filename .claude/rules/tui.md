@@ -89,6 +89,7 @@ The instance table's PURPOSE column (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`, 118,
 `Tui.buildRowData` always makes nine cells and `MainScreen` keeps those of the columns it draws.
 
 **The overview** (#2241): `o` on the instance table sets `Tui.overview`, the Work tab shows the same (`Tui.overviewShown()`), and `MainScreen.overviewColumns` draws NAME, STATUS, LAST USED, WORK, TOKENS, from 100 columns ACTIVE, GITHUB, from 120 DONE and, from 150, PURPOSE, the cells made by `OverviewCommand`'s cell methods from the parked `Tui.overviewLog` and `Tui.overviewReading`.
+GITHUB is `OverviewCommand.githubParts` fitted by `fitGithub` (each reference whole, the rest counted), as wide as its widest row needs within what the other columns leave, and each pull request a hyperlink span to `PullRequest.url()` (#2292).
 `Tui.readOverview` reads the log, then the guests' `GuestRead` (work state and agent sessions) and GitHub's `PullRequestStates` (`overviewGitHub`, `overviewConfig` are the seams), on `o`, on entering the Work tab and on `r` while the overview is shown, through `overviewExecutor` (a virtual thread; tests run it when they choose, `TuiOverviewTest`), never on a live refresh or in `render()`.
 Rows, marks and F8 are the table's own; the title says what the log covers (design/terminal.md "The overview of what each instance did").
 F3's details add the newest session's ask and closing message from the parked reading (`InstanceDetailView.summaryRows`).
