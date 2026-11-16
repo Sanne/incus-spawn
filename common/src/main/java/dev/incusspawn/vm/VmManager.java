@@ -1402,9 +1402,10 @@ public final class VmManager {
     // --- Internal: helpers ---
 
     static String kernelCmdline() {
-        // mitigations=off is compiled in (CONFIG_CPU_MITIGATIONS=n), so it is
-        // not repeated here. rootfstype=btrfs avoids the kernel probing fuseblk
-        // (which rejects the 'commit' rootflag) before btrfs at root mount.
+        // No mitigations=off: the macOS appliance is aarch64, where arm64 forces
+        // CPU_MITIGATIONS on (only x86_64 compiles them off). rootfstype=btrfs
+        // avoids the kernel probing fuseblk (which rejects the 'commit'
+        // rootflag) before btrfs at root mount.
         return "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0"
                 + " isx.gateway=" + gatewayIp()
                 + " isx.mitm_port=" + mitmPort()
