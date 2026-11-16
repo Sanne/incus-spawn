@@ -235,6 +235,15 @@ jobs:
           cp cli/target/incus-spawn-*-runner dist/incus-spawn-macos-${{ matrix.arch }}
           cp proxy/target/incus-spawn-proxy-*-runner dist/isx-proxy-macos-${{ matrix.arch }}
 
+      # isx-vm, the launcher that runs the VM on a Mac (#2031). build-isx-vm.sh signs it ad hoc
+      # with com.apple.security.virtualization and fails unless the signature carries that
+      # entitlement and nothing else; no certificate or Apple account is involved.
+      - name: Build and sign isx-vm (macOS)
+        if: matrix.os == 'macos'
+        run: |
+          bin=$(launcher/build-isx-vm.sh)
+          cp "$bin" dist/isx-vm-macos-${{ matrix.arch }}
+
       # Both binaries must have been built with the profile, and found most of it relevant: a
       # profile that does not fit this platform's image would make the code PGO chose fast slow.
       - name: Check PGO profile quality
@@ -267,6 +276,16 @@ jobs:
           # Proxy --help: must exit 0
           "$PROXY" --help > /dev/null
 
+          # isx-vm: still signed with its entitlement after the copy, starts, and reads its
+          # arguments (a hosted Mac cannot start a machine)
+          if [ "${{ matrix.os }}" = macos ]; then
+            VM=dist/isx-vm-macos-${{ matrix.arch }}
+            codesign --verify --strict "$VM"
+            codesign -d --entitlements - --xml "$VM" 2>/dev/null | grep -q com.apple.security.virtualization
+            "$VM" --cpus 1 --memory 512 --gpu yes > vm-refused.txt 2>&1 || true
+            grep -qx "isx-vm: unknown option '--gpu'" vm-refused.txt
+          fi
+
           # Linux: the proxy carries Netty's native epoll transport (#475). Without it the
           # proxy still runs, on NIO, so nothing else would notice a missing dependency.
           if [ "${{ matrix.os }}" = linux ] && ! grep -qa EpollTransport "$PROXY"; then
@@ -286,7 +305,8 @@ jobs:
       - name: Record checksums
         run: |
           sums() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
-          (cd dist && sums -- incus-spawn-* isx-proxy-* > SHA256SUMS && cat SHA256SUMS)
+          # isx-vm-* only on macOS
+          (cd dist && shopt -s nullglob && sums -- incus-spawn-* isx-proxy-* isx-vm-* > SHA256SUMS && cat SHA256SUMS)
           if [ -d dist-jars ]; then (cd dist-jars && sums -- *.jar > SHA256SUMS && cat SHA256SUMS); fi
 
       # The runner is discarded after the job, so the smoke may change its System keychain (#1467)
@@ -337,7 +357,8 @@ jobs:
       - name: Write SHA256SUMS
         run: |
           .github/scripts/release-sha256sums.sh SHA256SUMS \
-            artifacts/uber-jar/*.jar artifacts/native-*/incus-spawn-* artifacts/native-*/isx-proxy-*
+            artifacts/uber-jar/*.jar artifacts/native-*/incus-spawn-* artifacts/native-*/isx-proxy-* \
+            artifacts/native-*/isx-vm-*
           cat SHA256SUMS
 
       - name: Upload SHA256SUMS
@@ -410,6 +431,7 @@ jobs:
             artifacts/native-linux-amd64/isx-proxy-linux-amd64 \
             artifacts/native-linux-aarch64/isx-proxy-linux-aarch64 \
             artifacts/native-macos-aarch64/isx-proxy-macos-aarch64 \
+            artifacts/native-macos-aarch64/isx-vm-macos-aarch64 \
             artifacts/vmlinuz-x86_64.gz \
             artifacts/vmlinuz-aarch64.gz \
             artifacts/disk-x86_64.img.gz \
@@ -427,71 +449,21 @@ jobs:
         continue-on-error: true
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-
-          SHA_ARM64=$(sha256sum artifacts/native-macos-aarch64/incus-spawn-macos-aarch64 | cut -d' ' -f1)
-          PROXY_SHA_ARM64=$(sha256sum artifacts/native-macos-aarch64/isx-proxy-macos-aarch64 | cut -d' ' -f1)
-          GIT_REMOTE_SHA=$(sha256sum common/src/main/resources/git-remote-isx | cut -d' ' -f1)
-          COMPLETIONS_SHA=$(sha256sum artifacts/completions.tar.gz | cut -d' ' -f1)
+          sha() { sha256sum "$1" | cut -d' ' -f1; }
 
           git clone https://x-access-token:${TAP_TOKEN}@github.com/Sanne/homebrew-tap.git /tmp/homebrew-tap
-          cd /tmp/homebrew-tap
-
           FORMULA="Formula/${{ needs.channel.outputs.homebrew_formula }}"
 
-          # No Intel macOS binary is released any more (#1693). Rewritten, a formula that still names
-          # one would point Intel Macs at a missing v#{version} binary beside the previous isx-proxy.
-          # The tap's formulas must declare depends_on arch: :arm64 instead, which brew reports to an
-          # Intel Mac before downloading. A refusal leaves every Mac on the previous formula: this step
-          # is continue-on-error, so the release still publishes, with this annotation.
-          if grep -q 'macos-x86_64\|on_intel\|depends_on arch: :x86_64' "$FORMULA" || ! grep -q '^  depends_on arch: :arm64' "$FORMULA"; then
-            echo "::error::$FORMULA still serves Intel Macs: make it Apple Silicon only (depends_on arch: :arm64, no x86_64 asset) before this release updates it"
-            exit 1
-          fi
+          # A refusal (a formula still serving Intel Macs) leaves every Mac on the previous formula:
+          # this step is continue-on-error, so the release still publishes, with the annotation.
+          .github/scripts/update-homebrew-formula.sh "/tmp/homebrew-tap/$FORMULA" "$VERSION" \
+            "$(sha artifacts/native-macos-aarch64/incus-spawn-macos-aarch64)" \
+            "$(sha artifacts/native-macos-aarch64/isx-proxy-macos-aarch64)" \
+            "$(sha artifacts/native-macos-aarch64/isx-vm-macos-aarch64)" \
+            "$(sha common/src/main/resources/git-remote-isx)" \
+            "$(sha artifacts/completions.tar.gz)"
 
-          # Add isx-proxy resource and install blocks if not yet present (handles
-          # the transition from monolithic CLI to separate proxy binary)
-          if ! grep -q 'resource "isx-proxy"' "$FORMULA"; then
-            awk -v ver="$VERSION" -v sha_arm="$PROXY_SHA_ARM64" '
-              /resource "git-remote-isx"/ {
-                print "  resource \"isx-proxy\" do"
-                print "    url \"https://github.com/Sanne/incus-spawn/releases/download/v" ver "/isx-proxy-macos-aarch64\""
-                print "    sha256 \"" sha_arm "\""
-                print "  end"
-                print ""
-              }
-              /resource\("git-remote-isx"\)/ {
-                print "    resource(\"isx-proxy\").stage do"
-                print "      bin.install \"isx-proxy-macos-aarch64\" => \"isx-proxy\""
-                print "    end"
-                print ""
-              }
-              {print}
-            ' "$FORMULA" > "${FORMULA}.tmp" && mv "${FORMULA}.tmp" "$FORMULA"
-          fi
-
-          # Homebrew's name for pom.xml's macos.deployment.target, which the binaries were
-          # checked against above; WorkflowRunnerLabelsTest keeps the two equal. Rewritten
-          # every release, ahead of the first depends_on as `brew style` orders it.
-          MACOS_MIN=sequoia
-          awk -v min="$MACOS_MIN" '
-            /^  depends_on macos:/ {next}
-            /^  depends_on / && !done {print "  depends_on macos: :" min; done=1}
-            {print}
-            END {exit !done}
-          ' "$FORMULA" > "${FORMULA}.tmp" \
-            || { echo "::error::no depends_on line in $FORMULA to place the macOS minimum before"; exit 1; }
-          mv "${FORMULA}.tmp" "$FORMULA"
-
-          sed -i \
-            -e "s/version \"[^\"]*\"/version \"${VERSION}\"/" \
-            -e "/incus-spawn-macos-aarch64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_ARM64}\"/;}" \
-            -e "/isx-proxy-macos-aarch64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${PROXY_SHA_ARM64}\"/;}" \
-            -e "/resource \"git-remote-isx\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/git-remote-isx\"|}" \
-            -e "/resource \"git-remote-isx\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${GIT_REMOTE_SHA}\"/}" \
-            -e "/resource \"completions\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/completions.tar.gz\"|}" \
-            -e "/resource \"completions\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${COMPLETIONS_SHA}\"/}" \
-            "$FORMULA"
-
+          cd /tmp/homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "$FORMULA"

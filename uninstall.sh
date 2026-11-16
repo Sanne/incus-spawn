@@ -58,14 +58,21 @@ if $BINARIES_ONLY && { $PURGE || $DELETE_INSTANCES; }; then
     exit 2
 fi
 
-# The VM is up when vm.pid names a live vfkit or qemu process. Sets VM_PID and
+# The VM is up when vm.pid names a live isx-vm process, or vfkit for a VM an isx
+# before the launcher started (#2031), or qemu; without a pid file, the launcher
+# started with this state directory's control socket. Sets VM_PID and
 # VM_NAME for any live process the pid file names, VM or not.
 vm_running() {
     VM_PID="$(cat "$STATE_DIR/vm.pid" 2>/dev/null || true)"
     VM_NAME=""
+    # An isx from before the launcher, left open, removes the pid file of a VM isx-vm runs; the
+    # launcher is still found by the control socket it was started with, as isx finds it.
+    if [ -z "$VM_PID" ] || ! kill -0 "$VM_PID" 2>/dev/null; then
+        VM_PID="$(pgrep -f -- "--control $STATE_DIR/vm.control.sock" 2>/dev/null | head -n 1 || true)"
+    fi
     [ -n "$VM_PID" ] && kill -0 "$VM_PID" 2>/dev/null || return 1
     VM_NAME="$(ps -p "$VM_PID" -o comm= 2>/dev/null || true)"
-    case "$VM_NAME" in *vfkit*|*qemu*) return 0 ;; esac
+    case "$VM_NAME" in *isx-vm*|*vfkit*|*qemu*) return 0 ;; esac
     return 1
 }
 
@@ -145,7 +152,7 @@ fi
 
 if $BINARIES_ONLY; then
     echo "This will remove only the binaries:"
-    echo "  - Binaries:          $INSTALL_DIR/{$BINARY_NAME,isx-proxy,git-remote-isx}"
+    echo "  - Binaries:          $INSTALL_DIR/{$BINARY_NAME,isx-proxy,isx-vm,git-remote-isx}"
     echo "  - Homebrew override: (if install.sh made one; Homebrew's own link is put back when it counts the formula as linked, otherwise the command to link it is named)"
     echo ""
     echo "Kept: instances, templates, configuration, cache, state and services."
@@ -209,7 +216,7 @@ if $IS_MACOS && ! $BINARIES_ONLY; then
 
     # Stop the VM first. A data disk that is kept should be shut down cleanly, so
     # 'isx vm stop' asks the guest first, through its agent, and waits for it to
-    # power off. If it had to signal vfkit instead, --require-clean makes it exit
+    # power off. If it had to stop the launcher instead, --require-clean makes it exit
     # 4: that is every stop of an appliance or an isx from before #881. Signals
     # here are only the fallback. Either way the kept disk was cut off, and the
     # script says so.
@@ -312,7 +319,7 @@ else
     echo "Binary not found at $INSTALL_DIR/$BINARY_NAME (skipping)"
 fi
 
-for f in isx-proxy git-remote-isx; do
+for f in isx-proxy isx-vm git-remote-isx; do
     if [ -f "$INSTALL_DIR/$f" ]; then
         echo "Removing $INSTALL_DIR/$f..."
         rm -f "$INSTALL_DIR/$f"
