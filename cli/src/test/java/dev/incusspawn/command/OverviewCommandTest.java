@@ -78,6 +78,8 @@ class OverviewCommandTest {
             asked.add(token + " " + pulls);
             return Map.of(new EventLogReader.PullRequest("o/r", 12), PullRequestStates.State.MERGED);
         };
+        cmd.model = (config, target, system, question) -> fail("one session needs no model call");
+        cmd.cache = () -> new SessionMerge.Cache(dir.resolve("summaries"));
         var bytes = new ByteArrayOutputStream();
         try (var out = new PrintStream(bytes, true, StandardCharsets.UTF_8)) {
             cmd.print(daemon.client(), out, ZONE);
@@ -88,11 +90,23 @@ class OverviewCommandTest {
     @Test
     void plainIsOneRecordPerInstanceWithWhatTheLogSaw() throws Exception {
         assertEquals("""
-                dev-1\trunning\tfix #12\t2026-11-03T14:00:00+02:00\t1\t1500\t1200\t300\t0\t0\t2026-11-01T11:00:00+02:00\t2026-11-03T12:01:00+02:00\to/r:fix [31m\to/r#12\tmerged\tunsaved\t3\t1\t0\tapp,lib\tapp\t1\tFixed the parser.\tsession\t2026-11-03T12:00:00+02:00\t-\tFixed the parser. PR #12 is open.
-                dev-2\tstopped\t-\t-\t0\t0\t0\t0\t0\t0\t-\t-\t-\t-\t-\tnot_read\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-
+                dev-1\trunning\tfix #12\t2026-11-03T14:00:00+02:00\t1\t1500\t1200\t300\t0\t0\t2026-11-01T11:00:00+02:00\t2026-11-03T12:01:00+02:00\to/r:fix [31m\to/r#12\tmerged\tunsaved\t3\t1\t0\tapp,lib\tapp\t1\tFixed the parser.\tsession\t2026-11-03T12:00:00+02:00\t-\tFixed the parser. PR #12 is open.\t-\t-\t-\t-\t-
+                dev-2\tstopped\t-\t-\t0\t0\t0\t0\t0\t0\t-\t-\t-\t-\t-\tnot_read\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-
                 """, overview("plain"), "dev-2's line is an earlier dev-2's, it never started, and a stopped instance is not read; dev-1's one session says what it did");
         assertEquals(java.util.List.of("host-token [o/r#12]"), asked, "one request, with the instance's account");
         assertEquals(1, daemon.execs().size(), "only the running instance is read");
+    }
+
+    @Test
+    void aStoppedInstanceShowsItsLastMergedSummaryWithItsAge() throws Exception {
+        new SessionMerge.Cache(dir.resolve("summaries")).put("dev-2", "2026-11-02T08:00:00Z", "fp",
+                new SessionMerge.Merged("Wrote the docs", "Docs are written.", "All pushed.", "nothing reported", 2, 3, 1,
+                        java.time.Instant.parse("2026-11-02T10:00:00Z")), f -> fail(f));
+        var plain = overview("plain").lines().toList();
+        assertTrue(plain.get(1).endsWith("\t-\tWrote the docs\tmerged\t-\t-\t-\tDocs are written.\tAll pushed.\tnothing reported\t2\t2026-11-02T12:00:00+02:00"),
+                plain.get(1));
+        var table = overview(null);
+        assertTrue(table.contains("merged from 2 of 3 sessions ") && table.contains(": Wrote the docs"), table);
     }
 
     @Test

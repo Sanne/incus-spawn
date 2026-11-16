@@ -639,7 +639,29 @@ When the newest candidate does not parse, cut at the bound or not JSON, the clos
 The ask is the same: when the first candidate does not parse, none is shown, never a later message.
 The text is scrubbed as a guest's output is (`SecretRedactor.scrubGuest`), cut to 4,000 code points (500 for the ask), and shown a line at a time through `OutputFormat.oneLine`.
 The DONE column shows the newest session's first line that says something, `newest of 3:` before it when there were several, and the instance details show the ask and up to 20 lines of the closing message with the session count and the newest one's age.
-No model is called yet: one session's message is shown as it is, and several are not merged, which is the next step of #2241.
+One session's message is shown as it is, with no model call.
+
+**Several sessions are merged by one model call, on the instance's own Claude account** (#2241, part 3).
+`SessionMerge` sends the closing messages and first asks of the sessions read, newest first, and each clone's counts, never a transcript.
+It asks for four labelled lines: a headline, what was done, where the work stands, and what looks pending.
+The call goes from the host through `AiHelpClient`'s transport to the account the proxy would use for the instance: its `account.claude` stamp, else the namespace's default.
+The instance's sessions and code already go to that account, so no content reaches another one.
+A pin to a missing account, `inherit`, or a Pro/Max subscription (whose token serves Claude Code alone) means no call, and DONE keeps the newest session's message; the AI Help account is never used.
+The answer is the guest's text at one remove, so it is read only in that exact shape, scrubbed and cut like a closing message, and shown through `OutputFormat.oneLine`; an answer in another shape is not shown and not kept.
+DONE puts the session count and age before the headline, `merged from 3 sessions 2h ago: …`, so a cut cell keeps them, and `from 6 of 12` when only six of the twelve sessions were read with a closing message.
+The instance details add the clones it saw: `from 3 sessions, 1 repository, 2h ago`.
+The instance details show the other three lines, pending labelled as inferred.
+
+**Merged summaries are cached on the host, one file per incarnation.**
+`SessionMerge.Cache` keeps each in `~/.cache/incus-spawn/overview-summaries/`, named by a hash of the instance's name and `created_at`, so a new instance of the same name never shows an older one's summary.
+Its fingerprint is a hash of the model, the prompt and the whole question, so the cache holds exactly when the model would be shown the same thing.
+That covers what the issue named: a new session or closing message changes it, and so do the clones' counts of uncommitted changes, unpushed commits and stashes.
+A commit that leaves the counts as they were, such as one pushed at once, does not; the closing messages describe it, which is what is merged.
+A stopped instance shows its last cached summary with its age, and nothing starts it to make a new one.
+An overview of every instance removes the files of instances no longer listed; one filtered by `--status` removes none.
+Files are written whole through a rename and readable by the host user alone.
+At most four calls run at once, and in the TUI the exact columns are shown before any call ends.
+What this gives up: the first overview after an instance's work changed waits for its call, up to the transport's two minutes; a model's summary can be wrong, and the exact columns beside it are the check.
 `untouched` is shown only when no session was found, every clone was read and holds nothing, the event log saw no activity, and no other agent's sessions are there (Codex's or Pi's session directories, or opencode's database, which are not read yet).
 So a read that failed, a stopped instance, or a Codex box never reads as untouched.
 Beside Claude Code's message, DONE names such an agent as not read, since it may have worked since.

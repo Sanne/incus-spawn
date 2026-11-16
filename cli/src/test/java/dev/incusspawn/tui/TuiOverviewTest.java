@@ -71,6 +71,8 @@ class TuiOverviewTest {
         tui.eventLogReader = () -> EventLogReader.read(file);
         tui.overviewExecutor = reads::add;
         tui.overviewGitHub = (token, pulls) -> Map.of();
+        tui.overviewModel = (config, target, system, question) -> org.junit.jupiter.api.Assertions.fail("no instance here has several sessions");
+        tui.overviewCache = () -> new dev.incusspawn.command.SessionMerge.Cache(dir.resolve("summaries"));
         tui.overviewZone = java.time.ZoneOffset.UTC;
         tui.useDefinitions(new LinkedHashMap<>(), new ToolDefLoader(List.of()), List.of());
         tui.startSession(daemon.client(), new BackgroundTaskManager(Runnable::run), new FlockInstanceLockManager(),

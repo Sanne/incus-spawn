@@ -101,6 +101,7 @@ No value reaches the terminal with a control character raw (#1118): `plain` turn
 `isx overview` (`OverviewCommand`, #2241) is the one command that reads the proxy's event log, on demand; its fields are pinned by `OverviewCommandTest`.
 It also runs `WorkState`'s read-only script in each running guest (fails closed: `unknown`, never `clean`) and asks GitHub about the pull requests with each instance's own account (`PullRequestStates`, no request without one), both on demand only.
 The same exec reads Claude Code's newest sessions (`GuestRead` sections, `ClaudeSessions`), so `untouched` (`AgentSessions.Summary`) needs every read to have succeeded and nothing to say the instance was used.
+Two or more closing messages are merged by one model call on the instance's own Claude account (`SessionMerge.target`, no call without one), cached per incarnation against a hash of the whole question (`SessionMerge.Cache`).
 `isx list` outside the TUI (`ListCommand.printListing`) reads the instance listing once (`-q` at `recursion=1`, since completion runs it on every TAB) and never loads definitions.
 Templates are excluded by the `base` type, never by the `tpl-` prefix (which is why `BranchFlow` stamps `clone` in the copy request: a half-made branch must not pass for a template).
 The prefix is only a convention: `isx doctor` reads the type too, and `isx templates new`/`edit` use a name as given (design/templates.md).

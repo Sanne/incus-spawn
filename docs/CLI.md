@@ -372,8 +372,16 @@ A clone isx copied from a checkout on the host has no remote, so commits on its 
 
 The DONE column says what the coding agent reported it did, in its own closing message.
 The same script reads the newest Claude Code sessions in each running instance.
-With several sessions it shows the newest one's message, marked as `newest of` the count.
-An agent's message can claim more than it finished, so check WORK beside it.
+
+With several sessions, one model call merges their closing messages into one line.
+DONE shows that line with how many sessions it read and how old it is.
+A stopped instance shows its last merged line.
+A message or a merged line can claim more than the agent finished, so check WORK beside it.
+
+The call uses the instance's own Claude account, an API key or Vertex AI.
+It is made again only when the instance's sessions or clones changed.
+With a Pro/Max subscription, or no account isx may use, there is no call.
+DONE then shows the newest message, marked as `newest of` the count.
 
 DONE shows `untouched` only when nothing says the instance was used.
 That means no agent session, no work in any clone, and no activity in the event log.
@@ -383,14 +391,18 @@ The session text is scrubbed of anything shaped like a credential and cut to a b
 
 In the TUI, the Work tab and `o` on the instance list show the same columns.
 There Space marks rows and F8 destroys the marked ones.
-DONE is shown from 120 columns, and F3 on a row shows what was asked and the closing message.
+DONE is shown from 120 columns, and F3 on a row shows what was asked and the closing message, and the merged lines when there are some.
 
 In `plain` and `json` it prints these fields, in this order: `name`, `status`, `purpose`, `last_used`, `model_calls`, `tokens`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `first_active`, `last_active`, `pushed_branches`, `pull_requests`, `pull_request_states`, `work_state`, `uncommitted_changes`, `unpushed_commits`, `stashes`, `repos`, `unsaved_repos`, `agent_sessions`, `headline`, `headline_from`, `last_session`, `first_ask` and `closing_message`.
+After them come `merged_done`, `merged_state`, `merged_pending`, `merged_sessions` and `merged_at`.
 
 `tokens` is the sum of the four token counts.
 `pushed_branches` lists `<owner>/<repo>:<branch>` for each branch the instance pushed and kept.
 `pull_requests` lists `<owner>/<repo>#<number>`.
-`headline_from` is `untouched`, `session` or `newest_session`, and `null` when there is no headline.
+`headline_from` is `untouched`, `session`, `newest_session` or `merged`, and `null` when there is no headline.
+
+With `merged`, the `merged_` fields hold the model's other three lines, how many sessions it read and when it answered; otherwise they are `null`.
+`merged_pending` is the model's inference, not a fact the instance reported.
 
 `pull_request_states` gives each of them, in the same order, as `open`, `merged`, `closed` or `unknown`.
 `work_state` is `unsaved`, `clean`, `no_repos`, `unknown` or `not_read`.
