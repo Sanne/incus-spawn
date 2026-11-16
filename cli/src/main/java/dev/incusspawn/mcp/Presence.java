@@ -125,8 +125,7 @@ final class Presence {
     static String holderScript(DelegateAgent agent, String sessionId, String cwd) {
         // POSIX, as the login shell running it need not be bash; the probe brings its own.
         return "h=$(" + script("") + " | { h=; a=' '; while read -r k p rest; do "
-                + "case $k in " + agent.id + ") a=\"$a$p \";; esac; "
-                + "case $k in claude|codex|pi|opencode) [ \"$rest\" = " + ExecScript.quote(cwd) + " ] && h=$p;; "
+                + "case $k in " + agent.id + ") a=\"$a$p \"; [ \"$rest\" = " + ExecScript.quote(cwd) + " ] && h=$p;; "
                 + "resume) case $a in *\" $p \"*) [ \"$rest\" = " + ExecScript.quote(sessionId) + " ] && h=$p;; esac;; esac; "
                 + "done; echo \"$h\"; }); ";
     }
@@ -162,17 +161,15 @@ final class Presence {
     }
 
     /**
-     * The pid of a coding agent a person runs on this conversation -- resuming {@code sessionId},
-     * or working in {@code cwd}, where {@code claude --continue} or the resume picker would pick
-     * it up -- or null if there is none.
+     * The pid of a coding agent of the task's own kind that a person runs on this conversation --
+     * resuming {@code sessionId}, or working in {@code cwd}, where {@code claude --continue} or the
+     * resume picker would pick it up -- or null if there is none. Another kind of agent in the
+     * directory cannot resume this conversation, so it does not hold it.
      */
-    Long holderOf(String sessionId, String cwd) {
-        return holderOf(DelegateAgent.CLAUDE, sessionId, cwd);
-    }
-
     Long holderOf(DelegateAgent agent, String sessionId, String cwd) {
         for (var c : agents) {
-            if (agent == c.agent() && sessionId != null && !sessionId.isEmpty() && c.resumes().contains(sessionId)) return c.pid();
+            if (agent != c.agent()) continue;
+            if (sessionId != null && !sessionId.isEmpty() && c.resumes().contains(sessionId)) return c.pid();
             if (cwd != null && !cwd.isEmpty() && cwd.equals(c.cwd())) return c.pid();
         }
         return null;
