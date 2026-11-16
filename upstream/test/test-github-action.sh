@@ -64,7 +64,8 @@ case "$1 $2" in
     "api --paginate") r="${3#repos/}"; r="${r%/releases}"; jq -r "$(jqf)" "$FIX/rel-${r//\//_}.json" ;;
     "api repos/"*)
         case "$2" in
-            */git/ref/tags/*) r="${2#repos/}"; r="${r%%/git/*}"; t="${2##*/tags/}"
+            */git/ref/tags/*) [ -f "$FIX/fail-tag-read" ] && { echo "gh: HTTP 502" >&2; exit 1; }
+                r="${2#repos/}"; r="${r%%/git/*}"; t="${2##*/tags/}"
                 jq -e --arg t "$t" '.[$t]' "$FIX/tags-${r//\//_}.json" > /dev/null 2>&1 || nf
                 jq -c --arg t "$t" '.[$t]' "$FIX/tags-${r//\//_}.json" | jq -r "$(jqf)" ;;
             */git/tags/*) s="${2##*/}"
@@ -197,6 +198,16 @@ P="$(plan moved)"
 grep -qP "^actions\tissue\t$CUR\tpin mismatch$" "$P/plan.tsv" || fail "a moved tag is not a pin-mismatch issue: $(cat "$P/plan.tsv")"
 cp "$WORK/tags.bak" "$FIX/tags-example_act.json"
 echo "moved tag: ok"
+
+# ---- a publisher that cannot be read -------------------------------------------------------------------
+# A failed read while the pin is checked is a failing watch, never a tamper alarm (#2261).
+touch "$FIX/fail-tag-read"
+rc=0; "$E" plan "$WORK/plan-unreadable" > "$WORK/unreadable.log" 2>&1 || rc=$?
+rm -f "$FIX/fail-tag-read"
+[ "$rc" != 0 ] || fail "plan survived an unreadable publisher: $(cat "$WORK/plan-unreadable/plan.tsv")"
+grep -q 'cannot derive' "$WORK/unreadable.log" || fail "an unreadable publisher was not said to be one: $(cat "$WORK/unreadable.log")"
+! compgen -G "$WORK/plan-unreadable/issues/*" > /dev/null || fail "an unreadable publisher opened an issue"
+echo "unreadable publisher: ok"
 
 # ---- apply -------------------------------------------------------------------------------------------
 cp -r "$REPO" "$WORK/applied"

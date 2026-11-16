@@ -122,21 +122,23 @@ apply() {
 # regenerate_fields <item> <version>: src_fields as the publisher would have them for <version>, from
 # a copy of TREE, without downloading tarballs. Prints key=value lines.
 regenerate_fields() {
-    local copy f
+    local copy f rc=0
     copy="$(mktemp -d)"
     for f in $(item_list "$1" files); do
         mkdir -p "$copy/$(dirname "$f")"; cp "$TREE/$f" "$copy/$f"
     done
-    ( TREE="$copy"; UPSTREAM_REHASH="${UPSTREAM_REHASH:-0}"; src_apply "$2" >&2; src_fields )
+    ( TREE="$copy"; UPSTREAM_REHASH="${UPSTREAM_REHASH:-0}"; src_apply "$2" >&2 && src_fields ) || rc=$?
     rm -rf "$copy"
+    return "$rc"
 }
 
 # check <item> [<tree>]: the pinned fields are what the publisher gives the pinned version.
+# Returns 0 when they are, 1 when they differ, 2 when the publisher could not be read.
 check() {
     local have want
     load_source "$1"; with_tree "${2:-}"
     have="$(src_fields)"
-    want="$(regenerate_fields "$1" "$(src_current)")" || die "$1: cannot derive $(src_current) from its publisher"
+    want="$(regenerate_fields "$1" "$(src_current)")" || { log "ERROR: $1: cannot derive $(src_current) from its publisher"; return 2; }
     if [[ "$have" != "$want" ]]; then
         log "$1 pins $(src_current), but the publisher gives:"
         diff <(echo "$have") <(echo "$want") >&2 || true
@@ -166,7 +168,11 @@ plan() {
         top="$(newest $all)"
         # The pin itself first: a pinned version whose sums the publisher no longer confirms is a
         # republished or tampered release, an issue, never a silent re-pin.
-        if ! UPSTREAM_REHASH=0 check "$i" > /dev/null 2> "$out/$i.check"; then
+        rc=0
+        UPSTREAM_REHASH=0 check "$i" > /dev/null 2> "$out/$i.check" || rc=$?
+        # A publisher that could not be read is a failing watch, not a tamper alarm (#2261).
+        if [[ "$rc" -ge 2 ]]; then cat "$out/$i.check" >&2; exit 1; fi
+        if [[ "$rc" -ne 0 ]]; then
             issue_file "$out" "$i" pin-mismatch "[upstream] $i: pinned $cur no longer matches its publisher" \
                 "\`$i\` pins \`$cur\`, but the publisher now gives other values for it:
 
