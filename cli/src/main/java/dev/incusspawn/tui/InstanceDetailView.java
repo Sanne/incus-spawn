@@ -160,7 +160,8 @@ public final class InstanceDetailView {
     /**
      * The detail pane's rows for what the overview read of the instance's agent sessions (#2241):
      * what the person asked first and the newest closing message, with how many sessions there
-     * were and how old the newest is; none before the overview has read the instance. All of it is
+     * were and how old the newest is, and a model's merge of several, its pending work labelled
+     * inferred; none before the overview has read the instance. All of it is
      * the guest's text, already scrubbed and bounded, shown a line at a time through
      * {@link OutputFormat#oneLine}.
      */
@@ -168,6 +169,13 @@ public final class InstanceDetailView {
         var rows = new ArrayList<DetailRow>();
         if (summary == null) return rows;
         rows.add(new DetailRow("Done:", OutputFormat.oneLine(summary.cell())));
+        var merge = summary.merged();
+        if (merge != null) {
+            rows.add(new DetailRow(null, "a model's merge of the agents' own words, " + merge.sources(now)));
+            rows.add(new DetailRow("  Finished:", OutputFormat.oneLine(merge.done())));
+            rows.add(new DetailRow("  State:", OutputFormat.oneLine(merge.current())));
+            rows.add(new DetailRow("  Pending:", OutputFormat.oneLine(merge.pending()) + " (inferred)"));
+        }
         if (summary.newest() == null) return rows;
         var at = java.time.LocalDateTime.ofInstant(summary.newest(), java.time.ZoneId.systemDefault());
         rows.add(new DetailRow(null, "the agent's own words, from " + summary.sessions()

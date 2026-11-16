@@ -8,6 +8,9 @@
 ai-help-anthropic: claude-sonnet-5-5
 ai-help-vertex: claude-sonnet-5-5
 ai-help-openai: gpt-6-luna
+# The overview's merged summary of several agent sessions, on the instance's own Claude account.
+overview-merge-anthropic: claude-sonnet-5-5
+overview-merge-vertex: claude-sonnet-5-5
 vertex-probe: claude-sonnet-5-5
 vertex-rewriter-default: claude-sonnet-5-5
 # What a coding agent starts with when its tool names no model.

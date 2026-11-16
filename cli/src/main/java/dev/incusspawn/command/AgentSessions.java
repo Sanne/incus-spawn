@@ -117,14 +117,32 @@ public record AgentSessions(State state, int total, List<Session> sessions, List
      * Git work and no activity in the event log say otherwise; one session's closing message; or
      * the newest of several, labelled as such. Merging several is not done here.
      *
-     * @param from {@code untouched}, {@code session}, {@code newest_session}, or null when there
-     *     is no headline: the {@code headline_from} field
+     * @param from {@code untouched}, {@code session}, {@code newest_session}, {@code merged} (a
+     *     model's merge of several, {@link #withMerged}), or null when there is no headline: the
+     *     {@code headline_from} field
      */
     public record Summary(String from, String headline, String cell, Integer sessions, Instant newest,
-                          String closing, String ask) {
+                          String closing, String ask, SessionMerge.Merged merged) {
+
+        public Summary(String from, String headline, String cell, Integer sessions, Instant newest,
+                       String closing, String ask) {
+            this(from, headline, cell, sessions, newest, closing, ask, null);
+        }
 
         static Summary none(String cell) {
             return new Summary(null, null, cell, null, null, null, null);
+        }
+
+        /**
+         * This summary with the model's merge of its sessions as the headline ({@code merged}),
+         * its session count and age before it, so a cut cell keeps them; the newest session's message stays in {@link #closing}.
+         * {@code otherAgents} are named as not read, as beside a session's message, since they may
+         * have worked since.
+         */
+        public Summary withMerged(SessionMerge.Merged merge, java.time.LocalDateTime now, List<String> otherAgents) {
+            var others = otherAgents.isEmpty() ? "" : " (" + String.join(", ", otherAgents) + " not read)";
+            return new Summary("merged", merge.headline(), merge.label(now) + ": " + merge.headline() + others,
+                    sessions, newest, closing, ask, merge);
         }
 
         /**

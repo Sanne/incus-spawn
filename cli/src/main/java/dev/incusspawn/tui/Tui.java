@@ -414,6 +414,10 @@ public class Tui {
     dev.incusspawn.command.PullRequestStates.GitHub overviewGitHub = dev.incusspawn.command.PullRequestStates.api();
     /** The host's config, for each instance's GitHub account; tests give their own. */
     java.util.function.Supplier<SpawnConfig> overviewConfig = SpawnConfig::load;
+    /** The model that merges several sessions' closing messages, on each instance's own account; tests answer for it. */
+    dev.incusspawn.command.SessionMerge.Model overviewModel = dev.incusspawn.command.SessionMerge.api();
+    /** Where merged summaries are kept on the host. */
+    java.util.function.Supplier<dev.incusspawn.command.SessionMerge.Cache> overviewCache = dev.incusspawn.command.SessionMerge.Cache::host;
 
     /** Whether the instance table shows the overview's columns: on {@code o}, or in the Work tab. */
     boolean overviewShown() {
@@ -2845,7 +2849,8 @@ public class Tui {
     /**
      * Reads the overview's columns off the UI thread: the event log first, shown as soon as it is
      * read, then each running guest's work state and GitHub's answer. The table shows the last
-     * read, or that it is reading, until each is done. Only on {@code o}, entering the Work tab
+     * read, or that it is reading, until each is done, and then the model's merge of each
+     * instance's sessions where it has several (cached on the host). Only on {@code o}, entering the Work tab
      * and {@code r}, never on a live refresh, so nothing is read or asked unless a person asks.
      */
     private void readOverview() {
@@ -2869,13 +2874,26 @@ public class Tui {
             overviewLog = log;
             needsRepaint.set(true);
             dev.incusspawn.command.OverviewCommand.Reading reading;
+            SpawnConfig host = null;
             try {
-                reading = dev.incusspawn.command.OverviewCommand.read(client, rows, log, configs.get(), github, warningLog::add);
+                host = configs.get();
+                reading = dev.incusspawn.command.OverviewCommand.read(client, rows, log, host, github, warningLog::add);
             } catch (RuntimeException e) {
                 warningLog.add("Could not read what the instances hold: " + e.getMessage());
                 reading = new dev.incusspawn.command.OverviewCommand.Reading(log, java.util.Map.of(), java.util.Map.of());
             }
-            if (overviewReads.get() == read) overviewReading = reading;
+            if (overviewReads.get() != read) return;
+            overviewReading = reading;
+            needsRepaint.set(true);
+            if (host == null) return;
+            // The exact columns are shown first: a model call never holds them back
+            try {
+                var merged = dev.incusspawn.command.SessionMerge.mergeAll(rows, reading.guests(), host,
+                        overviewModel, overviewCache.get(), warningLog::add);
+                if (overviewReads.get() == read && !merged.isEmpty()) overviewReading = reading.withMerged(merged);
+            } catch (RuntimeException e) {
+                warningLog.add("Could not merge the instances' sessions: " + e.getMessage());
+            }
             needsRepaint.set(true);
         });
     }

@@ -65,15 +65,33 @@ public class OverviewCommand extends BaseCommand {
     /** GitHub, asked whether the pull requests are still open; tests answer for it. */
     PullRequestStates.GitHub github = PullRequestStates.api();
 
-    /** The host's config, for each instance's GitHub account. */
+    /** The host's config, for each instance's GitHub and Claude accounts. */
     Supplier<SpawnConfig> config = SpawnConfig::load;
+
+    /** The model that merges several sessions' closing messages; tests answer for it. */
+    SessionMerge.Model model = SessionMerge.api();
+
+    /** Where merged summaries are kept on the host. */
+    Supplier<SessionMerge.Cache> cache = SessionMerge.Cache::host;
 
     /**
      * Everything the overview shows beside the listing: the event log, each instance's work state
      * read in its guest, and what became of its pull requests.
      */
     public record Reading(EventLogReader.Log log, Map<String, GuestRead> guests,
-                          Map<String, Map<EventLogReader.PullRequest, PullRequestStates.State>> pulls) {
+                          Map<String, Map<EventLogReader.PullRequest, PullRequestStates.State>> pulls,
+                          Map<String, SessionMerge.Merged> merged) {
+
+        public Reading(EventLogReader.Log log, Map<String, GuestRead> guests,
+                       Map<String, Map<EventLogReader.PullRequest, PullRequestStates.State>> pulls) {
+            this(log, guests, pulls, Map.of());
+        }
+
+        /** This reading with the merged summaries {@link SessionMerge#mergeAll} made or found. */
+        public Reading withMerged(Map<String, SessionMerge.Merged> merges) {
+            return new Reading(log, guests, pulls, merges);
+        }
+
         /**
          * Its work state; one the read did not cover (it appeared or started since) is not read
          * when stopped and unknown when running, never shown as stopped.
@@ -88,11 +106,14 @@ public class OverviewCommand extends BaseCommand {
         }
 
         /**
-         * What was done in it, without a model ({@link AgentSessions.Summary}): never
-         * {@code untouched} while the event log saw it active.
+         * What was done in it ({@link AgentSessions.Summary}): never {@code untouched} while the
+         * event log saw it active, and the model's merge of its sessions when there is one.
          */
         public AgentSessions.Summary summaryOf(InstanceInfo instance) {
-            return AgentSessions.Summary.of(sessionsOf(instance), workOf(instance), effortOf(log, instance).any());
+            var sessions = sessionsOf(instance);
+            var summary = AgentSessions.Summary.of(sessions, workOf(instance), effortOf(log, instance).any());
+            var merge = merged.get(instance.name());
+            return merge == null ? summary : summary.withMerged(merge, LocalDateTime.now(), sessions.otherAgents());
         }
 
         private GuestRead guestOf(InstanceInfo instance) {
@@ -151,7 +172,12 @@ public class OverviewCommand extends BaseCommand {
                 .filter(i -> !Metadata.TYPE_BASE.equals(i.type()))
                 .filter(i -> wanted == null || wanted.equalsIgnoreCase(i.status()))
                 .toList();
-        var reading = read(incus, instances, eventLog.get(), config.get(), github, BuildOutput::warn);
+        var host = config.get();
+        var summaries = cache.get();
+        var reading = read(incus, instances, eventLog.get(), host, github, BuildOutput::warn);
+        reading = reading.withMerged(SessionMerge.mergeAll(instances, reading.guests(), host, model, summaries, BuildOutput::warn));
+        // Only a listing of every instance says which were destroyed
+        if (wanted == null) summaries.prune(instances);
         switch (outputFormat) {
             case PLAIN, JSON -> {
                 outputFormat.print(out, records(instances, reading, zone));
@@ -218,6 +244,12 @@ public class OverviewCommand extends BaseCommand {
             record.put("last_session", iso(summary.newest(), zone));
             record.put("first_ask", summary.ask());
             record.put("closing_message", summary.closing());
+            var merge = summary.merged();
+            record.put("merged_done", merge == null ? null : merge.done());
+            record.put("merged_state", merge == null ? null : merge.current());
+            record.put("merged_pending", merge == null ? null : merge.pending());
+            record.put("merged_sessions", merge == null ? null : merge.sessions());
+            record.put("merged_at", merge == null ? null : iso(merge.made(), zone));
             records.add(record);
         }
         return records;
