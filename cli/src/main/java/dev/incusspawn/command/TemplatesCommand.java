@@ -15,6 +15,9 @@ import dev.incusspawn.config.TemplateValidator;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.tool.ToolDefValidator;
+import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
@@ -359,8 +362,10 @@ public class TemplatesCommand extends BaseCommand {
                 check.add(TemplateFinding.error("name", "The definition is named '" + named
                         + "', not '" + templateName + "': the two must agree"));
             }
+            if (check.stream().noneMatch(TemplateFinding::isError)) {
+                check.addAll(hostFindings(() -> ImageDef.parseYaml(yaml), defs));
+            }
             var valid = check.stream().noneMatch(TemplateFinding::isError);
-            if (valid) check.addAll(credentialFindings(() -> ImageDef.parseYaml(yaml), defs));
             var written = false;
             if (valid) {
                 try {
@@ -435,9 +440,9 @@ public class TemplatesCommand extends BaseCommand {
                 return CommandResult.valueOf(1);
             }
             var result = TemplateValidator.validate(yaml, location, defs);
-            var valid = !result.hasErrors();
             var findings = new ArrayList<>(result.findings());
-            if (valid) findings.addAll(credentialFindings(() -> ImageDef.parseYaml(yaml), defs));
+            if (!result.hasErrors()) findings.addAll(hostFindings(() -> ImageDef.parseYaml(yaml), defs));
+            var valid = findings.stream().noneMatch(TemplateFinding::isError);
             if (outputFormat != OutputFormat.TABLE) {
                 printCheck(outputFormat, result.name(), location, valid, false, findings, result.reach());
             } else {
@@ -479,17 +484,15 @@ public class TemplatesCommand extends BaseCommand {
      * is instead one warning on {@code accounts}, since the build refuses it. Only advice: whatever
      * stops it, it says nothing.
      */
-    static List<TemplateFinding> credentialFindings(ImageDefSource definition, Map<String, ImageDef> defs) {
+    static List<TemplateFinding> credentialFindings(ImageDef def, Map<String, ImageDef> defs,
+                                                    SpawnConfig config, ToolDefLoader tools) {
         try {
-            var def = definition.read();
             var chain = new java.util.HashMap<>(defs);
             chain.put(def.getName(), def);
             // An account pin with no such account, which the build refuses and the credential check skips
             var unknownAccount = BuildCommand.validateTemplateAccounts(List.of(def.getName()), chain);
             if (unknownAccount != null) return List.of(TemplateFinding.warning("accounts", unknownAccount));
-            var config = SpawnConfig.load();
-            return CredentialCheck.missingByCredential(config, List.of(def.getName()), chain,
-                            new ToolDefLoader(config.getSearchPaths()))
+            return CredentialCheck.missingByCredential(config, List.of(def.getName()), chain, tools)
                     .keySet().stream()
                     .map(missing -> {
                         var said = new ArrayList<String>();
@@ -498,13 +501,111 @@ public class TemplatesCommand extends BaseCommand {
                         return TemplateFinding.warning("tools", String.join(" ", said));
                     })
                     .toList();
-        } catch (IOException | RuntimeException e) {
+        } catch (RuntimeException e) {
             ClientLog.warn("Missing-credential check skipped: " + e);
             return List.of();
         }
     }
 
-    /** Where {@link #credentialFindings} reads the definition it checks. */
+    /**
+     * What the host's tools and config say of a definition with no error, which parses and has a
+     * name: {@link #toolFindings} and {@link #credentialFindings}, over one read of the tools.
+     */
+    static List<TemplateFinding> hostFindings(ImageDefSource definition, Map<String, ImageDef> defs) {
+        ImageDef def;
+        try {
+            def = definition.read();
+        } catch (IOException e) {
+            // The check that came first read it, so this is a file changed in between
+            return List.of(TemplateFinding.error(null, "Could not read the definition again: " + e.getMessage()));
+        }
+        var config = SpawnConfig.load();
+        var tools = new ToolDefLoader(config.getSearchPaths());
+        var findings = new ArrayList<TemplateFinding>();
+        try {
+            findings.addAll(toolFindings(def, tools, RuntimeServices.toolSetups()));
+        } catch (RuntimeException e) {
+            // Said rather than a crash; an error, since a check that did not run passes nothing
+            ClientLog.warn("Tool check failed: " + e);
+            findings.add(TemplateFinding.error("tools", "Could not check the tools: " + OutputFormat.oneLine(String.valueOf(e.getMessage()))));
+        }
+        findings.addAll(credentialFindings(def, defs, config, tools));
+        return findings;
+    }
+
+    /**
+     * Each of {@code def}'s {@code tools:} entries as {@code isx build} resolves it (#2291), so a
+     * template the build would set up without one of its tools, or refuse, is not reported valid:
+     * an error on {@code tools[i]} for a tool no built-in or tool file defines, listed or required,
+     * for parameters the tool refuses, for a tool file that names a tool the entry reaches but did
+     * not load, and for a tool file's own errors ({@link ToolDefValidator}). Built-in tools are
+     * not checked again. A tool behind a feature not enabled here, a dependency cycle and an
+     * overridden parameter are warnings, as the build gives them. A tool file that did not load
+     * and names none of these tools is a warning on {@code tools}: the build refuses until it is
+     * fixed, but the template is not why.
+     */
+    static List<TemplateFinding> toolFindings(ImageDef def, ToolDefLoader tools, Iterable<ToolSetup> cdiTools) {
+        var findings = new ArrayList<TemplateFinding>();
+        var failures = new ArrayList<>(tools.loadFailures());
+        for (var check : BuildTools.checkEntries(def, tools, cdiTools)) {
+            var field = "tools[" + check.entry() + "]";
+            for (var problem : check.problems()) {
+                if (problem.kind() == BuildTools.Problem.Kind.UNKNOWN) {
+                    // A file that would have defined it did not load: that is the cause to name
+                    if (failedFile(failures, problem.tool(), field, findings)) continue;
+                    var name = "'" + OutputFormat.oneLine(problem.tool()) + "'";
+                    var which = problem.requiredBy() == null ? "tool " + name
+                            : "tool " + name + ", which '" + OutputFormat.oneLine(problem.requiredBy()) + "' requires,";
+                    findings.add(TemplateFinding.error(field, which + " is not a tool isx knows,"
+                            + " so isx build skips it; 'isx tools list' lists the tools"));
+                } else {
+                    findings.add(TemplateFinding.warning(field, OutputFormat.oneLine(problem.message())));
+                }
+            }
+            if (check.error() != null) findings.add(TemplateFinding.error(field, check.error()));
+            for (var tool : check.reached()) {
+                failedFile(failures, tool.name(), field, findings);
+                var source = tools.getSource(tool.name());
+                if (!(tool instanceof YamlToolSetup yaml) || "built-in".equals(source)) continue;
+                var errors = new ArrayList<String>();
+                var warnings = new ArrayList<String>();
+                ToolDefValidator.validateDef(yaml.toolDef(), errors, warnings);
+                var file = OutputFormat.oneLine(Path.of(source).getFileName().toString()) + ": ";
+                errors.forEach(error -> findings.add(TemplateFinding.error(field, file + error)));
+                warnings.forEach(warning -> findings.add(TemplateFinding.warning(field, file + warning)));
+            }
+        }
+        for (var failure : failures) {
+            findings.add(TemplateFinding.warning("tools", refusal(failure)));
+        }
+        return findings;
+    }
+
+    /**
+     * Takes from {@code failures} each tool file that may have defined {@code tool}, as an error on
+     * {@code field}; whether there was one.
+     */
+    private static boolean failedFile(List<ToolDefLoader.LoadFailure> failures, String tool, String field,
+                                      List<TemplateFinding> findings) {
+        var found = false;
+        for (var it = failures.iterator(); it.hasNext(); ) {
+            var failure = it.next();
+            if (!failure.likelyName().equals(tool)) continue;
+            it.remove();
+            findings.add(TemplateFinding.error(field, refusal(failure)));
+            found = true;
+        }
+        return found;
+    }
+
+    /** Why a tool file did not load, and that the build refuses until it is fixed. */
+    private static String refusal(ToolDefLoader.LoadFailure failure) {
+        var reason = OutputFormat.oneLine(failure.reason());
+        var refused = dev.incusspawn.config.LayeredDefinitions.REFUSED;
+        return reason.endsWith(refused) ? reason : reason + refused;
+    }
+
+    /** Where {@link #hostFindings} reads the definition it checks. */
     @FunctionalInterface
     interface ImageDefSource {
         ImageDef read() throws IOException;
@@ -723,7 +824,7 @@ public class TemplatesCommand extends BaseCommand {
             if (!reported) Warnings.warn(warning);
         }
         var findings = new ArrayList<>(result.findings());
-        if (!result.hasErrors()) findings.addAll(credentialFindings(() -> ImageDef.parseFile(file), defs));
+        if (!result.hasErrors()) findings.addAll(hostFindings(() -> ImageDef.parseFile(file), defs));
         return reportFindings(findings, out);
     }
 
