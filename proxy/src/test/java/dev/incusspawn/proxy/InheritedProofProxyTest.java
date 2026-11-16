@@ -228,12 +228,11 @@ class InheritedProofProxyTest {
         // The first request finds the secret old and has it read again in the background
         assertEquals(200, send(API, "/first", "token " + INSTANCE_PROOF));
         var expected = "token gho_isx_" + ProofToken.derive(rotated, "github");
-        for (int i = 0; i < 50 && !expected.equals(received.get("/later")); i++) {
-            Thread.sleep(20);
+        // A deadline, not a count of tries: under a loaded full build the re-read took over a second (#2325)
+        ArtifactCacheProxyTest.awaitOr("the rotated secret's proof on /later", () -> {
             assertEquals(200, send(API, "/later", "token " + INSTANCE_PROOF));
-        }
-
-        assertEquals(expected, received.get("/later"));
+            return expected.equals(received.get("/later"));
+        }, () -> "last sent " + received.get("/later"));
     }
 
     @Test
