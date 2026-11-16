@@ -1,9 +1,8 @@
 // isx-vm: starts isx's Linux VM on Virtualization.framework and relays its vsock ports (#2031).
 //
-// A prototype, to be measured against vfkit before anything ships: it reads the command line
-// isx writes for vfkit, so the same isx can start either. It lives as long as the machine and
-// exits when the guest powers off. SIGTERM and SIGINT stop the machine; SIGUSR1 prints each
-// relay's counts.
+// isx starts it with arguments of its own (`VmManager.launcherCommand`, read by `VmSpec`). It
+// lives as long as the machine and exits when the guest powers off. SIGTERM and SIGINT stop the
+// machine; SIGUSR1 prints each relay's counts, which the control socket also answers.
 import Darwin
 import Foundation
 import IsxRelay

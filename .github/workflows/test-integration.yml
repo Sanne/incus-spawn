@@ -374,8 +374,8 @@ jobs:
           bin=$(launcher/build-isx-vm.sh)
           cp "$bin" "$RUNNER_TEMP/isx-vm"
           # It starts and reads its arguments; a machine it cannot have here.
-          "$RUNNER_TEMP/isx-vm" --cpus 1 --memory 512 --device virtio-gpu 2>&1 | tee "$RUNNER_TEMP/refused.txt" || true
-          grep -qx "isx-vm: unknown device 'virtio-gpu'" "$RUNNER_TEMP/refused.txt"
+          "$RUNNER_TEMP/isx-vm" --cpus 1 --memory 512 --gpu yes 2>&1 | tee "$RUNNER_TEMP/refused.txt" || true
+          grep -qx "isx-vm: unknown option '--gpu'" "$RUNNER_TEMP/refused.txt"
 
       # The scripts that measure it on the Mac runner call the appliance's agent with
       # agent-call.pl. Apple's nc, which they used before, shuts its write side down after its
