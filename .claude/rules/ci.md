@@ -275,6 +275,15 @@ The record is a measurement, so it counts only from a Mac that was otherwise idl
 The appliance cache key hashes `appliance/**` except `appliance/test-*.sh`, the tunnel scripts' agent client (`agent-call.pl`), the launcher's measurement scripts (`measure-tunnel.sh`, `tunnel-hold.pl`, `launcher-on-mac.sh`), `appliance/*.md` and `appliance/kernel/vm*.config`, which never enter the image, and appends the kernel's fingerprint, so editing a test script, a measurement script or a VM kernel fragment does not force an appliance rebuild.
 Anything `build.sh` copies into the image (`root/`, `config.sh`, the kernel) must stay inside the hash.
 
+Each Maven job keeps a cache of its own, `maven-<job>-<hash of the poms>` (`macos-maven-<job>-` on macOS), and builds through `.github/scripts/mvn-ci.sh` (#2307).
+`actions/cache` saves a key once and never updates it, so one key shared by jobs that resolve different modules held only what the first job to finish needed, and the others downloaded the rest from Maven Central on every run.
+After an exact hit the script builds offline, so a Maven Central 429 cannot fail the job; without one it builds online, and the job saves what it downloaded.
+If an offline build fails for a missing artifact it warns that the cache was incomplete and builds again online, and any other failure (a test) is returned as it is.
+Online, the resolver retries 429 as well as 503, up to 8 times with pauses of up to 60 s (the defaults retry 503 alone, 3 times).
+The Linux jobs also restore the old `maven-` prefix, so a first run starts from a partial cache.
+`MavenCiScriptTest` holds the script and that every Maven cache step is its job's own and its build goes through the script.
+`release.yml` keeps no Maven cache and does not use the script.
+
 The kernel-source cache (`/tmp/kernel-cache/`) is keyed `kernel-source-<version>-<sha256>`, both read from `appliance/kernel/build-kernel.sh`.
 That script downloads only from kernel.org and checks `KERNEL_SHA256` on every run, a cache hit included (#1128).
 The save step runs only after a verified build, but `actions/cache` never overwrites a key.

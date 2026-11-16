@@ -47,11 +47,14 @@ jobs:
           distribution: 'graalvm'
 
       - name: Cache Maven dependencies
+        id: maven-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.m2/repository
-          key: maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: maven-
+          key: maven-docs-gates-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-docs-gates-
+            maven-
 
       - name: Run the docs gates
-        run: mvn -B -ntp -pl common,cli -am test -Dgroups=docs
+        run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' -B -ntp -pl common,cli -am test -Dgroups=docs
