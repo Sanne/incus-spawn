@@ -812,7 +812,7 @@ Codex 0.166 adds an optional `refresh_reason`, a diagnostic from a fixed set of 
 Otherwise it answers with the current session's placeholders.
 Concurrent refreshes of one session share one upstream call, and at most one goes upstream per 30 seconds: with tokens that stayed inside the window, real Codex otherwise refreshed nearly 6000 times in 5 minutes.
 A caller whose token no longer works waits for a refresh already upstream for it, whatever the throttle says; one whose token still works is answered with it, and never shares a failed refresh.
-Within that interval a token that has expired, or that the backend has just refused, is answered 503, not handed back as if refreshed, which would only loop Codex between refreshes and 401s with a bearer known to be bad.
+Within that interval a token that has expired, or that the backend has just refused, is answered 503 with a `Retry-After` of the rest of the interval, not handed back as if refreshed, which would only loop Codex between refreshes and 401s with a bearer known to be bad.
 Such a caller is handed a generation committed since it read the session only when that generation's token works too, and is answered 401 once the account's session is another one or gone.
 A refusal is a 401 to a backend request or to a WebSocket handshake, and is kept per token (the session at one generation), so a late 401 for a token a refresh has already replaced does not mark the current one; a refresh that succeeds clears the session's earlier ones.
 A rate limit or server error from OpenAI reaches the guest as one too (429, 502), so Codex retries rather than treating its session as dead.
@@ -1121,7 +1121,8 @@ A ChatGPT token refresh refused with a `429` keeps the proxy's own JSON body, wh
 A refresh refused with a `5xx` becomes the proxy's `502`, without upstream's headers.
 OpenAI's body is not passed on, since it answered a request that carried the host's refresh token.
 
-The proxy's own throttle of ChatGPT refreshes answers `503` without `Retry-After`: it is the proxy's answer, not upstream's.
+The proxy's own throttle of ChatGPT refreshes answers `503` with a `Retry-After` of the rest of its 30 s window, in whole seconds rounded up (`ChatGptRoute.newerOrLater`).
+Without it, Codex obeying a shorter `Retry-After` from OpenAI would come back inside the window and get a `503` that says nothing about when to try again.
 
 ## Vertex AI: container in Vertex mode vs standard mode
 We initially ran containers in standard (non-Vertex) mode with proxy-side API translation — the container sent `/v1/messages` and the proxy rewrote to Vertex `rawPredict`.

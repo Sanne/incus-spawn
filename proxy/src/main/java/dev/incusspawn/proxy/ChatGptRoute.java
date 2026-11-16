@@ -412,7 +412,7 @@ final class ChatGptRoute {
 
     /**
      * A refresh's outcome: the session's tokens after it, or why the caller gets none.
-     * {@code retryHeaders}: upstream's, when its 429 is passed on (#2309).
+     * {@code retryHeaders}: when to try again, upstream's with its 429, or the throttle's own (#2309).
      */
     record Refreshed(ChatGptSessionStore.Tokens tokens, String sessionId, int status, String code,
                              String message, List<Map.Entry<String, String>> retryHeaders) {
@@ -496,13 +496,14 @@ final class ChatGptRoute {
                 return inFlight;
             }
             var last = lastUpstream.get(key);
-            if (last != null && System.currentTimeMillis() - last < MIN_UPSTREAM_INTERVAL_MILLIS) {
+            var waitMillis = last == null ? 0 : MIN_UPSTREAM_INTERVAL_MILLIS - (System.currentTimeMillis() - last);
+            if (waitMillis > 0) {
                 // Throttled: a token that still works is answered with. One that has expired, or
                 // that the backend has just refused, would only send Codex round a refresh-and-401
                 // loop with a bearer known to be bad: it gets a refresh that committed since this
                 // caller read the session, if there is one, and otherwise is told to try again later
                 return usable ? Future.succeededFuture(Refreshed.ok(session))
-                        : vertx.executeBlocking(() -> newerOrLater(session), false);
+                        : vertx.executeBlocking(() -> newerOrLater(session, waitMillis), false);
             }
             return refreshes.computeIfAbsent(tokenKey(session), k -> {
                 var started = upstreamRefresh(req, session, request);
@@ -758,17 +759,21 @@ final class ChatGptRoute {
     /**
      * What a throttled refresh of {@code session}, whose token no longer works, answers with: a
      * generation of the same session committed since the caller read it, if its token works, else
-     * a 503; a 401 once the account's session is another. Blocks; package-private for tests.
+     * a 503 whose {@code Retry-After} is the rest of the throttle, {@code waitMillis} in whole seconds
+     * rounded up, so a client that waits as told is not throttled again; a 401 once the account's
+     * session is another. Blocks; package-private for tests.
      */
-    Refreshed newerOrLater(ChatGptSessionStore.Session session) {
+    Refreshed newerOrLater(ChatGptSessionStore.Session session, long waitMillis) {
         var now = store.read(session.account());
         if (now == null || !now.sessionId().equals(session.sessionId())) return forget(session);
         // A newer token the backend has refused, or that has expired, is no better than the caller's
         if (now.generation() > session.generation() && works(now)) {
             return Refreshed.ok(now);
         }
-        return Refreshed.refused(503, "temporarily_unavailable",
-                "a refresh of the session went upstream moments ago and left no token that works yet; try again shortly");
+        var retryAfter = String.valueOf(Math.max(1, (waitMillis + 999) / 1000));
+        return new Refreshed(null, null, 503, "temporarily_unavailable",
+                "a refresh of the session went upstream moments ago and left no token that works yet; try again shortly",
+                List.of(Map.entry("Retry-After", retryAfter)));
     }
 
     /**
