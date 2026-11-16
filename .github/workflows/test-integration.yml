@@ -343,8 +343,8 @@ jobs:
 
   # The same tests where the launcher will run, and the only place the launcher itself is
   # compiled: isx-vm needs Virtualization.framework. A hosted Mac cannot start a machine, so
-  # the binary is built and signed here and run on the Mac runner, which takes it from this
-  # job (appliance/launcher-on-mac.sh). Nothing waits for this job: a macOS runner that is
+  # the binary is built and signed here; the Mac runner builds its own from the checkout it
+  # boots (appliance/test-boot.sh). Nothing waits for this job: a macOS runner that is
   # slow to come does not hold the Linux jobs.
   launcher-macos:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
@@ -478,7 +478,7 @@ jobs:
         run: |
           sudo .github/scripts/apt-install.sh ${{ matrix.qemu_pkg }} socat \
             dnsmasq-base incus-client busybox-static
-          # vsock for the guest: the same transport vfkit gives the appliance on macOS.
+          # vsock for the guest: the same transport the launcher gives the appliance on macOS.
           # Loading the module fires a udev "add" event that is handled asynchronously; a bare
           # chmod raced it, and udev resetting the node to root:kvm 0660 left QEMU with EACCES.
           # A rule makes udev itself apply the mode, and settling waits for it to have done so.
@@ -496,10 +496,10 @@ jobs:
 
       # One boot covers both halves: the in-guest smoke test (Incus works inside the VM) and
       # the host-facing tunnel, reached the way isx reaches it on macOS. The launcher's relay
-      # bridges Unix sockets to the guest's vsock ports, where vfkit does on a Mac today:
+      # bridges Unix sockets to the guest's vsock ports, as isx-vm does on a Mac:
       #   Unix socket -> isx-vsock-bridge -> in-guest socat forwarder -> Incus socket
-      # This proves the relay and everything either side of it, not vfkit (#774) and not
-      # Virtualization.framework, which only a Mac has (#2031).
+      # This proves the relay and everything either side of it, not Virtualization.framework,
+      # which only a Mac has (#774, #2031).
       - name: Boot appliance VM
         run: |
           ${{ matrix.qemu }} \
@@ -632,7 +632,7 @@ jobs:
           kill -9 "$QEMU_PID" 2>/dev/null || true
 
       # The macOS data path (#1585): a second boot in remote proxy mode, on a tap network shaped
-      # like vfkit's NAT, with a listener on the host standing in for isx-proxy. A container's
+      # like the Mac's NAT, with a listener on the host standing in for isx-proxy. A container's
       # request to the gateway's port 443 must reach the host through the guest's DNAT, and
       # arrive from the VM's address. It runs even if the tunnel checks failed, since it tests
       # something else from a boot of its own, but not without a disk image.
@@ -657,7 +657,7 @@ jobs:
 
   # isx and isx-proxy in their macOS roles, on Linux (#1800): the macOS-role test build
   # (scripts/macos-role-build.sh, never released) against the appliance booted as isx boots it on
-  # macOS, with stand-ins for vfkit, its NAT, the DHCP leases and the Keychain. A template build
+  # macOS, with stand-ins for the launcher, its NAT, the DHCP leases and the Keychain. A template build
   # that runs gh, a pinned branch, refused proofs, --mcp-client and the exposed-host-ports relay's
   # caller rule, through the macOS code paths (appliance/test-macos-role.sh). The vsock ports are
   # bridged by the launcher's relay (#2031), so isx's own requests cross the relay it is to ship.

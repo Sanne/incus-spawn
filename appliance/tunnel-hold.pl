@@ -10,7 +10,7 @@
 # until its stdin ends, and then prints "open <k>": how many the other side had not closed.
 # The first connection that is not accepted within 10 s ends the tries: a tunnel that holds no
 # more keeps the next one waiting, and each one after it would wait as long.
-# Used by measure-tunnel.sh and launcher-on-mac.sh (#2031).
+# Used by measure-tunnel.sh and bench/vm-launcher-compare.sh (#2031).
 use strict; use Socket; use MIME::Base64;
 # A pong written to a connection the other side has just closed must not end this program
 # before it prints "open <k>": the failed write is left to the next read, which sees the close.

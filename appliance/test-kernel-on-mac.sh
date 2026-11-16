@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Boot a PR's appliance on the Mac and record it for the kernel-mac-verified
 # check (#1355, .claude/rules/ci.md). Runs on a bare-metal Apple silicon Mac,
-# the only place vfkit runs (#791), from a clean checkout of origin/main: the
+# the only place the launcher runs a machine (#791), from a clean checkout of origin/main: the
 # test scripts are this checkout's, and only the PR's build is under test.
 #
 #   0. refuses before anything else unless this checkout is origin/main with no
@@ -20,7 +20,8 @@ set -euo pipefail
 #   2. fingerprints that merge with this checkout's kernel-fingerprint.sh, as
 #      the check does, and checks the kernel's Linux version banner against
 #      the merge's KERNEL_VERSION
-#   3. boots it with test-boot.sh (vfkit, ISX READY and the tunnel checks), then
+#   3. boots it with test-boot.sh (isx-vm built from this checkout, ISX READY and the
+#      tunnel checks), then
 #      with test-with-isx.sh (isx's own VM manager, over vsock)
 #   4. posts a "### Mac kernel verification" record on the PR (the head, the
 #      build, the fingerprint, the artifact's sums, the machine, each result,
@@ -37,7 +38,7 @@ set -euo pipefail
 #
 # Needs gh logged in as an account kernel-mac-verified.yml lists in VERIFIERS,
 # strings (the Xcode command line tools), and what test-boot.sh and
-# test-with-isx.sh need (vfkit, isx on PATH or ISX=...). Stops any appliance VM
+# test-with-isx.sh need (swift, isx on PATH or ISX=...). Stops any appliance VM
 # isx runs.
 
 REPO=Sanne/incus-spawn
@@ -60,7 +61,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 listed() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }
 
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] \
-    || die "this records a vfkit boot, so it runs only on an Apple silicon Mac"
+    || die "this records a boot under the launcher, so it runs only on an Apple silicon Mac"
 
 # Everything below runs with the verifier's credentials, so it must be main's code: a PR branch
 # checked out here would run its own scripts and fingerprint with its own input lists.
@@ -74,6 +75,10 @@ git -C "$ROOT" fetch -q --no-tags origin +refs/heads/main:refs/remotes/origin/ma
 # A missing tool or the wrong login would only be found after the boot, and post for nothing or
 # post a failure that withdraws an earlier success.
 command -v strings > /dev/null || die "strings is missing; install the Xcode command line tools (xcode-select --install)"
+# test-boot.sh builds and signs isx-vm from this checkout (launcher/build-isx-vm.sh).
+for tool in swift codesign; do
+    command -v "$tool" > /dev/null || die "$tool is missing; install the Xcode command line tools (xcode-select --install)"
+done
 verifiers="$(sed -n 's/^ *VERIFIERS: *//p' "$ROOT/.github/workflows/kernel-mac-verified.yml")"
 [ -n "$verifiers" ] || die "kernel-mac-verified.yml lists no VERIFIERS"
 login="$(gh api user --jq .login)"
@@ -141,21 +146,11 @@ results=()
 failed=0
 logs=""
 step() {
-    local name="$1" rc=0 known checks; shift
+    local name="$1" rc=0 checks; shift
     echo "==> $name"
     "$@" > "$WORK/$name.log" 2>&1 || rc=$?
-    # A check that failed on vfkit's own leak and was allowed (test-tunnel.sh's KNOWN, #2031)
-    # is named in the record of every run, a failed one included, so the exception stays in sight
-    # until it is removed. Not from the guest's console that test-boot.sh quotes after its summary.
-    known="$(perl -ne 'last if /^Last 40 log lines:$/; s/\e\[[0-9;]*m//g; print' "$WORK/$name.log" \
-        | grep -E '^[[:space:]]*KNOWN:' | sed 's/^[[:space:]]*//' | head -n 10 | cut -c 1-300 || true)"
-    [ -z "$known" ] || logs+=$'\n'"$name, known failures allowed:"$'\n\n```\n'"$known"$'\n```\n'
     if [ "$rc" = 0 ]; then
-        if [ -n "$known" ]; then
-            results+=("$name: pass, with $(printf '%s\n' "$known" | wc -l | tr -d ' ') known failures of vfkit allowed (#2031)")
-        else
-            results+=("$name: pass")
-        fi
+        results+=("$name: pass")
     else
         results+=("$name: FAIL (exit $rc)")
         failed=1

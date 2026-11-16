@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Manage the incus-spawn appliance VM.
 #
-# On macOS: uses vfkit (Apple Virtualization.framework)
+# On macOS: uses isx-vm, isx's launcher (Apple Virtualization.framework); ISX_VM=<program>
+# names it, else it is built from this checkout (launcher/build-isx-vm.sh)
 # On Linux: uses QEMU with KVM
 #
 # Usage:  vm.sh start|stop|status|console
@@ -14,8 +15,7 @@ STATE_DIR="$HOME/.local/state/incus-spawn"
 APPLIANCE_DIR="${APPLIANCE_DIR:-$SCRIPT_DIR/build}"
 PID_FILE="$STATE_DIR/vm.pid"
 LOG_FILE="$STATE_DIR/vm.log"
-REST_URI_FILE="$STATE_DIR/vm.rest-uri"
-REST_SOCK="$STATE_DIR/vm.rest.sock"
+CONTROL_SOCK="$STATE_DIR/vm.control.sock"
 
 DISK_IMG="$STATE_DIR/disk.img"
 DISK_SIZE="${ISX_VM_DISK:-60G}"
@@ -99,14 +99,14 @@ is_running() {
     local pid
     pid=$(cat "$PID_FILE")
     kill -0 "$pid" 2>/dev/null || return 1
-    ps -p "$pid" -o comm= 2>/dev/null | grep -qE 'vfkit|qemu' || return 1
+    # vfkit: a VM an isx before the launcher started on the same disks (#2031)
+    ps -p "$pid" -o comm= 2>/dev/null | grep -qE 'isx-vm|vfkit|qemu' || return 1
 }
 
 detect_backend() {
     case "$(uname -s)" in
         Darwin)
-            command -v vfkit >/dev/null 2>&1 || die "vfkit not found. Install with: brew install vfkit"
-            echo "vfkit"
+            echo "launcher"
             ;;
         Linux)
             command -v qemu-system-"$(uname -m)" >/dev/null 2>&1 || die "qemu-system-$(uname -m) not found"
@@ -116,30 +116,21 @@ detect_backend() {
     esac
 }
 
-start_vfkit() {
-    # vfkit's REST API listens on a Unix socket, as under isx (#1189). A TCP port had to be
-    # picked before vfkit bound it, and vfkit exits when another process took it in between.
-    # vfkit does not start on a socket path that exists, and one it was killed on stays behind.
-    rm -f "$REST_SOCK"
-
-    # vfkit requires --initrd even though our kernel ignores it (CONFIG_BLK_DEV_INITRD=n)
-    local dummy_initrd="$STATE_DIR/empty-initrd"
-    [ -f "$dummy_initrd" ] || (echo | cpio -o -H newc 2>/dev/null | gzip > "$dummy_initrd")
-
-    vfkit \
+start_launcher() {
+    local launcher="${ISX_VM:-}"
+    [ -n "$launcher" ] || launcher="$("$SCRIPT_DIR/../launcher/build-isx-vm.sh")" || die "isx-vm could not be built"
+    "$launcher" \
         --cpus "$CPUS" --memory "$MEMORY" \
         --kernel "$APPLIANCE_DIR/vmlinuz" \
-        --initrd "$dummy_initrd" \
-        --kernel-cmdline "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0 quiet isx.gateway=${ISX_GATEWAY:-10.166.11.1} isx.mitm_port=${ISX_MITM_PORT:-18443}" \
-        --device virtio-blk,path="$DISK_IMG" \
-        --device virtio-net,nat \
-        --device virtio-serial,logFilePath="$LOG_FILE" \
-        --restful-uri "unix://$REST_SOCK" \
+        --cmdline "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0 quiet isx.gateway=${ISX_GATEWAY:-10.166.11.1} isx.mitm_port=${ISX_MITM_PORT:-18443}" \
+        --disk "$DISK_IMG" \
+        --nat 4a:53:58:00:00:02 \
+        --console "$LOG_FILE" \
+        --control "$CONTROL_SOCK" \
         &
     local pid=$!
     echo "$pid" > "$PID_FILE"
-    echo "unix://$REST_SOCK" > "$REST_URI_FILE"
-    echo "VM started (pid=$pid, rest=$REST_SOCK)"
+    echo "VM started (pid=$pid, control=$CONTROL_SOCK)"
 }
 
 start_qemu() {
@@ -189,7 +180,7 @@ cmd_start() {
     backend=$(detect_backend)
     echo "Starting VM with $backend (cpus=$CPUS, memory=${MEMORY}M)..."
     case "$backend" in
-        vfkit) start_vfkit ;;
+        launcher) start_launcher ;;
         qemu)  start_qemu ;;
     esac
 }
@@ -197,45 +188,35 @@ cmd_start() {
 cmd_stop() {
     if ! is_running; then
         echo "VM not running"
-        rm -f "$PID_FILE" "$REST_URI_FILE" "$REST_SOCK"
+        rm -f "$PID_FILE" "$CONTROL_SOCK"
         return 0
     fi
     local pid
     pid=$(cat "$PID_FILE")
 
-    if [ -f "$REST_URI_FILE" ]; then
-        local uri
-        uri=$(cat "$REST_URI_FILE")
-        case "$uri" in
-            unix://*)
-                curl -s --unix-socket "${uri#unix://}" -X POST "http://localhost/vm/state" \
-                    -d '{"state":"Stop"}' >/dev/null 2>&1 || true ;;
-            *)  # a VM started before the socket: its file holds http://localhost:<port>
-                curl -s -X POST "$uri/vm/state" -d '{"state":"Stop"}' >/dev/null 2>&1 || true ;;
-        esac
-        for _ in $(seq 1 10); do
-            kill -0 "$pid" 2>/dev/null || break
-            sleep 0.5
-        done
-    fi
+    # The launcher stops the machine on SIGTERM, as on its control socket's stop.
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 10); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.5
+    done
 
     if kill -0 "$pid" 2>/dev/null; then
         kill "$pid" 2>/dev/null || true
         sleep 1
         kill -9 "$pid" 2>/dev/null || true
     fi
-    rm -f "$PID_FILE" "$REST_URI_FILE" "$REST_SOCK"
+    rm -f "$PID_FILE" "$CONTROL_SOCK"
     echo "VM stopped"
 }
 
 cmd_status() {
     if is_running; then
         echo "VM running (pid=$(cat "$PID_FILE"))"
-        [ -f "$REST_URI_FILE" ] && echo "  REST API: $(cat "$REST_URI_FILE")"
         echo "  Log: $LOG_FILE"
     else
         echo "VM not running"
-        rm -f "$PID_FILE" "$REST_URI_FILE" "$REST_SOCK"
+        rm -f "$PID_FILE" "$CONTROL_SOCK"
     fi
 }
 
@@ -253,7 +234,7 @@ cmd_shell() {
     echo "Starting interactive VM (exit with Ctrl-A X)..."
 
     case "$backend" in
-        vfkit) die "Interactive shell not supported with vfkit. Use QEMU on Linux." ;;
+        launcher) die "Interactive shell not supported with the launcher. Use QEMU on Linux." ;;
         qemu)
             local arch qemu_bin machine_args console
             arch=$(uname -m)
