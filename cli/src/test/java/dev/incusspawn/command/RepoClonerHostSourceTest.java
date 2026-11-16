@@ -95,6 +95,32 @@ class RepoClonerHostSourceTest {
         return host;
     }
 
+    /** The overview counts what the guest committed since the copy, never the host's exported history (#2273). */
+    @Test
+    void exportedBranchesAreSavedForTheWorkStateAndGuestCommitsAreNot() throws Exception {
+        var host = source();
+        git(host, "branch", "second", "main");
+        assertEquals(BuildProgress.StepState.DONE, copy(host, null).state());
+        var guest = tmp.resolve("guest");
+        assertFalse(git(guest, "for-each-ref", "refs/isx/host").isEmpty());
+        assertEquals(git(host, "for-each-ref", "--format=%(objectname)", "refs/heads").lines().sorted().distinct().toList(),
+                git(guest, "for-each-ref", "--format=%(objectname)", "refs/isx/host").lines().sorted().distinct().toList());
+        assertEquals(0, unpushed(), "the host still holds every exported tip");
+        git(guest, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "guest work");
+        assertEquals(1, unpushed());
+    }
+
+    private int unpushed() throws Exception {
+        var process = new ProcessBuilder("sh", "-c", WorkState.SCRIPT).redirectErrorStream(true);
+        process.environment().put("HOME", tmp.toString());
+        var p = process.start();
+        var out = new String(p.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(0, p.waitFor());
+        // The host checkout lies beside the guest clone, so read the guest's row alone.
+        return WorkState.parse(0, out, false).repos().stream()
+                .filter(r -> r.path().equals("guest")).findFirst().orElseThrow().unpushed();
+    }
+
     @ParameterizedTest
     @NullSource
     @ValueSource(strings = {"main", "stable", "release"})

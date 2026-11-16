@@ -21,7 +21,8 @@ Only objects reachable from the captured branch/tag tips enter a newly packed in
 No build fetches into or modifies the source, contacts its corporate remote, or mounts the original checkout.
 The prepared export uses the same lease, read-only transfer, independent guest copy and checksum verification on Linux and macOS, with no overlay dependency.
 A failure aborts this repository step without a network fallback.
-The guest preserves all exported branches locally and removes the temporary origin.
+The guest preserves all exported branches locally, keeps each exported tip as `refs/isx/host/<branch>` and removes the temporary origin.
+The overview excludes those refs from its unpushed count, since the host still holds the commits (#2273).
 Canonical source associations are stamped by destination as `host-repositories` and inherited with the guest repository.
 Automatic `isx://` remotes use those paths without URL matching or global `repo-paths` entries.
 A host-owned `git-remotes/` record in the data directory makes cleanup independent of the current template definitions and the deleted instance.

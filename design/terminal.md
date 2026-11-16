@@ -601,14 +601,17 @@ WORK does not have that gap, since it counts commits on no remote-tracking branc
 
 **The work state is read in the guest, and fails closed.**
 `WorkState` runs one fixed script in each running instance through `IncusClient.execProbe`: as agentuser, with no login shell, killed after 10 seconds, its output cut at 64 KiB.
-For each clone directly under the home directory or one level below, at most 50, it counts the entries of `git status --porcelain`, the commits `git rev-list HEAD --branches --not --remotes` lists, less those under a tag a remote's fetch refspec names and under the commit the clone was made at, and `git stash list`.
+For each clone directly under the home directory or one level below, at most 50, it counts the entries of `git status --porcelain`, the commits `git rev-list HEAD --branches --not --remotes --glob=refs/isx/host/*` lists, less those under a tag a remote's fetch refspec names and under the commit the clone was made at, and `git stash list`.
 Such a tag counts as kept because a shallow clone isx pinned to a tag keeps no remote-tracking branch, only the refspec `+refs/tags/<tag>:refs/tags/<tag>`, and its tag's history is no work.
 Every other tag is ignored, so commits an agent tagged but did not push still count (review of #2272).
 A named tag the clone no longer has, one the agent deleted, is left out of the count rather than failing it.
 A full clone isx prepared from a snapshot for a tag pin, which is what a tag pin without `depth` gets, keeps the broad refspec and no remote-tracking branch instead.
 For it the script reads the commit the clone checked out from the first `clone:` entry of HEAD's reflog, and leaves its history out, if the commit is still there.
 An agent's tag never matches that entry, so it saves nothing; a reflog expired or rewritten loses the entry, and the history then counts, which errs on `unsaved`.
-A clone with no remote at all counts every commit after its clone, so a clone isx prepared from a host checkout (`repos[].host-source`) counts its other exported branches, though the host still holds them.
+A clone with no remote at all counts every commit after its clone.
+A clone isx prepared from a host checkout (`repos[].host-source`) keeps each exported tip as `refs/isx/host/<branch>`, which the script excludes like a remote-tracking branch, since the host still holds those commits (#2273).
+So it counts only the commits made in the guest since the copy.
+An instance built before that has no such refs until rebuilt, and counts its whole history.
 It fetches nothing, and `GIT_OPTIONAL_LOCKS=0` keeps `git status` from rewriting the index under an agent at work.
 The state is `unsaved` when any clone holds work, and `clean` only when every clone was read and holds none.
 A timeout, a failed exit, an answer cut short, a line that is not the script's, a count Git would not give or a 51st clone make it `unknown`.
