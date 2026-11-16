@@ -115,6 +115,15 @@ final class LossyIncusServer implements AutoCloseable {
     volatile int answersPings = Integer.MAX_VALUE;
     /** Each operation /wait is held this long before it is answered: a tunnel slower than its slack. */
     volatile long waitStallMillis = 0;
+    /** The HTTP status every operation /wait answers; 404 is an operation lost with its instance. */
+    volatile int waitHttpStatus = 200;
+    /**
+     * What {@code GET /1.0/instances/<name>} answers: the instance's status, or null for an
+     * instance that is gone (404).
+     */
+    volatile String instanceStatus = "Running";
+    /** The instance read is held this long before it is answered: a stalled daemon. */
+    volatile long instanceStallMillis = 0;
     /** Data messages the client sent on the control fd, in order. */
     final List<String> controlMessages = new CopyOnWriteArrayList<>();
     /**
@@ -212,6 +221,10 @@ final class LossyIncusServer implements AutoCloseable {
             throws IOException {
         if (req.path().contains("/wait")) {
             waits.incrementAndGet();
+            if (waitHttpStatus != 200) {
+                respond(out, waitHttpStatus, ERROR_BODY.formatted(waitHttpStatus), Framing.LENGTH, req.close());
+                return !req.close();
+            }
             respond(out, 200, waitBody(req.path()), Framing.LENGTH, req.close());
             return !req.close();
         }
@@ -219,6 +232,24 @@ final class LossyIncusServer implements AutoCloseable {
         if (req.method().equals("POST") && req.path().endsWith("/exec")) {
             startOperation();
             respond(out, 202, interactive ? INTERACTIVE_EXEC_BODY : execBody(), Framing.LENGTH, req.close());
+            return !req.close();
+        }
+        if (req.method().equals("GET") && req.path().startsWith(INSTANCES)
+                && req.path().indexOf('/', INSTANCES.length()) < 0) {
+            if (instanceStallMillis > 0) {
+                try {
+                    Thread.sleep(instanceStallMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            var status = instanceStatus;
+            if (status == null) {
+                respond(out, 404, ERROR_BODY.formatted(404), Framing.LENGTH, req.close());
+            } else {
+                respond(out, 200, "{\"type\":\"sync\",\"status_code\":200,\"metadata\":{\"status\":\""
+                        + status + "\"}}", Framing.LENGTH, req.close());
+            }
             return !req.close();
         }
         switch (fault) {
@@ -255,6 +286,9 @@ final class LossyIncusServer implements AutoCloseable {
         if (fault == Fault.DROP_AFTER_RESPONSE) return false;
         return !req.close() && effectiveFraming != Framing.EOF;
     }
+
+    private static final String INSTANCES = "/1.0/instances/";
+    private static final String ERROR_BODY = "{\"type\":\"error\",\"error_code\":%d,\"error\":\"not found\"}";
 
     private static void respond(OutputStream out, int status, String body, Framing framing, boolean close)
             throws IOException {
