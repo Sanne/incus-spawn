@@ -93,7 +93,7 @@ final class Launcher: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
     /// What it gives up: the connection beyond 192 waits for another to end, whoever asks,
     /// the next `isx` command included. Nothing isx does holds that many.
     private let room = GuestRoom(connections: 192)
-    private var served: [(path: String, relay: Relay)] = []
+    private var served: [(port: UInt32, path: String, relay: Relay)] = []
     private var watch = SleepWatch()
     /// Sets the guest's clock, one wake after another: its agent serves one client at a time.
     private let clockQueue = DispatchQueue(label: "isx-vm.clock")
@@ -132,16 +132,14 @@ final class Launcher: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
         }
         configuration.storageDevices = disks
 
-        if spec.nat {
+        if let mac = spec.mac {
             let network = VZVirtioNetworkDeviceConfiguration()
             network.attachment = VZNATNetworkDeviceAttachment()
-            if let mac = spec.mac {
-                // isx's fixed address, which the guest's lease on the host's NAT follows.
-                guard let address = VZMACAddress(string: mac) else {
-                    throw Unusable(description: "'\(mac)' is not a MAC address")
-                }
-                network.macAddress = address
+            // isx's fixed address, which the guest's lease on the host's NAT follows.
+            guard let address = VZMACAddress(string: mac) else {
+                throw Unusable(description: "'\(mac)' is not a MAC address")
             }
+            network.macAddress = address
             configuration.networkDevices = [network]
         }
 
@@ -213,9 +211,10 @@ final class Launcher: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
                 fail("\(path): stopped accepting", status: 1)
             }
             guard serving else { fail("\(path): no thread to accept on", status: 1) }
-            served.append((path, relay))
+            served.append((port, path, relay))
         }
         say("relaying \(served.count) sockets to the guest")
+        if let control = spec.control { serveControl(at: control) }
 
         // Asked every two seconds, with some leeway so the wake-up can share another's.
         let timer = DispatchSource.makeTimerSource(queue: .main)
@@ -299,6 +298,46 @@ final class Launcher: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
     /// The counts of every relay, one line each, as `isx-vsock-bridge` prints them.
     @MainActor private func report() {
         for one in served { say("\(one.path) \(one.relay.counts)") }
+    }
+
+    // isx's questions, on a thread of their own. The answers that read the machine's state ask
+    // the main queue, which never waits for this thread.
+    //
+    // state   running, or stopping once a stop was asked for, then this process's pid
+    // counts  one line for each relayed port: `<port> waiting N held N total N refused N`
+    // stop    stopping; the machine is stopped as on SIGTERM, and the launcher exits
+    @MainActor private func serveControl(at path: String) {
+        let listener: Int32
+        do {
+            listener = try Relay.listen(at: path, backlog: 16)
+        } catch {
+            fail("\(error)", status: 1)
+        }
+        let serving = Relay.detach {
+            Control.serve(listener: listener) { verb in self.answer(verb) }
+            fail("\(path): stopped accepting", status: 1)
+        }
+        guard serving else { fail("\(path): no thread to accept on", status: 1) }
+    }
+
+    private nonisolated func answer(_ verb: String) -> String {
+        DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+                switch verb {
+                case "state":
+                    // With the pid, so an isx that lost the pid file finds the VM again.
+                    return "\(stopping ? "stopping" : "running") \(getpid())\n"
+                case "counts":
+                    return served.map { "\($0.port) \($0.relay.counts)\n" }.joined()
+                case "stop":
+                    // After this answer: the stop may end the process at once.
+                    onMain { self.stop() }
+                    return "stopping\n"
+                default:
+                    return "unknown verb\n"
+                }
+            }
+        }
     }
 
     // The guest is not asked: isx asks it through its own agent first and sends a signal only

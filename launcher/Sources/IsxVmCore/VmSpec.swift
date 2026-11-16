@@ -1,10 +1,9 @@
 // What `isx-vm` is asked to start (#2031): the machine, read from the command line.
 //
-// The prototype reads the part of vfkit's command line that isx writes today
-// (`VmManager.vfkitCommand`, and `boot_vfkit` of appliance/test-boot.sh), so that an unchanged
-// isx can start it in vfkit's place and the two can be measured on one machine. That is all it
-// is for: the launcher that ships takes arguments of its own. Everything else is refused by
-// name, never skipped, so a device isx asked for is never silently missing from the machine.
+// The arguments are isx's own, shaped for isx as the only caller (`VmManager.launcherCommand`,
+// and `boot_launcher` of appliance/test-boot.sh). Every option takes one value. Anything else is
+// refused by name, never skipped, so a device isx asked for is never silently missing from the
+// machine.
 // No Foundation, and nothing of Virtualization.framework: this is tested on Linux too.
 
 public struct VmSpec: Equatable, Sendable {
@@ -33,16 +32,17 @@ public struct VmSpec: Equatable, Sendable {
     public var commandLine = ""
     /// Disk images, in the order the guest sees them: /dev/vda first.
     public var disks: [String] = []
-    /// Whether the machine has a network device behind the host's NAT, and its MAC address
-    /// when one was given.
-    public var nat = false
+    /// The MAC address of the network device behind the host's NAT, when the machine has one.
     public var mac: String?
     /// The file the guest's console is written to.
     public var consoleLog: String?
+    /// Directories shared with the guest, every one read-only.
     public var shares: [Share] = []
     public var sockets: [Socket] = []
     /// The vsock port of the guest agent that sets the guest's clock, when there is one.
     public var clockPort: UInt32?
+    /// The Unix socket isx asks the launcher's state and counts on, and asks it to stop.
+    public var control: String?
 
     public init() {}
 
@@ -51,8 +51,6 @@ public struct VmSpec: Equatable, Sendable {
         case missingValue(String)
         case repeated(String)
         case badValue(option: String, value: String)
-        case unknownDevice(String)
-        case badDevice(device: String, why: String)
         case missing(String)
 
         public var description: String {
@@ -61,17 +59,17 @@ public struct VmSpec: Equatable, Sendable {
             case .missingValue(let option): return "\(option) needs a value"
             case .repeated(let option): return "\(option) is given twice"
             case .badValue(let option, let value): return "\(option): '\(value)' is not a value it takes"
-            case .unknownDevice(let device): return "unknown device '\(device)'"
-            case .badDevice(let device, let why): return "--device \(device): \(why)"
             case .missing(let option): return "\(option) is required"
             }
         }
     }
 
+    /// The options that may be given more than once, each time for one more of the thing.
+    private static let repeatable: Set<String> = ["--disk", "--share", "--vsock"]
     /// Every option read, each with one value.
-    private static let options: Set<String> = [
-        "--cpus", "--memory", "--kernel", "--kernel-cmdline", "--device", "--timesync", "--initrd", "--restful-uri",
-    ]
+    private static let options: Set<String> = repeatable.union([
+        "--cpus", "--memory", "--kernel", "--cmdline", "--nat", "--console", "--clock-port", "--control",
+    ])
 
     /// Reads the arguments after the program's name.
     public init(arguments: [String]) throws(Refused) {
@@ -81,33 +79,46 @@ public struct VmSpec: Equatable, Sendable {
             // An option this does not read is named as that, before a value is asked of it.
             guard VmSpec.options.contains(option) else { throw .unknownOption(option) }
             guard let value = rest.popFirst() else { throw .missingValue(option) }
-            if option != "--device" && !seen.insert(option).inserted { throw .repeated(option) }
+            if !seen.insert(option).inserted && !VmSpec.repeatable.contains(option) { throw .repeated(option) }
+            func bad() -> Refused { .badValue(option: option, value: value) }
             switch option {
             case "--cpus":
-                guard let count = Int(value), count > 0 else { throw .badValue(option: option, value: value) }
+                guard let count = Int(value), count > 0 else { throw bad() }
                 cpus = count
             case "--memory":
                 // In MiB, and the machine is given bytes: a size that does not fit in them is refused.
-                guard let size = UInt64(value), size > 0, size <= UInt64.max >> 20 else { throw .badValue(option: option, value: value) }
+                guard let size = UInt64(value), size > 0, size <= UInt64.max >> 20 else { throw bad() }
                 memoryMiB = size
             case "--kernel":
-                guard !value.isEmpty else { throw .badValue(option: option, value: value) }
+                guard !value.isEmpty else { throw bad() }
                 kernel = value
-            case "--kernel-cmdline":
+            case "--cmdline":
                 commandLine = value
-            case "--device":
-                try add(device: value)
-            case "--timesync":
-                guard value.hasPrefix("vsockPort="), let port = UInt32(value.dropFirst("vsockPort=".count)) else {
-                    throw .badValue(option: option, value: value)
-                }
+            case "--disk":
+                guard !value.isEmpty else { throw bad() }
+                disks.append(value)
+            case "--nat":
+                // A MAC address, checked by the framework when the machine is made.
+                guard !value.isEmpty else { throw bad() }
+                mac = value
+            case "--console":
+                guard !value.isEmpty else { throw bad() }
+                consoleLog = value
+            case "--share":
+                // TAG=DIRECTORY, split at the first '=': a tag never holds one, a path may.
+                guard let (tag, directory) = VmSpec.pair(value), !tag.isEmpty, !directory.isEmpty else { throw bad() }
+                shares.append(Share(directory: directory, tag: tag))
+            case "--vsock":
+                // PORT=PATH: the host's socket at PATH leads to the guest's PORT.
+                guard let (port, path) = VmSpec.pair(value), let number = UInt32(port), !path.isEmpty else { throw bad() }
+                guard !sockets.contains(where: { $0.port == number || $0.path == path }) else { throw bad() }
+                sockets.append(Socket(port: number, path: path))
+            case "--clock-port":
+                guard let port = UInt32(value) else { throw bad() }
                 clockPort = port
-            case "--initrd", "--restful-uri":
-                // Read and not used. The appliance kernel is built without initrd support, so
-                // the file isx passes is a placeholder vfkit insists on. And isx asks vfkit's
-                // REST endpoint for one thing, to stop a guest that could not be asked itself,
-                // which a signal does here.
-                break
+            case "--control":
+                guard !value.isEmpty else { throw bad() }
+                control = value
             default:
                 throw .unknownOption(option)
             }
@@ -117,57 +128,8 @@ public struct VmSpec: Equatable, Sendable {
         guard seen.contains("--kernel") else { throw .missing("--kernel") }
     }
 
-    private mutating func add(device: String) throws(Refused) {
-        // vfkit's form: a kind, then keys with values and bare words, between commas. So a
-        // path that holds a comma cannot be written, and is refused as an unknown key.
-        let parts = device.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
-        let kind = parts[0]
-        var values: [String: String] = [:]
-        var words: Set<String> = []
-        for part in parts.dropFirst() {
-            if let equals = part.firstIndex(of: "=") {
-                let key = String(part[..<equals])
-                guard values.updateValue(String(part[part.index(after: equals)...]), forKey: key) == nil else {
-                    throw .badDevice(device: device, why: "'\(key)' is given twice")
-                }
-            } else {
-                words.insert(part)
-            }
-        }
-        // Takes a key that must be there and must not be empty.
-        func take(_ key: String) throws(Refused) -> String {
-            guard let value = values.removeValue(forKey: key), !value.isEmpty else {
-                throw .badDevice(device: device, why: "'\(key)' is required")
-            }
-            return value
-        }
-        switch kind {
-        case "virtio-blk":
-            disks.append(try take("path"))
-        case "virtio-net":
-            guard words.remove("nat") != nil else { throw .badDevice(device: device, why: "only 'nat' is supported") }
-            guard !nat else { throw .badDevice(device: device, why: "a second network device") }
-            nat = true
-            mac = values.removeValue(forKey: "mac")
-        case "virtio-serial":
-            guard consoleLog == nil else { throw .badDevice(device: device, why: "a second console") }
-            consoleLog = try take("logFilePath")
-        case "virtio-fs":
-            shares.append(Share(directory: try take("sharedDir"), tag: try take("mountTag")))
-        case "virtio-vsock":
-            // Only the direction isx uses: the host connects to a port the guest listens on.
-            guard words.remove("connect") != nil else {
-                throw .badDevice(device: device, why: "only 'connect' is supported")
-            }
-            guard let port = UInt32(try take("port")) else {
-                throw .badDevice(device: device, why: "'port' is not a number")
-            }
-            sockets.append(Socket(port: port, path: try take("socketURL")))
-        default:
-            throw .unknownDevice(kind)
-        }
-        if let left = values.keys.sorted().first ?? words.sorted().first {
-            throw .badDevice(device: device, why: "'\(left)' is not something \(kind) takes")
-        }
+    private static func pair(_ value: String) -> (String, String)? {
+        guard let equals = value.firstIndex(of: "=") else { return nil }
+        return (String(value[..<equals]), String(value[value.index(after: equals)...]))
     }
 }
