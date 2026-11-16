@@ -350,6 +350,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build the tests of the relay and of the launcher's own parts
+        timeout-minutes: 5
         run: |
           swift --version
           swift build --package-path launcher --build-tests
@@ -363,8 +364,11 @@ jobs:
         timeout-minutes: 10
         run: xcrun xctest "$(swift build --package-path launcher --show-bin-path)/launcherPackageTests.xctest"
 
+      # Every step has a limit of its own, so a run that hangs ends in the step that hung and names
+      # it: the job's 15 minutes named nothing, and its log was gone once it was cancelled (#2265).
       # Fails unless the signature verifies and carries exactly the one entitlement.
       - name: Build and sign isx-vm
+        timeout-minutes: 4
         run: |
           bin=$(launcher/build-isx-vm.sh)
           cp "$bin" "$RUNNER_TEMP/isx-vm"
@@ -378,6 +382,7 @@ jobs:
       # empty (#2031). This holds the client to its contract where a Mac's bash, perl and nc
       # are; the test's note says what this runner's nc does.
       - name: Test the tunnel checks' agent client
+        timeout-minutes: 3
         run: appliance/test-agent-call.sh
 
       # The measurement on the Mac runner runs this very binary, days after the job. Uploading
