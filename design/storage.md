@@ -260,8 +260,8 @@ All three now delete everything in the directory *except* `data.img` unless give
 Keeping only that file is enough: it is mounted at `/var/lib/incus`, so it carries the Incus database as well as the pool, and the appliance boots on it as it does after a root-disk upgrade.
 That makes how the VM stops matter: before, a disk about to be deleted could be killed mid-write, but one that is kept is stopped through the isx being uninstalled (`isx vm stop`) first.
 That asks the guest to shut down through its agent (`shutdown`: `poweroff`, so init runs `rcK`, which stops Incus and its instances and syncs) and waits up to 30 s for the hypervisor to exit by itself.
-Only then does `VmManager.stopLocked` fall back to vfkit's stop request and its own signals.
-Before #881 there was no such verb, and vfkit's request is a power button nothing in the guest listens for.
+Only then does `VmManager.stopLocked` fall back to the launcher's stop (its control socket, then `SIGTERM`), which cuts the disks off.
+Before #881 there was no such verb, and vfkit's stop request was a power button nothing in the guest listens for.
 So every `isx vm stop` on a Mac ended in the signal: the next boot replayed the data disk's btrfs tree log, and with the disks mounted `commit=300` an instance deleted seconds before the stop came back as an orphaned subvolume (see appliance/DESIGN.md, "Stop sequence").
 An appliance from before the verb is still stopped that way, until a restart applies a newer one.
 Because the VM is gone by the time the script looks, it cannot see a cut-off itself, so `stopLocked` reports how the VM stopped (`VmManager.StopResult`: `SHUT_DOWN` or `SIGNALLED`).

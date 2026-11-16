@@ -34,13 +34,15 @@ When cutting a new release:
 
 2. **GitHub Actions builds**:
    - macOS native binaries (`incus-spawn-macos-aarch64`, `isx-proxy-macos-aarch64`; Apple Silicon only)
+   - The VM launcher for macOS (`isx-vm-macos-aarch64`, signed ad hoc with `com.apple.security.virtualization`)
    - Linux binaries (amd64, aarch64)
    - VM appliance artifacts (kernel, disk images)
    - Git remote helper (`git-remote-isx`)
 
 3. **Homebrew formula is updated automatically** by the release workflow.
-   It computes SHA256 checksums from the build artifacts and pushes the
-   updated formula to `Sanne/homebrew-tap`. Requires the `HOMEBREW_TAP_TOKEN`
+   It computes SHA256 checksums from the build artifacts, rewrites the formula with
+   `.github/scripts/update-homebrew-formula.sh` and pushes it to `Sanne/homebrew-tap`.
+   The first release that ships `isx-vm` adds it as a resource and removes `depends_on "vfkit"`. Requires the `HOMEBREW_TAP_TOKEN`
    secret (a PAT with `contents: write` on the tap repo).
 
 4. **Users auto-update** on their next `brew update && brew upgrade`
@@ -55,6 +57,7 @@ Its guard refuses a formula that still names an Intel asset or lacks `depends_on
 VERSION=X.Y.Z
 curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/incus-spawn-macos-aarch64 | shasum -a 256
 curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/isx-proxy-macos-aarch64 | shasum -a 256
+curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/isx-vm-macos-aarch64 | shasum -a 256
 curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/git-remote-isx | shasum -a 256
 ```
 
@@ -69,7 +72,7 @@ A separate formula is available for development/pre-release builds:
 brew install Sanne/tap/incus-spawn-dev
 ```
 
-The dev formula installs the same `isx` and `isx-proxy` binaries but tracks the development release stream. It conflicts with the stable formula — Homebrew will prevent both from being installed at the same time.
+The dev formula installs the same `isx`, `isx-proxy` and `isx-vm` binaries but tracks the development release stream. It conflicts with the stable formula — Homebrew will prevent both from being installed at the same time.
 
 To switch between channels:
 

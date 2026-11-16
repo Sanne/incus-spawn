@@ -306,7 +306,7 @@ Two details decide how it is set:
 
 `release.yml` checks it on the very files it uploads: `scripts/check-macos-minos.py` reads each macOS artifact's `LC_BUILD_VERSION` and fails the release unless every `minos` equals the pom's value (or the file is not a thin Mach-O with one).
 It is plain Python so it runs on the Linux job that publishes, after the macOS builds, and it reads the expected value from the pom rather than repeating it.
-The Homebrew formula declares the same minimum (`depends_on macos: :sequoia`, from `MACOS_MIN` in the tap step).
+The Homebrew formula declares the same minimum (`depends_on macos: :sequoia`, from `MACOS_MIN` in the tap step's `.github/scripts/update-homebrew-formula.sh`).
 `WorkflowRunnerLabelsTest` fails if `MACOS_MIN` is not the target's Homebrew name, if a release runner is older than the target, or if `release.yml` no longer runs the check over `artifacts/native-macos-*/*-macos-*` (every macOS binary, not the build's `SHA256SUMS` beside them).
 That the glob matches what `gh release create` uploads rests on the artifact layout (each macOS artifact is one build's `dist/`), not on the test.
 A runner newer than the target is fine: it builds for the older version.

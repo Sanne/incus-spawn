@@ -46,23 +46,24 @@ The `startInstance` IP-filtering fallback must not touch a NIC with the ACL keys
 `Container` is a helper for running commands inside a specific container (`exec`, `runAsUser`, `runInteractive`).
 The `incus` CLI binary is not required at runtime.
 
-**The macOS VM runs in a session of its own** (`OwnSession`, #971): vfkit is started through a perl `setsid(); exec` (on Linux, util-linux's `setsid`), so it is the leader of a new session under the pid the caller recorded.
+**The macOS VM runs in a session of its own** (`OwnSession`, #971): the launcher, `isx-vm`, is started through a perl `setsid(); exec` (on Linux, util-linux's `setsid`), so it is the leader of a new session under the pid the caller recorded.
 As a plain child it stayed in the starting command's process group and on its terminal, and died with them.
 Closing the terminal hangs up everything on it, Ctrl+C reaches the foreground group, and launchd kills what is left in a job's process group when the job exits, which is how the login agent's `isx vm start` took its own VM down a few seconds after starting it.
 Anything else that has to outlive the command starting it, or must not get the terminal's Ctrl+C, needs the same: host processes a build waits on do (Git in `GitProcess`, tool setup's `tar`/`unzip`/`chmod`, #1425), through `OwnSession.start`, whose shutdown hook stops them when isx exits first.
 Without `setsid` or `/usr/bin/perl` the command is left as it is.
-vfkit's own stdout/stderr go to `Environment.vfkitLogFile()`, not `vm.log`: vfkit opens `vm.log` itself, non-append, for the VM's virtio-serial console, and a second append-mode writer on the same file corrupts both.
+The launcher's own stdout/stderr go to `Environment.launcherLogFile()` (`isx-vm.log`), not `vm.log`: the launcher opens `vm.log` itself, non-append, for the VM's console, and a second append-mode writer on the same file corrupts both.
 
-**vfkit's REST API is on a Unix socket** (`Environment.vmRestSocket()`, `vm.rest.sock`; #1189), never a TCP port.
-A port must be chosen before vfkit binds it, and vfkit exits fatally when its REST address is in use, so a port taken in between meant no VM.
-`VmManager.vfkitCommand` builds the command line, `startVfkit` removes a socket file a killed vfkit left (vfkit does not start on a path that exists), and `VfkitRest.post` sends the request through `UnixSocketHttp`, the public door to `UnixSocketTransport` for a peer that is not Incus, because `java.net.http.HttpClient` cannot connect to a Unix socket.
-Do not write a second HTTP-over-Unix-socket client, the transport's watchdog and its strict response parser are the tested ones.
+**The launcher's control socket** (`Environment.vmControlSocket()`, `vm.control.sock`; #2031) replaces vfkit's REST endpoint.
+It takes one verb a connection, as the guest's agent does, so `VmControl` sends it through `VmAgentClient.send(Path, String)`: `state`, `counts` (each relay's `waiting`, `held`, `total`, `refused`) and `stop`.
+`VmManager.launcherCommand` builds the launcher's command line, `findLauncher` finds `isx-vm` beside `isx`, and `ensureAppBundle` links it into the VM's app bundle.
+`vsockForwarderConnectionCount()` is the Incus relay's `held`, read there, never an `lsof` count.
+A VM an older isx started under vfkit (`VmManager.LEGACY_HYPERVISOR`) is still recognised by `isRunning()` and stopped with signals, so no second VM is started on its disks; remove that once no supported upgrade starts from a release that ran vfkit.
+A launcher whose `vm.pid` an older isx deleted is found again through the control socket's `state`, which names its pid (`adoptRunningLauncher`); never start a VM while one answers there.
+HTTP over a Unix socket to a peer that is not Incus is no longer needed by anything; should one come back, it goes through `UnixSocketTransport`, whose watchdog and strict response parser are the tested ones.
 Every response is read through `UnixSocketTransport.socketInput` (#1650): `HttpResponseReader` parses a head a byte at a time, and a bare channel stream made each byte a read call.
 A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past one response belong to the next.
-vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so a state directory whose path contains `#`, `?` or `%xx` would give the two different paths (the vsock `socketURL=` arguments have the same exposure).
-`vm.rest-uri` holds `unix://<path>`; `VfkitRest` still understands the `http://localhost:<port>` an older isx wrote, so a VM started before an upgrade is still asked to shut down rather than signalled.
 
-**macOS vsock robustness**: the vfkit vsock tunnel does not reliably propagate connection close/EOF, which drives several design choices (see design/macos-and-vms.md "macOS vsock robustness" and appliance/DESIGN.md):
+**macOS vsock robustness**: the vsock tunnel as vfkit ran it did not reliably propagate connection close/EOF, which drove several design choices (see design/macos-and-vms.md "macOS vsock robustness" and appliance/DESIGN.md):
 - **Exec completion via `/wait`, not close frames.**
   `IncusApi.execWebSocket` unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint (daemon operation state over HTTP) as the authoritative completion + exit-code signal, then drains and force-closes the data sockets -- so a lost close frame can't hang exec.
   Every exec fd is keepalive-pinged, stdin included (#1647).
@@ -106,7 +107,7 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   A late wakeup of the fake's sender stretched a gap past the window on a macOS runner (#1208).
   Every test asserts `UnixSocketTransport.openConnectionCount()` returns to its baseline, so a leaked permit on a failure path fails the build.
   The guest half (the in-VM forwarder, `isx-agent`, the `-T` backstop, recovery) runs in `integration-tests` against the real appliance over a vsock-bridged QEMU boot (`appliance/test-tunnel.sh`, see `ci.md`).
-  The bridge there is the launcher's relay (`launcher/`, below), so only vfkit and Virtualization.framework are untested, and cannot be on hosted runners (#774, #2031).
+  The bridge there is the launcher's relay (`launcher/`, below), so only Virtualization.framework is untested, and cannot be on hosted runners (#774, #2031).
 - **Never open a tunnel connection without sending a request.**
   Without lxc/incus@2cb2549, incusd's local listener (`StarttlsListener`) peeks 8 bytes inside `Accept()` with no deadline, so one connection that has sent fewer than 8 bytes stalls *every new* API connection until it speaks or closes.
   On Linux the close arrives at once; through vfkit it may not, and then the forwarder holds that silent connection until `socat -T` reaps it -- the whole API wedged for up to 180s, cleared early only by `forwarder-restart`.
@@ -121,18 +122,18 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
 - **Forwarder leak + recovery.**
   The same close-propagation gap makes the in-VM `socat` forwarder leak connections.
   A `socat -T` inactivity backstop reaps them (the forwarder and agent listeners also set `backlog=128`: socat's default of 5 refused concurrent connects, and one exec opens about five).
-  `isx doctor` diagnoses it (host-side connection gauge in `UnixSocketTransport` / `vm status` vs the in-VM `isx-agent`'s socat count, localizing vfkit vs forwarder) and can restart the forwarder via the agent **without rebooting the VM**.
+  `isx doctor` diagnoses it (host-side connection gauge in `UnixSocketTransport` / `vm status` vs the in-VM `isx-agent`'s socat count, localizing the launcher vs forwarder) and can restart the forwarder via the agent **without rebooting the VM**.
   `ClientLog` is a file-only (TUI-safe) diagnostic log for expected-but-noisy events like stale-connection recycling.
   The leak's source is vfkit's relay, which waits for both directions to end and cannot tell the guest that the host closed (design/macos-and-vms.md "Where the vsock leak comes from", reproduced on Linux).
   The replacement is the relay in `launcher/` (Swift package, module `IsxRelay`, #2031): it ends a connection as soon as either side ends and closes both sides, and its accept loop goes on after a failed accept.
   It gives up half-close, which isx never sends, so do not add one to a tunnel client.
   A script's `nc` is such a client on a Mac, whose `nc` always shuts its write side down after its input: the appliance's scripts call the agent with `appliance/agent-call.pl` instead (`test-agent-call.sh`).
   A connection holds two descriptors there, so a program that runs the relay raises its descriptor limit first (`Relay.raiseDescriptorLimit`): macOS starts one with 256.
-  `isx-vm` (`launcher/Sources/isx-vm`) is the prototype that puts that relay in front of Virtualization.framework; `appliance/launcher-on-mac.sh` measures it against vfkit on a Mac (design/macos-and-vms.md "The launcher's machine").
+  `isx-vm` (`launcher/Sources/isx-vm`) puts that relay in front of Virtualization.framework and runs the Mac's VM; `bench/vm-launcher-compare.sh` compares it with an isx that ran vfkit (design/macos-and-vms.md "The launcher's machine").
   Its relays have at most 192 connections to the guest open at once, all together (`GuestRoom`), and the next one waits for one to end.
   The framework's own process holds a descriptor for each and has room for 256, and the one that does not fit stops the machine; no program can raise that for it.
-  Until the launcher ships (#2031 stage 3) a Mac still runs vfkit, and every compensation above stays.
-  Until then, too, `appliance/test-tunnel.sh` reports the leak under vfkit as `KNOWN` in its two forwarder-children checks and does not fail them (`TUNNEL_KNOWN_LEAK=vfkit`, set by `test-boot.sh` when the program it boots is vfkit); remove that exception with vfkit (`ci.md`).
+  Every compensation above stays now that the launcher ships, and each is retired by itself with Mac evidence (#785).
+  `appliance/test-tunnel.sh`'s two forwarder-children checks are strict on a Mac as in CI: the `KNOWN` exception for vfkit's leak went with vfkit.
   The agent (`appliance/root/usr/local/sbin/isx-agent`, host side `VmAgentClient`) is an allowlisted one-verb-per-connection dispatcher -- `ping`, `version` (returns the appliance version from `/etc/isx-version`, cached by `VmAgentClient.applianceVersion()`; used to detect CLI↔appliance version skew in `ensureRunning`, `isx doctor`, `isx vm status`, and the TUI, all through `VmManager.applianceSkew()`, which reports skew only when a restart would re-extract the root disk -- i.e. `disk.version` differs from the installed version -- so a locally built `0.0.0-SNAPSHOT` appliance is not told to restart for a release it would not get), `socat-count`, `sshd-status`, `forwarder-restart`, `btrfs-usage <pool> [sync]` (returns the pool's `btrfs qgroup show`/`subvolume list` output for disk accounting, since only the in-VM root agent can read the pool; the allowlisted `sync` second token forces a commit first), `btrfs-status <pool>` (the kernel's qgroup accounting flags from sysfs as `key=value` lines -- `enabled`, `inconsistent`, `mode`, `drop_subtree_threshold` -- resolved via the same mountinfo-source-device lookup as `BtrfsSysfs.java`; keep the two in step), `btrfs-rescan <pool>` (starts a background `btrfs quota rescan`, replying `started`/`running`/`error: ...`) and `btrfs-orphan-delete <pool> <kind> <name>` (deletes one orphaned top-level subvolume -- `kind` is `containers` or `virtual-machines` -- after re-checking, from inside the VM and in every Incus project, that nothing still references it; a separate trust boundary from the host's own scan, since that scan can be stale by the time a user confirms `isx doctor`'s remediation.
   `name` rejects a leading `.` or `-` as well as any character outside `A-Za-z0-9._-`.
   `.` and `..` are themselves valid under that charset alone, and `..` resolved against the pool root -- itself a btrfs subvolume -- would recursively delete the whole pool (review, #874).

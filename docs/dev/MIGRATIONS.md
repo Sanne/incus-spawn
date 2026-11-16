@@ -359,3 +359,43 @@ chmod go-w ~/.config/incus-spawn
 ### How to verify
 
 `stat` shows `drwxr-xr-x` (or narrower), and `isx build tpl-minimal` gets past the credential proof host key.
+
+## A Mac whose VM still runs under vfkit
+
+Since issue 2031 isx runs the Mac's VM with its own launcher, `isx-vm`, which every install channel puts beside `isx`.
+Nothing on the VM's disks changes, and nothing has to be recreated.
+
+### How to tell
+
+```shell
+isx vm status          # "Launcher: vfkit" means the VM was started by an isx before the launcher
+ls ~/.local/state/incus-spawn/vm.rest-uri 2>/dev/null   # only vfkit's isx wrote it
+```
+
+### Migration
+
+```shell
+isx vm restart         # stops the vfkit VM (agent shutdown, then signals) and starts it under isx-vm
+brew autoremove        # removes vfkit once nothing else depends on it (Homebrew installs only)
+```
+
+The new isx recognises a running vfkit VM, so it never starts `isx-vm` beside it on the same disks; it only waits for the restart.
+The login agent's `isx vm start` restarts nothing, so a VM left running moves at the next reboot or `isx vm restart`.
+`isx vm restart` also rewrites the VM's app bundle (`incus-spawn-vm.app`) for `isx-vm`, and removes `vm.rest-uri`, `vm.rest.sock`, `empty-initrd` and `vfkit.log`.
+macOS may ask again for the home folder and Local Network permissions, since the program behind the bundle changed.
+A JBang install has no `isx-vm`: download `isx-vm-macos-aarch64` from the release with `curl` (a browser download is quarantined, and Gatekeeper refuses an ad hoc signature then), and install it as `isx-vm` on the `PATH`.
+Check it against the release's `SHA256SUMS` first, as `get-isx.sh` does for the binaries it installs.
+
+A downgrade is the one way back into trouble: an isx before the launcher does not recognise an `isx-vm` pid, takes it for a stale one, and would start vfkit beside it on the same disks.
+Stop the VM with the new isx (`isx vm stop`) before installing an older one.
+An old isx process that outlives the upgrade (an open TUI, an `isx mcp` session) does the same to a running `isx-vm` VM: it deletes `vm.pid`, `vm.incus.sock` and `vm.agent.sock`.
+The new isx then finds the launcher again through `vm.control.sock`, which names its pid (`VmManager.adoptRunningLauncher`), so it never starts a second VM, but Incus is unreachable until `isx vm restart`.
+Quit those processes before the restart.
+
+### How to verify
+
+```shell
+isx vm status          # Launcher: isx-vm, and a control socket
+isx doctor             # "VM running", with no "VM running under vfkit" warning
+pgrep -l vfkit         # nothing
+```

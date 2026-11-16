@@ -174,13 +174,15 @@ Three Maven modules under a parent POM:
   It drops no hardware the default ran on in practice: ARMv8.0 cores (Raspberry Pi 3/4) already fail `armv8.1-a`'s LSE check.
 
 **`launcher/` is a Swift package, outside the Maven build** (#2031, design/macos-and-vms.md "The launcher's relay").
-It holds the relay between a host Unix socket and a guest vsock port (`IsxRelay`), `isx-vsock-bridge`, that relay in front of `AF_VSOCK` on Linux, and `isx-vm`, a prototype of the program that would replace vfkit on macOS.
-The relay ends a connection as soon as either side ends and closes both sides, which vfkit's does not, and it gives up half-close, so no tunnel client may send one.
+It holds the relay between a host Unix socket and a guest vsock port (`IsxRelay`), `isx-vsock-bridge`, that relay in front of `AF_VSOCK` on Linux, and `isx-vm`, the launcher that runs the VM on macOS in place of vfkit.
+The relay ends a connection as soon as either side ends and closes both sides, which vfkit's did not, and it gives up half-close, so no tunnel client may send one.
 `swift test --package-path launcher` runs its tests (Swift 6); CI runs them on Linux and macOS and bridges the appliance's vsock ports with the bridge in `integration-tests`.
-`isx-vm` starts the VM on Virtualization.framework with that relay, reading the command line isx writes for vfkit; each of its settings is a decision of design/macos-and-vms.md "The launcher's machine".
+`isx-vm` starts the VM on Virtualization.framework with that relay, on arguments of its own (`VmManager.launcherCommand`, `VmSpec`); each of its settings is a decision of design/macos-and-vms.md "The launcher's machine".
+Its control socket (`vm.control.sock`, `VmControl`) answers `state`, `counts` and `stop`, in place of vfkit's REST endpoint and the `lsof` count.
 Its relays have at most 192 guest connections open at once, all together, and the next one waits (`GuestRoom`): the framework's own machine process has room for 256 descriptors, and the connection that does not fit stops the machine.
-No release holds it: `launcher-macos` builds and signs it ad hoc with `com.apple.security.virtualization` alone, and `appliance/launcher-on-mac.sh <pr>` measures it against vfkit on the Mac runner, which is what the decision to replace vfkit is read from.
-A Mac still runs vfkit until the launcher ships.
+`release.yml`'s macOS build signs it ad hoc with `com.apple.security.virtualization` alone (`launcher/build-isx-vm.sh`) and the release ships it as `isx-vm-macos-aarch64`; the Homebrew formula installs it beside `isx` (`update-homebrew-formula.sh`), `install.sh` builds it on a Mac, and isx finds it beside itself.
+A VM an older isx started under vfkit is still recognised as running, so isx never starts a second one on its disks (`VmManager.LEGACY_HYPERVISOR`, the one vfkit name left).
+`bench/vm-launcher-compare.sh` compares the Mac's VM under an isx that runs vfkit and one that runs `isx-vm`.
 
 **PGO**: release binaries are built with profiles collected in the same release run (#1637, design/native-image.md "Profile-guided optimization").
 `release.yml`'s `profiles` job builds both binaries instrumented (`-Dnative.pgo.instrument`), runs `bench/pgo-collect.sh` against a real Incus, and merges each binary's dumps into one profile (`scripts/pgo-merge.sh`).
@@ -191,7 +193,7 @@ A change to build flags, the GraalVM version or the collection flows is verified
 
 Both `cli` and `proxy` are independent Quarkus applications that produce separate native binaries.
 The CLI has no Vert.x dependency, so it **cannot** run the proxy in-process.
-Every install channel must ship both binaries.
+Every install channel must ship both binaries, and on macOS `isx-vm` beside them (a JBang user on a Mac downloads it from the release).
 `isx proxy start` exits `EXIT_CONFIG` (78) with install instructions when `isx-proxy` is missing -- before touching the service, since restarting a service whose binary is absent cannot help.
 On macOS that exit code is not enough (launchd has no `RestartPreventExitStatus`), so `haltUnusableMacOsService()` boots the job out and removes the plist unless the proxy is still answering.
 The unit and macOS plist exec `isx-proxy` directly; for units written by older builds, which exec `isx proxy start`, `ProxyService.isSupervisedInvocation()` matches systemd's `INVOCATION_ID` against the proxy unit's own so the command never manages the service it is itself running under.

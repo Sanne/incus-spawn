@@ -355,7 +355,7 @@ Windows is not supported.
 **Linux**: `isx init` installs [Incus](https://linuxcontainers.org/incus/) with your package manager.
 It also installs and enables firewalld when the host has neither firewalld nor UFW, since the proxy's redirect needs a firewall.
 
-**macOS**: `isx init` uses [vfkit](https://github.com/crc-org/vfkit) to provision a lightweight Linux VM, and the VM starts when needed.
+**macOS**: `isx init` provisions a lightweight Linux VM, which isx's own launcher, `isx-vm`, runs when needed.
 `isx vm start|stop|restart|status|resize|reset|console|check-version` manages the VM, and [its reference](docs/CLI.md#when-the-vm-stops-answering) says what to do when the VM stops answering.
 Apple Silicon is supported, and Intel Macs are not: v0.4.2 and v0.5.0-dev.2 were the last releases built for them.
 
@@ -402,6 +402,8 @@ To uninstall, run `uninstall.sh`:
 - `--binaries-only` removes only the binaries, to switch install channel, for example from a source build to Homebrew.
 
 Shell completions are available for bash, zsh, fish and PowerShell via `isx completion <shell>`.
+
+A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](docs/FAQ.md#how-do-i-upgrade-a-mac-whose-vm-ran-with-vfkit).
 
 ## CLI
 

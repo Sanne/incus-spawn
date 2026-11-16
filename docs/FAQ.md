@@ -114,3 +114,27 @@ The source on the host looks like a complete project, but built on the host it m
   Both are built-in tools (`vscode-remote`, `idea-backend`).
 - **`readonly` and `overlay` host-resources** ([Host Resources](TEMPLATES.md#host-resources)): for sharing host files with the instance, which cannot change them on the host.
   `readonly` is a read-only bind mount; `overlay` gives the instance a writable view backed by an ephemeral layer, without modifying the host.
+
+### How do I upgrade a Mac whose VM ran with vfkit?
+
+isx used to run the Mac's VM with vfkit, and now runs it with its own launcher, `isx-vm`.
+`brew upgrade incus-spawn` installs it beside `isx`.
+Your VM's disks, instances, templates and settings stay as they are.
+
+A VM that was running during the upgrade keeps running under vfkit until it restarts.
+Run `isx vm restart` once, or let your next login or reboot start it.
+`isx vm status` then shows `Launcher: isx-vm`, and `isx doctor` no longer warns that the VM runs under vfkit.
+
+macOS may ask once more for your home folder and the local network, since the program asking is new.
+Both are safe to approve, as before.
+Homebrew leaves vfkit installed, and `brew autoremove` removes it when nothing else needs it.
+
+A JBang install on a Mac needs `isx-vm` beside `isx`.
+Download `isx-vm-macos-aarch64` from the release with `curl`, save it on your PATH as `isx-vm`, and make it executable.
+Check it against the release's `SHA256SUMS` before you run it.
+
+Quit every isx you started before the upgrade, such as the TUI or an agent's `isx mcp`, before you run `isx vm restart`.
+An older isx does not see a VM that `isx-vm` runs, and removes the files the new isx reaches it by.
+If the new isx then cannot reach the VM, run `isx vm restart` again.
+
+To go back to an older isx, run `isx vm stop` before you downgrade.
