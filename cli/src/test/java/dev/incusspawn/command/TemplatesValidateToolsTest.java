@@ -58,20 +58,21 @@ class TemplatesValidateToolsTest {
     }
 
     @Test
-    void anUnknownToolIsAnErrorOnItsEntry() throws Exception {
+    void anUnknownToolIsAWarningOnItsEntry() throws Exception {
+        // Not an error: a template may be saved before its tools are defined; the build refuses it
         var run = validate(template("sshd", "gradlex"));
-        assertEquals(1, run.exit());
-        assertEquals(List.of("error tools[1] tool 'gradlex' is not a tool isx knows, so isx build skips it;"
-                + " 'isx tools list' lists the tools"), run.findings());
+        assertEquals(0, run.exit());
+        assertEquals(List.of("warning tools[1] tool 'gradlex' is not a tool isx knows, so isx build refuses this template"
+                + " until it is defined; 'isx tools list' lists the tools"), run.findings());
     }
 
     @Test
-    void anUnknownToolARequiresEntryNamesIsAnErrorNamingTheToolThatRequiresIt() throws Exception {
+    void anUnknownToolARequiresEntryNamesIsAWarningNamingTheToolThatRequiresIt() throws Exception {
         tool("mine.yaml", "name: mine\nrequires:\n  - nonesuch\n");
         var run = validate(template("mine"));
-        assertEquals(1, run.exit());
-        assertEquals(List.of("error tools[0] tool 'nonesuch', which 'mine' requires, is not a tool isx knows,"
-                + " so isx build skips it; 'isx tools list' lists the tools"), run.findings());
+        assertEquals(0, run.exit());
+        assertEquals(List.of("warning tools[0] tool 'nonesuch', which 'mine' requires, is not a tool isx knows,"
+                + " so isx build refuses this template until it is defined; 'isx tools list' lists the tools"), run.findings());
     }
 
     @Test

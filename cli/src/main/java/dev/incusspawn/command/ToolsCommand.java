@@ -391,14 +391,18 @@ public class ToolsCommand extends BaseCommand {
             if (errors.isEmpty()) checkRequires(def, loader, findings);
         }
 
-        /** An error for each tool {@code def} requires that isx does not know: a build skips it. */
+        /**
+         * A warning for each tool {@code def} requires that isx does not know: {@code isx build}
+         * refuses a template that uses it, but the tool it requires may be defined later.
+         */
         private static void checkRequires(ToolDef def, ToolDefLoader loader, List<Finding> findings) {
             var known = loader.allToolSetups().keySet();
             for (var required : def.getRequires()) {
                 var name = required.getName();
                 if (name == null || known.contains(name) || name.equals(def.getName())) continue;
-                findings.add(new Finding(true, OutputFormat.oneLine("'" + def.getName() + "' requires '" + name
-                        + "', which is not a tool isx knows, so isx build skips it; 'isx tools list' lists the tools")));
+                findings.add(new Finding(false, OutputFormat.oneLine("'" + def.getName() + "' requires '" + name
+                        + "', which is not a tool isx knows, so isx build refuses a template that uses it until it is defined;"
+                        + " 'isx tools list' lists the tools")));
             }
         }
     }

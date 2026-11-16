@@ -130,7 +130,8 @@ public class BuildCommand extends BaseCommand {
 
     IncusClient incus;
     ToolDefLoader toolDefLoader;
-    Iterable<ToolSetup> toolSetups;
+    // The built-in tools in isx's code, set here rather than in doExecute, so a build driven by a test has them too
+    Iterable<ToolSetup> toolSetups = RuntimeServices.toolSetups();
 
     /**
      * Prompt the user for confirmation unless {@code --yes} was passed.
@@ -240,7 +241,6 @@ public class BuildCommand extends BaseCommand {
     protected CommandResult doExecute() throws Exception {
         this.incus = RuntimeServices.incus();
         this.toolDefLoader = RuntimeServices.toolDefLoader();
-        this.toolSetups = RuntimeServices.toolSetups();
         if (!InitCommand.requireInit()) return CommandResult.valueOf(1);
         buildTotal = 1;
         buildIndex = 1;
@@ -336,6 +336,7 @@ public class BuildCommand extends BaseCommand {
         var chains = new ArrayList<String>();
         var seen = new HashSet<String>();
         for (var target : targets) collectAllRecursive(target, defs, chains, seen);
+        requireKnownTools(targets.stream().map(ImageDef::getName).toList(), defs);
         preflight(chains, defs);
         build(parentsFirst(targets, defs), defs);
         return CommandResult.SUCCESS;
@@ -432,6 +433,7 @@ public class BuildCommand extends BaseCommand {
             BuildOutput.step("All templates are up to date");
             return;
         }
+        requireKnownTools(templatesToRebuild, defs);
         preflight(templatesToRebuild, defs);
 
         if (!confirmBatch(outdatedOnly ? "Templates to rebuild: " : "This will rebuild: ",
@@ -609,6 +611,7 @@ public class BuildCommand extends BaseCommand {
         for (var leaf : missingLeaves) {
             collectAllRecursive(leaf, defs, toCheck, seen);
         }
+        requireKnownTools(missingLeaves.stream().map(ImageDef::getName).toList(), defs);
         preflight(toCheck, defs);
         build(missingLeaves, defs);
     }
@@ -619,6 +622,7 @@ public class BuildCommand extends BaseCommand {
      */
     void buildWithParents(List<ImageDef> targets, Map<String, ImageDef> defs) {
         var chain = withParentsChain(targets, defs);
+        requireKnownTools(chain, defs);
         preflight(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
@@ -633,6 +637,7 @@ public class BuildCommand extends BaseCommand {
      */
     void buildWithDescendants(List<ImageDef> targets, Map<String, ImageDef> defs) {
         var chain = withDescendantsChain(targets, defs);
+        requireKnownTools(chain, defs);
         preflight(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
@@ -803,6 +808,9 @@ public class BuildCommand extends BaseCommand {
             errorOfLines(e.getMessage());
             throw new BuildFailedException(canonicalName);
         }
+
+        // Again here: an ancestor the run builds only because it is missing or outdated was not checked up front
+        if (reportUnknownTools(List.of(imageDef), defs)) throw new BuildFailedException(canonicalName);
 
         if (reportStrandedStorage(incus, canonicalName, tempName)) throw new BuildFailedException(canonicalName);
         boolean vmByOption = imageDef.machineType() != MachineType.VM;
@@ -2288,6 +2296,62 @@ public class BuildCommand extends BaseCommand {
         requireValidAccounts(templates, defs);
         requireConsistentRepos(templates, defs);
         warnUnbranchable(templates, defs);
+    }
+
+    /**
+     * Refuses, naming every one at once, when a template this run builds lists a tool isx does not
+     * know, or one of its tools requires one: the image would lack it, and a typo in {@code tools:}
+     * used to cost only a warning (#2291). Only the build refuses; the template check warns, so a
+     * template can be saved before its tools are defined.
+     * <p>
+     * {@code templates} are those the run is sure to build: an ancestor it builds only when missing
+     * or outdated is checked by {@link #buildSingleImage} once it is, so a built parent's tool never
+     * refuses its child. Each template's tools are those its build applies ({@link #toolLayers}).
+     */
+    private void requireKnownTools(Collection<String> templates, Map<String, ImageDef> defs) {
+        if (reportUnknownTools(templates.stream().map(defs::get).toList(), defs)) throw new BuildFailedException();
+    }
+
+    /** {@link #requireKnownTools}'s check: whether it reported an unknown tool. */
+    private boolean reportUnknownTools(List<ImageDef> templates, Map<String, ImageDef> defs) {
+        // A set: a tool listed twice, required twice, or in a layer two targets share, is named once
+        var unknown = new LinkedHashSet<String>();
+        var refused = new LinkedHashSet<String>();
+        for (var template : templates) {
+            for (var layer : toolLayers(template, defs)) {
+                for (var check : BuildTools.checkEntries(layer, toolDefLoader, toolSetups)) {
+                    for (var problem : check.problems()) {
+                        if (problem.kind() != BuildTools.Problem.Kind.UNKNOWN) continue;
+                        unknown.add(BuildTools.unknownTool(layer.getName(), problem));
+                        refused.add(layer.getName());
+                    }
+                }
+            }
+        }
+        if (unknown.isEmpty()) return false;
+        var advice = "Define each tool in a tool file, or remove it from 'tools:'; 'isx tools list' lists the tools.";
+        if (unknown.size() == 1) {
+            BuildOutput.error("Cannot build: " + unknown.getFirst(), advice);
+        } else {
+            var details = new ArrayList<>(unknown);
+            details.add(advice);
+            var header = refused.size() == 1
+                    ? "Cannot build: template '" + OutputFormat.oneLine(refused.getFirst()) + "' uses tools isx does not know."
+                    : "Cannot build: templates use tools isx does not know.";
+            BuildOutput.error(header, details.toArray(String[]::new));
+        }
+        return true;
+    }
+
+    /**
+     * The templates whose {@code tools:} the build of {@code imageDef} applies, as {@link #buildInto}
+     * decides: its own, or, built from scratch (a root, or a VM over a container parent), every
+     * layer of its chain.
+     */
+    private List<ImageDef> toolLayers(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var parent = imageDef.isRoot() ? null : defs.get(imageDef.getParent());
+        var fromScratch = parent != null && effectiveMachineType(imageDef) != effectiveMachineType(parent);
+        return fromScratch ? ImageDef.chain(imageDef, defs) : List.of(imageDef);
     }
 
     /**

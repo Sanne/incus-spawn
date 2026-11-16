@@ -176,6 +176,17 @@ public final class BuildTools {
         enum Kind { UNKNOWN, FEATURE_GATED, CYCLE, OVERRIDDEN }
     }
 
+    /**
+     * {@code problem}, an unknown tool, as one line naming the template and, for a tool reached
+     * through {@code requires}, the tool that requires it.
+     */
+    static String unknownTool(String template, Problem problem) {
+        var tool = "'" + OutputFormat.oneLine(problem.tool()) + "'";
+        var how = problem.requiredBy() == null ? "lists " + tool
+                : "uses '" + OutputFormat.oneLine(problem.requiredBy()) + "', whose requires names " + tool;
+        return "template '" + OutputFormat.oneLine(String.valueOf(template)) + "' " + how + ", a tool isx does not know.";
+    }
+
     /** {@code " in template '<name>'"}, or nothing for an unnamed template. */
     private static String in(ImageDef imageDef) {
         var template = java.util.Objects.toString(imageDef.getName(), "");

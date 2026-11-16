@@ -85,6 +85,7 @@ class BuildCommandBatchTest {
         cmd.toolDefLoader = mock(ToolDefLoader.class);
         tools.forEach(name -> when(cmd.toolDefLoader.find(name)).thenReturn(BuildCommandTest.simpleToolSetup(name)));
         when(cmd.toolDefLoader.allToolSetups()).thenReturn(allToolSetups);
+        onLoader.accept(cmd);
         cmd.yes = true;
         cmd.skipGitRefresh = true;
         var names = new ArrayList<String>();
@@ -523,6 +524,104 @@ class BuildCommandBatchTest {
         RuntimeConstants.CDI_TOOLS.forEach(t -> map.put(t.name(), t));
         return map;
     }
+
+    /**
+     * A template that lists a tool isx does not know is refused before anything is built, with
+     * every unknown tool of every target named, rather than built without the tool (#2291).
+     */
+    @Test
+    void aTemplateListingAnUnknownToolIsRefusedBeforeAnythingIsBuilt() {
+        tools.add("known");
+        extra(List.of("tpl-a", ""), List.of("tpl-b", ""));
+        extraDefs.get("tpl-a").setTools(List.of(new ToolDef.ToolRef("known"), new ToolDef.ToolRef("gradlex")));
+        extraDefs.get("tpl-b").setTools(List.of(new ToolDef.ToolRef("typo")));
+
+        assertThrows(BuildCommand.BuildFailedException.class, () -> build("tpl-a", "tpl-b"));
+
+        assertEquals(List.of(), built);
+        assertTrue(stderr.contains("Cannot build: templates use tools isx does not know."), stderr);
+        assertTrue(stderr.contains("template 'tpl-a' lists 'gradlex', a tool isx does not know."), stderr);
+        assertTrue(stderr.contains("template 'tpl-b' lists 'typo', a tool isx does not know."), stderr);
+    }
+
+    /** Unknown tools of one template are named under that template, each once. */
+    @Test
+    void oneTemplatesUnknownToolsAreNamedUnderItEachOnce() {
+        extra(List.of("tpl-a", ""));
+        extraDefs.get("tpl-a").setTools(List.of(new ToolDef.ToolRef("typo"), new ToolDef.ToolRef("gradlex"),
+                new ToolDef.ToolRef("typo")));
+
+        assertThrows(BuildCommand.BuildFailedException.class, () -> build("tpl-a"));
+
+        assertEquals(List.of(), built);
+        assertTrue(stderr.contains("Cannot build: template 'tpl-a' uses tools isx does not know."), stderr);
+        var line = "template 'tpl-a' lists 'typo', a tool isx does not know.";
+        assertEquals(stderr.indexOf(line), stderr.lastIndexOf(line), stderr);
+    }
+
+    /** One a tool reaches through {@code requires} is refused too, naming the tool that requires it. */
+    @Test
+    void aToolRequiringAnUnknownToolIsRefused() {
+        var mine = new ToolDef();
+        mine.setName("mine");
+        mine.setRequires(List.of(new ToolDef.ToolRef("nonesuch")));
+        extra(List.of("tpl-a", ""));
+        extraDefs.get("tpl-a").setTools(List.of(new ToolDef.ToolRef("mine")));
+
+        onLoader = c -> when(c.toolDefLoader.find("mine")).thenReturn(new dev.incusspawn.tool.YamlToolSetup(mine));
+        assertThrows(BuildCommand.BuildFailedException.class, () -> build("tpl-a"));
+
+        assertEquals(List.of(), built);
+        assertTrue(stderr.contains("Cannot build: template 'tpl-a' uses 'mine', whose requires names 'nonesuch',"
+                + " a tool isx does not know."), stderr);
+    }
+
+    /**
+     * An ancestor's unknown tool does not refuse a child up front: the run builds the ancestor
+     * only when it is missing or outdated, and its own build refuses it then.
+     */
+    @Test
+    void aBuiltAncestorsUnknownToolDoesNotRefuseItsChildUpFront() {
+        builtAt(Map.of("tpl-base", "2026-10-01T09:00:00", "tpl-layer", "2026-10-01T09:01:00"));
+        // Not a ToolRef of tree(): replaced per test, as extra() does
+        var base = tree().get("tpl-base");
+        base.setTools(List.of(new ToolDef.ToolRef("typo")));
+        extraDefs.put("tpl-base", base);
+
+        build("tpl-isx");
+
+        assertFalse(stderr.contains("Cannot build"), stderr);
+        assertTrue(built.contains("tpl-isx"), built.toString());
+    }
+
+    /**
+     * The build of one template refuses before it creates anything when the tools it applies hold
+     * one isx does not know: a VM over a container parent applies the parent's too.
+     */
+    @Test
+    void aTemplatesOwnBuildRefusesAnUnknownToolOfALayerItApplies() {
+        var parent = new ImageDef();
+        parent.setName("tpl-c");
+        parent.setTools(List.of(new ToolDef.ToolRef("typo")));
+        var vm = new ImageDef();
+        vm.setName("tpl-vm");
+        vm.setParent("tpl-c");
+        vm.setType("vm");
+        var defs = Map.of("tpl-c", parent, "tpl-vm", vm);
+        var cmd = new BuildCommand();
+        cmd.incus = mock(dev.incusspawn.incus.IncusClient.class);
+        cmd.toolDefLoader = mock(ToolDefLoader.class);
+
+        var out = RecordingOutput.during(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                () -> cmd.buildSingleImage(vm, defs)));
+
+        assertTrue(out.events(RecordingOutput.Kind.ERROR).getFirst().msg()
+                .contains("template 'tpl-c' lists 'typo', a tool isx does not know."), out.events().toString());
+        verifyNoInteractions(cmd.incus);
+    }
+
+    /** Further stubbing of a build's tool loader, for a test that needs more than {@link #tools}. */
+    private java.util.function.Consumer<BuildCommand> onLoader = cmd -> { };
 
     /** Adds definitions as (name, parent) pairs, in this order; an empty parent is a root. */
     @SafeVarargs

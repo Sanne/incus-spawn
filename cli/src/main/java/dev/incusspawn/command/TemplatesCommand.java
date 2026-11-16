@@ -534,15 +534,15 @@ public class TemplatesCommand extends BaseCommand {
     }
 
     /**
-     * Each of {@code def}'s {@code tools:} entries as {@code isx build} resolves it (#2291), so a
-     * template the build would set up without one of its tools, or refuse, is not reported valid:
-     * an error on {@code tools[i]} for a tool no built-in or tool file defines, listed or required,
-     * for parameters the tool refuses, for a tool file that names a tool the entry reaches but did
-     * not load, and for a tool file's own errors ({@link ToolDefValidator}). Built-in tools are
-     * not checked again. A tool behind a feature not enabled here, a dependency cycle and an
-     * overridden parameter are warnings, as the build gives them. A tool file that did not load
-     * and names none of these tools is a warning on {@code tools}: the build refuses until it is
-     * fixed, but the template is not why.
+     * Each of {@code def}'s {@code tools:} entries as {@code isx build} resolves it (#2291): an
+     * error on {@code tools[i]} for parameters the tool refuses, for a tool file that names a tool
+     * the entry reaches but did not load, and for a tool file's own errors ({@link ToolDefValidator}).
+     * A tool no built-in or tool file defines, listed or required, is a warning on its entry, though
+     * {@code isx build} refuses the template for it: a template may be saved before its tools are
+     * defined. Built-in tools are not checked again. A tool behind a feature not enabled here, a
+     * dependency cycle and an overridden parameter are warnings, as the build gives them. A tool
+     * file that did not load and names none of these tools is a warning on {@code tools}: the
+     * build refuses until it is fixed, but the template is not why.
      */
     static List<TemplateFinding> toolFindings(ImageDef def, ToolDefLoader tools, Iterable<ToolSetup> cdiTools) {
         var findings = new ArrayList<TemplateFinding>();
@@ -556,8 +556,9 @@ public class TemplatesCommand extends BaseCommand {
                     var name = "'" + OutputFormat.oneLine(problem.tool()) + "'";
                     var which = problem.requiredBy() == null ? "tool " + name
                             : "tool " + name + ", which '" + OutputFormat.oneLine(problem.requiredBy()) + "' requires,";
-                    findings.add(TemplateFinding.error(field, which + " is not a tool isx knows,"
-                            + " so isx build skips it; 'isx tools list' lists the tools"));
+                    // A warning: a template may be saved before its tools are defined (Sanne, #2296)
+                    findings.add(TemplateFinding.warning(field, which + " is not a tool isx knows,"
+                            + " so isx build refuses this template until it is defined; 'isx tools list' lists the tools"));
                 } else {
                     findings.add(TemplateFinding.warning(field, OutputFormat.oneLine(problem.message())));
                 }
