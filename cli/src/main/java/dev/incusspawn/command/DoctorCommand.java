@@ -1595,16 +1595,17 @@ public class DoctorCommand extends BaseCommand {
             findings.add(new Finding(failing ? Status.FAIL : Status.WARN, "Proxy caller placement", detail, remediation));
         }
         var limited = activity.throttled().entrySet().stream()
-                .filter(e -> e.getValue().refusing() || e.getValue().lastAt().isAfter(now.minus(RECENT_THROTTLE)))
+                .filter(e -> e.getValue().lastAt().isAfter(now.minus(RECENT_THROTTLE)))
                 .sorted(Map.Entry.comparingByKey()).toList();
         if (!limited.isEmpty()) {
             var domains = OutputFormat.andList(limited.stream().map(e -> OutputFormat.oneLine(e.getKey())
-                    + (e.getValue().refusing() ? " (refusing now)" : "")).toList());
+                    + (e.getValue().refusing() ? " (refusing at its last answer)" : "")).toList());
             var refusals = limited.stream().mapToLong(e -> e.getValue().refusals()).sum();
             var unconfirmed = limited.stream().mapToLong(e -> e.getValue().servedUnconfirmed()).sum();
             findings.add(Finding.warn("Upstream rate limit", "(" + domains + " answered 429, too many requests, " + refusals
-                    + " time(s) since the proxy started. The limit is upstream's, on this host's address, not isx's;"
-                    + " cached artifacts are still served, " + unconfirmed + " of them unconfirmed)",
+                    + " time(s) since the proxy started. The limit is upstream's, not isx's: a registry's is on this host's address,"
+                    + " a model API's or GitHub's may be the account's. Cached artifacts are still served, "
+                    + unconfirmed + " of them unconfirmed)",
                     new Remediation("Wait for the limit to lift, or build from a different network; 'isx proxy activity'"
                             + " shows the counts", false, null)));
         }

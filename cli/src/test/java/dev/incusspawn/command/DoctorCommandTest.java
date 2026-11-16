@@ -87,11 +87,19 @@ class DoctorCommandTest {
         var findings = DoctorCommand.placementFindings(limited, false, NOW);
         assertEquals(1, findings.size());
         var detail = findings.get(0).detail();
-        assertTrue(detail.contains("repo.maven.apache.org (refusing now)"), detail);
+        assertTrue(detail.contains("repo.maven.apache.org (refusing at its last answer)"), detail);
         assertFalse(detail.contains("registry.npmjs.org"), "its last 429 was a day ago: " + detail);
-        assertTrue(detail.contains("upstream's, on this host's address"), detail);
-        assertTrue(detail.contains("cached artifacts are still served"), detail);
+        assertTrue(detail.contains("a registry's is on this host's address"), detail);
+        assertTrue(detail.contains("Cached artifacts are still served"), detail);
         assertEquals(List.of(), DoctorCommand.placementFindings(new ProxyActivity(Map.of()), false, NOW));
+    }
+
+    @Test
+    void aStaleRefusalIsNoFindingThoughTheDomainNeverAnsweredAgain() {
+        // Nothing asked the domain since its 429 an hour ago, so it still reads as refusing
+        var stale = new ProxyActivity(Map.of()).throttledBy(Map.of(
+                "repo.maven.apache.org", new ProxyActivity.Throttle(2, 0, NOW.minusSeconds(4000), NOW.minusSeconds(3600), true)));
+        assertEquals(List.of(), DoctorCommand.placementFindings(stale, false, NOW));
     }
 
     /** What {@code /activity} says: {@code placed} last had traffic {@code placedAt}, {@code idle} none and is running. */

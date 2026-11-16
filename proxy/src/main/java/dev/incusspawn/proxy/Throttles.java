@@ -36,34 +36,30 @@ final class Throttles {
         boolean refusing;
     }
 
-    /** Upstream {@code domain} answered with {@code status}; any request's answer, whoever asked. */
-    void answered(String domain, int status) {
+    /**
+     * Upstream {@code domain} answered with {@code status}; any request's answer, whoever asked.
+     * Logged under the lock, so a start and the end that follows it are logged in that order.
+     */
+    synchronized void answered(String domain, int status) {
         if (domain == null) return;
-        var message = (String) null;
-        synchronized (this) {
-            var tally = byDomain.get(domain);
-            if (status == 429) {
-                if (tally == null) {
-                    if (byDomain.size() >= MAX_DOMAINS) return;
-                    byDomain.put(domain, tally = new Tally());
-                }
-                var now = clock.getAsLong();
-                if (tally.refusals++ == 0) tally.firstAt = now;
-                tally.lastAt = now;
-                if (!tally.refusing) {
-                    tally.refusing = true;
-                    message = domain + " answers 429 (too many requests): the limit is upstream's, on this host's address;"
-                            + " cached artifacts are still served";
-                }
-            } else if (tally != null && tally.refusing && status < 400) {
-                // Only a success ends it: a 404 or a 5xx says nothing of the limit
-                tally.refusing = false;
-                message = domain + " answers again after " + tally.refusals + " refusal(s) with 429";
+        var tally = byDomain.get(domain);
+        if (status == 429) {
+            if (tally == null) {
+                if (byDomain.size() >= MAX_DOMAINS) return;
+                byDomain.put(domain, tally = new Tally());
             }
+            var now = clock.getAsLong();
+            if (tally.refusals++ == 0) tally.firstAt = now;
+            tally.lastAt = now;
+            if (!tally.refusing) {
+                tally.refusing = true;
+                ProxyLog.warn(domain + " answers 429 (too many requests): the limit is upstream's, not isx's");
+            }
+        } else if (tally != null && tally.refusing && status < 400) {
+            // Only a success ends it: a 404 or a 5xx says nothing of the limit
+            tally.refusing = false;
+            ProxyLog.info(domain + " answers again after " + tally.refusals + " refusal(s) with 429");
         }
-        if (message == null) return;
-        if (status == 429) ProxyLog.warn(message);
-        else ProxyLog.info(message);
     }
 
     /** A cached copy of {@code domain}'s was served unconfirmed because upstream answered 429. */
@@ -72,7 +68,7 @@ final class Throttles {
         if (tally != null) tally.servedUnconfirmed++;
     }
 
-    synchronized Map<String, dev.incusspawn.proxy.ProxyActivity.Throttle> snapshot() {
+    synchronized Map<String, ProxyActivity.Throttle> snapshot() {
         var all = new HashMap<String, ProxyActivity.Throttle>();
         byDomain.forEach((domain, t) -> all.put(domain, new ProxyActivity.Throttle(t.refusals, t.servedUnconfirmed,
                 Instant.ofEpochMilli(t.firstAt), Instant.ofEpochMilli(t.lastAt), t.refusing)));
