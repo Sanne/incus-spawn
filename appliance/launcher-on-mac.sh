@@ -87,10 +87,13 @@ fi
 if [ -n "${WHILE_UP_OUT:-}" ]; then
     rc=0
     OUT="$WHILE_UP_OUT" HELD_PROBE="$SELF" "$SCRIPT_DIR/measure-tunnel.sh" "$@" || rc=$?
+    # A hypervisor that ended under the load has no threads to count: no number, never 0.
+    threads="$(ps -M -p "$HYPERVISOR_PID" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"
+    [ "${threads:-0}" -gt 0 ] || threads=""
     {
         echo "measure_exit=$rc"
         echo "process_rss_kb=$(ps -o rss= -p "$HYPERVISOR_PID" | tr -d ' ')"
-        echo "process_threads=$(ps -M -p "$HYPERVISOR_PID" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"
+        echo "process_threads=$threads"
         echo "process_fds=$(open_descriptors "$HYPERVISOR_PID")"
     } >> "$WHILE_UP_OUT/values"
     # isx-vm prints each relay's counts on SIGUSR1, on its own output. vfkit would end on it.
