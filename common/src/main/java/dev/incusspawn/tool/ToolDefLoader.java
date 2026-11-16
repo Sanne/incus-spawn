@@ -70,6 +70,20 @@ public class ToolDefLoader {
 
     private LayeredDefinitions<YamlToolSetup> defs;
     private List<String> warnings = List.of();
+    private List<LoadFailure> loadFailures = List.of();
+
+    /**
+     * A tool file the loader skipped: {@code name} is the one it declares, or null when it
+     * declares none or does not parse; {@code reason} is the warning the loader gave.
+     */
+    public record LoadFailure(Path file, String name, String reason) {
+        /** The name the file gives, else its file name without the extension, which is the convention. */
+        public String likelyName() {
+            if (name != null) return name;
+            var fileName = file.getFileName().toString();
+            return fileName.substring(0, fileName.lastIndexOf('.'));
+        }
+    }
 
     /** A loader that reads its search paths from {@code config.yaml} when it first loads. */
     public ToolDefLoader() {}
@@ -139,6 +153,12 @@ public class ToolDefLoader {
     /** Tool files that failed to parse during the last load and were skipped. */
     public List<Path> parseFailures() {
         return load().parseFailures();
+    }
+
+    /** Every tool file the last load skipped, with why: the files {@link #parseFailures()} lists. */
+    public List<LoadFailure> loadFailures() {
+        load();
+        return List.copyOf(loadFailures);
     }
 
     /** Files that could not be read during the last load, as one message each. */
@@ -223,6 +243,7 @@ public class ToolDefLoader {
         if (defs == null) {
             defs = new LayeredDefinitions<>("tool");
             warnings = new ArrayList<>();
+            loadFailures = new ArrayList<>();
             loadBuiltins();
             var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
             userAndSearchPathToolDirs(paths).forEach(this::loadFromDirectory);
@@ -266,29 +287,34 @@ public class ToolDefLoader {
                         var source = path.toAbsolutePath().normalize();
                         var refused = ToolDefValidator.refusal(def);
                         if (refused != null) {
-                            warnings.add(file + ": " + refused
-                                    + LayeredDefinitions.REFUSED);
-                            // Like an unparsable file, it may have meant to replace a lower layer's.
-                            defs.parseFailed(source);
+                            failed(path, def.getName(), file + ": " + refused + LayeredDefinitions.REFUSED);
                             continue;
                         }
                         warnings.addAll(ToolDefValidator.embeddedTokens(def));
                         warnings.addAll(ToolDefValidator.lingersThroughLoginctl(def));
                         defs.put(def.getName(), new YamlToolSetup(def), source);
                     } else {
-                        warnings.add(file + ": " + (def.getName() == null ? "no 'name:'" : "a blank 'name:'")
+                        failed(path, null, file + ": " + (def.getName() == null ? "no 'name:'" : "a blank 'name:'")
                                 + LayeredDefinitions.REFUSED);
-                        // Like a nameless template, it may have meant to replace a lower layer's.
-                        defs.parseFailed(path.toAbsolutePath().normalize());
                     }
                 } catch (IOException e) {
-                    warnings.add(YamlErrors.friendly(path.getFileName().toString(), e));
-                    defs.parseFailed(path.toAbsolutePath().normalize());
+                    failed(path, null, YamlErrors.friendly(path.getFileName().toString(), e));
                 }
             }
         } catch (IOException e) {
             warnings.add("failed to scan " + dir + ": " + e.getMessage());
         }
         defs.endDirectory();
+    }
+
+    /**
+     * Skips {@code path}, with {@code reason} as its warning. Like an unparsable template, it may
+     * have meant to replace a lower layer's tool, so {@code isx build} refuses until it is fixed.
+     */
+    private void failed(Path path, String name, String reason) {
+        var source = path.toAbsolutePath().normalize();
+        warnings.add(reason);
+        loadFailures.add(new LoadFailure(source, name, reason));
+        defs.parseFailed(source);
     }
 }

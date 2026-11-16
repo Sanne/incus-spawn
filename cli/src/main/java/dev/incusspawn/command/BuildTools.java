@@ -99,10 +99,50 @@ public final class BuildTools {
         for (var toolRef : imageDef.getTools()) {
             resolveWithDeps(toolRef.getName(), toolRef.getParams(), resolved,
                 new LinkedHashSet<>(), explicit, explicitlyResolved, true,
-                toolDefLoader, cdiTools, quiet ? null : java.util.Objects.toString(imageDef.getName(), ""),
+                toolDefLoader, cdiTools, in(imageDef), quiet ? null : problem -> Warnings.warn(problem.message()),
                 autoAdded);
         }
         return new ArrayList<>(resolved.values());
+    }
+
+    /**
+     * What resolving one {@code tools:} entry met, at index {@code entry}: the problems a build
+     * warns about, {@code error} when a build would stop on it (parameters that do not validate),
+     * and the tools it reached that no earlier entry had, itself and what it requires.
+     */
+    record EntryCheck(int entry, List<Problem> problems, String error, List<ToolSetup> reached) {}
+
+    /**
+     * Each of {@code imageDef}'s own {@code tools:} entries resolved as a build resolves them, for
+     * {@code isx templates validate}: what a build would only warn about, or stop on, is reported
+     * per entry instead, and an entry that stops resolution does not stop the next.
+     */
+    static List<EntryCheck> checkEntries(ImageDef imageDef, ToolDefLoader toolDefLoader,
+                                         Iterable<ToolSetup> cdiTools) {
+        var explicit = new LinkedHashSet<String>();
+        for (var toolRef : imageDef.getTools()) {
+            explicit.add(toolRef.getName());
+        }
+        var resolved = new LinkedHashMap<String, ResolvedTool>();
+        var explicitlyResolved = new HashSet<String>();
+        var checks = new ArrayList<EntryCheck>();
+        var tools = imageDef.getTools();
+        for (int i = 0; i < tools.size(); i++) {
+            var problems = new ArrayList<Problem>();
+            var before = new HashSet<>(resolved.keySet());
+            String error = null;
+            try {
+                resolveWithDeps(tools.get(i).getName(), tools.get(i).getParams(), resolved,
+                        new LinkedHashSet<>(), explicit, explicitlyResolved, true,
+                        toolDefLoader, cdiTools, in(imageDef), problems::add, new LinkedHashMap<>());
+            } catch (IllegalArgumentException e) {
+                error = e.getMessage();
+            }
+            var reached = resolved.values().stream()
+                    .filter(tool -> !before.contains(tool.name())).map(ResolvedTool::setup).toList();
+            checks.add(new EntryCheck(i, List.copyOf(problems), error, reached));
+        }
+        return checks;
     }
 
     /**
@@ -128,23 +168,39 @@ public final class BuildTools {
     }
 
     /**
-     * {@code template} names the template being resolved in each warning (empty: unnamed), or is
-     * null for a quiet resolution: {@link Warnings#warn} says a message once, so without the name a second
-     * template's unknown tool would go unreported in a build of several.
+     * What resolving a template's tools skipped or overrode, as the build warns about it in
+     * {@code message}: {@code tool} is the tool it is about, and {@code requiredBy} the tool whose
+     * {@code requires} reached it, or null for one the template lists.
+     */
+    record Problem(Kind kind, String tool, String requiredBy, String message) {
+        enum Kind { UNKNOWN, FEATURE_GATED, CYCLE, OVERRIDDEN }
+    }
+
+    /** {@code " in template '<name>'"}, or nothing for an unnamed template. */
+    private static String in(ImageDef imageDef) {
+        var template = java.util.Objects.toString(imageDef.getName(), "");
+        return template.isEmpty() ? "" : " in template '" + OutputFormat.oneLine(template) + "'";
+    }
+
+    /**
+     * {@code in} names the template being resolved in each message: {@link Warnings#warn} says a
+     * message once, so without the name a second template's unknown tool would go unreported in a
+     * build of several. {@code report} receives each problem, or is null for a quiet resolution.
      * {@code autoAdded} collects each implicitly added dependency with the tools that required it.
      */
     private static void resolveWithDeps(String name, Map<String, String> params,
                                   LinkedHashMap<String, ResolvedTool> resolved,
                                   LinkedHashSet<String> visiting, Set<String> explicit,
                                   Set<String> explicitlyResolved, boolean isExplicit,
-                                  ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, String template,
+                                  ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, String in,
+                                  java.util.function.Consumer<Problem> report,
                                   Map<String, LinkedHashSet<String>> autoAdded) {
-        var quiet = template == null;
-        var in = quiet || template.isEmpty() ? "" : " in template '" + OutputFormat.oneLine(template) + "'";
+        var quiet = report == null;
+        var requiredBy = visiting.isEmpty() ? null : visiting.getLast();
         if (!visiting.add(name)) {
             if (!quiet) {
-                Warnings.warn("Dependency cycle detected: " +
-                        String.join(" -> ", visiting) + " -> " + name + in + ", skipping.");
+                report.accept(new Problem(Problem.Kind.CYCLE, name, requiredBy, "Dependency cycle detected: " +
+                        String.join(" -> ", visiting) + " -> " + name + in + ", skipping."));
             }
             return;
         }
@@ -153,10 +209,12 @@ public final class BuildTools {
             if (!quiet) {
                 var ungated = findToolUngated(name, toolDefLoader, cdiTools);
                 if (ungated != null) {
-                    Warnings.warn("Tool '" + name + "'" + in + " requires feature '"
-                            + ungated.feature() + "' — add it to the features list in config.yaml to enable.");
+                    report.accept(new Problem(Problem.Kind.FEATURE_GATED, name, requiredBy, "Tool '" + name + "'" + in
+                            + " requires feature '" + ungated.feature()
+                            + "' — add it to the features list in config.yaml to enable."));
                 } else {
-                    Warnings.warn("Unknown tool '" + name + "'" + in + ", skipping.");
+                    report.accept(new Problem(Problem.Kind.UNKNOWN, name, requiredBy,
+                            "Unknown tool '" + name + "'" + in + ", skipping."));
                 }
             }
             visiting.remove(name);
@@ -196,8 +254,8 @@ public final class BuildTools {
                 if (!isExplicit && explicit.contains(name)) {
                     // Transitive dep for a tool the user explicitly configured — skip
                     if (!quiet && params != null && !params.isEmpty()) {
-                        Warnings.warn("Tool '" + name + "'" + in +
-                            " is explicitly configured, overriding parameters from a transitive dependency.");
+                        report.accept(new Problem(Problem.Kind.OVERRIDDEN, name, requiredBy, "Tool '" + name + "'" + in +
+                            " is explicitly configured, overriding parameters from a transitive dependency."));
                     }
                 } else if (isExplicit && !explicitlyResolved.contains(name)) {
                     // Explicit config replaces a prior transitive-dep resolution
@@ -206,8 +264,8 @@ public final class BuildTools {
                             tool.parameters(), Map.of());
                         if (defaultOnly.hasErrors() ||
                                 !defaultOnly.resolvedValues().equals(existing.parameters())) {
-                            Warnings.warn("Tool '" + name + "'" + in +
-                                " is explicitly configured, overriding parameters from a transitive dependency.");
+                            report.accept(new Problem(Problem.Kind.OVERRIDDEN, name, requiredBy, "Tool '" + name + "'" + in +
+                                " is explicitly configured, overriding parameters from a transitive dependency."));
                         }
                     }
                     resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
@@ -235,14 +293,14 @@ public final class BuildTools {
                 if (!explicit.contains(depRef.getName()) && !visiting.contains(depRef.getName())) {
                     autoAdded.computeIfAbsent(depRef.getName(), k -> new LinkedHashSet<>()).add(name);
                 }
-                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, template, autoAdded);
+                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, in, report, autoAdded);
             }
         } else {
             for (var dep : tool.requires()) {
                 if (!explicit.contains(dep) && !visiting.contains(dep)) {
                     autoAdded.computeIfAbsent(dep, k -> new LinkedHashSet<>()).add(name);
                 }
-                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, template, autoAdded);
+                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, in, report, autoAdded);
             }
         }
 

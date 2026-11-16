@@ -505,6 +505,12 @@ Check a template definition without storing or building it.
 It takes a file, `-` for stdin, or the name of a template you have.
 It runs the same check as `isx templates new --from` and exits 1 when the definition has an error.
 
+The check resolves each entry under `tools` as `isx build` does, with the tools it requires.
+A tool isx does not know is an error on that entry, since the build would leave it out.
+So are parameters the tool refuses and errors in the tool files it uses.
+A tool behind a feature you have not enabled is a warning.
+
+A tool file that did not load is a warning on `tools` when the template does not use it, since `isx build` refuses every build until it is fixed.
 A credential the template's tools need that is not configured is a warning on `tools`, naming the command that configures it.
 
 ```shell
