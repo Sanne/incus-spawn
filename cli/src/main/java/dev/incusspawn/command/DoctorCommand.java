@@ -43,6 +43,7 @@ import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.SystemTrust;
 import dev.incusspawn.vm.VmAgentClient;
 import dev.incusspawn.vm.VmManager;
+import dev.incusspawn.vm.VmException;
 import dev.incusspawn.Platform;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import org.aesh.command.CommandDefinition;
@@ -248,7 +249,7 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    // ---- macOS checks (vfkit VM + vsock tunnel + shared layers) ----
+    // ---- macOS checks (the VM + vsock tunnel + shared layers) ----
 
     private List<Finding> runMacChecks() {
         var findings = new ArrayList<Finding>();
@@ -1309,7 +1310,19 @@ public class DoctorCommand extends BaseCommand {
     // ---- Layer 3: VM/tunnel (macOS) ----
 
     private Finding checkVmRunning(boolean running) {
-        if (running) return Finding.ok("VM running", "");
+        if (running) {
+            // A VM an isx before the launcher started keeps running after the upgrade (#2031).
+            if (VmManager.runsUnderLegacyHypervisor()) {
+                return Finding.warn("VM running under vfkit", "(started by an older isx; a restart moves it to isx-vm)",
+                        new Remediation("Restart the VM under isx-vm (stops running containers)", true, DoctorCommand::restartVm));
+            }
+            return Finding.ok("VM running", "");
+        }
+        try {
+            VmManager.findLauncher();
+        } catch (VmException e) {
+            return Finding.fail("VM not running", "(" + e.getMessage() + ")", null);
+        }
         return Finding.fail("VM not running", "",
                 new Remediation("Start the VM", false, VmManager::start));
     }
@@ -1345,7 +1358,7 @@ public class DoctorCommand extends BaseCommand {
     }
 
     /**
-     * Turns the host's vfkit fd count and the guest's socat count into the forwarder finding, and
+     * Turns the launcher's relay count and the guest's socat count into the forwarder finding, and
      * picks its fix: the no-reboot forwarder restart when the leak is in the forwarder (or cannot be
      * located) and the agent answers, a VM restart otherwise. Each agent round trip is spent only
      * when it can change the finding: {@code guest} is asked only when the host count reports a
@@ -1450,7 +1463,7 @@ public class DoctorCommand extends BaseCommand {
         if (conns > VmManager.VSOCK_CONN_WARN_THRESHOLD) {
             return Finding.warn("vsock forwarder connections: " + conns,
                     "(high — leaked streams degrade new-connection latency)",
-                    // Names no layer: it also stands for a VFKIT leak, which the forwarder did not cause.
+                    // Names no layer: it also stands for a LAUNCHER leak, which the forwarder did not cause.
                     new Remediation("Restart the VM to release the leaked vsock connections "
                             + "(stops running containers)", true, DoctorCommand::restartVm));
         }

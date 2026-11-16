@@ -14,7 +14,6 @@ import dev.incusspawn.Platform;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.util.SystemTrust;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.net.URI;
@@ -33,7 +32,6 @@ import java.util.function.BooleanSupplier;
 import java.util.function.IntPredicate;
 import java.util.function.Supplier;
 import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
 
 /**
  * Manages the incus-spawn VM appliance lifecycle.
@@ -46,21 +44,31 @@ public final class VmManager {
     /** Where forwarder streams are leaking, inferred from host vs in-guest connection counts. */
     public enum LeakLayer {
         FORWARDER("forwarder is lingering children (link 3) — the in-VM forwarder-restart clears it"),
-        VFKIT("vfkit is not reaping host fds (link 2) — a VM restart is required");
+        LAUNCHER("the VM's launcher holds connections the guest has closed (link 2) — a VM restart is required");
         public final String description;
         LeakLayer(String description) { this.description = description; }
     }
 
     public static LeakLayer leakLayer(int hostCount, int guestCount) {
         if (guestCount <= 0) return LeakLayer.FORWARDER;
-        return guestCount * 2 <= hostCount ? LeakLayer.VFKIT : LeakLayer.FORWARDER;
+        return guestCount * 2 <= hostCount ? LeakLayer.LAUNCHER : LeakLayer.FORWARDER;
     }
 
     /**
-     * Determine which tunnel layer is responsible for a leak using the host-side vfkit fd count
+     * Determine which tunnel layer is responsible for a leak using the launcher's relay count
      * and the in-guest forwarder socat count. Returns empty if either count is unavailable.
      */
     public static Optional<LeakLayer> detectLeakLayer() {
+        // A launcher whose Incus socket an older isx removed: no count to compare, and a restart
+        // of the guest's forwarder cannot bring a host socket back. A VM still under vfkit has no
+        // count either, and is left unknown, so recovery first tries the forwarder restart, which
+        // takes a second and stops no instance; unreachableAdvice() then says to restart.
+        if (isRunning() && incusSocketRemoved()) return Optional.of(LeakLayer.LAUNCHER);
+        return countedLeakLayer();
+    }
+
+    /** {@link #detectLeakLayer()} from the two counts alone, for a caller that ruled out a restart. */
+    private static Optional<LeakLayer> countedLeakLayer() {
         int host = vsockForwarderConnectionCount();
         if (host < 0) return Optional.empty();
         var guest = VmAgentClient.socatCount();
@@ -68,10 +76,44 @@ public final class VmManager {
         return Optional.of(leakLayer(host, guest.getAsInt()));
     }
 
+    /**
+     * Whether the launcher runs but its Incus socket is gone. The launcher makes its sockets once
+     * the machine has started, the control socket last, so a booting VM has neither: the socket
+     * counts as removed only while the control socket answers.
+     */
+    private static boolean incusSocketRemoved() {
+        return !Files.exists(Environment.vmVsockSocket()) && VmControl.state(Environment.vmControlSocket()).isPresent();
+    }
+
+    /**
+     * What to tell a person on macOS whose Incus does not answer while the VM runs, when the host
+     * side is at fault and only {@code isx vm restart} helps; empty otherwise, for the generic
+     * diagnosis. That one knows Linux's remedies alone ({@code systemctl}, {@code isx init}),
+     * which are wrong for a VM (#2031).
+     */
+    public static Optional<String> unreachableAdvice() {
+        if (!isRunning()) return Optional.empty();
+        if (runsUnderLegacyHypervisor()) {
+            return Optional.of("The VM still runs under vfkit, started by an isx before the launcher, and its tunnel"
+                    + " is not answering. Run 'isx vm restart' to move it to isx-vm.");
+        }
+        if (incusSocketRemoved()) {
+            return Optional.of("The VM is running, but its Incus socket " + Environment.vmVsockSocket()
+                    + " is gone (an isx from before the launcher, still open, removes it)."
+                    + " Quit any older isx, then run 'isx vm restart' to restore connectivity.");
+        }
+        // Both cases above are told apart already, so only the counts are left.
+        if (countedLeakLayer().filter(l -> l == LeakLayer.LAUNCHER).isPresent()) {
+            return Optional.of("The host-side vsock tunnel is wedged (the VM's launcher is not forwarding "
+                    + "connections). Run 'isx vm restart' to restore connectivity.");
+        }
+        return Optional.empty();
+    }
+
     /** Overall tunnel health, for proactive detection of wedged tunnels. */
     public enum TunnelHealth {
         HEALTHY,
-        VFKIT_WEDGED,
+        LAUNCHER_WEDGED,
         FORWARDER_ISSUE,
         UNKNOWN
     }
@@ -79,25 +121,26 @@ public final class VmManager {
     /**
      * Probe the vsock tunnel's health. Intended for periodic checks from the TUI or during
      * long-running operations (builds). When the Incus tunnel is dead but the agent lane answers,
-     * the host-side tunnel (vfkit) is wedged and only {@code isx vm restart} can fix it.
+     * the host-side tunnel (the launcher) is wedged and only {@code isx vm restart} can fix it.
      */
     public static TunnelHealth probeTunnelHealth() {
         if (!Platform.isMacOS()) return TunnelHealth.HEALTHY;
         if (!isRunning()) return TunnelHealth.UNKNOWN;
         if (IncusClient.isReachable()) return TunnelHealth.HEALTHY;
         // API is unreachable — try to determine which layer is at fault.
-        // detectLeakLayer() talks to the agent (socatCount), so a successful result
-        // also confirms the agent lane is healthy — no separate ping() needed.
+        // A result from the counts comes from the agent (socatCount), so it also confirms the
+        // agent lane is healthy; LAUNCHER for a removed Incus socket asks no agent, and needs
+        // the restart whatever the agent does.
         var layer = detectLeakLayer();
         if (layer.isPresent()) {
             return switch (layer.get()) {
-                case VFKIT -> TunnelHealth.VFKIT_WEDGED;
+                case LAUNCHER -> TunnelHealth.LAUNCHER_WEDGED;
                 case FORWARDER -> TunnelHealth.FORWARDER_ISSUE;
             };
         }
-        // Layer detection unavailable (lsof or socatCount failed); a bare ping only proves
-        // the agent lane is alive — it cannot distinguish a vfkit wedge from a stopped Incus
-        // daemon or a crashed forwarder, so we cannot safely claim VFKIT_WEDGED here.
+        // Layer detection unavailable (the launcher's counts or socatCount failed); a bare ping
+        // only proves the agent lane is alive — it cannot distinguish a launcher wedge from a
+        // stopped Incus daemon or a crashed forwarder, so we cannot safely claim LAUNCHER_WEDGED here.
         return TunnelHealth.UNKNOWN;
     }
 
@@ -236,7 +279,7 @@ public final class VmManager {
     // --- Hypervisor ---
 
     /**
-     * The appliance runs under vfkit on macOS, and nowhere else: on Linux isx drives the host's
+     * The appliance runs under isx's launcher, {@code isx-vm}, on macOS, and nowhere else: on Linux isx drives the host's
      * own Incus. The QEMU backend this once had was unreachable from every released isx and was
      * removed (#1695); design/macos-and-vms.md "A Linux appliance mode" says where to find it.
      */
@@ -246,10 +289,47 @@ public final class VmManager {
         }
     }
 
-    private static void requireVfkit() {
-        if (!commandExists("vfkit")) {
-            throw new VmException("vfkit not found. Install with: brew install vfkit");
+    /** The program name of isx's launcher, on disk and as {@link #isRunning()} recognises it. */
+    static final String LAUNCHER = "isx-vm";
+
+    /**
+     * The hypervisor every isx before the launcher ran (#2031). A VM it started may still be
+     * running after an upgrade, on the same disks: it is recognised as the running VM, so isx never
+     * starts a second one beside it, and is stopped like any other. isx never starts it. Remove this
+     * once no supported upgrade starts from a release that ran it.
+     */
+    static final String LEGACY_HYPERVISOR = "vfkit";
+
+    /**
+     * Files only an isx before the launcher wrote in the VM's state directory: vfkit's REST socket
+     * and the file naming it, the placeholder initrd it insisted on, and its own output. Removed
+     * with the VM's stale files.
+     */
+    private static final List<String> LEGACY_FILES = List.of("vm.rest-uri", "vm.rest.sock", "empty-initrd", "vfkit.log");
+
+    /**
+     * Where {@code isx-vm} is: beside this native {@code isx}, else beside the {@code isx} on the
+     * {@code PATH} (Homebrew installs both in one directory, {@code install.sh} both in
+     * {@code ~/.local/bin}), else in {@code ~/.local/bin}, else on the {@code PATH}. This process
+     * comes first, so two installs side by side each start their own launcher.
+     */
+    public static Path findLauncher() {
+        var candidates = new ArrayList<String>();
+        ProcessHandle.current().info().command().ifPresent(candidates::add);  // java's, on a JVM: no isx-vm there
+        var onPath = dev.incusspawn.proxy.ProxyService.resolveIsxPath();
+        if (onPath != null) candidates.add(onPath);
+        for (var isx : candidates) {
+            try {
+                var sibling = Path.of(isx).toRealPath().resolveSibling(LAUNCHER);
+                if (Files.isExecutable(sibling)) return sibling;
+            } catch (IOException ignored) {}
         }
+        var local = Environment.localBinIsx().resolveSibling(LAUNCHER);
+        if (Files.isExecutable(local)) return local;
+        var found = HostPath.find(LAUNCHER);
+        if (found != null) return Path.of(found);
+        throw new VmException(LAUNCHER + " not found beside isx or on the PATH. It ships with isx:"
+                + " reinstall isx (brew reinstall the Sanne/tap formula you installed), or build it with launcher/build-isx-vm.sh.");
     }
 
     // --- VM lifecycle lock ---
@@ -267,23 +347,82 @@ public final class VmManager {
 
     public static boolean isRunning() {
         var pidFile = Environment.vmPidFile();
-        if (!Files.exists(pidFile)) return false;
+        if (!Files.exists(pidFile)) return adoptRunningLauncher();
         try {
             long pid = Long.parseLong(Files.readString(pidFile).strip());
-            var handle = ProcessHandle.of(pid);
-            if (handle.isEmpty() || !handle.get().isAlive()) {
-                cleanupStaleFiles();
-                return false;
+            if (isVmProcess(pid)) return true;
+        } catch (IOException | NumberFormatException ignored) {}
+        if (adoptRunningLauncher()) return true;
+        cleanupStaleFiles();
+        return false;
+    }
+
+    private static boolean isVmProcess(long pid) {
+        var handle = ProcessHandle.of(pid);
+        if (handle.isEmpty() || !handle.get().isAlive()) return false;
+        var cmd = handle.get().info().command().orElse("");
+        // qemu: the macOS-role CI job's stand-in for the launcher (appliance/test-macos-role.sh)
+        return cmd.contains(LAUNCHER) || cmd.contains(LEGACY_HYPERVISOR) || cmd.contains("qemu");
+    }
+
+    /**
+     * A launcher that still runs the VM though its pid file is gone or names another process
+     * (#2031): an isx from before the launcher, still running after the upgrade (an open TUI, an
+     * {@code isx mcp} session), takes an {@code isx-vm} pid for a stale one and removes the pid
+     * file and the vsock sockets. Taken for "not running", the next start would put a second VM
+     * on the same disks. The control socket, which that isx never removes, names the launcher's
+     * pid, so it is recorded again and the VM counts as running: a restart then stops it and
+     * brings the sockets back. Costs nothing when no control socket exists.
+     */
+    static boolean adoptRunningLauncher() {
+        var control = Environment.vmControlSocket();
+        if (!Files.exists(control)) return false;
+        // A launcher that is stopping still holds the disks until it exits, so it counts too.
+        var launcher = VmControl.state(control).map(VmControl.State::pid)
+                .or(() -> launcherServing(control));
+        if (launcher.isEmpty()) {
+            // No launcher found, and nothing listens on the socket at all (a refused connect, not
+            // a slow answer): a launcher that exited leaves it behind. Removed, or with no pid file
+            // left to clean up every later command would list this user's processes again.
+            if (nothingListensOn(control)) {
+                try { Files.deleteIfExists(control); } catch (IOException ignored) {}
             }
-            var cmd = handle.get().info().command().orElse("");
-            if (!cmd.contains("vfkit") && !cmd.contains("qemu")) {
-                cleanupStaleFiles();
-                return false;
-            }
-            return true;
-        } catch (IOException | NumberFormatException e) {
-            cleanupStaleFiles();
             return false;
+        }
+        if (!isVmProcess(launcher.get())) return false;
+        try {
+            Files.writeString(Environment.vmPidFile(), String.valueOf(launcher.get()));
+        } catch (IOException e) {
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean nothingListensOn(Path socket) {
+        try (var ch = java.nio.channels.SocketChannel.open(java.net.StandardProtocolFamily.UNIX)) {
+            ch.connect(java.net.UnixDomainSocketAddress.of(socket));
+            return false;
+        } catch (java.net.ConnectException refused) {
+            return true;
+        } catch (IOException other) {
+            return false;
+        }
+    }
+
+    /**
+     * The launcher started with {@code control} as its control socket, found among this user's
+     * processes, for a control socket that exists and did not answer: a launcher whose control
+     * loop is busy still holds the disks, so its sockets must not be cleaned up as stale nor a
+     * second VM started. Only on that path, so no listing of processes costs an ordinary command.
+     */
+    private static Optional<Long> launcherServing(Path control) {
+        var wanted = control.toString();
+        try (var processes = ProcessHandle.allProcesses()) {
+            return processes
+                    .filter(h -> h.info().command().map(c -> c.contains(LAUNCHER)).orElse(false))
+                    .filter(h -> h.info().arguments().map(args -> java.util.Arrays.asList(args).contains(wanted)).orElse(false))
+                    .map(ProcessHandle::pid)
+                    .findFirst();
         }
     }
 
@@ -325,13 +464,19 @@ public final class VmManager {
             return StartResult.FAILED;
         }
 
-        requireVfkit();
+        Path launcher;
+        try {
+            launcher = findLauncher();
+        } catch (VmException e) {
+            BuildOutput.error(e.getMessage());
+            return StartResult.FAILED;
+        }
         int cpus = detectCpus();
         int memoryMiB = detectMemoryMiB();
 
         if (!Files.exists(Environment.vmLogFile())) {
-            // The share is read-only because the appliance mounts it so (rcS); vfkit cannot make it
-            // read-only at the hypervisor (crc-org/vfkit#495, #2031), so say no more than that.
+            // The launcher shares the home read-only at the hypervisor, and the appliance mounts it
+            // read-only too (rcS).
             BuildOutput.note("macOS may ask to allow access to your home folder and the local network.");
             BuildOutput.note("Both are safe to approve.");
             BuildOutput.note("isx's Linux VM mounts your home folder read-only, to share host paths you configure.");
@@ -339,10 +484,10 @@ public final class VmManager {
             BuildOutput.note("Local network access gives the Linux containers their network.");
         }
 
-        BuildOutput.stepStart("Launching VM (vfkit, cpus=" + cpus + ", memory=" + memoryMiB + "M)");
+        BuildOutput.stepStart("Launching VM (" + LAUNCHER + ", cpus=" + cpus + ", memory=" + memoryMiB + "M)");
         try {
             Files.createDirectories(Environment.vmStateDir());
-            startVfkit(cpus, memoryMiB);
+            startLauncher(launcher, cpus, memoryMiB);
             return StartResult.LAUNCHED;
         } catch (Exception e) {
             BuildOutput.stepFail("Failed to start VM: " + e.getMessage());
@@ -437,21 +582,23 @@ public final class VmManager {
             awaitExit(handle.get(), guestShutdownWait);
         }
 
-        // vfkit's own stop request (REST API). The appliance has nothing listening for the
-        // power button it presses, so this is only for a guest that could not be asked.
-        var restUriFile = Environment.vmRestUriFile();
-        if (!guestAgreed && handle.get().isAlive() && Files.exists(restUriFile)) {
-            try {
-                VfkitRest.post(Files.readString(restUriFile).strip(), "/vm/state", "{\"state\":\"Stop\"}");
-                awaitExit(handle.get(), Duration.ofSeconds(5));
-            } catch (Exception ignored) {}
-        }
-
-        // SIGTERM
+        // A guest that is still running is stopped by the launcher, which cuts its disks off as
+        // a power cut would: asked on its control socket, or with SIGTERM, which it takes the same
+        // way. A VM an older isx started under vfkit has no control socket and gets the signal.
         boolean signalled = handle.get().isAlive();
         if (signalled) {
-            handle.get().destroy();
-            awaitExit(handle.get(), Duration.ofSeconds(1));
+            // Only the launcher this pid is: a vfkit VM has no socket, and one answering beside it
+            // is another machine, which a stop of this VM must not cut off. One already stopping
+            // its machine is given the same time to finish before it is signalled.
+            var control = Environment.vmControlSocket();
+            var launcher = VmControl.state(control).filter(l -> l.pid() == pid);
+            if (launcher.isPresent() && (launcher.get().stopping() || VmControl.stop(control))) {
+                awaitExit(handle.get(), Duration.ofSeconds(5));
+            }
+            if (handle.get().isAlive()) {
+                handle.get().destroy();
+                awaitExit(handle.get(), Duration.ofSeconds(1));
+            }
         }
 
         // SIGKILL
@@ -461,7 +608,7 @@ public final class VmManager {
 
         // destroyForcibly() only sends SIGKILL; it does not wait for the process to actually
         // release the vsock socket files and disk images. A caller that starts a new VM right
-        // after (restart()) would otherwise race that teardown, which fails the new vfkit almost
+        // after (restart()) would otherwise race that teardown, which fails the new launcher almost
         // immediately with no diagnostic (see resetDataDisk(), which already had to work around
         // this). Throwing here -- rather than swallowing a timeout -- means every caller gets the
         // same protection restart() needs, instead of each having to re-check isAlive() itself.
@@ -515,16 +662,21 @@ public final class VmManager {
      * of its {@code --format=plain|json}. A fact that is not known is {@code null}, or -1 for a
      * number; a VM that is not running knows none.
      */
-    public record State(boolean running, long pid, String restApi, String log, String appliance,
-                        String applianceInstalled, int vsockConnections) {
+    public record State(boolean running, long pid, String launcher, String controlSocket, String log,
+                        String appliance, String applianceInstalled, int vsockConnections) {
 
-        static final State NOT_RUNNING = new State(false, -1, null, null, null, null, -1);
+        static final State NOT_RUNNING = new State(false, -1, null, null, null, null, null, -1);
 
         public String render() {
             if (!running) return "VM not running";
             var sb = new StringBuilder();
             sb.append("VM running (pid=").append(pid).append(")");
-            if (restApi != null) sb.append("\n  REST API: ").append(restApi);
+            if (launcher != null) {
+                sb.append("\n  Launcher: ").append(launcher);
+                if (LEGACY_HYPERVISOR.equals(launcher)) {
+                    sb.append("  (started by an older isx — 'isx vm restart' moves it to ").append(LAUNCHER).append(")");
+                }
+            }
             sb.append("\n  Log: ").append(log);
             if (appliance != null) {
                 sb.append("\n  Appliance: ").append(appliance);
@@ -549,17 +701,32 @@ public final class VmManager {
             return State.NOT_RUNNING;
         }
         long pid = readPid();
-        String restApi = null;
-        var restUriFile = Environment.vmRestUriFile();
-        if (Files.exists(restUriFile)) {
-            try {
-                restApi = Files.readString(restUriFile).strip();
-            } catch (IOException ignored) {}
-        }
+        var launcher = runningLauncher(pid);
+        var control = Environment.vmControlSocket();
         var appliance = runningApplianceVersion();
         var skew = applianceSkew(appliance);
-        return new State(true, pid, restApi, Environment.vmLogFile().toString(), appliance,
+        return new State(true, pid, launcher, Files.exists(control) ? control.toString() : null,
+                Environment.vmLogFile().toString(), appliance,
                 skew == null ? null : skew.installed(), vsockForwarderConnectionCount());
+    }
+
+    /**
+     * Which program runs the VM: {@code isx-vm}, or {@code vfkit} for a VM an isx before the
+     * launcher started and that has not been restarted since; null when it cannot be read.
+     */
+    static String runningLauncher(long pid) {
+        var cmd = ProcessHandle.of(pid).flatMap(h -> h.info().command()).orElse("");
+        if (cmd.contains(LAUNCHER)) return LAUNCHER;
+        if (cmd.contains(LEGACY_HYPERVISOR)) return LEGACY_HYPERVISOR;
+        return null;
+    }
+
+    /**
+     * Whether the running VM is still one an isx before the launcher started under vfkit. For a
+     * caller that already knows the VM runs ({@link #isRunning()}), so it is not asked again.
+     */
+    public static boolean runsUnderLegacyHypervisor() {
+        return LEGACY_HYPERVISOR.equals(runningLauncher(readPid()));
     }
 
     // Above this many held vsock connections, the appliance's socat forwarder is
@@ -568,43 +735,16 @@ public final class VmManager {
     public static final int VSOCK_CONN_WARN_THRESHOLD = 64;
 
     /**
-     * Count the host-side connections currently open on the vsock Unix socket
-     * (macOS only). These are held by vfkit and are reclaimed when the in-VM
-     * forwarder closes its end; a steadily climbing count is the signature of the
-     * forwarder leak. Returns -1 if the count can't be determined (non-macOS, no
-     * socket, or lsof unavailable).
-     *
-     * <p>The raw lsof count includes the LISTEN fd (vfkit's listener on the socket),
-     * which is always present while the VM runs. We subtract 1 so the return value
-     * reflects actual forwarded connections only — a healthy idle tunnel reads 0,
-     * not 1.
+     * The connections the launcher's relay holds on the Incus socket, as the relay itself counts
+     * them on its control socket (macOS only). Each is one host connection and one in-guest
+     * forwarder child; a steadily climbing count is the signature of the forwarder leak. Returns
+     * -1 if the count can't be read (non-macOS, no launcher answering, or a VM an older isx
+     * started under vfkit, which reports none).
      */
     public static int vsockForwarderConnectionCount() {
-        var sock = Environment.vmVsockSocket();
-        if (!Platform.isMacOS() || !Files.exists(sock)) return -1;
-        try {
-            var pb = new ProcessBuilder("lsof", "-nP", "-U");
-            pb.redirectErrorStream(true);
-            var proc = pb.start();
-            var future = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                try (var r = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(proc.getInputStream()))) {
-                    return (int) r.lines().filter(l -> l.contains(sock.toString())).count();
-                } catch (IOException e) { return -1; }
-            });
-            if (!proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                proc.destroyForcibly();
-                return -1;
-            }
-            if (proc.exitValue() != 0) return -1;
-            int raw = future.get(1, java.util.concurrent.TimeUnit.SECONDS);
-            if (raw < 0) return -1;
-            return Math.max(0, raw - 1);
-        } catch (IOException | InterruptedException | java.util.concurrent.ExecutionException
-                 | java.util.concurrent.TimeoutException e) {
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            return -1;
-        }
+        var control = Environment.vmControlSocket();
+        if (!Platform.isMacOS() || !Files.exists(control)) return -1;
+        return VmControl.held(control, INCUS_VSOCK_PORT).orElse(-1);
     }
 
     /**
@@ -640,8 +780,8 @@ public final class VmManager {
     /**
      * Recover reachability when the VM is running but the Incus tunnel is not answering.
      *
-     * Almost always this means the vsock forwarder is wedged with leaked connections: the vfkit
-     * boundary does not reliably propagate connection close, so stranded streams pin host-side fds
+     * Almost always this means the vsock forwarder is wedged with leaked connections: a tunnel
+     * that does not propagate connection close (vfkit's did not) leaves stranded streams that pin host-side fds
      * and degrade new-connection latency until the forwarder's own {@code socat -T 180} inactivity
      * backstop reaps them. Rather than block a command for that long, we give a brief transient a
      * chance to clear, then proactively restart the forwarder via the control agent — an
@@ -650,7 +790,7 @@ public final class VmManager {
      * or we would not be here), so it is safe to trigger even for other isx processes.
      *
      * <p>Before attempting a forwarder restart, the recovery path now checks which tunnel layer is
-     * wedged (see {@link LeakLayer}). A host-side (vfkit) wedge cannot be fixed by restarting the
+     * wedged (see {@link LeakLayer}). A host-side (launcher) wedge cannot be fixed by restarting the
      * guest forwarder — the recovery skips the restart and fails fast with an actionable message.
      */
     private static boolean recoverReachability() {
@@ -662,7 +802,7 @@ public final class VmManager {
      * Testable core of {@link #recoverReachability()}. {@code waitUntilReady} probes reachability
      * for a given number of seconds; {@code restartForwarder} asks the control agent to restart the
      * forwarder and returns whether it confirmed; {@code detectLayer} identifies whether the wedge
-     * is on the host (vfkit) or guest (forwarder) side. Split out so the grace / restart / backstop
+     * is on the host (launcher) or guest (forwarder) side. Split out so the grace / restart / backstop
      * orchestration can be unit-tested without a live VM.
      */
     static boolean recoverReachability(IntPredicate waitUntilReady, BooleanSupplier restartForwarder,
@@ -672,8 +812,8 @@ public final class VmManager {
 
         // Determine which layer is wedged before attempting the wrong remedy.
         var layer = detectLayer.get();
-        if (layer.isPresent() && layer.get() == LeakLayer.VFKIT) {
-            BuildOutput.warn("The host-side tunnel (vfkit) is wedged — a forwarder restart cannot fix this.",
+        if (layer.isPresent() && layer.get() == LeakLayer.LAUNCHER) {
+            BuildOutput.warn("The host-side tunnel (the VM's launcher) is wedged — a forwarder restart cannot fix this.",
                     "Run 'isx vm restart' to restore connectivity.");
             return false;
         }
@@ -821,113 +961,97 @@ public final class VmManager {
         Files.writeString(marker, "");
     }
 
-    // --- Internal: vfkit ---
+    // --- Internal: the launcher ---
+
+    /** The bundle's Info.plist: macOS takes the permission dialogs' text from it. */
+    static final String APP_BUNDLE_PLIST = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>CFBundleIdentifier</key>
+                <string>dev.incusspawn.vm</string>
+                <key>CFBundleName</key>
+                <string>incus-spawn VM</string>
+                <key>CFBundleExecutable</key>
+                <string>isx-vm</string>
+                <key>NSLocalNetworkUsageDescription</key>
+                <string>incus-spawn runs Linux containers inside a lightweight \
+            virtual machine on your Mac. Local network access is required so \
+            that containers can reach the network and communicate with the \
+            host.</string>
+                <key>NSHomeDirectoryUsageDescription</key>
+                <string>incus-spawn runs Linux containers inside a lightweight \
+            virtual machine on your Mac. Your home directory is mounted \
+            read-only to enable host file sharing — no data is modified. \
+            Agents run inside sandboxed containers, and each container only \
+            receives access to the specific paths you explicitly configure \
+            (such as a project directory or a build cache). Containers never \
+            see your full home directory.</string>
+            </dict>
+            </plist>
+            """;
 
     /**
-     * Create a macOS .app bundle wrapper around the vfkit binary. macOS uses the
-     * bundle's Info.plist for permission dialog text (home folder access, local
-     * network), giving users meaningful descriptions instead of a generic prompt.
+     * Puts the launcher inside a macOS .app bundle, as a link to the installed binary. macOS uses
+     * the bundle's Info.plist for permission dialog text (home folder access, local network),
+     * giving users meaningful descriptions instead of a generic prompt. A bundle an older isx made
+     * for vfkit is brought up to date: its link is removed and its plist rewritten.
      */
-    private static String ensureVfkitAppBundle() throws IOException {
-        return ensureVfkitAppBundle(Environment.vfkitAppBundle(), resolveVfkitPath());
-    }
-
-    static String ensureVfkitAppBundle(Path bundle, String vfkitPath) throws IOException {
+    static String ensureAppBundle(Path bundle, Path launcher) throws IOException {
         var macosDir = bundle.resolve("Contents/MacOS");
         var plistFile = bundle.resolve("Contents/Info.plist");
-        var linkedBin = macosDir.resolve("vfkit");
+        var linkedBin = macosDir.resolve(LAUNCHER);
+        var target = launcher.toRealPath();
 
-        if (Files.isSymbolicLink(linkedBin) && Files.exists(plistFile)
-                && Files.readSymbolicLink(linkedBin).equals(Path.of(vfkitPath))) {
+        if (Files.isSymbolicLink(linkedBin) && Files.readSymbolicLink(linkedBin).equals(target)
+                && Files.exists(plistFile) && Files.readString(plistFile).equals(APP_BUNDLE_PLIST)) {
             return linkedBin.toString();
         }
-        // The link itself, not its target: a dangling link is not "exists" but still blocks the new link.
+        // The links themselves, not their targets: a dangling link is not "exists" but still blocks the new link.
         Files.deleteIfExists(linkedBin);
+        Files.deleteIfExists(macosDir.resolve(LEGACY_HYPERVISOR));
 
         Files.createDirectories(macosDir);
-        Files.writeString(plistFile, """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
-                "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-                <plist version="1.0">
-                <dict>
-                    <key>CFBundleIdentifier</key>
-                    <string>dev.incusspawn.vm</string>
-                    <key>CFBundleName</key>
-                    <string>incus-spawn VM</string>
-                    <key>CFBundleExecutable</key>
-                    <string>vfkit</string>
-                    <key>NSLocalNetworkUsageDescription</key>
-                    <string>incus-spawn runs Linux containers inside a lightweight \
-                virtual machine on your Mac. Local network access is required so \
-                that containers can reach the network and communicate with the \
-                host.</string>
-                    <key>NSHomeDirectoryUsageDescription</key>
-                    <string>incus-spawn runs Linux containers inside a lightweight \
-                virtual machine on your Mac. Your home directory is mounted \
-                read-only to enable host file sharing — no data is modified. \
-                Agents run inside sandboxed containers, and each container only \
-                receives access to the specific paths you explicitly configure \
-                (such as a project directory or a build cache). Containers never \
-                see your full home directory.</string>
-                </dict>
-                </plist>
-                """);
-        Files.createSymbolicLink(linkedBin, Path.of(vfkitPath));
+        Files.writeString(plistFile, APP_BUNDLE_PLIST);
+        Files.createSymbolicLink(linkedBin, target);
         return linkedBin.toString();
     }
 
-    private static String resolveVfkitPath() throws IOException {
-        var found = HostPath.find("vfkit");
-        if (found != null) return Path.of(found).toRealPath().toString();
-        throw new IOException("vfkit not found in PATH. Install it with: brew install vfkit");
-    }
+    private static void startLauncher(Path launcher, int cpus, int memoryMiB) throws IOException {
+        var cmd = launcherCommand(ensureAppBundle(Environment.vmAppBundle(), launcher), cpus, memoryMiB);
 
-    private static void startVfkit(int cpus, int memoryMiB) throws IOException {
-        ensureDummyInitrd();
-        // vfkit does not start on a socket path that exists, and one it was killed on stays behind.
-        Files.deleteIfExists(Environment.vmRestSocket());
-
-        var cmd = vfkitCommand(ensureVfkitAppBundle(), cpus, memoryMiB);
-
-        // vfkit's own stdout/stderr, perl's included (a broken POSIX module, a missing target), go
-        // to vfkitLogFile(), never vmLogFile(): vfkit opens that one itself, non-append, for the
-        // VM's own virtio-serial console, and a second, append-mode writer on the same file
-        // corrupts both (#971 review) — vfkit's own periodic lines ("machine awake" on host wake,
-        // timesync setup) land at EOF over console bytes `isx vm console` has already read past,
-        // and the console's next write lands over those. A separate file also keeps `vm.log`
-        // absent, and the first-launch TCC note it gates on, through a perl failure: vfkit's own
-        // output never touches it.
-        long pid = launchInOwnSession(cmd, "vfkit", Environment.vfkitLogFile(), Environment.vmPidFile()).pid();
-        Files.writeString(Environment.vmRestUriFile(), VfkitRest.uriOf(Environment.vmRestSocket()));
-        BuildOutput.stepDone("pid=" + pid + ", rest=" + Environment.vmRestSocket().getFileName() + noSessionNote());
+        // The launcher's own output goes to launcherLogFile(), never vmLogFile(): the launcher
+        // opens that one itself, non-append, for the VM's console, and a second, append-mode
+        // writer on the same file corrupts both (#971 review). Its own lines (a wake, the guest's
+        // clock, a relay's complaint) and perl's, should the exec into it fail, go there.
+        long pid = launchInOwnSession(cmd, LAUNCHER, Environment.launcherLogFile(), Environment.vmPidFile()).pid();
+        BuildOutput.stepDone("pid=" + pid + noSessionNote());
     }
 
     /**
-     * vfkit's command line. Its REST API listens on a Unix socket, never on a TCP port: a port
-     * has to be chosen before vfkit binds it, and vfkit exits if another process took it in
-     * between (#1189).
+     * The launcher's command line (launcher/Sources/IsxVmCore/VmSpec.swift reads it). The disks
+     * are the guest's vda, vdb and vdc in this order; the home is shared read-only, at the
+     * hypervisor; the control socket answers isx's questions and a stop.
      */
-    static List<String> vfkitCommand(String vfkitBin, int cpus, int memoryMiB) {
+    static List<String> launcherCommand(String launcherBin, int cpus, int memoryMiB) {
         return new ArrayList<>(List.of(
-                vfkitBin,
+                launcherBin,
                 "--cpus", String.valueOf(cpus),
                 "--memory", String.valueOf(memoryMiB),
                 "--kernel", Environment.applianceKernel().toString(),
-                "--initrd", Environment.vmDummyInitrd().toString(),
-                "--kernel-cmdline", kernelCmdline(),
-                "--device", "virtio-blk,path=" + Environment.vmDiskImage(),
-                "--device", "virtio-blk,path=" + Environment.vmSwapImage(),
-                "--device", "virtio-blk,path=" + Environment.vmDataImage(),
-                "--device", "virtio-net,nat,mac=" + VmNetwork.ISX_VM_MAC,
-                "--device", "virtio-serial,logFilePath=" + Environment.vmLogFile(),
-                "--device", "virtio-fs,sharedDir=" + System.getProperty("user.home") + ",mountTag=hostfs",
-                "--device", "virtio-vsock,port=" + INCUS_VSOCK_PORT
-                        + ",socketURL=" + Environment.vmVsockSocket() + ",connect",
-                "--device", "virtio-vsock,port=" + AGENT_VSOCK_PORT
-                        + ",socketURL=" + Environment.vmAgentSocket() + ",connect",
-                "--timesync", "vsockPort=" + GA_VSOCK_PORT,
-                "--restful-uri", VfkitRest.uriOf(Environment.vmRestSocket())
+                "--cmdline", kernelCmdline(),
+                "--disk", Environment.vmDiskImage().toString(),
+                "--disk", Environment.vmSwapImage().toString(),
+                "--disk", Environment.vmDataImage().toString(),
+                "--nat", VmNetwork.ISX_VM_MAC,
+                "--console", Environment.vmLogFile().toString(),
+                "--share", "hostfs=" + System.getProperty("user.home"),
+                "--vsock", INCUS_VSOCK_PORT + "=" + Environment.vmVsockSocket(),
+                "--vsock", AGENT_VSOCK_PORT + "=" + Environment.vmAgentSocket(),
+                "--clock-port", String.valueOf(GA_VSOCK_PORT),
+                "--control", Environment.vmControlSocket().toString()
         ));
     }
 
@@ -1417,34 +1541,6 @@ public final class VmManager {
                 + " isx.shared=/host";
     }
 
-    private static void ensureDummyInitrd() throws IOException {
-        var path = Environment.vmDummyInitrd();
-        if (Files.exists(path)) return;
-        Files.createDirectories(path.getParent());
-        // Minimal empty cpio archive, gzipped (vfkit requires --initrd even if unused)
-        var baos = new ByteArrayOutputStream();
-        try (var gzip = new GZIPOutputStream(baos)) {
-            // Empty CPIO newc archive: just the trailer
-            var trailer = "070701"                // magic
-                    + "00000000"                   // ino
-                    + "00000000"                   // mode
-                    + "00000000"                   // uid
-                    + "00000000"                   // gid
-                    + "00000001"                   // nlink
-                    + "00000000"                   // mtime
-                    + "00000000"                   // filesize
-                    + "00000000"                   // devmajor
-                    + "00000000"                   // devminor
-                    + "00000000"                   // rdevmajor
-                    + "00000000"                   // rdevminor
-                    + "0000000B"                   // namesize (11 = "TRAILER!!!\0")
-                    + "00000000"                   // checksum
-                    + "TRAILER!!!\0";              // name
-            gzip.write(trailer.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-        }
-        Files.write(path, baos.toByteArray());
-    }
-
     private static String normalizeArch() {
         var arch = System.getProperty("os.arch");
         if ("amd64".equals(arch)) return "x86_64";
@@ -1452,14 +1548,13 @@ public final class VmManager {
         return arch;
     }
 
-    private static boolean commandExists(String command) {
-        return HostPath.isOnPath(command);
-    }
 
     private static void cleanupStaleFiles() {
         try { Files.deleteIfExists(Environment.vmPidFile()); } catch (IOException ignored) {}
-        try { Files.deleteIfExists(Environment.vmRestUriFile()); } catch (IOException ignored) {}
-        try { Files.deleteIfExists(Environment.vmRestSocket()); } catch (IOException ignored) {}
+        try { Files.deleteIfExists(Environment.vmControlSocket()); } catch (IOException ignored) {}
+        for (var legacy : LEGACY_FILES) {
+            try { Files.deleteIfExists(Environment.vmStateDir().resolve(legacy)); } catch (IOException ignored) {}
+        }
         try { Files.deleteIfExists(Environment.vmVsockSocket()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(Environment.vmAgentSocket()); } catch (IOException ignored) {}
     }
