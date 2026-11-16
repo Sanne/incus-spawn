@@ -73,7 +73,7 @@ class DocsGatesWorkflowTest {
         for (var job : JqYaml.parse(Files.readString(GATES)).path("jobs").asMap().values()) {
             for (var step : job.path("steps").asList()) commands.add(step.pathText("run", ""));
         }
-        assertTrue(commands.stream().anyMatch(run -> run.contains("mvn ")
+        assertTrue(commands.stream().anyMatch(run -> run.contains("mvn-ci.sh ")
                         && run.contains("-pl " + String.join(",", GATED_MODULES) + " -am")
                         && TEST_GOAL.matcher(run).find()
                         && run.contains("-Dgroups=" + TAG)),

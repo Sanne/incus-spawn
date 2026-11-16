@@ -41,14 +41,16 @@ jobs:
           distribution: 'graalvm'
 
       - name: Cache Maven dependencies
+        id: maven-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.m2/repository
-          key: macos-maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: macos-maven-
+          key: macos-maven-native-keychain-smoke-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            macos-maven-native-keychain-smoke-
 
       - name: Build CLI native image
-        run: mvn -B -ntp package -Dnative -DskipTests -Dnative.optimization=-Ob -pl cli -am
+        run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' -B -ntp package -Dnative -DskipTests -Dnative.optimization=-Ob -pl cli -am
 
       - name: Keychain trust smoke
         run: .github/scripts/macos-keychain-smoke.sh cli/target/incus-spawn-*-runner
