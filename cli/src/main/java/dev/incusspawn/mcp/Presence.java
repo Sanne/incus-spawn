@@ -7,9 +7,10 @@ import java.util.Set;
 
 /**
  * Whether a person is working in an instance: a process on a terminal (an {@code isx shell},
- * including a tmux or zmx session left detached), or a coding agent that isx did not start (a
- * person resuming a delegate's conversation). A task's own processes never count: they carry
- * {@code ISX_MCP_TASK} in their environment ({@link TaskScripts#TASK_ENV}).
+ * including a tmux or zmx session left detached); and which coding agents isx did not start hold a
+ * delegate's conversation (a person resuming it), with or without a terminal. A task's own
+ * processes never count: they carry {@code ISX_MCP_TASK} in their environment
+ * ({@link TaskScripts#TASK_ENV}).
  *
  * <p>Read from {@code /proc} rather than {@code ps}, which a minimal image may lack; through
  * {@code sudo} when it can, so processes of other users (a {@code sudo -i}) are seen too.
@@ -155,9 +156,13 @@ final class Presence {
         return new Presence(Set.copyOf(terminals), List.copyOf(agents.values()));
     }
 
-    /** Whether anyone is at work in the instance. */
+    /**
+     * Whether a person is at work in the instance: something runs on a terminal. A coding agent
+     * with no controlling terminal is no one's (a leftover after a hangup, say): it still holds its
+     * conversation ({@link #holderOf}), but it does not keep an instance from orphan cleanup.
+     */
     boolean attended() {
-        return !terminals.isEmpty() || !agents.isEmpty();
+        return !terminals.isEmpty();
     }
 
     /**
