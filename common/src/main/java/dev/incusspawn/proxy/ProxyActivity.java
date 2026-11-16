@@ -20,7 +20,12 @@ import java.util.Map;
  * (#1586). Only the host is answered. Fields are only ever added.
  */
 public record ProxyActivity(Map<String, Instance> instances, Instant unattributedSince, Traffic unattributed,
-                            Placement placement) {
+                            Placement placement, Map<String, Throttle> throttled) {
+
+    public ProxyActivity(Map<String, Instance> instances, Instant unattributedSince, Traffic unattributed,
+                         Placement placement) {
+        this(instances, unattributedSince, unattributed, placement, Map.of());
+    }
 
     public ProxyActivity(Map<String, Instance> instances) {
         this(instances, null, Traffic.NONE);
@@ -32,8 +37,23 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
 
     /** This activity with {@code placement}. */
     public ProxyActivity placed(Placement placement) {
-        return new ProxyActivity(instances, unattributedSince, unattributed, placement);
+        return new ProxyActivity(instances, unattributedSince, unattributed, placement, throttled);
     }
+
+    /** This activity with {@code throttled}: what upstream's 429s cost the host, by domain (#2303). */
+    public ProxyActivity throttledBy(Map<String, Throttle> throttled) {
+        return new ProxyActivity(instances, unattributedSince, unattributed, placement, Map.copyOf(throttled));
+    }
+
+    /**
+     * What upstream's 429s (too many requests) cost the host at one domain, since the proxy
+     * started (#2303). A limit is on the host's address, so it is not any instance's.
+     *
+     * @param refusals          the 429s upstream answered, to any request
+     * @param servedUnconfirmed cached copies served unconfirmed because of them
+     * @param refusing          whether the domain's latest answer was a 429
+     */
+    public record Throttle(long refusals, long servedUnconfirmed, Instant firstAt, Instant lastAt, boolean refusing) {}
 
     /**
      * Whether the proxy can tell its callers apart (#1586), since it started. Only requests that
@@ -177,7 +197,15 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
         if (unattributedSince != null) other.put("counting_since", unattributedSince.toEpochMilli());
         var unplaced = JqArray.arrayBuilder();
         placement.unplacedRunning().forEach(unplaced::add);
-        var root = JqObject.builder(8);
+        var limited = JqObject.builder(throttled.size());
+        throttled.forEach((domain, t) -> limited.put(domain, JqObject.builder(5)
+                .put("refusals", t.refusals())
+                .put("served_unconfirmed", t.servedUnconfirmed())
+                .put("first_at", t.firstAt().toEpochMilli())
+                .put("last_at", t.lastAt().toEpochMilli())
+                .put("refusing", t.refusing()).build()));
+        var root = JqObject.builder(9);
+        root.put("throttled", limited.build());
         if (placement.lastAddressMissAt() != null) root.put("last_address_miss_at", placement.lastAddressMissAt().toEpochMilli());
         return root
                 .put("refused_injections", refusedInjections)
@@ -228,7 +256,15 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
                 ? names.asList().stream().filter(JqValue::isString).map(v -> v.asText("")).sorted().toList() : List.<String>of();
         var placement = new Placement(root.path("refused_proofs").asLong(0), root.path("refused_address_misses").asLong(0),
                 root.path("registry_stale").asBoolean(false), unplaced, instant(root.path("last_address_miss_at")));
-        return new ProxyActivity(Map.copyOf(instances), instant(other.path("counting_since")), traffic(other), placement);
+        // A proxy older than #2303 reports none
+        var throttled = new HashMap<String, Throttle>();
+        if (root.path("throttled") instanceof JqObject limited) {
+            limited.forEach((domain, t) -> throttled.put(domain, new Throttle(t.path("refusals").asLong(0),
+                    t.path("served_unconfirmed").asLong(0), orEpoch(instant(t.path("first_at"))), orEpoch(instant(t.path("last_at"))),
+                    t.path("refusing").asBoolean(false))));
+        }
+        return new ProxyActivity(Map.copyOf(instances), instant(other.path("counting_since")), traffic(other), placement,
+                Map.copyOf(throttled));
     }
 
     /** A proxy older than #935 reports no traffic: {@link Traffic#NONE}. */
@@ -242,6 +278,10 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
     private static Counts counts(JqValue n) {
         return new Counts(n.path("requests").asLong(0), n.path("in_flight").asLong(0),
                 instant(n.path("last_activity_at")), n.path("request_bytes").asLong(0), n.path("response_bytes").asLong(0));
+    }
+
+    private static Instant orEpoch(Instant at) {
+        return at == null ? Instant.EPOCH : at;
     }
 
     private static Instant instant(JqValue millis) {

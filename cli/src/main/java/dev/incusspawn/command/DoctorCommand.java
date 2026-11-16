@@ -1551,6 +1551,9 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
+    /** How long after its last 429 a domain still counts as rate limiting in {@link #placementFindings}. */
+    static final java.time.Duration RECENT_THROTTLE = java.time.Duration.ofMinutes(30);
+
     /** How long an address miss with no traffic placed since keeps {@link #placementFindings} failing. */
     static final java.time.Duration RECENT_ADDRESS_MISS = java.time.Duration.ofMinutes(10);
 
@@ -1590,6 +1593,20 @@ public class DoctorCommand extends BaseCommand {
             var remediation = new Remediation("Restart the proxy with 'isx proxy restart'; if it persists, report it with"
                     + " 'isx proxy logs' (isx doctor inside an instance cannot fix this)", false, null);
             findings.add(new Finding(failing ? Status.FAIL : Status.WARN, "Proxy caller placement", detail, remediation));
+        }
+        var limited = activity.throttled().entrySet().stream()
+                .filter(e -> e.getValue().refusing() || e.getValue().lastAt().isAfter(now.minus(RECENT_THROTTLE)))
+                .sorted(Map.Entry.comparingByKey()).toList();
+        if (!limited.isEmpty()) {
+            var domains = OutputFormat.andList(limited.stream().map(e -> OutputFormat.oneLine(e.getKey())
+                    + (e.getValue().refusing() ? " (refusing now)" : "")).toList());
+            var refusals = limited.stream().mapToLong(e -> e.getValue().refusals()).sum();
+            var unconfirmed = limited.stream().mapToLong(e -> e.getValue().servedUnconfirmed()).sum();
+            findings.add(Finding.warn("Upstream rate limit", "(" + domains + " answered 429, too many requests, " + refusals
+                    + " time(s) since the proxy started. The limit is upstream's, on this host's address, not isx's;"
+                    + " cached artifacts are still served, " + unconfirmed + " of them unconfirmed)",
+                    new Remediation("Wait for the limit to lift, or build from a different network; 'isx proxy activity'"
+                            + " shows the counts", false, null)));
         }
         if (placement.refusedProofs() > 0) {
             findings.add(Finding.warn("Credential proofs", "(" + placement.refusedProofs()

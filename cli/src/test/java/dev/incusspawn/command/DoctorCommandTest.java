@@ -79,6 +79,21 @@ class DoctorCommandTest {
 
     private static final Instant NOW = Instant.parse("2026-10-20T12:00:00Z");
 
+    @Test
+    void upstreamRateLimitIsAFindingWhileRecentAndSaysWhoseItIs() {
+        var limited = new ProxyActivity(Map.of()).throttledBy(Map.of(
+                "repo.maven.apache.org", new ProxyActivity.Throttle(7, 3, NOW.minusSeconds(600), NOW.minusSeconds(60), true),
+                "registry.npmjs.org", new ProxyActivity.Throttle(1, 0, NOW.minusSeconds(86400), NOW.minusSeconds(86000), false)));
+        var findings = DoctorCommand.placementFindings(limited, false, NOW);
+        assertEquals(1, findings.size());
+        var detail = findings.get(0).detail();
+        assertTrue(detail.contains("repo.maven.apache.org (refusing now)"), detail);
+        assertFalse(detail.contains("registry.npmjs.org"), "its last 429 was a day ago: " + detail);
+        assertTrue(detail.contains("upstream's, on this host's address"), detail);
+        assertTrue(detail.contains("cached artifacts are still served"), detail);
+        assertEquals(List.of(), DoctorCommand.placementFindings(new ProxyActivity(Map.of()), false, NOW));
+    }
+
     /** What {@code /activity} says: {@code placed} last had traffic {@code placedAt}, {@code idle} none and is running. */
     private static ProxyActivity activity(ProxyActivity.Placement placement, Instant placedAt) {
         var placed = new ProxyActivity.Instance(Instant.EPOCH, 0, 0, null, null, 0, 0, 0, 0,

@@ -57,6 +57,9 @@ class Upstream {
     private final Vertx vertx;
     private final HostLookup hostLookup;
 
+    /** What upstream's 429s have cost the host, per domain (#2303), for {@code /activity}. */
+    final Throttles throttles = new Throttles();
+
     HttpClient upstreamClient;
     // Cache confirmations (HEADs, sidecars) get their own pool, so a cache hit never
     // queues behind large downloads on upstreamClient's
@@ -217,6 +220,7 @@ class Upstream {
         // Over when the response has ended, not when the exchange has: it may go on to follow a redirect
         var over = Promise.<Void>promise();
         var result = req.send().compose(resp -> {
+            throttles.answered(req.authority().host(), resp.statusCode());
             read.run();
             resp.end().onComplete(r -> over.tryComplete());
             return exchange.apply(resp, read);
@@ -534,6 +538,7 @@ class Upstream {
                       boolean streaming, RelayWatchdog watchdog, RelayHooks hooks, boolean resend) {
         upReq.response().onSuccess(upResp -> {
             if (watchdog.cut) return;
+            throttles.answered(domain, upResp.statusCode());
             if (hooks.responseCallback() != null) {
                 hooks.responseCallback().accept(upResp);
             }
@@ -931,6 +936,7 @@ class Upstream {
 
     /** Relays upstream's response, head and body, as {@link #relayBody} does the body. */
     void relayResponse(HttpServerRequest clientReq, String domain, HttpClientResponse upResp, long since) {
+        throttles.answered(domain, upResp.statusCode());
         copyResponseHead(upResp, clientReq.response());
         relayBody(clientReq, domain, new ResponseHold(upResp), since);
     }

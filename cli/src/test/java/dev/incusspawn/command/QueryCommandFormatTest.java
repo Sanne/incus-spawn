@@ -675,7 +675,10 @@ class QueryCommandFormatTest {
                   "refused_address_misses" : null,
                   "registry_stale" : null,
                   "unplaced_running" : null,
-                  "last_address_miss_at" : null
+                  "last_address_miss_at" : null,
+                  "throttled_domains" : null,
+                  "upstream_refusals" : null,
+                  "served_unconfirmed" : null
                 }, {
                   "instance" : null,
                   "counting_since" : "2026-10-11T09:00:00Z",
@@ -697,12 +700,15 @@ class QueryCommandFormatTest {
                   "refused_address_misses" : 0,
                   "registry_stale" : false,
                   "unplaced_running" : [ ],
-                  "last_address_miss_at" : null
+                  "last_address_miss_at" : null,
+                  "throttled_domains" : [ ],
+                  "upstream_refusals" : 0,
+                  "served_unconfirmed" : 0
                 } ]
                 """, json(records));
         assertEquals("worker\t2026-10-11T10:00:00Z\t5\t1\t2026-10-11T10:01:00Z\t300\t4000\t2\t1"
-                        + "\t2026-10-11T10:01:00Z\t2026-10-11T10:00:45Z\t10\t20\t30\t40\tfalse\t-\t-\t-\t-\t-\n"
-                        + "-\t2026-10-11T09:00:00Z\t1\t0\t2026-10-11T10:00:00Z\t0\t50\t-\t-\t-\t-\t-\t-\t-\t-\t-\t0\t0\tfalse\t-\t-\n",
+                        + "\t2026-10-11T10:01:00Z\t2026-10-11T10:00:45Z\t10\t20\t30\t40\tfalse\t-\t-\t-\t-\t-\t-\t-\t-\n"
+                        + "-\t2026-10-11T09:00:00Z\t1\t0\t2026-10-11T10:00:00Z\t0\t50\t-\t-\t-\t-\t-\t-\t-\t-\t-\t0\t0\tfalse\t-\t-\t-\t0\t0\n",
                 plain(records));
     }
 

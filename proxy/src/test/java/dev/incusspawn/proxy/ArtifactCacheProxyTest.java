@@ -2400,6 +2400,34 @@ class ArtifactCacheProxyTest {
                 why + ": " + left);
     }
 
+    /** #2303: a 429 is counted for the host, as is the copy served unconfirmed for it, until the domain answers again. */
+    @Test
+    void throttleIsCountedUntilTheDomainAnswersAgain() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+        var before = proxy.upstream.throttles.snapshot().get(CENTRAL);
+        var refusals = before == null ? 0 : before.refusals();
+        var unconfirmed = before == null ? 0 : before.servedUnconfirmed();
+
+        var jar = routes.get(CENTRAL + " " + JAR);
+        routes.put(CENTRAL + " " + JAR, new Reply(429, null, null));
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        var limited = proxy.upstream.throttles.snapshot().get(CENTRAL);
+        assertEquals(refusals + 1, limited.refusals());
+        assertEquals(unconfirmed + 1, limited.servedUnconfirmed());
+        assertTrue(limited.refusing());
+
+        // While the 429's backoff (#2301) lasts, the copy is served without asking: still refusing
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertTrue(proxy.upstream.throttles.snapshot().get(CENTRAL).refusing());
+        proxy.upstream.clearBackoffs();
+        routes.put(CENTRAL + " " + JAR, jar);
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertFalse(proxy.upstream.throttles.snapshot().get(CENTRAL).refusing(), "answering again");
+        assertEquals(refusals + 1, proxy.upstream.throttles.snapshot().get(CENTRAL).refusals());
+    }
+
     @Test
     void headerlessHeadNeverLetsTheSidecarEvictOnCentral() throws Exception {
         publishJar(CENTRAL, JAR, "v1");

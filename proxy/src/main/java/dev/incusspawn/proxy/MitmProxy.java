@@ -3002,7 +3002,7 @@ public class MitmProxy {
                 registry != null && registry.listingUnavailable(), unplaced, lastMiss == 0 ? null : java.time.Instant.ofEpochMilli(lastMiss));
         req.response()
                 .putHeader("Content-Type", "application/json")
-                .end(activity.placed(placement).toJson(refusedInjections.get()));
+                .end(activity.placed(placement).throttledBy(upstream.throttles.snapshot()).toJson(refusedInjections.get()));
     }
 
     private static boolean isHostCaller(HttpServerRequest req) {
