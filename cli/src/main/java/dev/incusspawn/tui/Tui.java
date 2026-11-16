@@ -1963,10 +1963,16 @@ public class Tui {
                 var selected = selectedEntry(instanceTableState);
                 // The overview's last read, if there was one (#2241): pure, from the parked reading
                 var reading = overviewReading;
+                var log = overviewLog;
                 // Assessed from the same snapshot as its tag row: pure, and a few map lookups
-                if (selected != null) instanceDetail.render(frame, screen, selected, detailAccountUses,
-                        detailRegisteredWith, BaseImageAge.assess(selected.metadata(), imageDefs), detailMcpScope,
-                        reading == null ? null : reading.summaryOf(selected));
+                if (selected != null) {
+                    var effort = log == null ? null : dev.incusspawn.command.OverviewCommand.effortOf(log, selected);
+                    var github = InstanceDetailView.githubRows(effort, effort == null || reading == null ? List.of()
+                            : dev.incusspawn.command.OverviewCommand.statesOf(reading, selected, effort));
+                    instanceDetail.render(frame, screen, selected, detailAccountUses,
+                            detailRegisteredWith, BaseImageAge.assess(selected.metadata(), imageDefs), detailMcpScope,
+                            github, reading == null ? null : reading.summaryOf(selected));
+                }
             }
             case ACCOUNTS -> accountsModal.render(frame, screen);
             case INFO -> about.render(frame, screen);

@@ -645,6 +645,8 @@ When the newest candidate does not parse, cut at the bound or not JSON, the clos
 The ask is the same: when the first candidate does not parse, none is shown, never a later message.
 The text is scrubbed as a guest's output is (`SecretRedactor.scrubGuest`), cut to 4,000 code points (500 for the ask), and shown a line at a time through `OutputFormat.oneLine`.
 The DONE column shows the newest session's first line that says something, `newest of 3:` before it when there were several, and the instance details show the ask and up to 20 lines of the closing message with the session count and the newest one's age.
+In the instance details these are sections of their own, a blank line before each, every label at one indent and a long value wrapped under its start, since a value wider than the dialog was cut off at its edge (Sanne on #2292).
+The details also list the instance's pull requests, each by its full URL as a link with its state, and its pushed branches, from the overview's last read of the log.
 One session's message is shown as it is, with no model call.
 
 **Several sessions are merged by one model call, on the instance's own Claude account** (#2241, part 3).

@@ -396,6 +396,8 @@ In the TUI, the Work tab and `o` on the instance list show the same columns.
 There Space marks rows and F8 destroys the marked ones.
 DONE is shown from 120 columns, and F3 on a row shows what was asked and the closing message, and the merged lines when there are some.
 
+F3 also lists each pull request by its full address, as a link, and the branches the instance pushed.
+
 In `plain` and `json` it prints these fields, in this order: `name`, `status`, `purpose`, `last_used`, `model_calls`, `tokens`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `first_active`, `last_active`, `pushed_branches`, `pull_requests`, `pull_request_states`, `work_state`, `uncommitted_changes`, `unpushed_commits`, `stashes`, `repos`, `unsaved_repos`, `agent_sessions`, `headline`, `headline_from`, `last_session`, `first_ask` and `closing_message`.
 After them come `merged_done`, `merged_state`, `merged_pending`, `merged_sessions` and `merged_at`.
 
