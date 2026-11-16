@@ -36,7 +36,7 @@ class UpstreamWorkflowTest {
 
     private static final Pattern SECRET_REFERENCE = Pattern.compile("secrets\\.[A-Za-z0-9_]+");
     /** What the credentialed step must not do: fetch from an upstream or run the planner. */
-    private static final Pattern FETCHES = Pattern.compile("\\bcurl\\b|\\bgh api\\b|\\bgh release\\b|upstream\\.sh plan\\b");
+    private static final Pattern FETCHES = Pattern.compile("\\bcurl\\b|\\bgh api\\b|\\bgh release\\b|upstream\\.sh plan\\b|\"\\$ENGINE\" plan\\b");
     private static final String APP_ID = "secrets.UPSTREAM_APP_ID";
     private static final String APP_KEY = "secrets.UPSTREAM_APP_PRIVATE_KEY";
 
@@ -57,9 +57,13 @@ class UpstreamWorkflowTest {
         return steps;
     }
 
-    private static JqValue checkout(Path file, String job) throws IOException {
-        var checkouts = steps(file, job).stream()
+    private static List<JqValue> checkouts(Path file, String job) throws IOException {
+        return steps(file, job).stream()
                 .filter(step -> step.pathText("uses", "").startsWith("actions/checkout@")).toList();
+    }
+
+    private static JqValue checkout(Path file, String job) throws IOException {
+        var checkouts = checkouts(file, job);
         assertEquals(1, checkouts.size(), job + " checks out once");
         return checkouts.getFirst();
     }
@@ -116,8 +120,43 @@ class UpstreamWorkflowTest {
 
     @Test
     void theWatchsCheckoutsKeepNoCredential() throws IOException {
-        assertKeepsNoCredential(checkout(WATCH, "plan"), "upstream-watch.yml plan");
-        assertKeepsNoCredential(checkout(WATCH, "publish"), "upstream-watch.yml publish");
+        for (var job : List.of("plan", "publish", "track")) {
+            for (var checkout : checkouts(WATCH, job)) assertKeepsNoCredential(checkout, "upstream-watch.yml " + job);
+        }
+    }
+
+    /**
+     * Each job runs once per watched repository (#2210). The first checkout is this repository's main,
+     * whose workflow and app-token.sh run; a sibling's leg adds the sibling and the engine at the
+     * commit the sibling pins, and nothing else. The matrices and {@code TARGETS} name the same
+     * repositories, so a dispatch's {@code repo} is checked against what the jobs run.
+     */
+    @Test
+    void eachJobRunsOncePerWatchedRepositoryWithMainsCheckoutFirst() throws IOException {
+        var targets = List.of(workflow(WATCH).path("env").pathText("TARGETS", "").split(" "));
+        assertEquals("Sanne/incus-spawn", targets.getFirst(), "TARGETS starts with this repository: " + targets);
+        for (var job : List.of("plan", "publish")) {
+            var repos = job(WATCH, job).path("strategy").path("matrix").path("include").asList().stream()
+                    .map(leg -> leg.pathText("repo", "")).toList();
+            assertEquals(targets, repos, job + "'s matrix and TARGETS name other repositories");
+            assertFalse(job(WATCH, job).path("strategy").path("fail-fast").asBoolean(true),
+                    job + ": a sibling's failing leg must not cancel this repository's");
+            var checkouts = checkouts(WATCH, job);
+            var main = checkouts.getFirst().path("with");
+            assertFalse(main.has("repository") || main.has("ref") || main.has("path"),
+                    job + "'s first checkout is this repository's main, at the workspace root");
+            for (var checkout : checkouts.subList(1, checkouts.size())) {
+                assertEquals("matrix.repo != github.repository", checkout.pathText("if", ""),
+                        job + ": a checkout beyond main's is a sibling leg's alone");
+                var with = checkout.path("with");
+                var sibling = with.pathText("repository", "").equals("${{ matrix.repo }}") && !with.has("ref")
+                        && with.pathText("path", "").equals("_target");
+                var engine = !with.has("repository") && with.pathText("ref", "").equals("${{ steps.pin.outputs.ref }}")
+                        && with.pathText("path", "").equals("_engine");
+                assertTrue(sibling || engine,
+                        job + " checks out something other than the sibling's main or this repository at the pinned engine: " + with);
+            }
+        }
     }
 
     /**
@@ -168,8 +207,20 @@ class UpstreamWorkflowTest {
         }
         var run = holder.pathText("run", "");
         assertFalse(FETCHES.matcher(run).find(), "the step holding the app's secrets fetches or plans:\n" + run);
-        assertTrue(run.contains("app-token.sh") && run.contains("upstream.sh publish"),
-                "the step holding the app's secrets mints its token and publishes:\n" + run);
+        // The key never shares a process tree with the engine, which on a sibling's leg is code
+        // another repository's pin chose: that step runs main's app-token.sh alone (#2210).
+        assertEquals(Set.of("UPSTREAM_APP_ID", "UPSTREAM_APP_PRIVATE_KEY"), holder.path("env").asMap().keySet(),
+                "the step holding the app's secrets is given nothing else");
+        assertTrue(run.contains("token=\"$(upstream/engine/app-token.sh \"$REPO\")\"") && run.contains("::add-mask::$token")
+                        && run.contains(">> \"$GITHUB_ENV\""),
+                "the step holding the app's secrets mints and masks the token with main's app-token.sh, and hands it on:\n" + run);
+        assertFalse(run.contains("ENGINE") || run.contains("upstream.sh"), "the step holding the app's secrets runs the engine:\n" + run);
+        assertEquals("${{ matrix.repo }}", job(WATCH, "publish").path("env").pathText("REPO", ""),
+                "the token is minted for the leg's own repository, and publish refuses another manifest's");
+        var publishSteps = steps(WATCH, "publish");
+        assertEquals(holder.pathText("name", ""), publishSteps.get(publishSteps.size() - 2).pathText("name", ""), "the token is minted just before publishing");
+        var publish = publishSteps.getLast();
+        assertTrue(publish.pathText("run", "").contains("\"$ENGINE\" publish"), "the last step publishes: " + publish.pathText("run", ""));
     }
 
     private static List<JqValue> watchSteps() throws IOException {
@@ -207,6 +258,48 @@ class UpstreamWorkflowTest {
         var concurrency = workflow(WATCH).path("concurrency");
         assertFalse(concurrency.pathText("group", "").isEmpty(),
                 "upstream-watch.yml sets a concurrency group: two runs would push the same branch");
+    }
+
+    /**
+     * The plan job handled publisher data, so its artifact never chooses code that runs with the
+     * app's token: publish takes the engine from the sibling's own default branch, and only compares
+     * the plan's (#2210).
+     */
+    @Test
+    void publishTakesTheEngineFromTheSiblingOnMainNeverFromThePlan() throws IOException {
+        var pins = steps(WATCH, "publish").stream().filter(step -> step.pathText("id", "").equals("pin")).toList();
+        assertEquals(1, pins.size(), "publish has one pin step");
+        var run = pins.getFirst().pathText("run", "");
+        assertTrue(run.contains("ref=\"$(tr -d '\\n' < _target/upstream/engine.ref)\""),
+                "publish reads the engine pin from the sibling's checkout:\n" + run);
+        assertTrue(run.contains("git merge-base --is-ancestor \"$ref\" origin/main"), "publish runs no engine off main:\n" + run);
+        var planPin = steps(WATCH, "plan").stream().filter(step -> step.pathText("id", "").equals("pin")).toList();
+        assertEquals(1, planPin.size(), "plan has one pin step");
+        assertTrue(planPin.getFirst().pathText("run", "").contains("git merge-base --is-ancestor \"$ref\" origin/main"),
+                "plan runs no engine off main:\n" + planPin.getFirst().pathText("run", ""));
+        assertEquals("${{ matrix.repo == github.repository && 1 || 0 }}",
+                checkouts(WATCH, "plan").getFirst().path("with").pathText("fetch-depth", ""),
+                "plan's checkout of main has the history the ancestry check reads");
+        assertFalse(run.contains("ref=\"$(tr -d '\\n' < \"$PLAN"), "publish takes the engine from the plan's artifact:\n" + run);
+    }
+
+    /**
+     * {@code validate} asks GitHub whether a git-main-paths item's repository is a fork, and gh will
+     * not run without a token, which would read as "not first party" and fail a sibling's leg on
+     * every run (#2210). So every step that validates has the run's token.
+     */
+    @Test
+    void everyStepThatValidatesHasTheRunsToken() throws IOException {
+        var validating = 0;
+        for (var job : List.of("plan", "publish", "track")) {
+            for (var step : steps(WATCH, job)) {
+                if (!step.pathText("run", "").contains(" validate")) continue;
+                validating++;
+                assertEquals("${{ github.token }}", step.path("env").pathText("GH_TOKEN", ""),
+                        job + "'s " + step.pathText("name", "<unnamed>") + " validates without GH_TOKEN");
+            }
+        }
+        assertTrue(validating > 0, "no step of upstream-watch.yml runs validate");
     }
 
     // --- upstream-verify.yml ---
