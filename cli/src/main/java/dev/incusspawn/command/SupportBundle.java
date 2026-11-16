@@ -80,7 +80,7 @@ final class SupportBundle {
         bundle.add("client.log", logTail(Environment.clientLogFile()));
         if (Platform.isMacOS()) {
             bundle.add("vm.log", logTail(Environment.vmLogFile()));
-            bundle.add("vfkit.log", logTail(Environment.vfkitLogFile()));
+            bundle.add("isx-vm.log", logTail(Environment.launcherLogFile()));
             bundle.add("proxy-service.log", logTail(Environment.proxyServiceLogFile()));
         }
         bundle.add("proxy-status.txt", collectProxyStatus());

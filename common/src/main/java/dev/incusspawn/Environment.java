@@ -267,22 +267,18 @@ public final class Environment {
     }
 
     /**
-     * vfkit's own stdout/stderr (perl's diagnostics if the exec into it fails, and whatever vfkit
-     * itself prints — "machine awake" on host wake, timesync setup). Separate from {@link
-     * #vmLogFile()} because vfkit opens that file itself, non-append, for the VM's virtio-serial
-     * console: sharing one append-mode fd with that non-append writer corrupts both (#971 review).
+     * The launcher's own stdout/stderr (perl's diagnostics if the exec into it fails, and the
+     * launcher's lines: a wake, the guest's clock, a relay's complaint). Separate from {@link
+     * #vmLogFile()} because the launcher opens that file itself, non-append, for the VM's console:
+     * sharing one append-mode fd with that non-append writer corrupts both (#971 review).
      */
-    public static Path vfkitLogFile() {
-        return vmStateDir().resolve("vfkit.log");
+    public static Path launcherLogFile() {
+        return vmStateDir().resolve("isx-vm.log");
     }
 
-    public static Path vmRestUriFile() {
-        return vmStateDir().resolve("vm.rest-uri");
-    }
-
-    /** The Unix socket vfkit's REST API listens on; {@link #vmRestUriFile()} names it. */
-    public static Path vmRestSocket() {
-        return vmStateDir().resolve("vm.rest.sock");
+    /** The launcher's control socket: its state, its relays' counts, and a stop (#2031). */
+    public static Path vmControlSocket() {
+        return vmStateDir().resolve("vm.control.sock");
     }
 
     public static Path vmVsockSocket() {
@@ -310,11 +306,7 @@ public final class Environment {
         return vmStateDir().resolve("swap.img");
     }
 
-    public static Path vmDummyInitrd() {
-        return vmStateDir().resolve("empty-initrd");
-    }
-
-    public static Path vfkitAppBundle() {
+    public static Path vmAppBundle() {
         return vmStateDir().resolve("incus-spawn-vm.app");
     }
 

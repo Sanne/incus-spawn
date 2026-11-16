@@ -170,7 +170,7 @@ Both binaries take their platform role from the OS they run on, and the role dec
 A runtime switch that selected macOS's role on Linux would be a switch that turns that check off, so released binaries have none, and CI runs a test-only build instead.
 `scripts/macos-role-build.sh` copies the `-Prelease` uber-jars and replaces their `Platform.class` with one compiled from `Platform.java` with its one `OS_NAME` line pinned to macOS, marked in the class and the manifest.
 `appliance/test-macos-role.sh` boots the appliance as isx boots it on macOS and runs those jars against it, with stand-ins for what only macOS has.
-QEMU stands in for vfkit: `vm.pid` names it and the launcher's relay bridges its vsock ports (`isx-vsock-bridge`, #2031; socat in a run by hand without it), and a tap device with DHCP, DNS and NAT stands in for vfkit's network.
+QEMU stands in for the launcher: `vm.pid` names it (`VmManager.isRunning()` accepts `qemu` for that alone) and the launcher's relay bridges its vsock ports (`isx-vsock-bridge`, #2031; socat in a run by hand without it), and a tap device with DHCP, DNS and NAT stands in for the Mac's network.
 The VM's lease is written to `/var/db/dhcpd_leases` for `VmNetwork`, and a `/usr/bin/security` answers the Keychain's admin trust settings with the one CA the GitHub stand-in's certificate chains to.
 It checks what #1582 broke and the Linux jobs cannot reach: a template build that runs `gh` is served the template's account, a pinned branch its pin, no known instance's proof is refused, an `--mcp-client` branch reaches `isx mcp`, and a forged proof or the host's own request gets no credential.
 Breaking `proofMayIdentify`'s macOS branch fails its template build with #1582's error, and the job also found that every `--mcp-client` branch was refused its first call (`CallerCheck`).
@@ -187,10 +187,10 @@ Three guards keep the test build out of a release.
 `PlatformRoleBuildGuardTest` fails if anything but the `macos-role` job makes the test build, if that job uploads more than its logs, or if `release.yml` stops checking.
 Making this sound found a switch the released uber-jars already had: a JVM reads `os.name` from its command line, so `-Dos.name` or `JAVA_TOOL_OPTIONS` put them in macOS's role.
 `Platform` now checks an `os.name` that claims macOS against the host: a Linux kernel (`/proc/sys/kernel/ostype`) makes it Linux, and without macOS's `/System/Library/CoreServices/SystemVersion.plist` isx refuses to start rather than run half as Linux.
-The test build runs the JVM, not the native macOS binaries, and none of vfkit, the macOS network stack or the real Keychain.
+The test build runs the JVM, not the native macOS binaries, and none of the launcher, the macOS network stack or the real Keychain.
 A runtime seam in the shipped code, defaulted off, was rejected for the reason above; an in-process harness over `MitmProxy` alone was rejected because it would run neither the CLI's macOS branch nor the real network path.
 
-What remains uncovered is vfkit itself.
+What remains uncovered is the launcher's machine itself.
 It cannot run on GitHub-hosted macOS runners at all -- they are macOS VMs, and Virtualization.framework nests only Linux guests -- so it needs a bare-metal Mac, as a self-hosted release gate or the manual pre-release run of `test-boot.sh` / `test-with-isx.sh` (#774).
 
 **Hosts as users install them** (#1972).

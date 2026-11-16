@@ -57,14 +57,14 @@ class VmOwnSessionTest {
     void aCommandThatCannotBeExecutedIsReported() throws Exception {
         SessionProbe.assumeSession();
 
-        var process = new ProcessBuilder(OwnSession.command(List.of("/nonexistent/vfkit")))
+        var process = new ProcessBuilder(OwnSession.command(List.of("/nonexistent/isx-vm")))
                 .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
 
-        var failure = assertThrows(java.io.IOException.class, () -> VmManager.awaitExec(process, "vfkit"));
-        assertTrue(failure.getMessage().startsWith("vfkit could not be started"), failure.getMessage());
+        var failure = assertThrows(java.io.IOException.class, () -> VmManager.awaitExec(process, "isx-vm"));
+        assertTrue(failure.getMessage().startsWith("isx-vm could not be started"), failure.getMessage());
     }
 
-    /** {@code launchInOwnSession}, which starts vfkit, leaves the hypervisor leading its own session (#993). */
+    /** {@code launchInOwnSession}, which starts the launcher, leaves the hypervisor leading its own session (#993). */
     @Test
     void theHypervisorIsStartedInASessionOfItsOwn(@TempDir Path dir) throws Exception {
         SessionProbe.assumeSession();

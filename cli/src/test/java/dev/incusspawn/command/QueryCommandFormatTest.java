@@ -467,25 +467,27 @@ class QueryCommandFormatTest {
 
     @Test
     void vmStatusOfARunningVm() {
-        var state = new VmManager.State(true, 4242, "http://127.0.0.1:7777", "/home/u/vm.log",
+        var state = new VmManager.State(true, 4242, "isx-vm", "/home/u/vm.control.sock", "/home/u/vm.log",
                 "2026.10.1", "2026.10.2", 3);
         assertEquals("""
                 {
                   "running" : true,
                   "pid" : 4242,
-                  "rest_api" : "http://127.0.0.1:7777",
+                  "rest_api" : null,
                   "log" : "/home/u/vm.log",
                   "appliance" : "2026.10.1",
                   "appliance_pending" : "2026.10.2",
                   "vsock_connections" : 3,
                   "incus_reachable" : true,
                   "incus_error" : null,
-                  "vsock_connections_high" : false
+                  "vsock_connections_high" : false,
+                  "launcher" : "isx-vm",
+                  "control_socket" : "/home/u/vm.control.sock"
                 }
                 """, json(VmCommand.Status.record(state, null)));
         assertEquals("""
                 VM running (pid=4242)
-                  REST API: http://127.0.0.1:7777
+                  Launcher: isx-vm
                   Log: /home/u/vm.log
                   Appliance: 2026.10.1  (installed: 2026.10.2 — restart to apply)
                   vsock forwarder connections: 3""", state.render());
@@ -493,14 +495,14 @@ class QueryCommandFormatTest {
 
     @Test
     void vmStatusSaysWhenTheForwarderLooksLeaky() {
-        var leaky = new VmManager.State(true, 1, null, "/l", null, null, VmManager.VSOCK_CONN_WARN_THRESHOLD + 1);
+        var leaky = new VmManager.State(true, 1, null, null, "/l", null, null, VmManager.VSOCK_CONN_WARN_THRESHOLD + 1);
         assertEquals(true, VmCommand.Status.record(leaky, null).get("vsock_connections_high"));
     }
 
     @Test
     void vmStatusOfAStoppedVm() {
-        var state = new VmManager.State(false, -1, null, null, null, null, -1);
-        assertEquals("false\t-\t-\t-\t-\t-\t-\tfalse\tno socket\t-\n",
+        var state = new VmManager.State(false, -1, null, null, null, null, null, -1);
+        assertEquals("false\t-\t-\t-\t-\t-\t-\tfalse\tno socket\t-\t-\t-\n",
                 plain(List.of(VmCommand.Status.record(state, "no socket"))));
     }
 

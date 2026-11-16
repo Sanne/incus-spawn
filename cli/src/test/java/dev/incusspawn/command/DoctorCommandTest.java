@@ -222,7 +222,7 @@ class DoctorCommandTest {
         assertOffersVmRestart(f);
         assertEquals("vsock forwarder connections: 300", f.label());
         assertTrue(f.detail().contains("(in-guest socat: 5)"), f.detail());
-        assertTrue(f.detail().endsWith("— " + VmManager.LeakLayer.VFKIT.description), f.detail());
+        assertTrue(f.detail().endsWith("— " + VmManager.LeakLayer.LAUNCHER.description), f.detail());
     }
 
     // A guest count came from the agent, so the agent lane is proven: no ping, and the fix offered
@@ -235,7 +235,7 @@ class DoctorCommandTest {
         assertTrue(f.detail().endsWith("— " + VmManager.LeakLayer.FORWARDER.description), f.detail());
     }
 
-    // The detail blames vfkit, so the fix must not blame the forwarder (#1214).
+    // The detail blames the launcher, so the fix must not blame the forwarder (#1214).
     @Test
     void hostLeakFixDoesNotBlameTheForwarder() {
         var fix = DoctorCommand.forwarderLeakFinding(300, () -> OptionalInt.of(5), AGENT_NOT_ASKED).remediation();
@@ -316,7 +316,7 @@ class DoctorCommandTest {
 
     @Test
     void unreachableIncusOffersTheVmRestartWhenTheForwarderDoesNot() {
-        // A vfkit leak, a healthy forwarder, or one that cannot be measured: the VM restart is the fix.
+        // A launcher leak, a healthy forwarder, or one that cannot be measured: the VM restart is the fix.
         for (var forwarder : List.of(
                 DoctorCommand.forwarderLeakFinding(300, () -> OptionalInt.of(5), AGENT_NOT_ASKED),
                 DoctorCommand.forwarderLeakFinding(1, GUEST_NOT_ASKED, AGENT_NOT_ASKED),

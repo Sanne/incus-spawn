@@ -8,10 +8,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The vfkit link in isx's app bundle is replaced when it dangles or names another vfkit (#2231). */
-class VfkitAppBundleTest {
+/**
+ * The launcher's link in isx's app bundle is replaced when it dangles or names another launcher
+ * (#2231), and a bundle an older isx made for vfkit is brought up to date (#2031).
+ */
+class VmAppBundleTest {
 
     @TempDir
     Path dir;
@@ -19,26 +23,47 @@ class VfkitAppBundleTest {
     @Test
     void replacesDanglingLink() throws IOException {
         var bundle = dir.resolve("incus-spawn-vm.app");
-        var link = bundle.resolve("Contents/MacOS/vfkit");
+        var link = bundle.resolve("Contents/MacOS/isx-vm");
         Files.createDirectories(link.getParent());
-        Files.writeString(bundle.resolve("Contents/Info.plist"), "<plist/>");
-        Files.createSymbolicLink(link, dir.resolve("gone/vfkit"));
+        Files.writeString(bundle.resolve("Contents/Info.plist"), VmManager.APP_BUNDLE_PLIST);
+        Files.createSymbolicLink(link, dir.resolve("gone/isx-vm"));
 
-        var vfkit = dir.resolve("new-vfkit");
-        Files.writeString(vfkit, "");
+        var launcher = dir.resolve("new-isx-vm");
+        Files.writeString(launcher, "");
 
-        assertEquals(link.toString(), VmManager.ensureVfkitAppBundle(bundle, vfkit.toString()));
+        assertEquals(link.toString(), VmManager.ensureAppBundle(bundle, launcher));
         assertTrue(Files.isSymbolicLink(link));
-        assertEquals(vfkit, Files.readSymbolicLink(link));
+        assertEquals(launcher.toRealPath(), Files.readSymbolicLink(link));
     }
 
     @Test
-    void keepsLinkToTheSameVfkit() throws IOException {
+    void keepsLinkToTheSameLauncher() throws IOException {
         var bundle = dir.resolve("incus-spawn-vm.app");
-        var vfkit = dir.resolve("vfkit");
-        Files.writeString(vfkit, "");
-        var link = Path.of(VmManager.ensureVfkitAppBundle(bundle, vfkit.toString()));
-        assertEquals(link.toString(), VmManager.ensureVfkitAppBundle(bundle, vfkit.toString()));
-        assertEquals(vfkit, Files.readSymbolicLink(link));
+        var launcher = dir.resolve("isx-vm");
+        Files.writeString(launcher, "");
+        var link = Path.of(VmManager.ensureAppBundle(bundle, launcher));
+        var plist = bundle.resolve("Contents/Info.plist");
+        var written = Files.getLastModifiedTime(plist);
+        assertEquals(link.toString(), VmManager.ensureAppBundle(bundle, launcher));
+        assertEquals(launcher.toRealPath(), Files.readSymbolicLink(link));
+        assertEquals(written, Files.getLastModifiedTime(plist));
+    }
+
+    /** The bundle names its executable, so one left naming vfkit would start nothing (#2031). */
+    @Test
+    void aBundleMadeForVfkitIsMadeForTheLauncher() throws IOException {
+        var bundle = dir.resolve("incus-spawn-vm.app");
+        var oldLink = bundle.resolve("Contents/MacOS/vfkit");
+        Files.createDirectories(oldLink.getParent());
+        Files.writeString(bundle.resolve("Contents/Info.plist"), "<string>vfkit</string>");
+        Files.createSymbolicLink(oldLink, dir.resolve("vfkit"));
+        var launcher = dir.resolve("isx-vm");
+        Files.writeString(launcher, "");
+
+        VmManager.ensureAppBundle(bundle, launcher);
+
+        assertFalse(Files.exists(oldLink, java.nio.file.LinkOption.NOFOLLOW_LINKS));
+        assertEquals(VmManager.APP_BUNDLE_PLIST, Files.readString(bundle.resolve("Contents/Info.plist")));
+        assertTrue(VmManager.APP_BUNDLE_PLIST.contains("<string>isx-vm</string>"));
     }
 }

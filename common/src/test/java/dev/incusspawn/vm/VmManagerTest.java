@@ -47,16 +47,39 @@ class VmManagerTest {
     }
 
     /**
-     * A TCP port would have to be chosen before vfkit binds it, and vfkit exits when another
-     * process took it in between; a socket in the state directory is nobody else's (#1189).
+     * The launcher's own arguments (launcher/Sources/IsxVmCore/VmSpec.swift reads them, and
+     * VmSpecTests holds this same line): the disks in the guest's order, the home shared, both
+     * vsock sockets and the control socket in the state directory (#2031).
      */
     @Test
-    void vfkitsRestApiListensOnAUnixSocketInTheStateDirectoryNotOnATcpPort() {
-        var cmd = VmManager.vfkitCommand("vfkit", 2, 2048);
+    void theLauncherIsGivenTheMachineInItsOwnArguments() {
+        var cmd = VmManager.launcherCommand("isx-vm", 2, 2048);
+        var state = Environment.vmStateDir();
 
-        assertEquals("unix://" + Environment.vmStateDir().resolve("vm.rest.sock"),
-                cmd.get(cmd.indexOf("--restful-uri") + 1));
-        assertTrue(cmd.stream().noneMatch(arg -> arg.contains("tcp://")), cmd.toString());
+        assertEquals(List.of("--disk", state.resolve("disk.img").toString(), "--disk", state.resolve("swap.img").toString(),
+                "--disk", state.resolve("data.img").toString()), cmd.subList(cmd.indexOf("--disk"), cmd.indexOf("--disk") + 6));
+        assertEquals("hostfs=" + System.getProperty("user.home"), cmd.get(cmd.indexOf("--share") + 1));
+        assertEquals("8443=" + state.resolve("vm.incus.sock"), cmd.get(cmd.indexOf("--vsock") + 1));
+        assertEquals("1025=" + state.resolve("vm.agent.sock"), cmd.get(cmd.lastIndexOf("--vsock") + 1));
+        assertEquals(state.resolve("vm.control.sock").toString(), cmd.get(cmd.indexOf("--control") + 1));
+        assertTrue(cmd.stream().noneMatch(arg -> arg.startsWith("--device") || arg.contains("initrd")), cmd.toString());
+    }
+
+    @Test
+    void theLaunchersPidIsReadFromItsState() {
+        assertEquals(java.util.Optional.of(new VmControl.State(false, 4242)), VmControl.state("running 4242\n"));
+        assertEquals(java.util.Optional.of(new VmControl.State(true, 7)), VmControl.state("stopping 7"));
+        assertTrue(VmControl.state("running").isEmpty());
+        assertTrue(VmControl.state("unknown verb").isEmpty());
+    }
+
+    @Test
+    void theRelaysCountIsReadForThePortAsked() {
+        var reply = "8443 waiting 0 held 3 total 40 refused 1\n1025 waiting 0 held 1 total 9 refused 0";
+        assertEquals(java.util.OptionalInt.of(3), VmControl.held(reply, 8443));
+        assertEquals(java.util.OptionalInt.of(1), VmControl.held(reply, 1025));
+        assertTrue(VmControl.held(reply, 8444).isEmpty());
+        assertTrue(VmControl.held("unknown verb", 8443).isEmpty());
     }
 
     @Test
@@ -336,9 +359,9 @@ class VmManagerTest {
         boolean ok = VmManager.recoverReachability(
                 secs -> false,                                      // grace fails
                 () -> { restarts.incrementAndGet(); return true; },
-                () -> java.util.Optional.of(VmManager.LeakLayer.VFKIT));
-        assertFalse(ok, "vfkit wedge cannot be fixed by a forwarder restart — must fail fast");
-        assertEquals(0, restarts.get(), "must not attempt a forwarder restart for a vfkit wedge");
+                () -> java.util.Optional.of(VmManager.LeakLayer.LAUNCHER));
+        assertFalse(ok, "launcher wedge cannot be fixed by a forwarder restart — must fail fast");
+        assertEquals(0, restarts.get(), "must not attempt a forwarder restart for a launcher wedge");
     }
 
     @Test
@@ -362,8 +385,8 @@ class VmManagerTest {
 
     @Test
     void leakLayerLocatesVfkitWhenGuestCountStaysLow() {
-        assertEquals(VmManager.LeakLayer.VFKIT, VmManager.leakLayer(300, 5));
-        assertEquals(VmManager.LeakLayer.VFKIT, VmManager.leakLayer(100, 50), "boundary: guest*2 == host");
+        assertEquals(VmManager.LeakLayer.LAUNCHER, VmManager.leakLayer(300, 5));
+        assertEquals(VmManager.LeakLayer.LAUNCHER, VmManager.leakLayer(100, 50), "boundary: guest*2 == host");
     }
 
     @Test
@@ -375,7 +398,7 @@ class VmManagerTest {
     @Test
     void leakLayerTreatsZeroGuestAsForwarderNotRunning() {
         assertEquals(VmManager.LeakLayer.FORWARDER, VmManager.leakLayer(0, 0),
-                "both zero: forwarder not running, not a vfkit wedge");
+                "both zero: forwarder not running, not a launcher wedge");
         assertEquals(VmManager.LeakLayer.FORWARDER, VmManager.leakLayer(5, 0),
                 "host fds leaked but forwarder gone: restarting it is the correct fix");
     }

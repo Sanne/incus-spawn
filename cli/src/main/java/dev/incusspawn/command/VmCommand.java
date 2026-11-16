@@ -166,13 +166,16 @@ public class VmCommand extends BaseCommand {
          * installed appliance a restart would apply, {@code null} when it is the one running;
          * {@code incus_error} says why Incus did not answer, which also makes the command exit 1;
          * {@code vsock_connections_high} is the table's warning that the in-VM forwarder may be
-         * leaking streams ({@code isx vm restart} clears them).
+         * leaking streams ({@code isx vm restart} clears them). {@code rest_api} is always
+         * {@code null} since the launcher replaced vfkit (#2031); {@code launcher} names the program
+         * running the VM ({@code isx-vm}, or {@code vfkit} for a VM an older isx started) and
+         * {@code control_socket} the launcher's control socket.
          */
         static Map<String, Object> record(VmManager.State state, String incusError) {
             var record = new LinkedHashMap<String, Object>();
             record.put("running", state.running());
             record.put("pid", state.pid() < 0 ? null : state.pid());
-            record.put("rest_api", state.restApi());
+            record.put("rest_api", null);
             record.put("log", state.log());
             record.put("appliance", state.appliance());
             record.put("appliance_pending", state.applianceInstalled());
@@ -181,6 +184,8 @@ public class VmCommand extends BaseCommand {
             record.put("incus_error", incusError);
             record.put("vsock_connections_high", state.vsockConnections() < 0 ? null
                     : state.vsockConnections() > VmManager.VSOCK_CONN_WARN_THRESHOLD);
+            record.put("launcher", state.launcher());
+            record.put("control_socket", state.controlSocket());
             return record;
         }
     }

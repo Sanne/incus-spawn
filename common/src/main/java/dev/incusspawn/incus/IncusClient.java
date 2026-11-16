@@ -567,11 +567,8 @@ public class IncusClient {
     public String checkConnectivity() {
         if (api() != null) return null;
         if (Platform.isMacOS()) {
-            var layer = dev.incusspawn.vm.VmManager.detectLeakLayer();
-            if (layer.isPresent() && layer.get() == dev.incusspawn.vm.VmManager.LeakLayer.VFKIT) {
-                return "The host-side vsock tunnel is wedged (vfkit is not forwarding "
-                        + "connections). Run 'isx vm restart' to restore connectivity.";
-            }
+            var advice = dev.incusspawn.vm.VmManager.unreachableAdvice();
+            if (advice.isPresent()) return advice.get();
         }
         return IncusApi.diagnoseConnectionFailure();
     }
