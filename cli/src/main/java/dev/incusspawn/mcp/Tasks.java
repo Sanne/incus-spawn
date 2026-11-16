@@ -311,22 +311,26 @@ final class Tasks {
         return launch(reserved, task, check, Tasks::agentRun, message);
     }
 
-    /** What {@link #reclaim} did, and the task's status after it (null when the conversation is not free). */
-    record Reclaimed(Reclaim reclaim, Status status) {}
-
     /**
      * Take a delegated task's conversation back from the person's agent that holds it
      * ({@link Reclaim}), recording {@code who} in the task's directory; with {@code expected}, only
      * if that pid is the holder. Nobody holding it is no error: there is nothing to do. Whether it
      * was refused (the holder does not exit on SIGHUP, or a run of the task is going, which is not a
-     * person's) is the caller's to raise ({@link Reclaim#requireFree}), once it recorded what was done.
+     * person's) is the caller's to raise ({@link Reclaim#requireFree}), once it recorded what was done;
+     * so is reading the status after it, which may fail where the reclaim did not.
      */
-    Reclaimed reclaim(Task task, String who, Long expected) {
+    Reclaim reclaim(Task task, String who, Long expected) {
         if (!AGENT.equals(task.kind())) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "task " + task.id() + " is a command, not a delegated agent.");
         task.agent().requireKnown();
-        var reclaim = Reclaim.parse(run(task.instance(), Reclaim.script(task.id(), task.agent(), who, expected, Reclaim.WAIT_SECONDS), null));
-        // Read again: the holder is gone, so this records finished in place of attached.
-        return new Reclaimed(reclaim, reclaim.free() ? status(task, 0) : null);
+        String out;
+        try {
+            out = run(task.instance(), Reclaim.script(task.id(), task.agent(), who, expected, Reclaim.WAIT_SECONDS), null);
+        } catch (RuntimeException e) {
+            // The exec failed part way (a ToolError, or Incus's own failure): SIGHUP may have been sent,
+            // so this is unreadable, for the caller to record.
+            return new Reclaim(Reclaim.Outcome.UNREADABLE, null);
+        }
+        return Reclaim.parse(out);
     }
 
     /** The run script of the task's current run. */
