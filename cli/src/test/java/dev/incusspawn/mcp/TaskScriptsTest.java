@@ -2183,6 +2183,72 @@ class TaskScriptsTest {
     }
 
     @Test
+    void anAgentInTheDirectoryResumingAnotherSessionDoesNotHoldTheConversation() {
+        var other = Presence.parse(List.of("claude 72 /w", "resume 72 other-session"));
+        assertNull(other.holderOf(DelegateAgent.CLAUDE, "this-session", "/w"), "a person's other conversation");
+        assertEquals(72L, other.holderOf(DelegateAgent.CLAUDE, null, "/w"), "with no session to compare, the directory decides");
+        assertEquals(72L, other.holderOf(DelegateAgent.CLAUDE, "other-session", "/elsewhere"));
+        assertEquals(72L, Presence.parse(List.of("claude 72 /w")).holderOf(DelegateAgent.CLAUDE, "this-session", "/w"),
+                "one resuming nothing there could pick this conversation up");
+    }
+
+    @Test
+    @Timeout(60)
+    void aReclaimLeavesAPersonsOtherConversationInTheDirectoryAlone() throws Exception {
+        var cwd = work.toRealPath().toString();
+        var id = "t17-other";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        claudeTranscript();
+        Files.writeString(d.resolve("cwd"), cwd + "\n");
+        // A person's claude in the task's directory, on a conversation of their own.
+        var pb = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'while read -r line; do :; done' --resume another-session")
+                .directory(work.toFile());
+        pb.environment().remove(TaskScripts.TASK_ENV);
+        var other = pb.start();
+        try {
+            var seen = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, "another-session", "/x") == null
+                    && System.nanoTime() < seen) Thread.sleep(10);
+            assertEquals("finished", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state(), "not attached");
+            assertEquals(Reclaim.Outcome.NONE, Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "me", null, 1), "")).outcome());
+            assertTrue(other.isAlive(), "never signalled");
+            // --resume with no value opens the picker, which can pick this conversation: an option after it is no session.
+            var picker = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'while read -r line; do :; done' --resume --model opus")
+                    .directory(work.toFile());
+            picker.environment().remove(TaskScripts.TASK_ENV);
+            var choosing = picker.start();
+            try {
+                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                Long held = null;
+                while ((held = Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, sessionId(), cwd)) == null
+                        && System.nanoTime() < deadline) Thread.sleep(10);
+                assertEquals(choosing.pid(), held);
+            } finally {
+                choosing.destroy();
+                assertTrue(choosing.waitFor(5, TimeUnit.SECONDS));
+            }
+            // The join guard, which runs the same guest rule, lets a person in.
+            var ready = home.resolve("join-ready");
+            stub("claude", "exec -a claude bash -c " + JOINED_AGENT + " \"$@\"");
+            var join = assertInstanceOf(TaskJoin.Outcome.Join.class, TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id));
+            var person = start(join.entry().guestCommand());
+            try {
+                var agentPid = joinedAgent(ready, person);
+                // Now the joined agent holds it, ahead of the other conversation in probe order or not.
+                assertEquals(new Reclaim(Reclaim.Outcome.RECLAIMED, agentPid),
+                        Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "me", null, 5), "")));
+                assertTrue(other.isAlive(), "the other conversation is untouched");
+            } finally {
+                stopAll(person);
+            }
+        } finally {
+            other.destroy();
+            assertTrue(other.waitFor(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     @Timeout(60)
     void anotherKindOfAgentInTheDirectoryDoesNotHoldTheConversation() throws Exception {
         var cwd = work.toRealPath().toString();

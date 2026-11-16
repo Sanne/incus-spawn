@@ -156,6 +156,7 @@ Nothing an agent can call changed: the stop is the sweep's, an instance write li
 Taking over a worker's conversation (`isx shell <instance> --task`, below) is how a person steers a design, so it must not race the coordinator's `send_message`, which runs `claude -p --resume` on the same session.
 The task status script runs the same probe and reports the coding agent of the task's own kind that resumes the task's `session_id`, or works in its recorded `cwd` (where `--continue` or the resume picker would find the conversation), excluding processes that carry a task's `ISX_MCP_TASK` marker.
 Another kind of agent in that directory cannot resume this conversation, so it does not hold it (#1995).
+Nor does one of the same kind there that resumes another session: that is a person's other conversation, and a reclaim must not end it.
 `task_status` then says `attached`, and `send_message` refuses.
 The check is made when a message is sent, so a person joining in the following seconds is not seen; the alternative was every client racing its own `pgrep` before each wake.
 
