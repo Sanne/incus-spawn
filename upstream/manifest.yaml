@@ -13,6 +13,10 @@
 #   workflows permission, so it could never push the bump.
 # - A maven-central item (central-exists) is never mechanical: Central's record of a release is not a
 #   signature, so a person merges every bump (#2210).
+# - Every git-main-paths item (main-commit), review or mechanical, follows a repository of this
+#   manifest's owner that is not a fork (#2210). Sibling repositories hold manifests of their own,
+#   which the watch plans with the engine at the commit each pins (design/upstream.md "Sibling
+#   repositories").
 # - There is no key that skips a check.
 repo: Sanne/incus-spawn
 app:

@@ -53,7 +53,7 @@ validate() {
         files="$(item_list "$i" files)"
         [[ -n "$files" ]] || die "manifest: item $i lists no files"
         while read -r f; do
-            [[ -f "$ENGINE_ROOT/$f" ]] || die "manifest: item $i: no such file $f"
+            [[ -f "$REPO_ROOT/$f" ]] || die "manifest: item $i: no such file $f"
         done <<<"$files"
         # Every item has a source: plan asks it for the pinned version and the releases, a judgement
         # item's included, so one without fails here rather than the whole watch.
@@ -72,14 +72,17 @@ validate() {
         [[ -n "$verify" ]] || die "manifest: $class item $i has no verify.type"
         [[ "$verify" == "$(src_verifier)" ]] || die "manifest: item $i: verify.type $verify is not what source type $type provides ($(src_verifier))"
         # What the bot may merge is proven by the publisher: a weaker verifier is for a review item.
+        # main-commit (#2210) proves only that the owner merged a commit, so it is enough for the bot
+        # only when the owner is this manifest's: a first-party repository's main.
         [[ "$class" != mechanical || "$verify" == signed-sums || "$verify" == signed-file || "$verify" == publisher-sums ]] \
-            || die "manifest: mechanical item $i: verify.type $verify is not signed-sums, signed-file or publisher-sums, so a person must merge it (class: review)"
+            || { [[ "$verify" == main-commit ]] && src_first_party; } \
+            || die "manifest: mechanical item $i: verify.type $verify is not signed-sums, signed-file or publisher-sums, nor main-commit (which every git-main-paths item, review or mechanical, may use only for a first-party repository), so a person must merge it (class: review)"
         if [[ "$verify" == signed-sums || "$verify" == signed-file ]]; then
-            [[ -f "$ENGINE_ROOT/$(item "$i" verify.key)" ]] || die "manifest: item $i: verify.key is not a committed file"
+            [[ -f "$REPO_ROOT/$(item "$i" verify.key)" ]] || die "manifest: item $i: verify.key is not a committed file"
             local fprs have_fprs
             fprs="$({ item "$i" verify.fingerprint; item_list "$i" verify.fingerprints; } | grep . || true)"
             [[ -n "$fprs" ]] || die "manifest: item $i: no verify.fingerprint or verify.fingerprints"
-            have_fprs="$(gpg --homedir "$UPSTREAM_CACHE" --batch --show-keys --with-colons "$ENGINE_ROOT/$(item "$i" verify.key)" 2> /dev/null \
+            have_fprs="$(gpg --homedir "$UPSTREAM_CACHE" --batch --show-keys --with-colons "$REPO_ROOT/$(item "$i" verify.key)" 2> /dev/null \
                 | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }')"
             for k in $fprs; do
                 [[ "$k" =~ ^[0-9A-F]{40}$ ]] || die "manifest: item $i: fingerprint '$k' is not 40 uppercase hex digits"
@@ -138,6 +141,18 @@ check() {
     local have want
     load_source "$1"; with_tree "${2:-}"
     have="$(src_fields)"
+    # A source that can tell its publisher no longer lists the pinned version (a commit off main,
+    # #2210) says so here: 1, a mismatch; 2, a read that failed, which plan fails the run on and
+    # prints, as for a regeneration that could not be made.
+    if declare -F src_confirms > /dev/null; then
+        local confirmed=0
+        src_confirms "$(src_current)" || confirmed=$?
+        (( confirmed < 2 )) || return 2
+        if (( confirmed != 0 )); then
+            log "$1 pins $(src_current), which its publisher no longer confirms"
+            return 1
+        fi
+    fi
     want="$(regenerate_fields "$1" "$(src_current)")" || { log "ERROR: $1: cannot derive $(src_current) from its publisher"; return 2; }
     if [[ "$have" != "$want" ]]; then
         log "$1 pins $(src_current), but the publisher gives:"
@@ -160,7 +175,7 @@ plan() {
     for i in $(items); do
         [[ -z "${UPSTREAM_ONLY:-}" || "$UPSTREAM_ONLY" == "$i" ]] || continue
         load_source "$i"
-        TREE="$ENGINE_ROOT"
+        TREE="$REPO_ROOT"
         if item_findings; then plan_findings_isolated "$out" "$i"; continue; fi
         cur="$(src_current)"
         all="$(src_releases)"
@@ -218,8 +233,10 @@ $(src_describe "$top" 2>/dev/null || true)" "$(item "$i" judgement design)"
         fi
         if declare -F src_stale_issues > /dev/null; then
             while IFS=$'\t' read -r pattern keep comment; do
-                [[ -n "$pattern" ]] && jq -n --arg p "$pattern" --arg k "$keep" --arg c "$comment" \
-                    '{pattern: $p, keep: $k, comment: $c}' > "$out/issues/$i.close"
+                # A sibling's pattern and kept title are its own issues': prefix scopes them, so
+                # they never close one of this repository's issues.
+                [[ -n "$pattern" ]] && jq -n --arg p "$pattern" --arg k "${keep:+$(issue_title "$keep")}" --arg c "$comment" \
+                    --arg x "$(issue_prefix)" '{pattern: $p, keep: $k, comment: $c, prefix: $x}' > "$out/issues/$i.close"
             done < <(src_stale_issues)
         fi
         cand="$(newest ${cands:-$cur})"
@@ -277,7 +294,8 @@ plan_findings() {
     found="$(src_findings)"
     while IFS=$'\t' read -r key title body; do
         [[ -n "$title" ]] || continue
-        if closed_issue_exists "$title"; then
+        # Asked under the title issue_file opens it as, so a sibling's answered finding stays answered.
+        if closed_issue_exists "$(issue_title "$title")"; then
             printf '%s\tnone\t-\tanswered (closed): %s\n' "$i" "$key" >> "$out/plan.tsv"
             continue
         fi
@@ -298,17 +316,31 @@ open_pr_carries() {
     [[ "$body" == *"<!-- upstream-watch: $1 $2 -->"* ]]
 }
 
+# issue_title <title>: the title an issue is opened under, which for a sibling names its repository.
+issue_title() {
+    if sibling; then printf '[upstream] %s/%s' "$(manifest_repo | cut -d/ -f2)" "${1#\[upstream\] }"; else printf '%s' "$1"; fi
+}
+
+# issue_prefix: what issue_title puts after "[upstream] " ("" for this repository's own items).
+issue_prefix() { ! sibling || printf '%s/' "$(manifest_repo | cut -d/ -f2)"; }
+
 # issue_file <out> <item> <key> <title> <body> <go: design|build>
+# A sibling's issue (#2210) is opened in the engine's repository, the only one the run's token reaches,
+# so its title names the repository after "[upstream] " and its body says where the pin is.
 issue_file() {
-    local f="$1/issues/$2-$3.json"
-    jq -n --arg t "$4" --arg b "$5" --arg l "go:$6" '{title: $t, body: $b, labels: [$l]}' > "$f"
+    local f="$1/issues/$2-$3.json" t b="$5"
+    t="$(issue_title "$4")"
+    ! sibling || b="In \`$(manifest_repo)\`: $b"
+    jq -n --arg t "$t" --arg b "$b" --arg l "go:$6" '{title: $t, body: $b, labels: [$l]}' > "$f"
 }
 
 # prepare_commit <out> <item> <current> <version>: a worktree of the engine's HEAD at <out>/<item>
 # with the bump applied and committed as the app, and <out>/<item>.json describing the PR.
 prepare_commit() {
-    local out="$1" i="$2" cur="$3" version="$4" wt="$1/$2" title body marker merges f
-    git -C "$ENGINE_ROOT" worktree add -q --detach "$wt" HEAD
+    local out="$1" i="$2" cur="$3" version="$4" wt="$1/$2" title body marker merges f watch="#2036"
+    # A sibling's PR is in another repository, where #2036 would name one of its own.
+    ! sibling || watch="Sanne/incus-spawn#2036"
+    git -C "$REPO_ROOT" worktree add -q --detach "$wt" HEAD
     TREE="$wt" src_apply "$version"
     title="$(pr_title "$i" "$version")"
     marker="<!-- upstream-watch: $i $version -->"
@@ -316,7 +348,7 @@ prepare_commit() {
     [[ "$(item_class "$i")" != review ]] || merges="the item is \`class: review\`, so the bot never approves or merges it: Sanne merges it, or closes it to decline this version"
     body="$(TREE="$wt" src_describe "$version")
 
-Written by \`upstream/engine\` on \`main\` (#2036) for item \`$i\` of \`upstream/manifest.yaml\`: every value above comes from the publisher, nothing from a build log or a PR. The \`upstream-verify\` check regenerates this change from the same publisher data and fails unless this PR is exactly that; $merges.
+Written by \`upstream/engine\` $(sibling && echo "at the incus-spawn commit this repository pins" || echo "on \`main\`") ($watch) for item \`$i\` of \`upstream/manifest.yaml\`: every value above comes from the publisher, nothing from a build log or a PR. The \`upstream-verify\` check regenerates this change from the same publisher data and fails unless this PR is exactly that; $merges.
 
 $marker"
     (
@@ -324,7 +356,7 @@ $marker"
         git config user.name "$APP_LOGIN"
         git config user.email "$APP_EMAIL"
         for f in $(item_list "$i" files); do git add -- "$f"; done
-        git commit -q -m "$title" -m "By the upstream watch (#2036), from $cur, with every value from the publisher."
+        git commit -q -m "$title" -m "By the upstream watch ($watch), from $cur, with every value from the publisher."
     )
     # The commit travels to the publish job as a bundle: a ref of its own, fetched there by name.
     git -C "$wt" update-ref "refs/upstream-prepared/$i" HEAD
@@ -332,14 +364,15 @@ $marker"
     jq -n --arg i "$i" --arg v "$version" --arg c "$cur" --arg t "$title" --arg b "$body" --arg m "$marker" \
         --arg sha "$(git -C "$wt" rev-parse HEAD)" --arg files "$(item_list "$i" files | tr '\n' ' ')" \
         '{item: $i, version: $v, current: $c, title: $t, body: $b, marker: $m, commit: $sha, files: $files}' > "$out/$i.json"
-    git -C "$ENGINE_ROOT" worktree remove --force "$wt"
+    git -C "$REPO_ROOT" worktree remove --force "$wt"
 }
 
 pr_title() {
     case "$1" in
         kernel) echo "Update the kernel to $2" ;;
         base-image) echo "Update base image to $2" ;;
-        *) echo "Update $1 to $2" ;;
+        # A commit (git-main-paths) is named by its first 8 digits; the body and marker carry all 40.
+        *) if [[ "$2" =~ ^[0-9a-f]{40}$ ]]; then echo "Update $1 to ${2:0:8}"; else echo "Update $1 to $2"; fi ;;
     esac
 }
 
@@ -365,7 +398,7 @@ ensure_issue() {
 }
 
 issues() {
-    local out="$1" f pattern keep comment n title
+    local out="$1" f pattern keep comment prefix n title
     for f in "$out"/issues/*.json; do
         [[ -f "$f" ]] || continue
         ensure_issue "$(jq -r .title "$f")" "$(jq -r .body "$f")" $(jq -r '.labels[]' "$f")
@@ -374,8 +407,14 @@ issues() {
     for f in "$out"/issues/*.close; do
         [[ -f "$f" ]] || continue
         pattern="$(jq -r .pattern "$f")"; keep="$(jq -r .keep "$f")"; comment="$(jq -r .comment "$f")"
+        prefix="$(jq -r '.prefix // ""' "$f")"
+        # With a prefix, only that repository's issues, matched as the title the source wrote.
         gh issue list --state open --limit 200 --json number,title \
-            | jq -r --arg p "$pattern" --arg k "$keep" '.[] | select((.title | test($p)) and .title != $k) | "\(.number)\t\(.title)"' \
+            | jq -r --arg p "$pattern" --arg k "$keep" --arg x "$prefix" '.[]
+                | (if $x == "" then .title
+                   elif (.title | startswith("[upstream] " + $x)) then "[upstream] " + (.title | ltrimstr("[upstream] " + $x))
+                   else null end) as $t
+                | select($t != null and ($t | test($p)) and .title != $k) | "\(.number)\t\(.title)"' \
             | while IFS=$'\t' read -r n title; do
                 [[ -n "$n" ]] && gh issue close "$n" --comment "$comment" && echo "closed #$n: $title"
             done
@@ -406,6 +445,11 @@ A signature that does not verify, a sum the publisher does not confirm, a link o
 publish() {
     local out="$1" i action version reason
     [[ -n "${REPO:-}" && -n "${APP_EMAIL:-}" ]] || die "publish needs REPO and APP_EMAIL"
+    # The token was minted for REPO: a manifest of another repository must not be published with it.
+    [[ "$REPO" == "$(manifest_repo)" ]] || die "publish: REPO $REPO is not the manifest's repository $(manifest_repo)"
+    out="$(cd "$out" && pwd)"
+    # pr.sh pushes from the checkout it runs in, whose origin is REPO: the watched repository's.
+    cd "$REPO_ROOT"
     . "$ENGINE_DIR/pr.sh"
     while IFS=$'\t' read -r i action version reason; do
         # pr.sh compares versions by the item's own order (src_order)
@@ -433,16 +477,16 @@ verify_pr() {
     author="$(jq -r '.user.login' <<<"$json")"
     same="$(jq -r 'if .head.repo.full_name == .base.repo.full_name then "yes" else "no" end' <<<"$json")"
     [[ "$head" =~ ^[0-9a-f]{40}$ && "$base" =~ ^[A-Za-z0-9._/-]+$ ]] || die "cannot read PR #$pr"
-    git -C "$ENGINE_ROOT" fetch -q origin "+refs/pull/$pr/head:refs/remotes/pr/$pr" "+refs/heads/$base:refs/remotes/origin/$base"
-    [[ "$(git -C "$ENGINE_ROOT" rev-parse "refs/remotes/pr/$pr")" == "$head" ]] || die "PR #$pr moved while it was read; the next run checks it"
-    verify_trees "$(git -C "$ENGINE_ROOT" merge-base "refs/remotes/origin/$base" "$head")" "$head" "$author" "$same"
+    git -C "$REPO_ROOT" fetch -q origin "+refs/pull/$pr/head:refs/remotes/pr/$pr" "+refs/heads/$base:refs/remotes/origin/$base"
+    [[ "$(git -C "$REPO_ROOT" rev-parse "refs/remotes/pr/$pr")" == "$head" ]] || die "PR #$pr moved while it was read; the next run checks it"
+    verify_trees "$(git -C "$REPO_ROOT" merge-base "refs/remotes/origin/$base" "$head")" "$head" "$author" "$same"
 }
 
 # verify_trees <base rev> <head rev> <author login> <same-repo yes|no>
 verify_trees() {
     local rc=0
     VERIFY_WT_HEAD=""; VERIFY_WT_BASE=""
-    git -C "$ENGINE_ROOT" worktree prune
+    git -C "$REPO_ROOT" worktree prune
     # In a subshell with errexit on: a function on the left of || runs with it off, and a die inside
     # $(...) would then leave an empty sum and carry on to a diff that passes. The worktree paths
     # come back through files, since the subshell's variables do not.
@@ -452,8 +496,8 @@ verify_trees() {
     set -e
     VERIFY_WT_HEAD="$(sed -n 's/^head=//p' "$state")"; VERIFY_WT_BASE="$(sed -n 's/^base=//p' "$state")"
     rm -f "$state"
-    [[ -z "$VERIFY_WT_HEAD" ]] || git -C "$ENGINE_ROOT" worktree remove --force "$VERIFY_WT_HEAD" 2>/dev/null || true
-    [[ -z "$VERIFY_WT_BASE" ]] || git -C "$ENGINE_ROOT" worktree remove --force "$VERIFY_WT_BASE" 2>/dev/null || true
+    [[ -z "$VERIFY_WT_HEAD" ]] || git -C "$REPO_ROOT" worktree remove --force "$VERIFY_WT_HEAD" 2>/dev/null || true
+    [[ -z "$VERIFY_WT_BASE" ]] || git -C "$REPO_ROOT" worktree remove --force "$VERIFY_WT_BASE" 2>/dev/null || true
     return "$rc"
 }
 
@@ -464,7 +508,7 @@ _narrow() {
     shift 2
     wt_base="$(mktemp -d)"; rmdir "$wt_base"
     echo "base=$wt_base" >> "$VERIFY_STATE"
-    git -C "$ENGINE_ROOT" worktree add -q --detach "$wt_base" "$base"
+    git -C "$REPO_ROOT" worktree add -q --detach "$wt_base" "$base"
     for i in "$@"; do
         load_source "$i"
         if f_head="$(TREE="$wt_head" src_fields 2> /dev/null)" && f_base="$(TREE="$wt_base" src_fields 2> /dev/null)" \
@@ -473,13 +517,13 @@ _narrow() {
         fi
         echo "$i"
     done
-    git -C "$ENGINE_ROOT" worktree remove --force "$wt_base"
+    git -C "$REPO_ROOT" worktree remove --force "$wt_base"
     sed -i '/^base=/d' "$VERIFY_STATE"
 }
 
 _verify_trees() {
     local narrowed base="$1" head="$2" author="$3" same="$4" changed touched=() i f wt_head wt_base v_head v_base tree rc=0
-    changed="$(git -C "$ENGINE_ROOT" diff --name-only "$base" "$head")"
+    changed="$(git -C "$REPO_ROOT" diff --name-only "$base" "$head")"
     for i in $(items); do
         for f in $(item_list "$i" files); do
             grep -qxF -- "$f" <<<"$changed" || continue
@@ -499,7 +543,7 @@ _verify_trees() {
         return 0
     fi
     wt_head="$(mktemp -d)"; rmdir "$wt_head"
-    git -C "$ENGINE_ROOT" worktree add -q --detach "$wt_head" "$head"
+    git -C "$REPO_ROOT" worktree add -q --detach "$wt_head" "$head"
     echo "head=$wt_head" >> "$VERIFY_STATE"
     if [[ "$author" == "$(app_login)" && "$same" == yes ]]; then
         # The app's PR: the whole tree must be what main's engine writes for that version.
@@ -530,7 +574,7 @@ _verify_trees() {
         ! declined_version "$i" "$v_head" || die "$i: $v_head was declined (a closed, unmerged upstream/$i PR carried it)"
         wt_base="$(mktemp -d)"; rmdir "$wt_base"
         echo "base=$wt_base" >> "$VERIFY_STATE"
-        git -C "$ENGINE_ROOT" worktree add -q --detach "$wt_base" "$base"
+        git -C "$REPO_ROOT" worktree add -q --detach "$wt_base" "$base"
         TREE="$wt_base" src_apply "$v_head"
         # Every regenerated sum has a sum's shape, whatever path wrote it. Read into a variable
         # first: errexit does not see a process substitution fail, and an empty loop would pass.
@@ -542,12 +586,12 @@ _verify_trees() {
             [[ "${k,,}" != *sha512* ]] || is_sha512 "$v" || die "$i: regenerated $k is not a sha512: '$v'"
         done <<<"$fields"
         tree="$(cd "$wt_base" && git add -A && git write-tree)"
-        if ! git -C "$ENGINE_ROOT" diff --quiet "$tree" "$head"; then
+        if ! git -C "$REPO_ROOT" diff --quiet "$tree" "$head"; then
             log "upstream-verify: PR tree is not main's engine's regeneration of $i at $v_head:"
-            git -C "$ENGINE_ROOT" diff --stat "$tree" "$head" >&2
+            git -C "$REPO_ROOT" diff --stat "$tree" "$head" >&2
             return 1
         fi
-        echo "upstream-verify: $i $v_head is exactly the engine's regeneration from $(git -C "$ENGINE_ROOT" rev-parse --short "$base")"
+        echo "upstream-verify: $i $v_head is exactly the engine's regeneration from $(git -C "$REPO_ROOT" rev-parse --short "$base")"
         return 0
     fi
     # Anyone else's bump: each touched item's fields must be the publisher's for the version pinned.
@@ -566,10 +610,10 @@ _verify_trees() {
 git_show_current() {
     local wt v rc=0
     wt="$(mktemp -d)"; rmdir "$wt"
-    git -C "$ENGINE_ROOT" worktree add -q --detach "$wt" "$1"
+    git -C "$REPO_ROOT" worktree add -q --detach "$wt" "$1"
     set +e; v="$(set -e; TREE="$wt" src_current)"; rc=$?; set -e
     # Removed whether or not the pin could be read, so a revision without one leaves no worktree.
-    git -C "$ENGINE_ROOT" worktree remove --force "$wt"
+    git -C "$REPO_ROOT" worktree remove --force "$wt"
     (( rc == 0 )) || exit "$rc"
     printf '%s' "$v"
 }

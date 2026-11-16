@@ -56,7 +56,7 @@ setup() {
     cp -r "$SRC/upstream/engine" "$dir/src/upstream/engine"
     # publish loads each item's source type, for the order its versions compare in (SOURCE: the
     # item's source type, default kernel-org; github-release orders base-image tags, #1994)
-    printf 'items:\n  kernel:\n    source:\n      type: %s\n' "${SOURCE:-kernel-org}" > "$dir/src/upstream/manifest.yaml"
+    printf 'repo: Sanne/incus-spawn\nitems:\n  kernel:\n    source:\n      type: %s\n' "${SOURCE:-kernel-org}" > "$dir/src/upstream/manifest.yaml"
     mkdir -p "$dir/src/.github/scripts"; cp "$SRC/.github/scripts/base-image-sums.sh" "$dir/src/.github/scripts/"
     echo "$2" > "$dir/src/pin.txt"
     cd "$dir/src"

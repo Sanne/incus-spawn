@@ -30,7 +30,7 @@ _pin() { local v; v="$(_src ".pins[$1][\"$2\"]")"; printf '%s' "${v:-${3:-}}"; }
 _series_parts() { local v; v="$(_src '["series-parts"]')"; printf '%s' "${v:-2}"; }
 _numeric() { [[ "$1" =~ ^[0-9]+(\.[0-9]+)*$ ]]; }
 _fprs() { { item "$ITEM" verify.fingerprint; item_list "$ITEM" verify.fingerprints; } | grep . || true; }
-_key() { printf '%s/%s' "$ENGINE_ROOT" "$(item "$ITEM" verify.key)"; }
+_key() { printf '%s/%s' "$REPO_ROOT" "$(item "$ITEM" verify.key)"; }
 _sole_label() { local l; l="$(_labels)"; [[ "$(wc -l <<<"$l")" == 1 ]] && printf '%s' "$l" || true; }
 _expand() { _numeric "$2" || die "not a release version: '$2'"; printf '%s' "${1//\{version\}/$2}"; }
 _https() { [[ "$1" =~ ^https://[A-Za-z0-9.-]+/[A-Za-z0-9._/{}~-]*$ && "${1//\{version\}/}" != *[\{\}]* ]]; }
