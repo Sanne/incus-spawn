@@ -103,7 +103,8 @@ final class Presence {
               fi
               while [ "$i" -lt ${#argv[@]} ]; do
                 case "${argv[$i]}" in
-                  --resume|-r) i=$((i + 1)); [ -n "${argv[$i]}" ] && echo "resume $pid ${argv[$i]}";;
+                  # --resume takes an optional value: an option after it is not a session.
+                  --resume|-r) case "${argv[$((i + 1))]}" in ''|-*) ;; *) i=$((i + 1)); echo "resume $pid ${argv[$i]}";; esac;;
                   --resume=*) echo "resume $pid ${argv[$i]#--resume=}";;
                 esac
                 i=$((i + 1))
@@ -146,11 +147,17 @@ final class Presence {
      */
     static String holderScriptWords(DelegateAgent agent, String sessionWord, String cwdWord) {
         // POSIX, as the login shell running it need not be bash; the probe brings its own.
-        return "h=$(" + script("") + " | { h=; a=' '; while read -r k p rest; do "
-                // The first match, as holderOf returns the first agent that matches.
-                + "case $k in " + agent.id + ") a=\"$a$p \"; [ -z \"$h\" ] && [ -n " + cwdWord + " ] && [ \"$rest\" = " + cwdWord + " ] && h=$p;; "
-                + "resume) case $a in *\" $p \"*) [ -z \"$h\" ] && [ -n " + sessionWord + " ] && [ \"$rest\" = " + sessionWord + " ] && h=$p;; esac;; esac; "
-                + "done; echo \"$h\"; }); ";
+        // a: this kind's agents in order; d: those in the directory; r: those resuming any session;
+        // s: those resuming this one. Decided at the end, as an agent's resume lines follow it.
+        return "h=$(" + script("") + " | { h=; a=; d=; r=; s=; while read -r k p rest; do "
+                + "case $k in " + agent.id + ") a=\"$a $p\"; [ -n " + cwdWord + " ] && [ \"$rest\" = " + cwdWord + " ] && d=\"$d $p \";; "
+                + "resume) case \"$a \" in *\" $p \"*) r=\"$r $p \"; [ -n " + sessionWord + " ] && [ \"$rest\" = " + sessionWord
+                + " ] && s=\"$s $p \";; esac;; esac; done; "
+                // The first agent that matches, as holderOf: by this session, or by the directory unless it resumes another one.
+                + "for p in $a; do case \"$s\" in *\" $p \"*) h=$p; break;; esac; "
+                + "case \"$d\" in *\" $p \"*) case \"$r\" in *\" $p \"*) [ -n " + sessionWord + " ] || { h=$p; break; };; "
+                + "*) h=$p; break;; esac;; esac; done; "
+                + "echo \"$h\"; }); ";
     }
 
     static Presence parse(List<String> lines) {
@@ -207,13 +214,15 @@ final class Presence {
      * The pid of a coding agent of the task's own kind that a person runs on this conversation --
      * resuming {@code sessionId}, or working in {@code cwd}, where {@code claude --continue} or the
      * resume picker would pick it up -- or null if there is none. Another kind of agent in the
-     * directory cannot resume this conversation, so it does not hold it.
+     * directory cannot resume this conversation, so it does not hold it; nor does one there that
+     * resumes another session than {@code sessionId}, which is a person's other conversation.
      */
     Long holderOf(DelegateAgent agent, String sessionId, String cwd) {
+        var known = sessionId != null && !sessionId.isEmpty();
         for (var c : agents) {
             if (agent != c.agent()) continue;
-            if (sessionId != null && !sessionId.isEmpty() && c.resumes().contains(sessionId)) return c.pid();
-            if (cwd != null && !cwd.isEmpty() && cwd.equals(c.cwd())) return c.pid();
+            if (known && c.resumes().contains(sessionId)) return c.pid();
+            if (cwd != null && !cwd.isEmpty() && cwd.equals(c.cwd()) && (!known || c.resumes().isEmpty())) return c.pid();
         }
         return null;
     }
