@@ -346,6 +346,7 @@ One kept only for a delegate that shows no activity is stopped instead, and dest
 A person sees the same: `isx list` (`mcp_state`, `mcp_purpose`) and the TUI's instance details say which instances a session made, what for, and whether they are held, orphaned or kept (`McpStanding`, from the listing alone, #1053).
 `exec` has no default time limit (cancel kills the process tree).
 Background commands and `delegate` (Claude Code, Codex, Pi or opencode inside the instance) run as systemd units in the guest.
+A task a person's agent holds stays `attached` until that agent exits or `reclaim_task` (`isx shell --task --take` for a person) ends it with SIGHUP, never because time passed (#1995).
 A client that lists `isx/task_changed` under `capabilities.experimental` is notified of every task state change (`TaskWatcher`, #1014), and only then are tasks polled.
 `instance_activity` reads what the proxy counted of an instance's model calls and, by domain, of all its traffic (its host-only, read-only `/activity`, #935; `isx proxy activity` for a person), so a coordinator tells working from stuck without touching the instance.
 Every tool declares an `outputSchema` and returns matching `structuredContent` for programs, while the text stays for the model; a refusal carries no `structuredContent`, only a code in `_meta["dev.incusspawn/error"]` (#1010).

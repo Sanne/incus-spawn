@@ -124,6 +124,7 @@ An agent gets these tools, and no others.
 | `send_message` | Continue a delegated agent's conversation, for example "push and open a PR". |
 | `get_diff` | What a delegated task changed, committed or not: a patch, or only the files and line counts. |
 | `instance_activity` | What the proxy saw of an instance's model calls and of all its traffic. It shows whether an agent is working or stuck, without running anything in the instance. |
+| `reclaim_task` | Take a task's conversation back from a person's agent that holds it, ending that agent. |
 | `cancel_task` / `destroy_instance` | Stop a task, or delete an instance. |
 | `keep_instance` | Give an instance to you permanently. |
 
@@ -213,6 +214,14 @@ It also refuses a Pi task whose saved session is gone, since Pi would open an em
 
 While you are in the conversation, `task_status` says `attached` and `send_message` is refused.
 Resuming by hand (`claude --resume`, `codex resume`, `pi --session-id` or `opencode --session` in a plain `isx shell`) gives up that protection: a turn that `send_message` starts at the same moment runs in the same conversation as you.
+
+The task stays `attached` for as long as your agent runs, whether you type or not.
+`task_status` adds `attached_tty` and `attached_last_input_at`, so the coordinating agent can see whether anyone typed lately.
+`reclaim_task` ends your agent with SIGHUP and records who did it in the task's directory, under `~/.isx-mcp/tasks`.
+For a person, `isx shell <instance> --task <id> --take` does the same after asking.
+
+isx cannot tell when the ssh client in front of `isx shell` has died, so your agent would keep the conversation.
+Set `ClientAliveInterval` in the sshd of the host you run isx on, and sshd then closes such a session.
 
 ### Keeping the agent to the MCP tools
 

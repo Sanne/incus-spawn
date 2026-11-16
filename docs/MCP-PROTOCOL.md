@@ -23,13 +23,16 @@ A task's `state` is the same word in every tool.
 |-------|---------|
 | `running` | The task is in progress. |
 | `finished` | It ended; `exit_code` says how. |
-| `attached` | It finished, and a person is in its conversation with `isx shell --task`. |
+| `attached` | It finished, and a person's agent holds its conversation, whether anyone types or not. |
 | `lost` | The instance no longer has a record of the task. |
 | `unknown` | Nothing has read how the task ended yet, as after `cancel_task`. |
 
 `list_instances` gives the state as the session last saw it, so `unknown` appears there.
 `task_status` reads it from the instance.
 `task_status.join_command` holds the exact `isx shell --task` command for a person to join the conversation.
+
+With `attached`, `attached_tty` says whether that agent has a terminal, and `attached_last_input_at` when that terminal last had input.
+Neither changes the state: a task leaves `attached` only when that agent exits, or when `reclaim_task` ends it.
 
 ## Delegate descriptors
 
