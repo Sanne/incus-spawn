@@ -336,6 +336,11 @@ api_up() {
     return 1
 }
 require 'api_up' "Incus API reachable over the vsock tunnel"
+# The guest agent (#2282): the host sets the clock through it after a wake. A guest-set-time to now
+# must answer {"return": {}}, so neither the agent's address nor hwclock's /dev/rtc0 can be missing.
+ga() { printf '%s\n' "$1" | as_user timeout 10 socat -t5 - VSOCK-CONNECT:"$CID":1024; }
+check 'ga "{\"execute\":\"guest-ping\"}" | grep -q "\"return\""' "the guest agent answers on vsock port 1024"
+check '[ "$(ga "{\"execute\":\"guest-set-time\",\"arguments\":{\"time\":$(date +%s)000000000}}" | tr -d " \n")" = "{\"return\":{}}" ]' "guest-set-time sets the clock and answers {\"return\": {}}"
 
 echo
 echo "-- isx and isx-proxy in their macOS roles --"
