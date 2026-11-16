@@ -96,7 +96,7 @@ public class CodexSetup implements ToolSetup {
         // Neither parameter declares a default: see configureSettings().
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("OpenAI model ID (e.g. " + ModelIds.get("example-codex") + ", " + ModelIds.get("example-codex-spark") + ")");
+        model.setDescription("OpenAI model ID (e.g. " + ModelIds.get("example-codex") + ", " + ModelIds.get("example-codex-fast") + ")");
         model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
         model.setOptional(true);
         model.setReconfigurable(true);
