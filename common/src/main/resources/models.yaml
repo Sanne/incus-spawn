@@ -24,7 +24,7 @@ example-claude-haiku: claude-haiku-5-5
 example-openai: gpt-6-luna
 example-gemini-flash: gemini-3.8-flash
 example-codex: gpt-6-sol
-example-codex-spark: gpt-5.3-codex-spark
+example-codex-fast: gpt-6-luna
 example-copilot-claude: claude-opus-5.5
 example-copilot-gpt: gpt-5.6-sol
 example-gemini: gemini-4-argon
