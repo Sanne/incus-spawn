@@ -2116,6 +2116,74 @@ class TaskScriptsTest {
 
     @Test
     @Timeout(60)
+    void aReclaimEndsTheHolderWithSighupAndRecordsWhoTookItBack() throws Exception {
+        var id = "t15-take";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        claudeTranscript();
+        Files.writeString(d.resolve("cwd"), work.toRealPath() + "\n");
+        assertEquals(Reclaim.Outcome.NONE, Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "me", null, 1), "")).outcome());
+        assertFalse(Files.exists(d.resolve(Reclaim.RECORD)), "nothing to record");
+
+        var ready = home.resolve("join-ready");
+        stub("claude", "exec -a claude bash -c " + JOINED_AGENT + " \"$@\"");
+        var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
+        var person = start(join.entry().guestCommand());
+        try {
+            var agentPid = joinedAgent(ready, person);
+            assertEquals("attached", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state());
+            // Not the agent the person was shown: nothing is signalled.
+            var other = Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "me", agentPid + 1, 1), ""));
+            assertEquals(new Reclaim(Reclaim.Outcome.OTHER, agentPid), other);
+            assertTrue(ProcessHandle.of(agentPid).isPresent());
+            // Another kind of agent's task is not this one's to reclaim.
+            assertEquals(Reclaim.Outcome.NONE, Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CODEX, "me", null, 1), "")).outcome());
+
+            var reclaimed = Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "isx shell --take", agentPid, 5), ""));
+            assertEquals(new Reclaim(Reclaim.Outcome.RECLAIMED, agentPid), reclaimed);
+            assertTrue(person.waitFor(5, TimeUnit.SECONDS), "the person's join ended with its agent");
+            assertEquals("finished", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state());
+            var record = Files.readString(d.resolve(Reclaim.RECORD));
+            assertTrue(record.matches("\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ pid " + agentPid + " by isx shell --take\n"), record);
+        } finally {
+            stopAll(person);
+        }
+    }
+
+    @Test
+    @Timeout(60)
+    void aReclaimSendsNothingHarderThanSighupAndNeverSignalsARun() throws Exception {
+        var id = "t16-take";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        claudeTranscript();
+        Files.writeString(d.resolve("cwd"), work.toRealPath() + "\n");
+        var ready = home.resolve("join-ready");
+        // An agent that ignores SIGHUP.
+        stub("claude", "exec -a claude bash -c 'trap \"\" HUP; echo $$ > \"$HOME/join-ready\"; while read -r line; do :; done' \"$@\"");
+        var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
+        var person = start(join.entry().guestCommand());
+        try {
+            var agentPid = joinedAgent(ready, person);
+            var refused = Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "me", null, 1), ""));
+            assertEquals(new Reclaim(Reclaim.Outcome.ALIVE, agentPid), refused);
+            assertTrue(ProcessHandle.of(agentPid).isPresent(), "still there: nothing harder was sent");
+            assertEquals("attached", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state());
+            assertTrue(refused.refusal(id).contains("nothing harder"), refused.refusal(id));
+        } finally {
+            stopAll(person);
+        }
+        // A run of the task is going: that is not a person's, and is never signalled.
+        sh("systemd-run --unit=" + TaskScripts.unit(id, "2") + " -- sleep 300", "");
+        try {
+            assertEquals(Reclaim.Outcome.RUNNING, Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "me", null, 1), "")).outcome());
+        } finally {
+            sh("kill -TERM -- -" + Files.readString(home.resolve("units/" + TaskScripts.unit(id, "2"))).strip(), "");
+        }
+    }
+
+    @Test
+    @Timeout(60)
     void anotherKindOfAgentInTheDirectoryDoesNotHoldTheConversation() throws Exception {
         var cwd = work.toRealPath().toString();
         var id = "t11-kind";

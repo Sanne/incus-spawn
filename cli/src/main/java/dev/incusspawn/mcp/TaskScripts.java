@@ -143,6 +143,18 @@ final class TaskScripts {
                 + "\" || { rm -f \"$w\"; false; }; }; }";
     }
 
+    /**
+     * Sets {@code u} to the task's units that are going, every run's whatever current says, from
+     * one systemctl; false when systemd cannot be asked. For a check before acting on the conversation.
+     */
+    static String activeUnits(String taskId) {
+        return "u=$(sudo -n systemctl list-units --plain --no-legend --state=active,activating,deactivating,reloading '"
+                + unit(taskId, "*") + "' 2>/dev/null)";
+    }
+
+    /** Sets {@code c} to the task's recorded directory ({@code $D/cwd}), empty when there is none. */
+    static final String READ_CWD = "c=$(" + ifFile("$D/cwd", "head -c 4096") + " | head -n 1); ";
+
     /** The unit of one run; {@code run} may be a shell expression such as {@code $n}. */
     static String unit(String taskId, String run) {
         ExecScript.requireId(taskId);
@@ -511,8 +523,7 @@ final class TaskScripts {
         return "D=" + dir(taskId) + "; isx_refuse() { echo \"isx: $1, so not joining " + taskId + ".\" >&2; " + mark
                 + "if [ -t 0 ] && [ -t 2 ]; then printf 'Press Enter to go back. ' >&2; read -r _; fi; exit 1; }; "
                 // Every unit of the task, whatever current says: one systemctl, and no answer refuses too.
-                + "u=$(sudo -n systemctl list-units --plain --no-legend --state=active,activating,deactivating,reloading '"
-                + unit(taskId, "*") + "' 2>/dev/null) || isx_refuse 'systemd cannot say whether a run is going'; "
+                + activeUnits(taskId) + " || isx_refuse 'systemd cannot say whether a run is going'; "
                 + "[ -z \"$u\" ] || isx_refuse 'a run of it is going'; "
                 + Presence.holderScript(agent, sessionId, cwd)
                 + "[ -z \"$h\" ] || isx_refuse \"a person is already in its conversation (agent pid $h)\"; "
@@ -536,7 +547,7 @@ final class TaskScripts {
      * value is not followed, and refuses. POSIX, as the rest of the guard.
      */
     static String piSessionCheck(String sessionId) {
-        return "c=$(" + ifFile("$D/cwd", "head -c 4096") + " | head -n 1); "
+        return READ_CWD
                 + "[ -n \"$c\" ] || isx_refuse 'its working directory was never recorded'; "
                 + "ts=$(" + ifFile("$D/session_started", "head -c 64") + "); "
                 + "case $ts in ''|*[!0-9A-Za-z:.-]*) isx_refuse 'its Pi session was never recorded';; esac; "

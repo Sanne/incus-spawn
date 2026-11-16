@@ -137,10 +137,19 @@ final class Presence {
      * conversation, empty for none, from one run of the probe. Same rule, so change both together.
      */
     static String holderScript(DelegateAgent agent, String sessionId, String cwd) {
+        return holderScriptWords(agent, ExecScript.quote(sessionId), ExecScript.quote(cwd));
+    }
+
+    /**
+     * {@link #holderScript} for a session and directory the guest reads itself: each a shell word,
+     * such as {@code "$sid"}. An empty one matches nothing.
+     */
+    static String holderScriptWords(DelegateAgent agent, String sessionWord, String cwdWord) {
         // POSIX, as the login shell running it need not be bash; the probe brings its own.
         return "h=$(" + script("") + " | { h=; a=' '; while read -r k p rest; do "
-                + "case $k in " + agent.id + ") a=\"$a$p \"; [ \"$rest\" = " + ExecScript.quote(cwd) + " ] && h=$p;; "
-                + "resume) case $a in *\" $p \"*) [ \"$rest\" = " + ExecScript.quote(sessionId) + " ] && h=$p;; esac;; esac; "
+                // The first match, as holderOf returns the first agent that matches.
+                + "case $k in " + agent.id + ") a=\"$a$p \"; [ -z \"$h\" ] && [ -n " + cwdWord + " ] && [ \"$rest\" = " + cwdWord + " ] && h=$p;; "
+                + "resume) case $a in *\" $p \"*) [ -z \"$h\" ] && [ -n " + sessionWord + " ] && [ \"$rest\" = " + sessionWord + " ] && h=$p;; esac;; esac; "
                 + "done; echo \"$h\"; }); ";
     }
 

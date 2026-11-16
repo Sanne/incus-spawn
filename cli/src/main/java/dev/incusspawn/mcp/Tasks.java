@@ -305,10 +305,28 @@ final class Tasks {
         if (attached != null) {
             throw new ToolError(ToolError.Code.WRONG_STATE, "a person is in task " + task.id() + "'s conversation (agent, pid " + attached
                     + ", in " + task.instance() + "). Messages would race with theirs: wait until task_status "
-                    + "no longer says attached, or ask the user.");
+                    + "no longer says attached, ask the user, or reclaim_task it.");
         }
         var reserved = reserve(task.id(), override, null, true);
         return launch(reserved, task, check, Tasks::agentRun, message);
+    }
+
+    /** What {@link #reclaim} did, and the task's status after it (null when the conversation is not free). */
+    record Reclaimed(Reclaim reclaim, Status status) {}
+
+    /**
+     * Take a delegated task's conversation back from the person's agent that holds it
+     * ({@link Reclaim}), recording {@code who} in the task's directory; with {@code expected}, only
+     * if that pid is the holder. Nobody holding it is no error: there is nothing to do. Whether it
+     * was refused (the holder does not exit on SIGHUP, or a run of the task is going, which is not a
+     * person's) is the caller's to raise ({@link Reclaim#requireFree}), once it recorded what was done.
+     */
+    Reclaimed reclaim(Task task, String who, Long expected) {
+        if (!AGENT.equals(task.kind())) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "task " + task.id() + " is a command, not a delegated agent.");
+        task.agent().requireKnown();
+        var reclaim = Reclaim.parse(run(task.instance(), Reclaim.script(task.id(), task.agent(), who, expected, Reclaim.WAIT_SECONDS), null));
+        // Read again: the holder is gone, so this records finished in place of attached.
+        return new Reclaimed(reclaim, reclaim.free() ? status(task, 0) : null);
     }
 
     /** The run script of the task's current run. */

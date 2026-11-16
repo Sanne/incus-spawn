@@ -237,7 +237,7 @@ final class McpTools {
                 "Continue a finished delegated task's conversation: the agent resumes with its "
                         + "context and your new message (e.g. review feedback, or 'push and open a "
                         + "PR'). Refused while a person is in that conversation (task_status says "
-                        + "attached). Returns at once; follow with task_status.",
+                        + "attached; reclaim_task takes it back). Returns at once; follow with task_status.",
                 Schema.object()
                         .string("task_id", "Task id of a delegated agent", true)
                         .string("message", "Your message to the agent", true)
@@ -246,6 +246,19 @@ final class McpTools {
                 OutputSchemas.runStarted(),
                 McpTool.annotations(false, false, false),
                 (args, ctx) -> sendMessage(args)));
+        tools.add(new McpTool("reclaim_task",
+                "Take a delegated task's conversation back from a person's agent that holds it "
+                        + "(task_status says attached): that agent is sent SIGHUP, which ends it, and its "
+                        + "conversation stays saved. Whatever the person typed and did not send is lost, so "
+                        + "weigh attached_tty and attached_last_input_at first. Refused if the agent does "
+                        + "not exit; nothing harder is sent. Then send_message continues the conversation.",
+                Schema.object().string("task_id", "Task id of a delegated agent", true)
+                        .integer("attached_pid", "The attached_pid task_status reported: refused if another "
+                                + "agent holds the conversation now", false)
+                        .build(),
+                OutputSchemas.reclaimTask(),
+                McpTool.annotations(false, true, false),
+                (args, ctx) -> reclaimTask(args)));
         tools.add(new McpTool("cancel_task",
                 "Stop a background task and everything it started.",
                 Schema.object().string("task_id", "Task id", true).build(),
@@ -1183,7 +1196,7 @@ final class McpTools {
         if (status.exit() != null) sb.append("\nexit_code: ").append(status.exit());
         if (status.attachedPid() != null) {
             sb.append("\nattached: a person is in this conversation (agent, pid ").append(status.attachedPid())
-                    .append("); send_message is refused until they leave.");
+                    .append("); send_message is refused until they leave, or until reclaim_task ends their agent.");
             sb.append("\nattached_tty: ").append(status.attachedTty());
             if (status.attachedLastInputAt() != null) sb.append("\nattached_last_input_at: ").append(status.attachedLastInputAt());
         }
@@ -1435,6 +1448,27 @@ final class McpTools {
                 "task=" + task.id() + " turn=" + updated.runs() + describe(override));
         return ToolResult.text("Sent. Task " + task.id() + " is running turn " + updated.runs()
                 + "; follow it with task_status or wait_any.", runStarted(updated).build());
+    }
+
+    private ToolResult reclaimTask(McpTool.Args args) {
+        var task = tasks.require(args.requireString("task_id")).task();
+        var expected = args.integer("attached_pid");
+        var reclaimed = tasks.reclaim(task, "isx mcp session " + session.id, expected == null ? null : expected.longValue());
+        var reclaim = reclaimed.reclaim();
+        var pid = reclaim.pid();
+        // Recorded whatever came of it: a refused holder may have been sent SIGHUP all the same.
+        McpAuditLog.record(session.id, "reclaim_task", task.instance(), null, 0, "task=" + task.id() + " "
+                + reclaim.outcome().name().toLowerCase(java.util.Locale.ROOT) + (pid != null ? " pid=" + pid : ""));
+        reclaim.requireFree(task.id());
+        var done = reclaim.outcome() == Reclaim.Outcome.RECLAIMED;
+        var node = taskNode(task);
+        node.put("state", reclaimed.status().state());
+        node.put("reclaimed", done);
+        if (done && pid != null) node.put("reclaimed_pid", pid);
+        return ToolResult.text(done
+                ? "Reclaimed task " + task.id() + "'s conversation: its holder (agent, pid " + pid + ") exited. State: "
+                        + reclaimed.status().state() + "; continue with send_message."
+                : "Nobody held task " + task.id() + "'s conversation. State: " + reclaimed.status().state() + ".", node.build());
     }
 
     private ToolResult cancelTask(McpTool.Args args) {
