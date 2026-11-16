@@ -1254,7 +1254,7 @@ Nobody looked into vfkit's 12 s start of 2026-11-15.
 | the guest's clock less the host's, 10 s after the wake | -59 s | -59 s |
 
 `isx-vm` logged "woke after 59 s asleep, dropped 20 connections" and then "the guest's clock is not set: its agent on vsock port 1024 did not answer".
-The cause is in the appliance and holds for vfkit too: `rcS` starts `qemu-ga` on an address no guest has, so the agent exits at boot and nothing listens on that port (#2282).
+The cause was in the appliance and held for vfkit too: before #2293, `rcS` started `qemu-ga` on an address no guest has, so the agent exited at boot and nothing listened on that port (#2282).
 That was confirmed on Linux, on the x86_64 appliance under QEMU with a vsock device: the host's dial to port 1024 is reset while the tunnel's port answers, and `qemu-ga` run by hand says "Failed to bind socket: Address not available".
 The clock was read once, 10 s after the wake, so how long the guest stays behind before chrony steps it was not measured.
 
