@@ -496,7 +496,8 @@ There is no upload size limit: a body passes as long as the host has disk for it
   It is stored prefixed (`sha512:<hex>`) in the `.shasum` sidecar; a bare SHA-1 stored before #1465 still matches a version without a SHA-512, and a version with one is downloaded once more and verified on it (`storedNpmDigest`).
   As for Maven/Gradle, when upstream answers its answer wins (#787): a version document that is gone (`404`/`410`: unpublished, or taken down as malware) evicts the tarball and the client gets upstream's answer, and any other answer without a usable digest relays the tarball without serving the copy.
   Only an unreachable registry (no connection, `5xx` after its retry, `429`) serves the copy unconfirmed, and logs that it did.
-  `registry.npmjs.org` has the same 30s backoff as the Maven/Gradle domains ("Offline" below): during it a cached tarball is served unconfirmed without a lookup and no background confirmation starts, so an offline install does not wait on a refused connect per tarball.
+  `registry.npmjs.org` has the same backoff as the Maven/Gradle domains, started by a refused connect or a `429` ("Offline" below).
+  During it a cached tarball is served unconfirmed without a lookup and no background confirmation starts, so an offline or rate-limited install does not wait on, or spend, a refused request per tarball.
   The ETag alone used to vouch for a tarball, but `npm ci` with a lockfile fetches no packument, so the ETag never changed and a version removed upstream stayed served indefinitely (#1466).
   The age check bounds that: at most `fresh` with no lookup, then the background confirmation evicts it for the next request.
   The per-version shasum is looked up asynchronously through `probeClient`, the same client and verification as Maven/Gradle checksums, so a cold install's lookups run concurrently over shared HTTP/2 connections (#960).
@@ -551,7 +552,8 @@ Only an unreachable upstream serves an older one.
   The Gradle Plugin Portal and Gradle distributions send no checksum headers, so a hit fetches the `.sha1`/`.sha256` fresh (`SIDECAR`, following Gradle's redirect to `downloads.gradle.org`).
   A match serves from disk.
   A different checksum, or a 404/410, evicts the artifact, and the request goes upstream.
-  So does any answer that confirms nothing (401/403/429).
+  So does any answer that confirms nothing (401/403).
+  A `429` serves the copy unconfirmed after that one request, and starts the domain's backoff ("Offline" below).
   A stale or withdrawn copy is therefore never served, whichever client asks, including Gradle, which never requests sidecars.
 - *Pass the checksum on.*
   A confirmed Central hit carries the `X-Checksum-SHA1` upstream just sent, and a miss carries upstream's own `X-Checksum-*` headers.
@@ -581,7 +583,7 @@ Only an unreachable upstream serves an older one.
   The budget runs from the client's request, so waiting for the response head gets what the lookups before it (an npm shasum, a Maven confirmation) left, a head that never comes becomes a logged 502 the client can retry, each resume (connect, head, backoff after one that could not be made) gets what is left of it since the client's last byte, and the stall check looks again the moment a pause ends (the temp file opening, a drain, a resume's head), since a head or a resume that arrived late can leave less of the budget than one check.
   Upstream always gets a second after we let it go before it counts as stalled, and only a client that drains renews its budget, not a disk.
   When too little is left, the client gets the error, logged, rather than a silent drop.
-  A connect timed out that early does not show that the domain is unreachable, so it does not start the unreachable backoff below.
+  A connect timed out that early does not show that the domain is unreachable, so it does not start the domain's backoff below.
   A resume needs a validator for `If-Range`: a strong `ETag`, or `Last-Modified` when there is no `ETag` at all and it is at least a second older than the response's `Date` (servers ignore a weak ETag, RFC 9110 does not let a date stand in for an entity tag, and a date within the second it was sent could match two versions).
   Without one there is no resume, since a file changed meanwhile would be spliced onto the old one's bytes.
   Only a `206` with the first response's validator, no `Content-Encoding`, a `Content-Length` of what is left and a `Content-Range` from the byte the client has to the end of the same length continues; `If-Range` alone is not trusted, since GitHub's asset store answers `206` to a mismatched one (#900, #1405).
@@ -653,9 +655,19 @@ Only an unreachable upstream serves an older one.
   A broken exchange is retried once first, since a pooled keep-alive connection may simply have died while idle; a timeout is not, which would double the wait on a black-holed network.
   An answer we cannot use (an oversized sidecar, a redirect loop, a redirect to anything but http(s)) is a different thing, `SidecarAnswer.UNUSABLE`: upstream answered, so it does not confirm the artifact and the request goes upstream rather than to the cache.
   Redirects are followed over TLS, an `http` Location included, as the proxy always has.
-  Only a failure to connect starts the domain's 30s backoff (not a connect timeout the proxy cut short to fit a client's budget), so a black-holed network does not cost a connect timeout per request.
+  A failure to connect starts the domain's backoff for 30s (not a connect timeout the proxy cut short to fit a client's budget), so a black-holed network does not cost a connect timeout per request.
+  A `429` starts it too (#2301), for as long as its `Retry-After` asks in seconds, at most 60s (the bound isx's own downloads honour, `DownloadCache.retryAfter`), else for 30s.
+  Without it, a warm build against a rate-limited Maven Central sent one refused request per artifact whose confirmation had aged out, each counted against a limit already exceeded.
+  A `Retry-After` of 0 starts no backoff, since upstream asked to be asked again at once.
+  Like any other answer, it ends one already on.
   The backoff short-circuits only requests that have a cached copy to fall back on (a request without one still asks upstream, which it might answer).
-  Only a response from the domain ends it.
+  It ends on time, or on any answer from the domain that is not a `429` asking for a wait, to a request sent after it began, and a shorter one never cuts a longer one short.
+  An answer to a request sent before the backoff began does not end it, since that request was already in flight and says nothing about the domain now.
+  A later failure or `429` that meets a running backoff counts as its start, so an answer to a request sent before it does not end the backoff either.
+  Repeated `429`s each start it again at the same length, so a lasting rate limit costs one refused request per backoff.
+  It does not grow when `Retry-After` is missing: that one request is how the proxy sees the limit lifted.
+  What it gives up: during it, copies past `max-stale` are served unconfirmed without an attempt, where before they were served the same way after a refused one.
+  The Plugin Portal, which can withdraw releases (`Revalidation.mayWithdraw`), keeps the backoff too, so its copies are then served unconfirmed without an attempt, and the warning that starts the backoff names that.
   A request on a pooled connection is sent without any network I/O first, so getting the connection does not prove the upstream is reachable now, and would let one request end a backoff a real connect failure started.
   It is kept where every upstream connection is made (`requestWithAsyncDns`), for every domain `Revalidation.keepsBackoff` names (the Maven/Gradle ones in `Revalidation` and the npm registry), so no fetch path can forget to update it.
 

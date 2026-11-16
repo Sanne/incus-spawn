@@ -83,8 +83,9 @@ enum Revalidation {
     }
 
     /**
-     * Whether upstream's reachability is tracked for this domain (the unreachable backoff):
-     * those whose cached copies are confirmed with upstream, these and the npm registry.
+     * Whether this domain keeps a backoff, started by a refused connect or a 429, during which
+     * cached copies are served without asking: those whose cached copies are confirmed with
+     * upstream, these and the npm registry.
      */
     static boolean keepsBackoff(String domain) {
         return forDomain(domain) != null || ProxyConfig.NPM_DOMAINS.contains(domain);

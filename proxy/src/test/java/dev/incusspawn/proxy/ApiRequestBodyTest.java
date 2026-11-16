@@ -353,7 +353,7 @@ class ApiRequestBodyTest {
             });
         } finally {
             proxy.overrideUpstream(host, "127.0.0.1", upstreamPorts.get(host));
-            proxy.upstream.clearUnreachable();
+            proxy.upstream.clearBackoffs();
         }
     }
 
