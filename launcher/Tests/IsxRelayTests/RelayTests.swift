@@ -726,6 +726,11 @@ final class Rig: Sendable {
         // error serve() retries, it would accept on whatever socket takes this descriptor's
         // number next, which is the next test's listener. Signalled again for whoever waits.
         if served.wait(timeout: .now() + 2) == .success { served.signal() }
+        // Nor before every connection has ended: a relay thread closes its descriptors when its
+        // connection ends, and one that ends after this returns would close them during the next
+        // test, which counts its own descriptors. One waiting for room stops within a second.
+        _ = relay.dropAll()
+        _ = eventually(within: 2) { let counts = relay.counts; return counts.held == 0 && counts.waiting == 0 }
         unlink(path)
         rmdir(directory)
     }
