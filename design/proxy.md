@@ -404,7 +404,8 @@ It is not cached across processes, since a stale read could keep handing guests 
 
 This fixes an intermittent "certificate is not yet valid" failure.
 A cert's `notBefore` is stamped from the **host** clock at mint time, but it is validated against the **container** clock.
-These are independent clocks: on macOS the proxy runs on the Mac host (launchd, `KeepAlive=true`) while containers run inside an Incus VM whose clock lags after the Mac sleeps; the guest agent that a host's `guest-set-time` reaches did not listen until #2282, so whether `--timesync` sets it on resume is unmeasured (design/macos-and-vms.md P5).
+These are independent clocks: on macOS the proxy runs on the Mac host (launchd, `KeepAlive=true`) while containers run inside an Incus VM whose clock lags after the Mac sleeps.
+The guest agent that a host's `guest-set-time` reaches did not listen until #2282, so whether `--timesync` sets it on resume is unmeasured (design/macos-and-vms.md P5).
 `KeepAlive` relaunches the proxy whenever it exits (including right after wake, when the Mac clock has already jumped forward to real time).
 Re-minting at that moment produced a `notBefore` in the lagging container's future, failing validation with "certificate is not yet valid".
 No clock ever runs backward — both are monotonic — but the gap between the mint clock (host, ahead) and the validating clock (container, behind) can exceed a day.

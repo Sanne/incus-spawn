@@ -181,7 +181,7 @@ A VM's RTC is emulated and not trusted to be right: vfkit has none, and QEMU's k
    The agent then runs `hwclock -w`, which needs `/dev/rtc0`, so the kernel sets `CONFIG_RTC_INTF_DEV`; without it the clock is set and the reply is an error.
    Until #2282 the agent was started on CID 2, never bound, and exited at every boot, so no host ever reached it.
    Whether vfkit's `--timesync` sets the clock reliably after a macOS sleep is therefore not yet known.
-   `rcS` reports the agent only when it runs.
+   `rcS` reports at boot whether the agent runs, and when it does not, the agent's log for that boot.
 
 3. **chrony (NTP)**: `chronyd` polls `pool.ntp.org` and steps the clock whenever the offset exceeds 1 second (`makestep 1 -1`). After a host sleep, the guest network recovers within ~30 seconds (udhcpc DHCP), then chrony detects the drift and corrects it within a few seconds via `iburst`. This is the primary post-resume clock correction mechanism and works whether or not the host reaches the agent.
 

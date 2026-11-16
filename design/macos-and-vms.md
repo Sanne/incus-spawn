@@ -431,7 +431,8 @@ The guest does not run while its host sleeps, so its clock is behind by the time
 The launcher sends the host's time to the guest agent (`guest-set-time`), on a connection of its own for each wake, tried up to five times a second apart since the guest is waking too.
 vfkit keeps one connection for all wakes and stops setting the clock for good when that one cannot be made.
 The clock is set for one wake at a time, on a serial queue, since the guest agent serves one client at a time.
-On a Mac this does not set the clock yet, under either program: the appliance's agent exits at boot, so nothing answers on its port, and the launcher's log says so (#2282).
+The appliance's agent listens since #2282, and on a Mac it answers `guest-set-time` under vfkit.
+Whether a wake sets the clock, under either program, is unmeasured until `appliance/launcher-on-mac.sh --sleep` runs on a Mac with the fixed appliance.
 After a sleep of 62 s the guest was 59 s behind 10 s after the wake, with vfkit as with `isx-vm` (docs/dev/PERFORMANCE-NOTES.md "The launcher's machine with 192 connections held, and after a sleep, on a Mac").
 A second wake while the first is still being served sets the clock again afterwards, since the guest stood still once more.
 The launcher learns of a wake from two clocks, one that counts the time asleep and one that does not (`SleepWatch`), read every two seconds.

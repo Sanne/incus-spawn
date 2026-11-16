@@ -93,7 +93,7 @@ fi
 # since a guest has no transport at the host's address (2) and the bind would fail.
 VSOCK_PORT=$(sed -En 's/.*isx\.ga_vsock=([^ ]+).*/\1/p' /proc/cmdline)
 if [ -n "$VSOCK_PORT" ] && [ -x /usr/bin/qemu-ga ]; then
-    echo "--- boot $(date -Iseconds) ---" >> /var/log/qemu-ga.log
+    echo "--- boot $(date -Iseconds) ---" > /var/log/qemu-ga.log
     qemu-ga -m vsock-listen -p "4294967295:$VSOCK_PORT" -l /var/log/qemu-ga.log >> /var/log/qemu-ga.log 2>&1 &
     GA_PID=$!
 fi
