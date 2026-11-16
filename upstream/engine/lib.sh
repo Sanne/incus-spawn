@@ -16,11 +16,20 @@ fi
 shopt -s inherit_errexit
 
 ENGINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# The repository whose main this engine runs from (its manifest, its scripts, its keys).
-ENGINE_ROOT="$(cd "$ENGINE_DIR/../.." && pwd)"
-MANIFEST="${MANIFEST:-$ENGINE_ROOT/upstream/manifest.yaml}"
-# The tree whose pins are read and rewritten; the engine's own checkout unless told otherwise.
-TREE="${TREE:-$ENGINE_ROOT}"
+# The repository this engine's scripts come from: main of Sanne/incus-spawn, or for a sibling the
+# incus-spawn commit that sibling pins (#2210, design/upstream.md "Sibling repositories").
+ENGINE_ROOT="$(cd "$ENGINE_DIR/../.." && pwd -P)"
+# The repository whose pins are watched: its manifest, its keys, its files and the history plan and
+# verify make worktrees of. The engine's own unless UPSTREAM_REPO_ROOT names a sibling's checkout.
+# Both are physical paths, so a symlink to the engine's own checkout is never taken for a sibling.
+REPO_ROOT="$(cd "${UPSTREAM_REPO_ROOT:-$ENGINE_ROOT}" && pwd -P)"
+MANIFEST="${MANIFEST:-$REPO_ROOT/upstream/manifest.yaml}"
+# The tree whose pins are read and rewritten; the watched repository's checkout unless told otherwise.
+TREE="${TREE:-$REPO_ROOT}"
+
+# sibling: the watched repository is not the engine's own, so its issues, opened in the engine's
+# repository (the only one the run's token reaches), name it.
+sibling() { [[ "$REPO_ROOT" != "$ENGINE_ROOT" ]]; }
 
 log() { printf '%s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
@@ -93,7 +102,7 @@ load_source() {
     # The optional hooks of the type loaded before this one must not carry over: plan asks for
     # src_extra_issues by name, and the kernel's would file its EOL issue under any later item;
     # newest asks for src_order, and the base image's would order the next item's versions.
-    unset -f src_extra_issues src_stale_issues src_validate src_order src_issue_title src_findings
+    unset -f src_extra_issues src_stale_issues src_validate src_order src_issue_title src_findings src_confirms
     # shellcheck source=/dev/null
     . "$f"
     # A findings source (#2227) pins nothing: it has no version, no bump and no verifier, only the
@@ -109,10 +118,11 @@ item_findings() { declare -F src_findings > /dev/null; }
 
 # closed_issue_exists <title>: an issue of exactly that title was closed, so a person has answered it
 # and the watch does not open it again. A read that fails counts as "no": ensure_issue still keeps
-# one open issue per title.
+# one open issue per title. Asked where ensure_issue opens them, the step's own repository, which is
+# the engine's for a sibling's items too (#2210).
 closed_issue_exists() {
     local n
-    n="$(gh issue list -R "$(manifest_repo)" --state closed --limit 100 --search "in:title \"$1\"" --json title 2> /dev/null \
+    n="$(gh issue list --state closed --limit 100 --search "in:title \"$1\"" --json title 2> /dev/null \
         | jq -r --arg t "$1" '[.[] | select(.title == $t)] | length' 2> /dev/null)" || return 1
     [[ "$n" =~ ^[0-9]+$ && "$n" != 0 ]]
 }
