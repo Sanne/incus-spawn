@@ -56,11 +56,22 @@ Check: open a PR that changes `common/src/main/resources/images/minimal.yaml` wi
 - `INCUS_SPAWN_DISPATCH_TOKEN` in `Sanne/incus-spawn-images`: the watch polls that repository's releases, so the `repository_dispatch` step in its `build-fedora.yml` has nothing to call.
   A companion PR there removes the step; delete the secret once it is merged.
 
-## 5. Later phases
+## 5. Sibling repositories
 
-- `incus-spawn-images` and `incus-spawn-templates` each get a manifest and a verify job of their own, running the engine at a pinned incus-spawn commit (design/upstream.md "Why not one engine copy per repo").
-  Each needs the app installed (step 1) and `upstream-verify` required in its ruleset.
-- `incus-spawn-templates` has no pull request rule yet: it needs one with one required approval, and `Sanne-ai-bot` needs write access there, before the watch opens PRs on it.
+`incus-spawn-images` has a manifest and a verify job of its own, running the engine at the incus-spawn commit its `upstream/engine.ref` names (design/upstream.md "Sibling repositories").
+Until the steps below are done, the watch's `incus-spawn-images` legs fail and `[upstream] watch failing` stays open; incus-spawn's own bumps still go out.
+
+In this order:
+- Merge the incus-spawn PR that taught the engine siblings.
+- In the companion PR in `incus-spawn-images`, set `upstream/engine.ref` to that merge's commit on `main`, then merge it.
+  An older commit has no sibling support, and a commit off `main` fails the engine pin's own check.
+- Install the app on `incus-spawn-images` too (step 1, Only select repositories).
+- In the `main` ruleset of `incus-spawn-images`, require `upstream-verify`, and keep the app off the bypass list.
+
+Check: `gh workflow run upstream-watch.yml -f item=isx-ref -f repo=Sanne/incus-spawn-images`; the run opens `upstream/isx-ref` in `incus-spawn-images`, or finds it current.
+
+`incus-spawn-templates` follows with Gradle once it has CI (#2226).
+It has no pull request rule yet: it needs one with one required approval, and `Sanne-ai-bot` needs write access there, before the watch opens PRs on it.
 
 ## What to watch after the first runs
 
