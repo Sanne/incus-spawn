@@ -107,7 +107,8 @@ On end of input or SIGTERM a session does not destroy any instance: it stamps `m
 After a SIGKILL nobody stamps that, so the first later session to see the dead holder stamps it then.
 Either way, the grace period starts when the orphan is first known, without a per-call heartbeat write (each instance write costs Incus a backup-file rewrite).
 Each new session sweeps this user's orphans and destroys those past `orphan-grace-hours` in `mcp.yaml` (default 24: long enough to outlast a night's CI wait, short enough that forgotten instances do not pile up) -- never kept ones, never ones in a pending operation, never one being adopted, never one a person is working in, and never one whose delegated agent is still running.
-That check is one exec: a probe (`Presence`) reading `/proc` for a process on a pseudo-terminal (an `isx shell`, including a tmux or zmx session left detached) or a Claude Code that does not carry the `ISX_MCP_TASK` marker of a task's own processes, and `TaskScripts.unfinished()`, which asks systemd about every agent task whose current run has no exit file.
+That check is one exec: a probe (`Presence`) reading `/proc` for a process on a pseudo-terminal (an `isx shell`, including a tmux or zmx session left detached), and `TaskScripts.unfinished()`, which asks systemd about every agent task whose current run has no exit file.
+A coding agent with no controlling terminal is no one's: a leftover after a hangup still holds its conversation, but does not keep its instance (#1995).
 Background commands do not count: a dev server never finishes, and would keep its orphan forever.
 `Presence` deliberately ignores a task's own processes, so without the second half a delegate still working when its coordinator's grace period ran out was destroyed with its unpushed work.
 A coordinator that never comes back leaves such an instance until the task ends, and the next sweep after that reaps it.
@@ -153,9 +154,24 @@ Nothing an agent can call changed: the stop is the sweep's, an instance write li
 
 **A person in the box is a task state.**
 Taking over a worker's conversation (`isx shell <instance> --task`, below) is how a person steers a design, so it must not race the coordinator's `send_message`, which runs `claude -p --resume` on the same session.
-The task status script runs the same probe and reports the Claude Code that resumes the task's `session_id`, or works in its recorded `cwd` (where `--continue` or the resume picker would find the conversation), excluding processes that carry a task's `ISX_MCP_TASK` marker.
+The task status script runs the same probe and reports the coding agent of the task's own kind that resumes the task's `session_id`, or works in its recorded `cwd` (where `--continue` or the resume picker would find the conversation), excluding processes that carry a task's `ISX_MCP_TASK` marker.
+Another kind of agent in that directory cannot resume this conversation, so it does not hold it (#1995).
 `task_status` then says `attached`, and `send_message` refuses.
 The check is made when a message is sent, so a person joining in the following seconds is not seen; the alternative was every client racing its own `pgrep` before each wake.
+
+**A task leaves `attached` only on an event, never because time passed** (#1995).
+`attached` answers two questions.
+Is the conversation in use: a leftover `claude --resume` holds the conversation's lock whether anyone types or not, so a `finished` reported after an idle threshold would let `send_message` through to fail on the lock, or, for a holder matched by its directory alone, run a second agent on the conversation.
+Is a person here: that matters only to orphan cleanup, where a wrong yes keeps an instance longer and loses nothing.
+So `task_status` reports facts and no verdict: `attached_tty`, whether the holder has a controlling pty, and `attached_last_input_at`, that pty's access time, which the kernel moves on input and not on output, at about 8 s granularity.
+The probe prints them as their own line kind (`input <pid> <epoch>`), so the readers of its other lines are unchanged.
+Leaving `attached` is an explicit act: `reclaim_task`, or `isx shell <instance> --task <id> --take` for a person, which shows the holder's pid and last input and asks first.
+One guest exec (`Reclaim.script`) refuses while a run of the task is going, finds the holder as `Presence` does (and, for `--take` or a `reclaim_task` given `attached_pid`, only the pid its caller was shown), appends who and when to the task directory's `reclaimed`, sends SIGHUP, and waits up to 10 s for the holder to exit and then for the conversation's lock.
+A holder that does not exit is refused as `wrong_state`, and nothing harder is sent: the caller decides what to do next.
+Any holder may be reclaimed, with or without a tty; the conversation stays on disk for `--resume`, so a wrong reclaim costs a person a restart of their agent and whatever they had typed and not sent.
+What this gives up: an unattended coordinator still needs a rule for when to reclaim, likely a threshold on `attached_last_input_at`, and a poor one can interrupt a person who is reading and not typing.
+That timeout belongs to the coordinator (Sanne/isx-workflow#69), where it is a decision an actor takes and logs, and isx's own state stays a function of what exists in the guest.
+A dead ssh client in front of `isx shell` is not visible to isx; sshd's `ClientAliveInterval` on the host covers it, and a silent link to Incus already tears the guest session down (#1996).
 
 **Joining a task is a mode of `isx shell`.**
 `isx shell <instance> --task [<id>]` opens the task's conversation instead of a login shell (#1509).

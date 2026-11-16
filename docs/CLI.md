@@ -204,6 +204,7 @@ isx shell <instance>
 isx shell <instance> --session <name>
 isx shell <instance> --no-attach
 isx shell <instance> --task [<task-id>]
+isx shell <instance> --task [<task-id>] --take
 ```
 
 When the instance auto-attaches to zmx or tmux, every `isx shell` enters its session `isx`, so two terminals show the same screen.
@@ -219,6 +220,13 @@ With several tasks, it lists them, each with the command that joins that task, a
 
 isx refuses a task in the middle of a turn until the turn ends.
 Plain `isx shell` into an instance `isx mcp` made prints the `--task` command before the prompt.
+
+isx also refuses a task whose conversation another person's agent already holds, however long ago they typed.
+`--take` shows that agent's process and its last input, and asks before ending it with SIGHUP and joining.
+The conversation stays saved, but whatever that person typed and did not send is lost.
+
+isx cannot tell when the ssh client in front of `isx shell` has died, so the agent behind it keeps the conversation.
+Set `ClientAliveInterval` in the sshd of the host you run isx on, and sshd then closes such a session, ending the agent too.
 
 Copying from an agent inside the instance needs an OSC 52-capable host terminal.
 See the [FAQ](FAQ.md#why-doesnt-copied-from-an-agent-reach-my-host-clipboard).
