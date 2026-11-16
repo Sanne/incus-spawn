@@ -187,6 +187,8 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The github-action source type
   - The maven-central source type
   - The model-deprecations source type
+  - The git-main-paths source type
+  - Sibling repositories
   - The review class
   - Threat model
   - Why not Sanne's own token

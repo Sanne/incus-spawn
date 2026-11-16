@@ -21,16 +21,18 @@ Four parts carry that:
 An item names its `class` (`mechanical`, `review`, or `judgement` by default), what a bump may move `within` (`series` or `any`), its `cooling` period, which `go:` label a `judgement` issue gets (`design` by default, or `build`), its `source.type`, its `verify.type`, the `files` and `fields` the bump rewrites, and the `gates` its PR needs beyond CI.
 `upstream.sh validate` and `UpstreamManifestTest` hold its rules: a mechanical or review item needs `within`, a source, a verifier and files; a mechanical item's verifier is `signed-sums` or `publisher-sums`; `verify.type` must be what the source type provides; a signed verifier's key must be a committed file and its fingerprint the one `update-kernel-pin.sh` pins; `fields` must be exactly what the source type reads; an unknown key fails, since there is no key that skips a check.
 
-**The engine** (`upstream/engine/upstream.sh`, with `lib.sh`, `pr.sh`, `app-token.sh` and one `source-<type>.sh` per source type) is a deterministic script that runs from `main`'s checkout only.
+**The engine** (`upstream/engine/upstream.sh`, with `lib.sh`, `pr.sh`, `app-token.sh` and one `source-<type>.sh` per source type) is a deterministic script that runs from `main`'s checkout only, or for a sibling repository from the incus-spawn commit that sibling pins ("Sibling repositories" below).
 `current`, `releases`, `check` and `apply` read and rewrite one item; `plan` decides every item (a prepared commit, an issue, or nothing) with no app credential; `issues` opens what `plan` wrote; `publish` pushes the prepared commits and opens or refreshes their PRs as the app; `verify-pr` and `verify-trees` are the check; `track` keeps the one `[upstream] watch failing` issue.
 Everything an upstream sends (a version, a tag, a URL, a sum) is data: it is matched against a shape before use and never reaches a shell line unquoted or a jq filter unbound.
 The three source types reuse what already verified a pin by hand: `kernel-org` is `appliance/kernel/update-kernel-pin.sh` (which gained `releases [<major>]` and `sum <version>`), `github-release` is `.github/scripts/base-image-sums.sh` and `verify-base-image-sums.sh`, and `jetbrains` reads the products API with a URL prefix allowlist and the `.sha256` beside each tarball.
-`github-asset`, `signed-file`, `github-action` and `maven-central` (#2210) are described under their own headings below, and `model-deprecations` (#2227) under "The model-deprecations source type".
+`github-asset`, `signed-file`, `github-action`, `maven-central` and `git-main-paths` (#2210) are described under their own headings below, and `model-deprecations` (#2227) under "The model-deprecations source type".
 
-**The watch** (`.github/workflows/upstream-watch.yml`) runs every six hours and on `workflow_dispatch` (an optional `item`, checked against the manifest's keys), in `Sanne/incus-spawn` from `main` only, as two jobs.
+**The watch** (`.github/workflows/upstream-watch.yml`) runs every six hours and on `workflow_dispatch` (an optional `item`, checked against the keys of the manifest of `repo`, by default this repository's), in `Sanne/incus-spawn` from `main` only, as two jobs, each once per watched repository.
 It has no PR, issue or comment trigger, `persist-credentials: false`, `contents: read` and `issues: write`, no third-party action, and no `${{ }}` inside any `run:`.
 The `plan` job runs in no environment: with the run's own read-only token it does every download and signature check, prepares each bump as a commit, opens the issues, and hands the plan on as an artifact (the decisions, the issue texts and each prepared commit as a git bundle under `refs/upstream-prepared/<item>`).
-The `publish` job is the only one in the `upstream-watch` environment, whose deployment branch policy admits `main` alone, so the only one that can read the app's key; it runs on another runner, does not fetch anything from an upstream, and its one credentialed step mints a one-hour installation token of the `isx-upstream[bot]` GitHub App from the environment's `UPSTREAM_APP_ID` and `UPSTREAM_APP_PRIVATE_KEY` (`app-token.sh`: an RS256 JWT signed by `openssl` on a file descriptor, then an installation token limited to this repository and to `contents` and `pull_requests` write), masks it, unsets the key and runs `publish`.
+The `publish` job is the only one in the `upstream-watch` environment, whose deployment branch policy admits `main` alone, so the only one that can read the app's key; it runs on another runner, does not fetch anything from an upstream, and its one credentialed step mints a one-hour installation token of the `isx-upstream[bot]` GitHub App from the environment's `UPSTREAM_APP_ID` and `UPSTREAM_APP_PRIVATE_KEY` (`app-token.sh`: an RS256 JWT signed by `openssl` on a file descriptor, then an installation token limited to the leg's repository and to `contents` and `pull_requests` write), masks it and hands it on through `$GITHUB_ENV`.
+That step holds the two secrets alone and runs `main`'s `app-token.sh` and nothing else; the next step runs `publish` with the token alone.
+They are two steps because a sibling's engine is code another repository's pin chose, and an `unset` key stays readable in the parent shell's `/proc/<pid>/environ`, so the engine must never run in a process tree that held the key (#2210).
 Two jobs rather than two steps because steps of one job share a runner and a user, so a process the planning step left behind could read a later step's environment; ordering steps is not isolation.
 The app's commits carry its login and noreply address, resolved from the public user id, since the ruleset asks an extra approval for unattributed changes.
 Issues are opened with the run's own token: one per judgement item and version, one when a `within: series` item's publisher lists a newer series, one when a pinned version's values no longer match what the publisher gives for it (a republished or tampered release, never a silent re-pin; a publisher that cannot be read while the pin is checked fails the run instead, #2261), the kernel's `[upstream] kernel: series <s> is EOL`, and `[upstream] watch failing` from a final `track` job that judges both jobs' results once, after both, so a plan that passed never closes the issue a failed publish is about to open; the next run where both pass closes it.
@@ -83,7 +85,8 @@ Its versions are ordered as isx orders release tags (`src_order`): by line, then
 A source type may define `src_order` (versions on stdin, oldest first) wherever `sort -V` is wrong for it; `newest` uses it, and `publish` loads each item's source type so `pr.sh` compares versions the same way.
 The images repo's `repository_dispatch` to this one, and its `INCUS_SPAWN_DISPATCH_TOKEN`, retire in favour of the six-hourly poll: the payload was only ever cross-checked against the release.
 `publisher-sums` proves consistency and transfer, not provenance, since the sums come from the same origin as the artifact; the manifest says so in the verifier's name rather than pretending otherwise.
-Items the design inventories for later phases (the siblings' `ISX_REF` and engine pins) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
+The siblings' items, `ISX_REF` and the engine pin of `incus-spawn-images`, are in that repository's own manifest ("Sibling repositories" below).
+Items the design inventories for later phases (Gradle in `incus-spawn-templates`) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
 
 ## The github-asset source type
 
@@ -249,6 +252,65 @@ A declared ID no vendor's `id-prefix` covers fails `validate`, so a new vendor i
 What this gives up: Google's and OpenAI's pages are read for deprecations and replacements only, so a newer OpenAI or Gemini model that replaces nothing is not reported, and a model an account cannot reach is still only found by `ModelCheck` when it is used (#1012).
 A person's PR that edits `models.yaml` is an ordinary change; `upstream-verify` refuses an app PR that touches it.
 
+## The git-main-paths source type
+
+`source-git-main-paths.sh` (#2210) pins a commit of a first-party repository's `main`, the way `incus-spawn-images` pins the incus-spawn commit its VM kernel is built from (`ISX_REF`).
+It moves the pin to the newest commit on `main` that changed one of the item's `source.paths`, the files the pinning repository reads from it.
+A commit that changed none of them is never proposed, so merging docs into incus-spawn opens no PR in a sibling, and a pin already past the newest such commit stays.
+The engine reads `main` from a blob-less bare clone over HTTPS, a few megabytes, once per run; "newer" is the later place on `main` in topological order, ancestors before descendants whatever the commit dates say, never `sort -V`.
+The pin is a literal text with `{version}` where the 40-hex commit is (`source.pin`), found exactly once, and the version is never shortened.
+
+Its verifier is `main-commit`: the commit is on the repository's `main` as fetched when the check runs.
+That proves the owner merged it, not what it does.
+`validate` accepts a `git-main-paths` item, `review` or `mechanical`, only when the repository's owner is the manifest's and GitHub says it is not a fork: a fork's `main` holds commits its upstream merged.
+So the step that validates needs a token to ask GitHub, and `UpstreamWorkflowTest` requires the run's on every such step; without it the answer reads as "not first party" and the leg fails.
+A move goes only to a commit that changed a watched path, so `upstream-verify` fails an app PR to any other commit on `main`, which `plan` never proposes; a person may still pin one.
+The design made these items auto for that reason (rows 45 and 48 of #2210): what moves is a commit Sanne already merged, and the PR's own CI builds and boots the kernel it names.
+A pin on a branch never merged is a pin-mismatch issue, and a person's PR pinning one fails `upstream-verify`.
+`check` asks the type's `src_confirms` for that before it regenerates anything, so the pin reads as a mismatch.
+A clone of `main` that fails is a failed read instead: `check` returns 2, and `plan` prints why and fails the run (#2261).
+Cooling is 0, as for every first-party source, and counts from the committer date.
+
+## Sibling repositories
+
+**Chosen:** one watch, one engine and one app for every repository (#2210).
+A sibling holds its own `upstream/manifest.yaml`, beside the files it pins, and `upstream/engine.ref`, the incus-spawn commit whose engine plans and verifies it.
+`upstream-watch.yml` here runs its `plan` and `publish` jobs once per repository its `TARGETS` and matrices name, today `Sanne/incus-spawn` and `Sanne/incus-spawn-images`.
+A sibling's leg checks out the sibling and incus-spawn at that pin, and runs that engine with `UPSTREAM_REPO_ROOT` naming the sibling's checkout.
+`REPO_ROOT` is then the watched repository (its manifest, its keys, its files, the history plan and verify make worktrees of), and `ENGINE_ROOT` the engine's own.
+`publish` mints a one-hour token limited to the leg's repository, with `main`'s `app-token.sh`, and refuses a manifest of another repository than the one the token names.
+The sibling's own `upstream-verify.yml` checks out its default branch, reads the pin there, never the PR's, and runs that same engine on the PR.
+So a regeneration is planned and checked by the same code, and a PR cannot choose its own verifier.
+
+The pin is a plain file, not a workflow's `ref:`: the app has no `workflows` permission, so it could never move a pin written there.
+The engine pin is a `git-main-paths` item of the sibling (`engine`, paths `upstream/engine`), so it follows incus-spawn's `main` by the same mechanical PR as any other pin.
+A bump of it is verified by the engine it replaces, which only checks that the new commit is on `main`.
+Both jobs also refuse the leg unless the pin is an ancestor of incus-spawn's `main` in their own full checkout, before checking the engine out: a checkout by commit also reaches a fork's commits, and the pin may have been set some way `upstream-verify` did not see.
+`publish` runs the engine the sibling's default branch pins, never one the plan's artifact names, since the plan job handled publisher data.
+The plan records its engine commit only for `publish` to compare, so a merge into the sibling between the two jobs fails the leg rather than hand the plan to another engine.
+An engine without sibling support fails the leg rather than plan incus-spawn's manifest there.
+`publish` compares a `git-main-paths` item's versions by their place on incus-spawn's `main`, so its publishing step reads that public history from GitHub, the host it pushes to; it fetches nothing from a third-party upstream.
+
+A sibling's issues are opened in incus-spawn, where the run's token reaches and where judgement work is dispatched.
+Their titles name the repository (`[upstream] incus-spawn-images/isx-ref: ...`), their bodies start with it, and a sibling's PR names the watch's issue as `Sanne/incus-spawn#2036`.
+Each `publish` leg runs whatever another repository's `plan` did, so a sibling whose plan fails holds back no bump of incus-spawn's; its own leg fails at its download, before a token is minted.
+
+| Repository | Item | File | Source | Verifier | Class | `cooling` |
+|---|---|---|---|---|---|---|
+| `incus-spawn-images` | `isx-ref` | `fedora/build-vm-kernel.sh` (`ISX_REF`) | incus-spawn's `main`, the commits that changed `appliance/kernel/build-kernel.sh`, `appliance/kernel/*.config` or `appliance/test-vm-kernel.sh` | `main-commit` | mechanical | 0 |
+| `incus-spawn-images` | `engine` | `upstream/engine.ref` | incus-spawn's `main`, the commits that changed `upstream/engine` | `main-commit` | mechanical | 0 |
+
+`isx-ref` replaces the daily job the draft incus-spawn-images#26 proposed, with the same rule: move only when what the image build reads changed.
+Its PR runs the images repository's `build-vm-scratch.yml`, which builds that kernel, checks it against `KERNEL_SHA256`, and boots it.
+
+**Alternatives:** a workflow and an engine copy in each sibling, which "Why not one engine copy per repo" below rejects.
+Planning a sibling with `main`'s engine and verifying with its pinned one, which fails every regeneration while the two differ.
+Opening a sibling's issues in the sibling, which needs `issues` write for the app on every repository.
+
+**What this gives up:** an engine change reaches a sibling one merged engine-pin PR later.
+An engine pin that names a commit without sibling support breaks that sibling's plan and verify, so the first pin is the merge of the PR that added it.
+The coordinator's merge script takes the repository as an argument, but its listing of upstream PRs (isx-workflow's `bin/pr-state.sh`) looks at incus-spawn alone until it is taught the siblings.
+
 ## The review class
 
 Sanne's words on #2210, after asking what the class would mean:
@@ -287,6 +349,7 @@ The merge script requires `class: mechanical` by name, so it refuses a review it
 | A stolen app key reaching the Mac | `appliance/test-kernel-on-mac.sh` trusts the app login, since a kernel bump needs a Mac boot; but for an app PR the script itself refuses unless the `upstream-verify` check run at the very head it boots, by GitHub Actions, concluded `success` (and isx-workflow's `bin/mac-pick.sh` lists it only then), so only a kernel whose build is `main`'s engine's regeneration is ever booted with the verifier's credentials. |
 | A moved Action tag | Every Action is pinned to a commit, so moving a tag changes nothing a workflow runs. The watch re-reads each pinned tag on every run and opens the pin-mismatch issue when one points elsewhere; `upstream-verify` re-reads each tag a PR names. A tag the publisher moved before the pin was taken is beyond this check, which proves where a tag points, not what the code does. |
 | A Maven Central release | Central keeps a release for good and never lets it be replaced, and `central-exists` checks the pom against Central's sha1 again on every person's PR. It proves Central published the version, not what it does, so a person merges every such bump and `validate` refuses the verifier on a mechanical item. |
+| A sibling's PR choosing its verifier | The sibling's `upstream-verify` reads `upstream/engine.ref` from its default branch, never the PR's, and checks out that incus-spawn commit; an app PR that moves the pin is verified by the engine it replaces, and the new pin must be a commit on incus-spawn's `main`. The token a sibling's leg mints is limited to that repository, and `publish` refuses a manifest of another. |
 | Replay or downgrade | Forward-only comparison in both the engine and the check, `within: series`, the declined marker; a sums file that lost entries never moves a pin back. |
 
 ## Why not Sanne's own token
@@ -319,7 +382,7 @@ Maven items go into the same manifest in a later phase, with a body the engine f
 ## Why not one engine copy per repo
 
 A copy per repository drifts.
-The sibling repositories (incus-spawn-images, incus-spawn-templates) will pin the engine's commit as an item of their own manifest and check it out from incus-spawn at that pin for their verify job.
+The sibling repositories pin the engine's commit as an item of their own manifest and check it out from incus-spawn at that pin for their verify job ("Sibling repositories" above).
 The same central watch mints a one-hour token per target repository, so no sibling keeps a long-lived secret or a bump job of its own.
 
 ## What is never done
