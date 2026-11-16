@@ -10,13 +10,23 @@
 TESTS=0
 PASS=0
 FAIL=0
+# Failed checks whose only cause was Maven Central's rate limit (#2278)
+THROTTLED=0
 ERRORS=""
+# The exit code of fetch_matching when every attempt got a 429, and of report when every failed
+# check was such a fetch: the host may then ask Maven Central without the proxy (#2278).
+THROTTLED_EXIT=75
+
+# The exit code of the last check assert ran
+LAST_EXIT=0
 
 assert() {
     local desc="$1"; shift
     local output
     TESTS=$((TESTS + 1))
-    if output=$("$@" 2>&1); then
+    LAST_EXIT=0
+    output=$("$@" 2>&1) || LAST_EXIT=$?
+    if [ "$LAST_EXIT" -eq 0 ]; then
         printf '  \033[32mPASS\033[0m  %s\n' "$desc"
         PASS=$((PASS + 1))
     else
@@ -52,6 +62,7 @@ assert_eq() {
 # without a Retry-After (#2063, #2268). Each wait is the answer's Retry-After in seconds, else
 # 5 s doubling each time, capped at FETCH_MAX_DELAY: about two minutes in all by default when no
 # answer names a Retry-After. A failed connection is not retried, since that one is the proxy's.
+# A 429 on the last attempt returns THROTTLED_EXIT, any other failure 1.
 fetch_matching() {
     local url="$1" pattern="$2" dir status server retry_after delay attempt=1 waited=0
     local attempts="${FETCH_ATTEMPTS:-6}" max_delay="${FETCH_MAX_DELAY:-60}"
@@ -68,6 +79,7 @@ fetch_matching() {
             server=$(grep -i '^server:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')
             echo "HTTP $status (Server: ${server:-none}, Retry-After: ${retry_after:-none}) for $url after $attempt attempts and ${waited}s of waiting: the TLS handshake with the proxy succeeded, an answer without the upstream Server header is the proxy's own"
             rm -rf "$dir"
+            [ "$status" = 429 ] && return "$THROTTLED_EXIT"
             return 1
         fi
         delay="$retry_after"
@@ -88,7 +100,17 @@ fetch_matching() {
     return $found
 }
 
-# The totals, and a failing exit if any check failed.
+# assert for fetch_matching, which also counts a check that failed only on a 429 as THROTTLED.
+assert_fetch() {
+    local desc="$1"
+    shift
+    assert "$desc" fetch_matching "$@"
+    [ "$LAST_EXIT" -eq "$THROTTLED_EXIT" ] && THROTTLED=$((THROTTLED + 1))
+    return 0
+}
+
+# The totals, and a failing exit if any check failed: THROTTLED_EXIT when every failed check was
+# a fetch Maven Central's rate limit refused, else 1.
 report() {
     echo "========================================"
     printf " Results: \033[1m%d/%d passed\033[0m" "$PASS" "$TESTS"
@@ -102,6 +124,10 @@ report() {
         echo ""
         echo "Failed tests:"
         printf "$ERRORS"
+        if [ "$FAIL" -eq "$THROTTLED" ]; then
+            echo "Every failure was Maven Central's rate limit (HTTP 429): exiting $THROTTLED_EXIT"
+            exit "$THROTTLED_EXIT"
+        fi
         exit 1
     fi
     exit 0
@@ -126,10 +152,10 @@ echo ""
 # to the bridge gateway, iptables redirects :443 to the proxy on :18443,
 # proxy terminates TLS with its CA, re-encrypts to upstream Maven Central.
 echo "[1] Maven Artifact Download (Proxy Interception)"
-assert "download Maven POM through proxy" \
-    fetch_matching https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom '<artifactId>junit</artifactId>'
-assert "download Maven JAR checksum through proxy" \
-    fetch_matching https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar.sha1 '^[0-9a-f]{40}$'
+assert_fetch "download Maven POM through proxy" \
+    https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom '<artifactId>junit</artifactId>'
+assert_fetch "download Maven JAR checksum through proxy" \
+    https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar.sha1 '^[0-9a-f]{40}$'
 echo ""
 
 # --- 2. Git clone over HTTPS (proxy + git) ---
