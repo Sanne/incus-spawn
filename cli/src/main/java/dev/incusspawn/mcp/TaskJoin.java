@@ -292,7 +292,7 @@ public final class TaskJoin {
             return "Could not reach " + instance + ": " + OutputFormat.oneLine(String.valueOf(e.getMessage()));
         }
         if (exit != 0) return "Could not take " + entry.id() + "'s conversation back in " + instance + " (exit " + exit + ").";
-        var why = Reclaim.parse(out.toString(StandardCharsets.UTF_8)).refusal(entry.id());
+        var why = Reclaim.parse(out.toString(StandardCharsets.UTF_8)).personRefusal(entry.id(), instance);
         return why == null ? null : "Did not take it back: " + why;
     }
 

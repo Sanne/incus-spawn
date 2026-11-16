@@ -116,6 +116,23 @@ record Reclaim(Outcome outcome, Long pid) {
         };
     }
 
+    /**
+     * {@link #refusal} for a person at {@code isx shell --take}, whose next step is a command of
+     * theirs rather than an MCP tool; null when the conversation is free.
+     */
+    String personRefusal(String taskId, String instance) {
+        var join = TaskJoin.hostCommand(instance, taskId);
+        return switch (outcome) {
+            case RUNNING -> "a run of task " + taskId + " is going, which is not a person's agent, so nothing was signalled; "
+                    + "join it once the turn ends: " + join;
+            case OTHER -> "another agent (pid " + pid + ") holds task " + taskId + "'s conversation now, so nothing was signalled; "
+                    + "to see who it is and take it: " + join + " --take";
+            case UNREADABLE -> "isx could not read what the instance did with task " + taskId + "'s conversation; "
+                    + "to see whether it is still held: " + join;
+            default -> refusal(taskId);
+        };
+    }
+
     /** Throws why the conversation was not taken back, unless it is free. */
     void requireFree(String taskId) {
         var why = refusal(taskId);
