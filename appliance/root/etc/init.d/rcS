@@ -81,7 +81,7 @@ if [ -n "$IFACE" ]; then
     echo "incus-spawn: network up on $IFACE ($(ts)s)"
 fi
 
-#-- Clock (vfkit VMs have no RTC) --#
+#-- Clock (the emulated RTC, if any, is not trusted to be right) --#
 # Seed from kernel cmdline so TLS works immediately at boot.
 HOST_TIME=$(sed -En 's/.*isx\.time=([^ ]+).*/\1/p' /proc/cmdline)
 if [ -n "$HOST_TIME" ]; then
@@ -93,14 +93,9 @@ fi
 # since a guest has no transport at the host's address (2) and the bind would fail.
 VSOCK_PORT=$(sed -En 's/.*isx\.ga_vsock=([^ ]+).*/\1/p' /proc/cmdline)
 if [ -n "$VSOCK_PORT" ] && [ -x /usr/bin/qemu-ga ]; then
-    qemu-ga -m vsock-listen -p "4294967295:$VSOCK_PORT" -l /var/log/qemu-ga.log >/dev/null 2>&1 &
+    echo "--- boot $(date -Iseconds) ---" >> /var/log/qemu-ga.log
+    qemu-ga -m vsock-listen -p "4294967295:$VSOCK_PORT" -l /var/log/qemu-ga.log >> /var/log/qemu-ga.log 2>&1 &
     GA_PID=$!
-    sleep 0.2
-    if kill -0 "$GA_PID" 2>/dev/null; then
-        echo "incus-spawn: guest agent on vsock port $VSOCK_PORT ($(date -Iseconds))"
-    else
-        echo "incus-spawn: guest agent NOT running on vsock port $VSOCK_PORT: $(tail -n 3 /var/log/qemu-ga.log 2>/dev/null | tr '\n' ' ')"
-    fi
 fi
 
 #-- NTP clock sync (corrects drift after host sleep/resume) --#
@@ -149,4 +144,12 @@ for dev in ttyS0 hvc0 ttyAMA0; do
 done
 kill -HUP 1
 
+# The agent has had the whole boot to bind; a bind failure is immediate, so one that is gone has failed.
+if [ -n "${GA_PID:-}" ]; then
+    if kill -0 "$GA_PID" 2>/dev/null; then
+        echo "incus-spawn: guest agent on vsock port $VSOCK_PORT ($(date -Iseconds))"
+    else
+        echo "incus-spawn: guest agent NOT running on vsock port $VSOCK_PORT: $(awk '/^--- boot /{b=""; next} {b=b $0 " "} END{print b}' /var/log/qemu-ga.log)"
+    fi
+fi
 echo "=== ISX READY ($(ts)s) ==="
