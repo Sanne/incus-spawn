@@ -49,21 +49,31 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SELF="$SCRIPT_DIR/$(basename "$0")"
 
+# How many descriptors a process has open: lsof's rows whose FD is a number. Its other rows
+# (the working directory, the program and every mapped file) take no room among the 256, and
+# the records up to 2026-11-15 counted them too, so their numbers are upper bounds.
+# Prints nothing when it cannot tell: a process that ended, or one lsof may not read, is not
+# one with no descriptors.
+open_descriptors() {
+    local n
+    n="$(lsof -p "$1" -Ff 2> /dev/null | grep -c '^f[0-9]' || true)"
+    [ "${n:-0}" -gt 0 ] && echo "$n"
+    return 0
+}
+
 # How many files the machine's own process has open. Virtualization.framework runs the machine
 # in a process of its own, for vfkit and isx-vm alike, which holds a descriptor for every vsock
 # connection and for the files of a share, and has room for 256: the one that does not fit
 # stops the machine (#2031). The newest such process is the machine this script booted last.
 # Prints nothing when it cannot tell.
 machine_fds() {
-    local pid n
+    local pid
     # A machine that stopped under the load has no such process left, and the newest one would
     # be another machine's, such as this Mac's own isx VM: no number, never that one's.
     if [ -n "${HYPERVISOR_PID:-}" ] && ! kill -0 "$HYPERVISOR_PID" 2> /dev/null; then return 0; fi
     pid="$(pgrep -n -f com.apple.Virtualization.VirtualMachine 2> /dev/null || true)"
     [ -n "$pid" ] || return 0
-    n="$(lsof -p "$pid" 2> /dev/null | tail -n +2 | wc -l | tr -d ' ')"
-    [ "${n:-0}" -gt 0 ] && echo "$n"
-    return 0
+    open_descriptors "$pid"
 }
 
 # measure-tunnel.sh calls back here while it holds connections (HELD_PROBE below).
@@ -81,7 +91,7 @@ if [ -n "${WHILE_UP_OUT:-}" ]; then
         echo "measure_exit=$rc"
         echo "process_rss_kb=$(ps -o rss= -p "$HYPERVISOR_PID" | tr -d ' ')"
         echo "process_threads=$(ps -M -p "$HYPERVISOR_PID" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"
-        echo "process_fds=$(lsof -p "$HYPERVISOR_PID" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"
+        echo "process_fds=$(open_descriptors "$HYPERVISOR_PID")"
     } >> "$WHILE_UP_OUT/values"
     # isx-vm prints each relay's counts on SIGUSR1, on its own output. vfkit would end on it.
     if [ "${WHILE_UP_COUNTS:-0}" = 1 ]; then
@@ -497,7 +507,7 @@ $(row "the tunnel stopped answering (b)" wedged)
 $(for h in $HELD; do
     row "$h held: accepted" "held_${h}_accepted"
     row "$h held: still open at the end" "held_${h}_open_at_end"
-    row "$h held: the machine's own process, open files (it has room for 256)" "held_${h}_machine_fds"
+    row "$h held: the machine's own process, open descriptors (it has room for 256)" "held_${h}_machine_fds"
     row "$h held: request on a new connection, median (c)" "held_${h}_new_median_ms" " ms"
     row "$h held: request on a new connection, 95th percentile" "held_${h}_new_p95_ms" " ms"
     row "$h held: request on a kept connection, median (c)" "held_${h}_kept_median_ms" " ms"
@@ -505,7 +515,7 @@ $(for h in $HELD; do
 done)
 $(row "the hypervisor's own process after the load: memory" process_rss_kb " kB")
 $(row "the hypervisor's own process after the load: threads" process_threads)
-$(row "the hypervisor's own process after the load: open files" process_fds)
+$(row "the hypervisor's own process after the load: open descriptors" process_fds)
 $(row "the guest's random numbers ready" crng_ready_s " s into the boot")
 $(row "the measurement took" seconds " s")
 $(row "under isx: the API answers after isx vm start" isx_api_after_start_ms " ms")"
@@ -521,7 +531,7 @@ $(row "under isx: the destroy, median of three" trace_destroy_ms " ms")
 $(row "under isx: an instance gets an answer over HTTPS, through the VM's network" isx_network)
 $(row "under isx: an instance reads a file of the home, through the VM's share" isx_share)
 $(row "under isx: the hypervisor's own process at the end: memory" isx_process_rss_kb " kB")
-$(row "under isx: the machine's own process at the end, open files (it has room for 256)" isx_machine_fds)"
+$(row "under isx: the machine's own process at the end, open descriptors (it has room for 256)" isx_machine_fds)"
 if [ "$SLEEP" = 1 ]; then
     table+="
 $(row "sleep (d): asleep for" wake_asleep_s " s")
