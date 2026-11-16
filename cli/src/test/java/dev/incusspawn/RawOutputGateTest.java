@@ -179,15 +179,16 @@ class RawOutputGateTest {
     private static final Pattern TERMINAL_DEVICE = Pattern.compile(("/dev/(?:tty\\w*|stdout\\b|stderr\\b|console\\b|fd/[0-2]\\b|pts/\\d*)"
             + "|/proc/(?:self|thread-self|\\d+)(?:/task/\\d+)?/fd/[0-2]\\b").replace("/", SEPARATOR));
 
-    /** The one terminal device a file may name, and why. */
-    record DeviceUse(String device, String why) {}
+    /** The terminal devices a file may name, and why. */
+    record DeviceUse(Set<String> devices, String why) {}
 
-    /** Who may name a terminal device, each only the one it names, with why. */
+    /** Who may name a terminal device, each only the ones it names, with why. */
     private static final Map<String, DeviceUse> MAY_OPEN_TERMINAL_DEVICE = Map.of(
             "common/src/main/java/dev/incusspawn/incus/IncusApi.java",
-            new DeviceUse("/dev/tty", "reads an interactive shell's keys"),
+            new DeviceUse(Set.of("/dev/tty"), "reads an interactive shell's keys"),
             "cli/src/main/java/dev/incusspawn/mcp/Presence.java",
-            new DeviceUse("/dev/console", "a guest script that stats the guest's console"));
+            new DeviceUse(Set.of("/dev/console", "/dev/pts/"),
+                    "a guest script that stats the guest's console, and an agent's pty for when it last had input"));
 
     @Test
     void onlyTheNamedFilesOpenATerminalDevice() throws IOException {
@@ -195,7 +196,7 @@ class RawOutputGateTest {
         for (var source : sources("src/main/java").entrySet()) {
             var use = MAY_OPEN_TERMINAL_DEVICE.get(source.getKey());
             var others = devices(source.getValue()).stream()
-                    .filter(found -> use == null || !found.getValue().equals(use.device()))
+                    .filter(found -> use == null || !use.devices().contains(found.getValue()))
                     .map(Map.Entry::getKey).toList();
             if (!others.isEmpty()) stray.append(source.getKey()).append(" at lines ").append(others).append('\n');
         }
@@ -208,11 +209,12 @@ class RawOutputGateTest {
         var unneeded = new StringBuilder();
         for (var listed : new TreeMap<>(MAY_OPEN_TERMINAL_DEVICE).entrySet()) {
             var file = repo().resolve(listed.getKey());
-            if (!Files.exists(file) || devices(Files.readString(file)).stream().noneMatch(found -> found.getValue().equals(listed.getValue().device()))) {
+            var named = Files.exists(file) ? devices(Files.readString(file)).stream().map(Map.Entry::getValue).toList() : List.<String>of();
+            if (!named.containsAll(listed.getValue().devices())) {
                 unneeded.append(listed.getKey()).append('\n');
             }
         }
-        assertEquals("", unneeded.toString(), "drop these from MAY_OPEN_TERMINAL_DEVICE: they no longer name their device");
+        assertEquals("", unneeded.toString(), "drop these from MAY_OPEN_TERMINAL_DEVICE, or the devices they no longer name");
     }
 
     /**

@@ -77,8 +77,13 @@ class TaskJoinTest {
         var entries = TaskJoin.parse(finished("t1-abcd", "sess-1", "/a") + "presence claude 42 /elsewhere\npresence resume 42 sess-1\n");
         var busy = assertInstanceOf(TaskJoin.Outcome.Busy.class, TaskJoin.resolve(entries, null));
         assertEquals(42L, busy.entry().attachedPid());
-        assertEquals("A person is already in t1-abcd's conversation (agent pid 42); a second would write to it at the same time.",
+        assertEquals("A person is already in t1-abcd's conversation (agent pid 42, with no terminal); a second would write to it "
+                + "at the same time. To end their agent and join instead: isx shell box --task t1-abcd --take",
                 TaskJoin.refusal(busy, "box"));
+        var onTerminal = TaskJoin.parse(finished("t1-abcd", "sess-1", "/a")
+                + "presence tty 42\npresence claude 42 /elsewhere\npresence input 42 1700000000\npresence resume 42 sess-1\n").getFirst();
+        assertTrue(onTerminal.attachedTty());
+        assertEquals(java.time.Instant.ofEpochSecond(1700000000), onTerminal.attachedLastInputAt());
         var elsewhere = TaskJoin.parse(finished("t1-abcd", "sess-1", "/a") + "presence claude 42 /b\n");
         assertInstanceOf(TaskJoin.Outcome.Join.class, TaskJoin.resolve(elsewhere, null), "an agent on another conversation");
     }
@@ -110,5 +115,24 @@ class TaskJoinTest {
         assertTrue(instruction.codePoints().noneMatch(Character::isISOControl), instruction);
         assertEquals(60, instruction.codePointCount(0, instruction.length()));
         assertTrue(instruction.endsWith("…"));
+    }
+
+    @Test
+    void aReclaimIsReadFromTheLastLineAndAnUnreadableOneSaysNothingOfASignal() {
+        assertEquals(new Reclaim(Reclaim.Outcome.RECLAIMED, 77L), Reclaim.parse("Welcome back\nreclaimed 77\n"));
+        var unreadable = Reclaim.parse("Welcome back\n");
+        assertEquals(Reclaim.Outcome.UNREADABLE, unreadable.outcome());
+        assertTrue(unreadable.refusal("t1-abcd").contains("task_status"), unreadable.refusal("t1-abcd"));
+    }
+
+    @Test
+    void onlyAFinishedResumableConversationIsTakeable() {
+        var held = new TaskJoin.Entry("t1-abcd", "claude", "finished", null, "", "s1", "/a", 42L, true, null);
+        assertTrue(held.takeable());
+        var noDirectory = new TaskJoin.Entry("t1-abcd", "claude", "finished", null, "", "s1", "", 42L, true, null);
+        assertTrue(!noDirectory.takeable(), "ending the holder could not be followed by a join");
+        assertTrue(!TaskJoin.refusal(new TaskJoin.Outcome.Busy(noDirectory), "box").contains("--take"));
+        var unknown = new TaskJoin.Entry("t1-abcd", "claude", "unknown", null, "", "s1", "/a", 42L, true, null);
+        assertTrue(!unknown.takeable());
     }
 }

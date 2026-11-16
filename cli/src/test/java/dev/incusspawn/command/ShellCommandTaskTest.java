@@ -70,8 +70,8 @@ class ShellCommandTaskTest {
     @Test
     void severalTasksAreAnErrorEachWithTheCommandThatJoinsIt() {
         var entries = List.of(
-                new TaskJoin.Entry("t1-abcd", "claude", "finished", Instant.ofEpochSecond(0), "Fix the flaky test", "s1", "/a", null),
-                new TaskJoin.Entry("t2-abcd", "codex", "running", null, "", "s2", "/b", null));
+                new TaskJoin.Entry("t1-abcd", "claude", "finished", Instant.ofEpochSecond(0), "Fix the flaky test", "s1", "/a"),
+                new TaskJoin.Entry("t2-abcd", "codex", "running", null, "", "s2", "/b"));
         var out = new RecordingOutput();
         ShellCommand.explain(new TaskJoin.Outcome.Several(entries), "box", Instant.ofEpochSecond(7200), List.of(), out);
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
@@ -84,11 +84,41 @@ class ShellCommandTaskTest {
     @Test
     void aBusyTaskIsAnErrorWithWhatItDidLately() {
         var busy = new TaskJoin.Outcome.Busy(
-                new TaskJoin.Entry("t2-abcd", "codex", "running", null, "", "s2", "/b", null));
+                new TaskJoin.Entry("t2-abcd", "codex", "running", null, "", "s2", "/b"));
         var out = new RecordingOutput();
         ShellCommand.explain(busy, "box", Instant.ofEpochSecond(7200), List.of("ran mvn test", "edited Foo.java"), out);
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
                 TaskJoin.refusal(busy, "box") + " Lately it:",
                 "ran mvn test", "edited Foo.java")), out.events());
+    }
+
+    private static final TaskJoin.Entry HELD = new TaskJoin.Entry("t1-abcd", "claude", "finished", null, "", "s1", "/a",
+            4242L, true, Instant.ofEpochSecond(0));
+
+    @Test
+    void takeShowsTheHolderAndAsksBeforeEndingIt() {
+        var asked = new java.util.ArrayList<TaskJoin.Entry>();
+        var out = new RecordingOutput();
+        assertFalse(ShellCommand.take(HELD, "box", Instant.ofEpochSecond(3 * 3600), ScriptedPrompts.lines("n"),
+                e -> { asked.add(e); return null; }, out));
+        assertTrue(asked.isEmpty(), "declined: nothing is signalled");
+        assertTrue(out.events().getFirst().msg().contains("agent pid 4242, last input 3h ago"), out.events().toString());
+
+        assertTrue(ShellCommand.take(HELD, "box", Instant.ofEpochSecond(3 * 3600), ScriptedPrompts.lines("y"),
+                e -> { asked.add(e); return null; }, new RecordingOutput()));
+        assertEquals(List.of(HELD), asked);
+
+        var refused = new RecordingOutput();
+        assertFalse(ShellCommand.take(HELD, "box", Instant.ofEpochSecond(3 * 3600), ScriptedPrompts.lines("y"),
+                e -> "Did not take it back: it did not exit.", refused));
+        assertEquals(new RecordingOutput.Event(RecordingOutput.Kind.ERROR, "Did not take it back: it did not exit."), refused.events().getLast());
+    }
+
+    @Test
+    void anAttachedTaskSRefusalNamesTake() {
+        var why = TaskJoin.refusal(new TaskJoin.Outcome.Busy(HELD), "box");
+        assertTrue(why.contains("isx shell box --task t1-abcd --take"), why);
+        var noTerminal = new TaskJoin.Entry("t1-abcd", "claude", "finished", null, "", "s1", "/a", 4242L, false, null);
+        assertTrue(TaskJoin.holder(noTerminal, Instant.now()).equals("agent pid 4242, with no terminal"));
     }
 }
