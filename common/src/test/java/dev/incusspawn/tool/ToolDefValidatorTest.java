@@ -192,7 +192,7 @@ class ToolDefValidatorTest {
     }
 
     @Test
-    void downloadWithoutUrlWarns(@TempDir Path dir) throws Exception {
+    void downloadWithoutUrlIsAnError(@TempDir Path dir) throws Exception {
         var file = dir.resolve("test.yaml");
         Files.writeString(file, """
                 name: my-tool
@@ -201,9 +201,7 @@ class ToolDefValidatorTest {
                     extract: /opt
                 """);
         var result = ToolDefValidator.validate(file);
-        assertFalse(result.hasErrors());
-        assertTrue(result.hasWarnings());
-        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("url")));
+        assertEquals(List.of("download entry in 'my-tool' is missing a 'url'"), result.errors());
     }
 
     @Test

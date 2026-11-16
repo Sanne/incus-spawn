@@ -61,8 +61,9 @@ public class ToolDefValidator {
         }
 
         for (var dl : def.getDownloads()) {
+            // An error: the build fails on it, after every earlier step has run
             if (dl.getUrl() == null || dl.getUrl().isBlank()) {
-                warnings.add("download entry in '" + def.getName() + "' is missing a 'url'");
+                errors.add("download entry in '" + def.getName() + "' is missing a 'url'");
             }
             var hasExtract = dl.getExtract() != null && !dl.getExtract().isBlank();
             var hasDestinationFile = dl.getDestinationFile() != null
