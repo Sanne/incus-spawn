@@ -809,7 +809,7 @@ class IncusApi {
                     joinQuietly(dataThread);
                 });
 
-                int exitCode = waitForExecOp(exec.opPath);
+                int exitCode = waitForExecOp(exec.instance, exec.opPath, 0, null);
                 keepalive.stop();
                 return exitCode;
             } catch (IOException e) {
@@ -1056,7 +1056,7 @@ class IncusApi {
         return body;
     }
 
-    private record ExecOp(String opPath, JqValue fds) {}
+    private record ExecOp(String instance, String opPath, JqValue fds) {}
 
     private ExecOp postExec(String instance, List<String> command,
                             Integer uid, Integer gid, String cwd, Map<String, String> env,
@@ -1067,7 +1067,7 @@ class IncusApi {
                 "exec POST failed (" + postResp.statusCode() + "): " +
                 postResp.body().pathText("error", ""));
         var opMeta = postResp.body().getField("metadata");
-        return new ExecOp(
+        return new ExecOp(instance,
                 "/1.0/operations/" + opMeta.pathText("id", ""),
                 opMeta.getField("metadata").getField("fds"));
     }
@@ -1130,7 +1130,7 @@ class IncusApi {
             // Authoritative completion + exit code (HTTP, reliable over vsock).
             int exitCode;
             try {
-                exitCode = waitForExecOp(exec.opPath, deadline, controlWs);
+                exitCode = waitForExecOp(exec.instance, exec.opPath, deadline, controlWs);
             } catch (IncusException timedOut) {
                 // Given up on: stop every helper now, the sockets close on the way out.
                 stdoutAlive.stop();
@@ -1343,12 +1343,8 @@ class IncusApi {
     /** How long a killed command gets to be reported finished before it is given up on. */
     static final long KILL_GRACE_SECONDS = 3;
 
-    private int waitForExecOp(String opPath) {
-        return waitForExecOp(opPath, 0, null);
-    }
-
     /**
-     * {@link #waitForExecOp(String)}, until {@code limit} ({@link System#nanoTime}; 0 for none):
+     * The wait for an exec's exit code, until {@code limit} ({@link System#nanoTime}; 0 for none):
      * then the process is sent SIGKILL through {@code control}, and given up on, throwing, once
      * it has had {@link #KILL_GRACE_SECONDS} to be reported finished. The kill may not end the
      * operation -- a child the process left holding its output keeps it open -- so the wait
@@ -1356,7 +1352,7 @@ class IncusApi {
      * a {@code /wait} request may overrun its poll, either way. (Starting the exec and opening its
      * sockets, before this, are bounded by the transport's own timeouts.)
      */
-    private int waitForExecOp(String opPath, long limit, IncusTransport.WsConnection control) {
+    private int waitForExecOp(String instance, String opPath, long limit, IncusTransport.WsConnection control) {
         long deadline = System.nanoTime() + MAX_EXEC_WAIT_SECONDS * 1_000_000_000L;
         long giveUp = limit + KILL_GRACE_SECONDS * 1_000_000_000L;
         boolean killed = false;
@@ -1385,6 +1381,9 @@ class IncusApi {
                         opPath + "/wait?timeout=" + pollSeconds,
                         null, (int) pollSeconds + (limit != 0 ? 2 : 30));
                 if (!waitResp.isSuccess()) {
+                    // An instance stopped or deleted under its command takes the operation with it;
+                    // that is no news to the user, and there is no exit code to be had either way.
+                    if (waitResp.statusCode() == 404 && !instanceRunning(instance)) return -1;
                     BuildOutput.warn("exec operation lost (HTTP " + waitResp.statusCode()
                             + " on " + opPath + "/wait) — exit code unknown");
                     return -1;
@@ -1408,6 +1407,18 @@ class IncusApi {
             // that failed or overran its slack, an operation lost, an interrupt -- leaves it
             // killed, never running on unowned in the guest.
             if (limit != 0 && !killed && !finished) kill(control);
+        }
+    }
+
+    /** Whether {@code instance} exists and is running; a failed read counts as running, so the caller warns. */
+    private boolean instanceRunning(String instance) {
+        try {
+            var resp = get("/1.0/instances/" + instance + "/state");
+            if (resp.statusCode() == 404) return false;
+            if (!resp.isSuccess()) return true;
+            return "Running".equalsIgnoreCase(resp.body().getField("metadata").pathText("status", "Running"));
+        } catch (RuntimeException e) {
+            return true;
         }
     }
 
