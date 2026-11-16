@@ -1453,22 +1453,26 @@ final class McpTools {
     private ToolResult reclaimTask(McpTool.Args args) {
         var task = tasks.require(args.requireString("task_id")).task();
         var expected = args.integer("attached_pid");
-        var reclaimed = tasks.reclaim(task, "isx mcp session " + session.id, expected == null ? null : expected.longValue());
-        var reclaim = reclaimed.reclaim();
+        var reclaim = tasks.reclaim(task, "isx mcp session " + session.id, expected == null ? null : expected.longValue());
         var pid = reclaim.pid();
-        // Recorded whatever came of it: a refused holder may have been sent SIGHUP all the same.
+        // Recorded whatever came of it, before anything else can fail: a refused holder may have been sent SIGHUP all the same.
         McpAuditLog.record(session.id, "reclaim_task", task.instance(), null, 0, "task=" + task.id() + " "
                 + reclaim.outcome().name().toLowerCase(java.util.Locale.ROOT) + (pid != null ? " pid=" + pid : ""));
         reclaim.requireFree(task.id());
+        // Read again: the holder is gone, so this records finished in place of attached.
+        var status = tasks.status(task, 0);
         var done = reclaim.outcome() == Reclaim.Outcome.RECLAIMED;
         var node = taskNode(task);
-        node.put("state", reclaimed.status().state());
+        node.put("state", status.state());
         node.put("reclaimed", done);
         if (done && pid != null) node.put("reclaimed_pid", pid);
-        return ToolResult.text(done
-                ? "Reclaimed task " + task.id() + "'s conversation: its holder (agent, pid " + pid + ") exited. State: "
-                        + reclaimed.status().state() + "; continue with send_message."
-                : "Nobody held task " + task.id() + "'s conversation. State: " + reclaimed.status().state() + ".", node.build());
+        var what = done ? "Reclaimed task " + task.id() + "'s conversation: its holder (agent, pid " + pid + ") exited."
+                : "Nobody held task " + task.id() + "'s conversation.";
+        var next = "attached".equals(status.state()) && status.attachedPid() != null
+                ? " But another agent (pid " + status.attachedPid() + ") holds it now, so send_message is still refused."
+                : "finished".equals(status.state()) || "lost".equals(status.state()) ? " State: " + status.state() + "; continue with send_message."
+                : " State: " + status.state() + ".";
+        return ToolResult.text(what + next, node.build());
     }
 
     private ToolResult cancelTask(McpTool.Args args) {

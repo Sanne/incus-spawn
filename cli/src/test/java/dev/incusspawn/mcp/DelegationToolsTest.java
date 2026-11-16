@@ -758,6 +758,7 @@ class DelegationToolsTest {
                 "only the holder the caller was shown");
         assertTrue(reclaimed.path("reclaimed").asBoolean(false));
         assertEquals("finished", reclaimed.path("state").asText());
+        assertTrue(text(call("reclaim_task", "{\"task_id\":\"" + task + "\"}")).contains("continue with send_message"));
         var sent = backend.scripts.stream().filter(sc -> sc.contains("pid %s by")).toList().getLast();
         assertTrue(sent.contains("isx mcp session "), "who reclaimed is recorded in the guest");
         assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}").path("isError").asBoolean(false));
@@ -765,6 +766,14 @@ class DelegationToolsTest {
         reclaimAnswer = "none";
         var nobody = structured(call("reclaim_task", "{\"task_id\":\"" + task + "\"}"));
         assertFalse(nobody.path("reclaimed").asBoolean(true));
+
+        // The status read after says another agent holds it: no send_message advice.
+        taskState = "finished";
+        attached = true;
+        var stillHeld = call("reclaim_task", "{\"task_id\":\"" + task + "\"}");
+        assertEquals("attached", structured(stillHeld).path("state").asText());
+        assertTrue(text(stillHeld).contains("another agent (pid 77) holds it now") && !text(stillHeld).contains("continue with send_message"),
+                text(stillHeld));
     }
 
     @Test
