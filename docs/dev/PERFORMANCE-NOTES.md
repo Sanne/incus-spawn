@@ -1195,7 +1195,60 @@ Another project on the same framework reports that process limited to 256 descri
 vfkit's row is empty: its tunnel stopped answering before the held connections were measured.
 
 What follows is in design/macos-and-vms.md "The launcher's machine": the relays hold at most 192 connections to the guest at once.
-What this does not show is how many descriptors the share of the home takes in that process, which the next record on a Mac reads.
+What this does not show is how many descriptors the share of the home takes in that process; the next section has the first reading.
+
+## The launcher's machine with 192 connections held, and after a sleep, on a Mac (issue #2031)
+
+Two records on PR #2197, both by `appliance/launcher-on-mac.sh` on the Mac runner (Mac18,5).
+The load was measured on 2026-11-14 with `isx-vm` of commit `69120c28` (macOS 27.2).
+The sleep was measured on 2026-11-15 with `isx-vm` of commit `4012424c`, under isx 0.5.2 and its appliance (macOS 27.2.1).
+
+**With the relays' limit the machine stays up.**
+Asked to hold 400 connections, `isx-vm` held 192, kept them open, and the framework did not stop the machine.
+vfkit has no rows here: its tunnel stopped answering before the held connections were measured.
+
+| Connections asked for | Accepted | Still open at the end | Rows of `lsof` for the machine's process | Request on a new connection, median | On a kept connection, median |
+|---|---|---|---|---|---|
+| 0 | 0 | 0 | 17 | 0.287 ms | 0.115 ms |
+| 150 | 150 | 150 | 167 | 0.298 ms | 0.122 ms |
+| 400 | 192 | 192 | 209 | not measured | not measured |
+
+Each held connection adds one row, so one descriptor in the machine's process.
+The script counted every row of `lsof` that day, and those include the working directory, the program and each mapped file, which are not descriptors.
+So 17 is an upper bound on what that process has open anyway, and the 8 inferred from the 248 is not disproved: 248 connections could not have been held beside 17 descriptors.
+With 192 held, between 47 and 56 of the 256 are left.
+Under isx, after an instance read one file of the home's share and with one connection held, the count was 26 rows for `isx-vm` and 42 for vfkit.
+A day later, read after the sleep below, it was 26 and 49.
+The script has counted descriptors only since (`open_descriptors`), under rows named "open descriptors", which no Mac has run yet.
+
+**Under isx, a branch takes the same time with either program, within what three runs can show.**
+
+| Under isx, median of three | vfkit | `isx-vm` |
+|---|---|---|
+| a branch to its prompt, 2026-11-14 | 387 ms | 455 ms |
+| a branch to its prompt, 2026-11-15 | 349 ms | 342 ms |
+| the destroy, 2026-11-14 | 696 ms | 720 ms |
+| the destroy, 2026-11-15 | 737 ms | 686 ms |
+| the API answers after `isx vm start`, 2026-11-14 | 3111 ms | 3128 ms |
+| the API answers after `isx vm start`, 2026-11-15 | 12152 ms | 3118 ms |
+
+The first record on that Mac had the branch at 442 ms under vfkit and 389 ms under `isx-vm`, so three runs give both orders.
+Nobody looked into vfkit's 12 s start of 2026-11-15.
+
+**After a minute of sleep the launcher ends the connections made before it, and the guest's clock stays behind under both programs.**
+
+| A sleep with 20 event streams held | vfkit | `isx-vm` |
+|---|---|---|
+| asleep for | 62 s | 62 s |
+| of the 20, still open on the host after the wake | 20 | 0 |
+| the API answers after the wake | 57 ms | 72 ms |
+| the guest's clock less the host's, before the sleep | 0 s | -1 s |
+| the guest's clock less the host's, 10 s after the wake | -59 s | -59 s |
+
+`isx-vm` logged "woke after 59 s asleep, dropped 20 connections" and then "the guest's clock is not set: its agent on vsock port 1024 did not answer".
+The cause is in the appliance and holds for vfkit too: `rcS` starts `qemu-ga` on an address no guest has, so the agent exits at boot and nothing listens on that port (#2282).
+That was confirmed on Linux, on the x86_64 appliance under QEMU with a vsock device: the host's dial to port 1024 is reset while the tunnel's port answers, and `qemu-ga` run by hand says "Failed to bind socket: Address not available".
+The clock was read once, 10 s after the wake, so how long the guest stays behind before chrony steps it was not measured.
 
 ## The vsock tunnel's relay under load, on Linux (issue #2031)
 
