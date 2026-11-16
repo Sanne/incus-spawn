@@ -84,11 +84,15 @@ final class Tasks {
      * or it was killed), or {@code unknown} when systemd could not be asked. A person can also
      * join while a run is still going; the state stays {@code running}, with the pid set.
      * {@code startedAt} and {@code lastActivity} are when the current run started and last
-     * wrote output, by the instance's clock; null when it has not.
+     * wrote output, by the instance's clock; null when it has not. With a pid,
+     * {@code attachedTty} says whether that agent has a controlling terminal, and
+     * {@code attachedLastInputAt} when that terminal last had input (null without one): facts for
+     * the caller to weigh, which never change the state.
      */
     record Status(String state, int run, Integer exit, long outputBytes,
                   long stderrBytes, String output, String stderr, Long attachedPid,
-                  Instant startedAt, Instant lastActivity, String sessionId, boolean sessionGone) {
+                  Instant startedAt, Instant lastActivity, String sessionId, boolean sessionGone,
+                  boolean attachedTty, Instant attachedLastInputAt) {
         boolean running() {
             return "running".equals(state);
         }
@@ -898,7 +902,7 @@ final class Tasks {
             else header.put(key, lines[i].substring(eq + 1));
         }
         if ("missing".equals(header.get("state"))) {
-            return new Status("lost", 0, null, 0, 0, "", "", null, null, null, null, false);
+            return new Status("lost", 0, null, 0, 0, "", "", null, null, null, null, false, false, null);
         }
         var rest = i < lines.length ? String.join("\n", List.of(lines).subList(i + 1, lines.length)) : "";
         var split = rest.indexOf("\n---stderr\n");
@@ -909,7 +913,8 @@ final class Tasks {
         var state = header.getOrDefault("state", "unknown");
         if (!List.of("running", "finished", "lost").contains(state)) state = "unknown";
         var agent = AGENT.equals(header.get("kind"));
-        var attached = agent ? Presence.parse(presence).holderOf(recordedAgent(header.get("identity")), header.get("session_id"), header.get("cwd")) : null;
+        var who = Presence.parse(presence);
+        var attached = agent ? who.holderOf(recordedAgent(header.get("identity")), header.get("session_id"), header.get("cwd")) : null;
         if (attached != null && state.equals("finished")) state = "attached";
         long outputBytes = parseLong(header.getOrDefault(agent ? "events_bytes" : "stdout_bytes", "0"));
         return new Status(state, (int) parseLong(header.getOrDefault("run", "0")), exit,
@@ -917,7 +922,8 @@ final class Tasks {
                 output.endsWith("\n") ? output.substring(0, output.length() - 1) : output, stderr, attached,
                 epochSeconds(header.get("started")), epochSeconds(header.get("activity")),
                 SESSION_ID.matcher(header.getOrDefault("session_id", "")).matches() ? header.get("session_id") : null,
-                "1".equals(header.get("session_gone")));
+                "1".equals(header.get("session_gone")),
+                attached != null && who.onTerminal(attached), attached == null ? null : who.lastInput(attached));
     }
 
     /** A time the guest reported in seconds since the epoch; null if it reported none. */

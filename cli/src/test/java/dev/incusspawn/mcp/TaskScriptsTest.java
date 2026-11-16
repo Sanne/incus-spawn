@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -1789,7 +1790,12 @@ class TaskScriptsTest {
     void presenceRecognizesBothAgentsAndQualifiesSessionIds() {
         var presence = Presence.parse(List.of("codex 71 /codex", "resume 71 same-id", "claude 72 /claude", "resume 72 same-id"));
         assertFalse(presence.attended(), "no agent is on a terminal");
-        assertTrue(Presence.parse(List.of("tty 72", "claude 72 /claude")).attended());
+        var onTerminal = Presence.parse(List.of("tty 72", "claude 72 /claude", "input 72 1700000000", "input 71 x"));
+        assertTrue(onTerminal.attended());
+        assertTrue(onTerminal.onTerminal(72));
+        assertEquals(java.time.Instant.ofEpochSecond(1700000000), onTerminal.lastInput(72));
+        assertFalse(presence.onTerminal(71));
+        assertNull(presence.lastInput(71));
         assertEquals(71L, presence.holderOf(DelegateAgent.CODEX, "same-id", "/other"));
         assertEquals(72L, presence.holderOf(DelegateAgent.CLAUDE, "same-id", "/other"));
         assertEquals(71L, presence.holderOf(DelegateAgent.CODEX, null, "/codex"));
@@ -1888,6 +1894,8 @@ class TaskScriptsTest {
                 var status = Tasks.parse(sh(TaskScripts.status(id, 0), ""));
                 assertEquals("attached", status.state(), agent.id);
                 assertEquals(agentPid, status.attachedPid());
+                assertFalse(status.attachedTty(), "started with no terminal");
+                assertNull(status.attachedLastInputAt());
                 var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
                 // Pi's sessions belong to their directory, and its title hides the session it opened.
                 if (agent != DelegateAgent.PI) assertEquals(agentPid, who.holderOf(agent, sessionId(), "/elsewhere"), "found by the session it resumes");
@@ -2077,6 +2085,33 @@ class TaskScriptsTest {
         assertEquals(1, unknown.exit(), unknown.stderr());
         assertTrue(unknown.stderr().contains("systemd cannot say whether a run is going"), unknown.stderr());
         assertFalse(Files.exists(ready));
+    }
+
+    @Test
+    @Timeout(60)
+    void anAttachedAgentOnATerminalReportsWhenItLastHadInput() throws Exception {
+        assumeTrue(new java.io.File("/usr/bin/script").canExecute(), "script (util-linux) gives the agent a pty");
+        var id = "t11-tty";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        claudeTranscript();
+        Files.writeString(d.resolve("cwd"), work.toRealPath() + "\n");
+        stub("claude", "exec -a claude bash -c " + JOINED_AGENT + " \"$@\"");
+        // The person's agent on a pty of its own, as isx shell gives it.
+        var person = start("exec script -qfec 'claude --resume " + sessionId() + "' /dev/null");
+        try {
+            var agentPid = joinedAgent(home.resolve("join-ready"), person);
+            var status = Tasks.parse(sh(TaskScripts.status(id, 0), ""));
+            assertEquals("attached", status.state());
+            assertEquals(agentPid, status.attachedPid());
+            assertTrue(status.attachedTty());
+            assertNotNull(status.attachedLastInputAt(), "its pty's access time");
+            var age = java.time.Duration.between(status.attachedLastInputAt(), java.time.Instant.now());
+            assertTrue(age.abs().toMinutes() < 5, "the pty was made just now: " + status.attachedLastInputAt());
+            assertTrue(Presence.parse(sh(Presence.script(""), "").lines().toList()).attended(), "a person on a terminal");
+        } finally {
+            stopAll(person);
+        }
     }
 
     @Test

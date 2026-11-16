@@ -1,9 +1,13 @@
 package dev.incusspawn.mcp;
 
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Whether a person is working in an instance: a process on a terminal (an {@code isx shell},
@@ -16,14 +20,17 @@ import java.util.Set;
  * {@code sudo} when it can, so processes of other users (a {@code sudo -i}) are seen too.
  */
 final class Presence {
+    private static final Pattern EPOCH_SECONDS = Pattern.compile("[0-9]{1,12}");
 
     /** A coding agent process isx did not start: where it runs, and which sessions it resumes. */
     record AgentProcess(long pid, DelegateAgent agent, String cwd, Set<String> resumes) {}
 
     /**
      * Prints {@code tty <pid>} for each process on a pseudo-terminal, {@code claude <pid> <cwd>},
-     * {@code codex <pid> <cwd>}, {@code pi <pid> <cwd>} or {@code opencode <pid> <cwd>} for each coding agent, and
-     * {@code resume <pid> <session>} for each session one resumes. Pi replaces its command line
+     * {@code codex <pid> <cwd>}, {@code pi <pid> <cwd>} or {@code opencode <pid> <cwd>} for each coding agent,
+     * {@code input <pid> <epoch seconds>} for one on a pseudo-terminal, the access time of its
+     * controlling pty, which the kernel moves on input and not on output (at about 8 s granularity),
+     * and {@code resume <pid> <session>} for each session one resumes. Pi replaces its command line
      * with its title, {@code pi}, so its session is never seen: it is found by its directory,
      * which is enough, as its sessions belong to the directory they started in (a
      * {@code --session-id} from elsewhere opens another, and {@code --session} forks).
@@ -38,7 +45,7 @@ final class Presence {
               st=$(cat "$d/stat" 2>/dev/null) || continue
               read -r -a f <<< "${st##*) }"
               maj=$(( (${f[4]:-0} >> 8) & 4095 ))
-              [ "$maj" -ge 136 ] && [ "$maj" -le 143 ] && [ "${f[4]}" != "$console" ] && echo "tty $pid"
+              pty=0; [ "$maj" -ge 136 ] && [ "$maj" -le 143 ] && [ "${f[4]}" != "$console" ] && pty=1 && echo "tty $pid"
               mapfile -d '' -t argv 2>/dev/null < "$d/cmdline" || continue
               [ ${#argv[@]} -gt 0 ] || continue
               case "${argv[0]##*/}" in
@@ -51,6 +58,10 @@ final class Presence {
               esac
               grep -qz '^ISX_MCP_TASK=' "$d/environ" 2>/dev/null && continue
               echo "$agent $pid $(readlink "$d/cwd" 2>/dev/null)"
+              if [ "$pty" = 1 ]; then
+                pts=$(( (maj - 136) * 256 + ((${f[4]} & 255) | ((${f[4]} >> 12) & 1048320)) ))
+                at=$(stat -c %X "/dev/pts/$pts" 2>/dev/null) && echo "input $pid $at"
+              fi
               [ "$agent" = pi ] && continue
               if [ "$agent" = opencode ]; then
                 # opencode's TUI, run and attach all resume with --session or -s.
@@ -101,14 +112,16 @@ final class Presence {
             exit 0
             """;
 
-    static final Presence NOBODY = new Presence(Set.of(), List.of());
+    static final Presence NOBODY = new Presence(Set.of(), List.of(), Map.of());
 
     private final Set<Long> terminals;
     private final List<AgentProcess> agents;
+    private final Map<Long, Instant> lastInput;
 
-    private Presence(Set<Long> terminals, List<AgentProcess> agents) {
+    private Presence(Set<Long> terminals, List<AgentProcess> agents, Map<Long, Instant> lastInput) {
         this.terminals = terminals;
         this.agents = agents;
+        this.lastInput = lastInput;
     }
 
     /** The probe, as a shell command whose output {@link #parse} reads; prefixed per line if asked. */
@@ -134,6 +147,7 @@ final class Presence {
     static Presence parse(List<String> lines) {
         var terminals = new HashSet<Long>();
         var agents = new LinkedHashMap<Long, AgentProcess>();
+        var lastInput = new HashMap<Long, Instant>();
         for (var line : lines) {
             var parts = line.strip().split(" ", 3);
             if (parts.length < 2) continue;
@@ -150,10 +164,25 @@ final class Presence {
                     var c = agents.get(pid);
                     if (c != null && parts.length > 2) c.resumes().add(parts[2]);
                 }
+                case "input" -> {
+                    if (parts.length > 2 && EPOCH_SECONDS.matcher(parts[2]).matches()) {
+                        lastInput.put(pid, Instant.ofEpochSecond(Long.parseLong(parts[2])));
+                    }
+                }
                 default -> { }
             }
         }
-        return new Presence(Set.copyOf(terminals), List.copyOf(agents.values()));
+        return new Presence(Set.copyOf(terminals), List.copyOf(agents.values()), Map.copyOf(lastInput));
+    }
+
+    /** Whether {@code pid} has a controlling pseudo-terminal: a person's agent does, a leftover after a hangup does not. */
+    boolean onTerminal(long pid) {
+        return terminals.contains(pid);
+    }
+
+    /** When {@code pid}'s pseudo-terminal last had input, or null when it has none or it could not be read. */
+    Instant lastInput(long pid) {
+        return lastInput.get(pid);
     }
 
     /**
