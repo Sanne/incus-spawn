@@ -431,12 +431,16 @@ public class DownloadCache {
         };
     }
 
-    /**
-     * A {@code Retry-After} given in seconds, capped at {@link #MAX_RETRY_AFTER}; the HTTP-date
-     * form is ignored, since the servers isx downloads from send seconds.
-     */
     private static Duration retryAfter(HttpResponse<?> response) {
-        var value = response.headers().firstValue("Retry-After").orElse(null);
+        return retryAfter(response.headers().firstValue("Retry-After").orElse(null));
+    }
+
+    /**
+     * A {@code Retry-After} given in seconds, capped at {@link #MAX_RETRY_AFTER}, or null when
+     * there is none; the HTTP-date form is ignored, since the servers isx downloads from send
+     * seconds. The proxy bounds its rate-limit backoff with it too.
+     */
+    public static Duration retryAfter(String value) {
         if (value == null) return null;
         try {
             var seconds = Long.parseLong(value.trim());

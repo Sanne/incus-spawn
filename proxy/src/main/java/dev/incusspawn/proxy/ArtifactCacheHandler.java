@@ -1958,11 +1958,7 @@ class ArtifactCacheHandler {
     }
 
     boolean inBackoff(String domain) {
-        var since = upstream.unreachableSince.get(domain);
-        if (since == null) return false;
-        if (System.nanoTime() - since < TimeUnit.SECONDS.toNanos(Upstream.UNREACHABLE_BACKOFF_SECONDS)) return true;
-        upstream.unreachableSince.remove(domain, since);
-        return false;
+        return upstream.inBackoff(domain);
     }
 
     /** A connection was made, then the exchange on it failed. */

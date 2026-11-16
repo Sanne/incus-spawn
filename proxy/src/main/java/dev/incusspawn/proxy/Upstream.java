@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.DerEncoder;
+import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.util.DeniedChainTrustManager;
 import dev.incusspawn.util.MacKeychainTrust;
 import dev.incusspawn.util.SystemTrust;
@@ -28,6 +29,7 @@ import java.net.UnknownHostException;
 import java.nio.file.Path;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,7 +42,7 @@ import java.util.function.BiFunction;
 
 /**
  * The proxy's side towards upstream, shared by {@link MitmProxy} and its caches: the upstream
- * clients, async DNS, the per-domain unreachable backoff, the client's silence budget, the plain
+ * clients, async DNS, the per-domain backoff, the client's silence budget, the plain
  * relay, and the helpers that copy headers, pipe a response and answer with an error.
  * <p>
  * It holds no credentials and never injects any: whatever needs them stays in {@link MitmProxy}.
@@ -121,8 +123,8 @@ class Upstream {
         dns.put(host, resolved(ip));
     }
 
-    void clearUnreachable() {
-        unreachableSince.clear();
+    void clearBackoffs() {
+        backoffs.clear();
     }
 
     Upstream(Vertx vertx, HostLookup hostLookup) {
@@ -257,19 +259,88 @@ class Upstream {
             });
         }
         if (!Revalidation.keepsBackoff(host)) return connected;
+        var sent = System.nanoTime();
         // Every request to a caching domain that keeps one, whatever its purpose, keeps its backoff current: a
-        // failed connect starts it, and only a response ends it, since a request on a pooled
-        // connection is handed out without any network I/O.
+        // failed connect or a 429 starts it, and only another answer or its end ends it, since a request on a
+        // pooled connection is handed out without any network I/O.
         return connected.andThen(ar -> {
             if (ar.succeeded()) {
-                ar.result().response().onSuccess(resp -> unreachableSince.remove(host));
+                ar.result().response().onSuccess(resp -> {
+                    if (resp.statusCode() == 429) throttled(host, resp.getHeader("Retry-After"), sent);
+                    else endBackoff(host, sent);
+                });
             } else if (cutShort && isTimeout(ar.cause())) {
                 return;
-            } else if (unreachableSince.put(host, System.nanoTime()) == null) {
-                ProxyLog.warn("Cannot reach " + host + " (" + ar.cause().getMessage() +
-                        "); serving cached copies unconfirmed for " + UNREACHABLE_BACKOFF_SECONDS + "s");
+            } else if (startBackoff(host, Duration.ofSeconds(UNREACHABLE_BACKOFF_SECONDS))) {
+                ProxyLog.warn("Cannot reach " + host + " (" + ar.cause().getMessage() + "); "
+                        + servingUnconfirmed(host, UNREACHABLE_BACKOFF_SECONDS));
             }
         });
+    }
+
+    /**
+     * A 429 from a domain that keeps a backoff: as long as its {@code Retry-After} says, within
+     * {@link DownloadCache#retryAfter}'s bound, else {@link #UNREACHABLE_BACKOFF_SECONDS}. A
+     * {@code Retry-After} of 0 starts none, and is an answer like any other. Repeated 429s each
+     * start it again, at the same length, so a lasting rate limit costs one refused request per
+     * backoff.
+     */
+    private void throttled(String host, String retryAfter, long sent) {
+        var given = DownloadCache.retryAfter(retryAfter);
+        var length = given != null ? given : Duration.ofSeconds(UNREACHABLE_BACKOFF_SECONDS);
+        if (length.isZero()) {
+            endBackoff(host, sent);
+        } else if (startBackoff(host, length)) {
+            ProxyLog.warn(host + " answered 429" + (given != null ? " (Retry-After " + retryAfter.trim() + ")" : "")
+                    + "; " + servingUnconfirmed(host, length.toSeconds()));
+        }
+    }
+
+    private static String servingUnconfirmed(String host, long seconds) {
+        return "serving cached copies unconfirmed for " + seconds + "s"
+                + (Revalidation.mayWithdraw(host) ? ", although " + host + " may withdraw releases" : "");
+    }
+
+    /**
+     * Start the domain's backoff, or extend it to last at least {@code length} from now: a shorter
+     * one never cuts a longer one short. A running one counts as begun now, so only an answer to a
+     * request sent after the latest failure or 429 ends it. Whether none was on before, which is
+     * when it is logged.
+     */
+    boolean startBackoff(String host, Duration length) {
+        var now = System.nanoTime();
+        var until = now + length.toNanos();
+        var started = new boolean[1];
+        backoffs.compute(host, (h, previous) -> {
+            started[0] = previous == null || previous.until() - now <= 0;
+            // Begun now either way: an answer to a request sent before this failure or 429
+            // says no more about the domain now than one sent before the first did
+            return new Backoff(now, started[0] || previous.until() - until < 0 ? until : previous.until());
+        });
+        return started[0];
+    }
+
+    /**
+     * An answer to a request sent at {@code sent} ends the domain's backoff, unless the backoff
+     * began after it was sent: an answer to a request already in flight then says nothing about now.
+     */
+    private void endBackoff(String host, long sent) {
+        backoffs.computeIfPresent(host, (h, backoff) -> backoff.since() - sent > 0 ? backoff : null);
+    }
+
+    /** Whether the domain's backoff is on: a request with a cached copy is then served it without asking. */
+    boolean inBackoff(String domain) {
+        var backoff = backoffs.get(domain);
+        if (backoff == null) return false;
+        if (backoff.until() - System.nanoTime() > 0) return true;
+        backoffs.remove(domain, backoff);
+        return false;
+    }
+
+    /** For tests: how long the domain's backoff has left, zero when it is off. */
+    Duration backoffLeft(String domain) {
+        var backoff = backoffs.get(domain);
+        return backoff == null ? Duration.ZERO : Duration.ofNanos(Math.max(0, backoff.until() - System.nanoTime()));
     }
 
     private static boolean isTimeout(Throwable e) {
@@ -353,10 +424,13 @@ class Upstream {
     // How long probeClient keeps an idle connection; design/proxy.md says why not longer
     private static final int PROBE_KEEP_ALIVE_SECONDS = 60;
 
-    // Per caching domain, when a connection to it last failed (requestWithAsyncDns
-    // keeps this). While recent, a request with a cached copy to fall back on uses it
-    // at once instead of each waiting out a connect timeout.
-    final Map<String, Long> unreachableSince = new ConcurrentHashMap<>();
+    // Per caching domain, its backoff (System.nanoTime): a failed connect or a 429
+    // starts it (requestWithAsyncDns keeps this). While it lasts, a request with a cached copy to fall
+    // back on uses it at once instead of each waiting out a connect timeout or being refused again.
+    final Map<String, Backoff> backoffs = new ConcurrentHashMap<>();
+
+    /** A domain's backoff: when it began and until when it lasts, both {@code System.nanoTime}. */
+    record Backoff(long since, long until) {}
 
     // --- Generic relay (non-cacheable) ---
 

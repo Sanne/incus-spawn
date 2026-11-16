@@ -197,7 +197,7 @@ class NpmCacheProxyTest {
             gathered.clear();
         }
         online();
-        proxy.upstream.clearUnreachable();
+        proxy.upstream.clearBackoffs();
     }
 
     /**
@@ -571,6 +571,22 @@ class NpmCacheProxyTest {
         assertEquals(1, hits.get("/backoff-stale/1.0.0").get(), "the stale hit is not confirmed in the background");
     }
 
+    @Test
+    void throttledLookupStartsTheBackoff() throws Exception {
+        var expired = cacheUnderEtag("throttled-expired", Duration.ofDays(8));
+        var other = cacheUnderEtag("throttled-other", Duration.ofDays(8));
+        unavailable.put("/throttled-expired/1.0.0", new AtomicInteger(1));
+        unavailableStatus = 429;
+
+        assertEquals(new Response(200, "tarball of throttled-expired"), get(expired, 10));
+        assertTrue(proxy.artifactCache.inBackoff(REGISTRY), "a 429 starts the backoff");
+
+        // The next copy is served without asking a registry that is refusing requests
+        assertEquals(new Response(200, "tarball of throttled-other"), get(other, 10));
+        assertEquals(2, hits.get("/throttled-expired/1.0.0").get(), "the lookup that cached it, and the refused one");
+        assertEquals(1, hits.get("/throttled-other/1.0.0").get(), "only the lookup that cached it");
+    }
+
     /** Ends with its confirmation's lookup still held: the drain answers it, rather than timing out on it. */
     @Test
     void aTestEndingWhileALookupIsHeldIsNotChargedTheDrain() throws Exception {
@@ -596,7 +612,7 @@ class NpmCacheProxyTest {
 
             // A backoff begins while it waits. The held lookup's connection then breaks (an answer would
             // end the backoff), and its retry's too, so the queue moves on with the backoff still on.
-            proxy.upstream.unreachableSince.put(REGISTRY, System.nanoTime());
+            proxy.upstream.startBackoff(REGISTRY, Duration.ofSeconds(Upstream.UNREACHABLE_BACKOFF_SECONDS));
             ArtifactCacheProxyTest.await("the queue to drain", () -> {
                 for (var req : stalled) {
                     stalled.remove(req);

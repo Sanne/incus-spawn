@@ -359,7 +359,7 @@ Key design:
   Afterwards only lookups touch them, every one under the same lock: `checkNpmTarballCache` renews `.shasum` and updates `.etag` when it confirms the copy and evicts the tarball with both on a mismatch or a gone version, and `reconcileNpmCopy` (the background confirmation) renews, expires or evicts.
   A cached tarball whose lookup gives no digest is served only when the registry is unreachable (`SidecarAnswer.unreachable()`); a `404`/`410` evicts it and anything else relays (`checkNpmTarballCache`, #787).
   An unchanged packument ETag is not enough to skip the lookup: `npm ci` fetches no packument, so a hit also needs its confirmation (the `.shasum` mtime) within `ArtifactCacheTiers`, and is confirmed in the background past `fresh` (`npmCacheState`, #1466).
-  The npm registry keeps the unreachable backoff like the `Revalidation` domains (`keepsBackoff`, read by `requestWithAsyncDns`): during it a cached tarball skips its lookup and its background confirmation.
+  The npm registry keeps the backoff like the `Revalidation` domains (`keepsBackoff`, read by `requestWithAsyncDns`, which starts it on a refused connect or a `429`): during it a cached tarball skips its lookup and its background confirmation.
   Never wait on the network inside an ordered `executeBlocking` (the default): every MITM connection shares one context and so one ordered queue, and a raw-socket lookup there ran every cold-install lookup one at a time (#960).
   The npm disk checks stay ordered on purpose, behind the packument's ETag write.
   All three commit through `Verification` (`fetchCacheAndServe`): nothing reaches the cache unverified.
@@ -375,7 +375,7 @@ Key design:
   Before adding a second listener instance or sending upstream requests from a worker context, give each event loop its own upstream client.
   A `206` continues only unencoded, with the remaining `Content-Length` and the first response's own validator (`resumesAt`), whatever `If-Range` got, since some servers ignore it.
   Both rules, the validator (`HttpValidator.strong`) and the whole continuation check (`HttpValidator.continues`), live in `common`, shared with `DownloadCache`, so the two paths cannot drift apart again.
-  A connect timeout cut short to fit the budget does not start the unreachable backoff (`requestWithAsyncDns`).
+  A connect timeout cut short to fit the budget does not start the domain's backoff (`requestWithAsyncDns`).
   Plain relays get the same budget with no resume (`RelayWatchdog` in `relayRequest`, #929): counted from the client's last byte, not while its body streams, so uploads are not cut while the client sends.
   A bodyless GET, HEAD or OPTIONS whose upstream connection closes before any answer is sent once more on a new request, through the same `prepare` (`Upstream.mayResend`, #1914): an upstream closing an idle pooled connection as the relay sends on it otherwise gives the guest a 502.
   Never resend a request with a body: it has gone and is not held.
@@ -404,7 +404,9 @@ Key design:
   Older is confirmed as `Revalidation` says per domain: `HEAD_CHECKSUM` (Central: a `HEAD`'s `X-Checksum-SHA1`, falling back to `.sha1`) or `SIDECAR` (portal, Gradle distributions).
   A domain without an entry is never cached.
   A miss is only the GET, committed if it matches the same response's `X-Checksum-SHA1` or the sidecar fetched afterwards; no usable checksum means served but not cached.
-  Past the tiers, only an unreachable upstream (`SidecarAnswer.unreachable()`: connect failure or 5xx; 30s per-domain backoff) serves unconfirmed.
+  Past the tiers, only an unreachable upstream (`SidecarAnswer.unreachable()`: connect failure, 5xx or 429) serves unconfirmed.
+  A refused connect starts a 30s per-domain backoff, and a 429 one as long as its `Retry-After` up to 60s, else 30s (`Upstream.startBackoff`, #2301).
+  It ends on time, or on an answer to a request sent after its latest start that is not a 429, or is a 429 with `Retry-After: 0`.
   A `429` or `5xx` on a relayed domain or a Maven/Gradle miss reaches the client as upstream sent it (#2309, design/proxy.md "A throttled answer reaches the client as upstream sent it").
   Where the proxy writes the answer, it keeps only what a client needs to wait: a sidecar with no stored copy keeps upstream's status, body, `Content-Type` and `Upstream.retryHeaders` (`SidecarAnswer.headers`), and a ChatGPT refresh's `429` keeps `Upstream.retryHeaders` beside the proxy's own body (its `5xx` becomes the proxy's `502`).
   `X-Checksum-SHA1` is what makes Maven skip its `.sha1` request.

@@ -154,6 +154,8 @@ class ArtifactCacheProxyTest {
     static volatile String lastModified;
     /** The Date GETs answer with, if any: what makes Last-Modified a strong validator or not. */
     static volatile String date;
+    /** The {@code Retry-After} a 429 is sent with, or none. */
+    static volatile String retryAfter;
     /** Range answers left to end short, as if the connection closed early without an error. */
     static final AtomicInteger rangesToShorten = new AtomicInteger();
     static volatile boolean changeOnCut;
@@ -292,6 +294,8 @@ class ArtifactCacheProxyTest {
             return;
         }
         resp.setStatusCode(reply.status());
+        var currentRetryAfter = retryAfter;
+        if (currentRetryAfter != null && reply.status() == 429) resp.putHeader("Retry-After", currentRetryAfter);
         if (reply.location() != null) resp.putHeader("Location", reply.location());
         if (slowRedirectBody && reply.location() != null) {
             resp.setChunked(true).write("x");
@@ -408,6 +412,7 @@ class ArtifactCacheProxyTest {
         etag = null;
         lastModified = null;
         date = null;
+        retryAfter = null;
         rangesToShorten.set(0);
         changeOnCut = false;
         ignoreIfRange = false;
@@ -526,7 +531,7 @@ class ArtifactCacheProxyTest {
 
     /** Every repository host goes to the mock, through the same hook the benchmark uses. */
     static void online() {
-        proxy.upstream.clearUnreachable();
+        proxy.upstream.clearBackoffs();
         for (var host : REPOSITORY_HOSTS) {
             online(host);
         }
@@ -1009,7 +1014,7 @@ class ArtifactCacheProxyTest {
         for (var jar : jars) {
             // Says which of the two ways the turn can fail to come (#1951): still queued, or run without a HEAD
             awaitOr("the background HEAD of " + jar, () -> headsOn(CENTRAL, jar) >= 1,
-                    () -> proxy.artifactCache.backgroundQueue() + ", upstream backoff " + proxy.upstream.unreachableSince
+                    () -> proxy.artifactCache.backgroundQueue() + ", upstream backoff " + proxy.upstream.backoffs
                             + ", HEADs " + hits.keySet().stream().filter(k -> k.startsWith("HEAD ")).sorted().toList());
         }
     }
@@ -2272,6 +2277,127 @@ class ArtifactCacheProxyTest {
     void throttledMissIsUpstreamsAnswer() throws Exception {
         routes.put(CENTRAL + " " + JAR, throttled("later"));
         assertThrottledAsUpstreamSent(get(CENTRAL, JAR), "later");
+    }
+
+    @Test
+    void throttledProbeStartsTheBackoff() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+        var other = "/maven2/org/example/other/1.0/other-1.0.jar";
+        publishJar(CENTRAL, other, "o1");
+        get(CENTRAL, other);
+        awaitStoredJar(CENTRAL, other, "o1");
+
+        routes.put(CENTRAL + " " + JAR, new Reply(429, null, null));
+        hits.clear();
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertTrue(proxy.artifactCache.inBackoff(CENTRAL), "a 429 starts the backoff");
+        assertBackoffLeft(Upstream.UNREACHABLE_BACKOFF_SECONDS, "without Retry-After, the same 30s");
+
+        // Neither the throttled artifact nor another one asks a domain that is refusing requests
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertEquals("o1", get(CENTRAL, other).text());
+        assertEquals(1, headsOn(CENTRAL, JAR));
+        assertEquals(0, headsOn(CENTRAL, other));
+    }
+
+    @Test
+    void throttledBackoffLastsAsLongAsRetryAfterWithinItsBound() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+        routes.put(CENTRAL + " " + JAR, new Reply(429, null, null));
+
+        retryAfter = "45";
+        get(CENTRAL, JAR);
+        assertBackoffLeft(45, "as long as upstream asked");
+
+        proxy.upstream.clearBackoffs();
+        retryAfter = "3600";
+        get(CENTRAL, JAR);
+        assertBackoffLeft(60, "no longer than the bound isx's own downloads honour");
+
+        proxy.upstream.clearBackoffs();
+        retryAfter = "0";
+        get(CENTRAL, JAR);
+        assertFalse(proxy.artifactCache.inBackoff(CENTRAL), "upstream asked to be asked again at once");
+    }
+
+    @Test
+    void throttledBackoffEndsOnAnAnswerThatIsNotA429() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+        routes.put(CENTRAL + " " + JAR, new Reply(429, null, null));
+        get(CENTRAL, JAR);
+
+        // Nothing stored to fall back on, so upstream is asked despite the backoff: a 429 keeps it on...
+        var other = "/maven2/org/example/other/1.0/other-1.0.jar";
+        routes.put(CENTRAL + " " + other, new Reply(429, null, null));
+        assertEquals(429, get(CENTRAL, other).status());
+        assertTrue(proxy.artifactCache.inBackoff(CENTRAL), "a 429 does not end it");
+
+        // ...and any other answer ends it
+        publishJar(CENTRAL, other, "o1");
+        assertEquals("o1", get(CENTRAL, other).text());
+        assertFalse(proxy.artifactCache.inBackoff(CENTRAL), "an answer that is not a 429 ends it");
+    }
+
+    @Test
+    void anAnswerSentBeforeTheBackoffBeganDoesNotEndIt() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+        var other = "/maven2/org/example/other/1.0/other-1.0.jar";
+        publishJar(CENTRAL, other, "o1");
+        hits.clear();
+
+        // A download already in flight when the domain starts refusing requests...
+        var gate = new CompletableFuture<Void>();
+        gates.put("GET " + CENTRAL + " " + other, gate);
+        var inFlight = getAsync(CENTRAL, other);
+        await("the download in flight", () -> hitsOn(CENTRAL, other) == 1);
+        routes.put(CENTRAL + " " + JAR, new Reply(429, null, null));
+        get(CENTRAL, JAR);
+        assertTrue(proxy.artifactCache.inBackoff(CENTRAL));
+
+        // ...is answered, but that says nothing about the domain since
+        gate.complete(null);
+        assertEquals("o1", inFlight.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS).text());
+        assertTrue(proxy.artifactCache.inBackoff(CENTRAL), "an answer to a request sent before it does not end it");
+    }
+
+    @Test
+    void anAnswerSentBeforeALater429DoesNotEndTheBackoffItExtended() throws Exception {
+        var other = "/maven2/org/example/other/1.0/other-1.0.jar";
+        publishJar(CENTRAL, other, "o1");
+        var third = "/maven2/org/example/third/1.0/third-1.0.jar";
+        routes.put(CENTRAL + " " + third, new Reply(429, null, null));
+        hits.clear();
+
+        // A refused connect starts the backoff; a download with no copy to fall back on still goes out...
+        proxy.upstream.startBackoff(CENTRAL, Duration.ofSeconds(Upstream.UNREACHABLE_BACKOFF_SECONDS));
+        var gate = new CompletableFuture<Void>();
+        gates.put("GET " + CENTRAL + " " + other, gate);
+        var inFlight = getAsync(CENTRAL, other);
+        await("the download in flight", () -> hitsOn(CENTRAL, other) == 1);
+
+        // ...then a 429 asks for a longer quiet
+        retryAfter = "60";
+        assertEquals(429, get(CENTRAL, third).status());
+        assertBackoffLeft(60, "extended by the 429");
+
+        // The download's answer was on its way before that 429, so it does not end the backoff
+        gate.complete(null);
+        assertEquals("o1", inFlight.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS).text());
+        assertTrue(proxy.artifactCache.inBackoff(CENTRAL), "an answer to a request sent before the 429 does not end it");
+    }
+
+    static void assertBackoffLeft(long seconds, String why) {
+        var left = proxy.upstream.backoffLeft(CENTRAL);
+        assertTrue(left.compareTo(Duration.ofSeconds(seconds)) <= 0 && left.compareTo(Duration.ofSeconds(seconds - 5)) > 0,
+                why + ": " + left);
     }
 
     @Test
