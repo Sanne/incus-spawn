@@ -240,6 +240,7 @@ class ArtifactCacheHandler {
 
             upReq.send().onSuccess(upResp -> {
                 var statusCode = upResp.statusCode();
+                if (statusCode == 200) upstream.throttles.answered(domain, statusCode);
 
                 if (statusCode == 200) {
                     new CachingDownload(clientReq, domain, started, upResp, cacheFile, ref, verification).start();
@@ -324,6 +325,7 @@ class ArtifactCacheHandler {
 
             redReq.send().onSuccess(redResp -> {
                 var statusCode = redResp.statusCode();
+                if (statusCode == 200) upstream.throttles.answered(redirectHost, statusCode);
                 if (statusCode == 200) {
                     new CachingDownload(clientReq, domain, started, redResp, cacheFile, ref, verification).start();
                 } else if (statusCode >= 300 && statusCode < 400) {
@@ -685,6 +687,7 @@ class ArtifactCacheHandler {
                 resumeWhenWritable();
             } else {
                 resp.request().reset();
+                upstream.throttles.answered(domain, resp.statusCode());
                 if (resp.statusCode() >= 500 || resp.statusCode() == 429) {
                     // An overloaded upstream, as a stall often is: tried again like a failed connect
                     broken(new IOException("upstream answered " + resp.statusCode()), true);
@@ -934,7 +937,12 @@ class ArtifactCacheHandler {
                     : fetchNpmVersion(domain, packageName, version, started);
             // Ordered by when upstream was asked, not by when the request came in: the queue above can be long
             return lookup.compose(l -> vertx.executeBlocking(
-                    () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, l.answer(), l.askedAt())));
+                    () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, l.answer(), l.askedAt()))
+                    .onSuccess(r -> {
+                        if (r != null && r.cacheHit() && l.answer().status() == 429) {
+                            upstream.throttles.servedUnconfirmed(domain);
+                        }
+                    }));
         }).onSuccess(result -> {
             if (result == null) {
                 // Said here, so a relay that fails points at the lookup that sent it there
@@ -1618,6 +1626,7 @@ class ArtifactCacheHandler {
                                     ArtifactTarget target, String ref, long size) {
         confirm(domain, clientReq.path(), revalidation, target).onSuccess(confirmed -> {
             if (confirmed.outcome() == null) {
+                if (confirmed.answer().status() == 429) upstream.throttles.servedUnconfirmed(domain);
                 recordHit(ArtifactCacheStats.Hit.UNCONFIRMED, size);
                 serveCachedFile(clientReq.response(), target.artifact(), null);
             } else if (confirmed.outcome() == VerifiedArtifactStore.Outcome.SUPERSEDED) {
@@ -1778,6 +1787,7 @@ class ArtifactCacheHandler {
                 .onSuccess(reply -> {
                     var resp = clientReq.response();
                     if (reply.unreachable() && stored != null) {
+                        if (reply.status() == 429) upstream.throttles.servedUnconfirmed(domain);
                         sendSidecar(resp, 200, stored);
                     } else if (reply.error() != null) {
                         upstream.sendError(resp, reply.status(), reply.error());

@@ -1096,7 +1096,7 @@ The fields of each command, in order:
 | `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem`, `pinned_by`, `following` |
 | `isx account show <instance>` | one record per namespace: `namespace`, `account`, `description`, `chosen_by`, `chosen_in`, `template`, `template_account`, `problem`, `identity_pending`, `template_problem` |
 | `isx proxy status` | `status`, `version`, `git_sha`, `runtime`, `dns_overrides`, `drift`, `auth_error`, `health_endpoint`, `mitm_port`, `service_installed`, `managed_by`, `restart_helps`, `check_error`, `pid`, `pid_owner`, `foreign_holder`, `display_version` |
-| `isx proxy activity` | one record per instance: `instance`, `counting_since`, `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes`, `model_requests`, `model_in_flight`, `last_model_request_at`, `last_model_response_at`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `identified_by_proof`, `refused_proofs`, `refused_address_misses`, `registry_stale`, `unplaced_running`, `last_address_miss_at` |
+| `isx proxy activity` | one record per instance: `instance`, `counting_since`, `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes`, `model_requests`, `model_in_flight`, `last_model_request_at`, `last_model_response_at`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `identified_by_proof`, `refused_proofs`, `refused_address_misses`, `registry_stale`, `unplaced_running`, `last_address_miss_at`, `throttled_domains`, `upstream_refusals`, `served_unconfirmed` |
 | `isx doctor` | one record per check: `level`, `label`, `detail`, `remediation` |
 | `isx vm status` | `running`, `pid`, `rest_api`, `log`, `appliance`, `appliance_pending`, `vsock_connections`, `incus_reachable`, `incus_error`, `vsock_connections_high` |
 | `isx update-base --list` | newest first: `tag`, `date`, `latest`, `current`, `pinned`, `listed` |
@@ -1193,9 +1193,14 @@ One record per instance the proxy knows, by name, then one whose `instance` is `
 | `registry_stale` | The proxy's last instance listing failed, or the one under way has hung |
 | `unplaced_running` | Running instances with no traffic attributed |
 | `last_address_miss_at` | The time of the last address miss |
+| `throttled_domains` | Domains whose upstream answered 429 since the proxy started, which is the host's limit and no instance's |
+| `upstream_refusals` | The 429s those domains answered |
+| `served_unconfirmed` | Cached copies served without upstream's confirmation because of a 429 |
 
-The last five fields describe the proxy, not one instance: they are set on the unattributed record alone, and are `null` on the others.
+The last eight fields describe the proxy, not one instance: they are set on the unattributed record alone, and are `null` on the others.
 The table ends with the refused proofs and a failed listing when there are any, and the unplaced instances when there are address misses.
+
+It also names each domain that answered 429, with its counts, and `isx doctor` warns about one that is limiting the host or did within the last 30 minutes.
 
 With `--by-domain`, one record per instance and domain: `instance`, `domain`, `counting_since`, `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes`.
 `domain` is an intercepted domain, a subdomain counted under it, or `(other)`.

@@ -135,6 +135,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Auth & Security: MITM TLS Proxy
   - Credential Isolation
   - The proxy holds no configuration of its own
+  - Upstream rate limits are counted per domain (#2303)
   - The event log (#2241)
   - The socket transport: epoll on Linux
   - Host routes

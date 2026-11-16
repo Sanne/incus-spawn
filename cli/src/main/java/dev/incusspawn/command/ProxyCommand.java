@@ -365,6 +365,12 @@ public class ProxyCommand extends BaseCommand {
                         + String.join(", ", placement.unplacedRunning().stream().map(OutputFormat::oneLine).toList()));
             }
             if (placement.registryStale()) lines.add("Instance listing failed or not answering: proofs are refused until one succeeds");
+            for (var domain : new TreeSet<>(activity.throttled().keySet())) {
+                var t = activity.throttled().get(domain);
+                lines.add("Upstream rate limit: %s answered 429 %d time(s), %d cached copy(ies) served unconfirmed, %s"
+                        .formatted(OutputFormat.oneLine(domain), t.refusals(), t.servedUnconfirmed(),
+                                t.refusing() ? "refusing now" : "answering again"));
+            }
             if (lines.isEmpty()) return;
             out.println();
             lines.forEach(out::println);
@@ -406,22 +412,24 @@ public class ProxyCommand extends BaseCommand {
          * {@code model_} ones and the tokens are model calls alone. {@code identified_by_proof}: its
          * proof or secret alone named it, not its address (#1586). The proxy's {@code refused_proofs},
          * {@code refused_address_misses}, {@code registry_stale}, {@code unplaced_running} and {@code last_address_miss_at} are
-         * on the unattributed record alone, {@code null} on the others (#1586).
+         * on the unattributed record alone, {@code null} on the others (#1586), as are the host's upstream
+         * rate limits (#2303): {@code throttled_domains} (those that answered 429 since the proxy started),
+         * {@code upstream_refusals} (the 429s) and {@code served_unconfirmed} (cached copies served for them).
          */
         static List<Map<String, Object>> records(ProxyActivity activity, ZoneId zone) {
             var records = new ArrayList<Map<String, Object>>();
             for (var name : new TreeSet<>(activity.instances().keySet())) {
                 var i = activity.of(name);
-                records.add(record(name, i.countingSince(), i.traffic().total(), i, null, zone));
+                records.add(record(name, i.countingSince(), i.traffic().total(), i, null, null, zone));
             }
             records.add(record(null, activity.unattributedSince(), activity.unattributed().total(), null,
-                    activity.placement(), zone));
+                    activity.placement(), activity.throttled(), zone));
             return records;
         }
 
         private static Map<String, Object> record(String instance, Instant since, ProxyActivity.Counts traffic,
                                                   ProxyActivity.Instance model, ProxyActivity.Placement placement,
-                                                  ZoneId zone) {
+                                                  Map<String, ProxyActivity.Throttle> throttled, ZoneId zone) {
             var record = traffic(instance, null, since, traffic, zone);
             record.put("model_requests", model == null ? null : model.requests());
             record.put("model_in_flight", model == null ? null : model.inFlight());
@@ -437,6 +445,11 @@ public class ProxyCommand extends BaseCommand {
             record.put("registry_stale", placement == null ? null : placement.registryStale());
             record.put("unplaced_running", placement == null ? null : placement.unplacedRunning());
             record.put("last_address_miss_at", placement == null ? null : iso(placement.lastAddressMissAt(), zone));
+            record.put("throttled_domains", throttled == null ? null : new TreeSet<>(throttled.keySet()).stream().toList());
+            record.put("upstream_refusals", throttled == null ? null
+                    : throttled.values().stream().mapToLong(ProxyActivity.Throttle::refusals).sum());
+            record.put("served_unconfirmed", throttled == null ? null
+                    : throttled.values().stream().mapToLong(ProxyActivity.Throttle::servedUnconfirmed).sum());
             return record;
         }
 
