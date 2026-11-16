@@ -4,6 +4,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.BridgeSubnetCheck;
+import dev.incusspawn.incus.BtrfsUsage;
 import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FirewalldCheck;
@@ -1457,19 +1458,40 @@ class HostSetup {
         // matches the argument vector exactly, so each form needs its own entry. `quota rescan` is
         // the one non-read: it only rebuilds the accounting counters (never touches data) and is how
         // isx repairs the `inconsistent` state that would otherwise freeze every size it shows.
+        // `subvolume sync` and `quota rescan -W` only wait, for btrfs to free what was deleted and for a
+        // rescan already running, so that the rescan after a batch of deletes starts once nothing it
+        // rebuilds can be undone (#2061); -W never starts one.
         return List.of(
                 btrfsPath + " qgroup show -re --raw " + mount,
                 btrfsPath + " qgroup show -re --raw --sync " + mount,
                 btrfsPath + " subvolume list " + mount,
-                btrfsPath + " quota rescan " + mount);
+                btrfsPath + " quota rescan " + mount,
+                btrfsPath + " subvolume sync " + mount,
+                btrfsPath + " quota rescan -W " + mount);
+    }
+
+    /**
+     * The rule's entry that lets isx set the pool's {@code drop_subtree_threshold} before a delete
+     * (#2061, {@link dev.incusspawn.incus.BtrfsUsage#skipDropAccounting}), joined to the list, or
+     * nothing when the pool's filesystem is not found. The path names the filesystem by its UUID,
+     * written out: sudo's {@code *} also matches spaces, so a wildcard would let {@code tee} write
+     * any file. sudo matches the arguments exactly, so {@code tee} gets no option and no other file,
+     * and the kernel takes only 0 to 8 there.
+     */
+    static String thresholdEntry(String fsid) {
+        return BtrfsUsage.isFsid(fsid)
+                ? ", " + BtrfsUsage.TEE + " " + BtrfsUsage.dropThresholdPath(fsid)
+                : "";
     }
 
     static String btrfsSudoersContent(String pool) {
-        return btrfsSudoersContent(btrfsUsageCommands(pool));
+        return btrfsSudoersContent(btrfsUsageCommands(pool),
+                thresholdEntry(BtrfsUsage.fsid(pool).orElse(null)));
     }
 
-    private static String btrfsSudoersContent(List<String> commands) {
-        return System.getProperty("user.name") + " ALL=(root) NOPASSWD: " + String.join(", ", commands) + "\n";
+    private static String btrfsSudoersContent(List<String> commands, String thresholdEntry) {
+        return System.getProperty("user.name") + " ALL=(root) NOPASSWD: " + String.join(", ", commands)
+                + thresholdEntry + "\n";
     }
 
     /**
@@ -1535,7 +1557,7 @@ class HostSetup {
         // The rule names btrfs as btrfsPath() finds it, by the same search: run as the script runs,
         // after it installed btrfs-progs, never before, so a host without the package needs one
         // script, and the lines, the script's record of them, stay the same once it is there
-        var content = btrfsSudoersContent(btrfsUsageCommands(pool, "${btrfs}"));
+        var content = btrfsSudoersContent(btrfsUsageCommands(pool, "${btrfs}"), "${threshold_entry}");
         var delimiter = InitPlan.Change.delimiter(content);
         var lines = new ArrayList<String>();
         lines.add("btrfs=" + BTRFS_FALLBACK);
@@ -1546,8 +1568,21 @@ class HostSetup {
         lines.add("old_ifs=$IFS; IFS=:; set -f");
         lines.add("for dir in $path; do case $dir in /*) if [ -f \"$dir/btrfs\" ] && [ -x \"$dir/btrfs\" ]; then btrfs=$dir/btrfs; break; fi;; esac; done");
         lines.add("set +f; IFS=$old_ifs");
+        // The pool's filesystem UUID, found as BtrfsSysfs and the appliance's isx-agent find it: the
+        // source of the longest btrfs mount over the pool, then the sysfs directory listing that device;
+        // where there is no mountinfo (the script's test on macOS), no UUID and so no entry
+        lines.add("src=$(awk -v p=" + Container.shellQuote(BtrfsUsage.POOL_MOUNT_PREFIX + pool)
+                + " '{ mp = $5; i = index($0, \" - \"); split(substr($0, i + 3), r, \" \"); if (r[1] != \"btrfs\") next;"
+                + " if (p == mp || mp == \"/\" || index(p, mp \"/\") == 1) { if (length(mp) > best) { best = length(mp); s = r[2] } } }"
+                + " END { print s }' /proc/self/mountinfo 2>/dev/null || true)");
+        lines.add("fsid=");
+        lines.add("if [ -n \"$src\" ]; then name=$(basename \"$(readlink -f \"$src\" 2>/dev/null || echo \"$src\")\");"
+                + " for d in /sys/fs/btrfs/*/devices/\"$name\"; do if [ -e \"$d\" ]; then fsid=$(basename \"$(dirname \"$(dirname \"$d\")\")\"); break; fi; done; fi");
+        // Only a UUID goes into the rule, as thresholdEntry() holds it
+        lines.add("case $fsid in *[!0-9a-f-]*|'') threshold_entry= ;; ????????-????-????-????-????????????) threshold_entry=\", "
+                + BtrfsUsage.TEE + " /sys/fs/btrfs/$fsid/qgroups/drop_subtree_threshold\" ;; *) threshold_entry= ;; esac");
         lines.add("tmp=$(mktemp)");
-        // Unquoted: the one expansion is ${btrfs}; the user and the pool's mount hold no shell syntax
+        // Unquoted: the expansions are ${btrfs} and ${threshold_entry}; the user and the pool's mount hold no shell syntax
         lines.add("cat > \"$tmp\" <<" + delimiter);
         lines.addAll(content.lines().toList());
         lines.add(delimiter);
@@ -1638,8 +1673,10 @@ class HostSetup {
      * {@link dev.incusspawn.incus.BtrfsUsage}). Reading qgroups needs CAP_SYS_ADMIN and the pool dir
      * is root-only, and Incus exposes no API for rfer, so a privileged read is unavoidable; a
      * password prompt on TUI refresh isn't acceptable, hence NOPASSWD. The rule permits ONLY the
-     * read-only qgroup/subvolume listings plus {@code quota rescan} (rebuilds accounting counters,
-     * never touches data) against this pool's mount — no wildcards, no other btrfs subcommands.
+     * read-only qgroup/subvolume listings, {@code quota rescan} (rebuilds accounting counters,
+     * never touches data) and {@code subvolume sync} (waits for deleted subvolumes to be freed)
+     * against this pool's mount — no wildcards, no other btrfs subcommands — and {@code tee} to the
+     * one sysfs file holding the filesystem's {@code drop_subtree_threshold} (#2061).
      *
      * <p>Linux only (on macOS the pool lives in the appliance VM and the in-VM agent reads it as
      * root). Best-effort: if it can't be installed, rfer stamping simply fails and the TUI falls

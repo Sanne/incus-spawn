@@ -122,6 +122,9 @@ The delete-confirmation dialog restates the caveat at the moment it matters — 
 Reading rfer needs root (the qgroup ioctls need `CAP_SYS_ADMIN` and the pool directory is `0700 root`), and `isx` normally runs as an unprivileged user.
 Rather than prompt for sudo on every TUI refresh, the privileged read is split by platform (`BtrfsUsage`).
 On **Linux** the pool is on the host, so `isx init` installs a tightly-scoped NOPASSWD sudoers rule (`/etc/sudoers.d/incus-spawn-btrfs`, validated with `visudo -cf`) permitting *only* read-only `btrfs qgroup show -re --raw [--sync]`/`subvolume list` against the pool mount (both the plain and `--sync` command forms are listed, since sudo matches argv exactly).
+It also permits `quota rescan`, which rebuilds the counters, the two waits of a settle, `subvolume sync` and `quota rescan -W`, and `tee` to the pool filesystem's `drop_subtree_threshold` (#2061).
+That path names the filesystem by its UUID, written out, because sudo's `*` also matches spaces and would let `tee` write any file; sudo matches the arguments exactly, and the kernel accepts only 0 to 8 there.
+A pool re-created under another UUID loses the entry until `isx init` rewrites the rule.
 On **macOS** the pool lives inside the appliance VM, where the in-VM control agent already runs as root, so it gains a `btrfs-usage` verb (still an allowlisted one-verb dispatcher, not a general guest-exec channel).
 Both paths feed one unit-tested parser (`BtrfsUsage.parse`, joining qgroup rfer to subvolume paths).
 Since rfer is read only at build time (plus the fallback), the privileged surface is exercised rarely, not on every refresh.
@@ -178,19 +181,50 @@ A rescan walks the whole pool, which took over 20 s on a nested host, and every 
 The stamp serves only the TUI's disk panel, so a build whose accounting is under repair leaves its template unstamped, prints no message, and the TUI's backfill measures and saves it once the flag clears.
 `isx doctor` reports the state and offers the rescan for when the automatic one couldn't run.
 
-**Full qgroups make the next branches wait for deleted instances (#2061).**
+**Full qgroups made the next branches wait for deleted instances (#2061).**
 A subvolume delete returns at once, and `btrfs-cleaner` frees the tree in the background.
 Under full qgroup accounting it accounts every extent the subvolume shared with its source, and a new snapshot waits for the transaction that work holds.
-After 20 copies of a 2.7 GiB instance were deleted, each `incus copy` took about 5 s instead of 0.15 s, for over two minutes (docs/dev/PERFORMANCE-NOTES.md "Branching after a bulk delete").
-The cost grows with the data deleted and the number of copies sharing it, and isx makes the same requests throughout.
-With qgroups off, or in simple mode, the same series showed no slowdown.
+After 20 copies of a 2.7 GiB instance were deleted, each `incus copy` took about 5 s instead of 0.15 s, for over two minutes; after 70, up to 24 s, for 16 minutes (docs/dev/PERFORMANCE-NOTES.md "Branching after a bulk delete").
 isx turns full qgroups on itself: the root `size` every branch gets makes Incus run `btrfs quota enable` (see "Quotas on the host filesystem" above).
-isx keeps full mode, since simple quotas count only what a subvolume wrote after they were enabled, so the referenced column `BtrfsUsage` reads would be 0 for every template.
-Nor does a destroy wait for the cleaner: that would move minutes into the destroy for a slowdown that only some later branches feel.
-`isx doctor` names the backlog instead, as a note (`DoctorCommand.pendingCleanupFinding`), when the pool uses consistent full accounting.
+
+**isx has btrfs skip that accounting, and rebuilds it after the delete.**
+The kernel's `drop_subtree_threshold` (sysfs, `qgroups/drop_subtree_threshold`, 3 by default) decides it: a delete whose shared tree is that deep or deeper is not traced, and the accounting is marked inconsistent instead.
+Before a delete, isx sets it to 0 on a pool under full qgroups (`BtrfsUsage.skipDropAccounting`), so the cleaner traces nothing and frees 70 deleted copies at once.
+The kernel resets it to 3 at every mount and every `quota enable`, and Incus enables quotas lazily, so isx sets it before its deletes rather than once at boot.
+After the delete, isx settles the pool (`BtrfsUsage.settleDeletes`): it forces a commit, waits for the cleaner, puts the old threshold back, waits for any rescan already running, commits again, and starts a `btrfs quota rescan`.
+Putting it back means a delete isx does not make, a plain `incus delete` or Incus pruning an image, is traced as before, slowly, and never leaves the accounting inconsistent with nobody to settle it.
+The rescan rebuilds the counters in the background without slowing a snapshot; branches during it measured 0.12–0.16 s.
+What this gives up: while the accounting is inconsistent, btrfs enforces no qgroup limit, so no instance's root `size` holds, from the delete until the rescan completes.
+Settling at once is what keeps that short, a second or two after a destroy.
+Left alone, the cleaner frees a delete only at the next commit, up to `commit=300` s later, when no isx process is there to notice the flag it sets.
+A rescan that overlapped the cleaner clears the flag on completion, and the commit that then removes a freed subvolume's qgroup sets it again, which is why the settle waits for one and commits before starting its own.
+A drop at threshold 0 marks the accounting inconsistent, and marking it cancels a rescan still running, so the prepare step waits for one before it sets the threshold.
+Without that wait, 20 `isx destroy` in a row cancelled each previous one's rescan 14 times, and once left the pool reading "rescan running" with no rescan, refusing every new one, until it was mounted again.
+The wait costs back-to-back destroys one rescan each: 20 in a row took 58 s instead of 32 s on a 2.3 GiB source, and a destroy with no rescan running waits for nothing.
+A rescan the wait does not see end (60 s on Linux, 4 s through the macOS agent, inside its 5 s reply timeout) leaves the threshold as it is, so that delete is traced as before.
+A wait that times out kills `sudo`, not the `btrfs` it forked, which keeps both pipes open.
+So the reads of its output give up after a second (`BtrfsUsage.runProcess`), and the destroy goes on while that `btrfs` ends on its own.
+isx puts a threshold it replaced back from a shutdown hook too (`IncusClient.restoreReplacedThresholds`), for Ctrl-C or SIGTERM during a batch, whose settle then never runs.
+Left at 0, every delete isx does not make would go untraced until the next mount, and isx's own next delete, reading 0, would put nothing back.
+The hook writes the threshold alone, and the next delete, TUI refresh, build or doctor run rescans; a SIGKILL runs no hook.
+It is registered before the first threshold write, and marks isx as exiting before it reads what is held.
+A delete whose write was still in flight when the hook read puts its threshold back itself, unless the JVM halts first.
+A delete made once isx is exiting writes no threshold and is traced as before.
+The settle runs once per batch of deletes (`IncusClient.deleteBatch`: `isx destroy --all-*`, the TUI's batch delete, `isx clean`), so a destroy of one instance pays it once, under 0.1 s of its 0.7 s here, and a batch of 70 about 2 s.
+The forced commit writes whatever the pool has not committed yet, so on a busy pool it can take longer.
+On macOS the appliance's `isx-agent` does the same through its `btrfs-skip-drop-accounting` and `btrfs-settle` verbs, the second detached so the host does not wait.
+
+Rejected: simple quotas (`btrfs quota enable --simple`) also avoid the wait and never leave the counters inconsistent.
+On a pool enabled in simple mode from the start, each subvolume counts what it wrote, which is the per-template delta the TUI shows.
+But an existing pool needs its quotas disabled and re-enabled, after which everything already written counts for nobody until it is rebuilt, and the base image's bytes are left to a nameless qgroup once the image is deleted.
+Rejected too: dropping the root `size`, which turns quotas off and with them every template size and every instance's disk cap.
+
+`isx doctor` names a backlog as a note (`DoctorCommand.pendingCleanupFinding`) when the pool still traces drops: full accounting, consistent, at a threshold other than 0.
 It is read from the `qgroup show` that `BtrfsUsage` already reads (`BtrfsUsage.pendingCleanup`), counting the qgroups btrfs-progs paths as `<under deletion>`.
 A missing subvolume is not enough: once the cleaner has freed one, its qgroup stays until a later commit with its referenced bytes unchanged, pathed `<stale>`.
 An inconsistent pool is skipped, since its frozen counters could show a backlog long gone.
+On Linux it also notes when the sudoers rule does not let isx set the threshold (`DoctorCommand.thresholdNotSettable`), since a threshold of 3 is what every pool reads between deletes.
+It asks by writing back the value the pool has, which changes nothing; `sudo -n -l` would also say yes for a rule that wants a password, such as an administrator's `%wheel` one.
 
 The `C` key reclaims space via `isx clean pool` (failed builds, unused images, build caches).
 Downloaded base images, the container one and the `-vm` disk image, are a category of their own and opt-in, like the DNF cache.

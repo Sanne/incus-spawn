@@ -1608,41 +1608,44 @@ public class Tui {
                 "Deleted " + count + " " + kind + "(s)", null, () -> {
             int destroyed = 0;
             int skipped = 0;
-            for (var name : names) {
-                if (!backgroundTasks.tryClaim(name)) {
-                    skipped++;
-                    continue;
-                }
-                Optional<InstanceLockManager.LockHandle> lockOpt;
-                try {
-                    lockOpt = lockManager.tryAcquire(name, Metadata.OP_DELETING);
-                } catch (java.io.UncheckedIOException e) {
-                    backgroundTasks.releaseClaim(name);
-                    setStatusMessage("Lock error for " + name + ": " + e.getCause().getMessage());
-                    break;
-                }
-                if (lockOpt.isEmpty()) {
-                    backgroundTasks.releaseClaim(name);
-                    skipped++;
-                    continue;
-                }
-                try (var lock = lockOpt.get()) {
-                    if (incus.exists(name)) {
-                        incus.setPendingOperation(name, Metadata.OP_DELETING);
-                        refreshDataAfterBackground();
-                        try {
-                            incus.delete(name, true);
-                            InstanceLifecycle.removeHostIntegration(name, drawing);
-                            destroyed++;
-                        } catch (Exception e) {
-                            setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
-                            incus.clearPendingOperation(name);
-                            refreshDataAfterBackground();
-                            break;
-                        }
+            // One settle of the pool's accounting at the end, not one per instance (#2061)
+            try (var batch = incus.deleteBatch()) {
+                for (var name : names) {
+                    if (!backgroundTasks.tryClaim(name)) {
+                        skipped++;
+                        continue;
                     }
-                } finally {
-                    backgroundTasks.releaseClaim(name);
+                    Optional<InstanceLockManager.LockHandle> lockOpt;
+                    try {
+                        lockOpt = lockManager.tryAcquire(name, Metadata.OP_DELETING);
+                    } catch (java.io.UncheckedIOException e) {
+                        backgroundTasks.releaseClaim(name);
+                        setStatusMessage("Lock error for " + name + ": " + e.getCause().getMessage());
+                        break;
+                    }
+                    if (lockOpt.isEmpty()) {
+                        backgroundTasks.releaseClaim(name);
+                        skipped++;
+                        continue;
+                    }
+                    try (var lock = lockOpt.get()) {
+                        if (incus.exists(name)) {
+                            incus.setPendingOperation(name, Metadata.OP_DELETING);
+                            refreshDataAfterBackground();
+                            try {
+                                incus.delete(name, true);
+                                InstanceLifecycle.removeHostIntegration(name, drawing);
+                                destroyed++;
+                            } catch (Exception e) {
+                                setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
+                                incus.clearPendingOperation(name);
+                                refreshDataAfterBackground();
+                                break;
+                            }
+                        }
+                    } finally {
+                        backgroundTasks.releaseClaim(name);
+                    }
                 }
             }
             if (destroyed > 0) InstanceDestroyer.refreshProxy();

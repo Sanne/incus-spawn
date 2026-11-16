@@ -533,13 +533,16 @@ public class CleanCommand extends BaseCommand {
     static int deleteFailedBuilds(IncusClient incus, List<String> names, Consumer<String> deleted,
                                   BiConsumer<String, Exception> failed) {
         int count = 0;
-        for (var name : names) {
-            try {
-                incus.delete(name, true);
-                count++;
-                deleted.accept(name);
-            } catch (Exception e) {
-                failed.accept(name, e);
+        // One settle of the pool's accounting at the end, not one per build (#2061)
+        try (var batch = incus.deleteBatch()) {
+            for (var name : names) {
+                try {
+                    incus.delete(name, true);
+                    count++;
+                    deleted.accept(name);
+                } catch (Exception e) {
+                    failed.accept(name, e);
+                }
             }
         }
         if (count > 0) InstanceDestroyer.refreshProxy();

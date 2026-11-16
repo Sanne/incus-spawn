@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -130,6 +131,23 @@ public final class BtrfsUsage {
         public boolean untrusted() {
             return available && enabled && inconsistent;
         }
+
+        /**
+         * Whether a delete traces every shared extent, under full qgroups at a threshold other than
+         * 0 (#2061). A kernel that reports no threshold (-1) predates the attribute and traces them all.
+         */
+        public boolean tracesDrops() {
+            return available && enabled && !"squota".equals(mode) && dropSubtreeThreshold != SKIP_DROP_ACCOUNTING;
+        }
+
+        /** Whether a delete skips that tracing and leaves the accounting for a rescan. */
+        public boolean skipsDropAccounting() {
+            return available && enabled && !"squota".equals(mode) && dropSubtreeThreshold == SKIP_DROP_ACCOUNTING;
+        }
+
+        QgroupStatus withDropSubtreeThreshold(int threshold) {
+            return new QgroupStatus(available, enabled, inconsistent, mode, threshold);
+        }
     }
 
     /**
@@ -246,6 +264,188 @@ public final class BtrfsUsage {
             return r.exit() == 0 || r.stderr().toLowerCase().contains("in progress");
         } catch (RuntimeException e) {
             return false;
+        }
+    }
+
+    /**
+     * The {@code drop_subtree_threshold} isx gives a pool under full qgroup accounting (#2061): a
+     * subvolume delete then skips tracing the extents it shared with its template and marks the
+     * accounting inconsistent instead, for a rescan to rebuild in the background. At the kernel's
+     * default of 3, {@code btrfs-cleaner} traces them inside the transaction a new snapshot must
+     * commit, and a branch after a bulk delete waited seconds, for minutes (design/storage.md).
+     */
+    static final int SKIP_DROP_ACCOUNTING = 0;
+
+    /** The {@code tee} the sudoers rule lets write {@link #dropThresholdPath}. */
+    public static final String TEE = "/usr/bin/tee";
+
+    /** How long a settle waits for {@code btrfs-cleaner} to free what was deleted. */
+    private static final long SETTLE_TIMEOUT_SECONDS = 60;
+
+    /** A btrfs filesystem UUID, as its {@code /sys/fs/btrfs/<fsid>} directory is named. */
+    private static final Pattern FSID = Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+
+    /** The sysfs file holding the drop threshold of the filesystem {@code fsid}. */
+    public static String dropThresholdPath(String fsid) {
+        return "/sys/fs/btrfs/" + fsid + "/qgroups/drop_subtree_threshold";
+    }
+
+    /** Whether {@code fsid} is a filesystem UUID, safe to put in a path and a sudoers rule. */
+    public static boolean isFsid(String fsid) {
+        return fsid != null && FSID.matcher(fsid).matches();
+    }
+
+    /**
+     * The UUID of the btrfs filesystem holding {@code poolName} on this Linux host, read without
+     * privilege from mountinfo and sysfs, or empty when it cannot be found. Never throws.
+     */
+    public static java.util.Optional<String> fsid(String poolName) {
+        if (!Platform.isLinux() || !isSafePoolName(poolName)) return java.util.Optional.empty();
+        try {
+            return BtrfsSysfs.fsidDir(BtrfsSysfs.MOUNTINFO, BtrfsSysfs.SYSFS_BTRFS, POOL_MOUNT_PREFIX + poolName)
+                    .map(dir -> dir.getFileName().toString()).filter(BtrfsUsage::isFsid);
+        } catch (IOException | RuntimeException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
+    /**
+     * What {@link #skipDropAccounting} did to a pool before its deletes.
+     *
+     * @param status the status after: what {@link #settleDeletes} needs to know whether to settle
+     * @param restoreTo the threshold isx replaced, which the settle puts back, or -1 when isx changed none
+     */
+    public record DropAccounting(QgroupStatus status, int restoreTo) {
+        public static final DropAccounting UNAVAILABLE = new DropAccounting(QgroupStatus.UNAVAILABLE, -1);
+    }
+
+    /**
+     * Before a delete: give a pool under full qgroups {@link #SKIP_DROP_ACCOUNTING}, unless it has
+     * it already. The kernel resets the threshold to 3 at every mount and every quota enable, and
+     * Incus enables quotas lazily, so it is set here rather than once at boot. The settle puts the
+     * old value back once the cleaner is done, so a delete isx does not make, a plain
+     * {@code incus delete} or Incus pruning an image, is traced as before and leaves no accounting
+     * inconsistent with nobody to settle it. A rescan still running, the previous delete's settle's
+     * or one a TUI refresh started, is waited for first: a drop at threshold 0 marks the accounting
+     * inconsistent, which cancels a running rescan, and a series of {@code isx destroy} that kept
+     * cancelling each other's left the pool reading "rescan running" with no rescan, refusing every
+     * new one, until it was mounted again (measured, design/storage.md). A rescan the wait does not
+     * see end leaves the threshold as it is, so that delete is traced as before. Best-effort: without the
+     * sudoers entry, or the agent's verb, the pool keeps its threshold and a delete costs what it
+     * did before. Never throws.
+     */
+    public static DropAccounting skipDropAccounting(String poolName) {
+        var status = status(poolName);
+        // No attribute to set on a kernel that reports none
+        if (!status.tracesDrops() || status.dropSubtreeThreshold() < 0) return new DropAccounting(status, -1);
+        // Nor on a Linux pool whose filesystem is not found: the write below would fail, so the
+        // rescan wait would only delay the delete. Read once, for that and the write.
+        var fsid = Platform.isLinux() ? fsid(poolName).orElse(null) : null;
+        if (Platform.isLinux() && fsid == null) return new DropAccounting(status, -1);
+        boolean set;
+        try {
+            // The flag stays set while a rescan runs, so a consistent pool has none to wait for.
+            // One still running after the wait keeps the threshold: this delete is traced, as before.
+            if (status.inconsistent() && Platform.isLinux()) {
+                var waited = runBtrfsResult(SETTLE_TIMEOUT_SECONDS, "quota", "rescan", "-W", POOL_MOUNT_PREFIX + poolName);
+                if (waited == null || waited.exit() != 0) return new DropAccounting(status, -1);
+            }
+            set = Platform.isMacOS()
+                    ? VmAgentClient.btrfsSkipDropAccounting(poolName).map("ok"::equals).orElse(false)
+                    : writeThresholdOf(fsid, SKIP_DROP_ACCOUNTING);
+        } catch (RuntimeException e) {
+            set = false;
+        }
+        return set ? new DropAccounting(status.withDropSubtreeThreshold(SKIP_DROP_ACCOUNTING), status.dropSubtreeThreshold())
+                : new DropAccounting(status, -1);
+    }
+
+    /** Write {@code threshold} to the pool's {@code drop_subtree_threshold} through the sudoers rule's {@code tee} (Linux). */
+    private static boolean writeThreshold(String poolName, int threshold) {
+        return writeThresholdOf(fsid(poolName).orElse(null), threshold);
+    }
+
+    /** {@link #writeThreshold} on the filesystem {@code fsid}, already read. */
+    private static boolean writeThresholdOf(String fsid, int threshold) {
+        if (!isFsid(fsid) || threshold < 0) return false;
+        var cmd = List.of("sudo", "-n", TEE, dropThresholdPath(fsid));
+        dev.incusspawn.util.Privilege.check(cmd);
+        var r = runProcess(new ProcessBuilder(cmd), PROBE_TIMEOUT_SECONDS,
+                (threshold + "\n").getBytes(StandardCharsets.US_ASCII));
+        return r != null && r.exit() == 0;
+    }
+
+    /**
+     * Put back a threshold {@link #skipDropAccounting} replaced, alone, without a settle: isx is
+     * exiting before its settle ran (IncusClient's shutdown hook). On macOS the agent's settle is
+     * the one verb that writes it, and it returns at once. Never throws.
+     */
+    public static void restoreThreshold(String poolName, int threshold) {
+        if (threshold < 0 || !isSafePoolName(poolName)) return;
+        try {
+            if (Platform.isMacOS()) VmAgentClient.btrfsSettle(poolName, threshold);
+            else if (Platform.isLinux()) writeThreshold(poolName, threshold);
+        } catch (RuntimeException e) {
+            // Best-effort, at exit
+        }
+    }
+
+    /**
+     * Whether this Linux host's sudoers rule lets isx set the pool's threshold without a password.
+     * It writes back the value the pool has, which changes nothing: {@code sudo -n -l} would also
+     * say yes for a rule that wants a password, such as an administrator's {@code %wheel} one.
+     * False when the rule predates the entry ({@code isx init} rewrites it), or the threshold or the
+     * filesystem cannot be read. A threshold of 0, which isx sets during its deletes, counts as
+     * settable and is not written. Never throws.
+     */
+    public static boolean canSkipDropAccounting(String poolName) {
+        if (!Platform.isLinux()) return false;
+        try {
+            int threshold = status(poolName).dropSubtreeThreshold();
+            // 0 is what isx sets during its deletes, so the rule lets it; writing 0 back could
+            // land after that delete's settle put the old value back, and leave 0 with nobody to restore it
+            if (threshold == SKIP_DROP_ACCOUNTING) return true;
+            return writeThreshold(poolName, threshold);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * After the deletes {@link #skipDropAccounting} prepared: have btrfs free them now and rebuild
+     * the accounting they left inconsistent. While it is inconsistent btrfs enforces no qgroup limit,
+     * so the root {@code size} of every instance is not held. Left alone, the cleaner frees a delete
+     * only at the next commit, up to {@code commit=300} seconds later, and nothing in isx would
+     * notice the flag it then sets. So this forces the commit and waits for the cleaner, which skips
+     * the tracing and is done in a second or two. A rescan that overlapped the cleaner, such as the
+     * previous delete's, clears the flag when it completes, and the commit that then removes a freed
+     * subvolume's qgroup sets it again (measured: 20 {@code isx destroy} in a row ended inconsistent).
+     * So it waits for any such rescan, commits again, and only then starts its own. Once the cleaner
+     * is done it puts back the threshold isx replaced. On macOS the agent does the same in the VM,
+     * without making the caller wait. Does nothing for a pool that still traces drops, whose
+     * cleaner can take minutes. Never throws.
+     */
+    public static void settleDeletes(String poolName, DropAccounting before) {
+        if (!before.status().skipsDropAccounting() || !isSafePoolName(poolName)) return;
+        try {
+            if (Platform.isMacOS()) {
+                VmAgentClient.btrfsSettle(poolName, before.restoreTo());
+                return;
+            }
+            if (!Platform.isLinux()) return;
+            var mount = POOL_MOUNT_PREFIX + poolName;
+            runBtrfsResult(PROBE_TIMEOUT_SECONDS, "qgroup", "show", "-re", "--raw", "--sync", mount);
+            try {
+                runBtrfsResult(SETTLE_TIMEOUT_SECONDS, "subvolume", "sync", mount);
+            } finally {
+                // After the cleaner, or once the wait gave up: a drop still to come is traced, slowly but consistently
+                if (before.restoreTo() >= 0) writeThreshold(poolName, before.restoreTo());
+            }
+            runBtrfsResult(SETTLE_TIMEOUT_SECONDS, "quota", "rescan", "-W", mount);
+            runBtrfsResult(PROBE_TIMEOUT_SECONDS, "qgroup", "show", "-re", "--raw", "--sync", mount);
+            if (status(poolName).untrusted()) rescan(poolName);
+        } catch (RuntimeException e) {
+            // Best-effort: the deletes already succeeded, and the TUI, a build or doctor repair it later
         }
     }
 
@@ -443,6 +643,7 @@ public final class BtrfsUsage {
 
     /** A stream being consumed on its own thread, so no read can outlive the caller's timeout. */
     private record Drain(Thread thread, java.util.concurrent.atomic.AtomicReference<byte[]> bytes) {
+        /** At most a second: a grandchild still holding the pipe, such as the btrfs sudo forked, never blocks the caller. */
         void join() throws InterruptedException {
             thread.join(1000);
         }
@@ -469,6 +670,10 @@ public final class BtrfsUsage {
      * needs stderr to tell "already in progress" from a real failure); null if it couldn't run.
      */
     private static ProcResult runBtrfsResult(String... args) {
+        return runBtrfsResult(PROBE_TIMEOUT_SECONDS, args);
+    }
+
+    private static ProcResult runBtrfsResult(long timeoutSeconds, String... args) {
         var cmd = new java.util.ArrayList<String>();
         cmd.add("sudo");
         cmd.add("-n");
@@ -477,7 +682,7 @@ public final class BtrfsUsage {
         dev.incusspawn.util.Privilege.check(cmd);
         var pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(false);
-        return runProcess(pb, PROBE_TIMEOUT_SECONDS);
+        return runProcess(pb, timeoutSeconds);
     }
 
     /**
@@ -486,8 +691,18 @@ public final class BtrfsUsage {
      * this is the path that must never block the TUI, so the bound is worth pinning down in a test.
      */
     static ProcResult runProcess(ProcessBuilder pb, long timeoutSeconds) {
+        return runProcess(pb, timeoutSeconds, null);
+    }
+
+    /** {@link #runProcess(ProcessBuilder, long)}, writing {@code input} to the process's stdin first, when given. */
+    static ProcResult runProcess(ProcessBuilder pb, long timeoutSeconds, byte[] input) {
         try {
             var proc = pb.start();
+            try (var stdin = proc.getOutputStream()) {
+                if (input != null) stdin.write(input);
+            } catch (IOException ignored) {
+                // A process that exited before reading: its exit status says what happened
+            }
             // Drain BOTH streams on their own threads. readAllBytes() blocks until EOF, so reading
             // either one inline would outlast the bounded wait below whenever the child hangs with
             // its pipe still open — the timeout would never be reached and the caller would block
@@ -496,7 +711,9 @@ public final class BtrfsUsage {
             var out = drain(proc.getInputStream());
             var err = drain(proc.getErrorStream());
             if (!proc.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
-                proc.destroyForcibly();          // closes the pipes, so the drain threads finish
+                // Kills sudo, not the root btrfs it forked, which can keep both pipes open: the
+                // drain joins are bounded (Drain.join), and the virtual drain threads end with it
+                proc.destroyForcibly();
                 out.join();
                 err.join();
                 return null;

@@ -2,6 +2,7 @@ package dev.incusspawn.incus;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -147,6 +148,26 @@ class BtrfsUsageTest {
                 "must give up near the 2s timeout, not wait for the child; took " + elapsedSeconds + "s");
     }
 
+    /**
+     * {@code sudo} forks the command it runs, so killing it on a timeout leaves the root
+     * {@code btrfs} alive with both pipes open (review, #2061). Here {@code sh} stands in for sudo
+     * and its background {@code sleep} for btrfs: the caller must still be back within the timeout
+     * and the drains' bounded joins, not when the grandchild ends.
+     */
+    @Test
+    @org.junit.jupiter.api.Timeout(20)
+    void timeoutIsEnforcedWhenAGrandchildHoldsThePipesAfterTheChildIsKilled() {
+        var pb = new ProcessBuilder("sh", "-c", "sleep 30 & wait");
+        var started = System.nanoTime();
+        var result = BtrfsUsage.runProcess(pb, 1);
+        var elapsedSeconds = (System.nanoTime() - started) / 1_000_000_000.0;
+
+        assertNull(result, "a timed-out child yields no result");
+        assertTrue(elapsedSeconds < 5,
+                "must return after the 1 s timeout and two 1 s drain joins at most, not after the grandchild's 30 s; took "
+                        + elapsedSeconds + "s");
+    }
+
     @Test
     @org.junit.jupiter.api.Timeout(20)
     void capturesBothStreamsAndExitCodeOfAWellBehavedProcess() {
@@ -247,5 +268,35 @@ class BtrfsUsageTest {
         // A btrfs-progs that prints no path column cannot say, so it reports nothing
         assertEquals(BtrfsUsage.PendingCleanup.NONE, BtrfsUsage.parsePendingCleanup(QGROUP));
         assertEquals(BtrfsUsage.PendingCleanup.NONE, BtrfsUsage.parsePendingCleanup(""));
+    }
+
+    /** Which pools isx gives threshold 0 before a delete, and which it then settles (#2061). */
+    @Test
+    void onlyFullAccountingTracesDropsAndOnlyThresholdZeroSkipsThem() {
+        var full = new BtrfsUsage.QgroupStatus(true, true, false, "qgroup", 3);
+        assertTrue(full.tracesDrops());
+        assertFalse(full.skipsDropAccounting());
+        var skipping = new BtrfsUsage.QgroupStatus(true, true, false, "qgroup", 0);
+        assertFalse(skipping.tracesDrops());
+        assertTrue(skipping.skipsDropAccounting());
+        // A kernel that reports no mode has only full accounting; one with no threshold traces every drop
+        assertTrue(new BtrfsUsage.QgroupStatus(true, true, false, "", -1).tracesDrops());
+        for (var none : List.of(new BtrfsUsage.QgroupStatus(true, true, false, "squota", 3),
+                new BtrfsUsage.QgroupStatus(true, true, false, "squota", 0),
+                new BtrfsUsage.QgroupStatus(true, false, false, "", 3), BtrfsUsage.QgroupStatus.UNAVAILABLE)) {
+            assertFalse(none.tracesDrops(), none.toString());
+            assertFalse(none.skipsDropAccounting(), none.toString());
+        }
+    }
+
+    @Test
+    void onlyAFilesystemUuidNamesTheThresholdFile() {
+        assertTrue(BtrfsUsage.isFsid("4e47dfd0-7cd8-4069-893a-3410114af64f"));
+        for (var bad : new String[]{null, "", "*", "4e47dfd0-7cd8-4069-893a-3410114af64f /etc/shadow", "../x",
+                "4E47DFD0-7CD8-4069-893A-3410114AF64F"}) {
+            assertFalse(BtrfsUsage.isFsid(bad), String.valueOf(bad));
+        }
+        assertEquals("/sys/fs/btrfs/4e47dfd0-7cd8-4069-893a-3410114af64f/qgroups/drop_subtree_threshold",
+                BtrfsUsage.dropThresholdPath("4e47dfd0-7cd8-4069-893a-3410114af64f"));
     }
 }

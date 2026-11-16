@@ -162,6 +162,27 @@ public final class VmAgentClient {
         return send("btrfs-rescan " + poolName);
     }
 
+    /**
+     * Ask the agent to set the pool's {@code drop_subtree_threshold} to 0 under full qgroups, so a
+     * delete skips tracing what it shared (#2061, {@code BtrfsUsage.skipDropAccounting}). Replies
+     * {@code ok} or {@code error: ...}; an agent that predates the verb answers {@code error: unknown verb}.
+     */
+    public static Optional<String> btrfsSkipDropAccounting(String poolName) {
+        if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
+        return send("btrfs-skip-drop-accounting " + poolName);
+    }
+
+    /**
+     * Ask the agent to settle the pool's deletes in the background: force a commit, wait for the
+     * cleaner, put back {@code restoreTo} as the threshold when it is 0 to 8, then start the rescan
+     * ({@code BtrfsUsage.settleDeletes}). Replies {@code started} at once, so the caller does not
+     * wait for the cleaner.
+     */
+    public static Optional<String> btrfsSettle(String poolName, int restoreTo) {
+        if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
+        return send("btrfs-settle " + poolName + (restoreTo >= 0 && restoreTo <= 8 ? " " + restoreTo : ""));
+    }
+
     /** The two top-level directories a pool keeps instance subvolumes under; mirrors the agent's check. */
     private static boolean isSafeSubvolumeKind(String kindDir) {
         return "containers".equals(kindDir) || "virtual-machines".equals(kindDir);

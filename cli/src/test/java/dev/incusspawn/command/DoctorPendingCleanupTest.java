@@ -51,5 +51,14 @@ class DoctorPendingCleanupTest {
         assertTrue(DoctorCommand.slowsCleanup(status(false, "")));
         assertFalse(DoctorCommand.slowsCleanup(BtrfsUsage.QgroupStatus.UNAVAILABLE));
         assertFalse(DoctorCommand.slowsCleanup(new BtrfsUsage.QgroupStatus(true, false, false, "", -1)));
+        // At threshold 0 a delete skips the tracing, which measured no slowdown
+        assertFalse(DoctorCommand.slowsCleanup(new BtrfsUsage.QgroupStatus(true, true, false, "qgroup", 0)));
+    }
+
+    @Test
+    void aThresholdIsxCannotSetIsANoteThatNamesTheFix() {
+        var finding = DoctorCommand.thresholdNotSettable("cow");
+        assertEquals(DoctorCommand.Status.NOTE, finding.status());
+        assertTrue(finding.detail().contains("re-run 'isx init'"), finding.detail());
     }
 }
