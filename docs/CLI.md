@@ -360,6 +360,9 @@ A pull request shows whether it is still open, merged or closed.
 isx asks GitHub from the host, with the instance's own GitHub account, in one request per account.
 An instance with no usable GitHub account gets no request, and its pull requests show without a state.
 
+Each pull request shows whole, as its repository and number, and those without room are counted, such as `+2`.
+In the TUI a pull request is also a link, so a click opens its page in a terminal that supports links.
+
 The proxy keeps this in an event log on the host of about 80 MiB, and the oldest activity drops out first.
 A line under the table says since when the log counts, and whether the proxy lost any lines.
 That note goes to stderr in `plain` and `json`.

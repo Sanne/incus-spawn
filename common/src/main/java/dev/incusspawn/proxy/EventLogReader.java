@@ -44,6 +44,21 @@ public final class EventLogReader {
 
     /** A pull request an instance opened. */
     public record PullRequest(String repo, long number) {
+
+        /** GitHub's shape of {@code owner/name}; the guest's text must match it before isx asks about it or links to it. */
+        private static final java.util.regex.Pattern SHAPE =
+                java.util.regex.Pattern.compile("[A-Za-z0-9-]{1,39}/(?!\\.\\.?$)[A-Za-z0-9._-]{1,100}");
+
+        /** Whether it names a repository and a number of GitHub's shape. */
+        public boolean githubShaped() {
+            return SHAPE.matcher(repo).matches() && number > 0 && number <= Integer.MAX_VALUE;
+        }
+
+        /** Its page on GitHub, or null when it is not of GitHub's shape, so no other text becomes a link. */
+        public String url() {
+            return githubShaped() ? "https://github.com/" + repo + "/pull/" + number : null;
+        }
+
         @Override
         public String toString() {
             return repo + "#" + number;

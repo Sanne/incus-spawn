@@ -508,7 +508,7 @@ final class MainScreen {
             widths.add(Constraint.length(13));
             headers.add("ACTIVE");
         }
-        widths.add(Constraint.min(16));
+        int githubColumn = widths.size();
         headers.add("GITHUB");
         boolean done = width >= OVERVIEW_DONE_MIN_WIDTH;
         if (done) {
@@ -523,6 +523,33 @@ final class MainScreen {
         var log = tui.overviewLog;
         var reading = tui.overviewReading;
         var zone = tui.overviewZone;
+        // GITHUB is as wide as its widest row needs, to show each reference whole (#2292), within
+        // what the other columns leave at their least: the highlight mark, one cell between columns
+        int room = width - 2 - widths.size();
+        for (var constraint : widths) {
+            room -= constraint instanceof Constraint.Min min ? min.value()
+                    : constraint instanceof Constraint.Length length ? length.value() : 0;
+        }
+        int githubMost = Math.max(GITHUB_MIN_WIDTH, Math.min(GITHUB_MAX_WIDTH, room));
+        var efforts = new ArrayList<dev.incusspawn.proxy.EventLogReader.Effort>();
+        var github = new ArrayList<List<OverviewCommand.GitHubPart>>();
+        int githubWidth = GITHUB_MIN_WIDTH;
+        for (int i = 0; i < tui.tableRows.size(); i++) {
+            var instance = tui.instanceOnRow(i);
+            if (instance == null || log == null) {
+                efforts.add(null);
+                github.add(null);
+                continue;
+            }
+            var effort = OverviewCommand.effortOf(log, instance);
+            efforts.add(effort);
+            var parts = OverviewCommand.githubParts(effort, reading == null
+                    ? List.of() : OverviewCommand.statesOf(reading, instance, effort));
+            github.add(parts);
+            githubWidth = Math.max(githubWidth, OverviewCommand.fitGithub(parts, githubMost).stream()
+                    .mapToInt(piece -> OverviewCommand.width(piece.text())).sum());
+        }
+        widths.add(githubColumn, Constraint.length(githubWidth));
         var rows = new ArrayList<Row>();
         for (int i = 0; i < tui.tableRows.size(); i++) {
             var row = tui.tableRows.get(i);
@@ -537,12 +564,10 @@ final class MainScreen {
             if (log == null) {
                 for (int c = active ? 0 : 1; c < 3; c++) cells.add(dev.tamboui.widgets.table.Cell.from("\u2026"));
             } else {
-                var effort = OverviewCommand.effortOf(log, instance);
+                var effort = efforts.get(i);
                 cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.tokensCell(effort)));
                 if (active) cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.activeCell(effort, zone)));
-                var states = reading == null ? List.<dev.incusspawn.command.PullRequestStates.State>of()
-                        : OverviewCommand.statesOf(reading, instance, effort);
-                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.githubCell(effort, states, 60)));
+                cells.add(dev.tamboui.widgets.table.Cell.from(githubLine(github.get(i), githubWidth)));
             }
             if (done) cells.add(dev.tamboui.widgets.table.Cell.from(
                     reading == null ? "\u2026" : OverviewCommand.doneCell(reading.summaryOf(instance), 120)));
@@ -550,6 +575,24 @@ final class MainScreen {
             rows.add(Row.from(cells).style(row.style()));
         }
         return new Columns(widths, headers, rows);
+    }
+
+    /** The GITHUB column's least width, and the most it takes for the references of one row. */
+    static final int GITHUB_MIN_WIDTH = 16;
+    static final int GITHUB_MAX_WIDTH = 40;
+
+    /**
+     * A GITHUB cell: each reference whole within {@code width} (#2292), a pull request underlined
+     * and linked to its page, so a click in a terminal that supports links opens it.
+     */
+    private Line githubLine(List<OverviewCommand.GitHubPart> parts, int width) {
+        if (parts.isEmpty()) return Line.from("-");
+        var spans = new ArrayList<Span>();
+        for (var piece : OverviewCommand.fitGithub(parts, width)) {
+            spans.add(piece.url() == null ? Span.raw(piece.text())
+                    : Span.styled(piece.text(), Style.EMPTY.underlined().hyperlink(piece.url())));
+        }
+        return Line.from(spans);
     }
 
     /** The overview's title: what its counts cover, read from the event log. */

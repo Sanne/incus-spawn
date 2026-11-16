@@ -61,7 +61,7 @@ class TuiOverviewTest {
                 "{\"t\":\"2026-11-01T12:00:00Z\",\"kind\":\"model\",\"instance\":\"ws\",\"incarnation\":\"" + WS + "\","
                         + "\"input_tokens\":40000,\"output_tokens\":2000}",
                 "{\"t\":\"2026-11-04T12:00:00Z\",\"kind\":\"github\",\"op\":\"pull_request\",\"instance\":\"ws\","
-                        + "\"incarnation\":\"" + WS + "\",\"repo\":\"o/r\",\"number\":7}") + "\n");
+                        + "\"incarnation\":\"" + WS + "\",\"repo\":\"Sanne/incus-spawn\",\"number\":2287}") + "\n");
         var tui = new Tui() {
             @Override
             boolean showProxyError() {
@@ -108,9 +108,9 @@ class TuiOverviewTest {
         assertTrue(read.lines().anyMatch(l -> l.contains("WORK") && l.contains("TOKENS") && l.contains("GITHUB")), read);
         assertFalse(read.contains("ACTIVE"), "no room for it at 80 columns beside WORK");
         var ws = read.lines().filter(l -> l.contains(" ws ")).findFirst().orElseThrow();
-        assertTrue(ws.contains("42.0k") && ws.contains("not read") && ws.contains("PR o/r#7"), ws);
+        assertTrue(ws.contains("42.0k") && ws.contains("not read") && ws.contains("Sanne/incus-spawn#2287"), ws);
         var mine = read.lines().filter(l -> l.contains(" mine ")).findFirst().orElseThrow();
-        assertFalse(mine.contains("o/r"), mine);
+        assertFalse(mine.contains("Sanne/"), mine);
         assertTrue(mine.contains("2 unpushed"), "read in the running guest: " + mine);
         assertFalse(read.contains(" IP "), read);
 
@@ -119,6 +119,31 @@ class TuiOverviewTest {
         assertTrue(back.lines().anyMatch(l -> l.contains("NAME") && l.contains("IP") && l.contains("PARENT")), back);
         assertFalse(back.contains("TOKENS"), back);
         assertTrue(reads.isEmpty(), "leaving the overview reads nothing");
+    }
+
+    @Test
+    void theGitHubColumnShowsEachPullRequestWholeAndLinksItsPage() throws Exception {
+        for (int width : new int[] {80, 100, 120, 150}) {
+            var tui = tui(width);
+            press(tui, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar('o'));
+            readsFinish();
+            var buffer = TuiSnapshot.render(width, 24, tui::render);
+            var screen = TuiSnapshot.toText(buffer);
+            var lines = screen.lines().toList();
+            int y = 0;
+            while (y < lines.size() && !lines.get(y).contains(" ws ")) y++;
+            var ws = lines.get(y);
+            int x = ws.indexOf("Sanne/incus-spawn#2287");
+            assertTrue(x >= 0, "the repository and number whole at " + width + " columns: " + screen);
+            for (int c = x; c < x + "Sanne/incus-spawn#2287".length(); c++) {
+                assertEquals(java.util.Optional.of("https://github.com/Sanne/incus-spawn/pull/2287"),
+                        buffer.get(c, y).style().hyperlink().map(dev.tamboui.style.Hyperlink::url),
+                        "linked to its page at " + width + " columns, column " + c);
+            }
+            assertFalse(buffer.get(ws.indexOf(" ws ") + 1, y).style().hyperlink().isPresent(), "the name is no link");
+            runner.close();
+            runner = null;
+        }
     }
 
     @Test

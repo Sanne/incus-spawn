@@ -328,22 +328,90 @@ public class OverviewCommand extends BaseCommand {
     }
 
     /**
+     * One reference of the GITHUB cell: what it shows, the shorter form it falls back to when the
+     * cell has no room for that, the page it links to (null for none), and whether it opens a new
+     * group, the branches after the pull requests.
+     */
+    public record GitHubPart(String text, String brief, String url, boolean opensGroup) {}
+
+    /**
+     * The GITHUB cell's references, in order: the pull requests it opened, each with what became
+     * of it when GitHub said, {@code o/r#12 (merged)}, then the branches it pushed,
+     * {@code pushed main}, {@code fix-x}. Names are the guest's text, shown on one line, and only
+     * a pull request of GitHub's shape links to its page.
+     */
+    public static List<GitHubPart> githubParts(Effort effort, List<PullRequestStates.State> states) {
+        var parts = new ArrayList<GitHubPart>();
+        var pulls = effort.pullRequests();
+        for (int i = 0; i < pulls.size(); i++) {
+            var pull = pulls.get(i);
+            var name = OutputFormat.oneLine(pull.toString());
+            parts.add(new GitHubPart(PullRequestStates.labelled(name, states, i), name, pull.url(), false));
+        }
+        var branches = effort.branches();
+        for (int i = 0; i < branches.size(); i++) {
+            var name = OutputFormat.oneLine(branches.get(i).name());
+            parts.add(new GitHubPart(i == 0 ? "pushed " + name : name, i == 0 ? "pushed " + name : name, null,
+                    i == 0 && !parts.isEmpty()));
+        }
+        return parts;
+    }
+
+    /** A piece of a GITHUB cell as shown: its text, and the page it links to, or null. */
+    public record Shown(String text, String url) {}
+
+    /**
+     * {@code parts} within {@code max} terminal cells, each reference whole (#2292): what does not
+     * fit is counted as {@code +3}. A pull request without room for its state shows without it;
+     * only a first reference wider than the whole cell is cut.
+     */
+    public static List<Shown> fitGithub(List<GitHubPart> parts, int max) {
+        var shown = new ArrayList<Shown>();
+        int used = 0;
+        for (int i = 0; i < parts.size(); i++) {
+            var part = parts.get(i);
+            var separator = i == 0 ? "" : part.opensGroup() ? ", " : " ";
+            int after = parts.size() - i - 1;
+            int reserve = after == 0 ? 0 : (" +" + after).length();
+            int room = max - used - separator.length() - reserve;
+            var text = width(part.text()) <= room ? part.text() : width(part.brief()) <= room ? part.brief() : null;
+            if (text == null && i == 0) {
+                var brief = part.brief();
+                int end = 0;
+                while (end < brief.length()) {
+                    int next = brief.offsetByCodePoints(end, 1);
+                    if (width(brief.substring(0, next)) > Math.max(1, room) - 1) break;
+                    end = next;
+                }
+                text = brief.substring(0, end) + "…";
+            }
+            if (text == null) {
+                shown.add(new Shown(" +" + (parts.size() - i), null));
+                break;
+            }
+            if (!separator.isEmpty()) shown.add(new Shown(separator, null));
+            shown.add(new Shown(text, part.url()));
+            used += separator.length() + width(text);
+        }
+        return shown;
+    }
+
+    /** The terminal cells {@code text} takes: a CJK ideograph or an emoji takes two. */
+    public static int width(String text) {
+        return dev.tamboui.text.CharWidth.of(text);
+    }
+
+    /**
      * The pull requests it opened, each with what became of it when GitHub said, then the branches
-     * it pushed, cut to {@code max} code points: {@code PR o/r#12 (merged), pushed main fix-x}.
-     * Names are the guest's text, shown on one line.
+     * it pushed, each whole within {@code max} terminal cells and the rest counted:
+     * {@code o/r#12 (merged), pushed main fix-x +2}.
      */
     public static String githubCell(Effort effort, List<PullRequestStates.State> states, int max) {
-        var parts = new ArrayList<String>();
-        if (!effort.pullRequests().isEmpty()) {
-            parts.add("PR " + String.join(" ", PullRequestStates.labelled(effort.pullRequests(), states)));
-        }
-        if (!effort.branches().isEmpty()) {
-            parts.add("pushed " + String.join(" ", effort.branches().stream().map(EventLogReader.Branch::name).toList()));
-        }
+        var parts = githubParts(effort, states);
         if (parts.isEmpty()) return "-";
-        var text = OutputFormat.oneLine(String.join(", ", parts));
-        return text.codePointCount(0, text.length()) <= max ? text
-                : text.substring(0, text.offsetByCodePoints(0, max - 1)) + "…";
+        var text = new StringBuilder();
+        for (var piece : fitGithub(parts, max)) text.append(piece.text());
+        return text.toString();
     }
 
     /**

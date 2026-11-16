@@ -24,7 +24,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Whether the pull requests an instance opened are still open, merged or closed (#2241), asked of
@@ -66,9 +65,6 @@ public final class PullRequestStates {
     /** At most this many pull requests in one request: GitHub's GraphQL limits are far above it. */
     static final int PER_REQUEST = 100;
 
-    /** A repository name as GitHub allows it, {@code owner/name}: a log line holding anything else is not asked about. */
-    private static final Pattern REPO = Pattern.compile("[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}");
-
     /**
      * What GitHub said of the pull requests of {@code instances} in the log, by instance name,
      * then by pull request. One it was not asked about (no usable account, a failed request) or
@@ -89,7 +85,7 @@ public final class PullRequestStates {
             if (token == null) continue;
             tokenOf.put(instance.name(), token);
             // GraphQL's Int is 32 bits: a larger number would fail the whole request, every pull request with it
-            pulls.stream().filter(p -> REPO.matcher(p.repo()).matches() && p.number() > 0 && p.number() <= Integer.MAX_VALUE)
+            pulls.stream().filter(PullRequest::githubShaped)
                     .forEach(byToken.computeIfAbsent(token, t -> new LinkedHashSet<>())::add);
         }
         var answers = new LinkedHashMap<String, Map<PullRequest, State>>();
@@ -210,14 +206,13 @@ public final class PullRequestStates {
         };
     }
 
-    /** The pull requests with what became of each, for a cell: {@code o/r#12 (merged)}. */
-    public static List<String> labelled(List<PullRequest> pulls, List<State> states) {
-        var labels = new ArrayList<String>();
-        for (int i = 0; i < pulls.size(); i++) {
-            var state = states == null || i >= states.size() ? State.UNKNOWN : states.get(i);
-            labels.add(state == State.UNKNOWN ? pulls.get(i).toString() : pulls.get(i) + " (" + state.field + ")");
-        }
-        return labels;
+    /**
+     * {@code name}, the {@code i}th pull request as shown, with what became of it when GitHub said:
+     * {@code o/r#12 (merged)}; alone when {@code states} does not say.
+     */
+    public static String labelled(String name, List<State> states, int i) {
+        var state = states == null || i >= states.size() ? State.UNKNOWN : states.get(i);
+        return state == State.UNKNOWN ? name : name + " (" + state.field + ")";
     }
 
     /** {@link State#field} of each, for {@code pull_request_states}. */
