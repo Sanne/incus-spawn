@@ -826,6 +826,28 @@ class Upstream {
         clientResp.headers().remove("Transfer-Encoding");
     }
 
+    /**
+     * The headers that tell a client when to try again ({@code Retry-After}, {@code RateLimit*},
+     * {@code X-RateLimit-*}), copied out of {@code headers}, for an answer the proxy writes itself
+     * with upstream's status: a client that does not see them retries too early or gives up (#2309).
+     * An immutable copy, so one answer can be shared by every request that joined it.
+     */
+    static List<Map.Entry<String, String>> retryHeaders(io.vertx.core.MultiMap headers) {
+        var kept = new java.util.ArrayList<Map.Entry<String, String>>();
+        for (var header : headers) {
+            var name = header.getKey();
+            if (name.equalsIgnoreCase("Retry-After") || startsWithIgnoreCase(name, "RateLimit")
+                    || startsWithIgnoreCase(name, "X-RateLimit")) {
+                kept.add(Map.entry(name, header.getValue()));
+            }
+        }
+        return List.copyOf(kept);
+    }
+
+    private static boolean startsWithIgnoreCase(String name, String prefix) {
+        return name.regionMatches(true, 0, prefix, 0, prefix.length());
+    }
+
     static boolean hasBody(HttpServerRequest clientReq) {
         var cl = clientReq.getHeader("Content-Length");
         var te = clientReq.getHeader("Transfer-Encoding");

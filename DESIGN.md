@@ -139,6 +139,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The socket transport: epoll on Linux
   - Host routes
   - Exposed host ports
+  - A throttled answer reaches the client as upstream sent it (#2309)
   - Vertex AI: container in Vertex mode vs standard mode
 - [Credential accounts and proofs](design/accounts.md)
   - Credential accounts

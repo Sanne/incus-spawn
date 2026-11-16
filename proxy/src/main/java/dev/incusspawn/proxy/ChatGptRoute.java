@@ -410,14 +410,17 @@ final class ChatGptRoute {
 
     // --- Refresh ---
 
-    /** A refresh's outcome: the session's tokens after it, or why the caller gets none. */
+    /**
+     * A refresh's outcome: the session's tokens after it, or why the caller gets none.
+     * {@code retryHeaders}: upstream's, when its 429 is passed on (#2309).
+     */
     record Refreshed(ChatGptSessionStore.Tokens tokens, String sessionId, int status, String code,
-                             String message) {
+                             String message, List<Map.Entry<String, String>> retryHeaders) {
         static final String NOT_THIS_SESSION =
                 "the ChatGPT session is not the one this instance's proofs were made for, or the refresh was refused";
 
         static Refreshed ok(ChatGptSessionStore.Session session) {
-            return new Refreshed(session.tokens(), session.sessionId(), 200, null, null);
+            return new Refreshed(session.tokens(), session.sessionId(), 200, null, null, List.of());
         }
 
         static Refreshed refused(int status, String code) {
@@ -425,7 +428,7 @@ final class ChatGptRoute {
         }
 
         static Refreshed refused(int status, String code, String message) {
-            return new Refreshed(null, null, status, code, message);
+            return new Refreshed(null, null, status, code, message, List.of());
         }
     }
 
@@ -517,7 +520,8 @@ final class ChatGptRoute {
             if (outcome.status() != 200 || !binding.sessionId().equals(outcome.sessionId())) {
                 refuse(resp, outcome.status() == 200 ? 401 : outcome.status(),
                         outcome.code() == null ? "invalid_grant" : outcome.code(),
-                        outcome.message() == null ? Refreshed.NOT_THIS_SESSION : outcome.message());
+                        outcome.message() == null ? Refreshed.NOT_THIS_SESSION : outcome.message(),
+                        outcome.retryHeaders());
                 return;
             }
             String answer;
@@ -554,8 +558,9 @@ final class ChatGptRoute {
                 upReq.putHeader("Accept-Encoding", "identity");
                 upReq.putHeader("Content-Type", "application/json");
                 upReq.putHeader("Content-Length", String.valueOf(body.length()));
-                return upReq.send(body).compose(upResp -> upResp.body().map(b -> Map.entry(upResp.statusCode(), b)))
-                        .compose(answer -> vertx.executeBlocking(() -> settle(session, answer.getKey(), answer.getValue()), false),
+                return upReq.send(body).compose(upResp -> upResp.body().map(b -> new RefreshAnswer(upResp.statusCode(), b,
+                                upResp.statusCode() == 429 ? Upstream.retryHeaders(upResp.headers()) : List.of())))
+                        .compose(answer -> vertx.executeBlocking(() -> settle(session, answer), false),
                                 // Sent but its answer lost: OpenAI may have rotated the token. The record of
                                 // the attempt stays, and the next refresh says so if it is refused.
                                 e -> {
@@ -571,16 +576,24 @@ final class ChatGptRoute {
         });
     }
 
+    /** OpenAI's answer to a refresh, with the headers that say when to try again. */
+    private record RefreshAnswer(int status, Buffer body, List<Map.Entry<String, String>> retryHeaders) {}
+
     /** Commits or discards what OpenAI answered a refresh of {@code session} with. Blocks. */
-    private Refreshed settle(ChatGptSessionStore.Session session, int status, Buffer answer) {
+    private Refreshed settle(ChatGptSessionStore.Session session, RefreshAnswer refreshAnswer) {
+        var status = refreshAnswer.status();
+        var answer = refreshAnswer.body();
         if (status != 200) {
             store.abandonRefresh(session);
             var code = errorCode(answer);
             ProxyLog.warn("ChatGPT refresh for account '" + session.account() + "' refused upstream: HTTP "
                     + status + (code == null ? "" : " " + code));
             if (status != 400 && status != 401) {
-                // Rate limits and server errors say nothing about the token: Codex may retry
-                return Refreshed.refused(status == 429 ? 429 : 502, "server_error", NOT_NOW);
+                // Rate limits and server errors say nothing about the token: Codex may retry, when OpenAI
+                // said it may. Its body is not passed on: it answered a request bearing the host's token
+                return status == 429
+                        ? new Refreshed(null, null, 429, "server_error", NOT_NOW, refreshAnswer.retryHeaders())
+                        : Refreshed.refused(502, "server_error", NOT_NOW);
             }
             if (code != null && (code.startsWith("refresh_token_") || code.equals("invalid_grant"))
                     && isDefaultAccount(session.account())) {
@@ -619,7 +632,7 @@ final class ChatGptRoute {
         refused.remove(sessionKey(session));
         // Only an error this account raised: a working ChatGPT session says nothing about Claude's
         proxy.clearAuthErrorIf(standing -> standing.startsWith(authErrorPrefix(session.account())));
-        return new Refreshed(refreshed, session.sessionId(), 200, null, null);
+        return new Refreshed(refreshed, session.sessionId(), 200, null, null, List.of());
     }
 
     /** How an error about {@code account}'s session begins, so that only its own success clears it. */
@@ -839,7 +852,14 @@ final class ChatGptRoute {
 
     /** An answer in the shape OpenAI's errors take, so Codex classifies it as it would theirs. */
     private static void refuse(HttpServerResponse resp, int status, String code, String message) {
+        refuse(resp, status, code, message, List.of());
+    }
+
+    /** {@code retryHeaders}: upstream's, with the 429 they came with. */
+    private static void refuse(HttpServerResponse resp, int status, String code, String message,
+                               List<Map.Entry<String, String>> retryHeaders) {
         if (resp.ended() || resp.closed()) return;
+        retryHeaders.forEach(header -> resp.headers().add(header.getKey(), header.getValue()));
         resp.setStatusCode(status).putHeader("Content-Type", "application/json")
                 .end(JqObject.builder(1).put("error", JqObject.builder(2)
                         .put("code", JqString.of(code))

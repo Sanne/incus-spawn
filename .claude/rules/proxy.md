@@ -405,6 +405,8 @@ Key design:
   A domain without an entry is never cached.
   A miss is only the GET, committed if it matches the same response's `X-Checksum-SHA1` or the sidecar fetched afterwards; no usable checksum means served but not cached.
   Past the tiers, only an unreachable upstream (`SidecarAnswer.unreachable()`: connect failure or 5xx; 30s per-domain backoff) serves unconfirmed.
+  A `429` or `5xx` on a relayed domain or a Maven/Gradle miss reaches the client as upstream sent it (#2309, design/proxy.md "A throttled answer reaches the client as upstream sent it").
+  Where the proxy writes the answer, it keeps only what a client needs to wait: a sidecar with no stored copy keeps upstream's status, body, `Content-Type` and `Upstream.retryHeaders` (`SidecarAnswer.headers`), and a ChatGPT refresh's `429` keeps `Upstream.retryHeaders` beside the proxy's own body (its `5xx` becomes the proxy's `502`).
   `X-Checksum-SHA1` is what makes Maven skip its `.sha1` request.
   For a copy served on a trusted confirmation (`serveTrusted`) it is the stored checksum, and sidecar requests get the stored copy too, or Maven would pay the round trip the tiers save.
   For any other copy it must be upstream's **current** value, never synthesized from the store, which would turn the client's check against upstream into a check against our own cache.

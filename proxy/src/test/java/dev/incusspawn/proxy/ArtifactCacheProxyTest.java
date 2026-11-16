@@ -105,9 +105,13 @@ class ArtifactCacheProxyTest {
     /** A reply status that closes the connection instead of answering. */
     static final int DROP = -2;
 
-    record Reply(int status, byte[] body, String location, String checksumHeader) {
+    record Reply(int status, byte[] body, String location, String checksumHeader, Map<String, String> headers) {
         Reply(int status, byte[] body, String location) {
             this(status, body, location, null);
+        }
+
+        Reply(int status, byte[] body, String location, String checksumHeader) {
+            this(status, body, location, checksumHeader, Map.of());
         }
     }
 
@@ -302,6 +306,7 @@ class ArtifactCacheProxyTest {
             return;
         }
         if (reply.checksumHeader() != null) resp.putHeader("X-Checksum-SHA1", reply.checksumHeader());
+        reply.headers().forEach(resp::putHeader);
         var body = reply.body() == null ? new byte[0] : reply.body();
         var currentEtag = etag;
         if (currentEtag != null && reply.status() == 200) resp.putHeader("ETag", currentEtag);
@@ -538,7 +543,7 @@ class ArtifactCacheProxyTest {
         }
     }
 
-    record Response(int status, byte[] body, String checksumHeader) {
+    record Response(int status, byte[] body, String checksumHeader, io.vertx.core.MultiMap headers) {
         String text() {
             return new String(body, StandardCharsets.UTF_8);
         }
@@ -550,7 +555,7 @@ class ArtifactCacheProxyTest {
 
     static Future<Response> getAsync(String host, String path) {
         return sendAsync(host, path, resp -> resp.body().map(b -> new Response(resp.statusCode(), b.getBytes(),
-                resp.getHeader("X-Checksum-SHA1"))));
+                resp.getHeader("X-Checksum-SHA1"), resp.headers())));
     }
 
     /** A GET through the proxy, its response handled by {@code read}, all on the client's context. */
@@ -2222,6 +2227,51 @@ class ArtifactCacheProxyTest {
         assertEquals(1, headsOn(CENTRAL, JAR));
         assertEquals(0, hitsOn(CENTRAL, JAR + ".sha1"), "a 429 is not answered by asking again");
         assertEquals(0, hitsOn(CENTRAL, JAR));
+    }
+
+    /** A throttled answer, as Maven Central's edge sends one: what a client needs to wait it out. */
+    static Reply throttled(String body) {
+        return new Reply(429, body.getBytes(), null, null, Map.of("Retry-After", "17",
+                "X-RateLimit-Remaining", "0", "Content-Type", "application/json"));
+    }
+
+    static void assertThrottledAsUpstreamSent(Response response, String body) {
+        assertEquals(429, response.status());
+        assertEquals("17", response.headers().get("Retry-After"), "the client decides how long to wait from it");
+        assertEquals("0", response.headers().get("X-RateLimit-Remaining"));
+        assertEquals("application/json", response.headers().get("Content-Type"));
+        assertEquals(body, response.text());
+    }
+
+    @Test
+    void throttledSidecarWithNothingStoredIsUpstreamsAnswer() throws Exception {
+        routes.put(CENTRAL + " " + JAR + ".sha1", throttled("{\"slow\":\"down\"}"));
+        assertThrottledAsUpstreamSent(get(CENTRAL, JAR + ".sha1"), "{\"slow\":\"down\"}");
+    }
+
+    @Test
+    void failingSidecarWithNothingStoredIsUpstreamsAnswer() throws Exception {
+        routes.put(CENTRAL + " " + JAR + ".sha1", new Reply(503, "down".getBytes(), null, null, Map.of("Retry-After", "17")));
+        var response = get(CENTRAL, JAR + ".sha1");
+        assertEquals(503, response.status());
+        assertEquals("17", response.headers().get("Retry-After"));
+        assertEquals("down", response.text());
+    }
+
+    @Test
+    void throttledSignatureBesideAStoredArtifactIsUpstreamsAnswer() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+        // A signature the proxy never stored: nothing stands in for upstream's answer
+        routes.put(CENTRAL + " " + JAR + ".asc", throttled("later"));
+        assertThrottledAsUpstreamSent(get(CENTRAL, JAR + ".asc"), "later");
+    }
+
+    @Test
+    void throttledMissIsUpstreamsAnswer() throws Exception {
+        routes.put(CENTRAL + " " + JAR, throttled("later"));
+        assertThrottledAsUpstreamSent(get(CENTRAL, JAR), "later");
     }
 
     @Test
