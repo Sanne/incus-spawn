@@ -129,6 +129,11 @@ class WorkStateTest {
         git(tagged, "fetch", "-q", "origin");
         git(tagged, "commit", "-q", "--allow-empty", "-m", "unpushed");
         git(tagged, "tag", "local-only");
+        // A host-source clone: no remote, the exported tip kept under refs/isx/host (#2273)
+        var hosted = Files.createDirectories(home.resolve("hosted"));
+        git(hosted, "init", "-q");
+        git(hosted, "commit", "-q", "--allow-empty", "-m", "from the host");
+        git(hosted, "update-ref", "refs/isx/host/main", "HEAD");
         var index = Files.getLastModifiedTime(dirty.resolve(".git/index"));
 
         var out = new ByteArrayOutputStream();
@@ -140,7 +145,7 @@ class WorkStateTest {
         var state = WorkState.parse(p.exitValue(), out.toString(StandardCharsets.UTF_8), false);
 
         assertEquals(State.UNSAVED, state.state(), out.toString(StandardCharsets.UTF_8));
-        assertEquals(List.of(new WorkState.Repo("clean", 0, 0, 0), new WorkState.Repo("fullpin", 0, 0, 0),
+        assertEquals(List.of(new WorkState.Repo("clean", 0, 0, 0), new WorkState.Repo("fullpin", 0, 0, 0), new WorkState.Repo("hosted", 0, 0, 0),
                         new WorkState.Repo("pinned", 0, 0, 0),
                         new WorkState.Repo("tagged", 0, 1, 0), new WorkState.Repo("untagged", 0, 1, 0),
                         new WorkState.Repo("src/dirty", 1, 2, 1)), state.repos(),

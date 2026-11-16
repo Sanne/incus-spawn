@@ -368,7 +368,8 @@ The columns from the event log show only what went through the proxy.
 A branch can show as pushed even when GitHub refused it, such as a push to a protected branch.
 
 WORK does not see a clone outside the home directory, or files outside any clone.
-A clone isx copied from a checkout on the host has no remote, so commits on its other branches count as unpushed.
+A clone isx copied from a checkout on the host has no remote, and the host's commits at the copy count as saved.
+Only commits made in the guest since then count as unpushed.
 
 The DONE column says what the coding agent reported it did, in its own closing message.
 The same script reads the newest Claude Code sessions in each running instance.
