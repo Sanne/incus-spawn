@@ -2141,11 +2141,16 @@ class TaskScriptsTest {
         return Long.parseLong(Files.readString(ready).strip());
     }
 
-    /** Stop {@code p} and what it started (a join's flock and agent are its children). */
-    private static void stopAll(Process p) throws InterruptedException {
-        p.descendants().forEach(ProcessHandle::destroy);
+    /**
+     * Stop {@code p} and what it started (a join's flock and agent are its children), and wait for
+     * all of them: a flock still exiting holds the conversation's lock from the next step.
+     */
+    private static void stopAll(Process p) throws Exception {
+        var started = p.descendants().toList();
+        started.forEach(ProcessHandle::destroy);
         p.destroy();
         assertTrue(p.waitFor(5, TimeUnit.SECONDS));
+        for (var child : started) child.onExit().get(5, TimeUnit.SECONDS);
     }
 
     private record Joined(int exit, String stderr) {}
