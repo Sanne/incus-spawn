@@ -1544,7 +1544,7 @@ class TaskScriptsTest {
             var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
             assertTrue(who.attended());
             assertEquals(person.pid(), who.holderOf(DelegateAgent.PI, "any-session", cwd));
-            assertEquals(person.pid(), who.holderOf(DelegateAgent.CLAUDE, null, cwd), "the worktree stays protected across agents");
+            assertNull(who.holderOf(DelegateAgent.CLAUDE, null, cwd), "a Pi in the directory cannot resume a Claude conversation");
             assertNull(who.holderOf(DelegateAgent.PI, "any-session", "/elsewhere"));
         } finally {
             person.destroy();
@@ -1791,7 +1791,8 @@ class TaskScriptsTest {
         assertTrue(presence.attended());
         assertEquals(71L, presence.holderOf(DelegateAgent.CODEX, "same-id", "/other"));
         assertEquals(72L, presence.holderOf(DelegateAgent.CLAUDE, "same-id", "/other"));
-        assertEquals(71L, presence.holderOf(DelegateAgent.CLAUDE, null, "/codex"), "same worktree stays protected across agents");
+        assertEquals(71L, presence.holderOf(DelegateAgent.CODEX, null, "/codex"));
+        assertNull(presence.holderOf(DelegateAgent.CLAUDE, null, "/codex"), "a person's codex in the directory does not hold a claude task");
     }
 
     @Test
@@ -2075,6 +2076,39 @@ class TaskScriptsTest {
         assertEquals(1, unknown.exit(), unknown.stderr());
         assertTrue(unknown.stderr().contains("systemd cannot say whether a run is going"), unknown.stderr());
         assertFalse(Files.exists(ready));
+    }
+
+    @Test
+    @Timeout(60)
+    void anotherKindOfAgentInTheDirectoryDoesNotHoldTheConversation() throws Exception {
+        var cwd = work.toRealPath().toString();
+        var id = "t11-kind";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        claudeTranscript();
+        Files.writeString(d.resolve("cwd"), cwd + "\n");
+        var ready = home.resolve("join-ready");
+        stub("claude", "exec -a claude bash -c " + JOINED_AGENT + " \"$@\"");
+        // A person's codex working in the task's directory: it cannot resume a Claude conversation.
+        var codex = new ProcessBuilder("bash", "-c", "exec -a codex bash -c 'while read -r line; do :; done'").directory(work.toFile());
+        codex.environment().remove(TaskScripts.TASK_ENV);
+        var other = codex.start();
+        try {
+            var seen = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CODEX, null, cwd) == null
+                    && System.nanoTime() < seen) Thread.sleep(10);
+            assertEquals("finished", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state(), "not attached");
+            var join = assertInstanceOf(TaskJoin.Outcome.Join.class, TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id));
+            var person = start(join.entry().guestCommand());
+            try {
+                joinedAgent(ready, person);
+            } finally {
+                stopAll(person);
+            }
+        } finally {
+            other.destroy();
+            assertTrue(other.waitFor(5, TimeUnit.SECONDS));
+        }
     }
 
     @Test
