@@ -551,6 +551,7 @@ isx tools <subcommand>
 |------------|--------------|
 | `list` | List available tools |
 | `show` | Show details of a tool definition |
+| `validate` | Check a tool definition without building it |
 
 ### `isx tools list`
 
@@ -572,6 +573,23 @@ Show the details of one tool definition.
 ```shell
 isx tools show <name>
 ```
+
+### `isx tools validate`
+
+Check a tool definition without building it.
+It takes a tool file, or the name of a tool you have.
+A tool file that does not parse, an entry a build would fail on, and a required tool isx does not know are errors, and the command then exits 1.
+
+```shell
+isx tools validate <file-or-name>
+```
+
+| Option | What it does |
+|--------|--------------|
+| `--format=<format>` | `table` (the default), `plain` or `json` |
+
+In `json` it prints one object with `name`, `path`, `valid` and `findings`, each finding with `severity` and `message`.
+`plain` prints one line per finding: its severity and its message, tab-separated.
 
 ## `isx account`
 
@@ -966,7 +984,7 @@ The zsh, fish and PowerShell scripts mark each namespace's default account; bash
 
 Query commands print `plain` and `json` output that a script can rely on, and exit codes that say what happened.
 
-Query commands take `--format=table|plain|json`: `isx init --plan`, `isx list`, `isx overview`, `isx templates [list]`, `isx templates validate`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
+Query commands take `--format=table|plain|json`: `isx init --plan`, `isx list`, `isx overview`, `isx templates [list]`, `isx templates validate`, `isx tools list`, `isx tools show`, `isx tools validate`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
 
 ### Formats
 
@@ -1062,6 +1080,7 @@ The fields of each command, in order:
 | `isx templates` | `name`, `parent`, `source`, `description`, `built`, `built_at`, `version_outdated`, `definition_changed`, `parent_rebuilt` |
 | `isx tools list` | `name`, `source`, `description` |
 | `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains` |
+| `isx tools validate` | `name`, `path`, `valid`, `findings` (each `severity`, `message`) |
 | `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem`, `pinned_by`, `following` |
 | `isx account show <instance>` | one record per namespace: `namespace`, `account`, `description`, `chosen_by`, `chosen_in`, `template`, `template_account`, `problem`, `identity_pending`, `template_problem` |
 | `isx proxy status` | `status`, `version`, `git_sha`, `runtime`, `dns_overrides`, `drift`, `auth_error`, `health_endpoint`, `mitm_port`, `service_installed`, `managed_by`, `restart_helps`, `check_error`, `pid`, `pid_owner`, `foreign_holder`, `display_version` |
