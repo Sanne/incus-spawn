@@ -455,7 +455,33 @@ public final class FakeIncusDaemon implements IncusTransport {
     public synchronized IncusClient client() {
         var client = new IncusClient(new IncusApi(this));
         if (subvolumeListing != null) client.subvolumeLister = pool -> subvolumeListing;
+        client.poolAccounting = new IncusClient.PoolAccounting() {
+            @Override
+            public dev.incusspawn.incus.BtrfsUsage.DropAccounting beforeDeletes(String pool) {
+                synchronized (FakeIncusDaemon.this) {
+                    poolAccountingCalls.add("before " + pool);
+                }
+                return dev.incusspawn.incus.BtrfsUsage.DropAccounting.UNAVAILABLE;
+            }
+
+            @Override
+            public void afterDeletes(String pool, dev.incusspawn.incus.BtrfsUsage.DropAccounting before) {
+                synchronized (FakeIncusDaemon.this) {
+                    poolAccountingCalls.add("after " + pool);
+                }
+            }
+        };
         return client;
+    }
+
+    private final List<String> poolAccountingCalls = new ArrayList<>();
+
+    /**
+     * What a client's deletes did to a btrfs pool's accounting, {@code before <pool>} and
+     * {@code after <pool>}: never the host's, whose real one runs sudo (#2061).
+     */
+    public synchronized List<String> poolAccountingCalls() {
+        return List.copyOf(poolAccountingCalls);
     }
 
     /**

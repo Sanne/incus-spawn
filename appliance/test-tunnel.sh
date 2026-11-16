@@ -156,6 +156,12 @@ expect 'echo "$u" | grep -q "^---ISX-SUBVOL---$"' "btrfs-usage accepted the sync
 r=$(agent "btrfs-rescan cow")
 expect '[ "$r" = started ] || [ "$r" = running ] || [[ "$r" == error:* ]]' \
     "btrfs-rescan answered ('$(echo "$r" | head -1)')"
+# The settle verbs of #2061: with quotas off there is no threshold to set, which is an error reply
+r=$(agent "btrfs-skip-drop-accounting cow")
+expect '[ "$r" = ok ] || [[ "$r" == error:* ]]' "btrfs-skip-drop-accounting answered ('$(echo "$r" | head -1)')"
+expect '[ "$(agent "btrfs-settle cow")" = started ]' "btrfs-settle answered at once"
+expect '[ "$(agent "btrfs-settle ../x")" = "error: bad pool name" ]' "btrfs-settle rejects a path-like pool name"
+expect '[ "$(agent "btrfs-settle cow 9")" = "error: bad option" ]' "btrfs-settle rejects a threshold the kernel would not take"
 
 # The agent is a trust boundary: arguments are validated there, not only on the host.
 expect '[ "$(agent "btrfs-status ../x")" = "error: bad pool name" ]' "agent rejects a path-like pool name"

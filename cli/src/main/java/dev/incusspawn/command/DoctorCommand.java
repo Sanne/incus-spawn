@@ -1008,18 +1008,37 @@ public class DoctorCommand extends BaseCommand {
         if (slowsCleanup(status)) {
             BtrfsUsage.pendingCleanup(pool).flatMap(p -> pendingCleanupFinding(pool, p, Platform.isMacOS()))
                     .ifPresent(findings::add);
+            // isx sets the threshold before each of its deletes; a rule without the entry never can.
+            // With no filesystem found, re-running 'isx init' writes no entry either, so no note; nor
+            // on a kernel with no threshold (-1), where there is nothing for the rule to set.
+            if (Platform.isLinux() && status.dropSubtreeThreshold() >= 0 && BtrfsUsage.fsid(pool).isPresent()
+                    && !BtrfsUsage.canSkipDropAccounting(pool)) {
+                findings.add(thresholdNotSettable(pool));
+            }
         }
         return findings;
     }
 
     /**
-     * Whether a cleaner backlog delays new snapshots on this pool (#2061): only full qgroup
-     * accounting traces every freed extent. Simple quotas and quotas off measured no slowdown, and
-     * an inconsistent pool's counters are frozen, so a backlog read from them could be a stale one.
-     * A kernel that reports no {@code mode} predates simple quotas, so its accounting is full.
+     * Whether a cleaner backlog delays new snapshots on this pool (#2061): full qgroup accounting
+     * at a {@code drop_subtree_threshold} other than 0 traces every freed extent. Simple quotas,
+     * quotas off and threshold 0 measured no slowdown, and an inconsistent pool's counters are
+     * frozen, so a backlog read from them could be a stale one. A kernel that reports no
+     * {@code mode} predates simple quotas, so its accounting is full.
      */
     static boolean slowsCleanup(BtrfsUsage.QgroupStatus status) {
-        return status.available() && status.enabled() && !status.inconsistent() && !"squota".equals(status.mode());
+        return status.tracesDrops() && !status.inconsistent();
+    }
+
+    /**
+     * A note when isx cannot set the pool's threshold before a delete (#2061): the sudoers rule
+     * predates the entry. The kernel resets the threshold at every mount, so seeing it above 0 is
+     * not enough to say so; the rule is asked instead.
+     */
+    static Finding thresholdNotSettable(String pool) {
+        return Finding.note("Deletes slow down later branches",
+                "(isx cannot set drop_subtree_threshold on pool '" + pool + "', so after a bulk delete a new branch"
+                        + " can take seconds for minutes; re-run 'isx init' to update the btrfs sudoers rule)");
     }
 
     /**

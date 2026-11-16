@@ -1797,54 +1797,300 @@ public class IncusClient {
      * If force is true, stops the instance first (REST API does not accept delete of a running instance).
      */
     public void delete(String name, boolean force) {
+        // One read of each, for the storage check, the accounting and the stale volumes below
+        var meta = instanceMetadata(name);
+        var pools = listPools();
         // Before the stop: a refused delete must leave a running instance running.
-        requireStorageOnDisk(name);
-        var http = http();
-        if (force) {
-            try {
-                http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
-                        Map.of("action", "stop", "timeout", 30, "force", true));
-            } catch (Exception ignored) {
-                // May already be stopped — proceed to delete.
+        requireStorageOnDisk(name, meta, pools);
+        var rootPool = rootDiskPoolFromDevices(meta.path("expanded_devices"));
+        var accounting = accountingBeforeDelete("btrfs".equals(pools.get(rootPool)) ? rootPool : null);
+        // Settled even when the stop or the DELETE throws: the threshold is already 0, and outside
+        // a batch nothing else would put it back, so deletes isx does not make would go untraced
+        // until the next mount
+        try {
+            var http = http();
+            if (force) {
+                try {
+                    http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                            Map.of("action", "stop", "timeout", 30, "force", true));
+                } catch (Exception ignored) {
+                    // May already be stopped — proceed to delete.
+                }
             }
+            var resp = http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
+            if (!resp.isSuccess()) throw new IncusException("Failed to delete " + name);
+            cleanupStaleVolumes(name, pools.keySet());
+        } finally {
+            accountingAfterDelete(accounting);
         }
-        var resp = http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
-        if (!resp.isSuccess()) throw new IncusException("Failed to delete " + name);
-        cleanupStaleVolumes(name);
-        triggerAccountingRepairIfNeeded();
+    }
+
+    /** A btrfs pool's accounting as {@link PoolAccounting#beforeDeletes} left it, or none. */
+    private record DeleteAccounting(String pool, BtrfsUsage.DropAccounting status) {
+        static final DeleteAccounting NONE = new DeleteAccounting(null, BtrfsUsage.DropAccounting.UNAVAILABLE);
+    }
+
+    /**
+     * What deletes do to a btrfs pool's qgroup accounting (#2061). Package-private and swappable,
+     * like {@link #subvolumeLister}: the host's runs sudo and writes sysfs, which no test may do to
+     * the host's own pools.
+     */
+    interface PoolAccounting {
+        /** Before the first delete on {@code pool}: returns the status the settle goes by. */
+        BtrfsUsage.DropAccounting beforeDeletes(String pool);
+
+        /** After the last one. */
+        void afterDeletes(String pool, BtrfsUsage.DropAccounting before);
+
+        /** Put back the threshold {@code beforeDeletes} replaced, alone, as isx exits before its settle. */
+        default void restoreThreshold(String pool, int threshold) {}
+
+        PoolAccounting HOST = new PoolAccounting() {
+            @Override
+            public BtrfsUsage.DropAccounting beforeDeletes(String pool) {
+                return BtrfsUsage.skipDropAccounting(pool);
+            }
+
+            @Override
+            public void afterDeletes(String pool, BtrfsUsage.DropAccounting before) {
+                // A pool that still traces drops gets the throttled check it always did, since its
+                // cleaner can take minutes
+                if (before.status().skipsDropAccounting()) BtrfsUsage.settleDeletes(pool, before);
+                else BtrfsUsage.repairIfInconsistentThrottled(() -> pool);
+            }
+
+            @Override
+            public void restoreThreshold(String pool, int threshold) {
+                BtrfsUsage.restoreThreshold(pool, threshold);
+            }
+        };
+    }
+
+    /**
+     * The thresholds isx replaced and no settle has put back yet, each with how to put it back.
+     * Process-wide, since a threshold belongs to the pool, not to a client. Keyed by the delete's
+     * own accounting, by identity: a settle removes only what its own delete held, never a later
+     * delete's on the same pool that replaced the threshold again after this settle put it back.
+     */
+    private static final Map<DeleteAccounting, Runnable> REPLACED_THRESHOLDS =
+            java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
+    private static final java.util.concurrent.atomic.AtomicBoolean RESTORE_HOOK = new java.util.concurrent.atomic.AtomicBoolean();
+    /** Set by the restore hook before it reads what is held: a delete after that writes no threshold. */
+    private static final java.util.concurrent.atomic.AtomicBoolean EXITING = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * Hold a replaced threshold until its settle, and put it back if isx exits first: Ctrl-C or
+     * SIGTERM during {@code isx destroy --all-*}, {@code isx clean} or the TUI's batch delete never
+     * reaches the batch's close. Left at 0, every delete isx does not make, a plain
+     * {@code incus delete} or Incus pruning an image, would go untraced and leave the accounting
+     * inconsistent until the next mount, and isx's own next delete, reading 0, would put nothing
+     * back. The hook writes the threshold alone; the next isx delete, TUI refresh, build or doctor
+     * run rescans. A SIGKILL runs no hook, and leaves the pool at 0 until the next mount.
+     */
+    private void holdReplacedThreshold(DeleteAccounting accounting) {
+        int restoreTo = accounting.status().restoreTo();
+        if (accounting.pool() == null || restoreTo < 0) return;
+        var accountingOf = poolAccounting;
+        var pool = accounting.pool();
+        REPLACED_THRESHOLDS.put(accounting, () -> accountingOf.restoreThreshold(pool, restoreTo));
+    }
+
+    /** How the restore hook is registered: the JVM's, or a test's recorder. */
+    interface ShutdownHooks {
+        /** Throws {@link IllegalStateException} once the JVM is shutting down. */
+        void add(Thread hook);
+    }
+
+    static ShutdownHooks shutdownHooks = hook -> Runtime.getRuntime().addShutdownHook(hook);
+
+    /**
+     * Register the restore hook once, before the first threshold write rather than after it: a
+     * signal between the two would leave 0 with nothing to put it back. False when the JVM is
+     * already shutting down, so no hook can run: that delete then keeps the threshold, traced as
+     * before, and gets the throttled repair of a pool that traces drops.
+     */
+    private static boolean restoreHookRegistered() {
+        if (RESTORE_HOOK.get()) return true;
+        synchronized (RESTORE_HOOK) {
+            if (RESTORE_HOOK.get()) return true;
+            try {
+                shutdownHooks.add(new Thread(IncusClient::restoreAtExit, "isx-threshold-restore"));
+            } catch (IllegalStateException shuttingDown) {
+                return false;
+            }
+            RESTORE_HOOK.set(true);
+            return true;
+        }
+    }
+
+    /** Forget every held threshold and the hook's registration. Test-only. */
+    static void resetReplacedThresholdsForTest() {
+        REPLACED_THRESHOLDS.clear();
+        RESTORE_HOOK.set(false);
+        EXITING.set(false);
+    }
+
+    /**
+     * The hook itself: mark isx as exiting, then put back what is held. A delete whose write was
+     * still in flight holds its threshold after this read the map, and so puts it back itself
+     * ({@link #accountingBeforeDelete}); one that starts later writes none.
+     */
+    static void restoreAtExit() {
+        EXITING.set(true);
+        restoreReplacedThresholds();
+    }
+
+    /** Put back {@code accounting}'s threshold now, unless a settle, the hook or the delete already took it. */
+    private static void restoreHeld(DeleteAccounting accounting) {
+        var restore = REPLACED_THRESHOLDS.remove(accounting);
+        if (restore == null) return;
+        try {
+            restore.run();
+        } catch (RuntimeException ignored) {
+            // Best-effort, at exit
+        }
+    }
+
+    /** The shutdown hook's work: put back every threshold still held. Package-private for tests. */
+    static void restoreReplacedThresholds() {
+        List<DeleteAccounting> held;
+        synchronized (REPLACED_THRESHOLDS) {
+            held = List.copyOf(REPLACED_THRESHOLDS.keySet());
+        }
+        held.forEach(IncusClient::restoreHeld);
+    }
+
+    /** The pools whose replaced threshold is still held. Test-only. */
+    static Set<String> replacedThresholdPoolsForTest() {
+        synchronized (REPLACED_THRESHOLDS) {
+            return REPLACED_THRESHOLDS.keySet().stream().map(DeleteAccounting::pool)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        }
+    }
+
+    PoolAccounting poolAccounting = PoolAccounting.HOST;
+
+    private final Object deleteBatchLock = new Object();
+    private int deleteBatchDepth;
+    /** Each btrfs pool's accounting from its first delete in the open batch, by pool. */
+    private final Map<String, DeleteAccounting> batchAccounting = new LinkedHashMap<>();
+
+    /**
+     * Deletes made until this closes settle the pool once, at the end, rather than after each one
+     * (#2061): {@code isx destroy} of several instances, the TUI's batch delete, {@code isx clean}.
+     * A delete outside a batch settles on its own.
+     *
+     * <p>The batch belongs to the client, not to the thread that opened it: while it is open, a
+     * delete this client makes on any thread is settled at its close too. That is deliberate. The
+     * batch holds the pool at threshold 0, so such a delete would find nothing to put back, and a
+     * rescan it started on its own would be undone by the batch's next delete; the batch's settle
+     * covers it, on whichever pool it was.
+     */
+    public final class DeleteBatch implements AutoCloseable {
+        private boolean closed;
+
+        private DeleteBatch() {}
+
+        @Override
+        public void close() {
+            List<DeleteAccounting> settle = List.of();
+            synchronized (deleteBatchLock) {
+                if (closed) return;
+                closed = true;
+                if (--deleteBatchDepth == 0) {
+                    settle = List.copyOf(batchAccounting.values());
+                    batchAccounting.clear();
+                }
+            }
+            settle.forEach(IncusClient.this::settleDeletes);
+        }
+    }
+
+    public DeleteBatch deleteBatch() {
+        synchronized (deleteBatchLock) {
+            deleteBatchDepth++;
+        }
+        return new DeleteBatch();
     }
 
     /**
      * Every caller that deletes a subvolume (branch/template removal, `isx clean`, a rebuild's
-     * {@code deleteIfExists}, ...) funnels through this one method, and a subvolume delete is
-     * exactly the operation that can flip a btrfs pool's qgroup accounting to {@code inconsistent}
-     * (see {@link BtrfsUsage}) — so check right here instead of waiting for the next TUI reload or
-     * build to notice.
-     *
-     * <p>Deletes come in bursts ({@code isx clean} removing several failed builds, destroying a set
-     * of branches), so this uses the throttled entry point: one check per burst, not one per
-     * instance. That matters because the status read is a round trip to the in-VM agent on macOS,
-     * and because the pool lookup below is itself an API call — the supplier is only invoked when
-     * the check actually runs. Best-effort throughout: the rescan is async, so this never adds a
-     * wait, and a failure here never fails a delete that already succeeded.
+     * {@code deleteIfExists}, ...) funnels through {@link #delete}, so the accounting is handled
+     * here, on the btrfs pool holding the instance's root disk ({@code pool}, null when it is on
+     * no btrfs pool). Before the delete, a pool under full qgroups gets the threshold that has
+     * btrfs skip tracing what the instance shared, which made later branches wait for minutes
+     * ({@link BtrfsUsage#skipDropAccounting}). That costs no Incus request: a sysfs read, or a
+     * round trip to the in-VM agent on macOS, and in a batch only the first delete on each pool makes it.
+     * Best-effort: a failure here never stops the delete.
      */
-    private void triggerAccountingRepairIfNeeded() {
+    private DeleteAccounting accountingBeforeDelete(String pool) {
+        if (pool == null) return DeleteAccounting.NONE;
+        synchronized (deleteBatchLock) {
+            var held = deleteBatchDepth > 0 ? batchAccounting.get(pool) : null;
+            if (held != null) return held;
+        }
+        DeleteAccounting accounting;
         try {
-            BtrfsUsage.repairIfInconsistentThrottled(() -> {
-                var probe = probeCowPool();
-                return probe.isBtrfs() ? probe.poolName() : null;
-            });
+            accounting = !EXITING.get() && restoreHookRegistered()
+                    ? new DeleteAccounting(pool, poolAccounting.beforeDeletes(pool))
+                    : new DeleteAccounting(pool, BtrfsUsage.DropAccounting.UNAVAILABLE);
+        } catch (Exception e) {
+            // Still settled after the delete, as a pool that traces drops is
+            accounting = new DeleteAccounting(pool, BtrfsUsage.DropAccounting.UNAVAILABLE);
+        }
+        holdReplacedThreshold(accounting);
+        // The hook ran while the write was in flight and read the map before this hold: put it back
+        // now, rather than leave 0 with nothing to restore it
+        if (EXITING.get()) restoreHeld(accounting);
+        synchronized (deleteBatchLock) {
+            if (deleteBatchDepth > 0) keepInBatch(accounting);
+        }
+        return accounting;
+    }
+
+    /**
+     * Hold {@code accounting} for the open batch's settle. When two deletes on one pool prepared it
+     * at once, the second found the threshold already 0 and has nothing to put back, so the one
+     * that replaced a threshold wins whichever arrives first. Called under {@link #deleteBatchLock}.
+     */
+    private void keepInBatch(DeleteAccounting accounting) {
+        if (accounting.pool() == null) return;
+        batchAccounting.merge(accounting.pool(), accounting,
+                (held, added) -> held.status().restoreTo() < 0 && added.status().restoreTo() >= 0 ? added : held);
+    }
+
+    /**
+     * After a delete outside a batch, settle at once; in a batch, when it closes. A subvolume delete
+     * can flip the pool's accounting to {@code inconsistent}, and while it is, btrfs enforces no
+     * instance's root {@code size}: settling has btrfs free the delete now and starts the rescan
+     * ({@link BtrfsUsage#settleDeletes}).
+     */
+    private void accountingAfterDelete(DeleteAccounting accounting) {
+        synchronized (deleteBatchLock) {
+            // A batch opened during this delete settles it too, and must know what to put back
+            if (deleteBatchDepth > 0) {
+                keepInBatch(accounting);
+                return;
+            }
+        }
+        settleDeletes(accounting);
+    }
+
+    private void settleDeletes(DeleteAccounting accounting) {
+        if (accounting.pool() == null) return;
+        try {
+            poolAccounting.afterDeletes(accounting.pool(), accounting.status());
         } catch (Exception ignored) {
             // Best-effort; the delete itself already succeeded.
+        } finally {
+            // The settle put it back, or tried to; a second write at exit would race a later delete
+            if (accounting.status().restoreTo() >= 0) REPLACED_THRESHOLDS.remove(accounting);
         }
     }
 
-    private void cleanupStaleVolumes(String instanceName) {
+    private void cleanupStaleVolumes(String instanceName, Collection<String> pools) {
         try {
-            var pools = http().get("/1.0/storage-pools?recursion=1");
-            if (!pools.isSuccess()) return;
-            for (var pool : pools.body().getField("metadata").asList()) {
-                var poolName = pool.path("name").asText();
+            for (var poolName : pools) {
                 var volPath = "/1.0/storage-pools/" + poolName
                         + "/volumes/container/" + instanceName;
                 var volResp = http().get(volPath);
@@ -1940,8 +2186,8 @@ public class IncusClient {
      * driver, no listing, a listing that came back empty) lets the delete proceed, since refusing
      * every delete on a host without the sudoers rule would be worse than the rare orphan.
      */
-    private void requireStorageOnDisk(String name) {
-        var where = storageLocation(name);
+    private void requireStorageOnDisk(String name, JqValue meta, Map<String, String> pools) {
+        var where = storageLocation(name, meta, pools);
         if (where != null && !where.onDisk()) {
             throw new DanglingRecordException(name, where.pool(), where.ref().path());
         }
@@ -1963,9 +2209,14 @@ public class IncusClient {
     }
 
     private StorageLocation storageLocation(String name, JqValue meta) {
+        return storageLocation(name, meta, listPools());
+    }
+
+    /** {@link #storageLocation(String, JqValue)} with the pools' drivers already read. */
+    private StorageLocation storageLocation(String name, JqValue meta, Map<String, String> pools) {
         var kind = InstanceSubvolumes.Kind.fromApiType(meta.path("type").asText(""));
         var pool = rootDiskPoolFromDevices(meta.path("expanded_devices"));
-        if (kind == null || pool == null || !"btrfs".equals(listPools().get(pool))) return null;
+        if (kind == null || pool == null || !"btrfs".equals(pools.get(pool))) return null;
         var listing = subvolumeLister.apply(pool);
         if (listing == null) return null;
         var onDisk = InstanceSubvolumes.parse(listing, pool);

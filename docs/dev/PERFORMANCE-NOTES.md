@@ -987,10 +987,47 @@ Each series made 20 copies of it, deleted them with `incus delete -f`, then time
 - **Simple quotas would avoid it but cost the referenced column.**
   Under simple quotas a subvolume's referenced bytes count only what it wrote since quotas were enabled.
   Every template read 0 and the source only its 236 KiB of later writes, so `BtrfsUsage` would report no template's weight.
-- **What isx does:** `isx doctor` reports a backlog as a note when the pool uses full qgroups, from the `qgroup show` read `BtrfsUsage` already makes.
+  That was a pool switched to simple mode over existing data; on a scratch pool enabled in simple mode from the start, a template and a branch read 104 MB and 21 MB, what each wrote (2026-11-14).
+- **What isx did first:** `isx doctor` reports a backlog as a note when the pool uses full qgroups, from the `qgroup show` read `BtrfsUsage` already makes.
   It counts the qgroups btrfs-progs paths as `<under deletion>`.
   A freed subvolume's qgroup stays until a later commit, up to 300 s with `commit=300`, with its referenced bytes unchanged and pathed `<stale>`, so a missing subvolume alone would report a backlog already gone.
   `sudo btrfs subvolume sync <pool>` waits for the backlog.
+
+### Threshold 0 and a settle after each delete (2026-11-14 to 2026-11-16)
+
+isx now sets the pool's `drop_subtree_threshold` to 0 before a delete and settles the pool after it (design/storage.md "isx has btrfs skip that accounting").
+Same KVM guest and kernel, Incus 6.23, the `cow` loop pool with `commit=300`, the same 2.7 GiB source (here 200,000 files of 4 KB and one 1.5 GiB file).
+Each series made N copies with `incus copy`, deleted them, forced a commit, then timed `incus copy` every 2 s.
+
+| Series | `incus copy` while the cleaner works | Freed after |
+|---|---|---|
+| 20 deleted, threshold 3 | 0.24 s, then **5.0–9.2 s** for each copy until t+150 s | 154 s |
+| 20 deleted, threshold 0 | 0.12–0.17 s, flat, for 150 s | at once |
+| 70 deleted, threshold 3 | 0.43 s, then up to **23.7 s**; 6 copies in 120 s | 957 s |
+| 70 deleted, threshold 0, rescan started at once | 0.12–0.16 s, flat; the rescan finished within the 60 s | at once |
+
+- **Threshold 0 leaves the accounting inconsistent, and btrfs then enforces no qgroup limit.**
+  On a scratch loop file, a subvolume limited to 120M took a 200 MB write while the flag was set.
+  A rescan clears it; on this pool, one took 0.5 s, and branches made during one were not slowed.
+- **Without a settle, the flag appears minutes later, when nobody looks.**
+  Three copies deleted at threshold 0 stayed consistent, still waiting to be freed, until t+300 s, and were marked inconsistent at t+330 s, at the periodic commit.
+- **The settle is cheap.**
+  For one delete, forced commit, `subvolume sync`, `quota rescan -W`, a second commit and the rescan start took 0.06–0.07 s together, five sudo calls.
+  For 20 and 70 deletes, the commit took 0.04 and 0.09 s and the cleaner 1.0 and 2.0 s, then the rescan 0.5 s.
+- **A rescan that overlaps the cleaner is undone.**
+  20 `isx destroy` in a row, each settling without waiting for the previous rescan, ended inconsistent: the kernel logged `qgroup scan completed (inconsistency flag cleared)` and, 16 ms later, `qgroup marked inconsistent, to be deleted qgroup 0/393 has non-zero numbers`.
+  With the wait and the second commit, the same 20 took 0.61–0.67 s each, the accounting read consistent within a second of the last, and stayed so after another commit; copies then took 0.12–0.13 s.
+- **The settle puts the threshold back.**
+  With the old value written back once the cleaner is done, 20 `isx destroy` took 0.66–0.72 s each, the pool read threshold 3 and consistent after them, and copies took 0.12–0.13 s.
+  Three plain `incus delete` after that were traced as before: still being freed, and consistent.
+- **A delete must not cancel the previous delete's rescan (2026-11-20).**
+  Another KVM guest, kernel 7.3.1, Incus 6.23, a 2.3 GiB source (200,000 files of 4 KB and one 1.5 GiB file), 20 started branches destroyed one `isx destroy` at a time.
+  Each destroy's drop at threshold 0 marked the accounting inconsistent while the previous settle's rescan ran, which cancels it: the kernel logged `qgroup scan paused` 14 times.
+  In one series the pool was then left reading `rescan operation running` with no rescan behind it, `inconsistent` 1, and every `btrfs quota rescan` refused with EINPROGRESS for over 7 minutes, until the pool was mounted again.
+  `qgroup show` prints `rescan is running` rather than `inconsistent` then, so read the sysfs `inconsistent` flag and `btrfs quota rescan -s` instead.
+  With the prepare step waiting for a running rescan, the same 20 logged 20 marks and 20 completed rescans, none paused, and ended consistent.
+  The 20 took 58.5 s instead of 31.7 s, since each waits for the previous one's rescan, about 1.3 s on this pool.
+  On this pool, deleting copies at threshold 3 (`incus delete`) made the next `isx branch` take 5.8–8.6 s for over 120 s; after the 20 `isx destroy`, 0.81–1.05 s from the first.
 
 ## Quarkus 4.0.0.CR1 against Beta3 (issue #2169)
 

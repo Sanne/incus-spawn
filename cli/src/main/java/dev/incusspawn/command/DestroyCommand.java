@@ -325,27 +325,30 @@ public class DestroyCommand extends BaseCommand {
         int destroyed = 0;
         int skipped = 0;
         int failures = 0;
-        for (var n : names) {
-            var lockOpt = tryAcquireLock(lockManager, n, false);
-            if (lockOpt == null) {
-                failures++;
-                continue;
-            }
-            if (lockOpt.isEmpty()) {
-                BuildOutput.stepStart("Destroying " + n);
-                BuildOutput.stepFail("locked by another process");
-                skipped++;
-                continue;
-            }
-            try (var lock = lockOpt.get()) {
-                BuildOutput.stepStart("Destroying " + n);
-                try {
-                    InstanceDestroyer.deleteHeld(incus, n);
-                    BuildOutput.stepDone();
-                    destroyed++;
-                } catch (Exception e) {
-                    BuildOutput.stepFail(e.getMessage());
+        // One settle of the pool's accounting at the end, not one per instance (#2061)
+        try (var batch = incus.deleteBatch()) {
+            for (var n : names) {
+                var lockOpt = tryAcquireLock(lockManager, n, false);
+                if (lockOpt == null) {
                     failures++;
+                    continue;
+                }
+                if (lockOpt.isEmpty()) {
+                    BuildOutput.stepStart("Destroying " + n);
+                    BuildOutput.stepFail("locked by another process");
+                    skipped++;
+                    continue;
+                }
+                try (var lock = lockOpt.get()) {
+                    BuildOutput.stepStart("Destroying " + n);
+                    try {
+                        InstanceDestroyer.deleteHeld(incus, n);
+                        BuildOutput.stepDone();
+                        destroyed++;
+                    } catch (Exception e) {
+                        BuildOutput.stepFail(e.getMessage());
+                        failures++;
+                    }
                 }
             }
         }

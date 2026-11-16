@@ -399,3 +399,18 @@ isx vm status          # Launcher: isx-vm, and a control socket
 isx doctor             # "VM running", with no "VM running under vfkit" warning
 pgrep -l vfkit         # nothing
 ```
+
+## The btrfs sudoers rule from before issue 2061
+
+Since issue 2061, isx sets a btrfs pool's `drop_subtree_threshold` to 0 before each delete and settles the pool after it, so that a bulk delete no longer slows the branches after it for minutes.
+On Linux that takes three more entries in `/etc/sudoers.d/incus-spawn-btrfs`, which `isx init` writes.
+A rule written before then lacks them, and isx keeps working without them: deletes behave as before, and `isx doctor` notes "Deletes slow down later branches".
+Re-run `isx init` to rewrite the rule:
+
+```shell
+isx init
+sudo cat /etc/sudoers.d/incus-spawn-btrfs   # ends with: /usr/bin/tee /sys/fs/btrfs/<uuid>/qgroups/drop_subtree_threshold
+```
+
+The entry names the pool's filesystem by its UUID, so a pool re-created later needs `isx init` again.
+On macOS the appliance's agent does the same, and an appliance from before then answers neither verb, so deletes behave as before until the appliance is updated.

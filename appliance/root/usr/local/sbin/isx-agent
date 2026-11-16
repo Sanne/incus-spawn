@@ -169,6 +169,53 @@ case "$verb" in
             echo "error: $out"
         fi
         ;;
+    btrfs-skip-drop-accounting)
+        # Under full qgroups, set the pool's drop_subtree_threshold to 0 before a delete (#2061): the
+        # cleaner then skips tracing the extents a deleted instance shared with its template and marks
+        # the accounting inconsistent, for btrfs-settle's rescan, instead of holding the transaction a
+        # new snapshot commits for seconds per instance. The kernel resets it to 3 at every mount and
+        # quota enable, so the host asks before its deletes. A rescan still running is waited for
+        # first, since the drop's inconsistency mark cancels it, and rescans that kept cancelling
+        # each other left the pool refusing every rescan until a remount; one that outlasts the
+        # wait keeps the threshold, so the delete is traced as before. Mirrors
+        # BtrfsUsage.skipDropAccounting.
+        valid_pool "$arg" || exit 0
+        fsid=$(btrfs_fsid "$POOL_MOUNT_PREFIX/$arg")
+        q="/sys/fs/btrfs/$fsid/qgroups"
+        if [ -z "$fsid" ] || [ ! -w "$q/drop_subtree_threshold" ]; then
+            echo "error: no qgroups"
+        elif [ "$(cat "$q/mode" 2>/dev/null)" = squota ]; then
+            echo "error: simple quotas"
+        elif [ "$(cat "$q/inconsistent" 2>/dev/null)" = 1 ] \
+                && ! timeout 4 btrfs quota rescan -W "$POOL_MOUNT_PREFIX/$arg" >/dev/null 2>&1; then
+            # Within the host's 5 s reply timeout; the delete keeps the threshold and is traced
+            echo "error: rescan running"
+        elif echo 0 > "$q/drop_subtree_threshold" 2>/dev/null; then
+            echo ok
+        else
+            echo "error: could not set the threshold"
+        fi
+        ;;
+    btrfs-settle)
+        # After deletes made at threshold 0: force a commit so the cleaner frees them now rather than
+        # at the next commit=300, wait for it and for a rescan already running (one that overlapped
+        # the cleaner is undone by the commit that removes a freed subvolume's qgroup), commit again,
+        # then start the rescan that rebuilds the accounting they left inconsistent; while it is
+        # inconsistent btrfs enforces no qgroup limit. Detached, so the host does not wait.
+        # The optional opt is the threshold isx replaced, put back once the cleaner is done, so a
+        # delete isx does not make is traced as before. Mirrors BtrfsUsage.settleDeletes.
+        valid_pool "$arg" || exit 0
+        case "$opt" in
+            ''|[0-8]) ;;
+            *) echo "error: bad option"; exit 0 ;;
+        esac
+        mount="$POOL_MOUNT_PREFIX/$arg"
+        q="/sys/fs/btrfs/$(btrfs_fsid "$mount")/qgroups"
+        # The rescan only when the accounting reads inconsistent, as on Linux; unconditionally when it cannot be read
+        setsid sh -c 'btrfs filesystem sync "$1"; timeout 60 btrfs subvolume sync "$1"; if [ -n "$3" ]; then echo "$3" > "$2/drop_subtree_threshold"; fi; timeout 60 btrfs quota rescan -W "$1"; btrfs filesystem sync "$1"; if [ ! -r "$2/inconsistent" ] || [ "$(cat "$2/inconsistent")" = 1 ]; then btrfs quota rescan "$1"; fi' \
+            sh "$mount" "$q" "$opt" </dev/null >/dev/null 2>&1 &
+        echo started
+        ;;
     btrfs-orphan-delete)
         # Removes one orphaned subvolume so the rest of the pool is untouched (#874) — isx
         # doctor's only destructive-but-targeted alternative to wiping the whole pool with
