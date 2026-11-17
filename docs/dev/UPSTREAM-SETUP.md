@@ -76,6 +76,7 @@ It has no pull request rule yet: it needs one with one required approval, and `S
 ## What to watch after the first runs
 
 - `[upstream] watch failing`: a signature that did not verify, a sum the publisher does not confirm, a link off its allowlist, or a missing secret; the issue links the run.
+  A `publish` leg that fails at "Mint the app's token" says why in its log: `the isx-upstream app is not installed on <repo>` asks for step 1's installation on that repository.
 - A PR on `upstream/<item>` by `isx-upstream[bot]` with `upstream-verify` green: the coordinator merges it through `bin/upstream-merge.sh`; nobody edits it in place.
 - A PR on `upstream/<item>` whose text says the item is `class: review`: the bot leaves it alone, so you merge it once it is green, or close it to decline that version.
 - Issues titled `[upstream] <item>: ...` labelled `go:design` or `go:build`: the judgement path, dispatched like any other `go:` issue.

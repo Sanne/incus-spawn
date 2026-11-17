@@ -10,10 +10,23 @@
 #
 # Needs openssl, curl, jq. GITHUB_API may point curl elsewhere (tests).
 set -euo pipefail
+# Each failure is said in words, on stderr only: stdout is the token alone. In Actions it is an
+# ::error:: annotation, its %, CR and LF escaped as workflow commands require, so a message GitHub
+# sent cannot end the annotation and start a command of its own.
+die() {
+    local msg="$*"
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+        msg="${msg//%/%25}"; msg="${msg//$'\r'/%0D}"; msg="${msg//$'\n'/%0A}"
+        echo "::error::$msg" >&2
+    else
+        echo "$msg" >&2
+    fi
+    exit 1
+}
 repo="${1:?owner/repo}"
-[[ "$repo" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || { echo "not owner/repo: '$repo'" >&2; exit 1; }
-[[ "${UPSTREAM_APP_ID:-}" =~ ^[0-9]+$ ]] || { echo "UPSTREAM_APP_ID is not set to a number" >&2; exit 1; }
-[[ -n "${UPSTREAM_APP_PRIVATE_KEY:-}" ]] || { echo "UPSTREAM_APP_PRIVATE_KEY is not set" >&2; exit 1; }
+[[ "$repo" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die "not owner/repo: '$repo'"
+[[ "${UPSTREAM_APP_ID:-}" =~ ^[0-9]+$ ]] || die "UPSTREAM_APP_ID is not set to a number"
+[[ -n "${UPSTREAM_APP_PRIVATE_KEY:-}" ]] || die "UPSTREAM_APP_PRIVATE_KEY is not set"
 API="${GITHUB_API:-https://api.github.com}"
 
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
@@ -25,12 +38,31 @@ sig="$(printf '%s.%s' "$header" "$payload" \
     | openssl dgst -sha256 -sign /dev/fd/3 3<<<"$UPSTREAM_APP_PRIVATE_KEY" | b64url)"
 jwt="$header.$payload.$sig"
 
-installation="$(curl -fsS -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
-    "$API/repos/$repo/installation" | jq -r '.id // empty')"
-[[ "$installation" =~ ^[0-9]+$ ]] || { echo "the app is not installed on $repo" >&2; exit 1; }
-token="$(curl -fsS -X POST -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
-    "$API/app/installations/$installation/access_tokens" \
-    -d "$(jq -cn --arg r "${repo#*/}" '{repositories: [$r], permissions: {contents: "write", pull_requests: "write"}}')" \
-    | jq -r '.token // empty')"
-[[ -n "$token" ]] || { echo "no installation token for $repo" >&2; exit 1; }
+# With curl -f a 404 ended the script with no message, and a 404 here is the app not installed on
+# that repository (#2330), so each request's answer is named.
+# github <what it does> <what a 404 means> <curl arguments...>: the body of a 2xx answer on stdout,
+# any other answer named.
+github() {
+    local what="$1" not_found="$2" response status; shift 2
+    response="$(curl -sS -w '\n%{http_code}' -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" "$@")" \
+        || die "could not reach GitHub to $what"
+    status="${response##*$'\n'}"
+    case "$status" in
+        2??) printf '%s\n' "${response%$'\n'*}" ;;
+        401) die "GitHub refused the app's id or key to $what (401): check UPSTREAM_APP_ID and UPSTREAM_APP_PRIVATE_KEY" ;;
+        404) die "$not_found" ;;
+        *) die "GitHub answered $status to $what: $(jq -r '.message? // empty' <<<"${response%$'\n'*}" 2> /dev/null)" ;;
+    esac
+}
+
+body="$(github "look up the app's installation on $repo" \
+    "the isx-upstream app is not installed on $repo (404): install it there, docs/dev/UPSTREAM-SETUP.md step 1 and \"Sibling repositories\"" \
+    "$API/repos/$repo/installation")"
+installation="$(jq -r '.id // empty' <<<"$body")"
+[[ "$installation" =~ ^[0-9]+$ ]] || die "GitHub named no installation of the app on $repo"
+body="$(github "mint a token for $repo" "GitHub has no installation $installation of the app (404)" \
+    -X POST "$API/app/installations/$installation/access_tokens" \
+    -d "$(jq -cn --arg r "${repo#*/}" '{repositories: [$r], permissions: {contents: "write", pull_requests: "write"}}')")"
+token="$(jq -r '.token // empty' <<<"$body")"
+[[ -n "$token" ]] || die "no installation token for $repo"
 printf '%s\n' "$token"
