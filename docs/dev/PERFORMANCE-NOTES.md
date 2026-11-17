@@ -724,6 +724,14 @@ Claude's first-run fetch is made with the instance's credential, so its answer b
 Caching it in a template is therefore not the obvious fix it looks like: a template outlives an account switch, and builds scrub temporary credential state, Claude's included, before publication.
 It is recorded here rather than changed.
 
+### The job-control shell around the action (issue #2333)
+
+Since #2333 the action runs as the first job of an interactive bash, one more `exec` and an rcfile before Claude starts.
+Measured on 2026-11-17 in a Fedora isx box (an isx VM), not in a guest: `su -l -P agentuser -c` with the old wrapper and with the new one, on a terminal from util-linux `script`, around a stand-in that exits 0.
+Each pass ran 50 launches, and two passes each gave 77.5-77.7 ms for the old wrapper and 77.5-78.0 ms for the new, the `su -l` login being nearly all of it.
+So the new shell adds 0.0-0.3 ms per launch, under the noise of the login, against a first screen of ~400 ms.
+`~/.bashrc` is read only after the action, for the prompt, so it is not in that figure.
+
 ## VM boot: where the wait goes
 
 A container answers exec in well under a second; a VM from `tpl-isx-agent-vm` took about 11 s on Sanne's host (#1238).

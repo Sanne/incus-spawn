@@ -353,7 +353,8 @@ default-action: claude
 `workdir` inherits from parent templates: isx uses the `workdir` of the nearest template that sets it, even when a child adds repos of its own.
 When no template in the chain sets it, it defaults to the first repo of the nearest template that declares any.
 
-If the `shell-command` fails to start, isx runs `bash --login` instead.
+If the `shell-command` or the default action fails, isx leaves you in a shell.
+Ctrl+Z suspends it to that shell, and `fg` brings it back.
 
 `default-action` is a tool name, such as `claude`, if the tool has a single action, or `tool:action-id`, such as `claude:launch`, if the tool has several (see [Tool Actions](TOOLS.md#tool-actions) for the `id` field).
 

@@ -147,13 +147,12 @@ class InteractiveShellSessionTest {
     @Test
     void aShellCommandRunsInTheSessionAskedFor() throws Exception {
         var prep = new ShellPrep(null, "claude", false, true, null, true, "tpl");
-        assertEquals("zmx attach isx claude", run(prep, false, true, false));
-        assertEquals("zmx attach work claude", run(prep.withSession(ShellSession.named("work")), false, true, false));
-        assertEquals("zmx attach 2 claude", run(prep.withSession(ShellSession.NEW), false, true, false, "isx"));
-        // No stand-in for claude: outside zmx it is not found, and the plain shell follows
-        var none = run(prep.withSession(ShellSession.NONE), false, true, false);
-        assertFalse(none.contains("zmx"), none);
-        assertTrue(none.endsWith("plain --login"), none);
+        // The command runs as the first job of an interactive bash (#2333), which the stand-in prints
+        var job = "bash -c ISX_ACTION='claude' exec bash --rcfile /dev/fd/3 -i";
+        assertTrue(run(prep, false, true, false).startsWith("zmx attach isx " + job));
+        assertTrue(run(prep.withSession(ShellSession.named("work")), false, true, false).startsWith("zmx attach work " + job));
+        assertTrue(run(prep.withSession(ShellSession.NEW), false, true, false, "isx").startsWith("zmx attach 2 " + job));
+        assertEquals("plain --rcfile /dev/fd/3 -i", run(prep.withSession(ShellSession.NONE), false, true, false));
     }
 
     @Test
