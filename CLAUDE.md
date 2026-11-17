@@ -308,6 +308,10 @@ Commands that act need only clean stdout: `BuildOutput.ansi()` is the one gate f
 A status report goes to stdout in every state, its exit code saying which (#1037).
 See `.claude/rules/commands.md` and design/terminal.md "Output for scripts".
 
+**Container image manifests are cached, and every hit is confirmed with the caller's own token** (#2306).
+The proxy stores manifests by digest and serves a copy only after a `HEAD` with the client's own headers answers 200, which Docker Hub does not count as a pull.
+Without that answer it serves only a repository an anonymous check found public (design/proxy.md "Container image manifests").
+
 **YAML tool downloads:** `ToolDef` download entries may set `extract`, `destination_file`, or both.
 Downloads are cached on the host, then either extracted into the target, copied to the exact destination path, or processed both ways.
 VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock.

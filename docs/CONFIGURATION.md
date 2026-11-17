@@ -377,6 +377,9 @@ isx caches only content it can verify: isx checks everything against its digest 
 Proxy caches, from instance traffic:
 
 - **Container image layers**: OCI blobs from Docker Hub, GHCR and Quay, keyed by SHA256 content digest.
+- **Container image manifests**: from the same registries, so pulling a cached image does not count against Docker Hub's pull limit.
+  The proxy confirms each one with a `HEAD` request carrying your token, which Docker Hub does not count as a pull.
+  When the registry throttles or is down, the proxy serves a public tag at its last known version.
 - **Maven and Gradle artifacts**: release JARs, POMs and plugins from Maven Central, the Gradle plugin portal and the [repositories you declare](#more-maven-repositories).
   The proxy checks each against the upstream checksum, and checks it with upstream again as it ages.
   When the repository is unreachable, the proxy serves cached artifacts unconfirmed, so builds keep working offline.

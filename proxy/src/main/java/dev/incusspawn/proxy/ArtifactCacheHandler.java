@@ -45,12 +45,13 @@ import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
 /**
- * The proxy's artifact cache: container registry blobs, npm tarballs, and Maven/Gradle
- * artifacts confirmed with upstream per {@link ArtifactCacheTiers}.
+ * The proxy's artifact cache: container registry blobs and manifests ({@link ManifestCache}), npm
+ * tarballs, and Maven/Gradle artifacts confirmed with upstream per {@link ArtifactCacheTiers}.
  * <p>
- * It serves only public repositories and never sees credentials: it is built from the
- * {@link Upstream} it fetches through and the cache settings, and is given no
- * {@code MitmProxy.RequestContext}, so it has nothing to inject. {@link MitmProxy#routeRequest}
+ * It never chooses a credential: it is built from the {@link Upstream} it fetches through and the
+ * cache settings, and is given no {@code MitmProxy.RequestContext}, so it has nothing to inject.
+ * A private Maven repository's request comes with the one header to send ({@link #servePrivate}),
+ * and a container image's tag is confirmed with the client's own headers before its copy is served. {@link MitmProxy#routeRequest}
  * decides which requests reach it.
  */
 class ArtifactCacheHandler {
@@ -262,8 +263,268 @@ class ArtifactCacheHandler {
             }
         }
 
-        // Non-cacheable (auth tokens, manifests, HEAD, tag lookups) — relay
+        if (clientReq.method() == HttpMethod.GET && path != null && clientReq.query() == null) {
+            var manifest = ManifestCache.MANIFEST_PATTERN.matcher(path);
+            if (manifest.matches()) {
+                serveManifest(clientReq, started, domain, manifest.group(1), manifest.group(2));
+                return;
+            }
+        }
+
+        // Not cached: auth tokens, a HEAD (Docker Hub does not count one), anything else
         upstream.relayRequest(clientReq, domain, started);
+    }
+
+    // --- Registry manifest caching (#2306) ---
+
+    // How often one repository is checked for being public, at most: the check is three requests
+    private static final long PUBLIC_CHECK_INTERVAL_NANOS = TimeUnit.HOURS.toNanos(6);
+    /** When this proxy last checked each repository ({@code domain/name}) for being public (nanoTime). */
+    private final ConcurrentHashMap<String, Long> publicChecks = new ConcurrentHashMap<>();
+
+    /**
+     * A manifest GET, by digest or by tag. A copy is served only on a {@code HEAD} carrying the
+     * client's own headers, its {@code Authorization} and {@code Accept} included, that a registry
+     * answers 200 (naming the copy's digest, for a tag): the registry vouches for the caller's
+     * access, and for a tag's current digest, and Docker Hub counts a manifest GET as a pull but
+     * never a HEAD. A digest is confirmed too, since one is often published: knowing it proves no
+     * access. When that HEAD cannot be answered (a connect failure, 5xx, 429), the copy is served
+     * unconfirmed only for a repository an anonymous check found public. Everything else is
+     * fetched, served and cached, or relayed.
+     */
+    private void serveManifest(HttpServerRequest clientReq, long started, String domain, String name, String reference) {
+        var byDigest = ManifestCache.isDigest(reference);
+        var ref = domain + "/" + name + (byDigest ? "@" : ":") + reference;
+        var tag = byDigest ? null : ManifestCache.tag(domain, name, reference, clientReq.getHeader("Accept"));
+        vertx.executeBlocking(() -> {
+            var digest = byDigest ? reference : ManifestCache.resolvedDigest(tag);
+            return digest == null || ManifestCache.storedType(digest) == null ? null : digest;
+        }, false).onComplete(ar -> {
+            var last = ar.succeeded() ? ar.result() : null;
+            // No copy to serve: the HEAD would only add a round trip before the GET
+            if (last == null) {
+                fetchManifest(clientReq, started, domain, name, reference, tag, ref);
+                return;
+            }
+            confirmManifest(clientReq, domain).onComplete(confirmed -> {
+                var answer = confirmed.succeeded() ? confirmed.result() : SidecarAnswer.UNREACHABLE;
+                if (answer.status() == 200) {
+                    // A digest names its bytes, whatever the answer's header says; a tag is what the header says
+                    var digest = byDigest ? reference
+                            : answer.body() == null ? null : new String(answer.body(), StandardCharsets.US_ASCII);
+                    serveConfirmedManifest(clientReq, started, domain, name, reference, tag, ref, digest);
+                } else if (answer.unreachable()) {
+                    serveManifestUnconfirmed(clientReq, started, domain, name, last, ref, answer);
+                } else {
+                    // The registry refuses this caller or does not know the manifest: it says so itself
+                    upstream.relayRequest(clientReq, domain, started);
+                }
+            });
+        });
+    }
+
+    /**
+     * A HEAD for the client's manifest request, with the client's own headers: a 200 carries the
+     * {@code Docker-Content-Digest} it names as its body, or none. Never fails; an exchange that
+     * broke is {@link SidecarAnswer#UNREACHABLE}.
+     */
+    private Future<SidecarAnswer> confirmManifest(HttpServerRequest clientReq, String domain) {
+        var options = probeOptions(HttpMethod.HEAD, domain, 443, clientReq.uri());
+        return retryOnceAfterConnect(() -> upstream.requestWithAsyncDns(upstream.probeClient, options)
+                        .compose(req -> {
+                            upstream.copyRequestHeaders(clientReq, req, domain);
+                            req.headers().remove("Accept-Encoding");
+                            return afterConnect(upstream.sendProbe(req, (resp, read) -> resp.end().map(v -> {
+                                var digest = ManifestCache.usableDigest(resp.getHeader("Docker-Content-Digest"));
+                                return resp.statusCode() == 200
+                                        ? new SidecarAnswer(200, digest == null ? null : digest.getBytes(StandardCharsets.US_ASCII), true)
+                                        : new SidecarAnswer(resp.statusCode(), null, true, errorHeaders(resp));
+                            })));
+                        }))
+                .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE));
+    }
+
+    /** The registry confirmed the caller's manifest at {@code digest}: serve the copy of it if there is one. */
+    private void serveConfirmedManifest(HttpServerRequest clientReq, long started, String domain, String name,
+                                        String reference, Path tag, String ref, String digest) {
+        if (digest == null) {
+            fetchManifest(clientReq, started, domain, name, reference, tag, ref);
+            return;
+        }
+        vertx.executeBlocking(() -> {
+            var type = ManifestCache.storedType(digest);
+            if (type != null) {
+                if (tag != null) ManifestCache.recordTag(tag, digest);
+                ManifestCache.recordInRepository(domain, name, digest);
+            }
+            return type;
+        }, false).onComplete(ar -> {
+            var type = ar.succeeded() ? ar.result() : null;
+            if (type == null) {
+                fetchManifest(clientReq, started, domain, name, reference, tag, ref);
+            } else {
+                ProxyLog.trace("Registry manifest cache hit: " + ref + " (" + digest.substring(0, 19) + "..., confirmed)");
+                serveManifestCopy(clientReq, digest, type);
+                // Hits must renew it too: a manifest that never moves is never fetched again
+                checkPublicInBackground(domain, name, digest, type);
+            }
+        });
+    }
+
+    /**
+     * The registry could not confirm the manifest: the copy of {@code digest} (the one asked for, or
+     * the one the tag last resolved to) is served for a public repository that served that digest,
+     * as the Maven cache serves an artifact upstream cannot be asked about. A private one's would go
+     * to a caller the registry may refuse, so it gets the registry's own answer. A digest is checked
+     * against the repository too, since copies are shared by digest: else a private image's digest,
+     * asked for under a public repository's name, would be served.
+     */
+    private void serveManifestUnconfirmed(HttpServerRequest clientReq, long started, String domain, String name,
+                                          String digest, String ref, SidecarAnswer answer) {
+        vertx.executeBlocking(() -> {
+            if (!ManifestCache.isPublic(domain, name) || !ManifestCache.inRepository(domain, name, digest)) return null;
+            var type = ManifestCache.storedType(digest);
+            return type == null ? null : new String[] {digest, type};
+        }, false).onComplete(ar -> {
+            var copy = ar.succeeded() ? ar.result() : null;
+            if (copy == null) {
+                upstream.relayRequest(clientReq, domain, started);
+                return;
+            }
+            var why = answer == SidecarAnswer.UNREACHABLE ? "could not be reached" : "answered " + answer.status();
+            ProxyLog.info("Registry " + why + ": serving " + ref + " unconfirmed, at " + copy[0]);
+            upstream.throttles.servedUnconfirmed(domain, answer.status());
+            serveManifestCopy(clientReq, copy[0], copy[1]);
+        });
+    }
+
+    private void serveManifestCopy(HttpServerRequest clientReq, String digest, String type) {
+        var resp = clientReq.response();
+        resp.setStatusCode(200);
+        resp.putHeader("Content-Type", type);
+        resp.putHeader("Docker-Content-Digest", digest);
+        resp.sendFile(ManifestCache.copy(digest).toString()).onFailure(err -> {
+            ProxyLog.trace("Failed to serve cached manifest: " + err.getMessage());
+            if (!resp.ended() && !resp.closed()) upstream.sendError(resp, 500, "Cache read error");
+        });
+    }
+
+    /**
+     * Fetch the client's manifest with its own headers and serve it, caching it when the answer
+     * names a digest the bytes then match: the reference itself when it is one, else the answer's
+     * {@code Docker-Content-Digest}. A tag ({@code tag} not null) is recorded as resolving to it.
+     */
+    private void fetchManifest(HttpServerRequest clientReq, long started, String domain, String name,
+                               String reference, Path tag, String ref) {
+        fetchManifest(clientReq, started, domain, name, reference, tag, ref, Upstream.mayResend(clientReq, false));
+    }
+
+    private void fetchManifest(HttpServerRequest clientReq, long started, String domain, String name,
+                               String reference, Path tag, String ref, boolean resend) {
+        var options = new RequestOptions()
+                .setMethod(HttpMethod.GET)
+                .setHost(domain)
+                .setPort(443)
+                .setURI(clientReq.uri())
+                .setConnectTimeout(Math.min(Upstream.UPSTREAM_CONNECT_TIMEOUT_MILLIS, upstream.timeoutLeftMillis(started)));
+        upstream.requestWithAsyncDns(options).onSuccess(upReq -> {
+            upReq.idleTimeout(upstream.timeoutLeftMillis(started));
+            upstream.copyRequestHeaders(clientReq, upReq, domain);
+            // The copy is served as stored, so it is stored as sent
+            upReq.headers().remove("Accept-Encoding");
+            upReq.send().onSuccess(upResp -> {
+                upstream.throttles.answered(domain, upResp.statusCode());
+                var answered = ManifestCache.usableDigest(upResp.getHeader("Docker-Content-Digest"));
+                var digest = tag == null ? reference : answered;
+                var type = upResp.getHeader("Content-Type");
+                if (upResp.statusCode() != 200 || digest == null || type == null || type.isBlank()
+                        || (answered != null && !answered.equals(digest))) {
+                    upstream.relayResponse(clientReq, domain, upResp, started);
+                    return;
+                }
+                new CachingDownload(clientReq, domain, started, upResp, ManifestCache.copy(digest), ref,
+                        Verification.ofManifest(digest, type)).start();
+                vertx.executeBlocking(() -> {
+                    if (tag != null) ManifestCache.recordTag(tag, digest);
+                    ManifestCache.recordInRepository(domain, name, digest);
+                    return null;
+                }, false).onFailure(err -> ProxyLog.trace("Could not record " + ref + ": " + err.getMessage()));
+                checkPublicInBackground(domain, name, digest, type);
+            }).onFailure(err -> {
+                if (resend && !clientReq.response().closed() && Upstream.closedUnanswered(err)) {
+                    ProxyLog.trace("Upstream closed fetching " + ref + ", sending again: " + err.getMessage());
+                    fetchManifest(clientReq, started, domain, name, reference, tag, ref, false);
+                    return;
+                }
+                ProxyLog.warn("Upstream error fetching " + ref + ": " + err.getMessage());
+                upstream.sendError(clientReq.response(), 502, "Upstream error");
+            });
+        }).onFailure(err -> {
+            ProxyLog.warn("Connect error fetching " + ref + ": " + err.getMessage());
+            upstream.sendError(clientReq.response(), 502, "Upstream connection failed");
+        });
+    }
+
+    /**
+     * Find out, at most every {@link #PUBLIC_CHECK_INTERVAL_NANOS}, whether anyone may pull
+     * {@code domain/name}, and record it: only then is a tag of it served without the registry's
+     * confirmation. It asks as an anonymous client would, with none of the caller's headers: a HEAD
+     * for the manifest, and on a Bearer challenge a pull token from its realm and the HEAD again
+     * with it. None of these is a pull Docker Hub counts. A failed exchange, a 5xx or a 429 changes
+     * nothing, so a flaky registry does not drop the marker it is needed for; any other answer but
+     * a 200 finds it not public. The token request follows no redirect.
+     */
+    private void checkPublicInBackground(String domain, String name, String digest, String type) {
+        var key = domain + "/" + name;
+        var now = System.nanoTime();
+        var due = new boolean[1];
+        publicChecks.compute(key, (k, last) -> {
+            due[0] = last == null || now - last >= PUBLIC_CHECK_INTERVAL_NANOS;
+            return due[0] ? now : last;
+        });
+        if (!due[0]) return;
+        var path = "/v2/" + name + "/manifests/" + digest;
+        anonymousManifestHead(domain, path, type, null).compose(ArtifactCacheHandler::answered).compose(first -> {
+            if (first.status() == 200) return Future.succeededFuture(true);
+            var tokenUri = first.status() == 401
+                    ? ManifestCache.tokenUri(first.header("WWW-Authenticate"), name, REGISTRY_DOMAINS) : null;
+            if (tokenUri == null) return Future.succeededFuture(false);
+            // Never redirected: the realm was checked, a redirect's target would not be
+            var tokenPath = tokenUri.getRawPath() + "?" + tokenUri.getRawQuery();
+            return retryOnceAfterConnect(() -> fetchSmallBody(tokenUri.getHost(), 443, tokenPath, MAX_REDIRECTS,
+                            ManifestCache.MAX_TOKEN_BYTES))
+                    .compose(ArtifactCacheHandler::answered).compose(answer -> {
+                        var token = answer.status() == 200 ? ManifestCache.token(answer.body()) : null;
+                        if (token == null) return Future.succeededFuture(false);
+                        return anonymousManifestHead(domain, path, type, token).compose(ArtifactCacheHandler::answered)
+                                .map(second -> second.status() == 200);
+                    });
+        }).onSuccess(isPublic -> vertx.executeBlocking(() -> {
+            ManifestCache.recordPublic(domain, name, isPublic);
+            return null;
+        }, false)).onFailure(err -> publicChecks.remove(key));
+    }
+
+    /** {@code answer}, or a failure when upstream failed or throttled it: that says nothing about the repository. */
+    private static Future<SidecarAnswer> answered(SidecarAnswer answer) {
+        return answer.unreachable()
+                ? Future.failedFuture(new IOException("upstream answered " + answer.status()))
+                : Future.succeededFuture(answer);
+    }
+
+    /**
+     * A HEAD for a manifest with no credential but an anonymous pull {@code token}, if any. A 401
+     * keeps its {@code WWW-Authenticate}. Fails when upstream could not be asked.
+     */
+    private Future<SidecarAnswer> anonymousManifestHead(String domain, String path, String type, String token) {
+        var options = probeOptions(HttpMethod.HEAD, domain, 443, path).putHeader("Accept", type);
+        if (token != null) options.putHeader("Authorization", "Bearer " + token);
+        return retryOnceAfterConnect(() -> upstream.requestWithAsyncDns(upstream.probeClient, options)
+                .compose(req -> afterConnect(upstream.sendProbe(req, (resp, read) -> resp.end().map(v -> {
+                    var challenge = resp.getHeader("WWW-Authenticate");
+                    return new SidecarAnswer(resp.statusCode(), null, true,
+                            challenge == null ? List.of() : List.of(Map.entry("WWW-Authenticate", challenge)));
+                })))));
     }
 
     private Future<Long> cachedFileSize(Path cacheFile) {
@@ -1513,6 +1774,19 @@ class ArtifactCacheHandler {
             alongside.put(".etag", packageEtag == null ? null : packageEtag.getBytes(StandardCharsets.UTF_8));
             alongside.put(".shasum", digest.getBytes(StandardCharsets.US_ASCII));
             return ofDigest(digest, alongside, lookedUp);
+        }
+
+        /**
+         * A container image manifest of digest {@code digest} (#2306), committed with its media type
+         * beside it, which goes to the client in place of a blob's {@code application/octet-stream}.
+         */
+        static Verification ofManifest(String digest, String type) {
+            var blob = ofDigest(digest, ManifestCache.alongside(type), Instant.now());
+            return new Verification(blob.checksum(), blob.expected(), false, blob.alongside(), blob.lookedUp(),
+                    (clientResp, upResp) -> {
+                        clientResp.putHeader("Content-Type", type);
+                        blob.responseHeaders().accept(clientResp, upResp);
+                    });
         }
 
         private static Verification ofDigest(String digest, SequencedMap<String, byte[]> alongside, Instant lookedUp) {
