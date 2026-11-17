@@ -292,6 +292,10 @@ Resolution only returns them (`ToolResolution.autoAdded`), and the Tools group p
 Printed during resolution, it landed after whatever step ran last and before the Packages group.
 A required tool that cannot be found is warned about, and one a parent template already installed is inherited; neither is announced as added.
 A `requires` entry that sets parameters other than a parent's, all of them reconfigurable, sets the tool up again, so it is announced; one without parameters keeps the parent's installation.
+A parent's explicit `tools:` entry beats a descendant's `requires` entry with parameters, which only warns (#1909).
+Per tool the order is the nearest explicit entry, then the nearest `requires` entry with parameters, then the defaults; `ResolvedTool.explicit` carries the first rank.
+A requires entry reconfigures only a tool the ancestors reached through `requires` alone.
+This gives up forcing a dependency's parameters over an author's pin: the tool runs against the pinned ones until the template lists the dependency itself.
 Its note names only the dependents this build sets up, or all of them when it sets up none.
 Packages the build installs anyway do not silence the note, since the tool is still added and its setup still runs.
 Dependencies are installed before the tools that require them.

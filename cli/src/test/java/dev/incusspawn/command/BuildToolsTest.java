@@ -246,16 +246,81 @@ class BuildToolsTest {
         assertTrue(result.effective().isEmpty());
     }
 
-    /** A {@code requires} entry that sets parameters still reconfigures the parent's tool. */
+    /** An ancestor's explicit entry beats a {@code requires} entry with parameters of an unchanged tool (#1909). */
     @Test
-    void aTransitiveDependencyWithParametersStillReconfiguresTheParentsTool() {
+    void anAncestorsExplicitPinBeatsATransitiveDependencyWithParameters() {
         var result = childReachingPinnedSshd(true,
                 new ToolDef.ToolRef("sshd", java.util.Map.of("model", "other")));
-        assertEquals(1, result.effective().size());
-        var sshd = result.effective().get(0);
-        assertEquals("sshd", sshd.name());
-        assertTrue(sshd.reconfigureOnly());
-        assertEquals(java.util.Map.of("model", "other"), sshd.parameters());
+        assertTrue(result.effective().isEmpty(), "nothing is set up again");
+        var sshd = result.ancestors().stream().filter(t -> t.name().equals("sshd")).findFirst().orElseThrow();
+        assertEquals(java.util.Map.of("model", "pinned"), sshd.parameters());
+    }
+
+    /** The same holds for a parameter that is not reconfigurable: the build succeeds. */
+    @Test
+    void anAncestorsExplicitPinBeatsAFixedTransitiveParameterWithoutError() {
+        var result = childReachingPinnedSshd(false,
+                new ToolDef.ToolRef("sshd", java.util.Map.of("model", "other")));
+        assertTrue(result.effective().isEmpty());
+    }
+
+    /** The child is told why its requires entry's parameters were not applied, and how to apply them. */
+    @Test
+    void anAncestorsExplicitPinOverATransitiveDependencyIsWarnedAbout() {
+        var recorded = RecordingOutput.during(() -> childReachingPinnedSshd(true,
+                new ToolDef.ToolRef("sshd", java.util.Map.of("model", "other"))));
+        assertEquals(List.of("Tool 'sshd' is set up by template 'tpl-p' with {model=pinned}, which beats the"
+                + " {model=other} a requires entry asks for; add an explicit 'sshd' entry to this template to change it."),
+                recorded.warnings());
+    }
+
+    /**
+     * A tool listed twice with different parameters is an error, even when a requires entry
+     * reached it first with the first listing's parameters.
+     */
+    @Test
+    void aToolListedTwiceAfterAMatchingRequiresEntryIsStillAnError() {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(toolWithModel("sshd", true));
+        when(toolDefLoader.find("orca")).thenReturn(
+                yamlToolRequiring("orca", new ToolDef.ToolRef("sshd", java.util.Map.of("model", "other"))));
+        var imageDef = new ImageDef();
+        imageDef.setTools(List.of(new ToolDef.ToolRef("orca"),
+                new ToolDef.ToolRef("sshd", java.util.Map.of("model", "other")),
+                new ToolDef.ToolRef("sshd", java.util.Map.of("model", "pinned"))));
+        var e = assertThrows(IllegalArgumentException.class,
+                () -> BuildTools.resolveTools(imageDef, toolDefLoader, true));
+        assertTrue(e.getMessage().contains("specified multiple times"), e.getMessage());
+    }
+
+    /**
+     * A middle template's requires entry with parameters did not reconfigure the grandparent's
+     * explicit pin, so the grandchild compares against the pin, not the middle one's parameters (#1909).
+     */
+    @Test
+    void aFartherExplicitPinOutranksANearerTransitiveDependencyWithParameters() {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(toolWithModel("sshd", true));
+        when(toolDefLoader.find("orca")).thenReturn(
+                yamlToolRequiring("orca", new ToolDef.ToolRef("sshd", java.util.Map.of("model", "other"))));
+
+        var grandparent = new ImageDef();
+        grandparent.setName("tpl-g");
+        grandparent.setTools(List.of(new ToolDef.ToolRef("sshd", java.util.Map.of("model", "pinned"))));
+        var parent = new ImageDef();
+        parent.setName("tpl-p");
+        parent.setParent("tpl-g");
+        parent.setTools(List.of(new ToolDef.ToolRef("orca")));
+        var child = new ImageDef();
+        child.setName("tpl-c");
+        child.setParent("tpl-p");
+        child.setTools(List.of(new ToolDef.ToolRef("sshd", java.util.Map.of("model", "pinned"))));
+        var defs = java.util.Map.of("tpl-g", grandparent, "tpl-p", parent, "tpl-c", child);
+
+        var result = BuildTools.collectEffectiveTools(child, defs, toolDefLoader, List.of());
+        var sshd = result.ancestors().stream().filter(t -> t.name().equals("sshd")).findFirst().orElseThrow();
+        assertEquals(java.util.Map.of("model", "pinned"), sshd.parameters());
+        assertTrue(result.effective().isEmpty(), "the child's entry matches what is installed");
     }
 
     /**
@@ -698,33 +763,48 @@ class BuildToolsTest {
 
     /**
      * sshd is reconfigured, but orca is re-listed unchanged from the parent: this build does not set it up, so the note leaves it out.
-     * Only a {@code requires} entry with parameters reconfigures a dependency an ancestor installed (#1906).
+     * Only a {@code requires} entry with parameters reconfigures a dependency an ancestor installed only
+     * through {@code requires} (#1906, #1909).
      */
     @Test
     void aReconfiguredDependencyNamesOnlyTheDependentsThisBuildSetsUp() {
         var sshd = toolWithModel("sshd", true);
-        var orca = yamlToolRequiring("orca", new ToolDef.ToolRef("sshd", Map.of("model", "other")));
+        var orca = yamlToolRequiring("orca", new ToolDef.ToolRef("sshd"));
         var headroom = yamlToolRequiring("headroom", new ToolDef.ToolRef("sshd", Map.of("model", "other")));
+        var pinner = yamlToolRequiring("pinner", new ToolDef.ToolRef("sshd", Map.of("model", "pinned")));
         var parent = new ImageDef();
-        parent.setTools(List.of(new ToolDef.ToolRef("sshd", Map.of("model", "pinned")),
-                new ToolDef.ToolRef("orca")));
+        parent.setTools(List.of(new ToolDef.ToolRef("pinner"), new ToolDef.ToolRef("orca")));
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("orca"), new ToolDef.ToolRef("headroom")));
         assertEquals(List.of("Adding the sshd tool automatically: the headroom tool requires it"),
-                autoAddNotes(parent, child, sshd, orca, headroom));
+                autoAddNotes(parent, child, sshd, orca, headroom, pinner));
     }
 
     /** When none of a reconfigured dependency's dependents is set up, the note still says why it is added. */
     @Test
     void aReconfiguredDependencyWithNoDependentSetUpNamesThemAll() {
-        var orca = yamlToolRequiring("orca", new ToolDef.ToolRef("sshd", Map.of("model", "other")));
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(toolWithModel("sshd", true));
+        when(toolDefLoader.find("orca")).thenReturn(
+                yamlToolRequiring("orca", new ToolDef.ToolRef("sshd", Map.of("model", "other"))));
+        when(toolDefLoader.find("pinner")).thenReturn(
+                yamlToolRequiring("pinner", new ToolDef.ToolRef("sshd", Map.of("model", "pinned"))));
+        // The grandparent installs orca with sshd's "other"; the parent's pinner reconfigures it to "pinned"
+        var grandparent = new ImageDef();
+        grandparent.setName("tpl-g");
+        grandparent.setTools(List.of(new ToolDef.ToolRef("orca")));
         var parent = new ImageDef();
-        parent.setTools(List.of(new ToolDef.ToolRef("sshd", Map.of("model", "pinned")),
-                new ToolDef.ToolRef("orca")));
+        parent.setName("tpl-p");
+        parent.setParent("tpl-g");
+        parent.setTools(List.of(new ToolDef.ToolRef("pinner")));
         var child = new ImageDef();
+        child.setName("tpl-c");
+        child.setParent("tpl-p");
         child.setTools(List.of(new ToolDef.ToolRef("orca")));
+        var defs = Map.of("tpl-g", grandparent, "tpl-p", parent, "tpl-c", child);
         assertEquals(List.of("Adding the sshd tool automatically: the orca tool requires it"),
-                autoAddNotes(parent, child, toolWithModel("sshd", true), orca));
+                BuildTools.collectEffectiveTools(child, defs, toolDefLoader, List.of()).autoAdded().stream()
+                        .map(BuildTools.AutoAdded::note).toList());
     }
 
     /** The edge that closes a cycle is skipped, so it does not name a dependent. */
@@ -780,12 +860,13 @@ class BuildToolsTest {
     void aDependencyAParentInstalledWithOtherParametersIsAnnouncedWhenReconfigured() {
         var claude = toolWithModel("claude", true);
         var headroom = yamlToolRequiring("headroom", new ToolDef.ToolRef("claude", Map.of("model", "dep-model")));
+        var pinner = yamlToolRequiring("pinner", new ToolDef.ToolRef("claude", Map.of("model", "parent-model")));
         var parent = new ImageDef();
-        parent.setTools(List.of(new ToolDef.ToolRef("claude")));
+        parent.setTools(List.of(new ToolDef.ToolRef("pinner")));
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("headroom")));
         assertEquals(List.of("Adding the claude tool automatically: the headroom tool requires it"),
-                autoAddNotes(parent, child, claude, headroom));
+                autoAddNotes(parent, child, claude, headroom, pinner));
     }
 
     @Test
