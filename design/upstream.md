@@ -279,6 +279,8 @@ A sibling holds its own `upstream/manifest.yaml`, beside the files it pins, and 
 A sibling's leg checks out the sibling and incus-spawn at that pin, and runs that engine with `UPSTREAM_REPO_ROOT` naming the sibling's checkout.
 `REPO_ROOT` is then the watched repository (its manifest, its keys, its files, the history plan and verify make worktrees of), and `ENGINE_ROOT` the engine's own.
 `publish` mints a one-hour token limited to the leg's repository, with `main`'s `app-token.sh`, and refuses a manifest of another repository than the one the token names.
+A leg on a repository the app is not installed on fails at that mint, saying so and naming the repository (#2330).
+It fails rather than skips, so `[upstream] watch failing` stays open until the installation is done, and a sibling never goes unwatched without anyone seeing.
 The sibling's own `upstream-verify.yml` checks out its default branch, reads the pin there, never the PR's, and runs that same engine on the PR.
 So a regeneration is planned and checked by the same code, and a PR cannot choose its own verifier.
 
