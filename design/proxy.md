@@ -541,13 +541,16 @@ Only an unreachable upstream serves an older one.
   The hit path reads the copy without the store's lock (commits hold it across an fsync), re-reading under it when the artifact changed between the reads.
   Why tiers: a warm build that asks for 1,500 artifacts one after another paid ~20 ms per `HEAD`, ~30 s against ~3.5 s with no confirmation (Maven's default depth-first collector cannot overlap them).
   What they give up: within `fresh`, a republished or withdrawn artifact is served until the window ends, and in the background tier it is served once more before the eviction.
-  Central forbids both and Gradle does not withdraw distributions, which offline serving already relies on; the Plugin Portal, which does withdraw, is excluded.
+  Every repository can withdraw a release, Central included: it lets no publisher change or remove one, but removes releases itself on occasion (copyright, malware).
+  So the tiers are not a claim that nothing is withdrawn; they are how long a withdrawal may go unnoticed, which the host's owner sets per repository.
+  The Plugin Portal, where authors delete versions often enough, has tiers of zero.
+  For comparison, without isx a withdrawn release stays in each developer's `~/.m2` for good, since Maven never checks a release it already has, so any finite tier is stricter.
   A confirmation time in the future (a clock stepped back) is not trusted.
   Hits are not logged one by one: at thousands per build, a line each on the event loop cost more than a hit served on trust.
   `ArtifactCacheStats` counts them by kind, and the first hit after a quiet spell schedules one summary line 5 s later, so an idle proxy neither logs nor wakes up for it.
   Evictions, errors and newly cached artifacts are still logged individually.
 - *Confirm a hit* (past the tiers).
-  `Revalidation` says how, per domain; a domain without an entry is never cached (`VerifiedArtifactStoreTest` fails if a Maven/Gradle domain lacks one).
+  The repository's `Revalidation` says how (`CachedRepository`, one per repository, matched by the longest path prefix on its domain); a path under no repository is never cached (`VerifiedArtifactStoreTest` fails if a built-in Maven/Gradle domain lacks one, `MavenRepositoriesTest` holds what a declared one must say).
   Maven Central sends `X-Checksum-SHA1` with every artifact, so a hit costs one `HEAD` (`HEAD_CHECKSUM`), compared with the stored `.sha1`.
   The Gradle Plugin Portal and Gradle distributions send no checksum headers, so a hit fetches the `.sha1`/`.sha256` fresh (`SIDECAR`, following Gradle's redirect to `downloads.gradle.org`).
   A match serves from disk.
@@ -683,17 +686,43 @@ Only an unreachable upstream serves an older one.
   A request on a pooled connection is sent without any network I/O first, so getting the connection does not prove the upstream is reachable now, and would let one request end a backoff a real connect failure started.
   It is kept where every upstream connection is made (`requestWithAsyncDns`), for every domain `Upstream.backoffDomains` names (the cached repositories' and the npm registry), so no fetch path can forget to update it.
 
-*Why only these domains.*
-With both tiers at zero an online serve does not depend on a repository's publishing rules, so `Revalidation`'s allowlist is not a claim of immutability.
-A domain is still vetted before it is cached, for three reasons.
-**Offline serves are unconfirmed, and serves within the tiers are not confirmed now**.
-So they are only right if the repository does not change or withdraw what it published: Central forbids both, Gradle does not withdraw distributions, and the Plugin Portal can delete a version (an accepted risk while offline).
-**The confirmation must be sound for that repository**: a server-computed header describes exactly the bytes the server would send, so `HEAD_CHECKSUM` is sound even for changing content.
+**Why a repository is declared** (#2312).
+With both tiers at zero an online serve does not depend on a repository's publishing rules, so a cached repository is not a claim of immutability.
+Each one still says three things the proxy cannot find out about it by itself, built in or in config.yaml's `maven-repositories:` (`MavenRepositories`), one shape for both.
+**How long a withdrawal may go unnoticed.**
+Offline serves are unconfirmed, and serves within the tiers are not confirmed now, so they are only what a fetch would return while upstream has not withdrawn or replaced the release.
+Every repository can withdraw one, so this is a duration, not a property: the entry's `fresh` and `max-stale`, which default to 0 for a declared repository.
+A repository that replaces the bytes at a release path (`replaces-releases: true`) is never served on a past confirmation at all, offline and during a backoff included (`Revalidation.servesOnlyConfirmed`), and its sidecars are relayed rather than stored.
+**The confirmation must be sound for that repository**: a server-computed header describes exactly the bytes the server would send, so `confirm: checksum-header` (`X-Checksum-SHA1`, which Central and Artifactory send; Nexus 3 sends none, its `ETag` being the SHA-1) is sound even for changing content.
 A separately uploaded sidecar is not (`mvn deploy` PUTs the jar and its `.sha1` one by one, so a repository can briefly serve a new jar beside the old `.sha1`).
-So `SIDECAR` only fits repositories that publish the two together and never replace them.
-**Public repositories only**: the cache is shared by every instance and confirmation carries no client credentials, so a private repository's artifact cached for one instance would be served to others, and offline serving would bypass its authorization entirely.
+So `confirm: sidecar` only fits repositories that publish the two together and never replace them, and an entry declaring both a sidecar and replaced releases is refused at load; a replacing repository's header-less answer is not confirmed by its sidecar either.
+**Whether it is public.**
+The cache is shared by every instance and a public repository's confirmation carries no client credentials.
+A request carrying its own credential (`Authorization`, `Cookie`, or a repository manager's token header such as `Private-Token` or `X-JFrog-Art-Api`) to a declared public repository is relayed and never cached, so one declared public by mistake does not spread what a credential read to every instance.
+A private repository (`access: private`) is served from a cache of its own, per credential, below.
+The declarations are the user's claim: a repository that replaces artifacts declared as one that does not serves stale builds from the cache, within its tiers.
+The defaults make a repository described too cautiously slow, never wrong.
+Only config.yaml declares one: a template, and above all a project-local definition, cannot, since it would decide what every other instance on the host is served.
+An entry is dropped with a warning naming why, never failing config.yaml: a field that could loosen a protection is required, a domain isx intercepts for something else (built in, `.internal`, ChatGPT's) is refused, and so is a public entry on a domain a tool injects a credential at, whose cache would take the domain's requests from that injection.
+Its domain joins the intercepted ones through `ToolProxyResolver.handlerDomains(SpawnConfig)`, the seam the proxy and the CLI's bridge DNS writers share, so a reload mints its certificate and writes its DNS override.
+**Private repositories** (#2312).
+A company's repository manager is where most of the demand is, so `access: private` is served too, without loosening what makes the shared cache safe.
+The guest holds a proof, never the repository's credential: a private entry names the namespace whose tool injects at its domain, and the proxy drops it when none does.
+Only a request that proved that namespace reaches the cache (`MitmProxy.privateRepositoryCredential`, after `authorize`); any other is relayed as it came, its own credential and all, and never cached.
+The cache sees only the one header the relay would have injected (`ArtifactCacheHandler.Credential`), never the request context, so it still cannot choose a credential.
+Copies live apart per credential, under `.private/<partition>/` in the Maven cache, the partition an HMAC of the namespace, header and value under an owner-only random key (`PrivatePartitions`), so two accounts never share a copy, a confirmation or a single-flight key, and a hashed weak password cannot be tested against a directory name.
+Every hit is confirmed first by a `HEAD` for the artifact itself carrying that credential, and served only on a `200` whose `X-Checksum-SHA1` matches.
+So upstream decides each serve: a revoked account is refused at once, and nothing is served while upstream cannot be asked, offline included.
+That is why a private entry must confirm by `checksum-header`: a sidecar's answer shows that the credential may read the sidecar, not the artifact.
+A declared `checksum-header` repository that answers an artifact without the header is named once in the proxy log, since its copies are then confirmed by sidecar or, where that is unsound, never cached.
+Its sidecars, metadata and SNAPSHOTs go through the ordinary credentialed relay; a cache error answers 502 rather than relaying without the credential.
+A redirect from a private repository goes to the client, whose next request is proven and credentialed again; followed by the cache it would go out with no credential.
+What it gives up: a private hit always costs one round trip, and a private repository is never available offline.
+A token replaced in an account starts a partition of its own, and nothing removes the old one but `isx clean cache`.
+A nested isx's `inherit` namespace is not cached here, since the real credential is the parent's to send; the parent's proxy caches it.
+
 `maven-metadata.xml` stays relayed because confirming it costs the same round trip as fetching it.
-SNAPSHOTs stay relayed because no cached domain serves them, and were one to, sidecar confirmation would be unsound and offline serves of content replaced on every deploy rarely right.
+SNAPSHOTs stay relayed: Central and the Plugin Portal reject them, and where a declared repository serves them, sidecar confirmation would be unsound and offline serves of content replaced on every deploy rarely right.
 
 `VerifiedArtifactStore` owns the on-disk half and serializes commit, reconcile and evict per artifact with a striped lock, so a store racing an eviction cannot leave a sidecar beside an artifact it does not describe.
 A commit is ordered for crashes as well: the download is flushed to disk before it is renamed into place, sidecars of a previous copy are dropped before the rename, and the new checksum is written after it, so an interrupted commit never leaves a checksum beside bytes it does not describe (an artifact without one is hashed before it is trusted).

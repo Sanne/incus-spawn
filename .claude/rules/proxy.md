@@ -349,7 +349,8 @@ Key design:
   - `HttpClientRequest.authority()` is the request's own `Host`, not the `setServer()` target, which is what the redirect and resume paths want.
     That holds because every upstream request sets a host: without one, Vert.x falls back to the server address.
 - Caches OCI blobs by SHA256, Maven/Gradle artifacts by repository path (confirmed with upstream per `ArtifactCacheTiers`, see below), and npm tarballs from `registry.npmjs.org` with ETag-based packument verification.
-  The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot inject a credential; keep it that way.
+  The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot choose or inject a credential; keep it that way.
+  The one exception is a private repository's (#2312): `MitmProxy.privateRepositoryCredential` hands `servePrivate` the single header `injectHeaders` would send, only after `authorize` proved the namespace the repository names, never an inherited one, as an `ArtifactCacheHandler.Credential`.
   npm's per-version digest lookups go through `probeClient` (`fetchNpmVersion` → `fetchSmallBody`) like Maven/Gradle checksums.
   A `5xx` is asked once more (while over half the client's budget is left), since a failed lookup relays the tarball uncached and unresumable (#925).
   The digest is `dist.integrity`'s SHA-512, else its SHA-1, else `dist.shasum`; SHA-1 only when the integrity is absent or lists only `sha1-` hashes (algorithms compared case-insensitively), never for any other integrity that gives no readable SHA-512 (`npmDigest`, #1465).
@@ -401,8 +402,11 @@ Key design:
   Each `CachedRepository` carries its own `Revalidation`, tiers included: the Plugin Portal's are zero, so its every hit is confirmed first.
   `artifact-cache:` stays a raw value in `SpawnConfig`: a typed binding would let a mistyped section fail the whole config.yaml.
   Hits are counted in `ArtifactCacheStats` and logged as one summary at most every 5 s, only after activity; don't add a per-hit log line back.
-  Older is confirmed as `Revalidation` says per domain: `HEAD_CHECKSUM` (Central: a `HEAD`'s `X-Checksum-SHA1`, falling back to `.sha1`) or `SIDECAR` (portal, Gradle distributions).
-  A domain without an entry is never cached.
+  Older is confirmed as the repository's `Revalidation` says: `HEAD_CHECKSUM` (Central: a `HEAD`'s `X-Checksum-SHA1`, falling back to `.sha1`) or `SIDECAR` (portal, Gradle distributions).
+  A path under no `CachedRepository` (the built-in four, and config.yaml's `maven-repositories:`, matched by the longest prefix on the domain) is never cached.
+  A repository that replaces releases, or is private, `servesOnlyConfirmed`: tiers forced to zero, no serve when upstream is unreachable or in a backoff (its domain keeps none, `Upstream.backoffDomains`), no stored sidecar served and no `.sha1` fallback for a header-less answer.
+  A request carrying its own credential (`CLIENT_CREDENTIAL_HEADERS`: `Authorization`, `Cookie`, repository-manager token headers) to a declared public repository is relayed uncached, and a declared `checksum-header` repository answering without the header is warned about once (`warnHeaderless`).
+  A private repository is served only through a proven request (`servePrivate`): its copies live under `mavenCacheDir()/.private/<partition>/`, one partition per injected credential (`PrivatePartitions`, an HMAC under an owner-only key), every hit confirmed by a `HEAD` carrying that credential, its sidecars, metadata and a failed lookup relayed or refused through the credentialed path, never relayed bare.
   A miss is only the GET, committed if it matches the same response's `X-Checksum-SHA1` or the sidecar fetched afterwards; no usable checksum means served but not cached.
   Past the tiers, only an unreachable upstream (`SidecarAnswer.unreachable()`: connect failure, 5xx or 429) serves unconfirmed.
   A refused connect starts a 30s per-domain backoff, and a 429 one as long as its `Retry-After` up to 60s, else 30s (`Upstream.startBackoff`, #2301).
@@ -413,7 +417,7 @@ Key design:
   `X-Checksum-SHA1` is what makes Maven skip its `.sha1` request.
   For a copy served on a trusted confirmation (`serveTrusted`) it is the stored checksum, and sidecar requests get the stored copy too, or Maven would pay the round trip the tiers save.
   For any other copy it must be upstream's **current** value, never synthesized from the store, which would turn the client's check against upstream into a check against our own cache.
-  `Revalidation` is also the caching allowlist, and its javadoc states why a domain must be vetted even though hits are confirmed: offline serves are unconfirmed, and serves within the tiers not confirmed now (so they rely on the repository not changing or withdrawing releases), the confirmation must be sound for that repository (`SIDECAR` only where artifact and sidecar are published together and never replaced), and the cache is shared across instances without per-client authorization (public repositories only).
+  `CachedRepository` is the caching allowlist, and `Revalidation`'s javadoc states why a repository is declared even though hits are confirmed: offline serves are unconfirmed, and serves within the tiers not confirmed now (so they rely on the repository not changing or withdrawing releases), the confirmation must be sound for that repository (`SIDECAR` only where artifact and sidecar are published together and never replaced), and the cache is shared across instances without per-client authorization (so a private repository's copies are kept per credential and confirmed with it before every serve).
   Keep those reasons, not "immutability", in comments.
   Send every `probeClient` request through `Upstream.sendProbe()`, with `probeReadIdleSeconds` below `probeOptions()`' request timeout: it closes a connection with nothing read since the request, the only thing that evicts a silently dead h2 connection (a request timeout resets just its stream).
   Don't give `probeClient` a read-idle or all-idle timeout instead: Netty ticks the first from the last read, cutting a request just sent on a long-pooled connection, and requests' writes restart the second (#1007).

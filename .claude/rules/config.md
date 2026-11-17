@@ -31,6 +31,10 @@ Only `isx destroy --owner` reads it, and only config.yaml declares it: never a t
 **Host routes** (`host-routes:`, `HostRoutes`): a raw section like `artifact-cache:`, so any shape loads and is written back as it was; a name under `.internal` mapped to `target:` (`host:port` on loopback) and a required, non-empty `templates:` list (no route admits every instance; decided on #936).
 `HostRoutes.routes` checks each entry against the intercepted domains and drops a wrong one with a warning naming it; an unknown key drops the entry, so a misspelt `templates:` drops it too, never widens it.
 Keep the entry keyed by name with its filter as a field: #935's per-instance grants go beside `templates:`.
+**Maven repositories** (`maven-repositories:`, `MavenRepositories`, #2312): a raw list, read only from `config.yaml`, never a template or tool, of repositories the proxy caches beside its built-in four.
+Each entry requires `url`, `access` (`public`, or `private` with `credentials: <namespace>`), `confirm` (`checksum-header` or `sidecar`) and `replaces-releases`; `fresh` and `max-stale` default to 0.
+An entry that is unknown-keyed, unsound (sidecar with replaced releases, private by sidecar, tiers on one confirmed before every serve) or on a domain isx intercepts for something else is dropped with a warning naming it, never failing the file.
+Its domain is intercepted through `ToolProxyResolver.handlerDomains(SpawnConfig)`; the proxy also drops a public entry on a domain a tool injects at, and a private one no tool of its namespace injects at (`CachedRepository.withConfigured`).
 **Exposed host ports** (`exposed-host-ports:`, `ExposedHostPorts`, #2117): a raw key, read only from `config.yaml`, never a template or tool.
 Anything but a plain list of integers drops the whole key; within one, a port outside 1 to 65535 or one isx serves (443, 18443, 18080, 53) is dropped with a warning, and a duplicate kept once.
 Every instance with network reaches them, project-local ones included, since the relay cannot identify callers; see `proxy.md`.

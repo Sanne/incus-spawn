@@ -39,7 +39,7 @@ import java.nio.charset.StandardCharsets;
  */
 record Revalidation(Sidecar headerChecksum, String header, ArtifactCacheTiers tiers, boolean servesOnlyConfirmed) {
 
-    /** The header Maven Central, Artifactory and Nexus 2 send the artifact's SHA-1 in. */
+    /** The header Maven Central and Artifactory send the artifact's SHA-1 in (Nexus 3 does not: its ETag is the SHA-1). */
     static final String CHECKSUM_HEADER = "X-Checksum-SHA1";
 
     /**
