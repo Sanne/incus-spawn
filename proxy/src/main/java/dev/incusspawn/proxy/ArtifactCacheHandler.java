@@ -1832,10 +1832,18 @@ class ArtifactCacheHandler {
         }
     }
 
-    /** Where a request's artifact is cached, the checksum describing it, and any copy in the host's ~/.m2. */
-    record ArtifactTarget(Path artifact, Sidecar checksum, Path hostCopy, Credential credential) {
+    /**
+     * Where a request's artifact is cached, the checksum describing it, any copy in the host's
+     * ~/.m2, and where its repository's mirror holds it (#2304), or null.
+     */
+    record ArtifactTarget(Path artifact, Sidecar checksum, Path hostCopy, Credential credential,
+                          CachedRepository.MirrorSource mirror) {
         ArtifactTarget(Path artifact, Sidecar checksum, Path hostCopy) {
-            this(artifact, checksum, hostCopy, null);
+            this(artifact, checksum, hostCopy, null, null);
+        }
+
+        ArtifactTarget(Path artifact, Sidecar checksum, Path hostCopy, Credential credential) {
+            this(artifact, checksum, hostCopy, credential, null);
         }
     }
 
@@ -1960,7 +1968,8 @@ class ArtifactCacheHandler {
         if (!isMavenCacheable(path)) return null;
         var artifact = mavenCacheFile(repository.domain(), path);
         return artifact == null ? null
-                : new ArtifactTarget(artifact, Sidecar.SHA1, resolveM2Path(repository.pathPrefix(), path));
+                : new ArtifactTarget(artifact, Sidecar.SHA1, resolveM2Path(repository.pathPrefix(), path), null,
+                        repository.mirrorOf(path));
     }
 
     /** services.gradle.org: only distribution archives, checked against the {@code .sha256} Gradle publishes. */
@@ -1998,10 +2007,11 @@ class ArtifactCacheHandler {
                 // The checksum is needed before deciding whether to download at all
                 hostImports.join(target.artifact(), () -> importHostCopy(domain, clientReq.path(), revalidation, target, ref))
                         .onSuccess(imported -> importOrDownload(clientReq, started, domain, revalidation, target, ref, imported))
+                        // Fails only once upstream answered with a checksum, so never from the mirror
                         .onFailure(err -> download(clientReq, started, domain, revalidation, target, ref));
             } else {
-                // No copy to fall back on, so even in a backoff upstream is asked
-                download(clientReq, started, domain, revalidation, target, ref);
+                // No copy to fall back on, so even in a backoff upstream is asked, after its mirror
+                downloadMissing(clientReq, started, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
             ProxyLog.trace("Artifact cache check error for " + ref + ": " + err.getMessage());
@@ -2276,15 +2286,152 @@ class ArtifactCacheHandler {
     private void importOrDownload(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                                   ArtifactTarget target, String ref, HostImport imported) {
         var answer = imported.answer();
-        if (answer == SidecarAnswer.UNREACHABLE) {
+        if (answer == SidecarAnswer.UNREACHABLE && target.mirror() == null) {
             // Downloading would only wait out the same failed connection
             upstream.sendError(clientReq.response(), 502, "Upstream unreachable");
         } else if (imported.importedSize() >= 0) {
             recordHit(ArtifactCacheStats.Hit.HOST_COPY, imported.importedSize());
             serveConfirmed(clientReq, target.artifact(), revalidation, answer);
+        } else if (answer.unreachable()) {
+            // Unreachable, throttled or failing, upstream said nothing about the artifact: its mirror may serve it
+            downloadMissing(clientReq, started, domain, revalidation, target, ref);
         } else {
             download(clientReq, started, domain, revalidation, target, ref);
         }
+    }
+
+    /**
+     * Download an artifact upstream has said nothing about: from its repository's mirror when it
+     * has one (#2304), else, or when the mirror does not serve it, from upstream ({@link #download}).
+     * Never after upstream answered for the artifact: a copy it withdrew or changed would come
+     * back from a mirror that still has the old one. The mirror's checksum is asked first, so it
+     * goes out with the artifact where the repository sends one (Central's {@code X-Checksum-SHA1}),
+     * and Maven does not then ask the repository, maybe throttling, for the {@code .sha1}; a mirror
+     * without it is not asked for the artifact. Each of the two requests gets half of what the
+     * client has left ({@link #mirrorWaitMillis}), so a mirror that hangs leaves upstream the rest,
+     * and one that failed or throttled is not asked again for {@link Upstream#UNREACHABLE_BACKOFF_SECONDS}.
+     */
+    private void downloadMissing(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
+                                 ArtifactTarget target, String ref) {
+        var mirror = target.mirror();
+        if (mirror == null || mirrorResting(mirror.host())) {
+            download(clientReq, started, domain, revalidation, target, ref);
+            return;
+        }
+        var checksum = target.checksum();
+        // The probe client's own timeouts outlast Gradle's read timeout: the mirror gets its share
+        var settled = new java.util.concurrent.atomic.AtomicBoolean();
+        var timer = vertx.setTimer(mirrorWaitMillis(started), t -> {
+            if (!settled.compareAndSet(false, true)) return;
+            restMirror(mirror.host());
+            ProxyLog.trace("Mirror " + mirror.host() + " did not answer for " + ref + " in time, asking " + domain);
+            if (!clientReq.response().closed()) download(clientReq, started, domain, revalidation, target, ref);
+        });
+        fetchSidecar(mirror.host(), mirror.path() + checksum.extension).onSuccess(answer -> {
+            if (!settled.compareAndSet(false, true)) return;
+            vertx.cancelTimer(timer);
+            if (clientReq.response().closed()) return;
+            var hex = answer.status() == 200 ? checksum.hex(answer.body()) : null;
+            if (hex == null) {
+                if (answer.unreachable()) restMirror(mirror.host());
+                ProxyLog.trace("Mirror " + mirror.host() + " has no usable " + checksum.extension + " for " + ref
+                        + " (" + (answer == SidecarAnswer.UNREACHABLE ? "unreachable" : "HTTP " + answer.status())
+                        + "), asking " + domain);
+                download(clientReq, started, domain, revalidation, target, ref);
+            } else {
+                downloadFromMirror(clientReq, started, domain, revalidation, target, ref, mirror, hex);
+            }
+        });
+    }
+
+    /** The mirror's GET for an artifact whose checksum it gave as {@code hex}. */
+    private void downloadFromMirror(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
+                                    ArtifactTarget target, String ref, CachedRepository.MirrorSource mirror, String hex) {
+        var wait = mirrorWaitMillis(started);
+        Runnable fromUpstream = () -> {
+            if (!clientReq.response().closed()) download(clientReq, started, domain, revalidation, target, ref);
+        };
+        // Only what the mirror needs to find the file: nothing of the client's, a credential
+        // included, goes to a third party, and a resume repeats these same headers
+        var options = new RequestOptions()
+                .setMethod(HttpMethod.GET)
+                .setHost(mirror.host())
+                .setPort(443)
+                .setURI(mirror.path())
+                .setConnectTimeout(Math.min(Upstream.UPSTREAM_CONNECT_TIMEOUT_MILLIS, wait));
+        upstream.requestWithAsyncDns(options).onSuccess(req -> {
+            req.idleTimeout(wait);
+            req.putHeader("Host", mirror.host());
+            req.send().onSuccess(resp -> {
+                var status = resp.statusCode();
+                // Under the mirror's own name: its limit is not the repository's
+                upstream.throttles.answered(mirror.host(), status);
+                if (status == 200) {
+                    ProxyLog.info("Fetching " + ref + " from its mirror " + mirror.host()
+                            + "; " + domain + " confirms the copy at its next use");
+                    new CachingDownload(clientReq, domain, started, resp, target.artifact(), ref,
+                            mirroredArtifact(revalidation, target.checksum(), hex)).start();
+                } else {
+                    if (status == 429 || status >= 500) restMirror(mirror.host());
+                    ProxyLog.trace("Mirror " + mirror.host() + " answered " + status + " for " + ref
+                            + ", asking " + domain);
+                    // Over h2 the reset reaches this response as an error; it is the one we asked for
+                    resp.exceptionHandler(ignored -> {});
+                    resp.request().reset();
+                    fromUpstream.run();
+                }
+            }).onFailure(err -> {
+                restMirror(mirror.host());
+                ProxyLog.trace("Mirror " + mirror.host() + " failed for " + ref + " (" + err.getMessage()
+                        + "), asking " + domain);
+                fromUpstream.run();
+            });
+        }).onFailure(err -> {
+            restMirror(mirror.host());
+            ProxyLog.trace("Mirror " + mirror.host() + " unreachable for " + ref + " (" + err.getMessage()
+                    + "), asking " + domain);
+            fromUpstream.run();
+        });
+    }
+
+    /**
+     * How long the mirror may take, for each of its two requests: half of what the client has
+     * left, of its silence budget and of {@link #CLIENT_READ_TIMEOUT_MILLIS} alike, so a mirror
+     * that hangs leaves the repository at least a quarter of it.
+     */
+    private long mirrorWaitMillis(long started) {
+        var readLeft = CLIENT_READ_TIMEOUT_MILLIS - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        return Math.max(1, Math.min(upstream.timeoutLeftMillis(started), readLeft) / 2);
+    }
+
+    // Mirrors that failed, hung or throttled, by host, and the System.nanoTime until which they are not asked
+    final Map<String, Long> mirrorBackoffs = new ConcurrentHashMap<>();
+
+    private boolean mirrorResting(String host) {
+        var until = mirrorBackoffs.get(host);
+        if (until == null) return false;
+        if (until - System.nanoTime() > 0) return true;
+        mirrorBackoffs.remove(host, until);
+        return false;
+    }
+
+    private void restMirror(String host) {
+        mirrorBackoffs.put(host, System.nanoTime() + TimeUnit.SECONDS.toNanos(Upstream.UNREACHABLE_BACKOFF_SECONDS));
+    }
+
+    /**
+     * What a mirrored download must match: the checksum the mirror gave, {@code hex}, which goes
+     * out to the client as the repository's checksum header where it sends one. That vouches only
+     * for the transfer, so the copy is committed unconfirmed ({@link Instant#EPOCH}): its first hit
+     * is confirmed with the repository itself, which evicts it if the repository disagrees.
+     */
+    private static Verification mirroredArtifact(Revalidation revalidation, Sidecar checksum, String hex) {
+        var expected = hex.getBytes(StandardCharsets.US_ASCII);
+        var header = revalidation.header() != null && revalidation.headerChecksum() == checksum ? revalidation.header() : null;
+        return new Verification(checksum, resp -> Future.succeededFuture(expected), true,
+                VerifiedArtifactStore.NOTHING_ALONGSIDE, Instant.EPOCH, (clientResp, upResp) -> {
+                    if (header != null) clientResp.putHeader(header, hex);
+                });
     }
 
     /**

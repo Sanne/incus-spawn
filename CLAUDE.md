@@ -259,6 +259,8 @@ The name is in bridge DNS only while a port is listed and is never intercepted (
 Each says what the proxy cannot find out: its URL prefix, `public` or `private` with the credential namespace isx injects there, `checksum-header` or `sidecar` confirmation, whether it replaces releases, and its own tiers (0 by default).
 An unsound or clashing entry is dropped with a warning, never failing config.yaml; one that replaces releases, or is private, is confirmed before every serve and never served offline.
 A private one is cached per injected credential and reached only through a proven request, every hit confirmed with that credential (design/proxy.md "Private repositories").
+`maven-mirrors:` in `config.yaml` (`MavenMirrors`, #2304) names a mirror of a cached public Maven repository that does not replace releases: a miss asks it first (its `.sha1`, then the artifact, with no header of the client's) and the repository when it does not serve it, within half of the client's time, and its copy is committed unconfirmed so the repository confirms it at its first hit (design/proxy.md "A mirror for a repository").
+Never ask the mirror after the repository answered for the artifact, or a withdrawn release comes straight back.
 
 **Host trust** (#1437): isx's own HTTPS, CLI and proxy upstream alike, trusts the host's system CA bundle through `SystemTrust`.
 On macOS it adds what an administrator trusts for SSL in the Keychain's admin domain and drops what one denied, from every source, refusing a chain that holds it (`MacKeychainTrust`, #1467; `DeniedChainTrustManager`, #1552); the user's own domain counts for its denies alone.

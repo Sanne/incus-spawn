@@ -6,6 +6,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
+
+import dev.incusspawn.config.MavenMirrors;
+import dev.incusspawn.config.MavenRepositories;
 
 /**
  * A repository whose artifacts the proxy caches: the four isx names itself and those declared in
@@ -19,9 +23,15 @@ import java.util.Set;
  * @param revalidation how a cached copy is confirmed, and how long a confirmation is trusted
  * @param credentials  the config namespace whose injected credential reaches this repository,
  *                     or null for a public one
+ * @param mirror       where a cache miss is asked first (config.yaml's {@code maven-mirrors:},
+ *                     #2304), or null to ask only this repository
  */
 record CachedRepository(String domain, String pathPrefix, Layout layout, Revalidation revalidation,
-                        String credentials) {
+                        String credentials, MavenRepositories.Url mirror) {
+
+    CachedRepository(String domain, String pathPrefix, Layout layout, Revalidation revalidation, String credentials) {
+        this(domain, pathPrefix, layout, revalidation, credentials, null);
+    }
 
     /** How a repository lays out what it serves. */
     enum Layout {
@@ -35,6 +45,18 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
     boolean isPrivate() {
         return credentials != null;
     }
+
+    /**
+     * Where the mirror holds the artifact this repository holds at {@code path}, or null when
+     * there is no mirror: the same path under the mirror's prefix.
+     */
+    MirrorSource mirrorOf(String path) {
+        return mirror == null || !holds(path) ? null
+                : new MirrorSource(mirror.host(), mirror.pathPrefix() + path.substring(pathPrefix.length()));
+    }
+
+    /** One artifact's place on a mirror. */
+    record MirrorSource(String host, String path) {}
 
     /** Whether {@code path} lies under this repository's prefix. */
     boolean holds(String path) {
@@ -106,6 +128,41 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
                     .trustedFor(new ArtifactCacheTiers(entry.fresh(), entry.maxStale()));
             if (entry.replacesReleases() || entry.isPrivate()) revalidation = revalidation.onlyConfirmed();
             all.add(new CachedRepository(entry.domain(), entry.pathPrefix(), Layout.MAVEN, revalidation, entry.credentials()));
+        }
+        return List.copyOf(all);
+    }
+
+    /**
+     * {@code repositories} with config.yaml's {@code maven-mirrors:} attached (#2304). A mirror
+     * whose repository is not one of them is dropped with a warning naming why, as is one for a
+     * repository it cannot stand in for: a private one, whose credential must never reach another
+     * host and whose copies are confirmed before every serve; one that replaces releases, whose
+     * copies are confirmed before every serve anyway; and the Gradle distributions, laid out apart.
+     */
+    static List<CachedRepository> withMirrors(List<CachedRepository> repositories,
+                                              List<MavenMirrors.Entry> mirrors, Consumer<String> warn) {
+        var all = new ArrayList<>(repositories);
+        for (var entry : mirrors) {
+            var url = entry.repository();
+            var index = -1;
+            for (int i = 0; i < all.size(); i++) {
+                var r = all.get(i);
+                if (r.domain().equals(url.host()) && r.pathPrefix().equals(url.pathPrefix())) index = i;
+            }
+            var refusal = index < 0 ? "isx caches no repository at " + url
+                    + " (the built-in ones, or one maven-repositories: declares)"
+                    : all.get(index).isPrivate() ? "a private repository's credential never goes to another host"
+                    : all.get(index).revalidation().servesOnlyConfirmed()
+                    ? "a repository that replaces releases is confirmed before every serve, so a mirror cannot stand in for it"
+                    : all.get(index).layout() != Layout.MAVEN ? "only a Maven repository may have a mirror"
+                    : null;
+            if (refusal != null) {
+                warn.accept("Ignoring maven-mirrors " + url + " in config.yaml: " + refusal);
+                continue;
+            }
+            var r = all.get(index);
+            all.set(index, new CachedRepository(r.domain(), r.pathPrefix(), r.layout(), r.revalidation(),
+                    r.credentials(), entry.mirror()));
         }
         return List.copyOf(all);
     }

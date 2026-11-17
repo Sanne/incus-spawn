@@ -135,7 +135,7 @@ public final class MavenRepositories {
         return Set.copyOf(taken);
     }
 
-    private static final class Refused extends Exception {
+    static final class Refused extends Exception {
         Refused(String reason) {
             super(reason, null, false, false);
         }
@@ -146,27 +146,10 @@ public final class MavenRepositories {
         for (var key : map.keySet()) {
             if (!KEYS.contains(String.valueOf(key))) throw new Refused("unknown key '" + key + "'");
         }
-        var url = required(map, "url");
-        URI uri;
-        try {
-            uri = new URI(url);
-        } catch (URISyntaxException e) {
-            throw new Refused("url is not a URL");
-        }
-        if (!"https".equals(uri.getScheme())) throw new Refused("url must be https://, the only scheme the proxy intercepts");
-        if (uri.getRawUserInfo() != null) throw new Refused("url must not hold a user or password: name a credentials: namespace instead");
-        if (uri.getPort() != -1 && uri.getPort() != 443) throw new Refused("url must use port 443, the only one the proxy intercepts");
-        if (uri.getRawQuery() != null || uri.getRawFragment() != null) throw new Refused("url must not have a query or a fragment");
-        var host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
-        if (!HOST.matcher(host).matches()) throw new Refused("url must name a host by its domain name, not an address");
-        if (host.equals("internal") || host.endsWith(".internal")) throw new Refused("names under .internal are isx's own");
+        var url = repositoryUrl(required(map, "url"), "url");
+        var host = url.host();
         if (taken.contains(host)) throw new Refused(host + " is already intercepted by isx for something else");
-        var prefix = uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
-        if (!prefix.endsWith("/")) prefix += "/";
-        if (!PREFIX.matcher(prefix).matches()) throw new Refused("the url's path must be plain segments (no '.', '..', '%' or empty segment)");
-        for (var segment : prefix.split("/")) {
-            if (segment.equals(".") || segment.equals("..")) throw new Refused("the url's path must not hold '.' or '..'");
-        }
+        var prefix = url.pathPrefix();
 
         var access = required(map, "access");
         String credentials;
@@ -209,7 +192,44 @@ public final class MavenRepositories {
         return new Entry(host, prefix, header, replacesReleases, fresh, maxStale, credentials);
     }
 
-    private static String required(Map<?, ?> map, String key) throws Refused {
+    /** A repository's URL, cut into the host, lower case, and the path prefix, starting and ending with {@code /}. */
+    public record Url(String host, String pathPrefix) {
+        @Override
+        public String toString() {
+            return "https://" + host + pathPrefix;
+        }
+    }
+
+    /**
+     * {@code url}, written under {@code key}, checked as a repository URL the proxy can reach and
+     * hold one meaning for: https on port 443, a domain name outside {@code .internal}, and a path
+     * of plain segments, so the prefix means one thing to the proxy and to the repository.
+     */
+    static Url repositoryUrl(String url, String key) throws Refused {
+        URI uri;
+        try {
+            uri = new URI(url);
+        } catch (URISyntaxException e) {
+            throw new Refused(key + " is not a URL");
+        }
+        if (!"https".equals(uri.getScheme())) throw new Refused(key + " must be https://, the only scheme the proxy intercepts");
+        if (uri.getRawUserInfo() != null) throw new Refused(key + " must not hold a user or password"
+                + (key.equals("url") ? ": name a credentials: namespace instead" : ""));
+        if (uri.getPort() != -1 && uri.getPort() != 443) throw new Refused(key + " must use port 443, the only one the proxy intercepts");
+        if (uri.getRawQuery() != null || uri.getRawFragment() != null) throw new Refused(key + " must not have a query or a fragment");
+        var host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+        if (!HOST.matcher(host).matches()) throw new Refused(key + " must name a host by its domain name, not an address");
+        if (host.equals("internal") || host.endsWith(".internal")) throw new Refused("names under .internal are isx's own");
+        var prefix = uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
+        if (!prefix.endsWith("/")) prefix += "/";
+        if (!PREFIX.matcher(prefix).matches()) throw new Refused("the " + key + "'s path must be plain segments (no '.', '..', '%' or empty segment)");
+        for (var segment : prefix.split("/")) {
+            if (segment.equals(".") || segment.equals("..")) throw new Refused("the " + key + "'s path must not hold '.' or '..'");
+        }
+        return new Url(host, prefix);
+    }
+
+    static String required(Map<?, ?> map, String key) throws Refused {
         var value = map.get(key);
         if (value == null) throw new Refused(key + ": is required");
         if (!(value instanceof String s) || s.isBlank()) throw new Refused(key + ": must be a string");

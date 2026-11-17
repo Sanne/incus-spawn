@@ -775,6 +775,31 @@ A redirect from a private repository goes to the client, whose next request is p
 What it gives up: a private hit always costs one round trip, and a private repository is never available offline.
 A token replaced in an account starts a partition of its own, and nothing removes the old one but `isx clean cache`.
 A nested isx's `inherit` namespace is not cached here, since the real credential is the parent's to send; the parent's proxy caches it.
+**A mirror for a repository** (#2304).
+A cold build needs every artifact once, and a repository that rate-limits the host (Central does) would fail it, however the cache confirms what it already holds.
+config.yaml's `maven-mirrors:` (`MavenMirrors`) names, for a cached Maven repository, a mirror of it that the proxy asks first for an artifact the cache does not hold (`ArtifactCacheHandler.downloadMissing`).
+Sanne's decision on the issue: off by default and host config only, used in place of the repository, the repository still asked when the mirror does not have the artifact, logged but not warned about, and not tied to Central's names.
+So the repository is named by its URL, any cached one: Central's two names (each a repository of its own, listed apart), the Plugin Portal, or a public one `maven-repositories:` declares.
+The repository is asked when the mirror answers anything but a `200`, cannot be reached or fails mid-request, so a mirror never makes a build worse than none.
+Each of the mirror's two requests waits at most half of what the client has left, counted against its silence budget and Gradle's 30 s read timeout alike (`mirrorWaitMillis`), so a mirror that hangs leaves the repository at least a quarter of it.
+A mirror that failed, hung or answered `429` or a `5xx` is not asked again for 30 seconds (`mirrorBackoffs`).
+The mirror gets bare `GET`s with only `Host`: no header of the client's reaches a third party, a credential included, and a resume repeats those same headers.
+Its answers are booked under its own name in `Upstream.throttles`, and a mirrored download is one `info` line in the proxy log.
+**Its copy is committed unconfirmed.**
+The mirror's `.sha1` is asked first, and a mirror without a usable one is not asked for the artifact.
+That checksum goes out with the artifact as the repository's own header where the repository sends one (Central's `X-Checksum-SHA1`), so Maven does not then ask the repository for the `.sha1`, which a throttling Central would refuse.
+The download is checked against it, which proves only the transfer, then committed with its confirmation at the epoch, so its first hit is confirmed with the repository itself before it is served again (`mirroredArtifact`).
+The copy is keyed under the repository, not the mirror, so that confirmation and every later one go to the repository, which evicts a copy it disagrees with.
+During a throttle that confirmation is answered `429` and the copy is served unconfirmed, as any copy is.
+**The mirror is asked only when the repository has said nothing about the artifact**: a miss, or a `~/.m2` import whose probe was throttled or failed.
+Never after the repository evicted a copy as changed or withdrawn, or the mirror's older copy would come straight back.
+What it gives up: the cache-integrity rule above holds from the first hit on, not for the miss itself.
+The build that misses uses bytes the mirror's operator vouched for, under the mirror's TLS, and a release the repository withdrew is served again by every new miss while the mirror still holds it (each such copy evicted at its next hit).
+That is the trust the user chose by naming the mirror.
+A private repository cannot take a mirror, since its credential never goes to another host and its copies are confirmed before every serve; nor does one that replaces releases, for the same second reason; nor the Gradle distributions, which are not laid out as Maven coordinates.
+An entry naming no cached repository, or one of these, is dropped with a warning naming why (`CachedRepository.withMirrors`).
+The mirror's host is not intercepted: only the proxy talks to it.
+Uncached paths (`maven-metadata.xml`, SNAPSHOTs, a sidecar with no stored copy) still go to the repository alone, which leaves a build that resolves a version range or a plugin prefix exposed to its limit.
 
 `maven-metadata.xml` stays relayed because confirming it costs the same round trip as fetching it.
 SNAPSHOTs stay relayed: Central and the Plugin Portal reject them, and where a declared repository serves them, sidecar confirmation would be unsound and offline serves of content replaced on every deploy rarely right.

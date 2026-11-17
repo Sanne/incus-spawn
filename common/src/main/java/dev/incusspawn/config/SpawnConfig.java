@@ -91,6 +91,11 @@ public class SpawnConfig extends UndeclaredKeys {
     @JqName("maven-repositories")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object mavenRepositories;
+    // Mirrors the proxy asks first for an artifact its cache does not hold (MavenMirrors, #2304).
+    // Raw like host-routes, so a mistyped section loads and is written back as it was.
+    @JqName("maven-mirrors")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object mavenMirrors;
     // What an external tool that drives isx may do to its instances (Drivers, #1720). Raw like
     // host-routes, so a mistyped section loads and is written back as it was.
     @JqName("drivers")
@@ -701,6 +706,9 @@ public class SpawnConfig extends UndeclaredKeys {
     /** The {@code maven-repositories:} section; it declares none when there is none. */
     public MavenRepositories mavenRepositories() { return MavenRepositories.of(mavenRepositories); }
 
+    /** The {@code maven-mirrors:} section; it names no mirror when there is none. */
+    public MavenMirrors mavenMirrors() { return MavenMirrors.of(mavenMirrors); }
+
     /** The {@code drivers:} section; it grants nothing when there is none. */
     public Drivers drivers() { return Drivers.of(drivers); }
 
@@ -857,6 +865,7 @@ public class SpawnConfig extends UndeclaredKeys {
         this.hostRoutes = other.hostRoutes;
         this.exposedHostPorts = other.exposedHostPorts;
         this.mavenRepositories = other.mavenRepositories;
+        this.mavenMirrors = other.mavenMirrors;
         this.drivers = other.drivers;
         this.hostCa = other.hostCa;
         getExtras().clear();
