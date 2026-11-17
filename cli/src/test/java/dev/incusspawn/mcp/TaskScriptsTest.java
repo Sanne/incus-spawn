@@ -2184,12 +2184,49 @@ class TaskScriptsTest {
 
     @Test
     void anAgentInTheDirectoryResumingAnotherSessionDoesNotHoldTheConversation() {
-        var other = Presence.parse(List.of("claude 72 /w", "resume 72 other-session"));
+        var other = Presence.parse(List.of("claude 72 /w", "resume 72 0b7d1e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d"));
         assertNull(other.holderOf(DelegateAgent.CLAUDE, "this-session", "/w"), "a person's other conversation");
         assertEquals(72L, other.holderOf(DelegateAgent.CLAUDE, null, "/w"), "with no session to compare, the directory decides");
-        assertEquals(72L, other.holderOf(DelegateAgent.CLAUDE, "other-session", "/elsewhere"));
+        assertEquals(72L, other.holderOf(DelegateAgent.CLAUDE, "0b7d1e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d", "/elsewhere"));
         assertEquals(72L, Presence.parse(List.of("claude 72 /w")).holderOf(DelegateAgent.CLAUDE, "this-session", "/w"),
                 "one resuming nothing there could pick this conversation up");
+        // A search term or a name for the picker is not another session's ID: the picker can pick this conversation.
+        assertEquals(72L, Presence.parse(List.of("claude 72 /w", "resume 72 fix")).holderOf(DelegateAgent.CLAUDE, "this-session", "/w"));
+        assertNull(Presence.parse(List.of("opencode 72 /w", "resume 72 ses_abc")).holderOf(DelegateAgent.OPENCODE, "ses_mine", "/w"));
+        assertEquals(72L, Presence.parse(List.of("codex 72 /w", "resume 72 fix")).holderOf(DelegateAgent.CODEX, "this-session", "/w"));
+    }
+
+    @Test
+    @Timeout(60)
+    void aPickerSearchOrAnEmptyResumeInTheDirectoryStillHoldsTheConversation() throws Exception {
+        var cwd = work.toRealPath().toString();
+        var id = "t18-pick";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        claudeTranscript();
+        Files.writeString(d.resolve("cwd"), cwd + "\n");
+        // claude --resume fix opens the picker on "fix", from where this task's conversation can be picked.
+        for (var args : List.of("--resume fix", "--resume=")) {
+            var pb = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'while read -r line; do :; done' " + args)
+                    .directory(work.toFile());
+            pb.environment().remove(TaskScripts.TASK_ENV);
+            var person = pb.start();
+            try {
+                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                Tasks.Status status;
+                while (!"attached".equals((status = Tasks.parse(sh(TaskScripts.status(id, 0), ""))).state()) && System.nanoTime() < deadline) {
+                    Thread.sleep(10);
+                }
+                assertEquals("attached", status.state(), args);
+                assertEquals(person.pid(), status.attachedPid(), args);
+                // The guest's twin agrees: the reclaim finds the same holder.
+                assertEquals(new Reclaim(Reclaim.Outcome.RECLAIMED, person.pid()),
+                        Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "me", person.pid(), 5), "")), args);
+                assertTrue(person.waitFor(5, TimeUnit.SECONDS), args);
+            } finally {
+                person.destroy();
+            }
+        }
     }
 
     @Test
@@ -2202,13 +2239,13 @@ class TaskScriptsTest {
         claudeTranscript();
         Files.writeString(d.resolve("cwd"), cwd + "\n");
         // A person's claude in the task's directory, on a conversation of their own.
-        var pb = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'while read -r line; do :; done' --resume another-session")
+        var pb = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'while read -r line; do :; done' --resume 0b7d1e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d")
                 .directory(work.toFile());
         pb.environment().remove(TaskScripts.TASK_ENV);
         var other = pb.start();
         try {
             var seen = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, "another-session", "/x") == null
+            while (Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, "0b7d1e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d", "/x") == null
                     && System.nanoTime() < seen) Thread.sleep(10);
             assertEquals("finished", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state(), "not attached");
             assertEquals(Reclaim.Outcome.NONE, Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "me", null, 1), "")).outcome());

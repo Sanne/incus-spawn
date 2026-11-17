@@ -21,6 +21,12 @@ import java.util.regex.Pattern;
  */
 final class Presence {
     private static final Pattern EPOCH_SECONDS = Pattern.compile("[0-9]{1,12}");
+    /** A Claude session or a Codex thread: what either resumes by ID. */
+    private static final Pattern UUID = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+    /** An opencode session, which opencode names itself. */
+    private static final Pattern OPENCODE_SESSION = Pattern.compile("ses_[A-Za-z0-9]+");
+    private static final String HEX = "[0-9a-fA-F]";
+    private static final String UUID_GLOB = HEX.repeat(8) + "-" + HEX.repeat(4) + "-" + HEX.repeat(4) + "-" + HEX.repeat(4) + "-" + HEX.repeat(12);
 
     /** A coding agent process isx did not start: where it runs, and which sessions it resumes. */
     record AgentProcess(long pid, DelegateAgent agent, String cwd, Set<String> resumes) {}
@@ -68,7 +74,7 @@ final class Presence {
                 while [ "$i" -lt ${#argv[@]} ]; do
                   case "${argv[$i]}" in
                     --session|-s) i=$((i + 1)); [ -n "${argv[$i]}" ] && echo "resume $pid ${argv[$i]}";;
-                    --session=*) echo "resume $pid ${argv[$i]#--session=}";;
+                    --session=?*) echo "resume $pid ${argv[$i]#--session=}";;
                     --) break;;
                   esac
                   i=$((i + 1))
@@ -105,7 +111,7 @@ final class Presence {
                 case "${argv[$i]}" in
                   # --resume takes an optional value: an option after it is not a session.
                   --resume|-r) case "${argv[$((i + 1))]}" in ''|-*) ;; *) i=$((i + 1)); echo "resume $pid ${argv[$i]}";; esac;;
-                  --resume=*) echo "resume $pid ${argv[$i]#--resume=}";;
+                  --resume=?*) echo "resume $pid ${argv[$i]#--resume=}";;
                 esac
                 i=$((i + 1))
               done
@@ -147,11 +153,11 @@ final class Presence {
      */
     static String holderScriptWords(DelegateAgent agent, String sessionWord, String cwdWord) {
         // POSIX, as the login shell running it need not be bash; the probe brings its own.
-        // a: this kind's agents in order; d: those in the directory; r: those resuming any session;
+        // a: this kind's agents in order; d: those in the directory; r: those resuming a session by its ID;
         // s: those resuming this one. Decided at the end, as an agent's resume lines follow it.
         return "h=$(" + script("") + " | { h=; a=; d=; r=; s=; while read -r k p rest; do "
                 + "case $k in " + agent.id + ") a=\"$a $p\"; [ -n " + cwdWord + " ] && [ \"$rest\" = " + cwdWord + " ] && d=\"$d $p \";; "
-                + "resume) case \"$a \" in *\" $p \"*) r=\"$r $p \"; [ -n " + sessionWord + " ] && [ \"$rest\" = " + sessionWord
+                + "resume) case \"$a \" in *\" $p \"*) " + shapedSession(agent, "r=\"$r $p \"") + "[ -n " + sessionWord + " ] && [ \"$rest\" = " + sessionWord
                 + " ] && s=\"$s $p \";; esac;; esac; done; "
                 // The first agent that matches, as holderOf: by this session, or by the directory unless it resumes another one.
                 + "for p in $a; do case \"$s\" in *\" $p \"*) h=$p; break;; esac; "
@@ -215,15 +221,39 @@ final class Presence {
      * resuming {@code sessionId}, or working in {@code cwd}, where {@code claude --continue} or the
      * resume picker would pick it up -- or null if there is none. Another kind of agent in the
      * directory cannot resume this conversation, so it does not hold it; nor does one there that
-     * resumes another session than {@code sessionId}, which is a person's other conversation.
+     * resumes another session by its ID ({@link #sessionShaped}), which is a person's other conversation.
      */
     Long holderOf(DelegateAgent agent, String sessionId, String cwd) {
         var known = sessionId != null && !sessionId.isEmpty();
         for (var c : agents) {
             if (agent != c.agent()) continue;
             if (known && c.resumes().contains(sessionId)) return c.pid();
-            if (cwd != null && !cwd.isEmpty() && cwd.equals(c.cwd()) && (!known || c.resumes().isEmpty())) return c.pid();
+            var another = known && c.resumes().stream().anyMatch(r -> sessionShaped(agent, r));
+            if (cwd != null && !cwd.isEmpty() && cwd.equals(c.cwd()) && !another) return c.pid();
         }
         return null;
+    }
+
+    /**
+     * Whether {@code value}, given to a resume option, names one of {@code agent}'s sessions by its
+     * ID. Anything else, such as a session's name or the search term Claude Code's picker takes
+     * ({@code claude --resume fix}), may still pick this task's conversation, so an agent resuming
+     * it in the directory keeps holding it.
+     */
+    static boolean sessionShaped(DelegateAgent agent, String value) {
+        return switch (agent) {
+            case CLAUDE, CODEX -> UUID.matcher(value).matches();
+            case OPENCODE -> OPENCODE_SESSION.matcher(value).matches();
+            case PI, UNKNOWN -> false;
+        };
+    }
+
+    /** {@link #sessionShaped} in the guest, on {@code $rest}: runs {@code then} when it holds. POSIX. */
+    private static String shapedSession(DelegateAgent agent, String then) {
+        return switch (agent) {
+            case CLAUDE, CODEX -> "case $rest in " + UUID_GLOB + ") " + then + ";; esac; ";
+            case OPENCODE -> "case $rest in ses_?*) case ${rest#ses_} in *[!A-Za-z0-9]*) ;; *) " + then + ";; esac;; esac; ";
+            case PI, UNKNOWN -> "";
+        };
     }
 }
