@@ -62,10 +62,15 @@ final class Throttles {
         }
     }
 
-    /** A cached copy of {@code domain}'s was served unconfirmed because upstream answered 429. */
-    synchronized void servedUnconfirmed(String domain) {
+    /**
+     * A cached copy of {@code domain}'s was served unconfirmed, after an answer of {@code status}
+     * (0 or less: none, upstream was not asked). Counted when that answer was a 429, or when the
+     * domain still refuses: a copy served during the backoff a 429 started (#2301) is not asked
+     * about upstream at all, and is unconfirmed because of that 429 just the same.
+     */
+    synchronized void servedUnconfirmed(String domain, int status) {
         var tally = byDomain.get(domain);
-        if (tally != null) tally.servedUnconfirmed++;
+        if (tally != null && (status == 429 || tally.refusing)) tally.servedUnconfirmed++;
     }
 
     synchronized Map<String, ProxyActivity.Throttle> snapshot() {

@@ -11,7 +11,7 @@ class ThrottlesTest {
         var throttles = new Throttles(() -> 1000);
         throttles.answered("repo.example", 429);
         throttles.answered("repo.example", 429);
-        throttles.servedUnconfirmed("repo.example");
+        throttles.servedUnconfirmed("repo.example", 429);
         throttles.answered("repo.example", 503);
         assertTrue(throttles.snapshot().get("repo.example").refusing(), "a 5xx says nothing of the limit");
         throttles.answered("repo.example", 200);
@@ -22,10 +22,20 @@ class ThrottlesTest {
     }
 
     @Test
+    void aCopyServedWithoutAskingCountsOnlyWhileTheDomainRefuses() {
+        var throttles = new Throttles(() -> 1);
+        throttles.answered("repo.example", 429);
+        throttles.servedUnconfirmed("repo.example", 0);
+        throttles.answered("repo.example", 200);
+        throttles.servedUnconfirmed("repo.example", 0);
+        assertEquals(1, throttles.snapshot().get("repo.example").servedUnconfirmed(), "an outage after the limit lifted is not its");
+    }
+
+    @Test
     void aDomainThatNeverRefusedIsNotListed() {
         var throttles = new Throttles(() -> 1);
         throttles.answered("fine.example", 200);
-        throttles.servedUnconfirmed("fine.example");
+        throttles.servedUnconfirmed("fine.example", 429);
         assertTrue(throttles.snapshot().isEmpty());
     }
 

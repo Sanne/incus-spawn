@@ -531,7 +531,7 @@ Key design:
   A flow in flight keeps an unlisted instance's counters from the prune.
   Fields are only added.
 - **Upstream 429s on `/activity` (#2303)**: `throttled` is `Upstream.throttles` (`Throttles`), per upstream host and the host's, not an instance's: refusals, copies served unconfirmed for one, first and last, and `refusing`.
-  It is fed by `Upstream.send` and `relayBuffered` (every relay), `sendVertexRequest`, `ChatGptRoute`'s refresh and revoke, `sendProbe`, the cache miss's fetch, each redirect it follows and a resume.
+  It is fed by `Upstream.send` and `relayBuffered` (every relay), `sendVertexRequest`, a refused WebSocket upgrade, `ChatGptRoute`'s refresh and revoke, `sendProbe`, the cache miss's fetch, each redirect it follows and a resume.
   A redirect target's answer is booked under the target's own name and a resume's under the host it asked, the redirect itself an answer of the redirecting domain.
   A new path that asks upstream calls `throttles.answered` too, once per answer.
   Only a status below 400 ends a refusal; the proxy logs the start and the end, never each 429, and holds at most `Throttles.MAX_DOMAINS` hosts.

@@ -2010,6 +2010,7 @@ public class MitmProxy {
         }).onFailure(err -> {
             ProxyLog.trace("WebSocket upstream connect failed (" + domain + "): " + err.getMessage());
             if (err instanceof UpgradeRejectedException rejected) {
+                upstream.throttles.answered(domain, rejected.getStatus());
                 upstreamRefused.accept(rejected.getStatus());
             }
             if (!clientWs.isClosed()) clientWs.close((short) 1011, "Upstream connection failed");
