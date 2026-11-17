@@ -247,6 +247,7 @@ public class ToolDefValidator {
         if (invalidNamespace != null) refusals.add(invalidNamespace);
         refusals.addAll(invalidPathScopes(def));
         refusals.addAll(invalidMcpServers(def));
+        refusals.addAll(invalidFileMerges(def));
         return refusals;
     }
 
@@ -270,6 +271,30 @@ public class ToolDefValidator {
                             + "' has no definition"));
                 }
             });
+        }
+        return errors;
+    }
+
+    /**
+     * Every {@code files:} entry with a {@code merge:} that cannot be carried out, as an error: a
+     * value other than {@code json}, or content that is not a JSON object. Such a tool is refused
+     * where definitions load, since an unknown value would otherwise replace the file it was meant
+     * to add to.
+     */
+    public static List<String> invalidFileMerges(ToolDef def) {
+        var errors = new ArrayList<String>();
+        for (var file : def.getFiles()) {
+            if (file == null || file.getMerge() == null) continue;
+            var where = "files entry '" + file.getPath() + "' in '" + def.getName() + "'";
+            if (!file.mergesJson()) {
+                errors.add(OutputFormat.oneLine(where + " has merge '" + file.getMerge()
+                        + "'; the only value is '" + ToolDef.FileEntry.MERGE_JSON + "'"));
+                continue;
+            }
+            var invalid = JsonFileMerge.invalidEntry(file.getContent(), def.getParameters());
+            if (invalid != null) {
+                errors.add(OutputFormat.oneLine(where + " merges JSON, but " + invalid));
+            }
         }
         return errors;
     }

@@ -193,6 +193,7 @@ public class ToolDef extends FingerprintCache {
         private String path;
         private String content;
         private String owner;
+        private String merge;
 
         public String getPath() { return path; }
         public void setPath(String path) { this.path = path; }
@@ -200,6 +201,13 @@ public class ToolDef extends FingerprintCache {
         public void setContent(String content) { this.content = content; }
         public String getOwner() { return owner; }
         public void setOwner(String owner) { this.owner = owner; }
+        /** {@code json} to deep-merge the content into the file already there, else null to replace it. */
+        public String getMerge() { return merge; }
+        public void setMerge(String merge) { this.merge = merge; }
+        public boolean mergesJson() { return MERGE_JSON.equals(merge); }
+
+        /** The one {@code merge:} value there is. */
+        public static final String MERGE_JSON = "json";
     }
 
     @JqMapped
@@ -483,7 +491,10 @@ public class ToolDef extends FingerprintCache {
         runAsUser.forEach(r -> sb.append("run_as_user=").append(r).append('\n'));
         for (var f : files) {
             sb.append("file=").append(f.path).append(',').append(f.content)
-                    .append(',').append(f.owner).append('\n');
+                    .append(',').append(f.owner);
+            // Only when set, so a tool without it keeps the fingerprint it had before merge: existed
+            if (f.merge != null) sb.append(",merge=").append(f.merge);
+            sb.append('\n');
         }
         env.stream()
                 .map(EnvEntry::fingerprintString)

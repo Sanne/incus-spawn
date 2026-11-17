@@ -79,7 +79,7 @@ Every field is optional except `name`.
 | `requires` | Other tools that must be installed first; an entry is a name, or a map such as `idea-backend: {memory: "8g"}` to pass parameters |
 | `run` | Shell commands run as root |
 | `run_as_user` | Shell commands run as agentuser |
-| `files` | Files to write, each with an optional `owner` |
+| `files` | Files to write, see [File entry fields](#file-entry-fields) |
 | `env` | Environment variables written to `/etc/profile.d/isx-env.sh` |
 | `verify` | Verification command, logged and non-fatal |
 | `verify_as_root` | `true` when the verify needs root |
@@ -140,6 +140,35 @@ A JDK ships its own root store, and its HTTPS calls fail until isx binds it to t
 isx binds a runtime extracted under `/opt`, `/usr/local`, `/usr/lib/jvm` or one of the home directories that [File bindings](FEDORA.md#file-bindings) lists.
 
 Extract a JDK into one of those directories; a template's prime or a shell in the instance binds a JDK in any other directory with `isx-trust <dir>`.
+
+#### File entry fields
+
+Every entry sets `path` and `content`; the other fields are optional.
+
+| Field | What it does |
+|-------|--------------|
+| `path` | Where the file goes in the instance |
+| `content` | What the file holds; `${param_<name>}` takes a parameter's value |
+| `owner` | `user:group` to give the file, and its parent directories in that user's home that root owns |
+| `merge` | `json` to add the content to the JSON file already at `path` instead of replacing it |
+
+A file entry replaces the whole file at its path, which deletes what another tool or an earlier template wrote there.
+With `merge: json` isx deep-merges the content into the file instead.
+Objects merge key by key, and the entry's value wins everywhere else, so its arrays replace the file's.
+Keys the entry does not name keep their values.
+
+```yaml
+files:
+  - path: /home/agentuser/.pi/agent/models.json
+    merge: json
+    owner: agentuser:agentuser
+    content: |
+      {"providers": {"my-gateway": {"baseUrl": "https://llm.example.com/v1"}}}
+```
+
+When the file does not exist or is empty, isx writes the content as it stands.
+When it holds anything but a JSON object, the build fails and names the file.
+isx refuses to load a tool whose merge is not `json`, or whose content is not a JSON object.
 
 #### Install order
 
