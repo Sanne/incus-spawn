@@ -612,13 +612,19 @@ class CredentialProofProxyTest {
         assertEquals(0, tokenFetches.get());
     }
 
-    /** The count_tokens route is still translated, as before, and signed in the account's project. */
-    @Test void claudeOnVertexStillTranslatesTheCountTokensRoute() throws Exception {
+    /**
+     * A standard count_tokens call goes to Vertex's token count in the account's project, never to the
+     * model's rawPredict, a generation (#1938): the model stays in the body, without its date suffix,
+     * and neither stream nor a generation's own fields reach it.
+     */
+    @Test void claudeOnVertexTranslatesCountTokensToVertexsTokenCount() throws Exception {
         serve(claude("vertex"));
         assertEquals(200, http(HttpMethod.POST, ANTHROPIC, "/v1/messages/count_tokens", "Authorization",
-                "Bearer " + ProofTestSupport.token("claude", "ya29.")));
+                "Bearer " + ProofTestSupport.token("claude", "ya29."),
+                "{\"model\":\"claude-test-20250101\",\"messages\":[],\"max_tokens\":7,\"stream\":true}"));
         var got = received.get(10, TimeUnit.SECONDS);
-        assertTrue(got.uri().startsWith(CLAUDE_ON_VERTEX), got.uri());
+        assertEquals(CLAUDE_ON_VERTEX + "count-tokens:rawPredict", got.uri());
+        assertEquals("{\"messages\":[],\"model\":\"claude-test\",\"anthropic_version\":\"vertex-2023-10-16\"}", got.body());
         assertEquals("Bearer ya29.outer", got.authorization());
     }
 

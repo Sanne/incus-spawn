@@ -2141,7 +2141,7 @@ public class MitmProxy {
     private static boolean isTranslatedModelCall(HttpServerRequest clientReq) {
         var path = clientReq.path();
         return io.vertx.core.http.HttpMethod.POST.equals(clientReq.method())
-                && ("/v1/messages".equals(path) || "/v1/messages/count_tokens".equals(path));
+                && ("/v1/messages".equals(path) || VertexBodyRewriter.COUNT_TOKENS_PATH.equals(path));
     }
 
     private static boolean isVertexModelRequest(HttpServerRequest clientReq, RequestContext ctx) {

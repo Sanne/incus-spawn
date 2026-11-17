@@ -49,10 +49,15 @@ class VertexBodyRewriterTest {
 
     /** {@code vertexFormat}: the body is already in Vertex's format, sent to {@link #VERTEX_PATH}. */
     static Outcome rewrite(boolean vertexFormat, byte[] body, int... splits) {
+        return rewrite(vertexFormat ? null : PATH, body, splits);
+    }
+
+    /** A translation of a body sent to {@code path}, or, when it is null, one already in Vertex's format. */
+    static Outcome rewrite(String path, byte[] body, int... splits) {
         var out = new ByteArrayOutputStream();
         Consumer<Buffer> output = b -> out.writeBytes(b.getBytes());
-        var rewriter = vertexFormat ? VertexBodyRewriter.vertexFormat(VERTEX_PATH, output)
-                : new VertexBodyRewriter(PATH, PROJECT, REGION, output);
+        var rewriter = path == null ? VertexBodyRewriter.vertexFormat(VERTEX_PATH, output)
+                : new VertexBodyRewriter(path, PROJECT, REGION, output);
         try {
             int from = 0;
             for (var split : splits) {
@@ -390,6 +395,56 @@ class VertexBodyRewriterTest {
                 "{\"stream\":false,\"stre\\u0061m\":true}"}) {
             assertInstanceOf(VertexBodyRewriter.RefusedBody.class, rewrite(body).refusal(), body);
         }
+    }
+
+    // --- A token count (#1938) ---
+
+    static final String COUNT_PATH = "/v1/projects/proj/locations/us-east5/publishers/anthropic/models/count-tokens:rawPredict";
+
+    static Outcome count(String body, int... splits) {
+        return rewrite(VertexBodyRewriter.COUNT_TOKENS_PATH, body.getBytes(StandardCharsets.UTF_8), splits);
+    }
+
+    @Test
+    void aTokenCountGoesToVertexsCountWithItsModelInTheBody() {
+        var body = "{\"model\":\"claude-sonnet-4-5-20250929\",\"system\":\"s\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"tools\":[{\"name\":\"t\",\"strict\":true}],\"stream\":true,\"max_tokens\":7,\"anthropic_version\":\"x\"}";
+        var expected = "{\"system\":\"s\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"tools\":[{\"name\":\"t\"}],"
+                + "\"model\":\"claude-sonnet-4-5\",\"anthropic_version\":\"vertex-2023-10-16\"}";
+        for (int split = 0; split <= body.length(); split++) {
+            var outcome = count(body, split);
+            // stream never chooses the path, and a generation's own fields are not counted
+            assertEquals(COUNT_PATH, outcome.path());
+            assertEquals(expected, body(outcome), "split at " + split);
+            assertEquals(List.of(VertexBodyRewriter.TOOL_STRICT, "stream", "max_tokens"), outcome.dropped());
+        }
+    }
+
+    @Test
+    void aTokenCountNamingNoModelCountsForTheDefault() {
+        assertEquals("{\"messages\":[],\"model\":\"" + VertexBodyRewriter.DEFAULT_MODEL + "\",\"anthropic_version\":\"vertex-2023-10-16\"}",
+                body(count("{\"messages\":[]}")));
+        assertEquals("{\"model\":\"" + VertexBodyRewriter.DEFAULT_MODEL + "\",\"anthropic_version\":\"vertex-2023-10-16\"}",
+                body(count("{}")));
+    }
+
+    @Test
+    void aTokenCountsModelCannotAddAMember() throws Exception {
+        for (var model : new String[] {"a\\\",\\\"stream\\\":true,\\\"x", "a\\u0022,\\u0022y\\u0022:1,\\u0022z", "é😀"}) {
+            var out = body(count("{\"model\":\"" + model + "\",\"messages\":[]}"));
+            var parsed = (JqObject) JqValues.parseStrict(out);
+            var keys = new ArrayList<String>();
+            parsed.forEach((k, v) -> keys.add(k));
+            assertEquals(List.of("messages", "model", "anthropic_version"), keys, out);
+            assertEquals(canonical(JqValues.parseStrict("\"" + model + "\"")), canonical(parsed.path("model")), out);
+            assertTrue(out.chars().allMatch(c -> c >= 0x20 && c < 0x7f), out);
+        }
+    }
+
+    @Test
+    void aTokenCountNamingItsModelTwiceIsRefused() {
+        assertInstanceOf(VertexBodyRewriter.RefusedBody.class, count("{\"model\":\"a\",\"model\":\"b\"}").refusal());
+        assertNull(count("{\"stream\":true,\"stream\":false}").refusal(), "stream is dropped, not read");
     }
 
     @Test

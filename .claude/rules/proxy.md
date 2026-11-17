@@ -326,6 +326,7 @@ Key design:
   It keeps only the `alt` parameters of its query (`GeminiOnVertex.responseFormat`); an unproven one is forwarded as before, query and all.
   `injectHeaders`' Vertex branch drops `GeminiOnVertex.CLIENT_OVERRIDES` from every request it signs, Claude's and Gemini's alike.
   A proven translation must be `POST /v1/messages` or `POST /v1/messages/count_tokens` (`MitmProxy.isTranslatedModelCall`, else 403 before the body is read), and `retainVertexRequest` refuses with 403 one the rewriter did not translate (empty or non-object body, its result still the guest's path), so no guest-chosen path is ever signed (#1921).
+  A translated `count_tokens` goes to the fixed `.../models/count-tokens:rawPredict` with its model in the body, re-encoded by `VertexBodyRewriter.jsonString`, and only `COUNT_FIELDS` kept; `stream` never chooses its path (#1938).
   A passthrough body loses only each tool's `strict` (`VertexBodyRewriter.vertexFormat`) and, for an object, insignificant whitespace; a non-empty one must be valid JSON (else 502) with well-formed top-level and tool names (else 400).
   One whose `Content-Encoding` headers name any coding but `identity` is not read, and is forwarded unchanged.
   API key mode replaces `x-api-key` with the real key.

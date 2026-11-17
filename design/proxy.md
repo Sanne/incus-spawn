@@ -180,6 +180,12 @@ The proxy routes requests to `api.anthropic.com` through one of three paths base
 **Standard-to-Vertex translation details** (path 2):
 
 - URL: `/v1/messages` → `/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/{model}:rawPredict` (or `:streamRawPredict` when `stream=true`)
+- URL: `/v1/messages/count_tokens` → `/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/count-tokens:rawPredict`, Vertex's token count, whatever `stream` says (#1938).
+  Before #1938 it went to the model's `rawPredict`, a generation: a 400 for a missing `max_tokens`, or a billed answer where the client asked for a count.
+  The proxy sets that path itself, so no path the guest chose is signed.
+  The body keeps `model`, written after the kept fields and before `anthropic_version` with the date suffix stripped as below, and only the fields of a prompt (`messages`, `system`, `tools`, `tool_choice`, `thinking`, `output_config`).
+  The model is re-encoded as an ASCII JSON string, so a quote in the guest's model cannot add a member.
+  Google's documentation and Anthropic's Vertex SDK send this shape, `anthropic_version` included; it was not measured against a live Vertex project.
 - Auth: replaces `x-api-key` with `Authorization: Bearer <gcp-token>` (obtained via `gcloud auth print-access-token`, cached ~50 minutes)
 - Body: extracts `model` field and moves it into the URL path, stripping date suffixes (e.g. `claude-sonnet-4-6-20251001` → `claude-sonnet-4-6`)
 - Body: adds `"anthropic_version": "vertex-2023-10-16"` (required by Vertex rawPredict)
