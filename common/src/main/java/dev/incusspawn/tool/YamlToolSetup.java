@@ -175,11 +175,17 @@ public class YamlToolSetup implements ToolSetup {
                     "Failed to run user setup for " + def.getName());
         }
 
-        // 4. Files (with parameter substitution in path and content)
+        // 4. Files (with parameter substitution in path and content), each replaced or, with
+        // merge: json, deep-merged into the JSON already there
         for (var file : def.getFiles()) {
             var path = ParameterSubstitutor.substitute(file.getPath(), resolvedParams);
             var content = ParameterSubstitutor.substitute(file.getContent(), resolvedParams);
-            BuildOutput.stepProgress("writing " + path);
+            if (file.mergesJson()) {
+                BuildOutput.stepProgress("merging into " + path);
+                content = JsonFileMerge.contentFor(container, def.getName(), path, content);
+            } else {
+                BuildOutput.stepProgress("writing " + path);
+            }
             container.writeFile(path, content);
             if (file.getOwner() != null && !file.getOwner().isEmpty()) {
                 chownWithParents(container, path, file.getOwner());

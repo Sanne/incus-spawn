@@ -252,7 +252,7 @@ Schema fields (all optional except `name`):
 - `requires` — list of other tool names that must be installed first (resolved transitively); an entry without parameters is satisfied by an ancestor template's installation, whatever its parameters (#1906)
 - `run` — shell commands as root
 - `run_as_user` — shell commands as agentuser
-- `files` — files to write (path, content, optional owner)
+- `files` — files to write (path, content, optional owner); `merge: json` adds the content to the JSON file already there instead of replacing it
 - `env` — environment variables written to `/etc/profile.d/isx-env.sh` (supports structured entries with merge strategies)
 - `verify` — verification command (logged, non-fatal), run as `agentuser` in a login shell, so `isx-env.sh` is loaded
 - `verify_as_root` — set `true` for a check that needs root (`sshd -t` reads the host keys); it then runs as root in root's own environment (`HOME=/root`), without `isx-env.sh`
@@ -359,6 +359,23 @@ A gated tool is excluded from build resolution, proxy registration and action re
 The `isx init` credential menu is deliberately *not* gated: a gated tool's credential is usually what the user needs to configure first, so hiding it until the feature is on is a deadlock (Pi with `provider: openai` hit exactly that).
 `openai` (gating `codex`) was the first and so far only use; codex graduated to always-available once the flow was validated end to end, so no built-in tool is currently gated and the mechanism waits for the next experimental capability.
 Enablement is purely the `features` list: the earlier "a configured `openai.apiKey` implicitly enables `openai`" rule existed so that graduating the flag couldn't break setups that predated it, and went away with the gate.
+
+**A `files:` entry may merge into a JSON file** (#2347).
+Without it an entry replaces the file whole, so a tool that only adds its own providers to Pi's `~/.pi/agent/models.json` deletes whatever another tool or an earlier layer put there, and which one survives depends on build order.
+With `merge: json` the build reads the file, deep-merges the entry into it with jjq's `deepMerge` and writes the result back (`JsonFileMerge`).
+Objects merge key by key, the entry's value wins anywhere else, and so an array is replaced, as jq's `*` does.
+A file that is not there, or is empty as `touch` leaves one, is written as the entry stands, as `ClaudeSetup.mergeClaudeJson` treats `~/.claude.json`.
+Any other file must hold a JSON object, or the build fails naming the tool and the path, without writing it.
+The result is independent of build order only while every writer of the file merges: a tool that writes it whole still replaces what the others merged.
+The file is written back as jjq prints it, so its formatting and the written form of some numbers change, and a lone surrogate escape reads as U+FFFD, as in every other read of a foreign file (`Jjq.parseForeign`).
+The loader refuses a `merge:` other than `json`, and content that is not a JSON object once each declared `${param_*}` stands for a number (`ToolDefValidator.invalidFileMerges`).
+The content is parsed again after substitution, since a parameter value holding a quote breaks it only then.
+`merge:` enters `contentFingerprint()` only when set, so a tool without it keeps its fingerprint.
+Chosen: JSON alone, arrays replaced.
+Alternatives: appending arrays without duplicates or a per-entry choice, which no tool needs yet and which a later value of `merge:` can add.
+YAML and TOML (starship's config has the same shape), which need a writer that keeps comments.
+A provider seam in `PiSetup`, like `McpServerRegistration`, which fits Pi alone.
+Why: a merge of JSON is the general mechanism the Pi case needs, it needs nothing in the guest, and an unknown value is refused, so a later format cannot silently fall back to replacing the file.
 
 ## YAML tools vs a full plugin system (Packer, Ansible, etc.)
 We evaluated Packer (null builder + shell provisioner) and Ansible but rejected both.
