@@ -2092,7 +2092,7 @@ public class MitmProxy {
      */
     private void handleApiRequest(HttpServerRequest clientReq, RequestContext ctx, long started) {
         if (servesGeminiOnVertex(ctx)) {
-            relayGeminiOnVertex(clientReq, ctx, started);
+            relayGeminiOnVertex(clientReq, ctx);
             return;
         }
         if (!isVertexModelRequest(clientReq, ctx)) {
@@ -2195,10 +2195,11 @@ public class MitmProxy {
     /**
      * A Gemini call from Pi's google-vertex provider whose key was the instance's claude proof
      * (#1114): sent in the Vertex account's project and region, signed with the host's gcloud token
-     * as Claude's Vertex calls are ({@link GeminiOnVertex}). It is streamed, never held, so a 401
-     * is not sent again: it drops the cached token, and the next call fetches a new one.
+     * as Claude's Vertex calls are ({@link GeminiOnVertex}). Its body is held as theirs is, and sent
+     * only once {@link GeminiBodyCheck} has admitted all of it (#1925), so a refusal sends nothing
+     * upstream and a 401 sends it again.
      */
-    private void relayGeminiOnVertex(HttpServerRequest clientReq, RequestContext ctx, long started) {
+    private void relayGeminiOnVertex(HttpServerRequest clientReq, RequestContext ctx) {
         var credentials = ctx.creds();
         if (!credentials.useVertex() || credentials.vertexProjectId().isBlank() || credentials.vertexRegion().isBlank()) {
             refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 502, "Pi's google-vertex provider needs a Vertex AI Claude account"
@@ -2211,26 +2212,62 @@ public class MitmProxy {
             refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "Only Gemini model calls are served with the Vertex AI account");
             return;
         }
-        var upstreamHost = vertexHost(credentials);
-        var debug = debugExchange(clientReq, null);
-        upstream.relayRequest(clientReq, upstreamHost, uri, new Upstream.RelayHooks(
-                upReq -> prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, false),
-                upResp -> {
-                    if (upResp.statusCode() == 401) invalidateVertexToken();
-                    if (debug != null) debug.logAtEnd(upResp);
-                },
-                debug == null ? null : chunk -> capture(debug.original, chunk),
-                responseTap(null, debug)), started);
+        if (clientReq.headers().contains("Content-Encoding")) {
+            // The check cannot read an encoded body, whatever the coding claims to be
+            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "A Gemini call on the Vertex AI account"
+                    + " must not have a Content-Encoding");
+            return;
+        }
+        if (!isJson(clientReq.headers().getAll("Content-Type"))) {
+            // Vertex may read an untyped, protobuf (application/x-protobuf, json+protobuf) or non-UTF-8 body
+            // as another format or text than the check does
+            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "A Gemini call on the Vertex AI account"
+                    + " must have a JSON body in UTF-8 (Content-Type: application/json)");
+            return;
+        }
+        holdVertexRequest(clientReq, ctx, clientReq.path(), (sink, debug) -> {
+            var check = new GeminiBodyCheck(sink);
+            return new HeldBody() {
+                @Override public void accept(Buffer chunk) throws Exception {
+                    check.accept(chunk);
+                }
+
+                @Override public String end() throws Exception {
+                    check.end();
+                    return uri;
+                }
+            };
+        });
+    }
+
+    /**
+     * Whether the request's Content-Type headers are one, naming JSON in UTF-8: {@code application/json}
+     * with no parameter or with {@code charset=utf-8} alone, since {@link GeminiBodyCheck} reads UTF-8,
+     * and a reader honouring another charset (UTF-7's {@code +ACI-} is a quote) would see other JSON.
+     */
+    static boolean isJson(List<String> contentTypes) {
+        if (contentTypes.size() != 1) return false;
+        var parts = contentTypes.get(0).split(";", -1);
+        if (!parts[0].strip().equalsIgnoreCase("application/json")) return false;
+        if (parts.length == 1) return true;
+        if (parts.length > 2) return false;
+        var parameter = parts[1].strip();
+        return parameter.equalsIgnoreCase("charset=utf-8") || parameter.equalsIgnoreCase("charset=\"utf-8\"");
     }
 
     /** Refuses a proven call the Vertex AI account does not serve on {@code route}, warning once in a while per caller. */
     private void refuseOnVertex(HttpServerRequest clientReq, RequestContext ctx, String route, int status, String message) {
+        warnRefusedOnVertex(clientReq, ctx, route, status, message);
+        CallerCheck.refuse(clientReq, status, message);
+    }
+
+    /** Warns of a refused proven call on {@code route}, once in a while per caller. */
+    private void warnRefusedOnVertex(HttpServerRequest clientReq, RequestContext ctx, String route, int status, String message) {
         var caller = ctx.caller() == null ? "an unknown caller" : "instance '" + ctx.caller().accounts().instanceName() + "'";
         if (refusedProofWarnings.shouldLog(caller + ":" + route + ":" + status, System.nanoTime())) {
             ProxyLog.warn("Refusing " + clientReq.method() + " " + ctx.domain() + clientReq.path() + " for " + caller
                     + ": " + message);
         }
-        CallerCheck.refuse(clientReq, status, message);
     }
 
     /** What the proxy notes of an upstream answer's head, before relaying it. */
@@ -2246,11 +2283,66 @@ public class MitmProxy {
     /**
      * A Vertex model call: its body is rewritten as it arrives, translated if it is in the standard API's
      * format and otherwise only rid of each tool's {@code strict} (#1568), unless it is encoded
-     * ({@link #isEncodedVertexFormat}); and held in a {@link BodySpool} until it has been sent for good,
-     * since the URL is known only at its end and a 401 sends it again. Paused here, before anything waits (#1164).
-     * A call already in Vertex's format goes to {@code path}, with {@code query} (empty, or from its {@code ?}).
+     * ({@link #isEncodedVertexFormat}); and held until it has been sent for good ({@link #holdVertexRequest}),
+     * since the URL is known only at its end. A call already in Vertex's format goes to {@code path},
+     * with {@code query} (empty, or from its {@code ?}).
      */
     private void retainVertexRequest(HttpServerRequest clientReq, RequestContext ctx, String path, String query) {
+        holdVertexRequest(clientReq, ctx, path, (sink, debug) -> {
+            if (isEncodedVertexFormat(clientReq)) {
+                return new HeldBody() {
+                    @Override public void accept(Buffer chunk) {
+                        sink.accept(chunk);
+                    }
+
+                    @Override public String end() {
+                        return vertexFormatPath(path) + query;
+                    }
+                };
+            }
+            if (debug != null) debug.forwarded = new ApiTrafficLog.Capture();
+            var rewriter = vertexRewriter(path, ctx.creds(), debug == null ? sink : chunk -> {
+                capture(debug.forwarded, chunk);
+                sink.accept(chunk);
+            });
+            return new HeldBody() {
+                @Override public void accept(Buffer chunk) throws Exception {
+                    rewriter.accept(chunk);
+                }
+
+                @Override public String end() throws Exception {
+                    var result = rewriter.end();
+                    logDroppedFields(result.droppedFields());
+                    var uri = result.path();
+                    if (ctx.authorized() && !isVertexFormat(path) && !isVertexFormat(uri)) {
+                        // Not translated (no body, or no JSON object): the guest's path is never signed (#1921)
+                        refuseOnVertex(clientReq, ctx, "claude-on-vertex", 403, "A Claude model call on the Vertex"
+                                + " AI account needs a JSON object for its body");
+                        return null;
+                    }
+                    // A request already in Vertex's format keeps its query (#1576); a translation's URI is its own
+                    return isVertexFormat(path) ? uri + query : uri;
+                }
+            };
+        });
+    }
+
+    /** A held Vertex body, read as it arrives and sent, once it has ended, where {@link #end} says. */
+    private interface HeldBody {
+        /** Reads a chunk, and writes what is to be sent to the spool. */
+        void accept(Buffer chunk) throws Exception;
+
+        /** Where the body goes; null when the request was refused, and answered, instead. */
+        String end() throws Exception;
+    }
+
+    /**
+     * Holds a Vertex model call's body in a {@link BodySpool}, read by the {@link HeldBody} {@code reader}
+     * makes for the spool's sink and the debug record, until it has been sent for good, since a 401
+     * sends it again. Paused here, before anything waits (#1164). {@code path} names it in the log.
+     */
+    private void holdVertexRequest(HttpServerRequest clientReq, RequestContext ctx, String path,
+                                   java.util.function.BiFunction<Consumer<Buffer>, DebugExchange, HeldBody> reader) {
         clientReq.pause();
         var credentials = ctx.creds();
         var upstreamHost = vertexHost(credentials);
@@ -2267,16 +2359,7 @@ public class MitmProxy {
         clientResp.endHandler(ended);
         clientResp.closeHandler(ended);
 
-        VertexBodyRewriter rewriter = null;
-        if (!isEncodedVertexFormat(clientReq)) {
-            if (debug != null) debug.forwarded = new ApiTrafficLog.Capture();
-            rewriter = vertexRewriter(path, credentials,
-                    debug == null ? spool::write : chunk -> {
-                        capture(debug.forwarded, chunk);
-                        spool.write(chunk);
-                    });
-        }
-        var translator = rewriter;
+        var body = reader.apply(spool::write, debug);
         var refused = new boolean[1];
         var expectsContinue = Upstream.expectsContinue(clientReq);
         java.util.function.BiConsumer<Integer, String> refuse = (status, message) -> {
@@ -2304,11 +2387,10 @@ public class MitmProxy {
         clientReq.handler(chunk -> {
             if (debug != null) capture(debug.original, chunk);
             try {
-                if (translator != null) translator.accept(chunk);
-                else spool.write(chunk);
-            } catch (VertexBodyRewriter.InvalidBody | VertexBodyRewriter.RefusedBody | RuntimeException e) {
+                body.accept(chunk);
+            } catch (Exception e) {
                 // Anything unexpected too: the client gets an answer, and the spool is closed with it
-                refuseTranslation(path, e, refuse);
+                refuseBody(clientReq, ctx, path, e, refuse);
                 return;
             }
             // Refused by this very chunk: the rest is read and dropped, and the spool gives no drain
@@ -2323,25 +2405,12 @@ public class MitmProxy {
             if (refused[0]) return;
             String uri;
             try {
-                if (translator == null) {
-                    uri = vertexFormatPath(path);
-                } else {
-                    var result = translator.end();
-                    uri = result.path();
-                    logDroppedFields(result.droppedFields());
-                }
-            } catch (VertexBodyRewriter.InvalidBody | VertexBodyRewriter.RefusedBody | RuntimeException e) {
-                refuseTranslation(path, e, refuse);
+                uri = body.end();
+            } catch (Exception e) {
+                refuseBody(clientReq, ctx, path, e, refuse);
                 return;
             }
-            if (ctx.authorized() && !isVertexFormat(path) && !isVertexFormat(uri)) {
-                // Not translated (no body, or no JSON object): the guest's path is never signed (#1921)
-                refuseOnVertex(clientReq, ctx, "claude-on-vertex", 403, "A Claude model call on the Vertex"
-                        + " AI account needs a JSON object for its body");
-                return;
-            }
-            // A request already in Vertex's format keeps its query (#1576); a translation's URI is its own
-            if (isVertexFormat(path)) uri += query;
+            if (uri == null) return;
             var requestOptions = new RequestOptions()
                     .setMethod(clientReq.method())
                     .setPort(443)
@@ -2376,19 +2445,24 @@ public class MitmProxy {
     }
 
     /**
-     * Answers a body the rewriter would not rewrite: invalid JSON as before, with a 502; a refused
+     * Answers a body the route would not send: a Gemini body outside its allowlist as
+     * {@link GeminiBodyCheck.Refused} says; for Claude, invalid JSON as before, with a 502, a refused
      * one with a 400; and anything unexpected with a 502, as the handler's catch-all always did.
      */
-    private static void refuseTranslation(String path, Exception e, java.util.function.BiConsumer<Integer, String> answer) {
-        if (e instanceof RuntimeException) {
-            ProxyLog.trace("Vertex request error (" + path + "): " + e, e);
-            answer.accept(502, "Proxy error");
+    private void refuseBody(HttpServerRequest clientReq, RequestContext ctx, String path, Exception e,
+                            java.util.function.BiConsumer<Integer, String> answer) {
+        if (e instanceof GeminiBodyCheck.Refused refusal) {
+            warnRefusedOnVertex(clientReq, ctx, "gemini-on-vertex", refusal.status(), refusal.getMessage());
+            answer.accept(refusal.status(), "isx-proxy: " + refusal.getMessage());
         } else if (e instanceof VertexBodyRewriter.InvalidBody) {
             ProxyLog.trace("Failed to rewrite a request body for Vertex: " + e.getMessage());
             answer.accept(502, "Proxy error");
-        } else {
+        } else if (e instanceof VertexBodyRewriter.RefusedBody) {
             ProxyLog.warn("Refusing a Vertex request (" + path + "): " + e.getMessage());
             answer.accept(400, "isx-proxy: " + e.getMessage());
+        } else {
+            ProxyLog.trace("Vertex request error (" + path + "): " + e, e);
+            answer.accept(502, "Proxy error");
         }
     }
 

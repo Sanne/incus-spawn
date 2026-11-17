@@ -246,9 +246,23 @@ A proven request on a Vertex account is rewritten to `/v1/projects/<project>/loc
 The proof never leaves: the Vertex branch of `injectHeaders` strips `x-goog-api-key`.
 The gcloud user credential reaches every project and every Vertex API its user can, so the route serves only `generateContent`, `streamGenerateContent` and `countTokens` on Google's publisher in the express form, in the account's own project; anything else proven is a 403, and a proven call on an account that is not Vertex AI a 502, before anything is sent.
 Of the guest's query it keeps only `alt` (letters only), and it drops `x-goog-user-project` and `X-HTTP-Method-Override`, which would otherwise bill another quota project or change the method.
-The body is still forwarded as sent, and a Gemini body can name resources in other projects (`cachedContent`, a RAG corpus or a Vertex AI Search datastore in `tools`), which the host's token may read; screening it is #1925.
 Unproven requests relay unchanged, so a guest's own Google key still works there.
-The call streams rather than being held, so a 401 is not retried; it drops the cached token for the next call.
+
+**The Gemini body is an allowlist (#1925).**
+A Gemini body can name data in other projects: a `cachedContent`, a RAG corpus or a Vertex AI Search datastore in `tools`, a `gs://` object in a part's `fileData`.
+The host's token may read all of them, so a proven guest could read them through the model.
+The proxy therefore sends only the body Pi's `google-vertex` provider sends, read from pi-ai 1.5.2, and refuses every other before anything leaves (`GeminiBodyCheck`).
+Its top object holds only `contents`, `systemInstruction`, `generationConfig`, `tools` and `toolConfig`, and each tool holds only `functionDeclarations`.
+A part holds no `fileData`, in the parts of `contents[]`, of `systemInstruction` and of a part's `functionResponse`.
+The check goes by position, since a function's arguments may hold a field named `fileData`.
+A field outside the list is refused with a 403 naming it, never dropped, since a dropped `cachedContent` would answer another question than the one asked.
+Names are compared as Vertex decodes them, and both spellings Vertex's JSON reading is believed to accept (`file_data` beside `fileData`) are covered where the check reads names.
+The body must be strict JSON, one complete object, typed by one `Content-Type` of `application/json` in UTF-8 and without a `Content-Encoding`, and each position the check reads must have its shape or be `null`, so no other spelling or shape slips past it.
+The bytes of every string must be well-formed UTF-8, and a name the check reads holds no control character, so a lenient decoder or one that honours another charset cannot end a string or a name where the check did not.
+The check reads the body as it arrives, with bounded memory, and passes each chunk on unchanged to a `BodySpool`, as a Claude Vertex call's body is held (`MitmProxy.holdVertexRequest`).
+So a refusal sends nothing upstream, and a 401 sends the body again with a fresh token.
+What this gives up: a new Pi feature that sends another field gets a 403 until isx allows it, and a large upload is held in memory, then on disk, before it is sent.
+Rejected: checking that a named resource is in the account's project, since the account buys model calls, not that project's caches, corpora and datastores; and a list of refused fields, which misses fields Google adds and spellings nobody listed.
 Alternatives rejected: ADC in the guest (a credentials file Google's auth library exchanges for a real token, which would then sit in the instance); a refresh-token stub that the proxy answers on `oauth2.googleapis.com` (same: the guest would hold a working access token); intercepting every `*-aiplatform.googleapis.com` region (the express form needs only the global host).
 
 **WebSocket passthrough:** The proxy also handles WebSocket upgrade requests.
@@ -476,6 +490,7 @@ Otherwise turning on diagnostics would change what it diagnoses: the upload's la
 
 **A body the proxy must hold (#1315)**: a Vertex model call is sent only once its body has ended, since its URL is built from `model` and `stream`, which SDKs put last, and a 401 sends the same body again.
 `MitmProxy.retainVertexRequest` pauses it at routing (#1164), translates it as it arrives, and writes it to a `BodySpool`, kept across the 401 retry.
+A Gemini call on the Vertex AI account is held the same way, through `MitmProxy.holdVertexRequest`, so its body is checked whole before any of it is sent (#1925).
 It is released once an answer other than a 401 has come and the body has all gone upstream, or the exchange ends, whichever is first, so a long streamed answer does not keep it; the release runs on the spool's own event loop, and a spool gives back what it kept once, however many closes race.
 Memory is bounded by one `SpoolBudget` (32 MiB, an eighth of the native heap) shared by every spool, which counts bytes kept in memory, bytes waiting for their disk write and bytes read back but not yet written to the upstream socket.
 Kept bytes take at most half of it, so the other half always serves I/O in flight and a write never waits behind memory nobody gives back until their exchange ends.
@@ -997,7 +1012,7 @@ A started instance's placeholders are proof tokens (`gho_isx_<digest>`, see desi
 | GCP credentials (Vertex mode) | Placeholder `ya29.placeholder-for-proxy` in `ISX_VERTEX_ACCESS_TOKEN` | Container runs Claude Code in Vertex mode with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`, which sends only `ANTHROPIC_CUSTOM_HEADERS`; a login script puts `Authorization: Bearer $ISX_VERTEX_ACCESS_TOKEN` there. Proxy injects GCP Bearer token from `gcloud` on the host. No GCP credentials, service accounts, or access tokens enter the container |
 | Pi Anthropic key | Placeholder `sk-ant-placeholder` in `ANTHROPIC_API_KEY` | Same as Claude direct/OAuth mode. Pi always uses standard API format; the proxy handles key injection, OAuth Bearer injection, or Vertex translation transparently |
 | opencode Anthropic key | Placeholder `sk-ant-placeholder` in `OPENCODE_ANTHROPIC_API_KEY` (claude namespace), named by `provider.anthropic.options.apiKey` in `~/.config/opencode/opencode.json` | Same as Pi's Anthropic key. Its own variable, so Claude Code's `ANTHROPIC_API_KEY` auth is left alone |
-| Pi Gemini on Vertex | Placeholder `AIzaplaceholder` in `GOOGLE_CLOUD_API_KEY` (claude namespace) | Pi's `google-vertex` provider sends Vertex's express form to `aiplatform.googleapis.com`; the proxy moves it into the Vertex account's project and region and injects the host's gcloud Bearer token. Only Gemini model calls are served |
+| Pi Gemini on Vertex | Placeholder `AIzaplaceholder` in `GOOGLE_CLOUD_API_KEY` (claude namespace) | Pi's `google-vertex` provider sends Vertex's express form to `aiplatform.googleapis.com`; the proxy moves it into the Vertex account's project and region and injects the host's gcloud Bearer token. Only Gemini model calls are served, with only the body fields Pi sends |
 | OpenAI API key | Placeholder `sk-placeholder` in `OPENAI_API_KEY` (and, for `codex`, copied into `~/.codex/auth.json` at login) | Proxy replaces `Authorization: Bearer` header with real key for `api.openai.com`. Used by `codex` and by `pi` with `provider: openai` |
 | GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
 

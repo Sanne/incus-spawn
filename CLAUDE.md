@@ -113,6 +113,8 @@ Google OAuth is outside this integration; see `.claude/rules/tools-env.md`.
 Pi's `google` provider spends the same `gemini` account, and its `google-vertex` provider (isx also takes `vertex`) the Claude Vertex AI account (#1114).
 Its `GOOGLE_CLOUD_API_KEY` carries the claude proof to `aiplatform.googleapis.com`, a built-in intercepted domain.
 There the proxy serves only Gemini model calls in Vertex's express form (`GeminiOnVertex`), moved into the account's project and region and signed with the host's gcloud token.
+Their body is held and sent only when it holds nothing but the fields Pi sends (`GeminiBodyCheck`, #1925).
+A top-level field outside Pi's five, a tool field other than `functionDeclarations` or a part's `fileData` is a 403, and nothing is sent upstream.
 A proven call already in Vertex's form at `api.anthropic.com` is likewise served only as a Claude model call, moved into the account's own project and region (`ClaudeOnVertex`, #1921), else a 403.
 A proven call to be translated is signed only as `POST /v1/messages` or `/v1/messages/count_tokens` with a JSON object for its body, else a 403, so the guest's own path never is.
 
