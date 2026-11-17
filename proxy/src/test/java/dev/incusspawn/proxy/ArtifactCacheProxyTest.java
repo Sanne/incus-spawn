@@ -1049,6 +1049,38 @@ class ArtifactCacheProxyTest {
     }
 
     @Test
+    void mavenCentralCopyIsTrustedLongerWhileArtifactCacheIsUnset() throws Exception {
+        var stored = cacheJar(CENTRAL, JAR, "v1");
+        proxy.artifactCache.artifactCacheTiers = null;
+        confirmedAgo(stored, Duration.ofHours(3));
+
+        publishJar(CENTRAL, JAR, "v2");
+        hits.clear();
+        assertEquals("v1", get(CENTRAL, JAR).text(), "within Central's own fresh, past the default's");
+        assertTrue(proxy.artifactCache.cacheStats.drain().contains("(1 served on a fresh confirmation)"),
+                "no confirmation, not even in the background");
+        assertEquals(0, headsOn(CENTRAL, JAR));
+
+        confirmedAgo(stored, Duration.ofHours(13));
+        assertEquals("v1", get(CENTRAL, JAR).text(), "the stale tier serves before it checks");
+        await("the background confirmation", () -> headsOn(CENTRAL, JAR) >= 1);
+    }
+
+    @Test
+    void aConfiguredArtifactCacheReplacesCentralsLongerTiers() throws Exception {
+        var stored = cacheJar(CENTRAL, JAR, "v1");
+        // Only max-stale set: Central's longer fresh must not raise it
+        proxy.artifactCache.artifactCacheTiers = ArtifactCacheTiers.configured(
+                dev.incusspawn.config.Jjq.spawnConfig("artifact-cache: {max-stale: 1h}"));
+        confirmedAgo(stored, Duration.ofHours(3));
+
+        publishJar(CENTRAL, JAR, "v2");
+        hits.clear();
+        assertEquals("v2", get(CENTRAL, JAR).text(), "past the configured tiers the change is seen first");
+        assertEquals(1, headsOn(CENTRAL, JAR));
+    }
+
+    @Test
     void staleHitThatChangedIsEvictedForTheNextRequest() throws Exception {
         var stored = cacheJar(CENTRAL, JAR, "v1");
         confirmedAgo(stored, Duration.ofDays(2));

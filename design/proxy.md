@@ -518,7 +518,7 @@ Only an unreachable upstream serves an older one.
   The client then gets the copy, and for a sidecar request the copy's stored sidecar, else upstream's answer to one more ask made after that confirmation (a 502 if that one is superseded too), never the older answer's checksum beside the newer bytes.
   That includes a 404/410: a takedown that reached upstream before the copy's confirmation was not in force when upstream confirmed it, and one after it is seen by the next probe.
   A sidecar answer settled by Central's checksum header applies only to the copy it was reconciled against: if that copy was replaced before the header matched, the match may be about bytes committed after the sidecar was asked for, so the answer neither stores nor drops a signature beside the new copy, and the client gets the copy's own (#1555).
-  Younger than `fresh` (default 2h), a hit is served from disk with no upstream request.
+  Younger than `fresh` (default 2h, and 12h for Maven Central while config.yaml has no `artifact-cache:`), a hit is served from disk with no upstream request.
   Younger than `max-stale` (default 7 days), it is served at once and confirmed again in the background: a match renews the confirmation, a change or withdrawal evicts the copy so the *next* request fetches it, and an answer that settles neither (a 403, an unusable sidecar) expires the confirmation, so the next hit gets the confirm-first path's handling.
   Older, it is confirmed before it is served, as below.
   Background confirmations are single-flight per artifact, at most 16 in flight with the rest queued (dropping them would leave copies unconfirmed build after build under a parallel resolver), and confirm no copy during a domain's backoff.
@@ -544,6 +544,11 @@ Only an unreachable upstream serves an older one.
   Every repository can withdraw a release, Central included: it lets no publisher change or remove one, but removes releases itself on occasion (copyright, malware).
   So the tiers are not a claim that nothing is withdrawn; they are how long a withdrawal may go unnoticed, which the host's owner sets per repository.
   The Plugin Portal, where authors delete versions often enough, has tiers of zero.
+  Maven Central's `fresh` is 12 hours instead of 2 while config.yaml has no `artifact-cache:` (`ArtifactCacheTiers.CENTRAL_DEFAULT`, #2305).
+  What a warm cache sends Central is one `HEAD` per artifact per `fresh` window, about 1,700 at once for a Quarkus build (docs/dev/PERFORMANCE-NOTES.md "Requests a warm cache sends to Maven Central").
+  That count does not grow with the number of instances, since a confirmation renews the shared copy, and `max-stale` only moves it between the background and the foreground, so `fresh` is the one duration that lowers it.
+  It is a default, never a repository's own tiers: any `artifact-cache:`, even one key, replaces it whole (`Revalidation.tiersOr`), so it never loosens a duration the user wrote, such as a `max-stale` below 12 hours that the record's clamp would raise.
+  The 404 memory the same issue proposed was not built: Maven asks repositories in order and stops at the first that has an artifact, so Central's 404s came to four of 1,721 requests in that build.
   For comparison, without isx a withdrawn release stays in each developer's `~/.m2` for good, since Maven never checks a release it already has, so any finite tier is stricter.
   A confirmation time in the future (a clock stepped back) is not trusted.
   Hits are not logged one by one: at thousands per build, a line each on the event loop cost more than a hit served on trust.

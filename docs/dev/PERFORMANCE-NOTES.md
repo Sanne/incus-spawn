@@ -1309,3 +1309,29 @@ What it shows:
 
 What it does not show: the failures a Mac sees beyond the leaked children, missed requests, `Empty reply from server` and a socket that stops answering (P2).
 Linux reproduces none of them with vfkit's logic, so only the Mac's record compares the two programs on those.
+
+## Requests a warm cache sends to Maven Central (issue #2305)
+
+Measured 2026-11-17 in a Linux box, Maven 3.9.16, Quarkus at `main` of 2026-11-14.
+The build was `mvn -pl core/deployment -am install -DskipTests -Dquickly` with an empty local repository (`-Dmaven.repo.local`), which is what a newly branched instance asks the proxy for.
+
+| Kind | Requests | Share |
+|---|---|---|
+| Artifacts found (`.pom`, `.jar`) | 1,713 | 99.5% |
+| Not found at Central (404) | 4 | 0.2% |
+| Found at the second repository (`repo.gradle.org`) | 4 | 0.2% |
+| `maven-metadata.xml` | 0 | 0 |
+| Checksum sidecars (`.sha1`) | 0 | 0 |
+
+No sidecar was asked for, since the proxy sends Central's `X-Checksum-SHA1` with every artifact and Maven Resolver then skips its own `.sha1` request.
+The four 404s are the `.pom` and `.jar` of the two `gradle-tooling-api` versions, which live in Gradle's repository.
+Maven asks its repositories in order and stops at the first that has the artifact, so a repository listed before another is asked about two requests for each artifact that only the later one has.
+It does not ask every repository for every artifact.
+So remembering Central's 404s would save four requests in this build, and the idea was dropped.
+
+What a warm cache sends Central is one confirmation per artifact, derived from the code rather than measured through the proxy.
+Within `fresh` an artifact costs no request.
+Past it, one `HEAD`, in the background within `max-stale` and before the serve after it, and that `HEAD` renews the shared copy for every instance.
+So the count does not grow with the number of instances: it is one burst of about 1,700 `HEAD`s for this build, once per `fresh` window.
+`max-stale` only moves those requests between the background and the foreground, and does not change their number.
+That is why Central's longer default lengthens `fresh`, from 2 hours to 12, which brings a working day's bursts from about five down to one or two.

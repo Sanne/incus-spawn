@@ -400,6 +400,7 @@ Key design:
   Overlapping lookups are joined by `SingleFlight` (#1567): a sidecar settle (`sidecarSettles`, by domain and path: GET, reconcile, header, store and `keptSidecar` as one unit returning a `SidecarReply`), a confirmation (`confirmations`, by artifact, foreground and background alike), a `~/.m2` probe and import (`hostImports`) and an npm version lookup (`npmLookups`: each ask is joined, but the 5xx retry is each caller's own, on its own `started`).
   The shared work never touches a client response, and the key is released before any caller hears of it; downloads are not joined.
   Each `CachedRepository` carries its own `Revalidation`, tiers included: the Plugin Portal's are zero, so its every hit is confirmed first.
+  Maven Central's two names carry a default instead (`Revalidation.defaultTiers`, `ArtifactCacheTiers.CENTRAL_DEFAULT`, `fresh` 12h, #2305), used only while config.yaml has no `artifact-cache:`: the handler's `artifactCacheTiers` is null then, and any section, even one key or a malformed one, replaces the default whole, so it never loosens what a user wrote.
   `artifact-cache:` stays a raw value in `SpawnConfig`: a typed binding would let a mistyped section fail the whole config.yaml.
   Hits are counted in `ArtifactCacheStats` and logged as one summary at most every 5 s, only after activity; don't add a per-hit log line back.
   Older is confirmed as the repository's `Revalidation` says: `HEAD_CHECKSUM` (Central: a `HEAD`'s `X-Checksum-SHA1`, falling back to `.sha1`) or `SIDECAR` (portal, Gradle distributions).

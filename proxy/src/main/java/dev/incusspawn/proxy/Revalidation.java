@@ -36,8 +36,11 @@ import java.nio.charset.StandardCharsets;
  * @param tiers          how long a confirmation is trusted; null for config.yaml's {@code artifact-cache:}
  * @param servesOnlyConfirmed never served on a past confirmation, offline or during a backoff
  *                       either: the repository may replace what it published, or is private
+ * @param defaultTiers   where {@code tiers} is null, the tiers used while config.yaml has no
+ *                       {@code artifact-cache:}; null for {@link ArtifactCacheTiers#DEFAULT}
  */
-record Revalidation(Sidecar headerChecksum, String header, ArtifactCacheTiers tiers, boolean servesOnlyConfirmed) {
+record Revalidation(Sidecar headerChecksum, String header, ArtifactCacheTiers tiers, boolean servesOnlyConfirmed,
+                    ArtifactCacheTiers defaultTiers) {
 
     /** The header Maven Central and Artifactory send the artifact's SHA-1 in (Nexus 3 does not: its ETag is the SHA-1). */
     static final String CHECKSUM_HEADER = "X-Checksum-SHA1";
@@ -49,13 +52,13 @@ record Revalidation(Sidecar headerChecksum, String header, ArtifactCacheTiers ti
      * Maven Resolver's smart checksums skip their own {@code .sha1} request.
      * A response without the header falls back to fetching the {@code .sha1}.
      */
-    static final Revalidation HEAD_CHECKSUM = new Revalidation(Sidecar.SHA1, CHECKSUM_HEADER, null, false);
+    static final Revalidation HEAD_CHECKSUM = new Revalidation(Sidecar.SHA1, CHECKSUM_HEADER, null, false, null);
 
     /**
      * No checksum headers (Gradle Plugin Portal, Gradle distributions): a hit
      * fetches the checksum sidecar, and a miss fetches it once downloaded.
      */
-    static final Revalidation SIDECAR = new Revalidation(null, null, null, false);
+    static final Revalidation SIDECAR = new Revalidation(null, null, null, false, null);
 
     Revalidation {
         if (servesOnlyConfirmed) tiers = ArtifactCacheTiers.CONFIRM_EVERY_HIT;
@@ -63,17 +66,33 @@ record Revalidation(Sidecar headerChecksum, String header, ArtifactCacheTiers ti
 
     /** This confirmation, its confirmation trusted for {@code tiers}. */
     Revalidation trustedFor(ArtifactCacheTiers tiers) {
-        return new Revalidation(headerChecksum, header, tiers, servesOnlyConfirmed);
+        return new Revalidation(headerChecksum, header, tiers, servesOnlyConfirmed, defaultTiers);
     }
 
     /** This confirmation, made before every serve and never skipped. */
     Revalidation onlyConfirmed() {
-        return new Revalidation(headerChecksum, header, tiers, true);
+        return new Revalidation(headerChecksum, header, tiers, true, defaultTiers);
     }
 
-    /** The tiers a hit is judged by: this repository's own, else {@code configured}. */
+    /**
+     * This confirmation, its confirmation trusted for {@code defaults} unless config.yaml's
+     * {@code artifact-cache:} says otherwise.
+     */
+    Revalidation trustedByDefaultFor(ArtifactCacheTiers defaults) {
+        return new Revalidation(headerChecksum, header, tiers, servesOnlyConfirmed, defaults);
+    }
+
+    /**
+     * The tiers a hit is judged by: this repository's own, else {@code configured}, the
+     * {@code artifact-cache:} section, else this repository's default when there is none. Any
+     * {@code artifact-cache:} at all, even one key, replaces the default whole, so a default never
+     * loosens what a user wrote (a {@code max-stale} below the default's {@code fresh} would be
+     * raised to it).
+     */
     ArtifactCacheTiers tiersOr(ArtifactCacheTiers configured) {
-        return tiers != null ? tiers : configured;
+        if (tiers != null) return tiers;
+        if (configured != null) return configured;
+        return defaultTiers != null ? defaultTiers : ArtifactCacheTiers.DEFAULT;
     }
 
     /** Whether artifacts described by {@code checksum} can be confirmed this way. */

@@ -104,8 +104,9 @@ class ArtifactCacheHandler {
     // How long a download to the cache may go without a byte from upstream before it is
     // resumed (#925)
     int downloadIdleSeconds = 20;
-    // From config.yaml's artifact-cache: section, through useConfig()
-    volatile ArtifactCacheTiers artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
+    // From config.yaml's artifact-cache: section, through useConfig(); null when it has none, so a
+    // repository's own default applies (Revalidation.tiersOr)
+    volatile ArtifactCacheTiers artifactCacheTiers;
     // The repositories whose artifacts are cached, by domain, the longest prefix first (#2312)
     private volatile Map<String, List<CachedRepository>> repositories = CachedRepository.byDomain(CachedRepository.BUILT_IN);
     // The private ones, reached only through a proven request's credential (servePrivate)
@@ -204,7 +205,9 @@ class ArtifactCacheHandler {
                 " (domains: " + REGISTRY_DOMAINS + ")");
         ProxyLog.stdout("Maven cache: " + mavenCacheDir() +
                 " (domains: " + new java.util.TreeSet<>(repositories.keySet()) + ")");
-        ProxyLog.stdout("Maven/Gradle/npm confirmations: " + artifactCacheTiers);
+        var configured = artifactCacheTiers;
+        ProxyLog.stdout("Maven/Gradle/npm confirmations: " + (configured != null ? configured
+                : ArtifactCacheTiers.DEFAULT + "; Maven Central: " + ArtifactCacheTiers.CENTRAL_DEFAULT));
         ProxyLog.stdout("Maven .m2 fallback: " +
                 (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
         ProxyLog.stdout("Gradle cache: " + gradleCacheDir() +
@@ -970,7 +973,7 @@ class ArtifactCacheHandler {
      * <ul>
      *   <li><b>Tarball</b> ({@code GET /<pkg>/-/<name>-<ver>.tgz}): served from cache when
      *       the package's ETag hasn't changed since the tarball was verified and that
-     *       confirmation is still trusted ({@link #artifactCacheTiers}). Otherwise the
+     *       confirmation is still trusted ({@link #npmTiers}). Otherwise the
      *       tarball's digest is re-verified against per-version metadata. Cache misses
      *       are verified on store.</li>
      *   <li><b>Packument</b> ({@code GET /<pkg>}): relayed fresh to upstream. The response's
@@ -1084,7 +1087,7 @@ class ArtifactCacheHandler {
      * Serve an npm tarball from cache or fetch fresh.
      * <p>
      * <b>Cache hit + ETag unchanged</b>: serve directly while the tarball's last
-     * confirmation is within {@link #artifactCacheTiers}' fresh window, and confirm it again
+     * confirmation is within {@link #npmTiers}' fresh window, and confirm it again
      * in the background within max-stale. The ETag alone is not enough: a lockfile
      * install ({@code npm ci}) fetches no packument, so it never changes, and a version
      * removed upstream would be served forever (#1466).
@@ -1109,7 +1112,7 @@ class ArtifactCacheHandler {
             var etagFile = cacheDir.resolve(packageName).resolve(".etag").normalize();
             var packageEtag = etagFile.startsWith(cacheDir)
                     ? readFileOrNull(etagFile) : null;
-            return npmCacheState(cacheFile, packageEtag, artifactCacheTiers, Instant.now());
+            return npmCacheState(cacheFile, packageEtag, npmTiers(), Instant.now());
         }).compose(state -> {
             if (state.hit() != null) return Future.succeededFuture(state.hit());
             // A copy to fall back on is served at once during a backoff, as for Maven/Gradle; with none, the registry is still asked
@@ -1695,7 +1698,7 @@ class ArtifactCacheHandler {
 
     /**
      * Serve an artifact from the verified cache, confirmed with upstream as recently
-     * as {@link #artifactCacheTiers} asks, or download, verify and store it.
+     * as its repository's tiers ask ({@link #trustTier}), or download, verify and store it.
      */
     private void serveArtifact(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                                ArtifactTarget target) {
@@ -1735,6 +1738,11 @@ class ArtifactCacheHandler {
      */
     private ArtifactCacheTiers.Tier trustTier(Revalidation revalidation, VerifiedArtifactStore.CachedCopy cached) {
         return revalidation.tiersOr(artifactCacheTiers).tierOf(cached.confirmedAt(), Instant.now());
+    }
+
+    /** The tiers npm tarballs are judged by: config.yaml's, else the default. */
+    private ArtifactCacheTiers npmTiers() {
+        return java.util.Objects.requireNonNullElse(artifactCacheTiers, ArtifactCacheTiers.DEFAULT);
     }
 
     /**
@@ -2024,7 +2032,7 @@ class ArtifactCacheHandler {
 
     /**
      * Serve a sidecar. While the artifact's last confirmation is trusted
-     * ({@link #artifactCacheTiers}) its stored copy is served, as the artifact
+     * ({@link #trustTier}) its stored copy is served, as the artifact
      * itself would be; an aging one is confirmed again in the background.
      * Otherwise it is served as upstream has it now, and used to check the cached
      * artifact (see {@link VerifiedArtifactStore#reconcile}); the stored copy then

@@ -397,9 +397,15 @@ The defaults:
 
 ```yaml
 artifact-cache:
-  fresh: 2h        # durations: 30m, 2h, 7d ...
+  fresh: 2h        # durations: 30m, 2h, 7d ... (Maven Central: 12h while this section is absent)
   max-stale: 7d
 ```
+
+Maven Central gets a longer `fresh` of 12 hours while `config.yaml` has no `artifact-cache:` section.
+Each confirmation is a request to Central, so this keeps a busy host further from Central's rate limit.
+In exchange, the proxy may serve a release Central withdrew for up to 12 hours.
+
+Once you write `artifact-cache:`, even one key of it, its durations apply to Central too.
 
 Setting both to `0` makes the proxy confirm every cached artifact before serving it.
 On Maven Central this mostly adds latency: Central never changes a published artifact, and withdraws one only rarely.
