@@ -485,6 +485,7 @@ There is no upload size limit: a body passes as long as the host has disk for it
 
 **Proxy caching**: The proxy caches three types of upstream content to avoid redundant downloads:
 - **OCI blobs** — keyed by SHA256 content digest, verified on store
+- **OCI manifests** — by digest, verified on store, with their media type beside them; each hit is confirmed with a `HEAD` carrying the caller's token before its copy is served (see "Container image manifests" below)
 - **Maven/Gradle artifacts and Gradle distributions** — keyed by repository path, verified on store, confirmed with upstream as recently as `artifact-cache:` asks (see below)
 - **npm tarballs** — keyed by package name and version, with ETag-based verification against the npm registry packument.
   A cached tarball is served without a lookup only while the packument ETag is the one it was verified under and its last confirmation is within the same tiers as Maven/Gradle (`artifactCacheTiers`, see "Confirmation tiers" below).
@@ -506,6 +507,42 @@ There is no upload size limit: a body passes as long as the host has disk for it
   Every lookup from every instance ran one after another, so 540 packages took 195s through the proxy against 53s direct.
   So nothing that waits on the network runs in an ordered `executeBlocking`.
   The npm path's disk checks still do, on purpose: ordering keeps a tarball's ETag read behind the packument's ETag write (`relayNpmPackument`), which an unordered read could overtake and serve a tarball on a stale ETag without a shasum check
+
+**Container image manifests** (#2306): Docker Hub counts a pull per manifest `GET`, never a `HEAD` and never a blob.
+Its limit is 100 pulls per 6 hours per IPv4 address or IPv6 /64 for anonymous pulls and 200 for a personal account, and a multi-arch image counts once per platform it fetches ([Docker's documentation](https://docs.docker.com/docker-hub/usage/pulls/), read 2026-11).
+A blob cache alone saves bandwidth but not one counted pull, and a throttled pull of a fully cached image still fails at its manifest.
+quay.io does not limit anonymous pulls except under abuse, and ghcr.io publishes no limit, so for them the cache saves round trips and survives an outage, nothing more.
+`ArtifactCacheHandler.serveManifest` takes every `GET /v2/<name>/manifests/<reference>` without a query; `ManifestCache` holds the files and the rules for reading the requests.
+- A manifest is stored by its digest.
+  A miss is fetched with the client's own headers, streamed to it, and committed through `VerifiedArtifactStore` only when the bytes hash to the digest, with the response's `Content-Type` beside it as `.type`, the copy's media type.
+  For a tag, the digest is the answer's `Docker-Content-Digest`; an answer without one is relayed uncached.
+  The media type matters: a client tells an index from a single-platform manifest by it, so a copy is never served as `application/octet-stream`.
+- A tag is a name that can move, and one repository may be private.
+  Every hit, by tag or by digest, is confirmed with a `HEAD` carrying the client's own headers, its `Authorization` and `Accept` included.
+  A tag's copy is served only when the `HEAD`'s `Docker-Content-Digest` names a stored copy, and a digest's when the `HEAD` answers 200.
+  That one uncounted request proves that the registry lets this caller pull it, and for a tag that the tag still points there.
+  A digest is confirmed too, unlike a blob's: a manifest digest is often published (an image pinned in a chart, a compose file or a CI log), so knowing one is no proof of access, and the manifest would lead to every layer the blob cache holds.
+  That is the rule #2312 set for private Maven repositories: a copy reaches a caller only on the registry's word for that caller.
+  A `401`, `403`, `404` or any other refusal relays the client's `GET`, so the client gets the registry's own answer, its `WWW-Authenticate` challenge included.
+  A tag never seen before skips the `HEAD`, which could only add a round trip before the `GET`.
+- Which digest a tag last resolved to is kept per registry, repository, tag and `Accept` (`ManifestCache.tag`), since one tag gives a client that accepts other media types another manifest.
+  Every file name is a hash of what names it, so no part of a request becomes a path.
+- When the confirming `HEAD` cannot be answered (a refused connect, a `5xx` or a `429`), a public repository's copy is served: the digest asked for, or the one a tag last resolved to, logged as unconfirmed and, while the registry answers `429`, counted on `/activity`'s `throttled`.
+  A private repository's is not, since nobody can tell whether the caller may pull it; the client's `GET` is relayed and gets upstream's own answer.
+  The digest must also have been served by that repository (`ManifestCache.inRepository`): copies are shared by digest, so a private image's digest asked for under a public repository's name is not served.
+  Public means what an anonymous client finds: a `HEAD` with no credential, and on a Bearer challenge a pull-only token from its realm and the `HEAD` again with it (`checkPublicInBackground`).
+  None of the three is a counted pull.
+  The realm must be an `https` URL on a registry domain with no port, and the token request follows no redirect, so a registry's challenge cannot send the proxy anywhere else.
+  The scope is the proxy's own, never the challenge's.
+  The check runs after a tag's fetch and after its confirmed hits, at most every 6 hours per repository and proxy, since a tag that never moves is never fetched again.
+  Its marker is there exactly while the last check that got an answer found the repository public: a `5xx`, a `429` or a failed exchange leaves it as it was, so a flaky registry does not drop the marker exactly when it is needed.
+- There are no confirmation tiers for tags: every hit is confirmed, since the `HEAD` costs no pull, so `:latest` is never served stale while the registry answers.
+
+**What it gives up:** during a throttle or an outage, a public tag that moved upstream is served at its old digest.
+A repository made private keeps its marker until the next check that gets an answer, which a pull makes at most 6 hours apart.
+Until then, and only while the registry cannot be asked, its manifests can still be served to a caller it would refuse.
+A client's own `HEAD` (containerd resolves a tag that way) is relayed, not answered from the cache: Docker Hub does not count it, and during a throttle the registry is believed to keep answering it.
+The registries' 429s are not waited out (`waitOutThrottle` excludes them): Docker Hub's window is 6 hours, longer than any client waits.
 
 **Maven/Gradle cache integrity**: the rule is that a cached artifact is served only when a direct fetch would have returned the same bytes when upstream last confirmed it (#555), and that confirmation is recent enough.
 How recent is configurable; with both durations at zero, every hit is confirmed before it is served.

@@ -348,6 +348,13 @@ Key design:
   - Cert reloads build their `ServerSSLOptions` from `mitmServerOptions()`, never a bare object, because the update replaces client auth, protocols and ciphers.
   - `HttpClientRequest.authority()` is the request's own `Host`, not the `setServer()` target, which is what the redirect and resume paths want.
     That holds because every upstream request sets a host: without one, Vert.x falls back to the server address.
+- Caches OCI manifests (#2306, `ManifestCache`, design/proxy.md "Container image manifests").
+  Stored by digest, committed only when the bytes hash to it, with the upstream `Content-Type` stored beside as `.type`.
+  Every hit, by digest too, is served only on a `HEAD` carrying the client's own headers, which for a tag must name a stored digest, so the registry vouches for the caller's access each time and Docker Hub counts no pull.
+  Never serve a digest's copy without that `HEAD`: manifest digests are published, and a manifest leads to every cached layer.
+  Unconfirmed (connect failure, 5xx, 429) only for a repository an anonymous token check found public and that served that digest (`inRepository`); a private one's is relayed.
+  That check runs on a tag's fetch and its confirmed hits, at most every 6 hours per repository, and a 5xx, a 429 or a failed exchange leaves its marker as it was.
+  The token realm is followed only to an `https` host in `REGISTRY_DOMAINS`, with the proxy's own pull scope and no redirect.
 - Caches OCI blobs by SHA256, Maven/Gradle artifacts by repository path (confirmed with upstream per `ArtifactCacheTiers`, see below), and npm tarballs from `registry.npmjs.org` with ETag-based packument verification.
   The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot choose or inject a credential; keep it that way.
   The one exception is a private repository's (#2312): `MitmProxy.privateRepositoryCredential` hands `servePrivate` the single header `injectHeaders` would send, only after `authorize` proved the namespace the repository names, never an inherited one, as an `ArtifactCacheHandler.Credential`.
