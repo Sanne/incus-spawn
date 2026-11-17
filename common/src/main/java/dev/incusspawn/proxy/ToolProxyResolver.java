@@ -140,8 +140,33 @@ public final class ToolProxyResolver {
                 .collect(Collectors.toCollection(java.util.HashSet::new));
         // The proxy reports what it drops; a CLI writer only needs the names
         domains.addAll(hostRoutes(config, acrossAccounts, warning -> {}).keySet());
-        domains.addAll(handlerDomains(config.tree()));
+        domains.addAll(handlerDomains(config));
         return Set.copyOf(domains);
+    }
+
+    /**
+     * Every domain a built-in handler serves under {@code config}: {@link #handlerDomains(JqValue)}'s,
+     * and those of the Maven repositories {@code maven-repositories:} declares for caching (#2312),
+     * which may claim none of isx's own. The one place the proxy and {@link #resolvedDomains} take
+     * them from, so a configured repository is intercepted, its certificate minted and its name in
+     * the bridge DNS block, on a reload too.
+     */
+    public static Set<String> handlerDomains(SpawnConfig config) {
+        var tree = config.tree();
+        var builtIn = handlerDomains(tree);
+        var repositories = config.mavenRepositories().domains(repositoryDomainsTaken(builtIn));
+        if (repositories.isEmpty()) return builtIn;
+        var all = new java.util.HashSet<>(builtIn);
+        all.addAll(repositories);
+        return Set.copyOf(all);
+    }
+
+    /** The domains a {@code maven-repositories:} entry may not claim, beside {@code handlerDomains}' own. */
+    public static Set<String> repositoryDomainsTaken(Set<String> handlerDomains) {
+        var taken = new java.util.HashSet<>(dev.incusspawn.config.MavenRepositories.builtInTaken());
+        taken.addAll(handlerDomains);
+        taken.addAll(ChatGptAccounts.DOMAINS);
+        return Set.copyOf(taken);
     }
 
     /**

@@ -74,10 +74,51 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
         return Map.copyOf(sorted);
     }
 
+    /**
+     * The built-in repositories and those of config.yaml's {@code maven-repositories:} that hold
+     * against the tool proxy entries {@code toolProxies} (every account's): a public repository on a
+     * domain a tool injects a credential for is dropped, since its cache would take the domain's
+     * requests from that injection; a private one needs an entry of its own namespace there.
+     */
+    static List<CachedRepository> withConfigured(List<dev.incusspawn.config.MavenRepositories.Entry> entries,
+                                                 java.util.Collection<ResolvedToolProxy> toolProxies,
+                                                 java.util.function.Consumer<String> warn) {
+        var all = new ArrayList<>(BUILT_IN);
+        for (var entry : entries) {
+            var injecting = toolProxies.stream().filter(tp -> covers(tp.domain(), entry.domain())).toList();
+            if (!entry.isPrivate() && !injecting.isEmpty()) {
+                warn.accept("Ignoring maven-repositories " + entry.url() + " in config.yaml: a tool injects a credential"
+                        + " at " + entry.domain() + ", so it is private; declare it access: private with credentials: "
+                        + injecting.getFirst().namespaces().stream().sorted().findFirst().orElse("<namespace>"));
+                continue;
+            }
+            if (entry.isPrivate() && injecting.stream().noneMatch(tp -> tp.namespaces().contains(entry.credentials()))) {
+                warn.accept("Ignoring maven-repositories " + entry.url() + " in config.yaml: no tool injects a "
+                        + entry.credentials() + " credential at " + entry.domain()
+                        + ", so its requests are relayed uncached");
+                continue;
+            }
+            var revalidation = (entry.checksumHeader() ? Revalidation.HEAD_CHECKSUM : Revalidation.SIDECAR)
+                    .trustedFor(new ArtifactCacheTiers(entry.fresh(), entry.maxStale()));
+            if (entry.replacesReleases() || entry.isPrivate()) revalidation = revalidation.onlyConfirmed();
+            all.add(new CachedRepository(entry.domain(), entry.pathPrefix(), Layout.MAVEN, revalidation, entry.credentials()));
+        }
+        return List.copyOf(all);
+    }
+
+    /** Whether a tool proxy entry for {@code entryDomain} (exact, or {@code *.suffix}) covers {@code domain}. */
+    private static boolean covers(String entryDomain, String domain) {
+        if (entryDomain.startsWith("*.")) {
+            var base = entryDomain.substring(2);
+            return domain.equals(base) || domain.endsWith("." + base);
+        }
+        return entryDomain.equals(domain);
+    }
+
     /** The built-in domains, which a configured repository may not take. */
+    static final Set<String> BUILT_IN_DOMAINS = Set.copyOf(BUILT_IN.stream().map(CachedRepository::domain).toList());
+
     static Set<String> builtInDomains() {
-        var domains = new java.util.HashSet<String>();
-        BUILT_IN.forEach(r -> domains.add(r.domain()));
-        return Set.copyOf(domains);
+        return BUILT_IN_DOMAINS;
     }
 }

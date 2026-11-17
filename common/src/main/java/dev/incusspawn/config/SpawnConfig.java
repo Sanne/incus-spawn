@@ -86,6 +86,11 @@ public class SpawnConfig extends UndeclaredKeys {
     @JqName("exposed-host-ports")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object exposedHostPorts;
+    // Maven repositories beyond isx's own whose artifacts the proxy caches (MavenRepositories,
+    // #2312). Raw like host-routes, so a mistyped section loads and is written back as it was.
+    @JqName("maven-repositories")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object mavenRepositories;
     // What an external tool that drives isx may do to its instances (Drivers, #1720). Raw like
     // host-routes, so a mistyped section loads and is written back as it was.
     @JqName("drivers")
@@ -693,6 +698,9 @@ public class SpawnConfig extends UndeclaredKeys {
     /** The {@code exposed-host-ports:} key; it exposes nothing when there is none. */
     public ExposedHostPorts exposedHostPorts() { return ExposedHostPorts.of(exposedHostPorts); }
 
+    /** The {@code maven-repositories:} section; it declares none when there is none. */
+    public MavenRepositories mavenRepositories() { return MavenRepositories.of(mavenRepositories); }
+
     /** The {@code drivers:} section; it grants nothing when there is none. */
     public Drivers drivers() { return Drivers.of(drivers); }
 
@@ -848,6 +856,7 @@ public class SpawnConfig extends UndeclaredKeys {
         this.readyTimeouts = other.readyTimeouts;
         this.hostRoutes = other.hostRoutes;
         this.exposedHostPorts = other.exposedHostPorts;
+        this.mavenRepositories = other.mavenRepositories;
         this.drivers = other.drivers;
         this.hostCa = other.hostCa;
         getExtras().clear();

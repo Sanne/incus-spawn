@@ -68,7 +68,10 @@ class ArtifactCacheProxyTest {
     static final String PORTAL = "plugins.gradle.org";
     static final String GRADLE = "services.gradle.org";
     static final String GRADLE_DOWNLOADS = "downloads.gradle.org";
-    static final List<String> REPOSITORY_HOSTS = List.of(CENTRAL, PORTAL, GRADLE, GRADLE_DOWNLOADS);
+    /** A repository config.yaml declares (#2312), not one isx caches by itself. */
+    static final String DECLARED = "maven.example.com";
+    static final String DECLARED_JAR = "/repo/org/example/lib/1.0/lib-1.0.jar";
+    static final List<String> REPOSITORY_HOSTS = List.of(CENTRAL, PORTAL, GRADLE, GRADLE_DOWNLOADS, DECLARED);
     static final String JAR = "/maven2/org/example/lib/1.0/lib-1.0.jar";
     static final String PLUGIN_JAR = "/m2/org/example/plugin/1.0/plugin-1.0.jar";
     static final String DIST = "/distributions/gradle-9.0-bin.zip";
@@ -448,6 +451,8 @@ class ArtifactCacheProxyTest {
         // Most tests are about confirming a hit; the tiers that skip it have tests of their own
         proxy.artifactCache.artifactCacheTiers = ArtifactCacheTiers.CONFIRM_EVERY_HIT;
         proxy.artifactCache.logCacheStats();
+        proxy.artifactCache.useRepositories(CachedRepository.BUILT_IN);
+        proxy.artifactCache.warnedHeaderless.clear();
         online();
         for (var dir : new Path[] {Environment.mavenCacheDir(), Environment.gradleCacheDir(),
                 Environment.m2Repository()}) {
@@ -699,6 +704,123 @@ class ArtifactCacheProxyTest {
     }
 
     // --- tests ---
+
+    /** Declare {@link #DECLARED} in config.yaml as {@code entry} describes it, and reload, as the watcher would. */
+    static void declare(String entry) throws Exception {
+        Files.writeString(tempHome.resolve(".config/incus-spawn/config.yaml"), "maven-repositories:\n"
+                + "  - url: https://" + DECLARED + "/repo/\n" + entry.indent(4));
+        proxy.reload();
+        proxy.artifactCache.artifactCacheTiers = ArtifactCacheTiers.CONFIRM_EVERY_HIT;
+    }
+
+    /** A jar on {@link #DECLARED}, with the checksum header Artifactory sends. */
+    static void publishDeclared(String content) throws Exception {
+        publish(DECLARED, DECLARED_JAR, content, "SHA-1", ".sha1");
+        var bytes = content.getBytes(StandardCharsets.UTF_8);
+        routes.put(DECLARED + " " + DECLARED_JAR, new Reply(200, bytes, null, hex("SHA-1", bytes)));
+    }
+
+    @Test
+    void aDeclaredRepositoryIsCachedAndConfirmedAsItsEntrySays() throws Exception {
+        declare("""
+                access: public
+                confirm: checksum-header
+                replaces-releases: false
+                """);
+        publishDeclared("v1");
+        assertEquals("v1", get(DECLARED, DECLARED_JAR).text());
+        awaitFile(cached(DECLARED, DECLARED_JAR), "v1");
+
+        hits.clear();
+        var hit = get(DECLARED, DECLARED_JAR);
+        assertEquals("v1", hit.text());
+        assertEquals(1, headsOn(DECLARED, DECLARED_JAR), "its tiers default to 0, so the hit is confirmed first");
+        assertEquals(0, hitsOn(DECLARED, DECLARED_JAR), "served from the cache");
+    }
+
+    @Test
+    void aDeclaredRepositorysOwnTiersOutrankTheConfiguredOnes() throws Exception {
+        declare("""
+                access: public
+                confirm: checksum-header
+                replaces-releases: false
+                fresh: 1d
+                max-stale: 7d
+                """);
+        publishDeclared("v1");
+        get(DECLARED, DECLARED_JAR);
+        awaitFile(cached(DECLARED, DECLARED_JAR), "v1");
+
+        hits.clear();
+        assertEquals("v1", get(DECLARED, DECLARED_JAR).text());
+        assertEquals(0, headsOn(DECLARED, DECLARED_JAR), "fresh for a day, whatever artifact-cache: says");
+    }
+
+    @Test
+    void aPathOutsideTheDeclaredPrefixIsRelayedUncached() throws Exception {
+        declare("""
+                access: public
+                confirm: checksum-header
+                replaces-releases: false
+                """);
+        var outside = "/other/org/example/lib/1.0/lib-1.0.jar";
+        routes.put(DECLARED + " " + outside, new Reply(200, "x".getBytes(), null, hex("SHA-1", "x".getBytes())));
+        assertEquals("x", get(DECLARED, outside).text());
+        get(DECLARED, outside);
+        assertEquals(2, hitsOn(DECLARED, outside));
+        assertFalse(Files.exists(cached(DECLARED, outside)));
+    }
+
+    @Test
+    void aRepositoryThatReplacesReleasesIsNeverServedOffline() throws Exception {
+        declare("""
+                access: public
+                confirm: checksum-header
+                replaces-releases: true
+                """);
+        publishDeclared("v1");
+        get(DECLARED, DECLARED_JAR);
+        awaitFile(cached(DECLARED, DECLARED_JAR), "v1");
+
+        offline();
+        var answer = get(DECLARED, DECLARED_JAR);
+        assertNotEquals(200, answer.status(), "a copy it may have replaced is not served on a past confirmation");
+        assertNotEquals("v1", answer.text());
+    }
+
+    @Test
+    void aDeclaredChecksumHeaderThatNeverComesIsNamedAndNothingUnsoundIsCached() throws Exception {
+        declare("""
+                access: public
+                confirm: checksum-header
+                replaces-releases: true
+                """);
+        // As Nexus 3 answers: the .sha1 beside the jar, no X-Checksum-SHA1 header
+        publish(DECLARED, DECLARED_JAR, "v1", "SHA-1", ".sha1");
+        assertEquals("v1", get(DECLARED, DECLARED_JAR).text());
+        // Named once the download is verified, which may end after the client has the body
+        await("the declaration to be named in the log", () -> proxy.artifactCache.warnedHeaderless.contains(DECLARED));
+        assertFalse(Files.exists(cached(DECLARED, DECLARED_JAR)),
+                "a sidecar is no sound check where releases are replaced, so nothing is cached");
+        assertEquals(0, hitsOn(DECLARED, DECLARED_JAR + ".sha1"));
+    }
+
+    @Test
+    void aRequestWithItsOwnCredentialToADeclaredPublicRepositoryIsNeverCached() throws Exception {
+        declare("""
+                access: public
+                confirm: checksum-header
+                replaces-releases: false
+                """);
+        publishDeclared("v1");
+        var answer = requestAsync(DECLARED, DECLARED_JAR, req -> req.putHeader("Authorization", "Basic dXNlcjpwYXNz")
+                .send().compose(resp -> resp.body().map(b -> resp.statusCode())))
+                .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        assertEquals(200, answer);
+        // The relay has ended once the client has the body; nothing was stored on the way
+        assertFalse(Files.exists(cached(DECLARED, DECLARED_JAR)),
+                "what a credential reads may be private, and the cache is every instance's");
+    }
 
     @Test
     void centralMissIsOneGetVerifiedAgainstItsOwnChecksumHeader() throws Exception {

@@ -586,8 +586,12 @@ public class MitmProxy {
         configState = new ConfigState(config, tree, setups, credentials, acrossAccounts,
                 HostRouteRelay.served(ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn),
                         name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)), nested,
-                ToolProxyResolver.handlerDomains(tree));
+                ToolProxyResolver.handlerDomains(config));
         artifactCache.artifactCacheTiers = ArtifactCacheTiers.from(config);
+        artifactCache.useRepositories(CachedRepository.withConfigured(
+                config.mavenRepositories().entries(ToolProxyResolver.repositoryDomainsTaken(
+                        ToolProxyResolver.handlerDomains(tree)), ProxyLog::warn),
+                acrossAccounts, ProxyLog::warn));
         exposedHostPorts = withoutOwnPorts(config.exposedHostPorts().ports(ProxyLog::warn));
         return previous;
     }
@@ -1411,7 +1415,16 @@ public class MitmProxy {
     private void serveProvenRequest(ConfigState state, HttpServerRequest clientReq, String domain,
                                      Proof proof, ApiActivity.Flow flow, long started) {
         try {
-            handleApiRequest(clientReq, contextFor(state, domain, proof.caller(), proof.namespaces(), flow), started);
+            var ctx = contextFor(state, domain, proof.caller(), proof.namespaces(), flow);
+            var credential = privateRepositoryCredential(clientReq, ctx);
+            var taken = credential == null ? null : artifactCache.privateTarget(clientReq, domain, credential);
+            if (taken != null) {
+                // Paused for authorize; a GET with no body, as every cache handler sees it
+                clientReq.resume();
+                artifactCache.servePrivate(clientReq, started, domain, taken);
+                return;
+            }
+            handleApiRequest(clientReq, ctx, started);
         } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
                  | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
             ProxyLog.warn("Refusing " + domain + " for " + describe(proof.caller()) + refusal(e));
@@ -1420,6 +1433,27 @@ public class MitmProxy {
             ProxyLog.error("Refusing " + domain + " for " + describe(proof.caller()) + refusal(e));
             CallerCheck.refuse(clientReq, 502, "Internal proxy error");
         }
+    }
+
+    /**
+     * The credential a proven request to a private Maven repository (#2312) would be sent with, for
+     * the cache to send in its place, or null when the cache does not take the request: it has a
+     * body, no private repository holds its path, or it did not prove the namespace the repository
+     * names. Only the entry the relay would inject, of that namespace, and never an inherited one,
+     * whose real credential is the parent's to send.
+     */
+    private ArtifactCacheHandler.Credential privateRepositoryCredential(HttpServerRequest clientReq, RequestContext ctx) {
+        var domain = ctx.domain();
+        var repository = artifactCache.privateRepository(domain, clientReq.path());
+        if (repository == null || hasBody(clientReq)) return null;
+        var namespace = repository.credentials();
+        if (!ctx.proven().contains(namespace) || ctx.creds().inheritedNamespaces().contains(namespace)) return null;
+        var tp = findToolProxy(ctx.routing(), domain, clientReq.uri());
+        if (tp == null || !tp.namespaces().contains(namespace) || !ctx.proves(tp)) return null;
+        var header = tp.headerName();
+        var value = tp.computeHeaderValue();
+        return header == null || value == null || value.isBlank() ? null
+                : new ArtifactCacheHandler.Credential(namespace, header, value);
     }
 
     /** A burst can suppress warnings for five minutes, never for the proxy's whole lifetime. */

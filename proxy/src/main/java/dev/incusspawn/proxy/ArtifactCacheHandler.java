@@ -108,6 +108,57 @@ class ArtifactCacheHandler {
     volatile ArtifactCacheTiers artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
     // The repositories whose artifacts are cached, by domain, the longest prefix first (#2312)
     private volatile Map<String, List<CachedRepository>> repositories = CachedRepository.byDomain(CachedRepository.BUILT_IN);
+    // The private ones, reached only through a proven request's credential (servePrivate)
+    private volatile Map<String, List<CachedRepository>> privateRepositories = Map.of();
+    // Keys the per-credential partitions of the private cache, read once a private repository is declared
+    private volatile byte[] partitionKey;
+    // Each credential's partition name, so a hit computes no HMAC; a handful of entries, one per credential seen
+    private final ConcurrentHashMap<Credential, String> partitions = new ConcurrentHashMap<>();
+
+    /** Where private repositories' copies live: one partition per credential, never a domain's name. */
+    static Path privateCacheDir() {
+        return mavenCacheDir().resolve(".private");
+    }
+
+    /** The private repository on {@code domain} whose prefix holds {@code path}, or null. */
+    CachedRepository privateRepository(String domain, String path) {
+        var cached = privateRepositories.get(domain);
+        return cached == null || path == null ? null : repositoryOf(cached, path);
+    }
+
+    /**
+     * Where a proven GET for an artifact of a private repository (#2312) is cached for its
+     * {@code credential}, or null for a request the cache does not take (a sidecar, metadata, a
+     * SNAPSHOT, a query), which goes through the credentialed relay instead. Decides only: nothing
+     * is read or sent.
+     */
+    PrivateTarget privateTarget(HttpServerRequest clientReq, String domain, Credential credential) {
+        var path = clientReq.path();
+        var repository = privateRepository(domain, path);
+        var key = partitionKey;
+        if (repository == null || key == null || clientReq.method() != HttpMethod.GET || clientReq.query() != null
+                || Sidecar.of(path) != null || !isMavenCacheable(path)) {
+            return null;
+        }
+        var partition = privateCacheDir().resolve(partitions.computeIfAbsent(credential,
+                c -> PrivatePartitions.of(key, c)));
+        var artifact = cacheFileUnder(partition, domain, path);
+        return artifact == null ? null
+                : new PrivateTarget(repository, new ArtifactTarget(artifact, Sidecar.SHA1, null, credential));
+    }
+
+    /** A private repository's request the cache takes, and where its copy lives. */
+    record PrivateTarget(CachedRepository repository, ArtifactTarget target) {}
+
+    /**
+     * Serve {@code taken} from the copy cached for its credential, or download and cache it there.
+     * Every hit is confirmed first with a HEAD carrying that credential: upstream decides each
+     * serve, so an account that lost access is refused at once, and nothing is served while
+     * upstream cannot be asked.
+     */
+    void servePrivate(HttpServerRequest clientReq, long started, String domain, PrivateTarget taken) {
+        serveArtifact(clientReq, started, domain, taken.repository().revalidation(), taken.target());
+    }
 
     ArtifactCacheHandler(Vertx vertx, Upstream upstream) {
         this.vertx = vertx;
@@ -116,7 +167,18 @@ class ArtifactCacheHandler {
 
     /** Cache these repositories' artifacts from now on: the built-in ones and config.yaml's. */
     void useRepositories(List<CachedRepository> cached) {
-        repositories = CachedRepository.byDomain(cached);
+        repositories = CachedRepository.byDomain(cached.stream().filter(r -> !r.isPrivate()).toList());
+        var privateOnes = cached.stream().filter(CachedRepository::isPrivate).toList();
+        // A reload may have replaced a credential: its old partition's name goes with it
+        partitions.clear();
+        if (!privateOnes.isEmpty() && partitionKey == null) {
+            partitionKey = PrivatePartitions.loadOrCreateKey(privateCacheDir(), ProxyLog::warn);
+            if (partitionKey == null) {
+                ProxyLog.warn("Private Maven repositories are relayed uncached: their cache has no usable key");
+                privateOnes = List.of();
+            }
+        }
+        privateRepositories = CachedRepository.byDomain(privateOnes);
         upstream.backoffDomains = backoffDomains(cached);
     }
 
@@ -229,20 +291,21 @@ class ArtifactCacheHandler {
      */
     private void fetchCacheAndServe(HttpServerRequest clientReq, long started, String domain,
                                     Path cacheFile, String ref, Verification verification) {
+        fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, null, verification);
+    }
+
+    /** {@code credential}: a private repository's, sent in place of the client's own (#2312). */
+    private void fetchCacheAndServe(HttpServerRequest clientReq, long started, String domain,
+                                    Path cacheFile, String ref, Credential credential, Verification verification) {
         // Never a body: the fetch sends none, whatever the client did
-        fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, verification, Upstream.mayResend(clientReq, false));
+        fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, credential, verification,
+                Upstream.mayResend(clientReq, false), 0);
     }
 
-    /** One attempt at the fetch; {@code resend} lets it make one more on a new request. */
+    /** One attempt at the fetch; {@code resend} lets it make one more on a new request; {@code throttled} counts the 429s it has already waited out. */
     private void fetchCacheAndServe(HttpServerRequest clientReq, long started, String domain,
-                                    Path cacheFile, String ref, Verification verification, boolean resend) {
-        fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, verification, resend, 0);
-    }
-
-    /** {@code throttled} counts the 429s this fetch has already waited out. */
-    private void fetchCacheAndServe(HttpServerRequest clientReq, long started, String domain,
-                                    Path cacheFile, String ref, Verification verification, boolean resend,
-                                    int throttled) {
+                                    Path cacheFile, String ref, Credential credential, Verification verification,
+                                    boolean resend, int throttled) {
         var options = new RequestOptions()
                 .setMethod(clientReq.method())
                 .setHost(domain)
@@ -254,6 +317,7 @@ class ArtifactCacheHandler {
             // A head that never comes is an error the client can retry, not a silent drop
             upReq.idleTimeout(upstream.timeoutLeftMillis(started));
             upstream.copyRequestHeaders(clientReq, upReq, domain);
+            if (credential != null) upReq.putHeader(credential.header(), credential.value());
             // Never Connection: close, here or on a redirect or resume, so the connection is pooled
             // again (#2082). A server that closes anyway loses nothing: ResponseHold (#2088)
 
@@ -271,8 +335,12 @@ class ArtifactCacheHandler {
                 } else if (statusCode == 429 && !REGISTRY_DOMAINS.contains(domain)
                         && waitOutThrottle(clientReq, started, domain, upResp, ref, throttled,
                                 () -> fetchCacheAndServe(clientReq, started, domain, cacheFile, ref,
-                                        verification, resend, throttled + 1))) {
+                                        credential, verification, resend, throttled + 1))) {
                     // Asked again when the domain's schedule says, within the client's budget (#2302)
+                } else if (statusCode >= 300 && statusCode < 400 && credential != null) {
+                    // A private repository's redirect goes to the client, whose next request is proven
+                    // and credentialed again: followed here, it would go out without the credential
+                    upstream.relayResponse(clientReq, domain, upResp, started);
                 } else if (statusCode >= 300 && statusCode < 400) {
                     // Follow redirect manually — Vert.x setFollowRedirects carries
                     // the original Host header, which breaks cross-domain redirects
@@ -286,7 +354,7 @@ class ArtifactCacheHandler {
                 if (resend && !clientReq.response().closed() && Upstream.closedUnanswered(err)) {
                     // A pooled connection upstream closed as the fetch went out on it (#1923)
                     ProxyLog.trace("Upstream closed fetching " + ref + ", sending again: " + err.getMessage());
-                    fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, verification, false, throttled);
+                    fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, credential, verification, false, throttled);
                     return;
                 }
                 ProxyLog.warn("Upstream error fetching " + ref + ": " + err.getMessage());
@@ -1485,7 +1553,24 @@ class ArtifactCacheHandler {
     }
 
     /** Where a request's artifact is cached, the checksum describing it, and any copy in the host's ~/.m2. */
-    record ArtifactTarget(Path artifact, Sidecar checksum, Path hostCopy) {}
+    record ArtifactTarget(Path artifact, Sidecar checksum, Path hostCopy, Credential credential) {
+        ArtifactTarget(Path artifact, Sidecar checksum, Path hostCopy) {
+            this(artifact, checksum, hostCopy, null);
+        }
+    }
+
+    /**
+     * The credential a private repository's request carries upstream (#2312): the header the proxy
+     * injected for the caller's proven account, in the namespace the repository names. Never a
+     * {@code RequestContext}: the cache sees the one header it sends and nothing it could choose by.
+     * Every confirmation and download of that request sends it, so upstream decides each serve.
+     */
+    record Credential(String namespace, String header, String value) {
+        @Override
+        public String toString() {
+            return "Credential[" + namespace + ", " + header + "]";
+        }
+    }
 
     private static final int MAX_SIDECAR_BYTES = 64 * 1024;
 
@@ -1502,13 +1587,16 @@ class ArtifactCacheHandler {
         var path = clientReq.path();
         var repository = path == null ? null : repositoryOf(cached, path);
 
-        if (clientReq.method() == HttpMethod.GET && clientReq.query() == null && repository != null) {
+        if (clientReq.method() == HttpMethod.GET && clientReq.query() == null && repository != null
+                && !carriesOwnCredential(clientReq, repository)) {
             var revalidation = repository.revalidation();
             var sidecar = Sidecar.of(path);
             var artifactPath = sidecar == null ? path : sidecar.artifactPath(path);
             // A sidecar of a sidecar (foo.jar.asc.sha1) has no artifact to cache
             var target = Sidecar.of(artifactPath) == null ? targetOf(repository, artifactPath) : null;
-            if (target != null && revalidation.fits(target.checksum())) {
+            if (target != null && revalidation.fits(target.checksum())
+                    // Its stored sidecars would be served on a past confirmation: upstream answers for them
+                    && !(sidecar != null && revalidation.servesOnlyConfirmed())) {
                 if (sidecar != null) {
                     serveSidecar(clientReq, domain, revalidation, sidecar, target);
                 } else {
@@ -1519,6 +1607,56 @@ class ArtifactCacheHandler {
         }
 
         upstream.relayRequest(clientReq, domain, started);
+    }
+
+    /**
+     * Whether a request to a public repository config.yaml declared carries a credential of the
+     * client's own. It is relayed, never cached: the cache is shared by every instance, and the
+     * repository answering a credential may be a private one declared public by mistake. The
+     * built-in ones are public whatever a client sends.
+     */
+    private static boolean carriesOwnCredential(HttpServerRequest clientReq, CachedRepository repository) {
+        if (CachedRepository.BUILT_IN_DOMAINS.contains(repository.domain())) return false;
+        for (var header : CLIENT_CREDENTIAL_HEADERS) {
+            if (clientReq.headers().contains(header)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The headers a client carries a credential of its own in: the standard ones, and the token
+     * headers repository managers take (GitLab's, Artifactory's), so none of them fills the shared cache.
+     */
+    private static final List<String> CLIENT_CREDENTIAL_HEADERS = List.of("Authorization", "Cookie",
+            "Private-Token", "Job-Token", "Deploy-Token", "X-JFrog-Art-Api", "X-Api-Key");
+
+    // Declared repositories already warned about for answering without their checksum header
+    final Set<String> warnedHeaderless = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Say once per domain that a repository config.yaml declared {@code confirm: checksum-header}
+     * answered an artifact without that header: its copies are then confirmed by the sidecar, or,
+     * where that is unsound, never cached, and nothing else would tell the user why.
+     */
+    private void warnHeaderless(String domain, Revalidation revalidation) {
+        if (CachedRepository.BUILT_IN_DOMAINS.contains(domain) || !warnedHeaderless.add(domain)) return;
+        ProxyLog.warn(domain + " answered an artifact without " + revalidation.header()
+                + ", which maven-repositories: in config.yaml declares it sends (confirm: checksum-header); "
+                + (revalidation.servesOnlyConfirmed() ? "its artifacts are not cached"
+                        : "its artifacts are confirmed by their .sha1 instead")
+                + ". Check the declaration against what the server sends.");
+    }
+
+    /**
+     * Relay a request the cache could not serve. Not a private repository's: the relay sends no
+     * credential of its own, so it would only carry the guest's proof upstream.
+     */
+    private void relayUncached(HttpServerRequest clientReq, String domain, long started, ArtifactTarget target) {
+        if (target.credential() != null) {
+            upstream.sendError(clientReq.response(), 502, "Artifact cache error");
+        } else {
+            upstream.relayRequest(clientReq, domain, started);
+        }
     }
 
     /** The repository among a domain's {@code cached} ones whose prefix holds {@code path}, or null. */
@@ -1587,7 +1725,7 @@ class ArtifactCacheHandler {
             }
         }).onFailure(err -> {
             ProxyLog.trace("Artifact cache check error for " + ref + ": " + err.getMessage());
-            upstream.relayRequest(clientReq, domain, started);
+            relayUncached(clientReq, domain, started, target);
         });
     }
 
@@ -1747,10 +1885,10 @@ class ArtifactCacheHandler {
     }
 
     /** Ask upstream for the artifact's current checksum, the way the domain allows. */
-    private Future<SidecarAnswer> probe(String domain, String path, Revalidation revalidation, Sidecar checksum) {
+    private Future<SidecarAnswer> probe(String domain, String path, Revalidation revalidation, ArtifactTarget target) {
         return revalidation.header() != null
-                ? fetchChecksumHeader(domain, path, revalidation)
-                : fetchSidecar(domain, path + checksum.extension);
+                ? fetchChecksumHeader(domain, path, revalidation, target.credential())
+                : fetchSidecar(domain, path + target.checksum().extension);
     }
 
     /** Upstream's answer, and what it did to the cached copy: no outcome when upstream was unreachable. */
@@ -1769,7 +1907,7 @@ class ArtifactCacheHandler {
         var lookedUp = Instant.now();
         var probed = inBackoff(domain)
                 ? Future.succeededFuture(SidecarAnswer.UNREACHABLE)
-                : probe(domain, path, revalidation, target.checksum());
+                : probe(domain, path, revalidation, target);
         return probed.compose(answer -> answer.unreachable()
                 ? Future.succeededFuture(new Confirmed(answer, null))
                 : vertx.executeBlocking(() -> new Confirmed(answer, VerifiedArtifactStore.reconcile(
@@ -1802,7 +1940,7 @@ class ArtifactCacheHandler {
             }
         }).onFailure(err -> {
             ProxyLog.trace("Artifact revalidation error for " + ref + ": " + err.getMessage());
-            upstream.relayRequest(clientReq, domain, started);
+            relayUncached(clientReq, domain, started, target);
         });
     }
 
@@ -1834,7 +1972,7 @@ class ArtifactCacheHandler {
                                               String ref) {
         var checksum = target.checksum();
         var lookedUp = Instant.now();
-        return probe(domain, path, revalidation, checksum).compose(answer -> {
+        return probe(domain, path, revalidation, target).compose(answer -> {
             if (answer == SidecarAnswer.UNREACHABLE || answer.status() != 200 || checksum.hex(answer.body()) == null) {
                 return Future.succeededFuture(new HostImport(answer, -1));
             }
@@ -1873,10 +2011,13 @@ class ArtifactCacheHandler {
     private void download(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                           ArtifactTarget target, String ref) {
         var sidecarPath = clientReq.path() + target.checksum().extension;
-        fetchCacheAndServe(clientReq, started, domain, target.artifact(), ref,
+        fetchCacheAndServe(clientReq, started, domain, target.artifact(), ref, target.credential(),
                 Verification.ofArtifact(target.checksum(), upResp -> {
                     var hex = revalidation.checksumFrom(upResp);
                     if (hex != null) return Future.succeededFuture(hex.getBytes(StandardCharsets.US_ASCII));
+                    // Served, not cached: a sidecar would be no sound check of these bytes
+                    if (revalidation.header() != null) warnHeaderless(domain, revalidation);
+                    if (revalidation.servesOnlyConfirmed() && revalidation.header() != null) return Future.succeededFuture(null);
                     return fetchSidecar(domain, sidecarPath).map(answer -> answer.status() == 200 ? answer.body() : null);
                 }));
     }
@@ -2106,16 +2247,25 @@ class ArtifactCacheHandler {
      * the sidecar; any other status is returned as is.
      */
     Future<SidecarAnswer> fetchChecksumHeader(String domain, String path, Revalidation revalidation) {
-        return retryOnceAfterConnect(() -> upstream.requestWithAsyncDns(upstream.probeClient, probeOptions(HttpMethod.HEAD, domain, 443, path))
+        return fetchChecksumHeader(domain, path, revalidation, null);
+    }
+
+    /** As above, sending {@code credential} when it is not null: a private repository's HEAD. */
+    Future<SidecarAnswer> fetchChecksumHeader(String domain, String path, Revalidation revalidation, Credential credential) {
+        var options = probeOptions(HttpMethod.HEAD, domain, 443, path);
+        if (credential != null) options.putHeader(credential.header(), credential.value());
+        return retryOnceAfterConnect(() -> upstream.requestWithAsyncDns(upstream.probeClient, options)
                         .compose(req -> afterConnect(upstream.sendProbe(req, (resp, read) -> resp.end().map(v -> {
                             var status = resp.statusCode();
                             if (status != 200) return new SidecarAnswer(status, null, true);
                             var hex = revalidation.checksumFrom(resp);
+                            if (hex == null) warnHeaderless(domain, revalidation);
                             return hex == null ? null : new SidecarAnswer(200, hex.getBytes(StandardCharsets.US_ASCII), true);
                         })))))
                 .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE))
-                .compose(answer -> answer != null
-                        ? Future.succeededFuture(answer)
+                .compose(answer -> answer != null ? Future.succeededFuture(answer)
+                        // A sidecar is uploaded apart from its artifact: no confirmation where releases are replaced
+                        : revalidation.servesOnlyConfirmed() ? Future.succeededFuture(SidecarAnswer.UNUSABLE)
                         : fetchSidecar(domain, path + revalidation.headerChecksum().extension));
     }
 
@@ -2268,10 +2418,11 @@ class ArtifactCacheHandler {
      * <ul>
      *   <li>{@code maven-metadata.xml}: confirming a hit costs the same round trip
      *       as fetching the file, so caching it gains nothing.</li>
-     *   <li>SNAPSHOTs: no cached domain serves them (Central and the Plugin Portal
-     *       reject them). Were one to, its sidecars would be unsound confirmation
-     *       (see {@link Revalidation#SIDECAR}), and offline serves of content
-     *       replaced on every deploy would rarely be what a fetch returns.</li>
+     *   <li>SNAPSHOTs: Central and the Plugin Portal reject them, but a declared
+     *       repository may serve them. Their content is replaced on every deploy, so
+     *       sidecar confirmation would be unsound (see {@link Revalidation#SIDECAR}),
+     *       offline serves would rarely be what a fetch returns, and confirming each
+     *       one would cost what fetching it costs.</li>
      * </ul>
      */
     private static boolean isMavenCacheable(String path) {
@@ -2295,7 +2446,12 @@ class ArtifactCacheHandler {
 
     /** Where a Maven repository URL path is cached, or null if it would land outside the domain's cache. */
     static Path mavenCacheFile(String domain, String urlPath) {
-        var domainRoot = mavenCacheDir().resolve(domain);
+        return cacheFileUnder(mavenCacheDir(), domain, urlPath);
+    }
+
+    /** Where a URL path of {@code domain} is cached under {@code root}, or null if it would land outside the domain's directory. */
+    private static Path cacheFileUnder(Path root, String domain, String urlPath) {
+        var domainRoot = root.resolve(domain);
         var file = domainRoot.resolve(urlPath.substring(1)).normalize();
         return file.startsWith(domainRoot) && !file.equals(domainRoot) ? file : null;
     }

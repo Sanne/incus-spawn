@@ -377,7 +377,8 @@ isx caches only content it can verify: isx checks everything against its digest 
 Proxy caches, from instance traffic:
 
 - **Container image layers**: OCI blobs from Docker Hub, GHCR and Quay, keyed by SHA256 content digest.
-- **Maven and Gradle artifacts**: release JARs, POMs and plugins from Maven Central and the Gradle plugin portal, verified against the upstream checksum and re-confirmed with upstream as they age (a `HEAD` on Maven Central, the checksum file elsewhere).
+- **Maven and Gradle artifacts**: release JARs, POMs and plugins from Maven Central, the Gradle plugin portal and the [repositories you declare](#more-maven-repositories).
+  The proxy checks each against the upstream checksum, and checks it with upstream again as it ages.
   When the repository is unreachable, the proxy serves cached artifacts unconfirmed, so builds keep working offline.
 - **Gradle distributions**: verified against the `.sha256` file upstream publishes beside the distribution, and re-confirmed against it the same way.
 - **npm tarballs**: from `registry.npmjs.org`, verified against the version's published SHA-512 integrity, or its SHA-1 shasum for old versions without one.
@@ -389,7 +390,9 @@ How recently a cached Maven or Gradle artifact, or npm tarball, must have been c
 - Within `max-stale`, the proxy serves the artifact at once and confirms it again in the background; the proxy evicts a copy that upstream has changed or withdrawn, so the next request does not receive that copy.
 - Older than `max-stale`, the proxy confirms the artifact before serving it.
 
-Gradle Plugin Portal artifacts are always confirmed first, since the portal can delete a published version.
+Every repository can withdraw a release, Maven Central included, for example a release that turns out to hold malware.
+So these durations are how long the proxy may go on serving a release after upstream withdrew it.
+Gradle Plugin Portal artifacts are always confirmed first, because authors delete versions there often.
 The defaults:
 
 ```yaml
@@ -399,7 +402,56 @@ artifact-cache:
 ```
 
 Setting both to `0` makes the proxy confirm every cached artifact before serving it.
-This is not recommended: Maven Central does not allow published artifacts to change, so confirming every time only adds latency.
+On Maven Central this mostly adds latency: Central never changes a published artifact, and withdraws one only rarely.
+Without isx, Maven never checks a release again once it is in `~/.m2`, so any finite duration notices a withdrawal sooner.
+
+### More Maven repositories
+
+The proxy caches artifacts from other Maven repositories once you declare them in `config.yaml`.
+Your builds then get the same cache and rate limit handling for Google's Maven repository, JitPack, Clojars or your company's repository manager.
+Only `config.yaml` can declare one, never a template, since the cache serves every instance on the host.
+
+```yaml
+maven-repositories:
+  - url: https://maven.google.com/
+    access: public
+    confirm: sidecar           # or checksum-header
+    replaces-releases: false
+    fresh: 2h                  # optional, 0 by default
+    max-stale: 7d              # optional, 0 by default
+  - url: https://artifactory.example.com/artifactory/libs-release/
+    access: private
+    credentials: artifactory   # the credential namespace isx injects there
+    confirm: checksum-header
+    replaces-releases: false
+```
+
+The proxy cannot find out these facts by itself, so each entry states them:
+
+- `url`: the repository, up to where the Maven coordinates begin.
+  A path under no declared URL is relayed uncached.
+- `access`: `public`, or `private` with the `credentials` namespace whose account isx injects there.
+- `confirm`: how a cached copy is checked against upstream.
+  Use `checksum-header` when the server sends an `X-Checksum-SHA1` header with each artifact, as Artifactory does and Nexus 3 does not.
+  Use `sidecar` only when the repository publishes each artifact and its `.sha1` file together and never replaces them.
+- `replaces-releases`: `true` when a release can be uploaded again with other content.
+  Such a repository is confirmed before every serve, and never served offline.
+- `fresh` and `max-stale`: as in `artifact-cache:` above, for this repository alone.
+  Both are `0` by default, so every hit is confirmed first until you raise them.
+
+The proxy trusts these declarations.
+Declared wrongly as never replacing releases, a repository can get a stale artifact served from the cache, for up to its `max-stale`.
+A repository described too cautiously is only slower.
+The proxy log names any entry isx ignores because it does not hold together.
+
+Every instance shares a public repository's cache.
+A request to it that carries its own credential is never cached, in case the repository is private after all.
+
+A private repository is cached only through a credential isx injects, from a tool with a proxy credential for that domain.
+
+It needs `confirm: checksum-header`, so isx does not cache a private Nexus 3 repository yet.
+The proxy keeps a separate cache per credential, and confirms every hit with upstream using that credential.
+An account that loses access is refused at once.
 
 Build-time caches:
 
@@ -408,4 +460,4 @@ Build-time caches:
 
 The DNF cache is a volume in the Incus storage pool; every other cache lives under `~/.cache/incus-spawn/`.
 `isx clean cache` removes them all.
-Nothing expires by age or size; an artifact is dropped only when upstream changes or withdraws it.
+Nothing expires by age or size; the proxy drops an artifact once a confirmation finds that upstream changed or withdrew it.
