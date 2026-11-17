@@ -112,7 +112,7 @@ record Reclaim(Outcome outcome, Long pid) {
                     + "took the conversation within " + WAIT_SECONDS + " s.";
             case UNRECORDED -> "the reclaim could not be recorded in task " + taskId + "'s directory, so nothing was signalled.";
             case UNREADABLE -> "isx could not read what the instance did with task " + taskId
-                    + "'s conversation; task_status says whether it is still attached.";
+                    + "'s conversation, so its holder may or may not have been sent SIGHUP; task_status says whether it is still attached.";
         };
     }
 
@@ -127,8 +127,8 @@ record Reclaim(Outcome outcome, Long pid) {
                     + "join it once the turn ends: " + join;
             case OTHER -> "another agent (pid " + pid + ") holds task " + taskId + "'s conversation now, so nothing was signalled; "
                     + "to see who it is and take it: " + join + " --take";
-            case UNREADABLE -> "isx could not read what the instance did with task " + taskId + "'s conversation; "
-                    + "to see whether it is still held: " + join;
+            case UNREADABLE -> "isx could not read what the instance did with task " + taskId + "'s conversation, "
+                    + "so the other agent may or may not have been ended; to see whether it is still held: " + join;
             default -> refusal(taskId);
         };
     }
