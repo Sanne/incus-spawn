@@ -35,6 +35,9 @@ Keep the entry keyed by name with its filter as a field: #935's per-instance gra
 Each entry requires `url`, `access` (`public`, or `private` with `credentials: <namespace>`), `confirm` (`checksum-header` or `sidecar`) and `replaces-releases`; `fresh` and `max-stale` default to 0.
 An entry that is unknown-keyed, unsound (sidecar with replaced releases, private by sidecar, tiers on one confirmed before every serve) or on a domain isx intercepts for something else is dropped with a warning naming it, never failing the file.
 Its domain is intercepted through `ToolProxyResolver.handlerDomains(SpawnConfig)`; the proxy also drops a public entry on a domain a tool injects at, and a private one no tool of its namespace injects at (`CachedRepository.withConfigured`).
+**Maven mirrors** (`maven-mirrors:`, `MavenMirrors`, #2304): a raw list, read only from `config.yaml`, of `repository:` and `mirror:` URLs, each checked by `MavenRepositories.repositoryUrl` (https, port 443, a domain name outside `.internal`, plain path segments).
+An unknown key, a mirror on its repository's host or a second mirror for one repository drops the entry with a warning.
+Which repositories take one is the proxy's to say (`CachedRepository.withMirrors`: a cached public Maven repository that does not replace releases), since only it knows the built-in ones; the mirror's host is never intercepted.
 **Exposed host ports** (`exposed-host-ports:`, `ExposedHostPorts`, #2117): a raw key, read only from `config.yaml`, never a template or tool.
 Anything but a plain list of integers drops the whole key; within one, a port outside 1 to 65535 or one isx serves (443, 18443, 18080, 53) is dropped with a warning, and a duplicate kept once.
 Every instance with network reaches them, project-local ones included, since the relay cannot identify callers; see `proxy.md`.

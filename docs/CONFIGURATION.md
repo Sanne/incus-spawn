@@ -462,6 +462,36 @@ It needs `confirm: checksum-header`, so isx does not cache a private Nexus 3 rep
 The proxy keeps a separate cache per credential, and confirms every hit with upstream using that credential.
 An account that loses access is refused at once.
 
+### A mirror for a Maven repository
+
+A cold build fetches every artifact once, so it fails while Maven Central rate-limits your host.
+You can name a mirror the proxy asks first for an artifact it has not cached yet.
+When the mirror does not have the artifact, or cannot serve it, the proxy asks the repository itself.
+
+```yaml
+maven-mirrors:
+  - repository: https://repo.maven.apache.org/maven2/
+    mirror: https://maven-central.storage-download.googleapis.com/maven2/
+  - repository: https://repo1.maven.org/maven2/
+    mirror: https://maven-central.storage-download.googleapis.com/maven2/
+```
+
+`repository` names a repository the proxy caches: one of Maven Central's two names, the Gradle plugin portal, or a public repository you declared above.
+Central's two names are separate repositories, so a mirror for both needs two entries.
+Only `config.yaml` can name a mirror, never a template.
+A private repository, or one that replaces releases, cannot take a mirror.
+
+The proxy does not send the mirror your build's headers, so your credentials do not reach it.
+It checks a mirrored artifact against the mirror's checksum, and confirms it with the repository at its next use.
+A copy the repository disagrees with is dropped, and the repository's own is fetched.
+The proxy log names each artifact fetched from a mirror.
+
+Naming a mirror means trusting its operator for the build that first fetches an artifact.
+Until the repository confirms that copy, you get the bytes the mirror serves, not the repository's.
+A release the repository withdrew comes back from a mirror that still holds it, until the next use evicts it again.
+
+`maven-metadata.xml` and SNAPSHOTs still come only from the repository.
+
 Build-time caches:
 
 - **DNF packages**, shared by every build, so builds reuse each other's downloads.

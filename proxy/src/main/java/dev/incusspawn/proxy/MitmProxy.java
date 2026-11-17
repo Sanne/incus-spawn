@@ -588,10 +588,10 @@ public class MitmProxy {
                         name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)), nested,
                 ToolProxyResolver.handlerDomains(config));
         artifactCache.artifactCacheTiers = ArtifactCacheTiers.configured(config);
-        artifactCache.useRepositories(CachedRepository.withConfigured(
+        artifactCache.useRepositories(CachedRepository.withMirrors(CachedRepository.withConfigured(
                 config.mavenRepositories().entries(ToolProxyResolver.repositoryDomainsTaken(
                         ToolProxyResolver.handlerDomains(tree)), ProxyLog::warn),
-                acrossAccounts, ProxyLog::warn));
+                acrossAccounts, ProxyLog::warn), config.mavenMirrors().entries(ProxyLog::warn), ProxyLog::warn));
         exposedHostPorts = withoutOwnPorts(config.exposedHostPorts().ports(ProxyLog::warn));
         return previous;
     }
