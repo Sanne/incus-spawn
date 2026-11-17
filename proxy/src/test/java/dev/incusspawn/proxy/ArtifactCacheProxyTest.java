@@ -2421,6 +2421,8 @@ class ArtifactCacheProxyTest {
         // While the 429's backoff (#2301) lasts, the copy is served without asking: still refusing
         assertEquals("v1", get(CENTRAL, JAR).text());
         assertTrue(proxy.upstream.throttles.snapshot().get(CENTRAL).refusing());
+        assertEquals(unconfirmed + 2, proxy.upstream.throttles.snapshot().get(CENTRAL).servedUnconfirmed(),
+                "a copy served in the backoff is unconfirmed because of the 429 too");
         proxy.upstream.clearBackoffs();
         routes.put(CENTRAL + " " + JAR, jar);
         assertEquals("v1", get(CENTRAL, JAR).text());

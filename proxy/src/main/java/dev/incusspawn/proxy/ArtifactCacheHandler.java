@@ -944,8 +944,9 @@ class ArtifactCacheHandler {
             return lookup.compose(l -> vertx.executeBlocking(
                     () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, l.answer(), l.askedAt()))
                     .onSuccess(r -> {
-                        if (r != null && r.cacheHit() && l.answer().status() == 429) {
-                            upstream.throttles.servedUnconfirmed(domain);
+                        // Served unconfirmed: a lookup that could not answer, or none made during a backoff
+                        if (r != null && r.cacheHit() && l.answer().unreachable()) {
+                            upstream.throttles.servedUnconfirmed(domain, l.answer().status());
                         }
                     }));
         }).onSuccess(result -> {
@@ -1631,7 +1632,7 @@ class ArtifactCacheHandler {
                                     ArtifactTarget target, String ref, long size) {
         confirm(domain, clientReq.path(), revalidation, target).onSuccess(confirmed -> {
             if (confirmed.outcome() == null) {
-                if (confirmed.answer().status() == 429) upstream.throttles.servedUnconfirmed(domain);
+                upstream.throttles.servedUnconfirmed(domain, confirmed.answer().status());
                 recordHit(ArtifactCacheStats.Hit.UNCONFIRMED, size);
                 serveCachedFile(clientReq.response(), target.artifact(), null);
             } else if (confirmed.outcome() == VerifiedArtifactStore.Outcome.SUPERSEDED) {
@@ -1748,6 +1749,8 @@ class ArtifactCacheHandler {
             var tier = stored == null ? ArtifactCacheTiers.Tier.EXPIRED : trustTier(domain, cached);
             if (tier != ArtifactCacheTiers.Tier.EXPIRED || (stored != null && inBackoff(domain))) {
                 sendSidecar(clientReq.response(), 200, stored);
+                // An expired copy served in a backoff was not asked about upstream
+                if (tier == ArtifactCacheTiers.Tier.EXPIRED) upstream.throttles.servedUnconfirmed(domain, 0);
                 if (tier == ArtifactCacheTiers.Tier.STALE) {
                     var artifactPath = sidecar.artifactPath(clientReq.path());
                     confirmInBackground(domain, artifactPath, revalidation, target, domain + artifactPath);
@@ -1792,7 +1795,7 @@ class ArtifactCacheHandler {
                 .onSuccess(reply -> {
                     var resp = clientReq.response();
                     if (reply.unreachable() && stored != null) {
-                        if (reply.status() == 429) upstream.throttles.servedUnconfirmed(domain);
+                        upstream.throttles.servedUnconfirmed(domain, reply.status());
                         sendSidecar(resp, 200, stored);
                     } else if (reply.error() != null) {
                         upstream.sendError(resp, reply.status(), reply.error());
