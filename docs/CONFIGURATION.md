@@ -440,7 +440,7 @@ The proxy cannot find out these facts by itself, so each entry states them:
   Both are `0` by default, so every hit is confirmed first until you raise them.
 
 The proxy trusts these declarations.
-Declared wrongly as never replacing releases, a repository can get a stale artifact served from the cache, for up to its `max-stale`.
+Declared wrongly as never replacing releases, a repository can get a stale artifact served from the cache, for up to its `max-stale` and whenever upstream cannot be reached.
 A repository described too cautiously is only slower.
 The proxy log names any entry isx ignores because it does not hold together.
 
