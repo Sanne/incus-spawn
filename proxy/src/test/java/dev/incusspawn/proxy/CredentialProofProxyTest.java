@@ -44,6 +44,16 @@ class CredentialProofProxyTest {
     static final String CLAUDE_ON_VERTEX = "/v1/projects/outer-project/locations/us-east5/publishers/anthropic/models/";
     static final String SECRET = ProofTestSupport.SECRET;
     static final String BODY = "{\"model\":\"claude-test\",\"messages\":[],\"max_tokens\":7}";
+    /** What Pi's google-vertex provider sends: every top-level field it uses, a function call and its answer. */
+    static final String GEMINI_BODY = """
+            {"contents":[{"role":"user","parts":[{"text":"hi"},{"inlineData":{"mimeType":"image/png","data":"iVBO"}}]},
+            {"role":"model","parts":[{"functionCall":{"name":"read","args":{"fileData":"gs://x"}}}]},
+            {"role":"user","parts":[{"functionResponse":{"name":"read","response":{"output":"ok"},
+            "parts":[{"inlineData":{"mimeType":"image/png","data":"iVBO"}}]}}]}],
+            "systemInstruction":{"parts":[{"text":"be brief"}]},
+            "generationConfig":{"maxOutputTokens":7,"thinkingConfig":{"includeThoughts":true}},
+            "tools":[{"functionDeclarations":[{"name":"read","parametersJsonSchema":{"type":"object"}}]}],
+            "toolConfig":{"functionCallingConfig":{"mode":"AUTO"}}}""";
     static final String GITHUB_CONFIG = """
             github:
               accounts:
@@ -68,11 +78,16 @@ class CredentialProofProxyTest {
     static WebSocketClient wsClient;
     static int upstreamPort;
     static volatile CompletableFuture<Received> received;
+    /** Upstream answers the next plain HTTP request with a 401, as Vertex does a stale token. */
+    static volatile boolean unauthorizedOnce;
+    static final AtomicInteger upstreamRequests = new AtomicInteger();
     static final AtomicInteger gitChallenges = new AtomicInteger();
     static final String GIT_HEAD = "a".repeat(40);
     record Received(String uri, String host, String authorization, String key, String googleKey, String body) {}
     /** The head of the last plain HTTP request upstream received, for headers {@link Received} does not name. */
     static volatile io.vertx.core.MultiMap receivedHeaders;
+    /** {@link #http} sends no Content-Type of its own. */
+    volatile boolean noContentType;
     /** Sent with every {@link #http} request beside its own header. */
     volatile Map<String, String> extraHeaders = Map.of();
     MitmProxy proxy;
@@ -112,6 +127,12 @@ class CredentialProofProxyTest {
                                 req.path().endsWith("/HEAD") ? "ref: refs/heads/main\n" : GIT_HEAD + "\trefs/heads/main\n");
                         return;
                     }
+                    upstreamRequests.incrementAndGet();
+                    if (unauthorizedOnce) {
+                        unauthorizedOnce = false;
+                        req.response().setStatusCode(401).end("stale token");
+                        return;
+                    }
                     receivedHeaders = io.vertx.core.MultiMap.caseInsensitiveMultiMap().addAll(req.headers());
                     received.complete(new Received(req.uri(), req.getHeader("Host"), req.getHeader("Authorization"),
                             req.getHeader("x-api-key"), req.getHeader("x-goog-api-key"), body.toString()));
@@ -130,6 +151,11 @@ class CredentialProofProxyTest {
     @AfterAll static void stop() throws Exception {
         try { if (vertx != null) vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS); }
         finally { System.setProperty("user.home", previousHome); }
+    }
+
+    @BeforeEach void resetUpstream() {
+        unauthorizedOnce = false;
+        upstreamRequests.set(0);
     }
 
     @AfterEach void stopProxy() { if (proxy != null) proxy.stop(); }
@@ -249,6 +275,8 @@ class CredentialProofProxyTest {
                 .setHost(host).setPort(443).setURI(uri);
         return client.request(options).compose(req -> {
             if (value != null) req.putHeader(header, value);
+            // As every SDK sends a JSON body; a test's own extraHeaders replace it
+            if (body != null && !noContentType) req.putHeader("Content-Type", "application/json");
             extraHeaders.forEach(req::putHeader);
             return body == null ? req.send() : req.send(body);
         }).compose(resp -> resp.body().map(b -> resp.statusCode()))
@@ -369,14 +397,15 @@ class CredentialProofProxyTest {
     /** Pi's google-vertex provider: its proof buys a Gemini call in the Vertex account's project, signed on the host. */
     @Test void geminiOnVertexSpendsTheVertexAccountWithTheHostsGcloudToken() throws Exception {
         serve(claude("vertex"));
-        assertEquals(200, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", ProofTestSupport.token("claude", "AIza")));
+        assertEquals(200, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", ProofTestSupport.token("claude", "AIza"),
+                GEMINI_BODY));
         var got = received.get(10, TimeUnit.SECONDS);
         assertEquals("/v1/projects/outer-project/locations/us-east5/publishers/google/models/gemini-3.7-flash"
                 + ":streamGenerateContent?alt=sse", got.uri());
         assertEquals("us-east5-aiplatform.googleapis.com", got.host());
         assertEquals("Bearer ya29.outer", got.authorization());
         assertNull(got.googleKey(), "the proof never leaves the proxy");
-        assertEquals(BODY, got.body());
+        assertEquals(GEMINI_BODY, got.body());
         assertEquals(1, tokenFetches.get());
     }
 
@@ -386,13 +415,83 @@ class CredentialProofProxyTest {
         extraHeaders = Map.of("x-goog-user-project", "someone-else", "X-HTTP-Method-Override", "DELETE");
         assertEquals(200, http(HttpMethod.POST, VERTEX, "/v1/publishers/google/models/gemini-3.7-flash:streamGenerateContent"
                 + "?userProject=someone-else&alt=sse&key=AIza-other&%24alt=json&alt=sse",
-                "x-goog-api-key", ProofTestSupport.token("claude", "AIza")));
+                "x-goog-api-key", ProofTestSupport.token("claude", "AIza"), GEMINI_BODY));
         var got = received.get(10, TimeUnit.SECONDS);
         assertEquals("/v1/projects/outer-project/locations/us-east5/publishers/google/models/gemini-3.7-flash"
                 + ":streamGenerateContent?alt=sse&alt=sse", got.uri());
         assertNull(receivedHeaders.get("x-goog-user-project"));
         assertNull(receivedHeaders.get("X-HTTP-Method-Override"));
         assertEquals("Bearer ya29.outer", got.authorization());
+    }
+
+    /**
+     * The host's gcloud token reaches every project its user can, and a body can name such a project's
+     * data: a proven call is refused, before anything leaves, unless its body is what Pi sends (#1925).
+     */
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "{\"contents\":[],\"cachedContent\":\"projects/other-project/locations/us-east5/cachedContents/x\"}",
+            "{\"contents\":[],\"cached_content\":\"projects/other-project/locations/us-east5/cachedContents/x\"}",
+            "{\"contents\":[],\"tools\":[{\"retrieval\":{\"vertexRagStore\":{\"ragResources\":"
+                    + "[{\"ragCorpus\":\"projects/other-project/locations/us-east5/ragCorpora/1\"}]}}}]}",
+            "{\"tools\":[{\"functionDeclarations\":[]},{\"retrieval\":{\"vertexAiSearch\":"
+                    + "{\"datastore\":\"projects/other-project/locations/global/collections/c/dataStores/d\"}}}]}",
+            "{\"contents\":[{\"parts\":[{\"fileData\":{\"fileUri\":\"gs://other-bucket/secret.pdf\"}}]}]}",
+            "{\"contents\":[{\"parts\":[{\"fil\\u0065Data\":{\"fileUri\":\"gs://other-bucket/secret.pdf\"}}]}]}",
+            "{\"contents\":[], \"labels\":{}}", "[]", "", "{\"contents\":["})
+    void geminiOnVertexRefusesABodyThatCouldNameAnotherProjectsData(String body) throws Exception {
+        serve(claude("vertex"));
+        var status = http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", ProofTestSupport.token("claude", "AIza"), body);
+        assertTrue(status == 403 || status == 400, status + " for " + body);
+        assertFalse(received.isDone(), "nothing reaches Vertex");
+        assertEquals(0, upstreamRequests.get());
+        assertEquals(0, tokenFetches.get());
+    }
+
+    /** A body the proxy cannot read is never signed. */
+    @Test void geminiOnVertexRefusesAnEncodedBody() throws Exception {
+        serve(claude("vertex"));
+        extraHeaders = Map.of("Content-Encoding", "gzip");
+        assertEquals(403, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", ProofTestSupport.token("claude", "AIza"),
+                GEMINI_BODY));
+        assertFalse(received.isDone());
+        assertEquals(0, tokenFetches.get());
+    }
+
+    /** Vertex would read a protobuf or non-UTF-8 body as another format or text than the check read: refused. */
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "application/x-protobuf", "application/json+protobuf", "text/plain", "application/jsonx", "",
+            "application/json; charset=utf-7", "application/json; charset=shift_jis", "application/json; charset=utf-16",
+            "application/json; charset=utf-8; charset=utf-7", "application/json; charset=utf-8; foo=bar"})
+    void geminiOnVertexRefusesABodyThatIsNotJson(String contentType) throws Exception {
+        serve(claude("vertex"));
+        noContentType = contentType.isEmpty();
+        if (!noContentType) extraHeaders = Map.of("Content-Type", contentType);
+        assertEquals(403, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", ProofTestSupport.token("claude", "AIza"),
+                GEMINI_BODY));
+        assertFalse(received.isDone());
+        assertEquals(0, tokenFetches.get());
+    }
+
+    /** JSON in UTF-8, which the check reads, however the type spells it. */
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "application/json", "Application/JSON; charset=utf-8", "application/json;charset=\"UTF-8\""})
+    void geminiOnVertexSendsAJsonTypedBody(String contentType) throws Exception {
+        serve(claude("vertex"));
+        extraHeaders = Map.of("Content-Type", contentType);
+        assertEquals(200, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", ProofTestSupport.token("claude", "AIza"),
+                GEMINI_BODY));
+        assertEquals(GEMINI_BODY, received.get(10, TimeUnit.SECONDS).body());
+    }
+
+    /** The body is held, so a 401 from a stale token sends it again with a fresh one, as Claude's Vertex calls are. */
+    @Test void geminiOnVertexSendsTheBodyAgainAfterA401() throws Exception {
+        serve(claude("vertex"));
+        unauthorizedOnce = true;
+        assertEquals(200, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", ProofTestSupport.token("claude", "AIza"),
+                GEMINI_BODY));
+        assertEquals(GEMINI_BODY, received.get(10, TimeUnit.SECONDS).body());
+        assertEquals(2, upstreamRequests.get());
+        assertEquals(2, tokenFetches.get());
     }
 
     /** Without the instance's own claude proof, the request keeps its authentication and its destination. */

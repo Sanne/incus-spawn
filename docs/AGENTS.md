@@ -160,6 +160,9 @@ isx also accepts `vertex` as a name for this provider, and writes `google-vertex
 On Vertex AI, Pi sends its calls with an API key that is a proof: a token isx gives the instance in place of the credential.
 The proxy checks the proof and moves each call into your account's project and region.
 
+The proxy sends only the request fields Pi uses for a model call, and refuses any other request with a 403 that names the field.
+So a cached context, a search tool or a Cloud Storage file in a request is refused, since these could read data your Google account can reach.
+
 The proxy signs the call with the host's GCP credentials, which never enter the instance.
 It uses those credentials only for Gemini model calls, and refuses any other Vertex AI call that carries the proof.
 

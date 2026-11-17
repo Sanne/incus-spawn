@@ -108,9 +108,15 @@ Key design:
   `aiplatform.googleapis.com` is built in (`ProxyConfig.GOOGLE_VERTEX_DOMAINS`); `ProofCarriers` reads the claude namespace's proof from `x-goog-api-key` there, and `AccountSelection.namespacesByDomain` maps it to `claude`, so `refuseIfUnservable` and the `inherit` swap cover it.
   An HTTP request that proved the claude namespace itself (`servesGeminiOnVertex`; another namespace's proof there gets only its own entry) goes to `relayGeminiOnVertex`: a non-Vertex account is a 502, and anything `GeminiOnVertex.projectUri` does not accept (only `POST /{v1,v1beta1}/publishers/google/models/<model>:{generateContent,streamGenerateContent,countTokens}`) a 403, both before anything leaves.
   The accepted call keeps only the `alt` parameters of its query (`alt=<letters>`) and loses `x-goog-user-project` and `X-HTTP-Method-Override` (`GeminiOnVertex.CLIENT_OVERRIDES`, removed by `injectHeaders`' Vertex branch after the client's head is copied), so no `userProject` or quota header charges another project.
-  Its body is forwarded unread, and may still name another project's resources (`cachedContent`, `tools` retrieval): #1925.
-  It is rewritten to the account's project and location, sent to `vertexHost(region)` through `Upstream.relayRequest(..., uri, ...)`, and signed by `injectHeaders`' Vertex branch, which strips `x-goog-api-key`.
-  It streams, never held, so a 401 is not retried: it invalidates the token cache for the next call.
+  It is rewritten to the account's project and location, sent to `vertexHost(region)`, and signed by `injectHeaders`' Vertex branch, which strips `x-goog-api-key`.
+  Its body is held as a Claude Vertex call's is (`holdVertexRequest`, the shared spool, `sendVertexRequest`), so a 401 sends it again with a fresh token.
+  It is sent only once `GeminiBodyCheck` has admitted all of it (#1925): strict JSON, one object, holding only `contents`, `systemInstruction`, `generationConfig`, `tools` and `toolConfig`, each tool only `functionDeclarations`, and no part with `fileData` or `file_data` (the parts of `contents[]`, `systemInstruction` and a part's `functionResponse`/`function_response`).
+  Any other field is a 403 naming it, never dropped.
+  So is a `Content-Encoding`, or anything but one `Content-Type` of `application/json` with no parameter or `charset=utf-8` alone (a missing one included).
+  So is a non-object, another shape at a position the check reads, or a control character or malformed Unicode in a name the check reads.
+  Invalid JSON is a 400, malformed UTF-8 in any other string included.
+  Names are compared decoded, and what lies below those positions (a function's arguments, the configs) is not read.
+  The list is what Pi's `google-vertex` provider sends: widening it is a decision on #1925, never a fix for a failing Pi feature, since a field may name another project's data the host's token can read.
   A proven WebSocket there gets the key header stripped and nothing injected; unproven requests relay unchanged, as everywhere.
   The host's gcloud token reaches every project its user can touch, which is why the route names the project itself and serves model calls alone.
 - **The generic seam is one method.**
@@ -282,7 +288,7 @@ Key design:
   Keep the match narrow -- it strips a security setting, so any other start failure must surface as itself.
 - **Per-request credentials.**
   `RequestContext(domain, instanceName, creds, routing, usesDefaultCredentials)` replaces the bare `domain` parameter down `routeRequest -> handleApiRequest -> streamApiRequest` (the relay's `RelayHooks.prepare`), or `-> retainVertexRequest -> sendVertexRequest`, to `injectHeaders`.
-  Only a Vertex model call is held, in a `BodySpool` under the shared `SpoolBudget` and `DiskReserve`, released once an answer other than a 401 has come and the body has all gone, or the exchange ends (#1315; design/proxy.md "A body the proxy must hold"): every other API request streams through `Upstream.relayRequest`, and its credential must be set in `prepare`, before any of the head leaves; `--debug` captures 64 KiB of each body as it passes, never more (design/proxy.md "API request bodies").
+  Only a Vertex model call is held, Claude's or Gemini's, in a `BodySpool` under the shared `SpoolBudget` and `DiskReserve`, released once an answer other than a 401 has come and the body has all gone, or the exchange ends (#1315; design/proxy.md "A body the proxy must hold"): every other API request streams through `Upstream.relayRequest`, and its credential must be set in `prepare`, before any of the head leaves; `--debug` captures 64 KiB of each body as it passes, never more (design/proxy.md "API request bodies").
   Routing is global (which domains are intercepted never varies by account); only the credential inside the entry does, so a pinned instance gets its own `ToolProxyRouting` built by the pure `buildRouting(list, warn)`.
   Everything derived from the config -- its serialized tree (the one every selection resolves against: serialize once per read, never per request), default credentials and routing, tool setups, the per-namespace indexes, and the `credentialsBySelection`/`mismatchesByInstance` caches (the first also caching a dangling pin's `UnknownAccountException`, #891) -- is one immutable `ConfigState`, built eagerly by `useConfig()` (the single path for the `MitmProxy(..., ConfigFingerprint.Loaded)` constructor and `reload()`) and **replaced whole on every reload**.
   A late request writes only into the old state's caches, so a rotated token is never put back.
