@@ -67,7 +67,7 @@ mv "$FORMULA.tmp" "$FORMULA"
 # asset <name> <sha>: the url and sha256 lines after the one naming <name>.
 sed -i.bak \
   -e "s/version \"[^\"]*\"/version \"${VERSION}\"/" \
-  -e "/incus-spawn-macos-aarch64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_CLI}\"/;}" \
+  -e "/incus-spawn-macos-aarch64\"$/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_CLI}\"/;}" \
   -e "/isx-proxy-macos-aarch64\"$/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_PROXY}\"/;}" \
   -e "/isx-vm-macos-aarch64\"$/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_VM}\"/;}" \
   -e "/resource \"git-remote-isx\"/,/end/{s|url \"[^\"]*\"|url \"${BASE}/v${VERSION}/git-remote-isx\"|;}" \
