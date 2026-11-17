@@ -34,6 +34,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -125,6 +126,14 @@ class Upstream {
     void overrideDns(String host, String ip) {
         dns.put(host, resolved(ip));
     }
+
+    /**
+     * The domains that keep a backoff, started by a refused connect or a 429, during which cached
+     * copies are served without asking: the npm registry, and every cached repository whose
+     * copies may be served unconfirmed (not a private one, whose 429 is one account's, nor one
+     * that serves only confirmed copies). Set by {@link ArtifactCacheHandler#useRepositories}.
+     */
+    volatile Set<String> backoffDomains = ArtifactCacheHandler.backoffDomains(CachedRepository.BUILT_IN);
 
     void clearBackoffs() {
         backoffs.clear();
@@ -262,7 +271,7 @@ class Upstream {
                 });
             });
         }
-        if (!Revalidation.keepsBackoff(host)) return connected;
+        if (!backoffDomains.contains(host)) return connected;
         var sent = System.nanoTime();
         // Every request to a caching domain that keeps one, whatever its purpose, keeps its backoff current: a
         // failed connect or a 429 starts it, and only another answer or its end ends it, since a request on a
@@ -301,8 +310,7 @@ class Upstream {
     }
 
     private static String servingUnconfirmed(String host, long seconds) {
-        return "serving cached copies unconfirmed for " + seconds + "s"
-                + (Revalidation.mayWithdraw(host) ? ", although " + host + " may withdraw releases" : "");
+        return "serving cached copies unconfirmed for " + seconds + "s";
     }
 
     /**

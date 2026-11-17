@@ -56,8 +56,6 @@ import java.util.zip.GZIPInputStream;
 class ArtifactCacheHandler {
 
     private static final Set<String> REGISTRY_DOMAINS = ProxyConfig.REGISTRY_DOMAINS;
-    private static final Set<String> MAVEN_DOMAINS = ProxyConfig.MAVEN_DOMAINS;
-    private static final Set<String> GRADLE_DOMAINS = ProxyConfig.GRADLE_DOMAINS;
     private static final Set<String> NPM_DOMAINS = ProxyConfig.NPM_DOMAINS;
 
     // OCI blob URL pattern: /v2/<name>/blobs/sha256:<64-hex-chars>
@@ -100,13 +98,6 @@ class ArtifactCacheHandler {
         return Environment.m2Repository();
     }
 
-    // URL path prefix preceding Maven coordinates on each domain
-    private static final java.util.Map<String, String> MAVEN_PATH_PREFIX = java.util.Map.of(
-            "repo.maven.apache.org", "/maven2/",
-            "repo1.maven.org", "/maven2/",
-            "plugins.gradle.org", "/m2/"
-    );
-
     private final Vertx vertx;
     private final Upstream upstream;
 
@@ -115,10 +106,34 @@ class ArtifactCacheHandler {
     int downloadIdleSeconds = 20;
     // From config.yaml's artifact-cache: section, through useConfig()
     volatile ArtifactCacheTiers artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
+    // The repositories whose artifacts are cached, by domain, the longest prefix first (#2312)
+    private volatile Map<String, List<CachedRepository>> repositories = CachedRepository.byDomain(CachedRepository.BUILT_IN);
 
     ArtifactCacheHandler(Vertx vertx, Upstream upstream) {
         this.vertx = vertx;
         this.upstream = upstream;
+    }
+
+    /** Cache these repositories' artifacts from now on: the built-in ones and config.yaml's. */
+    void useRepositories(List<CachedRepository> cached) {
+        repositories = CachedRepository.byDomain(cached);
+        upstream.backoffDomains = backoffDomains(cached);
+    }
+
+    /** {@link Upstream#backoffDomains} while {@code cached} are the cached repositories. */
+    static Set<String> backoffDomains(List<CachedRepository> cached) {
+        var domains = new java.util.HashSet<>(NPM_DOMAINS);
+        var refused = new java.util.HashSet<String>();
+        for (var repository : cached) {
+            if (repository.isPrivate() || repository.revalidation().servesOnlyConfirmed()) {
+                refused.add(repository.domain());
+            } else {
+                domains.add(repository.domain());
+            }
+        }
+        // A domain with one such repository keeps none: its backoff would refuse that one's confirmations too
+        domains.removeAll(refused);
+        return Set.copyOf(domains);
     }
 
     /** Says where each cache lives, and deletes the caches stored without verification. */
@@ -126,12 +141,12 @@ class ArtifactCacheHandler {
         ProxyLog.stdout("Registry cache: " + registryCacheDir() +
                 " (domains: " + REGISTRY_DOMAINS + ")");
         ProxyLog.stdout("Maven cache: " + mavenCacheDir() +
-                " (domains: " + MAVEN_DOMAINS + ")");
+                " (domains: " + new java.util.TreeSet<>(repositories.keySet()) + ")");
         ProxyLog.stdout("Maven/Gradle/npm confirmations: " + artifactCacheTiers);
         ProxyLog.stdout("Maven .m2 fallback: " +
                 (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
         ProxyLog.stdout("Gradle cache: " + gradleCacheDir() +
-                " (domains: " + GRADLE_DOMAINS + ")");
+                " (domains: [" + CachedRepository.GRADLE_DISTRIBUTIONS.domain() + "])");
         deleteUnverifiedLegacyCaches();
         ProxyLog.stdout("npm cache: " + npmCacheDir() +
                 " (domains: " + NPM_DOMAINS + ")");
@@ -140,12 +155,8 @@ class ArtifactCacheHandler {
     /** The handler of a domain served from a cache, or null: it sees only requests without a body. */
     Consumer<HttpServerRequest> cacheHandler(String domain, long started) {
         if (REGISTRY_DOMAINS.contains(domain)) return req -> handleRegistryRequest(req, started, domain);
-        if (MAVEN_DOMAINS.contains(domain)) {
-            return req -> handleArtifactRequest(req, started, domain, path -> mavenTarget(domain, path));
-        }
-        if (GRADLE_DOMAINS.contains(domain)) {
-            return req -> handleArtifactRequest(req, started, domain, ArtifactCacheHandler::gradleTarget);
-        }
+        var cached = repositories.get(domain);
+        if (cached != null) return req -> handleArtifactRequest(req, started, domain, cached);
         if (NPM_DOMAINS.contains(domain)) return req -> handleNpmRequest(req, started, domain);
         return null;
     }
@@ -1030,7 +1041,7 @@ class ArtifactCacheHandler {
             var etagFile = cacheDir.resolve(packageName).resolve(".etag").normalize();
             var packageEtag = etagFile.startsWith(cacheDir)
                     ? readFileOrNull(etagFile) : null;
-            return npmCacheState(cacheFile, packageEtag, tiersFor(domain), Instant.now());
+            return npmCacheState(cacheFile, packageEtag, artifactCacheTiers, Instant.now());
         }).compose(state -> {
             if (state.hit() != null) return Future.succeededFuture(state.hit());
             // A copy to fall back on is served at once during a backoff, as for Maven/Gradle; with none, the registry is still asked
@@ -1479,23 +1490,24 @@ class ArtifactCacheHandler {
     private static final int MAX_SIDECAR_BYTES = 64 * 1024;
 
     /**
-     * Handle a GET for an artifact or one of its sidecars on a domain vetted for
-     * caching (see {@link Revalidation} for why only those): {@code targetOf} maps
-     * the artifact's path to where it is cached, or null for a path that must not
-     * be. Everything else is relayed, including a request with a query string: the
-     * cache is keyed by path, and a query may select something else.
+     * Handle a GET for an artifact or one of its sidecars on a domain whose
+     * repositories are declared for caching (see {@link Revalidation} for what a
+     * declaration says): the repository whose prefix holds the path maps it to
+     * where it is cached, or to null for a path that must not be. Everything else
+     * is relayed, including a request with a query string: the cache is keyed by
+     * path, and a query may select something else.
      */
     private void handleArtifactRequest(HttpServerRequest clientReq, long started, String domain,
-                                       Function<String, ArtifactTarget> targetOf) {
+                                       List<CachedRepository> cached) {
         var path = clientReq.path();
-        var revalidation = Revalidation.forDomain(domain);
+        var repository = path == null ? null : repositoryOf(cached, path);
 
-        if (clientReq.method() == HttpMethod.GET && path != null && clientReq.query() == null
-                && revalidation != null) {
+        if (clientReq.method() == HttpMethod.GET && clientReq.query() == null && repository != null) {
+            var revalidation = repository.revalidation();
             var sidecar = Sidecar.of(path);
             var artifactPath = sidecar == null ? path : sidecar.artifactPath(path);
             // A sidecar of a sidecar (foo.jar.asc.sha1) has no artifact to cache
-            var target = Sidecar.of(artifactPath) == null ? targetOf.apply(artifactPath) : null;
+            var target = Sidecar.of(artifactPath) == null ? targetOf(repository, artifactPath) : null;
             if (target != null && revalidation.fits(target.checksum())) {
                 if (sidecar != null) {
                     serveSidecar(clientReq, domain, revalidation, sidecar, target);
@@ -1509,11 +1521,28 @@ class ArtifactCacheHandler {
         upstream.relayRequest(clientReq, domain, started);
     }
 
+    /** The repository among a domain's {@code cached} ones whose prefix holds {@code path}, or null. */
+    static CachedRepository repositoryOf(List<CachedRepository> cached, String path) {
+        for (var repository : cached) {
+            if (repository.holds(path)) return repository;
+        }
+        return null;
+    }
+
+    /** Where {@code repository} caches the artifact at {@code path}, or null when it must not be cached. */
+    private static ArtifactTarget targetOf(CachedRepository repository, String path) {
+        return switch (repository.layout()) {
+            case MAVEN -> mavenTarget(repository, path);
+            case GRADLE_DISTRIBUTIONS -> gradleTarget(path);
+        };
+    }
+
     /** A Maven-layout repository: metadata and SNAPSHOTs are not cached ({@link #isMavenCacheable}). */
-    private static ArtifactTarget mavenTarget(String domain, String path) {
+    private static ArtifactTarget mavenTarget(CachedRepository repository, String path) {
         if (!isMavenCacheable(path)) return null;
-        var artifact = mavenCacheFile(domain, path);
-        return artifact == null ? null : new ArtifactTarget(artifact, Sidecar.SHA1, resolveM2Path(domain, path));
+        var artifact = mavenCacheFile(repository.domain(), path);
+        return artifact == null ? null
+                : new ArtifactTarget(artifact, Sidecar.SHA1, resolveM2Path(repository.pathPrefix(), path));
     }
 
     /** services.gradle.org: only distribution archives, checked against the {@code .sha256} Gradle publishes. */
@@ -1541,7 +1570,7 @@ class ArtifactCacheHandler {
         }, false).onSuccess(local -> {
             var cached = local.cached();
             if (cached != null) {
-                var tier = trustTier(domain, cached);
+                var tier = trustTier(revalidation, cached);
                 if (tier == ArtifactCacheTiers.Tier.EXPIRED) {
                     revalidateAndServe(clientReq, started, domain, revalidation, target, ref, cached.size());
                 } else {
@@ -1563,16 +1592,11 @@ class ArtifactCacheHandler {
     }
 
     /**
-     * How far the artifact's last confirmation is trusted: the configured tiers, except
-     * on a domain that can withdraw what it published ({@link Revalidation#mayWithdraw}),
-     * whose every hit is confirmed first.
+     * How far the artifact's last confirmation is trusted: its repository's own tiers, else
+     * the configured ones ({@link Revalidation#tiersOr}).
      */
-    private ArtifactCacheTiers.Tier trustTier(String domain, VerifiedArtifactStore.CachedCopy cached) {
-        return tiersFor(domain).tierOf(cached.confirmedAt(), Instant.now());
-    }
-
-    private ArtifactCacheTiers tiersFor(String domain) {
-        return Revalidation.mayWithdraw(domain) ? ArtifactCacheTiers.CONFIRM_EVERY_HIT : artifactCacheTiers;
+    private ArtifactCacheTiers.Tier trustTier(Revalidation revalidation, VerifiedArtifactStore.CachedCopy cached) {
+        return revalidation.tiersOr(artifactCacheTiers).tierOf(cached.confirmedAt(), Instant.now());
     }
 
     /**
@@ -1594,9 +1618,9 @@ class ArtifactCacheHandler {
         }
         recordHit(tier == ArtifactCacheTiers.Tier.STALE
                 ? ArtifactCacheStats.Hit.TRUSTED_CHECKING : ArtifactCacheStats.Hit.TRUSTED, cached.size());
-        if (revalidation.header != null) {
+        if (revalidation.header() != null) {
             var hex = target.checksum().hex(cached.checksum());
-            if (hex != null) clientReq.response().putHeader(revalidation.header, hex);
+            if (hex != null) clientReq.response().putHeader(revalidation.header(), hex);
         }
         serveCachedFile(clientReq.response(), target.artifact(), null);
         if (tier == ArtifactCacheTiers.Tier.STALE) {
@@ -1724,7 +1748,7 @@ class ArtifactCacheHandler {
 
     /** Ask upstream for the artifact's current checksum, the way the domain allows. */
     private Future<SidecarAnswer> probe(String domain, String path, Revalidation revalidation, Sidecar checksum) {
-        return revalidation.header != null
+        return revalidation.header() != null
                 ? fetchChecksumHeader(domain, path, revalidation)
                 : fetchSidecar(domain, path + checksum.extension);
     }
@@ -1756,7 +1780,10 @@ class ArtifactCacheHandler {
     private void revalidateAndServe(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                                     ArtifactTarget target, String ref, long size) {
         confirm(domain, clientReq.path(), revalidation, target).onSuccess(confirmed -> {
-            if (confirmed.outcome() == null) {
+            if (confirmed.outcome() == null && revalidation.servesOnlyConfirmed()) {
+                // Never served on a past confirmation, however unreachable upstream is: it answers for itself
+                download(clientReq, started, domain, revalidation, target, ref);
+            } else if (confirmed.outcome() == null) {
                 upstream.throttles.servedUnconfirmed(domain, confirmed.answer().status());
                 recordHit(ArtifactCacheStats.Hit.UNCONFIRMED, size);
                 serveCachedFile(clientReq.response(), target.artifact(), null);
@@ -1789,9 +1816,9 @@ class ArtifactCacheHandler {
      */
     private void serveConfirmed(HttpServerRequest clientReq, Path artifact,
                                 Revalidation revalidation, SidecarAnswer answer) {
-        if (revalidation.header != null) {
-            var hex = revalidation.headerChecksum.hex(answer.body());
-            if (hex != null) clientReq.response().putHeader(revalidation.header, hex);
+        if (revalidation.header() != null) {
+            var hex = revalidation.headerChecksum().hex(answer.body());
+            if (hex != null) clientReq.response().putHeader(revalidation.header(), hex);
         }
         serveCachedFile(clientReq.response(), artifact, null);
     }
@@ -1871,8 +1898,9 @@ class ArtifactCacheHandler {
         ).onComplete(ar -> {
             var cached = ar.succeeded() ? ar.result() : null;
             var stored = cached == null ? null : cached.sidecar();
-            var tier = stored == null ? ArtifactCacheTiers.Tier.EXPIRED : trustTier(domain, cached);
-            if (tier != ArtifactCacheTiers.Tier.EXPIRED || (stored != null && inBackoff(domain))) {
+            var tier = stored == null ? ArtifactCacheTiers.Tier.EXPIRED : trustTier(revalidation, cached);
+            if (tier != ArtifactCacheTiers.Tier.EXPIRED
+                    || (stored != null && inBackoff(domain) && !revalidation.servesOnlyConfirmed())) {
                 sendSidecar(clientReq.response(), 200, stored);
                 // An expired copy served in a backoff was not asked about upstream
                 if (tier == ArtifactCacheTiers.Tier.EXPIRED) upstream.throttles.servedUnconfirmed(domain, 0);
@@ -1919,7 +1947,7 @@ class ArtifactCacheHandler {
                 .otherwise(err -> SidecarReply.error(502, "Sidecar check failed"))
                 .onSuccess(reply -> {
                     var resp = clientReq.response();
-                    if (reply.unreachable() && stored != null) {
+                    if (reply.unreachable() && stored != null && !revalidation.servesOnlyConfirmed()) {
                         upstream.throttles.servedUnconfirmed(domain, reply.status());
                         sendSidecar(resp, 200, stored);
                     } else if (reply.error() != null) {
@@ -2019,7 +2047,7 @@ class ArtifactCacheHandler {
             }
             return vertx.executeBlocking(() -> {
                 var outcome = VerifiedArtifactStore.reconcile(
-                        artifact, revalidation.headerChecksum, header.status(), header.body(), true, lookedUp);
+                        artifact, revalidation.headerChecksum(), header.status(), header.body(), true, lookedUp);
                 if (outcome != VerifiedArtifactStore.Outcome.MATCHED) return outcome;
                 boolean answeredCopy;
                 if (sidecarAnswer.gone()) {
@@ -2088,7 +2116,7 @@ class ArtifactCacheHandler {
                 .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE))
                 .compose(answer -> answer != null
                         ? Future.succeededFuture(answer)
-                        : fetchSidecar(domain, path + revalidation.headerChecksum.extension));
+                        : fetchSidecar(domain, path + revalidation.headerChecksum().extension));
     }
 
     private static RequestOptions probeOptions(HttpMethod method, String host, int port, String uri) {
@@ -2255,12 +2283,11 @@ class ArtifactCacheHandler {
     }
 
     /**
-     * Map a Maven repository URL path to the corresponding path in ~/.m2/repository.
-     * Returns null if the domain is unknown or the path doesn't match.
+     * Map a Maven repository URL path to the corresponding path in ~/.m2/repository, where
+     * {@code prefix} is the path before the coordinates. Returns null if the path doesn't match.
      */
-    static Path resolveM2Path(String domain, String urlPath) {
-        var prefix = MAVEN_PATH_PREFIX.get(domain);
-        if (prefix == null || !urlPath.startsWith(prefix)) return null;
+    static Path resolveM2Path(String prefix, String urlPath) {
+        if (!urlPath.startsWith(prefix)) return null;
         var relativePath = urlPath.substring(prefix.length());
         if (relativePath.contains("..")) return null;
         return m2Repository().resolve(relativePath);
