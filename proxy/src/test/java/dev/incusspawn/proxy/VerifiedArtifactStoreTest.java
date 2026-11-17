@@ -91,15 +91,11 @@ class VerifiedArtifactStoreTest {
     }
 
     @Test
-    void everyCachedDomainDeclaresItsRevalidation() {
-        for (var domain : ProxyConfig.MAVEN_DOMAINS) {
-            assertNotNull(Revalidation.forDomain(domain),
-                    domain + " is cached, so it must declare how a hit is confirmed with upstream");
-        }
-        for (var domain : ProxyConfig.GRADLE_DOMAINS) {
-            assertNotNull(Revalidation.forDomain(domain), domain);
-        }
-        assertNull(Revalidation.forDomain("example.com"));
+    void everyInterceptedMavenOrGradleDomainIsABuiltInRepository() {
+        var intercepted = new java.util.HashSet<>(ProxyConfig.MAVEN_DOMAINS);
+        intercepted.addAll(ProxyConfig.GRADLE_DOMAINS);
+        assertEquals(intercepted, CachedRepository.builtInDomains(),
+                "a cached domain must declare how a hit is confirmed with upstream, and an intercepted one is cached");
     }
 
     // --- commit ---

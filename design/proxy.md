@@ -532,7 +532,7 @@ Only an unreachable upstream serves an older one.
   The key is released before anyone is answered, so a request after that asks again, and its lookup follows the first one's writes.
   Downloads are not joined: concurrent downloads of one file are already safe (#1538), and joining one in flight would mean streaming each follower from a growing spool and resuming it separately, for bandwidth alone.
   The store-side ordering rules stay, since joining covers only one proxy's lookups in flight.
-  A domain that can withdraw releases never gets the tiers (`Revalidation.mayWithdraw`: the Plugin Portal), so its every hit is confirmed first.
+  Each repository carries its own tiers (`CachedRepository`, its `Revalidation`); the Plugin Portal's are zero, since authors delete versions there often enough, so its every hit is confirmed first.
   npm tarballs get the same tiers, keyed on the stored shasum's modification time (see "Proxy caching" above).
   `artifact-cache:` is read from the raw YAML value, so a mistyped section (`artifact-cache: 0`) is warned about and ignored instead of failing config.yaml, which would leave the proxy with no credentials.
   The stored checksum goes out as `X-Checksum-SHA1` with bytes the proxy opens by path (Vert.x 5 added `sendFile(FileChannel)`, but it is marked unstable and HTTP/1-only).
@@ -679,9 +679,9 @@ Only an unreachable upstream serves an older one.
   Repeated `429`s each start it again at the same length, so a lasting rate limit costs one refused request per backoff.
   It does not grow when `Retry-After` is missing: that one request is how the proxy sees the limit lifted.
   What it gives up: during it, copies past `max-stale` are served unconfirmed without an attempt, where before they were served the same way after a refused one.
-  The Plugin Portal, which can withdraw releases (`Revalidation.mayWithdraw`), keeps the backoff too, so its copies are then served unconfirmed without an attempt, and the warning that starts the backoff names that.
+  The Plugin Portal keeps the backoff too, so its copies are then served unconfirmed without an attempt.
   A request on a pooled connection is sent without any network I/O first, so getting the connection does not prove the upstream is reachable now, and would let one request end a backoff a real connect failure started.
-  It is kept where every upstream connection is made (`requestWithAsyncDns`), for every domain `Revalidation.keepsBackoff` names (the Maven/Gradle ones in `Revalidation` and the npm registry), so no fetch path can forget to update it.
+  It is kept where every upstream connection is made (`requestWithAsyncDns`), for every domain `Upstream.backoffDomains` names (the cached repositories' and the npm registry), so no fetch path can forget to update it.
 
 *Why only these domains.*
 With both tiers at zero an online serve does not depend on a repository's publishing rules, so `Revalidation`'s allowlist is not a claim of immutability.

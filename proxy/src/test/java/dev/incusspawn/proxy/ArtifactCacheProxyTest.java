@@ -1113,7 +1113,7 @@ class ArtifactCacheProxyTest {
     }
 
     static Future<ArtifactCacheHandler.SidecarAnswer> confirmAsync() {
-        return onClientContext(() -> proxy.artifactCache.fetchChecksumHeader(CENTRAL, JAR, Revalidation.forDomain(CENTRAL)));
+        return onClientContext(() -> proxy.artifactCache.fetchChecksumHeader(CENTRAL, JAR, Revalidation.HEAD_CHECKSUM));
     }
 
     static <T> Future<T> onClientContext(java.util.function.Supplier<Future<T>> action) {

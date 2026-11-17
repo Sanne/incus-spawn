@@ -3,41 +3,45 @@ package dev.incusspawn.proxy;
 import io.vertx.core.http.HttpClientResponse;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 
 /**
- * How a cached Maven/Gradle artifact is confirmed with upstream before it is
- * served, once its last confirmation is older than {@link ArtifactCacheTiers}
- * trusts; an unreachable upstream skips it.
+ * How a repository's cached Maven/Gradle artifacts are confirmed with upstream before they are
+ * served, and how long a confirmation is trusted: one per {@link CachedRepository}.
  * <p>
- * This is also the allowlist of domains whose artifacts are cached at all: a
- * domain with no entry is relayed. Confirming hits means an online serve no
- * longer depends on what a repository lets publishers do, so an entry is not a
- * claim that its content is immutable. A domain still has to be vetted, and
- * each entry below was, for three reasons:
+ * Confirming hits means an online serve does not depend on what a repository lets publishers do,
+ * so a repository's entry is not a claim that its content is immutable. What an entry does
+ * declare, built in or written in config.yaml, is three things the proxy cannot find out by
+ * itself (design/proxy.md "Why a repository is declared"):
  * <ol>
- *   <li><b>Offline serves are unconfirmed.</b> When upstream is unreachable a
- *       cached copy is served as is, which is only what a fetch would have
- *       returned if the repository does not change or withdraw what it has
- *       published. Central forbids both; Gradle does not withdraw distributions;
- *       the Plugin Portal can delete a version (7 days for authors, later via
- *       support), an accepted risk while offline. The same holds for a hit served
- *       on a past confirmation ({@link ArtifactCacheTiers}), which a withdrawing
- *       domain therefore never gets ({@link #mayWithdraw}).</li>
- *   <li><b>The confirmation must be sound for that repository.</b> A
- *       server-computed checksum header describes exactly the bytes the server
- *       would send, so {@link #HEAD_CHECKSUM} is sound even for content that
- *       changes. A sidecar is uploaded separately from its artifact
- *       ({@code mvn deploy} PUTs them one by one), so {@link #SIDECAR} is only
- *       sound where the two are published together and never replaced, as on the
- *       Portal and for Gradle distributions.</li>
- *   <li><b>Public repositories only.</b> The cache is shared by every instance and
- *       confirmation carries no client credentials, so a private repository's
- *       artifact cached for one instance would be served to others with no access
- *       to it, and offline serving would bypass its authorization entirely.</li>
+ *   <li><b>How long a withdrawal may go unnoticed.</b> Every repository can withdraw a release:
+ *       Central removes one on occasion (copyright, malware), the Plugin Portal lets authors
+ *       delete versions. A hit served on a past confirmation ({@link #tiers}), and an offline
+ *       serve, is only what a fetch would return while upstream has not withdrawn or replaced it.
+ *       The tiers bound how long that lasts, and a repository that replaces the bytes at a release
+ *       path is never served on a past confirmation at all ({@link #servesOnlyConfirmed}).</li>
+ *   <li><b>The confirmation must be sound for that repository.</b> A server-computed checksum
+ *       header describes exactly the bytes the server would send, so a {@link #header} is sound
+ *       even for content that changes. A sidecar is uploaded separately from its artifact
+ *       ({@code mvn deploy} PUTs them one by one), so sidecar confirmation is only sound where the
+ *       two are published together and never replaced, as on the Portal and for Gradle
+ *       distributions.</li>
+ *   <li><b>Whether it is public.</b> The cache is shared by every instance and a public
+ *       repository's confirmation carries no client credentials, so a private repository's
+ *       artifact is cached apart per credential and confirmed with that credential before every
+ *       serve ({@link CachedRepository#credentials}).</li>
  * </ol>
+ *
+ * @param headerChecksum the checksum the repository sends as a header with each artifact, or null
+ * @param header         that header's name, or null: then a hit fetches the checksum sidecar
+ * @param tiers          how long a confirmation is trusted; null for config.yaml's {@code artifact-cache:}
+ * @param servesOnlyConfirmed never served on a past confirmation, offline or during a backoff
+ *                       either: the repository may replace what it published, or is private
  */
-enum Revalidation {
+record Revalidation(Sidecar headerChecksum, String header, ArtifactCacheTiers tiers, boolean servesOnlyConfirmed) {
+
+    /** The header Maven Central, Artifactory and Nexus 2 send the artifact's SHA-1 in. */
+    static final String CHECKSUM_HEADER = "X-Checksum-SHA1";
+
     /**
      * The repository sends {@code X-Checksum-SHA1} with each artifact (Maven
      * Central). A hit costs one HEAD; a miss is verified against the header of
@@ -45,55 +49,31 @@ enum Revalidation {
      * Maven Resolver's smart checksums skip their own {@code .sha1} request.
      * A response without the header falls back to fetching the {@code .sha1}.
      */
-    HEAD_CHECKSUM(Sidecar.SHA1, "X-Checksum-SHA1"),
+    static final Revalidation HEAD_CHECKSUM = new Revalidation(Sidecar.SHA1, CHECKSUM_HEADER, null, false);
 
     /**
      * No checksum headers (Gradle Plugin Portal, Gradle distributions): a hit
      * fetches the checksum sidecar, and a miss fetches it once downloaded.
      */
-    SIDECAR(null, null);
+    static final Revalidation SIDECAR = new Revalidation(null, null, null, false);
 
-    private static final Map<String, Revalidation> BY_DOMAIN = Map.of(
-            "repo.maven.apache.org", HEAD_CHECKSUM,
-            "repo1.maven.org", HEAD_CHECKSUM,
-            "plugins.gradle.org", SIDECAR,
-            "services.gradle.org", SIDECAR);
-
-    /** The checksum the repository sends as a header with each artifact, or null. */
-    final Sidecar headerChecksum;
-    /** That header's name, or null. */
-    final String header;
-
-    Revalidation(Sidecar headerChecksum, String header) {
-        this.headerChecksum = headerChecksum;
-        this.header = header;
+    Revalidation {
+        if (servesOnlyConfirmed) tiers = ArtifactCacheTiers.CONFIRM_EVERY_HIT;
     }
 
-    /**
-     * Domains that can withdraw what they published: the Plugin Portal deletes versions
-     * (7 days for authors, later via support, e.g. a malicious plugin). Their hits are
-     * never served on a past confirmation ({@link ArtifactCacheTiers}): only offline,
-     * where the risk is accepted (see the class comment).
-     */
-    private static final java.util.Set<String> MAY_WITHDRAW = java.util.Set.of("plugins.gradle.org");
-
-    /** Whether this domain can withdraw a release, so its hits must always be confirmed first. */
-    static boolean mayWithdraw(String domain) {
-        return MAY_WITHDRAW.contains(domain);
+    /** This confirmation, its confirmation trusted for {@code tiers}. */
+    Revalidation trustedFor(ArtifactCacheTiers tiers) {
+        return new Revalidation(headerChecksum, header, tiers, servesOnlyConfirmed);
     }
 
-    /**
-     * Whether this domain keeps a backoff, started by a refused connect or a 429, during which
-     * cached copies are served without asking: those whose cached copies are confirmed with
-     * upstream, these and the npm registry.
-     */
-    static boolean keepsBackoff(String domain) {
-        return forDomain(domain) != null || ProxyConfig.NPM_DOMAINS.contains(domain);
+    /** This confirmation, made before every serve and never skipped. */
+    Revalidation onlyConfirmed() {
+        return new Revalidation(headerChecksum, header, tiers, true);
     }
 
-    /** How to confirm a cached artifact from this domain, or null when it must not be cached. */
-    static Revalidation forDomain(String domain) {
-        return BY_DOMAIN.get(domain);
+    /** The tiers a hit is judged by: this repository's own, else {@code configured}. */
+    ArtifactCacheTiers tiersOr(ArtifactCacheTiers configured) {
+        return tiers != null ? tiers : configured;
     }
 
     /** Whether artifacts described by {@code checksum} can be confirmed this way. */

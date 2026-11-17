@@ -359,7 +359,7 @@ Key design:
   Afterwards only lookups touch them, every one under the same lock: `checkNpmTarballCache` renews `.shasum` and updates `.etag` when it confirms the copy and evicts the tarball with both on a mismatch or a gone version, and `reconcileNpmCopy` (the background confirmation) renews, expires or evicts.
   A cached tarball whose lookup gives no digest is served only when the registry is unreachable (`SidecarAnswer.unreachable()`); a `404`/`410` evicts it and anything else relays (`checkNpmTarballCache`, #787).
   An unchanged packument ETag is not enough to skip the lookup: `npm ci` fetches no packument, so a hit also needs its confirmation (the `.shasum` mtime) within `ArtifactCacheTiers`, and is confirmed in the background past `fresh` (`npmCacheState`, #1466).
-  The npm registry keeps the backoff like the `Revalidation` domains (`keepsBackoff`, read by `requestWithAsyncDns`, which starts it on a refused connect or a `429`): during it a cached tarball skips its lookup and its background confirmation.
+  The npm registry keeps the backoff like the cached repositories' domains (`Upstream.backoffDomains`, set by `ArtifactCacheHandler.useRepositories` and read by `requestWithAsyncDns`, which starts it on a refused connect or a `429`): during it a cached tarball skips its lookup and its background confirmation.
   Never wait on the network inside an ordered `executeBlocking` (the default): every MITM connection shares one context and so one ordered queue, and a raw-socket lookup there ran every cold-install lookup one at a time (#960).
   The npm disk checks stay ordered on purpose, behind the packument's ETag write.
   All three commit through `Verification` (`fetchCacheAndServe`): nothing reaches the cache unverified.
@@ -398,7 +398,7 @@ Key design:
   `settleWithHeader` applies a sidecar answer only to the copy it was reconciled against: `reconcileCopy` returns the `FileState` it judged under the lock, and `storeSidecar`/`dropSidecar`/`isCopy` refuse any other, making the outcome `SUPERSEDED` (#1555).
   Overlapping lookups are joined by `SingleFlight` (#1567): a sidecar settle (`sidecarSettles`, by domain and path: GET, reconcile, header, store and `keptSidecar` as one unit returning a `SidecarReply`), a confirmation (`confirmations`, by artifact, foreground and background alike), a `~/.m2` probe and import (`hostImports`) and an npm version lookup (`npmLookups`: each ask is joined, but the 5xx retry is each caller's own, on its own `started`).
   The shared work never touches a client response, and the key is released before any caller hears of it; downloads are not joined.
-  `Revalidation.mayWithdraw` domains (Plugin Portal) never get the tiers.
+  Each `CachedRepository` carries its own `Revalidation`, tiers included: the Plugin Portal's are zero, so its every hit is confirmed first.
   `artifact-cache:` stays a raw value in `SpawnConfig`: a typed binding would let a mistyped section fail the whole config.yaml.
   Hits are counted in `ArtifactCacheStats` and logged as one summary at most every 5 s, only after activity; don't add a per-hit log line back.
   Older is confirmed as `Revalidation` says per domain: `HEAD_CHECKSUM` (Central: a `HEAD`'s `X-Checksum-SHA1`, falling back to `.sha1`) or `SIDECAR` (portal, Gradle distributions).
