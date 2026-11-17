@@ -85,19 +85,39 @@ class IncusApiTest {
     }
 
     @Test
-    void diagnoseMentionsIsxInitWhenSocketMissing() {
-        var notFoundMsg = """
-                Incus socket not found. Checked:
-                  /run/incus/unix.socket
-                  /var/lib/incus/unix.socket
+    void noSocketOnLinuxAsksForFirstTimeSetup(@TempDir Path home) throws Exception {
+        Files.createFile(home.resolve("data.img"));
+        var msg = IncusApi.noSocketFound(false, home.resolve("data.img"), false);
+        assertTrue(msg.contains("isx init"), msg);
+        assertFalse(msg.contains("isx vm start"), msg);
+    }
 
-                Ensure Incus is installed and the daemon is running:
-                  sudo systemctl enable --now incus
+    @Test
+    void noSocketOnAMacWithoutAVmAsksForFirstTimeSetup(@TempDir Path home) {
+        var msg = IncusApi.noSocketFound(true, home.resolve("data.img"), false);
+        assertTrue(msg.contains("isx init"), msg);
+        assertFalse(msg.contains("isx vm start"), msg);
+    }
 
-                First-time setup: run 'isx init'
-                """;
-        assertTrue(notFoundMsg.contains("systemctl enable --now incus"));
-        assertTrue(notFoundMsg.contains("isx init"));
+    /** #2328: a set-up Mac whose VM is stopped needs the VM started, not host setup again. */
+    @Test
+    void noSocketOnAMacWithAStoppedVmAsksToStartIt(@TempDir Path home) throws Exception {
+        var dataImage = Files.createFile(home.resolve("data.img"));
+        var msg = IncusApi.noSocketFound(true, dataImage, false);
+        assertTrue(msg.contains("isx vm start"), msg);
+        assertFalse(msg.contains("isx vm restart"), "restart refuses a VM that is not running: " + msg);
+        assertFalse(msg.contains("isx init"), msg);
+    }
+
+    /** A running VM whose tunnel is not up yet must not be told to start, which it already is. */
+    @Test
+    void noSocketOnAMacWithARunningVmSaysTheTunnelIsDown(@TempDir Path home) throws Exception {
+        var dataImage = Files.createFile(home.resolve("data.img"));
+        var msg = IncusApi.noSocketFound(true, dataImage, true);
+        assertFalse(msg.contains("not running"), msg);
+        assertFalse(msg.contains("isx vm start"), msg);
+        assertTrue(msg.contains("isx vm restart"), msg);
+        assertFalse(msg.contains("isx init"), msg);
     }
 
     // --- ApiResponse helpers ---
