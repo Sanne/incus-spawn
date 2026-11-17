@@ -749,7 +749,7 @@ class ArtifactCacheProxyTest {
                 """);
         publishDeclared("v1");
         get(DECLARED, DECLARED_JAR);
-        awaitFile(cached(DECLARED, DECLARED_JAR), "v1");
+        awaitStoredJar(DECLARED, DECLARED_JAR, "v1");
 
         hits.clear();
         assertEquals("v1", get(DECLARED, DECLARED_JAR).text());
