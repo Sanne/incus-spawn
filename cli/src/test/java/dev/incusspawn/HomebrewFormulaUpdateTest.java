@@ -92,6 +92,22 @@ class HomebrewFormulaUpdateTest {
     }
 
     /**
+     * The CLI's range starts at its url line, not at the install line naming the same asset: from
+     * there it would run to the end of the formula and rewrite any versioned link after it.
+     */
+    @org.junit.jupiter.api.Test
+    void aVersionedLinkAfterTheInstallBlockIsLeftAlone() throws Exception {
+        var file = formula("incus-spawn.rb");
+        var link = "https://github.com/Sanne/incus-spawn/blob/v0.5.2/README.md";
+        Files.writeString(file, Files.readString(file).replace("Documentation: https://github.com/Sanne/incus-spawn",
+                "Documentation: " + link));
+
+        update(file, "0.6.0", 'a');
+
+        assertTrue(Files.readString(file).contains(link), Files.readString(file));
+    }
+
+    /**
      * The formula downloads isx-vm from the release, so the release must upload it, and it is
      * in the release's SHA256SUMS: one list feeds both (#2080).
      */
