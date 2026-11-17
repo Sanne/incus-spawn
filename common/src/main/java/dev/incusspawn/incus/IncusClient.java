@@ -90,9 +90,18 @@ public class IncusClient {
     IncusApi http() {
         var result = api();
         if (result == null) {
-            throw new IncusException(IncusApi.diagnoseConnectionFailure());
+            throw new IncusException(unreachable());
         }
         return result;
+    }
+
+    /** Why this client found no daemon, read once: {@link #api()} keeps its null for the client's life. */
+    private volatile String unreachable;
+
+    private String unreachable() {
+        var why = unreachable;
+        if (why == null) unreachable = why = diagnoseUnreachable();
+        return why;
     }
 
     /**
@@ -566,6 +575,16 @@ public class IncusClient {
      */
     public String checkConnectivity() {
         if (api() != null) return null;
+        return unreachable();
+    }
+
+    /**
+     * Why Incus did not answer, as every command says it: {@link #checkConnectivity()} and each
+     * request that finds no daemon ({@link #http()}, which {@code isx list} meets first). On a Mac
+     * a wedge only a restart clears is said first; the socket probes alone would give Linux's
+     * advice, or 'isx init' (#2031).
+     */
+    static String diagnoseUnreachable() {
         if (Platform.isMacOS()) {
             var advice = dev.incusspawn.vm.VmManager.unreachableAdvice();
             if (advice.isPresent()) return advice.get();
