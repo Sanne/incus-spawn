@@ -1310,8 +1310,9 @@ What it shows:
 What it does not show: the failures a Mac sees beyond the leaked children, missed requests, `Empty reply from server` and a socket that stops answering (P2).
 Linux reproduces none of them with vfkit's logic, so only the Mac's record compares the two programs on those.
 
-## Requests a warm cache sends to Maven Central (issue #2305)
+## Requests a new instance's build makes, and what a warm cache sends Maven Central (issue #2305)
 
+The table below counts the requests a build with an empty local repository makes, by kind; it does not count confirmations, which the last paragraph derives from the code.
 Measured 2026-11-17 in a Linux box, Maven 3.9.16, Quarkus at `main` of 2026-11-14.
 The build was `mvn -pl core/deployment -am install -DskipTests -Dquickly` with an empty local repository (`-Dmaven.repo.local`), which is what a newly branched instance asks the proxy for.
 
