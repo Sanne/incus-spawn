@@ -112,7 +112,7 @@ A stopped orphan with a `mcp-dormant` naming its holder (`Orphans.dormantSince`)
 `adopt_instance` then calls `McpSession.wakeIfDormant()` on every adoption, a repeat included, which starts a held instance found stopped with any `mcp-dormant` (progress and audit line) and clears the stamp only after, so the retry `unavailable`/`busy` promise is the same call.
 `start_instance` and `stop_instance` clear a leftover `mcp-dormant` (`McpTools.notDormant`), so an instance its holder started or stopped on purpose is never woken by a later adoption.
 Task ids carry a random per-session tag (they outlive the session); `Tasks.adopt()` rebuilds them from `TaskScripts.list()`.
-A task is `attached` when `Presence` finds an agent of its own kind resuming its `session_id`, or working in its recorded physical `cwd` without resuming another session; `send_message` refuses then.
+A task is `attached` when `Presence` finds an agent of its own kind resuming its `session_id`, or working in its recorded physical `cwd` without resuming another session by its ID (`Presence.sessionShaped`: a UUID for Claude and Codex, `ses_...` for opencode; a picker search term is not one); `send_message` refuses then.
 It leaves `attached` only on an event, never after an idle time (#1995): the holder exits, or `reclaim_task` / `isx shell --task --take` ends it.
 `Reclaim` is one guest exec: it refuses while a run is going, records who in the task's `reclaimed`, sends SIGHUP and nothing harder, and waits for the holder and then the lock.
 `task_status` reports `attached_tty` and `attached_last_input_at` (the holder's pty atime, the probe's `input` lines) as facts that never change the state.
