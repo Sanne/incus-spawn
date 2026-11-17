@@ -352,8 +352,10 @@ Key design:
   Stored by digest, committed only when the bytes hash to it, with the upstream `Content-Type` stored beside as `.type`.
   Every hit, by digest too, is served only on a `HEAD` carrying the client's own headers, which for a tag must name a stored digest, so the registry vouches for the caller's access each time and Docker Hub counts no pull.
   Never serve a digest's copy without that `HEAD`: manifest digests are published, and a manifest leads to every cached layer.
-  Unconfirmed (connect failure, 5xx, 429) only for a repository an anonymous token check found public and that served that digest (`inRepository`); a private one's is relayed.
-  That check runs on a tag's fetch and its confirmed hits, at most every 6 hours per repository, and a 5xx, a 429 or a failed exchange leaves its marker as it was.
+  Unconfirmed (connect failure, 5xx, 429) only for a digest the anonymous check found public in that repository (`ManifestCache.publicMarker`, per registry, repository and digest); any other is relayed.
+  Only that check writes the marker, never a caller's fetch or confirmed hit: a per-repository marker let a repository made private lend it to a manifest pushed since.
+  The check runs on a manifest's fetch and its confirmed hits, at most every 6 hours per digest, and a 5xx, a 429 or a failed exchange leaves its marker as it was, so the marker has no age bound.
+  The tag key joins every `Accept` line.
   The token realm is followed only to an `https` host in `REGISTRY_DOMAINS`, with the proxy's own pull scope and no redirect.
 - Caches OCI blobs by SHA256, Maven/Gradle artifacts by repository path (confirmed with upstream per `ArtifactCacheTiers`, see below), and npm tarballs from `registry.npmjs.org` with ETag-based packument verification.
   The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot choose or inject a credential; keep it that way.

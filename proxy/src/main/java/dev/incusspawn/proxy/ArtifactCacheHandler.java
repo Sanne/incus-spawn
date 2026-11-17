@@ -277,9 +277,9 @@ class ArtifactCacheHandler {
 
     // --- Registry manifest caching (#2306) ---
 
-    // How often one repository is checked for being public, at most: the check is three requests
+    // How often one manifest is checked for being public, at most: the check is three requests
     private static final long PUBLIC_CHECK_INTERVAL_NANOS = TimeUnit.HOURS.toNanos(6);
-    /** When this proxy last checked each repository ({@code domain/name}) for being public (nanoTime). */
+    /** When this proxy last checked each manifest ({@code domain/name@digest}) for being public (nanoTime). */
     private final ConcurrentHashMap<String, Long> publicChecks = new ConcurrentHashMap<>();
 
     /**
@@ -289,13 +289,13 @@ class ArtifactCacheHandler {
      * access, and for a tag's current digest, and Docker Hub counts a manifest GET as a pull but
      * never a HEAD. A digest is confirmed too, since one is often published: knowing it proves no
      * access. When that HEAD cannot be answered (a connect failure, 5xx, 429), the copy is served
-     * unconfirmed only for a repository an anonymous check found public. Everything else is
-     * fetched, served and cached, or relayed.
+     * unconfirmed only for a digest an anonymous check found public in that repository. Everything
+     * else is fetched, served and cached, or relayed.
      */
     private void serveManifest(HttpServerRequest clientReq, long started, String domain, String name, String reference) {
         var byDigest = ManifestCache.isDigest(reference);
         var ref = domain + "/" + name + (byDigest ? "@" : ":") + reference;
-        var tag = byDigest ? null : ManifestCache.tag(domain, name, reference, clientReq.getHeader("Accept"));
+        var tag = byDigest ? null : ManifestCache.tag(domain, name, reference, clientReq.headers().getAll("Accept"));
         vertx.executeBlocking(() -> {
             var digest = byDigest ? reference : ManifestCache.resolvedDigest(tag);
             return digest == null || ManifestCache.storedType(digest) == null ? null : digest;
@@ -355,7 +355,6 @@ class ArtifactCacheHandler {
             var type = ManifestCache.storedType(digest);
             if (type != null) {
                 if (tag != null) ManifestCache.recordTag(tag, digest);
-                ManifestCache.recordInRepository(domain, name, digest);
             }
             return type;
         }, false).onComplete(ar -> {
@@ -373,16 +372,16 @@ class ArtifactCacheHandler {
 
     /**
      * The registry could not confirm the manifest: the copy of {@code digest} (the one asked for, or
-     * the one the tag last resolved to) is served for a public repository that served that digest,
-     * as the Maven cache serves an artifact upstream cannot be asked about. A private one's would go
-     * to a caller the registry may refuse, so it gets the registry's own answer. A digest is checked
-     * against the repository too, since copies are shared by digest: else a private image's digest,
-     * asked for under a public repository's name, would be served.
+     * the one the tag last resolved to) is served when the anonymous check found that digest public
+     * in that repository, as the Maven cache serves an artifact upstream cannot be asked about. Any
+     * other would go to a caller the registry may refuse, so it gets the registry's own answer: a
+     * private image's, a digest pushed since a repository was made private, and one the check has
+     * not answered for yet.
      */
     private void serveManifestUnconfirmed(HttpServerRequest clientReq, long started, String domain, String name,
                                           String digest, String ref, SidecarAnswer answer) {
         vertx.executeBlocking(() -> {
-            if (!ManifestCache.isPublic(domain, name) || !ManifestCache.inRepository(domain, name, digest)) return null;
+            if (!ManifestCache.isPublic(domain, name, digest)) return null;
             var type = ManifestCache.storedType(digest);
             return type == null ? null : new String[] {digest, type};
         }, false).onComplete(ar -> {
@@ -444,11 +443,12 @@ class ArtifactCacheHandler {
                 }
                 new CachingDownload(clientReq, domain, started, upResp, ManifestCache.copy(digest), ref,
                         Verification.ofManifest(digest, type)).start();
-                vertx.executeBlocking(() -> {
-                    if (tag != null) ManifestCache.recordTag(tag, digest);
-                    ManifestCache.recordInRepository(domain, name, digest);
-                    return null;
-                }, false).onFailure(err -> ProxyLog.trace("Could not record " + ref + ": " + err.getMessage()));
+                if (tag != null) {
+                    vertx.executeBlocking(() -> {
+                        ManifestCache.recordTag(tag, digest);
+                        return null;
+                    }, false).onFailure(err -> ProxyLog.trace("Could not record " + ref + ": " + err.getMessage()));
+                }
                 checkPublicInBackground(domain, name, digest, type);
             }).onFailure(err -> {
                 if (resend && !clientReq.response().closed() && Upstream.closedUnanswered(err)) {
@@ -467,15 +467,16 @@ class ArtifactCacheHandler {
 
     /**
      * Find out, at most every {@link #PUBLIC_CHECK_INTERVAL_NANOS}, whether anyone may pull
-     * {@code domain/name}, and record it: only then is a tag of it served without the registry's
-     * confirmation. It asks as an anonymous client would, with none of the caller's headers: a HEAD
-     * for the manifest, and on a Bearer challenge a pull token from its realm and the HEAD again
-     * with it. None of these is a pull Docker Hub counts. A failed exchange, a 5xx or a 429 changes
+     * {@code digest} from {@code domain/name}, and record it: only then is its copy served without
+     * the registry's confirmation. Per digest, so a digest new to the repository is checked at once,
+     * and stays unserved during a throttle until its check got an answer. It asks as an anonymous
+     * client would, with none of the caller's headers: a HEAD for the manifest, and on a Bearer
+     * challenge a pull token from its realm and the HEAD again with it. None of these is a pull Docker Hub counts. A failed exchange, a 5xx or a 429 changes
      * nothing, so a flaky registry does not drop the marker it is needed for; any other answer but
      * a 200 finds it not public. The token request follows no redirect.
      */
     private void checkPublicInBackground(String domain, String name, String digest, String type) {
-        var key = domain + "/" + name;
+        var key = domain + "/" + name + "@" + digest;
         var now = System.nanoTime();
         var due = new boolean[1];
         publicChecks.compute(key, (k, last) -> {
@@ -491,7 +492,7 @@ class ArtifactCacheHandler {
             if (tokenUri == null) return Future.succeededFuture(false);
             // Never redirected: the realm was checked, a redirect's target would not be
             var tokenPath = tokenUri.getRawPath() + "?" + tokenUri.getRawQuery();
-            return retryOnceAfterConnect(() -> fetchSmallBody(tokenUri.getHost(), 443, tokenPath, MAX_REDIRECTS,
+            return retryOnceAfterConnect(() -> fetchSmallBody(tokenUri.getHost(), 443, tokenPath, FOLLOW_NO_REDIRECT,
                             ManifestCache.MAX_TOKEN_BYTES))
                     .compose(ArtifactCacheHandler::answered).compose(answer -> {
                         var token = answer.status() == 200 ? ManifestCache.token(answer.body()) : null;
@@ -500,7 +501,7 @@ class ArtifactCacheHandler {
                                 .map(second -> second.status() == 200);
                     });
         }).onSuccess(isPublic -> vertx.executeBlocking(() -> {
-            ManifestCache.recordPublic(domain, name, isPublic);
+            ManifestCache.recordPublic(domain, name, digest, isPublic);
             return null;
         }, false)).onFailure(err -> publicChecks.remove(key));
     }
@@ -711,6 +712,8 @@ class ArtifactCacheHandler {
     }
 
     private static final int MAX_REDIRECTS = 10;
+    // fetchSmallBody's depth when no redirect may be followed: it follows one only below MAX_REDIRECTS
+    private static final int FOLLOW_NO_REDIRECT = MAX_REDIRECTS;
 
     /**
      * Follow a 3xx redirect from upstream, making a new request to the Location URL.
