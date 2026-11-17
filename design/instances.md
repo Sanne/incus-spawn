@@ -267,6 +267,22 @@ A template's `shell-command` runs in the session asked for, in zmx as before, an
 A name is held to `ShellSession.NAME` (1 to 32 of `[A-Za-z0-9_-]`, never a leading `-`, which zmx and tmux would read as an option) and checked before anything reaches Incus, so the script needs no quoting and the host link (`isx-<name>.<session>`, design/host-resources.md) stays unambiguous.
 Alternatives: only `--no-attach` loses persistence, the reason zmx is installed; a host-chosen name needs a second path where the host cannot see the sockets (macOS, tmux); Ctrl or Alt+F2 are unreliable across terminals, while `n` already means "new" on a template row.
 
+**Ctrl+Z in an action leaves a shell that `fg` resumes it from** (#2333).
+An action or a template's `shell-command` used to run as `su -c "<command> || exec bash --login"`, or as `bash -c` inside zmx.
+Neither shell has job control, so the command's process group has no parent in its session outside the group, which makes it orphaned.
+Claude Code suspends by handing the terminal back and sending `SIGTSTP` to its process group, and the kernel discards that signal for an orphaned group.
+Claude Code then waited for a `SIGCONT` that never came, with nothing reading the terminal, and the session was lost.
+`InteractiveShell.underJobControl` now runs the command as the first job of `bash -i`; the rcfile turns job control on with `set -m`, since bash enables it only after its startup files.
+The command keeps the login's exported variables, as before, and the rcfile reads `~/.bashrc` only after it, for the prompt.
+A function or alias a profile script defined without exporting it no longer reaches the command, since the shell is a new one.
+The extra shell adds 0.0-0.3 ms to a launch of about 77 ms (docs/dev/PERFORMANCE-NOTES.md "The job-control shell around the action").
+Ctrl+Z then stops the command at that shell's prompt, and `fg` resumes it.
+The command travels in the variable `ISX_ACTION`, so no quoting of the command can break the constant rcfile, which the shell reads from a quoted here-document on fd 3, since a login shell other than bash refuses a here-string.
+The session still ends when the command succeeds and no job is stopped, and stays in a shell when it fails; what it gives up is that ending after a suspension, a `fg` and a clean exit leaves the user in that shell instead of returning.
+A task join (`TaskJoin.guestCommand`) ends with `exit $rc`, so it does not exit while its agent is a stopped job (`jobs -s`); an agent that itself exits with 148 still ends the join with that status.
+The fallback is now an interactive shell, not a login shell, since the environment around it already comes from a login.
+`InteractiveShellJobControlTest` runs the script on a real terminal (util-linux `script`) and skips where that is missing, as on macOS.
+
 **Shell status bar** (feature-flagged as `shell-status-bar`): `ShellStatusBar` pins a two-line bar at the bottom of the terminal during `isx shell` sessions, showing instance name, template, IP and network mode.
 F12 opens a quick-action menu populated from tool actions with `shell_menu: true` and a `shortcut` -- only `url` actions, because the menu runs them while the session owns the terminal in raw mode, and a `command` action's process would share that tty with the shell (fighting it for keystrokes and writing past the bar).
 Actions run on a virtual thread, so a slow URL launcher never holds up keystrokes, and through `ToolAction.executeWithoutPrompting`, which returns an error where `execute` would ask the user something (VS Code's missing Remote-SSH extension) and by default refuses, so a new action is safe until it says it never prompts.

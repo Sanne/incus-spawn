@@ -130,10 +130,11 @@ final class InteractiveShell {
                 case NAMED, NEW -> true;
                 case NONE -> false;
             };
-            if (!inZmx) return prep.shellCommand() + " || exec bash --login";
+            var command = underJobControl(prep.shellCommand());
+            if (!inZmx) return command;
             return "if command -v zmx >/dev/null 2>&1; then "
-                    + zmxAttach(session, zmxCommand(prep.shellCommand()), key)
-                    + "; fi; " + prep.shellCommand() + " || exec bash --login";
+                    + zmxAttach(session, zmxCommand(command), key)
+                    + "; fi; " + command;
         }
         switch (session.kind()) {
             case NONE -> {
@@ -156,6 +157,34 @@ final class InteractiveShell {
         }
         return "exec bash --login";
     }
+
+    /**
+     * {@code command} as the first job of an interactive bash (#2333). Ctrl+Z then stops it at
+     * that shell's prompt and {@code fg} resumes it, as in any terminal. Run directly under
+     * {@code su -c} or zmx, its process group has no job-control shell above it, so the kernel
+     * discards the stop: Claude Code has already handed the terminal back and waits for a
+     * {@code SIGCONT} that never comes, and the session is lost. The session ends when the
+     * command succeeds, and stays in the shell when it fails or was suspended. The command
+     * travels in a variable, so no quoting of it can break the constant rcfile. The rcfile is a
+     * quoted here-document, not a here-string: the login shell that reads this need not be bash
+     * (dash refuses {@code <<<} as a syntax error, and runs nothing).
+     */
+    static String underJobControl(String command) {
+        return "ISX_ACTION=" + Container.shellQuote(command)
+                + " exec bash --rcfile /dev/fd/3 -i 3<<'ISX_RC'\n" + ACTION_RC + "\nISX_RC\n";
+    }
+
+    /**
+     * Job control is on only once the startup files have run, so {@code set -m} turns it on first.
+     * The command gets the login's exported variables, as before; a function or alias a profile
+     * script defined without exporting it does not reach it, since the shell is a new one.
+     * {@code ~/.bashrc} is read only for the prompt that follows, so starting it costs nothing more.
+     * The shell exits only when no job is stopped: a command such as {@code claude; echo bye} goes
+     * on after Ctrl+Z and succeeds, and leaving then would hang up the suspended job.
+     */
+    private static final String ACTION_RC = "exec 3<&-; __isx_action=$ISX_ACTION; unset ISX_ACTION; set -m; "
+            + "eval \"$__isx_action\" && [ -z \"$(jobs -s)\" ] && exit; unset __isx_action; "
+            + "[ -f ~/.bashrc ] && . ~/.bashrc";
 
     /** tmux refuses a {@code TERM} the guest has no terminfo for. */
     private static final String TMUX_TERM = "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; ";

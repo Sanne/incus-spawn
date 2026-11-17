@@ -197,12 +197,15 @@ public final class TaskJoin {
             case UNKNOWN -> throw new IllegalArgumentException("unsupported task agent");
         };
         // Under the conversation's lock, so a run that starts in the meantime and the person's
-        // agent cannot both run; the shell stays, to say so if the lock was taken first.
+        // agent cannot both run; the shell stays, to say so if the lock was taken first. While the
+        // agent is stopped by Ctrl+Z the shell does not exit, which would hang it up: the
+        // job-control shell it runs under keeps it for fg (#2333). Asked of the shell's jobs, not
+        // of status 148, so an agent that exits with 148 still ends the join with that status.
         return TaskScripts.joinGuard(taskId, agent, sessionId, cwd, nonce)
                 + "cd " + ExecScript.quote(cwd) + " || isx_refuse 'its directory is gone'; "
                 + TaskScripts.requireFlock("isx_refuse 'flock (util-linux) is missing in this instance'") + "; "
                 + TaskScripts.CONVERSATION_LOCK + resume + sessionId + "; rc=$?; [ $rc != " + TaskScripts.CONVERSATION_TAKEN
-                + " ] || isx_refuse 'a run of it, or another person, took its conversation first'; exit $rc";
+                + " ] || isx_refuse 'a run of it, or another person, took its conversation first'; [ -n \"$(jobs -s)\" ] || exit $rc";
     }
 
     /** A fresh token naming one join, for {@link Entry#guestCommand} and {@link #refusedInGuest}. */
