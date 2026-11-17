@@ -677,6 +677,24 @@ That is short of the several hundred milliseconds the plan asked for before ship
 A boot on Sanne's host with `FIRMWARE_CODE` pointed at the trimmed build would settle it.
 USB has no build flag and was left in.
 
+## A VM's hostname is set at each start (#2334)
+
+Every name the guest shows reads its hostname: `ISX_CONTAINER` expands `${HOSTNAME}` at login, and the terminal title, the agents' status lines and starship's module read that.
+Incus sets a container's hostname to the instance name, and sets nothing in a VM.
+A VM kept the base image's `fedora`, unless a DHCP answer from the bridge happened to name it on a first boot, and a VM that boots its static `.network` file asks DHCP nothing.
+So two VMs open at once could not be told apart from inside, and a tab running `isx shell` on one was titled `isx:fedora`.
+
+isx writes the instance name to `/proc/sys/kernel/hostname` in the exec that gives each boot its secret (`GuestHostname`): a start or restart for use (`awaitReady`), a branch's setup script, the agent recovery's restart, and the repair of a reboot isx did not do (`giveSecretHeld`).
+It is never written at build: the name has to be the branch's own, which is why `ISX_CONTAINER` is expanded at login.
+It is never written to `/etc/hostname` either, which a copy would carry under its source's name until its own first start.
+
+What this gives up: the name lasts one boot.
+A VM that reboots by itself shows `fedora` until isx next reaches it, which the first `isx shell`, plain `ssh` or `isx mcp` call does, since each repairs a boot without its secret.
+A boot unit in the base image that read the name from `/dev/incus` would cover that gap too, but it would also need a base image release and would set the name a second way beside the one isx already owns.
+
+The alternative was a file in `/run/isx` that every consumer reads instead of the hostname.
+It would leave `hostname` and every `gethostname()` saying `fedora`, and every consumer would have to change.
+
 ## Considered and deferred
 
 ### Address-based caller identity on macOS

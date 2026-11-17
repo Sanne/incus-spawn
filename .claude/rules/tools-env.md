@@ -166,6 +166,7 @@ When adding a built-in image or tool, you must update the corresponding `BUILTIN
 YAML is parsed by a custom `ListDeserializer` that accepts only structured maps and rejects shell strings (`- export FOO=bar`) with the structured equivalent in the error.
 There is no raw/verbatim entry: built-in code declares env vars through the same factories, so everything is conflict-checked.
 For a value the shell must expand at login (`$HOME` in `ClaudeSetup`'s PATH prepend, `$HOSTNAME` for `ISX_CONTAINER` in `GuestProvisioning.writeEnvFile()`), call `.expandingAtLogin()` -- code-only (no setter, not parsed from YAML).
+`$HOSTNAME` is the instance name because Incus sets a container's and isx sets a VM's, in every exec that delivers a boot's secret (`lifecycle/GuestHostname`, #2334); a new such exec runs `GuestHostname.afterSecret`, which appends it to `InstanceSecret.GUEST_SCRIPT`.
 Only plain `$NAME`/`${NAME}` references stay live.
 Any other `$`, quotes, backslashes and backticks are still escaped.
 Both `ToolDef.env` and `ImageDef.env` use this model.

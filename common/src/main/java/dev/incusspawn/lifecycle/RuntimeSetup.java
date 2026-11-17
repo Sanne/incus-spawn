@@ -125,7 +125,8 @@ public final class RuntimeSetup {
         // Each additional exec round trip blocks for seconds due to
         // seccomp_notify lock contention during container startup.
         var sshKeys = prefetched.hasSshKeys() ? sshKeysToInject() : List.<String>of();
-        var setupScript = buildSetupScript(prefetched, prefetched.buildSourceJson(), networkMode, sshKeys, secret != null);
+        var setupScript = buildSetupScript(prefetched, prefetched.buildSourceJson(), networkMode, sshKeys, secret != null,
+                GuestHostname.script(name, prefetched.instance()));
         out.stepStart("Waiting for container");
         var env = secret != null ? InstanceSecret.guestEnv(secret, mcpCaller, placeholders) : Map.<String, String>of();
         var answer = incus.pollUntilReadyOutput(name, 30, env, "sh", "-c", setupScript);
@@ -160,6 +161,16 @@ public final class RuntimeSetup {
     /** @param deliverSecret whether the script puts in place the secret its exec environment carries */
     static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson,
                                    NetworkMode networkMode, List<String> sshKeys, boolean deliverSecret) {
+        return buildSetupScript(prefetched, buildSourceJson, networkMode, sshKeys, deliverSecret, "");
+    }
+
+    /**
+     * @param hostname {@link GuestHostname#script}, after the secret's delivery, which unsets the
+     *                 variables carrying it, so nothing it runs inherits them
+     */
+    static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson,
+                                   NetworkMode networkMode, List<String> sshKeys, boolean deliverSecret,
+                                   String hostname) {
         var sb = new StringBuilder();
         // The static .network config is pushed into the stopped container before start
         // (see configureBranch). A container applies it first thing rather than waiting ~200 ms
@@ -170,6 +181,7 @@ public final class RuntimeSetup {
             sb.append(Container.heredoc("tic -x - 2>/dev/null", prefetched.terminfo())).append('\n');
         }
         if (deliverSecret) sb.append(InstanceSecret.GUEST_SCRIPT).append('\n');
+        sb.append(hostname);
         // Best-effort like the other steps: only the readiness checks below decide whether
         // the script succeeded, which is what pollUntilReady retries on.
         sb.append("chown agentuser:agentuser /home/agentuser || true");
