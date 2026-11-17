@@ -143,6 +143,7 @@ class DelegationToolsTest {
             return taskState.equals("running")
                     ? "run=1\nkind=agent\nstate=running\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
+                    : taskState.equals("lost") ? "run=1\nkind=agent\nstate=lost\n" + who + "events_bytes=400\n---\n" + EVENTS + "\n---stderr\n"
                     : "run=1\nkind=agent\nstate=finished\nexit=0\n" + who + "events_bytes=400\n---\n"
                             + (finishedEvents != null ? finishedEvents : EVENTS) + "\n---stderr\n";
         };
@@ -772,8 +773,15 @@ class DelegationToolsTest {
         attached = true;
         var stillHeld = call("reclaim_task", "{\"task_id\":\"" + task + "\"}");
         assertEquals("attached", structured(stillHeld).path("state").asText());
-        assertTrue(text(stillHeld).contains("another agent (pid 77) holds it now") && !text(stillHeld).contains("continue with send_message"),
+        assertTrue(text(stillHeld).contains("an agent (pid 77) holds it now") && !text(stillHeld).contains("continue with send_message"),
                 text(stillHeld));
+
+        // A run cut off stays lost with a holder in it: still no send_message advice.
+        taskState = "lost";
+        var lostHeld = call("reclaim_task", "{\"task_id\":\"" + task + "\"}");
+        assertEquals("lost", structured(lostHeld).path("state").asText());
+        assertTrue(text(lostHeld).contains("an agent (pid 77) holds it now") && !text(lostHeld).contains("continue with send_message"),
+                text(lostHeld));
     }
 
     @Test
