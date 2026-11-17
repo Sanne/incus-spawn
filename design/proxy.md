@@ -546,8 +546,12 @@ quay.io does not limit anonymous pulls except under abuse, and ghcr.io publishes
 **What it gives up:** during a throttle or an outage, a public tag that moved upstream is served at its old digest.
 A digest found public stays marked until a check of it gets an answer saying otherwise.
 Checks of one digest are at least 6 hours apart, run only when this proxy fetches it or the registry confirms a pull of it, and leave the marker as it was when they get no answer.
-A pull the registry refuses does not check it again, so the marker has no age bound.
-During an outage, a manifest that was public once can be served to a caller the registry now refuses, for as long as the outage lasts or no caller with access pulls it.
+A pull the registry refuses does not check it again, and neither does a copy served unconfirmed.
+The marker has no age bound.
+During an outage nothing checks the digest, so its marker does not change, and a manifest that was public once is served to a caller the registry now refuses for the whole outage.
+The marker carries into later outages too.
+It goes only when a fetch or a confirmed hit at least 6 hours after the digest's last check runs a check that gets an answer and finds the digest not public: an anonymous `HEAD` refused, or no anonymous token, but not a `5xx`, a `429` or a failed exchange.
+A proxy restart clears that 6-hour gate, so the first such pull after a restart checks at once.
 Only bytes an anonymous client could pull at some check are served that way, never a manifest pushed after the repository was made private.
 A client's own `HEAD` (containerd resolves a tag that way) is relayed, not answered from the cache: Docker Hub does not count it, and during a throttle the registry is believed to keep answering it.
 The registries' 429s are not waited out (`waitOutThrottle` excludes them): Docker Hub's window is 6 hours, longer than any client waits.
