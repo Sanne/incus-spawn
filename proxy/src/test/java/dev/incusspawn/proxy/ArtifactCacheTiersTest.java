@@ -20,7 +20,7 @@ class ArtifactCacheTiersTest {
     }
 
     private static ArtifactCacheTiers fromYaml(String yaml) throws Exception {
-        return ArtifactCacheTiers.from(Jjq.spawnConfig(yaml));
+        return java.util.Objects.requireNonNullElse(ArtifactCacheTiers.configured(Jjq.spawnConfig(yaml)), ArtifactCacheTiers.DEFAULT);
     }
 
     @Test
@@ -82,5 +82,30 @@ class ArtifactCacheTiersTest {
         assertEquals(Duration.ofHours(4), tiers.maxStale());
         assertEquals(FRESH, tiers.tierOf(ago(Duration.ofHours(3)), NOW));
         assertEquals(EXPIRED, tiers.tierOf(ago(Duration.ofHours(4)), NOW));
+    }
+
+    private static ArtifactCacheTiers centralUnder(String yaml) throws Exception {
+        return CachedRepository.CENTRAL.revalidation().tiersOr(ArtifactCacheTiers.configured(Jjq.spawnConfig(yaml)));
+    }
+
+    @Test
+    void mavenCentralConfirmsLessOftenWhileArtifactCacheIsUnset() throws Exception {
+        assertNull(ArtifactCacheTiers.configured(Jjq.spawnConfig("{}")));
+        assertEquals(ArtifactCacheTiers.CENTRAL_DEFAULT, centralUnder("{}"));
+        assertEquals(ArtifactCacheTiers.CENTRAL_DEFAULT, CachedRepository.CENTRAL_REPO1.revalidation().tiersOr(null));
+        assertEquals(Duration.ofHours(12), ArtifactCacheTiers.CENTRAL_DEFAULT.fresh());
+        // The others keep theirs: the Portal is confirmed every hit, Gradle distributions get the default
+        assertEquals(ArtifactCacheTiers.CONFIRM_EVERY_HIT, CachedRepository.PLUGIN_PORTAL.revalidation().tiersOr(null));
+        assertEquals(ArtifactCacheTiers.DEFAULT, CachedRepository.GRADLE_DISTRIBUTIONS.revalidation().tiersOr(null));
+    }
+
+    @Test
+    void anyArtifactCacheSectionReplacesCentralsDefaultWhole() throws Exception {
+        assertEquals(ArtifactCacheTiers.CONFIRM_EVERY_HIT, centralUnder("artifact-cache: {fresh: 0, max-stale: 0}"));
+        // One key alone takes the other from DEFAULT, never from Central's longer fresh, which would raise this max-stale
+        assertEquals(new ArtifactCacheTiers(Duration.ofHours(2), Duration.ofHours(2)),
+                centralUnder("artifact-cache: {max-stale: 1h}"));
+        // A malformed section is read as the defaults, not as absent
+        assertEquals(ArtifactCacheTiers.DEFAULT, centralUnder("artifact-cache: 0"));
     }
 }

@@ -41,11 +41,15 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
         return path.startsWith(pathPrefix);
     }
 
-    /** Maven Central, its two names. */
+    /**
+     * Maven Central, its two names. Its tiers are longer than the others' unless config.yaml's
+     * {@code artifact-cache:} sets them ({@link ArtifactCacheTiers#CENTRAL_DEFAULT}), since a
+     * build's every confirmation goes to Central.
+     */
     static final CachedRepository CENTRAL = new CachedRepository("repo.maven.apache.org", "/maven2/",
-            Layout.MAVEN, Revalidation.HEAD_CHECKSUM, null);
+            Layout.MAVEN, Revalidation.HEAD_CHECKSUM.trustedByDefaultFor(ArtifactCacheTiers.CENTRAL_DEFAULT), null);
     static final CachedRepository CENTRAL_REPO1 = new CachedRepository("repo1.maven.org", "/maven2/",
-            Layout.MAVEN, Revalidation.HEAD_CHECKSUM, null);
+            Layout.MAVEN, Revalidation.HEAD_CHECKSUM.trustedByDefaultFor(ArtifactCacheTiers.CENTRAL_DEFAULT), null);
     /**
      * The Gradle Plugin Portal. Authors delete versions there (7 days for authors, later via
      * support, a malicious plugin among them), often enough that a withdrawal is never left

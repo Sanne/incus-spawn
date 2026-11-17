@@ -587,7 +587,7 @@ public class MitmProxy {
                 HostRouteRelay.served(ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn),
                         name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)), nested,
                 ToolProxyResolver.handlerDomains(config));
-        artifactCache.artifactCacheTiers = ArtifactCacheTiers.from(config);
+        artifactCache.artifactCacheTiers = ArtifactCacheTiers.configured(config);
         artifactCache.useRepositories(CachedRepository.withConfigured(
                 config.mavenRepositories().entries(ToolProxyResolver.repositoryDomainsTaken(
                         ToolProxyResolver.handlerDomains(tree)), ProxyLog::warn),

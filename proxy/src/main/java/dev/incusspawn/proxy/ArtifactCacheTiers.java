@@ -17,6 +17,15 @@ import java.time.Instant;
 record ArtifactCacheTiers(Duration fresh, Duration maxStale) {
 
     static final ArtifactCacheTiers DEFAULT = new ArtifactCacheTiers(Duration.ofHours(2), Duration.ofDays(7));
+    /**
+     * Maven Central's, while config.yaml has no {@code artifact-cache:} (#2305). Within {@code fresh}
+     * a copy costs Central no request, and past it one {@code HEAD} per artifact, whatever the
+     * number of instances: the confirmation is stamped on the shared copy. So {@code fresh} alone
+     * sets how often a build's artifacts are confirmed in one burst (about 1,700 {@code HEAD}s for
+     * Quarkus' core), and {@code max-stale} only moves those requests into the background. What
+     * it gives up: a release Central withdraws is served for up to {@code fresh}, plus once more.
+     */
+    static final ArtifactCacheTiers CENTRAL_DEFAULT = new ArtifactCacheTiers(Duration.ofHours(12), Duration.ofDays(7));
     static final ArtifactCacheTiers CONFIRM_EVERY_HIT = new ArtifactCacheTiers(Duration.ZERO, Duration.ZERO);
 
     enum Tier { FRESH, STALE, EXPIRED }
@@ -26,9 +35,14 @@ record ArtifactCacheTiers(Duration fresh, Duration maxStale) {
         if (maxStale.compareTo(fresh) < 0) maxStale = fresh;
     }
 
-    static ArtifactCacheTiers from(SpawnConfig config) {
+    /**
+     * The tiers config.yaml's {@code artifact-cache:} sets, or null when it has none. A section
+     * that is there but malformed reads as {@link #DEFAULT}, never as absent, so it cannot
+     * leave a repository its longer default ({@link Revalidation#tiersOr}).
+     */
+    static ArtifactCacheTiers configured(SpawnConfig config) {
         var section = config.artifactCache();
-        if (section == null) return DEFAULT;
+        if (section == null) return null;
         if (!section.wellFormed()) {
             ProxyLog.warn("Ignoring artifact-cache: in config.yaml (expected fresh: and max-stale: under it);"
                     + " using the defaults");
