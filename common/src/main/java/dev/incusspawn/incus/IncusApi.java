@@ -7,8 +7,10 @@ import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.Platform;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.TerminalStreams;
+import dev.incusspawn.vm.VmManager;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -157,6 +159,32 @@ class IncusApi {
         var vsockSocket = Environment.vmVsockSocket();
         if (Files.exists(vsockSocket)) {
             return diagnoseVsock(vsockSocket);
+        }
+        boolean macOS = Platform.isMacOS();
+        return noSocketFound(macOS, Environment.vmDataImage(),
+                macOS && VmManager.isRunning());
+    }
+
+    /**
+     * The advice when neither socket exists. On a Mac whose VM has its data disk the VM was set up,
+     * so host setup again would not help (#2328): a stopped VM needs starting, and a running one
+     * whose vsock tunnel is missing needs time to boot or a restart.
+     */
+    static String noSocketFound(boolean macOS, Path vmDataImage, boolean vmRunning) {
+        if (macOS && vmRunning) {
+            return """
+                    Incus not reachable: the isx VM is running but its vsock tunnel is not set up.
+
+                    The VM may still be booting. Wait a few seconds and retry.
+                    If it persists:    isx vm restart
+                    """;
+        }
+        if (macOS && Files.exists(vmDataImage)) {
+            return """
+                    Incus not reachable: the isx VM is not running.
+
+                    Start it:          isx vm start
+                    """;
         }
         return """
                 Incus not reachable. No Unix socket found and no vsock socket found.
