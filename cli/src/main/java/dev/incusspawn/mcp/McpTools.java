@@ -1468,8 +1468,10 @@ final class McpTools {
         if (done && pid != null) node.put("reclaimed_pid", pid);
         var what = done ? "Reclaimed task " + task.id() + "'s conversation: its holder (agent, pid " + pid + ") exited."
                 : "Nobody held task " + task.id() + "'s conversation.";
-        var next = "attached".equals(status.state()) && status.attachedPid() != null
-                ? " But another agent (pid " + status.attachedPid() + ") holds it now, so send_message is still refused."
+        // A holder is named whatever the state: send_message refuses while one is there, lost or not.
+        var next = status.attachedPid() != null
+                ? " But " + (done ? "another agent" : "an agent") + " (pid " + status.attachedPid() + ") holds it now, so send_message is still refused. State: "
+                        + status.state() + "."
                 : "finished".equals(status.state()) || "lost".equals(status.state()) ? " State: " + status.state() + "; continue with send_message."
                 : " State: " + status.state() + ".";
         return ToolResult.text(what + next, node.build());
