@@ -289,11 +289,17 @@ public final class TaskJoin {
             exit = probe(incus, instance, Reclaim.script(entry.id(), DelegateAgent.parse(entry.agent()), "isx shell --take",
                     entry.attachedPid(), Reclaim.WAIT_SECONDS), out, READ_LIMIT.multipliedBy(2).plusSeconds(2L * Reclaim.WAIT_SECONDS));
         } catch (RuntimeException e) {
-            return "Could not reach " + instance + ": " + OutputFormat.oneLine(String.valueOf(e.getMessage()));
+            // The exec may have failed after the signal: what happened is not known, never "nothing".
+            return unknown(entry, instance, OutputFormat.oneLine(String.valueOf(e.getMessage())));
         }
-        if (exit != 0) return "Could not take " + entry.id() + "'s conversation back in " + instance + " (exit " + exit + ").";
+        if (exit != 0) return unknown(entry, instance, "exit " + exit);
         var why = Reclaim.parse(out.toString(StandardCharsets.UTF_8)).personRefusal(entry.id(), instance);
         return why == null ? null : "Did not take it back: " + why;
+    }
+
+    /** Why a take whose exec failed ({@code detail}) did not say what it did. */
+    private static String unknown(Entry entry, String instance, String detail) {
+        return "Did not take it back: " + new Reclaim(Reclaim.Outcome.UNREADABLE, null).personRefusal(entry.id(), instance) + " (" + detail + ")";
     }
 
     /** The hint plain {@code isx shell} prints before the prompt, or null when there is nothing to join. */
