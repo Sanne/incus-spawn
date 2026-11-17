@@ -27,6 +27,12 @@ import java.util.regex.Pattern;
  *       feature, which an organization policy may disallow, and then refuses every request with
  *       tools.</li>
  * </ul>
+ * A standard token count ({@link #COUNT_TOKENS_PATH}) is translated to Vertex's token count
+ * instead (#1938), never to the model's rawPredict, which is a generation: it goes to the fixed
+ * {@code count-tokens:rawPredict}, whatever {@code stream} says, and only {@link #COUNT_FIELDS} are
+ * kept. Its {@code model} stays in the body, written after the kept fields, before
+ * {@code anthropic_version}, with the same date suffix stripped as a generation's URL gets.
+ * <p>
  * {@code output_config}, a JSON-schema {@code format} included, is copied as it is, by the
  * translation and for a body already in Vertex's format (#1569). Vertex treats that format as the
  * same feature. Unlike a tool's {@code strict}, dropping it would answer with something other than
@@ -73,6 +79,13 @@ class VertexBodyRewriter {
             "metadata", "tools", "tool_choice", "thinking", "output_config"
     );
 
+    /** The standard token count, which goes to Vertex's {@code count-tokens} with its model in the body. */
+    static final String COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
+    /** What a token count keeps: the fields that make up the prompt, none a generation's own. */
+    static final Set<String> COUNT_FIELDS = Set.of(
+            "messages", "system", "tools", "tool_choice", "thinking", "output_config"
+    );
+
     /** Not JSON the translation takes: answered as before, with a 502. */
     static final class InvalidBody extends Exception {
         InvalidBody(String message) {
@@ -104,6 +117,8 @@ class VertexBodyRewriter {
     /** Where a translated body goes; null for a body already in Vertex's format, which is not translated. */
     private final String pathPrefix;
     private final Consumer<Buffer> output;
+    /** A token count: the model is written into the body, not the path. */
+    private final boolean counting;
 
     private int state = START;
     private int bomSeen;
@@ -173,6 +188,7 @@ class VertexBodyRewriter {
         this.originalPath = originalPath;
         this.pathPrefix = "/v1/projects/" + projectId + "/locations/" + region + "/publishers/anthropic/models/";
         this.output = output;
+        this.counting = COUNT_TOKENS_PATH.equals(originalPath);
     }
 
     /** A rewriter of a body already in Vertex's format, for {@code path}: only a tool's {@code strict} goes. */
@@ -184,6 +200,7 @@ class VertexBodyRewriter {
         this.originalPath = path;
         this.pathPrefix = null;
         this.output = output;
+        this.counting = false;
     }
 
     private boolean translating() {
@@ -214,8 +231,8 @@ class VertexBodyRewriter {
             if (state != TRAIL) throw new InvalidBody("the body ends before its JSON does");
             if (passthrough) return new Result(originalPath, List.of());
             if (!translating()) return new Result(originalPath, List.copyOf(dropped));
-            var name = model == null ? DEFAULT_MODEL : DATE_SUFFIX.matcher(model).replaceFirst("");
-            var path = pathPrefix + name + (stream ? ":streamRawPredict" : ":rawPredict");
+            if (counting) return new Result(pathPrefix + "count-tokens:rawPredict", List.copyOf(dropped));
+            var path = pathPrefix + modelName() + (stream ? ":streamRawPredict" : ":rawPredict");
             if (path.getBytes(StandardCharsets.UTF_8).length > MAX_URL_PATH) {
                 throw new RefusedBody("model is too long for a Vertex URL (" + MAX_URL_PATH + " bytes)");
             }
@@ -223,6 +240,31 @@ class VertexBodyRewriter {
         } finally {
             flush();
         }
+    }
+
+    /** The model the call is for: the body's, without its date suffix, or the default when it names none. */
+    private String modelName() {
+        return model == null ? DEFAULT_MODEL : DATE_SUFFIX.matcher(model).replaceFirst("");
+    }
+
+    /**
+     * {@code s} as a JSON string of ASCII alone: the guest chose it, so every quote, backslash, control
+     * and non-ASCII character is escaped, and it cannot end the string or add a member.
+     */
+    static String jsonString(String s) {
+        var json = new StringBuilder(s.length() + 2).append('"');
+        for (int i = 0; i < s.length(); i++) {
+            var c = s.charAt(i);
+            if (c == '"' || c == '\\') {
+                json.append('\\').append(c);
+            } else if (c < 0x20 || c >= 0x7f) {
+                json.append("\\u");
+                for (int shift = 12; shift >= 0; shift -= 4) json.append(Character.forDigit((c >> shift) & 0xf, 16));
+            } else {
+                json.append(c);
+            }
+        }
+        return json.append('"').toString();
     }
 
     // --- Lexer ---
@@ -373,6 +415,7 @@ class VertexBodyRewriter {
         var mode = modeAt(depth);
         if (depth == 1 && !passthrough && translating()) {
             if (bit(emittedAny, 1)) emit(',');
+            if (counting) emitAscii("\"model\":" + jsonString(modelName()) + ",");
             emitAscii("\"anthropic_version\":\"" + ANTHROPIC_VERSION + "\"");
         }
         if (mode == EMIT) emit(b);
@@ -449,7 +492,8 @@ class VertexBodyRewriter {
     private boolean memberIsWritten(String name) {
         if (modeAt(depth) != EMIT) return false;
         if (depth == 1 && !translating()) return true;
-        if (depth == 1) return name != null && ALLOWED_FIELDS.contains(name) && !name.equals("anthropic_version");
+        if (depth == 1) return name != null && (counting ? COUNT_FIELDS : ALLOWED_FIELDS).contains(name)
+                && !name.equals("anthropic_version");
         if (depth == ccDepth) return !"scope".equals(name);
         return true;
     }
@@ -478,7 +522,7 @@ class VertexBodyRewriter {
             if (translating() && "model".equals(name)) {
                 if (++modelSeen > 1) throw new RefusedBody("the body names its model twice");
                 valueMode = MODEL;
-            } else if (translating() && "stream".equals(name)) {
+            } else if (translating() && !counting && "stream".equals(name)) {
                 if (++streamSeen > 1) throw new RefusedBody("the body sets stream twice");
                 valueMode = EMIT;
                 valueIsStream = true;
