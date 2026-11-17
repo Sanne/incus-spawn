@@ -207,7 +207,7 @@ class ManifestCacheProxyTest {
         var digest = digestOf(latest.get(repository));
         assertOk(pull(digest, CALLER), latest.get(repository));
         awaitCopy(latest.get(repository));
-        await(() -> ManifestCache.isPublic(REGISTRY, repository), "The repository was never found public");
+        awaitPublic();
         throttled = true;
 
         assertOk(pull(digest, CALLER), latest.get(repository));
@@ -227,7 +227,7 @@ class ManifestCacheProxyTest {
         latest.put(repository, "{\"manifests\":[],\"public\":true}");
         publicRepositories.add(repository);
         assertOk(pull("latest", CALLER), latest.get(repository));
-        await(() -> ManifestCache.isPublic(REGISTRY, repository), "The repository was never found public");
+        awaitPublic();
         throttled = true;
 
         var answer = pull(privateDigest, CALLER);
@@ -268,7 +268,7 @@ class ManifestCacheProxyTest {
         publicRepositories.add(repository);
         assertOk(pull("latest", CALLER), latest.get(repository));
         awaitCopy(latest.get(repository));
-        await(() -> ManifestCache.isPublic(REGISTRY, repository), "The repository was never found public");
+        awaitPublic();
         throttled = true;
 
         assertOk(pull("latest", CALLER), latest.get(repository));
@@ -287,7 +287,38 @@ class ManifestCacheProxyTest {
         var answer = pull("latest", CALLER);
 
         assertTrue(answer.startsWith("HTTP/1.1 429"), answer);
-        assertFalse(ManifestCache.isPublic(REGISTRY, repository));
+        assertFalse(ManifestCache.isPublic(REGISTRY, repository, digest));
+    }
+
+    /**
+     * The public marker is the anonymous check's alone, per digest: a manifest pushed after the
+     * repository was made private is not served during a throttle, though a caller with access
+     * pulled it through the proxy since the repository's last check.
+     */
+    @Test
+    void digestPushedAfterTheRepositoryWasMadePrivateIsNotServedUnconfirmed() throws Exception {
+        publicRepositories.add(repository);
+        assertOk(pull("latest", CALLER), latest.get(repository));
+        awaitCopy(latest.get(repository));
+        awaitPublic();
+        publicRepositories.remove(repository);
+        latest.put(repository, "{\"manifests\":[],\"private\":true}");
+        var pushed = digestOf(latest.get(repository));
+        assertOk(pull("latest", CALLER), latest.get(repository));
+        awaitCopy(latest.get(repository));
+        // The new digest's own check, refused: its last step is the HEAD with the anonymous token
+        await(() -> hits("HEAD", pushed, "Bearer " + ANONYMOUS_TOKEN) > 0, "The new digest was never checked");
+        // And the tag now names it: written apart from the copy, so waited for too
+        var tag = ManifestCache.tag(REGISTRY, repository, "latest", List.of(TYPE));
+        await(() -> pushed.equals(ManifestCache.resolvedDigest(tag)), "The tag was never recorded at the new digest");
+        throttled = true;
+
+        var byTag = pull("latest", CALLER);
+        var byDigest = pull(pushed, CALLER);
+
+        assertTrue(byTag.startsWith("HTTP/1.1 429"), byTag);
+        assertTrue(byDigest.startsWith("HTTP/1.1 429"), byDigest);
+        assertFalse(ManifestCache.isPublic(REGISTRY, repository, pushed));
     }
 
     /** Bytes that do not match their digest reach the client, which checks them, but never the cache. */
@@ -334,6 +365,12 @@ class ManifestCacheProxyTest {
         assertTrue(answer.startsWith("HTTP/1.1 200"), answer);
         assertTrue(answer.contains("Content-Type: " + TYPE), answer);
         assertTrue(answer.endsWith("\r\n\r\n" + body), answer);
+    }
+
+    /** Waits for the anonymous check to find the repository's current manifest public. */
+    void awaitPublic() throws InterruptedException {
+        var digest = digestOf(latest.get(repository));
+        await(() -> ManifestCache.isPublic(REGISTRY, repository, digest), "The manifest was never found public");
     }
 
     static void awaitCopy(String body) throws InterruptedException {

@@ -526,21 +526,29 @@ quay.io does not limit anonymous pulls except under abuse, and ghcr.io publishes
   A `401`, `403`, `404` or any other refusal relays the client's `GET`, so the client gets the registry's own answer, its `WWW-Authenticate` challenge included.
   A tag never seen before skips the `HEAD`, which could only add a round trip before the `GET`.
 - Which digest a tag last resolved to is kept per registry, repository, tag and `Accept` (`ManifestCache.tag`), since one tag gives a client that accepts other media types another manifest.
+  Every `Accept` line counts, joined: Go clients such as podman's containers/image send one line per media type.
   Every file name is a hash of what names it, so no part of a request becomes a path.
-- When the confirming `HEAD` cannot be answered (a refused connect, a `5xx` or a `429`), a public repository's copy is served: the digest asked for, or the one a tag last resolved to, logged as unconfirmed and, while the registry answers `429`, counted on `/activity`'s `throttled`.
-  A private repository's is not, since nobody can tell whether the caller may pull it; the client's `GET` is relayed and gets upstream's own answer.
-  The digest must also have been served by that repository (`ManifestCache.inRepository`): copies are shared by digest, so a private image's digest asked for under a public repository's name is not served.
-  Public means what an anonymous client finds: a `HEAD` with no credential, and on a Bearer challenge a pull-only token from its realm and the `HEAD` again with it (`checkPublicInBackground`).
+- When the confirming `HEAD` cannot be answered (a refused connect, a `5xx` or a `429`), a copy is served only for a digest the anonymous check found public in that repository: the digest asked for, or the one a tag last resolved to.
+  It is logged as unconfirmed and, while the registry answers `429`, counted on `/activity`'s `throttled`.
+  Any other digest is not served, since nobody can tell whether the caller may pull it; the client's `GET` is relayed and gets upstream's own answer.
+  Public means what an anonymous client finds for that digest in that repository: a `HEAD` with no credential, and on a Bearer challenge a pull-only token from its realm and the `HEAD` again with it (`checkPublicInBackground`).
+  Only that check writes the marker, per registry, repository and digest (`ManifestCache.publicMarker`), never a caller's own fetch or confirmed hit.
+  A marker per repository would let a repository made private lend its old check to a manifest pushed since, which a caller with access then pulled: a throttle would hand it to an instance the registry refuses.
+  Copies are shared by digest, so the repository is in the key too: a private image's digest asked for under a public repository's name is not served.
   None of the three is a counted pull.
   The realm must be an `https` URL on a registry domain with no port, and the token request follows no redirect, so a registry's challenge cannot send the proxy anywhere else.
   The scope is the proxy's own, never the challenge's.
-  The check runs after a tag's fetch and after its confirmed hits, at most every 6 hours per repository and proxy, since a tag that never moves is never fetched again.
-  Its marker is there exactly while the last check that got an answer found the repository public: a `5xx`, a `429` or a failed exchange leaves it as it was, so a flaky registry does not drop the marker exactly when it is needed.
+  The check runs after a manifest's fetch and after its confirmed hits, at most every 6 hours per digest and proxy, since a manifest that never moves is never fetched again.
+  A digest new to the repository is therefore checked at its first fetch, and is not served during a throttle until that check got an answer.
+  The marker is there exactly while the last check that got an answer found the digest public: a `5xx`, a `429` or a failed exchange leaves it as it was, so a flaky registry does not drop the marker exactly when it is needed.
 - There are no confirmation tiers for tags: every hit is confirmed, since the `HEAD` costs no pull, so `:latest` is never served stale while the registry answers.
 
 **What it gives up:** during a throttle or an outage, a public tag that moved upstream is served at its old digest.
-A repository made private keeps its marker until the next check that gets an answer, which a pull makes at most 6 hours apart.
-Until then, and only while the registry cannot be asked, its manifests can still be served to a caller it would refuse.
+A digest found public stays marked until a check of it gets an answer saying otherwise.
+Checks of one digest are at least 6 hours apart, run only when this proxy fetches it or the registry confirms a pull of it, and leave the marker as it was when they get no answer.
+A pull the registry refuses does not check it again, so the marker has no age bound.
+During an outage, a manifest that was public once can be served to a caller the registry now refuses, for as long as the outage lasts or no caller with access pulls it.
+Only bytes an anonymous client could pull at some check are served that way, never a manifest pushed after the repository was made private.
 A client's own `HEAD` (containerd resolves a tag that way) is relayed, not answered from the cache: Docker Hub does not count it, and during a throttle the registry is believed to keep answering it.
 The registries' 429s are not waited out (`waitOutThrottle` excludes them): Docker Hub's window is 6 hours, longer than any client waits.
 

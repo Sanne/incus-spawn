@@ -14,6 +14,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.SequencedMap;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -26,8 +27,8 @@ import java.util.regex.Pattern;
  * A manifest is stored by its digest, verified on store, with its media type beside it. A tag is
  * a name that can move: what it last resolved to is kept per repository, tag and {@code Accept}.
  * Every copy is served on a registry's confirmation for the caller, and without one only for a
- * repository found public that served that digest: a manifest digest is often published (an
- * image pinned in a chart or a CI file), so knowing one is no proof of access.
+ * digest an anonymous check found public in that repository: a manifest digest is often
+ * published (an image pinned in a chart or a CI file), so knowing one is no proof of access.
  */
 final class ManifestCache {
 
@@ -92,8 +93,9 @@ final class ManifestCache {
      * {@code Accept}, since one tag gives a different manifest to a client that accepts other types.
      * Named by a hash, so no part of a request becomes a path.
      */
-    static Path tag(String domain, String name, String tag, String accept) {
-        return dir().resolve("tags").resolve(hash(domain + "\n" + name + "\n" + tag + "\n" + (accept == null ? "" : accept)));
+    static Path tag(String domain, String name, String tag, List<String> accept) {
+        // Every Accept line: Go clients (podman's containers/image) send one per media type
+        return dir().resolve("tags").resolve(hash(domain + "\n" + name + "\n" + tag + "\n" + String.join(",", accept)));
     }
 
     /** The digest a tag last resolved to, or null. */
@@ -120,46 +122,30 @@ final class ManifestCache {
     }
 
     /**
-     * The marker that {@code domain/name} served {@code digest}: copies are shared by digest, and one
-     * is served unconfirmed only under a repository that served it.
+     * The marker a manifest has while the anonymous check last found it public: a HEAD for that
+     * digest in that repository, with no credential or an anonymous pull token, answered 200. Only
+     * then may its copy be served when the registry cannot be asked. Per digest, never per
+     * repository: a repository made private after one check could otherwise lend that marker to a
+     * manifest pushed since, which no anonymous client could ever pull. Nothing a caller's own
+     * request answers writes it.
      */
-    static Path inRepositoryMarker(String domain, String name, String digest) {
-        return dir().resolve("repositories").resolve(hash(domain + "\n" + name + "\n" + digest));
+    static Path publicMarker(String domain, String name, String digest) {
+        return dir().resolve("public").resolve(hash(domain + "\n" + name + "\n" + digest));
     }
 
-    static boolean inRepository(String domain, String name, String digest) {
-        return Files.isRegularFile(inRepositoryMarker(domain, name, digest));
-    }
-
-    static void recordInRepository(String domain, String name, String digest) throws IOException {
-        var marker = inRepositoryMarker(domain, name, digest);
-        if (Files.exists(marker)) return;
-        Files.createDirectories(marker.getParent());
-        try {
-            Files.createFile(marker);
-        } catch (java.nio.file.FileAlreadyExistsException raced) {
-            // Another request recorded it first
-        }
+    static boolean isPublic(String domain, String name, String digest) {
+        return Files.isRegularFile(publicMarker(domain, name, digest));
     }
 
     /**
-     * The marker a repository has while it was last found public: anyone may then pull it, so a
-     * tag of it may be served from the copy when the registry cannot be asked.
+     * Records what an anonymous check found: the marker is there exactly while the last answered
+     * check found the digest public.
      */
-    static Path publicMarker(String domain, String name) {
-        return dir().resolve("public").resolve(hash(domain + "\n" + name));
-    }
-
-    static boolean isPublic(String domain, String name) {
-        return Files.isRegularFile(publicMarker(domain, name));
-    }
-
-    /** Records what an anonymous check found: the marker is there exactly while the repository is public. */
-    static void recordPublic(String domain, String name, boolean isPublic) throws IOException {
-        var marker = publicMarker(domain, name);
+    static void recordPublic(String domain, String name, String digest, boolean isPublic) throws IOException {
+        var marker = publicMarker(domain, name, digest);
         if (isPublic) {
             Files.createDirectories(marker.getParent());
-            if (!Files.exists(marker)) Files.writeString(marker, domain + "/" + name, StandardCharsets.UTF_8);
+            if (!Files.exists(marker)) Files.writeString(marker, domain + "/" + name + "@" + digest, StandardCharsets.UTF_8);
         } else {
             Files.deleteIfExists(marker);
         }
