@@ -2481,6 +2481,7 @@ public class BuildCommand extends BaseCommand {
 
         var visited = new HashSet<String>();
         var impliedToolInstances = new HashSet<String>();
+        var explicitToolInstances = new HashSet<String>();
         for (var current : ImageDef.chain(imageDef, defs).reversed()) {
             definitions.put(current.getName(), current);
             sources.put(current.getName(), current.getSource());
@@ -2488,7 +2489,7 @@ public class BuildCommand extends BaseCommand {
                 projectRoots.put(current.getName(), current.getProjectRoot().toString());
             }
             collectToolDefs(current, tools, visited);
-            collectToolInstances(current, toolInstances, impliedToolInstances);
+            collectToolInstances(current, toolInstances, impliedToolInstances, explicitToolInstances);
         }
 
         var buildSource = new BuildSource(definitions, tools, toolInstances, sources);
@@ -2499,16 +2500,20 @@ public class BuildCommand extends BaseCommand {
     /**
      * Child first, so a child's parameters win over its parent's, unless the child only implies
      * the tool through a parameterless {@code requires}: the parent's installation stands then
-     * (#1906), so a farther layer's entry replaces one in {@code implied}.
+     * (#1906), so a farther layer's entry replaces one in {@code implied}. Likewise a farther
+     * layer's explicit entry replaces a nearer {@code requires} entry with parameters, which the
+     * build did not apply over it (#1909); {@code explicit} holds the names an explicit entry set.
      */
     private void collectToolInstances(ImageDef imageDef, Map<String, BuildSource.ToolInstance> instances,
-                                      Set<String> implied) {
+                                      Set<String> implied, Set<String> explicit) {
         for (var resolvedTool : resolveTools(imageDef)) {
             var name = resolvedTool.name();
             if (resolvedTool.parameters().isEmpty()) continue;
-            if (instances.containsKey(name) && !implied.contains(name)) continue;
+            if (instances.containsKey(name) && !implied.contains(name)
+                    && (explicit.contains(name) || !resolvedTool.explicit())) continue;
             instances.put(name, new BuildSource.ToolInstance(name, resolvedTool.parameters()));
             if (resolvedTool.implied()) implied.add(name); else implied.remove(name);
+            if (resolvedTool.explicit()) explicit.add(name);
         }
     }
 

@@ -96,6 +96,10 @@ isx resolves `requires` transitively, and detects and rejects a circular depende
 An entry without parameters only asks for the tool to be installed.
 So when an ancestor template already installed it, the child keeps the ancestor's parameters.
 
+An entry with parameters never overrides a tool an ancestor listed in its own `tools:`.
+isx warns, and the child keeps the ancestor's parameters until it lists the tool itself.
+For each tool, isx takes the nearest explicit entry in a `tools:` list, else the nearest `requires` entry with parameters, else the defaults.
+
 `env` supports structured entries with merge strategies, see [Environment Variables](#environment-variables).
 
 `verify` runs after every tool is installed, as `agentuser` in a login shell with the image environment (`/etc/profile.d/isx-env.sh`) loaded.
