@@ -711,7 +711,7 @@ public final class InstanceLifecycle {
         // networkd is up. First, so a slow secret delivery or MCP registration does not delay it
         var applyAddress = machineType == MachineType.CONTAINER && !NetworkMode.isAirgapped(instance);
         var guestScript = (applyAddress ? InstanceNetwork.APPLY_STATIC_ADDRESS + "\n" : "")
-                + InstanceSecret.GUEST_SCRIPT
+                + GuestHostname.afterSecret(name, instance)
                 + (ssh ? RuntimeSetup.sshStartScript() : "");
         var answer = new String[1];
         var booted = withCurrentProofs(incus, name, secret, current -> {
@@ -994,7 +994,7 @@ public final class InstanceLifecycle {
             // a write it skipped would otherwise give a VM a new secret on every shell, silently
             var delivery = withCurrentProofs(incus, name, secret, current -> {
                 var result = incus.shellExec(name, InstanceSecret.guestEnv(current, mcpCaller, placeholders.join()), "sh", "-c",
-                        InstanceSecret.GUEST_SCRIPT + "\n" + InstanceSecret.GUEST_CHECK);
+                        GuestHostname.afterSecret(name, instance) + InstanceSecret.GUEST_CHECK);
                 if (bootedAt != null && !secret.proofGeneration().equals(current.proofGeneration())) {
                     incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt, current.proofGeneration()));
                 }

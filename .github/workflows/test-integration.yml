@@ -1024,7 +1024,7 @@ jobs:
             done'"
           sg incus-admin -c "incus file push .github/scripts/proof-curl.sh test-container/tmp/"
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-container/tmp/"
-          sg incus-admin -c "incus exec test-container -- bash /tmp/test-instance.sh"
+          sg incus-admin -c "incus exec test-container --env EXPECT_INSTANCE_NAME=test-container -- bash /tmp/test-instance.sh"
           # /tmp is on disk (#1561): a file there survives a restart.
           sg incus-admin -c "incus exec test-container -- touch /tmp/isx-survives-restart"
           sg incus-admin -c "incus restart test-container"
@@ -1159,10 +1159,19 @@ jobs:
           done
           sg incus-admin -c "incus file push .github/scripts/proof-curl.sh test-vm/tmp/"
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-vm/tmp/"
-          sg incus-admin -c "incus exec test-vm -- bash /tmp/test-instance.sh"
+          sg incus-admin -c "incus exec test-vm --env EXPECT_INSTANCE_NAME=test-vm -- bash /tmp/test-instance.sh"
           sg incus-admin -c "isx account show test-vm"
           sg incus-admin -c "incus file push .github/scripts/test-accounts.sh test-vm/tmp/"
           sg incus-admin -c "incus exec test-vm -- bash /tmp/test-accounts.sh beta"
+          # The VM names itself after a restart too (#2334): it then boots its static .network,
+          # so no DHCP answer names it, and only isx's start sets its hostname
+          sg incus-admin -c "isx stop test-vm"
+          sg incus-admin -c "isx start test-vm"
+          name=$(sg incus-admin -c "incus exec test-vm -- cat /proc/sys/kernel/hostname")
+          if [ "$name" != test-vm ]; then
+            echo "::error::after a restart the VM's hostname is '$name', not test-vm"
+            exit 1
+          fi
 
       - name: Test previous releases' config.yaml
         run: |

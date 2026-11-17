@@ -106,7 +106,7 @@ public final class VmAgentRecovery {
         if (restarted > 0) stamps.put(Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
         var secret = InstanceLifecycle.rotateInstanceSecret(incus, name, instance, stamps, placeholders.join());
         InstanceLifecycle.withCurrentProofs(incus, name, secret, current -> {
-            incus.waitForReady(name, MachineType.VM, InstanceSecret.GUEST_SCRIPT,
+            incus.waitForReady(name, MachineType.VM, GuestHostname.afterSecret(name, instance),
                     InstanceSecret.guestEnv(current, Metadata.isMcpCaller(instance), placeholders.join()));
             return null;
         });

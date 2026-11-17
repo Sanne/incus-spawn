@@ -136,6 +136,7 @@ A template that wants the tmpfs back can install a tool whose `run` is `systemct
 Every instance has one user, `agentuser` (UID 1000), and no password for it or for root: isx enters through Incus, never a login prompt.
 `agentuser` has passwordless sudo (`/etc/sudoers.d/agentuser`), reads the journal (group `systemd-journal`) and owns `~/inbox`.
 Its `.bashrc` sets the terminal title to `isx:<hostname>` and sources bash completion.
+The hostname is the instance's name, in a VM too.
 
 `agentuser` holds the subordinate ID range `100000:65536` in `/etc/subuid` and `/etc/subgid`, for rootless containers inside the instance.
 
@@ -230,3 +231,9 @@ Kernel updates arrive with a new base image.
 
 The root filesystem is found by its GPT partition name (`PARTLABEL=isx-root`) and there is no `/boot/efi` mount: Linux never mounts the EFI partition.
 The image's `/etc/systemd/network/enp5s0.network` asks for DHCP on the first NIC; isx's static file, matched by MAC, takes precedence.
+
+A stock VM keeps the hostname `fedora`, since Incus sets the hostname of a container only.
+isx sets a VM's hostname to the instance's name every time it starts the VM or gives it new credentials after a reboot.
+
+isx does not write `/etc/hostname`, so a branch never carries its source's name.
+A VM that restarts on its own shows `fedora` until the next `isx shell`, `ssh` or `isx mcp` call reaches it.

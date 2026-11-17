@@ -235,8 +235,11 @@ echo ""
 echo "[6] Login Shell Environment"
 assert "ISX_TEMPLATE is set" \
     su -l agentuser -c 'bash -c "source ~/.bashrc 2>/dev/null; test -n \"\$ISX_TEMPLATE\""'
-assert "ISX_CONTAINER is set (matches hostname)" \
-    su -l agentuser -c 'bash -c "source ~/.bashrc 2>/dev/null; test -n \"\$ISX_CONTAINER\""'
+# The instance's own name, never the base image's `fedora` a VM kept (#2334). EXPECT_INSTANCE_NAME
+# is the name the host gave it; without it the guest's hostname, which then only checks the expansion.
+expected_name=${EXPECT_INSTANCE_NAME:-$(uname -n)}
+assert "ISX_CONTAINER is the instance name ($expected_name)" \
+    su -l agentuser -c "bash -c 'source ~/.bashrc 2>/dev/null; [ \"\$ISX_CONTAINER\" = $expected_name ] || { echo \"ISX_CONTAINER=\$ISX_CONTAINER\"; false; }'"
 echo ""
 
 # --- 6b. Agent context file ---
