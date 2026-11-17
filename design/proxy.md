@@ -545,7 +545,7 @@ Only an unreachable upstream serves an older one.
   So the tiers are not a claim that nothing is withdrawn; they are how long a withdrawal may go unnoticed, which the host's owner sets per repository.
   The Plugin Portal, where authors delete versions often enough, has tiers of zero.
   Maven Central's `fresh` is 12 hours instead of 2 while config.yaml has no `artifact-cache:` (`ArtifactCacheTiers.CENTRAL_DEFAULT`, #2305).
-  What a warm cache sends Central is one `HEAD` per artifact per `fresh` window, about 1,700 at once for a Quarkus build (docs/dev/PERFORMANCE-NOTES.md "Requests a warm cache sends to Maven Central").
+  What a warm cache sends Central is one `HEAD` per artifact per `fresh` window, about 1,700 at once for a Quarkus build (docs/dev/PERFORMANCE-NOTES.md "Requests a new instance's build makes, and what a warm cache sends Maven Central").
   That count does not grow with the number of instances, since a confirmation renews the shared copy, and `max-stale` only moves it between the background and the foreground, so `fresh` is the one duration that lowers it.
   It is a default, never a repository's own tiers: any `artifact-cache:`, even one key, replaces it whole (`Revalidation.tiersOr`), so it never loosens a duration the user wrote, such as a `max-stale` below 12 hours that the record's clamp would raise.
   The 404 memory the same issue proposed was not built: Maven asks repositories in order and stops at the first that has an artifact, so Central's 404s came to four of 1,721 requests in that build.

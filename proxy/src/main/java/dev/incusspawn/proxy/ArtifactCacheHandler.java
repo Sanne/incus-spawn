@@ -1422,8 +1422,8 @@ class ArtifactCacheHandler {
     // Serve a cached artifact only when a direct fetch would return the same bytes:
     // - an artifact is stored only after matching a checksum from upstream, and that
     //   checksum is stored with it as a sidecar (VerifiedArtifactStore);
-    // - a hit is served on its last confirmation with upstream while artifactCacheTiers
-    //   trusts it (confirmed again in the background once it ages), and confirmed before
+    // - a hit is served on its last confirmation with upstream while its repository's
+    //   tiers trust it (trustTier, Revalidation.tiersOr; confirmed again in the background once it ages), and confirmed before
     //   it is served after that, the way the domain's Revalidation says (a HEAD's
     //   X-Checksum-SHA1, or a fresh sidecar);
     // - sidecar requests follow their artifact: the stored copy while it is trusted,
