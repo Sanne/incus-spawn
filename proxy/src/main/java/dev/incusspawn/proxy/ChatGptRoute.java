@@ -69,7 +69,7 @@ final class ChatGptRoute {
     static final String CHATGPT = ChatGptAccounts.CHATGPT;
     static final String AUTH = ChatGptAccounts.AUTH;
     /** Codex's OAuth client id (codex-rs {@code CLIENT_ID}): a refresh naming another is not Codex's. */
-    static final String CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+    static final String CODEX_CLIENT_ID = ChatGptAccounts.CODEX_CLIENT_ID;
     /** Codex refreshes 5 minutes before expiry; the real token is refreshed in the same window. */
     static final long REFRESH_WINDOW_SECONDS = 300;
     /**
