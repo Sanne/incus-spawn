@@ -236,7 +236,7 @@ public class VmCommand extends BaseCommand {
                 }
             } catch (IOException ignored) {}
 
-            boolean wasRunning = VmManager.isRunning();
+            boolean wasRunning = VmManager.runningOrAdopted();
             BuildOutput.step("Grow the storage pool's data disk from " + VmManager.humanSize(current)
                     + " to " + VmManager.humanSize(target) + "?");
             if (wasRunning) {
