@@ -1009,6 +1009,7 @@ A refusal pauses the request instead of draining its body, and the connection is
 | chatgpt.com | GET, WebSocket upgrade | `/backend-api/codex/responses` | the same, on the upgrade |
 | chatgpt.com | GET | `/backend-api/codex/models`, query `client_version` only | injects |
 | chatgpt.com | GET | `/backend-api/wham/accounts/check`, no query | injects; the answer is relayed as it came |
+| chatgpt.com | GET | `/backend-api/wham/config/bundle`, no query | injects; the workspace's managed policies, relayed as they came |
 | auth.openai.com | POST | `/oauth/token`, Codex's refresh request only | relays with the real refresh token (below) |
 | auth.openai.com | POST | `/oauth/revoke` with a placeholder | answers 200 itself: a guest's `codex logout` never ends the host session |
 
@@ -1019,6 +1020,7 @@ A 401 to it marks the token refused, as one to any allowed call does: it is Code
 The guest controls no more of this request than of the others, and the 30-second limit spaces the refreshes a refusing backend causes on any of them.
 Those are identifiers, not credentials, and the guest already holds the session's own ones in its id token; but a user in several workspaces shows them all to every instance that holds a proof.
 Widening the list further is a deliberate decision on #1332, not a fix.
+The config bundle is on the list because an Enterprise plan's Codex will not start without it (codex-rs cloud-config, {@code plan_requires_managed_config}): the failure is fatal, where its other off-list calls only fail without stopping a turn.
 Codex's other calls (plugins, plugin MCP, analytics, user settings, usage) stay refused, and fail without stopping a turn.
 
 **Refresh:** Codex refreshes when its token is within 5 minutes of expiry, or after a 401.
