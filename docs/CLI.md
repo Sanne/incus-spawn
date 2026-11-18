@@ -814,7 +814,7 @@ isx vm <subcommand>
 |------------|--------------|
 | `start` | Start the VM (creates the disk image on first run) |
 | `stop` | Stop the VM with a graceful shutdown |
-| `restart` | Stop and restart the VM (keeps instances, stops running containers, applies pending appliance updates) |
+| `restart` | Stop and restart the VM, or start it if it is not running (keeps instances, stops running containers, applies pending appliance updates) |
 | `status` | Show VM status and system diagnostics |
 | `resize` | Grow the VM data disk that backs the storage pool |
 | `reset` | Wipe the VM data disk: deletes every instance, template and cached image |
@@ -849,7 +849,8 @@ With `--require-clean`, such a stop also exits 4, and a VM isx could not stop ex
 
 Stop and restart the VM, applying any pending appliance updates.
 It keeps instances and templates, but stops running containers.
-When the VM is not running, it says so and does not start the VM: use `isx vm start` for that.
+When the VM is not running, it starts it, so the VM is up after every restart.
+A VM an older isx started with vfkit counts as running, even untracked, and moves to `isx-vm`.
 
 ```shell
 isx vm restart [options]

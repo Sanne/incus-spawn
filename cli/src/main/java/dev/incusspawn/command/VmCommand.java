@@ -89,7 +89,7 @@ public class VmCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "restart",
-            description = "Stop and restart the VM (keeps instances, stops running containers, applies pending appliance updates)",
+            description = "Stop and restart the VM, or start it if it is not running (keeps instances, stops running containers, applies pending appliance updates)",
             generateHelp = true
     )
     public static class Restart extends BaseCommand {
@@ -99,9 +99,13 @@ public class VmCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            if (!VmManager.isRunning()) {
-                BuildOutput.step("VM is not running. Use 'isx vm start' to start it.");
-                return CommandResult.SUCCESS;
+            // As systemctl restart: a VM that is not running is started, so the command always
+            // ends with the VM up. A vfkit VM an upgrade lost track of counts as running, and is
+            // moved to isx-vm (#2031).
+            if (!VmManager.runningOrAdopted()) {
+                BuildOutput.header("Starting VM");
+                BuildOutput.note("The VM was not running, so restart starts it.");
+                return VmManager.start() ? CommandResult.SUCCESS : CommandResult.valueOf(1);
             }
             var skew = VmManager.applianceSkew();
             if (skew != null) {

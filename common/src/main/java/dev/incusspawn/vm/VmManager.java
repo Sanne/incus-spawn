@@ -427,6 +427,17 @@ public final class VmManager {
     }
 
     /**
+     * Whether the VM runs, by {@code vm.pid} or, failing that, by a hypervisor holding this user's
+     * disks ({@link #adoptHypervisorOnDisks()}, which records its pid). For a command about to act
+     * on the VM (a restart, a start): a vfkit VM whose pid file was lost in an upgrade is then
+     * stopped and moved, not taken for a stopped VM (#2031). Lists processes when the pid file
+     * does not name the VM, so never on the path of a running VM.
+     */
+    public static boolean runningOrAdopted() {
+        return isRunning() || adoptHypervisorOnDisks().isPresent();
+    }
+
+    /**
      * A hypervisor of this user, {@code isx-vm} or an older isx's vfkit, whose arguments name this
      * state directory's root disk: the VM, whatever vm.pid says (#2031). An upgrade can lose the
      * pid file while vfkit runs on (an older isx still open, a crash, a cleaned state directory),
@@ -547,7 +558,7 @@ public final class VmManager {
      */
     public static boolean restart() {
         try (var ignored = acquireVmLock()) {
-            if (!isRunning()) {
+            if (!runningOrAdopted()) {
                 BuildOutput.note("VM not running — starting.");
             } else {
                 stopLocked();
