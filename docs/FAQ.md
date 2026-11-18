@@ -34,6 +34,21 @@ The credential that failed is stored on the host, and `isx doctor` reports it wi
 
 A login inside the instance would put a real credential where the agent can read it.
 
+### My build fails with HTTP 429 (Too Many Requests). What do I do?
+
+Wait for the time the error names, then run the build again, and run `isx doctor` on the host to see which registry refused.
+The registry refused your host's address or account, and isx did not cause it.
+
+Maven Central and Docker Hub limit the requests from one address, and a shared office or CI address reaches the limit sooner.
+
+isx already sends the registry fewer requests: the proxy's cache is shared by every instance, so a dependency is fetched once.
+While the registry refuses, the proxy serves what it has cached, and waits and asks again for what it has not.
+
+The proxy cannot lift the limit, so a host on a throttled address with an empty cache is still refused.
+[Registry rate limits](CONFIGURATION.md#registry-rate-limits) has the details.
+
+On a CI runner, keep the proxy's cache between runs, so that each run starts with the artifacts the last one fetched.
+
 ### Can an instance use a model server on my host, such as Ollama?
 
 Yes: list its port in `~/.config/incus-spawn/config.yaml`, and point the agent at `host.isx.internal`.

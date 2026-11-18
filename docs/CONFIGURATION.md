@@ -414,6 +414,45 @@ Setting both to `0` makes the proxy confirm every cached artifact before serving
 On Maven Central this mostly adds latency: Central never changes a published artifact, and withdraws one only rarely.
 Without isx, Maven never checks a release again once it is in `~/.m2`, so any finite duration notices a withdrawal sooner.
 
+### Registry rate limits
+
+A build that gets HTTP 429 (Too Many Requests) was refused by the registry, not by isx.
+Registries such as Maven Central and Docker Hub count requests per public address or per account, so a host on a shared office or CI address reaches the limit sooner.
+
+Sonatype's advice to heavy users of Central is to put a shared cache between their builds and Central, so that Central sees fewer requests from one address ([Sonatype's explanation](https://central.sonatype.org/faq/429-no-repo-manager/)).
+The proxy is that cache for every template and instance on the host: ten instances that build the same project ask Central once.
+
+While a registry refuses requests, the proxy behaves as follows:
+
+- It stops asking that registry for a while: for the time the registry says in its `Retry-After` header, at most 60 seconds, else 30 seconds.
+- It serves the artifacts it has cached in the meantime, so a build that has run before keeps working.
+- For a Maven, Gradle or npm artifact it has not cached, it waits and asks again, within the time the build tool allows.
+  When that time is not enough, the build tool gets the registry's own answer, with how long to wait.
+- A container registry's 429 is passed on as it came, because Docker Hub's limit lasts hours, longer than a client waits.
+
+What you give up: a copy served during the pause is not confirmed with the registry.
+If the registry withdrew that release in the last hours, the proxy may still serve it, as it does when the registry is unreachable.
+
+The proxy cannot lift the limit.
+A host on a throttled address with an empty cache is still refused, until the limit ends or you name a [mirror](#a-mirror-for-a-maven-repository).
+
+What improves is that the registry sees fewer requests, builds keep working from the cache, and the message says whose limit it is.
+
+To see a throttle, look for the registry's name in the proxy log, in the table of `isx proxy activity` and in the warnings of `isx doctor`.
+Each says that the limit is the registry's.
+`isx doctor` keeps warning for 30 minutes after the registry's last 429.
+
+Container image manifests are cached too.
+Docker Hub counts a pull of an image manifest, but not a `HEAD` request for one, according to [Docker's documentation](https://docs.docker.com/docker-hub/usage/pulls/).
+
+Pulling an image you already pulled therefore does not count against the limit of 100 pulls per 6 hours that Docker Hub gives an anonymous address, and works during a throttle for a public tag.
+
+The same handling applies to every [repository you declare](#more-maven-repositories) and to the npm registry.
+For Central, `fresh` and `max-stale` above decide how many confirmations the proxy sends.
+
+The cache cannot cover a build that runs on the host itself, since only traffic from instances passes through the proxy.
+Sonatype names such traffic that bypasses the cache as the usual cause of a limit that a cache did not prevent ([Sonatype's explanation](https://central.sonatype.org/faq/429-has-repo-manager/)).
+
 ### More Maven repositories
 
 The proxy caches artifacts from other Maven repositories once you declare them in `config.yaml`.
