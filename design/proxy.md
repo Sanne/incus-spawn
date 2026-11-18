@@ -813,6 +813,7 @@ Every hit is confirmed first by a `HEAD` for the artifact itself carrying that c
 So upstream decides each serve: a revoked account is refused at once, and nothing is served while upstream cannot be asked, offline included.
 That is why a private entry must confirm by `checksum-header` or `etag-sha1`: a sidecar's answer shows that the credential may read the sidecar, not the artifact.
 A declared `checksum-header` or `etag-sha1` repository that answers an artifact without its header is named once in the proxy log, since its copies are then confirmed by sidecar or, where that is unsound, never cached.
+The log names it by its URL, since one host often serves several.
 Its sidecars, metadata and SNAPSHOTs go through the ordinary credentialed relay; a cache error answers 502 rather than relaying without the credential.
 A redirect from a private repository goes to the client, whose next request is proven and credentialed again; followed by the cache it would go out with no credential.
 What it gives up: a private hit always costs one round trip, and a private repository is never available offline.
