@@ -324,7 +324,7 @@ class VmStopTest {
         try {
             assertFalse(VmManager.isRunning(), "no pid file: isRunning() alone cannot see it");
 
-            assertEquals(java.util.Optional.of(vm.pid()), VmManager.adoptHypervisorOnDisks());
+            assertTrue(VmManager.runningOrAdopted(), "a restart must stop and move it, not take it for stopped");
             assertEquals(Long.toString(vm.pid()), Files.readString(Environment.vmPidFile()));
             assertTrue(VmManager.isRunning());
             assertTrue(VmManager.runsUnderLegacyHypervisor());
@@ -338,6 +338,7 @@ class VmStopTest {
         Files.delete(Environment.vmPidFile());
         assertTrue(VmManager.adoptHypervisorOnDisks().isEmpty());
         assertFalse(Files.exists(Environment.vmPidFile()));
+        assertFalse(VmManager.runningOrAdopted(), "nothing runs: a restart starts the VM");
     }
 
     private void startStandInAt(Path home, Path control) throws IOException {
