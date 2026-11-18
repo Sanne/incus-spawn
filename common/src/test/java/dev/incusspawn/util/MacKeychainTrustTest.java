@@ -233,7 +233,8 @@ class MacKeychainTrustTest {
         assertEquals(false, withBody.denies(denied.intermediate()));
         // Without its body the key is unknown, and the hash still denies the certificate itself
         assertEquals(false, byHash.denies(crossSigned));
-        assertEquals(true, byHash.denies(denied.root()));        // An admin-trusted copy of the denied CA is no longer listed as trusted, as isx doctor shows it
+        assertEquals(true, byHash.denies(denied.root()));
+        // An admin-trusted copy of the denied CA is no longer listed as trusted, as isx doctor shows it
         var trustingCopy = new MacKeychainTrust.Trust(List.of(crossSigned, other.root()), byHash.denied(), null);
         assertEquals(List.of(other.root()), trustingCopy.withDeniedKeys(List.of(denied.root())).trusted());
     }
