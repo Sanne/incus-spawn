@@ -93,6 +93,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Considered and deferred
 - [Templates, tools and builds](design/templates.md)
   - Template Image Hierarchy
+  - A schema for editors
   - Tool System
   - YAML tools vs a full plugin system (Packer, Ansible, etc.)
   - Hardcoded built-in tool list vs classpath scanning

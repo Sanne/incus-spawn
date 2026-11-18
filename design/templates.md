@@ -244,6 +244,25 @@ An account's typed `<namespace>=` is dropped before quoting, because `%q` writes
 A host with a user tool named outside the rule renames it (docs/dev/MIGRATIONS.md, "A user tool whose name is not an identifier").
 A tool definition is refused the same way with a bare key under `parameters:` or `proxy.configuration:` (`flavour:` with nothing under it; `ToolDefValidator.bareKeys`, #1475): a bare key has no meaning of its own, and isx does not imply a default for it.
 
+## A schema for editors
+
+`site/schema/template.json` is a JSON Schema (draft 7, the dialect every YAML language server reads) for a template file.
+It is published at `https://isx.run/schema/template.json` by `site/build.sh`, with `application/schema+json` set in `site/_headers`.
+The skeleton that `isx templates new` writes starts with the modeline `# yaml-language-server: $schema=...`, so the editor finds it with no setup.
+
+The schema is written by hand and held true by `TemplateSchemaTest` (`cli`, tagged `docs`), because the loader's keys, defaults and converters are Java and a generator would have to model each converter anyway.
+The test fails when the loader binds a key the schema lacks, when the schema names a key the loader does not bind, and when a key has no description.
+It reads the bound names the way `TemplateSkeletonTest` does (`@JqName`, else the field, never `@JqIgnore`).
+The `type`, `env[].strategy` and `host-resources[].mode` value sets are compared with the code's.
+The three built-in templates and the skeleton's examples, uncommented, must validate.
+
+The schema is stricter than the loader in one way, on purpose: the loader warns about an unknown key and goes on (`MappedDefinition`), where the editor underlines it.
+It is looser where the loader is: a list or mapping may be empty (`packages:` alone), and a checksum or tag of digits may be a number, since YAML reads `0000` as an integer and the loader reads it back as text.
+What a schema cannot say stays in `TemplateValidator`: that a parent exists, a project-local template's confinement, and which keys a trusted template alone may use.
+
+The schema is a public contract, since files in the wild name its address: a key is added, never renamed or removed.
+SchemaStore.org registration, which would apply it with no modeline, and schemas for tool, `config.yaml` and `mcp.yaml` files are not done yet.
+
 ## Tool System
 
 Tools define how software gets installed into template images.

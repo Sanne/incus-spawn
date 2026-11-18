@@ -10,6 +10,7 @@ paths:
 - `SpawnConfig`: global config from `~/.config/incus-spawn/config.yaml`
 - `ImageDef.loadAll()`: discovers all image definitions across resolution layers
 - `ToolDefLoader`: discovers tools across resolution layers
+- A key added to `ImageDef` or one of its entries needs a property, with a description, in `site/schema/template.json`, the schema editors read through the skeleton's modeline: `TemplateSchemaTest` fails without it (design/templates.md "A schema for editors").
 - `ProjectConfig`: per-project config from `incus-spawn.yaml` or `.incus-spawn/incus-spawn.yaml`
 
 Resolution order for both images and tools (later overrides earlier): built-in -> user (`~/.config/incus-spawn/`) -> search paths -> project-local (`.incus-spawn/`).
