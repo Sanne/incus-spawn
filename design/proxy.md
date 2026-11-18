@@ -33,6 +33,20 @@ A runtime that lands later is found by systemd path units, not a daemon (#515): 
 A bare `isx-trust` covers the same directories as the build, the home ones as `agentuser`'s whoever runs it.
 The cost is one inotify instance per watched directory (systemd opens one per path), counted in `IncusDiagnostics.INOTIFY_INSTANCES_PER_CONTAINER`.
 What lands outside those directories, or whose bundled file appears only after the last pass, is bound by running `isx-trust <dir>`, and the agent context pairs the TLS symptoms with that command so an agent repairs the binding rather than turning verification off.
+A JDK built from source, such as an OpenJDK build tree, is one of those: isx does not bind the JDK that `JAVA_HOME` or `PATH` names, so a build tree's `cacerts` keeps the roots OpenJDK bundles until `isx-trust` runs on it (#1968).
+A hook on the shell's `JAVA_HOME` or `PATH` would not see a `JAVA_HOME` set inline for one command, and covers interactive shells only, which is why #713 dropped the prompt hook.
+What would see every use stays ruled out: `JAVA_TOOL_OPTIONS` by #464, a preload shim by #713.
+OpenJDK's `--with-cacerts-file` is only an opt-in, for a build that never leaves the instance.
+It copies the instance's store, isx CA and propagated host CAs included, into the built JDK, which then trusts them wherever it is taken, with nothing in the image saying so.
+The link `isx-trust` makes does not copy a CA, so on a machine without its target a JDK carrying it fails visibly.
+The link's first cost is a repeated step: OpenJDK's `make/Images.gmk` deletes `images/jdk` before the jlink step writes it again, so a rebuild that re-creates the image puts a fresh `cacerts` in place of the link.
+On a jdk-26 build a `java.base` change re-created the image, and a `make images` with nothing to rebuild kept the link.
+The user then runs `isx-trust <dir>` again.
+The second is that the link changes the JDK under test.
+OpenJDK's `VerifyCACerts` (tier2) checks the count and checksum of the image's `cacerts`, so it fails on a linked image until the build's own file is put back, and on a `--with-cacerts-file` build too.
+The `openjdk` template's primer names both the step and the flag, the flag only for a build that never leaves the instance, and how to put the build's own `cacerts` back before that test.
+If the repeated step proves too costly, the next mechanism would be extra watched directories a template declares; it is not planned.
+Such a directory would have to be the one whose entries change, such as `images`, since a path unit's watch is not recursive and a rebuild under `~/jdk/build` changes no entry of that directory itself.
 `docs/FEDORA.md`, "What differs from a stock Fedora install", lists these deviations for users.
 
 **How it works:**

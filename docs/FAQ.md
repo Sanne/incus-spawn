@@ -64,6 +64,21 @@ A runtime anywhere else needs `isx-trust <dir>`, such as a vendor JDK in `~/tool
 With no argument, `isx-trust` binds every runtime in the watched directories, which covers a runtime the watch has not bound yet.
 [What differs from Fedora](FEDORA.md#trust) lists those directories, and the environment variables that cover other runtimes.
 
+A JDK you build from source, such as an OpenJDK build tree, is outside the watched directories too.
+Run `isx-trust` on its build directory after the build.
+Run it again after a rebuild that re-creates the image, such as a `make images` after a source change, or whenever HTTPS from that JDK fails with `PKIX path building failed`.
+
+The link changes the JDK you test, so OpenJDK's own `VerifyCACerts` test fails on it.
+Before that test, replace the link in the image with a copy of the bundle the build made.
+If you test the exploded JDK in `jdk`, point its link back at that bundle.
+Run `isx-trust` on the build directory again afterwards.
+
+```sh
+cd ~/jdk/build/linux-$(uname -m)-server-release
+cp --remove-destination support/modules_libs/java.base/security/cacerts images/jdk/lib/security/cacerts
+ln -sfn ../../../support/modules_libs/java.base/security/cacerts jdk/lib/security/cacerts
+```
+
 ### Why can't I mount a host directory read-write to follow agent work in my IDE?
 
 Fetch the agent's work as commits over an `isx://` git remote, or run your IDE's backend inside the instance.
