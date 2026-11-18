@@ -164,18 +164,27 @@ class ChatGptStartTest {
     }
 
     @Test
-    void anUnreadableSessionFileServesNoSessionAndClearsStaleStamps() throws Exception {
+    void anUnreadableSessionFileServesNoSessionClearsStaleStampsAndWarns() throws Exception {
         signIn();
         Files.writeString(Path.of(System.getProperty("user.home"),
                 ".config/incus-spawn/openai/" + ACCOUNT + "/session.json"), "not json at all");
         var updates = new LinkedHashMap<String, String>();
+        var warnings = new java.util.ArrayList<String>();
 
-        var auth = ChatGptStart.stampInto(updates, configOf(Map.of(), staleStamps()),
-                InstanceSecret.generate(), SpawnConfig.load(), store);
+        String auth;
+        try (var ignored = dev.incusspawn.util.BuildOutput.bind(
+                dev.incusspawn.util.Output.diagnosticsTo(warnings::add))) {
+            auth = ChatGptStart.stampInto(updates, configOf(Map.of(), staleStamps()),
+                    InstanceSecret.generate(), SpawnConfig.load(), store);
+        }
 
         // Fail closed, as a missing session would: one bad file must not fail every start of
         // every instance pinned to the account
         assertEquals("", auth);
         for (var key : Metadata.CHATGPT_KEYS) assertEquals("", updates.get(key), key);
+        // And say so: without the warning, a file nobody can read logs every instance out with
+        // no word about the sign-in being the fix
+        assertTrue(warnings.stream().anyMatch(w -> w.contains(ACCOUNT) && w.contains("sign the account in again")),
+                String.join("\n", warnings));
     }
 }

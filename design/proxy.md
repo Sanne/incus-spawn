@@ -965,6 +965,7 @@ The tokens go to the session store alone, never a file in an instance, and `conf
 A sign-in again replaces the session, and its new `session_id` invalidates every proof made for the previous one.
 Removing an account leaves its session file behind, owner-only on the host; only an account re-created under the same name would serve it again.
 Switching an account to an API key ends its session: the `type` goes with the session file, or the account would read as a ChatGPT one and ignore the pasted key, and the guest's API-key login rewrites the dead proofs out of `auth.json`.
+A "replace all" save ends the replaced ChatGPT accounts' sessions the same way, whatever replaces them, and the API-key login touches a delivered session's file only while its own profile script is gone.
 
 **Delivery:** every start that mints an instance secret also decides its ChatGPT session (`ChatGptStart`, called from the secret rotation's locked write).
 The instance's pinned `openai` account resolves exactly as the proxy resolves it, and a session is served only when that account is a ChatGPT one and still has its session: anything else -- an API-key account, an `inherit` pin, a pin that no longer resolves, a session gone -- leaves the instance with no binding and clears stale stamps in the same write.

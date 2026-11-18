@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.Warnings;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Metadata;
@@ -86,7 +87,8 @@ public final class ChatGptStart {
     /**
      * The session the instance is served for its pinned account, or null when it is served none.
      * A session file that cannot be read or parsed is no session, as a missing one would be:
-     * fail closed, never a start that throws for every instance pinned to the account.
+     * fail closed, never a start that throws for every instance pinned to the account -- and
+     * said so, since only the warning tells the person the sign-in is the fix.
      */
     private static ChatGptSessionStore.Session sessionFor(SpawnConfig settings, String pinned,
                                                           ChatGptSessionStore store) {
@@ -102,7 +104,10 @@ public final class ChatGptStart {
                 .path("accounts").path(account))) return null;
         try {
             return store.read(account);
-        } catch (RuntimeException malformedOrUnreadable) {
+        } catch (RuntimeException unreadable) {
+            Warnings.warn("could not read the ChatGPT session of openai account '" + account + "' ("
+                    + unreadable.getMessage() + "), so this start serves it no session;"
+                    + " sign the account in again to restore it");
             return null;
         }
     }
