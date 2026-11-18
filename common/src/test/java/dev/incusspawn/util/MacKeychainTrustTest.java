@@ -7,6 +7,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509ExtendedTrustManager;
+import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.cert.X509Certificate;
@@ -20,7 +24,9 @@ import static dev.incusspawn.util.MacKeychainTrust.Decision.NONE;
 import static dev.incusspawn.util.MacKeychainTrust.Decision.TRUST;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * How macOS trust settings, as {@code security trust-settings-export -d} writes them, decide what
@@ -233,6 +239,36 @@ class MacKeychainTrustTest {
     }
 
     @Test
+    void aUserDenyOfSectigoE46RefusesTheChainApiGithubComSends() throws Exception {
+        // The case behind #1552 with Sectigo's real certificates (#1631): a "Never Trust" on the
+        // self-signed E46, while api.github.com sends E46 cross-signed by USERTrust ECC
+        var e46 = fixture("root-e46.pem");
+        var e46ByUsertrust = fixture("root-e46-by-usertrust-ecc.pem");
+        var dvE36 = fixture("ca-dv-e36.pem");
+        var user = plist(record(e46, entries(result(3))));
+
+        // read() matches the deny against the bodies the keychains and Apple's roots hold; here the
+        // self-signed E46 stands for them (the README says what was not checked)
+        var trust = MacKeychainTrust.withUserDenies(MacKeychainTrust.Trust.NONE, () -> user).withDeniedKeys(List.of(e46));
+
+        assertEquals(Set.of(MacKeychainTrust.sha1(e46)), trust.denied());
+        assertEquals(true, trust.denies(e46ByUsertrust), "the cross-signed copy the server sends");
+        assertEquals(false, trust.denies(dvE36), "E46's intermediate is not denied itself");
+        var chain = new X509Certificate[] {dvE36, e46ByUsertrust};
+        var refused = assertThrows(java.security.cert.CertificateException.class,
+                () -> denyingTrustManager(trust).checkServerTrusted(chain, "EC"));
+        assertTrue(refused.getMessage().contains("subject and key of one denied"), refused.getMessage());
+        // The overload a handshake calls, as the proxy's and the CLI's do
+        assertThrows(java.security.cert.CertificateException.class,
+                () -> denyingTrustManager(trust).checkServerTrusted(chain, "EC", (SSLEngine) null));
+
+        // Back to "Use System Defaults": no user deny, and the same chain passes
+        var restored = MacKeychainTrust.withUserDenies(MacKeychainTrust.Trust.NONE, () -> null).withDeniedKeys(List.of(e46));
+        assertEquals(false, restored.denies(e46ByUsertrust));
+        assertSame(ACCEPT_ALL, DeniedChainTrustManager.wrap(new TrustManager[] {ACCEPT_ALL}, restored)[0]);
+    }
+
+    @Test
     void aUserDomainThatCannotBeReadTrustsNothingAndKeepsTheAdminDomainsDenies() throws Exception {
         var trusted = ca("trusted");
         var denied = ca("denied");
@@ -308,6 +344,29 @@ class MacKeychainTrustTest {
     void parsesApplesDoctype() throws Exception {
         var parsed = MacKeychainTrust.parsePlist(plist(""));
         assertEquals(Map.of("trustList", Map.of(), "trustVersion", 1L), parsed);
+    }
+
+    /** A certificate from {@code macos-trust-settings/sectigo-e46}, where its README says where it came from. */
+    private static X509Certificate fixture(String name) throws Exception {
+        try (var in = java.util.Objects.requireNonNull(MacKeychainTrustTest.class.getResourceAsStream(
+                "/macos-trust-settings/sectigo-e46/" + name), name)) {
+            return (X509Certificate) java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(in);
+        }
+    }
+
+    /** Stands for the JDK's PKIX check, which the real chain would fail here only for want of its leaf. */
+    private static final X509ExtendedTrustManager ACCEPT_ALL = new X509ExtendedTrustManager() {
+        @Override public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+        @Override public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+        @Override public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) {}
+        @Override public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) {}
+        @Override public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {}
+        @Override public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {}
+        @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+    };
+
+    private static X509ExtendedTrustManager denyingTrustManager(MacKeychainTrust.Trust trust) {
+        return (X509ExtendedTrustManager) DeniedChainTrustManager.wrap(new TrustManager[] {ACCEPT_ALL}, trust)[0];
     }
 
     // --- plists shaped like trust-settings-export's ---
