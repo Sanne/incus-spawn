@@ -957,6 +957,25 @@ class SecretRedactorTest {
     }
 
     @Test
+    void aLongBuildLogCanScrubRewrittenRowsAndKeepTheWholeLog() {
+        var line = "[INFO] Finished compiling a module and preparing its build output.\n";
+        var progress = "[INFO] Downloading\r[INFO] Downloaded\r\n";
+        var armour = "-----";
+        var body = "private-key-body-on-a-separate-line";
+        var rewrittenKey = armour + "BEGIN RSA PRIVATE KEY--X\b---\r\n"
+                + body + "\n" + armour + "END RSA PRIVATE KEY" + armour + "\n";
+        var start = line.repeat(50_000);
+        var end = line.repeat(50_000) + "[INFO] BUILD SUCCESS ⭐\t2m\n";
+
+        var scrubbed = SecretRedactor.scrubGuest(start, progress + rewrittenKey, end);
+
+        assertFalse(scrubbed.contains(body));
+        assertTrue(scrubbed.contains("<isx:redacted:private-key>"));
+        assertTrue(scrubbed.startsWith(start));
+        assertTrue(scrubbed.endsWith(end));
+    }
+
+    @Test
     void aGuestsTextKeepsNoTokenAWideCharacterHides() {
         // A wide character takes two cells, so two backspaces after it put the cursor on it, and
         // what follows overwrites it: the token shows whole (#1900)
