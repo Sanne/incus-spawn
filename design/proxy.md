@@ -785,7 +785,8 @@ Every repository can withdraw one, so this is a duration, not a property: the en
 A repository that replaces the bytes at a release path (`replaces-releases: true`) is never served on a past confirmation at all, offline and during a backoff included (`Revalidation.servesOnlyConfirmed`), and its sidecars are relayed rather than stored.
 **The confirmation must be sound for that repository**: a server-computed header describes exactly the bytes the server would send, so `confirm: checksum-header` (`X-Checksum-SHA1`, which Central and Artifactory send and Nexus 3 does not) is sound even for changing content.
 Nexus 3 sends the SHA-1 as its strong, quoted `ETag` instead, which `confirm: etag-sha1` reads the same way (`Revalidation.HEAD_ETAG`, #2336).
-Nexus 3 makes that `ETag` the blob's SHA-1 in a hosted repository, but a proxy repository keeps its upstream's (Central's is an MD5), so no Nexus version or format is trusted to send it: a copy is committed on its `ETag` only when that is the SHA-1 of its bytes, and a weak, unquoted or `{SHA1{...}}` one counts as none.
+Nexus 3 makes that `ETag` the blob's SHA-1 in a hosted repository, but a proxy repository keeps its upstream's (Central's is an MD5), so no Nexus version or format is trusted to send it.
+A copy is committed on its `ETag` only when that is the SHA-1 of its bytes, and a weak, unquoted or `{SHA1{...}}` one counts as none.
 A download with no such `ETag` is handled as a `checksum-header` one without its header: confirmed by its `.sha1` where a sidecar is sound, and otherwise served but not cached.
 A served copy gets that SHA-1 as `X-Checksum-SHA1`, which Maven reads, never as an `ETag` the proxy made up; a miss gets none, since its `ETag` is not yet known to describe its bytes.
 A separately uploaded sidecar is not (`mvn deploy` PUTs the jar and its `.sha1` one by one, so a repository can briefly serve a new jar beside the old `.sha1`).
