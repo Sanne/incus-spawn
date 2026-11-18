@@ -123,7 +123,7 @@
           "url": {"type": "string", "description": "The repository, up to where the Maven coordinates begin."},
           "access": {"enum": ["public", "private"], "description": "public, or private with the credentials namespace whose account isx injects there."},
           "credentials": {"type": "string", "description": "The credential namespace isx injects, for a private repository."},
-          "confirm": {"enum": ["checksum-header", "sidecar"], "description": "How a cached copy is checked against upstream: checksum-header when the server sends X-Checksum-SHA1, sidecar when each artifact is published with its .sha1 and never replaced."},
+          "confirm": {"enum": ["checksum-header", "etag-sha1", "sidecar"], "description": "How a cached copy is checked against upstream: checksum-header when the server sends X-Checksum-SHA1, etag-sha1 when its ETag is the artifact's SHA-1 (a Nexus 3 hosted repository), sidecar when each artifact is published with its .sha1 and never replaced."},
           "replaces-releases": {"type": "boolean", "description": "true when a release can be uploaded again with other content. The repository is then confirmed before every serve."},
           "fresh": {"$ref": "#/definitions/duration", "description": "As in artifact-cache, for this repository alone. 0 by default."},
           "max-stale": {"$ref": "#/definitions/duration", "description": "As in artifact-cache, for this repository alone. 0 by default."}

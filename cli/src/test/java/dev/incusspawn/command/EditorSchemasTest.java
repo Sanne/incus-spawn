@@ -182,6 +182,10 @@ class EditorSchemasTest {
         assertEquals(privateSet(ToolDefValidator.class, "VALID_PARAM_TYPES"),
                 enumOf(schema.path("properties").path("parameters").path("additionalProperties")
                         .path("properties").path("type")));
+        var architectures = privateSet(ToolDefValidator.class, "VALID_ARCHITECTURES");
+        assertEquals(architectures, enumOf(schema.path("properties").path("architectures").path("items")));
+        assertEquals(architectures, enumOf(schema.path("properties").path("downloads").path("items")
+                .path("properties").path("arch")));
     }
 
     @Test

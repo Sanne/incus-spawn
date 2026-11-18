@@ -154,6 +154,11 @@
       "type": "string",
       "description": "A feature flag the tool needs. A build skips the tool, with a warning, until the flag is listed under features: in config.yaml."
     },
+    "architectures": {
+      "type": ["array", "null"],
+      "items": {"enum": ["x86_64", "aarch64"]},
+      "description": "The architectures the tool has a distribution for. Empty means every one."
+    },
     "actions": {
       "type": ["array", "null"],
       "description": "Runtime actions the TUI offers when the tool is installed.",
@@ -188,6 +193,9 @@
           "additionalProperties": false,
           "properties": {
             "repo": {"type": "string", "description": "Catalog that bare skill names are resolved in."},
+            "ref": {"type": ["string", "number"], "description": "Pins the skills to this release tag of repo. Needs commit."},
+            "commit": {"type": "string", "description": "The commit the tag names, from the publisher's repository (git ls-remote <url> 'refs/tags/<tag>^{}'). A moved tag fails the build."},
+            "path": {"type": "string", "description": "The directory of the repository that holds the skills. Needs ref."},
             "list": {"type": "array", "items": {"type": "string"}, "description": "owner/repo@skill, owner/repo, ./local-path or a bare name."}
           }
         }

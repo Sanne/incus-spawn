@@ -164,6 +164,18 @@
               "type": "string",
               "description": "Catalog that bare skill names are resolved in."
             },
+            "ref": {
+              "type": ["string", "number"],
+              "description": "Pins the skills to this release tag of repo. Needs commit."
+            },
+            "commit": {
+              "type": "string",
+              "description": "The commit the tag names, from the publisher's repository (git ls-remote <url> 'refs/tags/<tag>^{}'). A moved tag fails the build."
+            },
+            "path": {
+              "type": "string",
+              "description": "The directory of the repository that holds the skills. Needs ref."
+            },
             "list": {
               "type": ["array", "null"],
               "items": {"type": "string"},
