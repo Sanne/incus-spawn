@@ -6,6 +6,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.Warnings;
+import dev.incusspawn.config.BaseImagePin;
 import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
@@ -540,9 +541,11 @@ public class TemplatesCommand extends BaseCommand {
      * A tool no built-in or tool file defines, listed or required, is a warning on its entry, though
      * {@code isx build} refuses the template for it: a template may be saved before its tools are
      * defined. Built-in tools are not checked again. A tool behind a feature not enabled here, a
-     * dependency cycle and an overridden parameter are warnings, as the build gives them. A tool
-     * file that did not load and names none of these tools is a warning on {@code tools}: the
-     * build refuses until it is fixed, but the template is not why.
+     * dependency cycle and an overridden parameter are warnings, as the build gives them. So is a
+     * tool with no distribution for an architecture isx supports, which the build refuses only
+     * there ({@link #unsupportedFinding}). A tool file that did not load and names none of these
+     * tools is a warning on {@code tools}: the build refuses until it is fixed, but the template is
+     * not why.
      */
     static List<TemplateFinding> toolFindings(ImageDef def, ToolDefLoader tools, Iterable<ToolSetup> cdiTools) {
         var findings = new ArrayList<TemplateFinding>();
@@ -564,8 +567,10 @@ public class TemplatesCommand extends BaseCommand {
                 }
             }
             if (check.error() != null) findings.add(TemplateFinding.error(field, check.error()));
+            var entry = def.getTools().get(check.entry()).getName();
             for (var tool : check.reached()) {
                 failedFile(failures, tool.name(), field, findings);
+                unsupportedFinding(entry, tool, field, findings);
                 var source = tools.getSource(tool.name());
                 if (!(tool instanceof YamlToolSetup yaml) || "built-in".equals(source)) continue;
                 var errors = new ArrayList<String>();
@@ -580,6 +585,23 @@ public class TemplatesCommand extends BaseCommand {
             findings.add(TemplateFinding.warning("tools", refusal(failure)));
         }
         return findings;
+    }
+
+    /**
+     * A warning on {@code field} when {@code tool}, which entry {@code entry} reached, has no
+     * distribution for an architecture isx supports (#2368): {@code isx build} refuses the template
+     * there (#2357). Every architecture is checked whatever this host's, since the host that
+     * validates a template, such as CI, need not be the one that builds it.
+     */
+    private static void unsupportedFinding(String entry, ToolSetup tool, String field, List<TemplateFinding> findings) {
+        var missing = BaseImagePin.ARCHES.stream()
+                .filter(arch -> tool.unsupportedOn(arch) != null).toList();
+        if (missing.isEmpty()) return;
+        var name = "'" + OutputFormat.oneLine(tool.name()) + "'";
+        var which = entry.equals(tool.name()) ? "tool " + name
+                : "tool " + name + ", which '" + OutputFormat.oneLine(entry) + "' needs,";
+        findings.add(TemplateFinding.warning(field, which + " " + OutputFormat.oneLine(tool.unsupportedOn(missing.getFirst()))
+                + ", so isx build refuses this template on " + String.join(" and ", missing)));
     }
 
     /**

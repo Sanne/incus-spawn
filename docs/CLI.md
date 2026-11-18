@@ -539,6 +539,8 @@ A tool isx does not know is a warning, so you can save a template before you def
 `isx build` refuses the template until the tool is defined.
 A tool behind a feature you have not enabled is a warning.
 
+A tool with no distribution for `x86_64` or `aarch64` is a warning on any host, since `isx build` refuses the template on that architecture.
+
 A tool file that did not load is a warning on `tools` when the template does not use it, since `isx build` refuses every build until it is fixed.
 A credential the template's tools need that is not configured is a warning on `tools`, naming the command that configures it.
 
