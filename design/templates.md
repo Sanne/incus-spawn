@@ -115,6 +115,12 @@ That is also why a template whose parent was rebuilt after it now counts as out 
 Plain `isx build a b` and `--missing` build their targets one after the other, and like a batch (`rebuildAll`) a failure does not stop the run.
 A target inheriting from a template that failed in this run is skipped, since its build would copy the old image, the others are built, and the run exits 1 with a single summary naming every template it left unbuilt, a parent a target's chain failed on included (the chain's own summary is held back for it).
 One named target behaves as it always did.
+A template pinning an account the host has not configured refuses the whole run before any build (`BuildCommand.requireValidAccounts`), since such a pin is likely a mistake (Sanne, #2345).
+`--skip-missing-accounts` softens that for `--all`, `--missing` and `--out-of-sync` alone: `skippedForAccounts` drops each such template and every template inheriting from it, with one warning per template that pins the account, before the other checks and the confirmation see the batch.
+A descendant that selects a configured account is skipped too, since it would be copied from an image the run did not build.
+A missing parent that only skipped templates inherit from is still built by `--missing`, as `--all` builds it (`withoutSkipped`).
+The skips leave the exit status alone, because the user asked for them; a named build, `--with-parents` or `--with-descendants` refuses the flag, so a template named on purpose still fails fast.
+The flag skips only missing accounts: an unknown tool or a conflicting repo is a mistake in the definition, and still refuses the run.
 In the TUI, Space marks templates on the templates table (#1131), and F5 then offers to rebuild the marked ones with their parents, with their descendants, or alone, as one `isx build` of several names.
 The menu describes each batch with the chain `isx build` computes (`BuildCommand.withParentsChain`, `withDescendantsChain`), so a shared parent shows once.
 The marks are TUI state only, kept by name: a refresh keeps them, drops those of templates that are gone, and Esc or a build launched from them clears them.
