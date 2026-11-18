@@ -124,6 +124,27 @@ class TemplatesValidateToolsTest {
     }
 
     @Test
+    void aToolWithNoDistributionForAnArchitectureIsAWarningWhateverTheHost() throws Exception {
+        // isx build refuses it only on the other architecture (#2357), so the check says so on any host (#2368)
+        tool("corestory.yaml", "name: corestory\narchitectures: [x86_64]\n");
+        var run = validate(template("corestory"));
+        assertEquals(0, run.exit());
+        assertEquals(List.of("warning tools[0] tool 'corestory' supports only x86_64,"
+                + " so isx build refuses this template on aarch64"), run.findings());
+    }
+
+    @Test
+    void aRequiredToolWhoseDownloadsAreAllForOneArchitectureIsAWarningNamingTheEntryThatNeedsIt() throws Exception {
+        tool("corestory.yaml", "name: corestory\ndownloads:\n  - url: https://example.com/c.tar.gz\n"
+                + "    arch: aarch64\n    extract: /opt\n");
+        tool("mine.yaml", "name: mine\nrequires:\n  - corestory\n");
+        var run = validate(template("mine"));
+        assertEquals(0, run.exit());
+        assertEquals(List.of("warning tools[0] tool 'corestory', which 'mine' needs, has downloads only for aarch64,"
+                + " so isx build refuses this template on x86_64"), run.findings());
+    }
+
+    @Test
     void parametersTheToolRefusesAreAnError() throws Exception {
         var run = validate(template("sshd:\n      nonesuch: 1"));
         assertEquals(1, run.exit());

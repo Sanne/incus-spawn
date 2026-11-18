@@ -114,6 +114,8 @@ Without it, a tool whose every download sets an `arch` supports only those archi
 On any other, `isx build` refuses every template that installs the tool, before it builds anything, and names the tool.
 It does not skip the tool, so an image never lacks a tool its template lists.
 
+`isx templates validate` warns about such a tool on a host of either architecture.
+
 `agent_note` is explained in [Agent Environment Context](AGENTS.md#agent-environment-context).
 
 `skills` takes the same forms as the image-level field, but bare names resolve against this tool's own `skills.repo`.

@@ -46,7 +46,9 @@ A tool file declares them in `architectures:`; without it, a tool whose every do
 A Java tool answers through `ToolSetup.unsupportedOn`, which no built-in sets today.
 The build fails rather than skipping the tool, as Sanne decided: a warning is easily missed, and an image without a tool its template lists is not what the template promised.
 This gives up one template serving hosts of both architectures when it lists such a tool; there is no marker that makes a tool optional.
-Validating a template does not check the architecture, since the host that validates it need not be the one that builds it.
+Validating a template warns about such a tool for every architecture isx supports, whatever the host that validates it (`TemplatesCommand.unsupportedFinding`, #2368).
+The host that validates it need not be the one that builds it: the templates repository's CI builds on x86_64 only, and every instance on an Apple silicon Mac is aarch64.
+It only warns, as for an unknown tool, and only the build refuses.
 `YamlToolSetup.install` refuses the tool again should a build reach it, so none of its downloads, scripts or files run; its packages are installed in bulk before then.
 Parameters the tool refuses, which stop the build, and each error `ToolDefValidator` finds in a tool file the entry reaches are errors; built-in tools are not checked again.
 A tool file the loader skipped (`ToolDefLoader.loadFailures`) is an error on the entry that names its tool, by its `name:` or else its file name, since the build refuses while it is skipped; for an unknown tool it replaces the unknown-tool warning, being the cause.
