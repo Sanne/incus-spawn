@@ -89,35 +89,54 @@ jobs:
           done
           echo "::endgroup::"
 
-          # Round 2: the right is opened before any attempt, so no dialog left pending by a
-          # baseline attempt can block the later ones; the log says what authd waited for.
-          echo "::group::Opening com.apple.trust-settings.user"
-          limit 30 sudo security authorizationdb write com.apple.trust-settings.user allow; echo "exit $?"
-          echo "::endgroup::"
+          # Round 3: every trust right the database holds is opened before any attempt; authd's
+          # own log names the right it asks SecurityAgent about, and any it names is opened too.
+          opened=""
+          open_right() {
+            limit 30 sudo security authorizationdb write "$1" allow; echo "write $1 allow: exit $?"
+            security authorizationdb read "$1" 2>/dev/null | grep -A2 "<key>rule</key>" | tr -d '\t\n'; echo
+            opened="$opened $1"
+          }
+          for right in $(sudo sqlite3 /var/db/auth.db "select name from rules where name like '%trust%'"); do
+            open_right "$right"
+          done
+          authd_rights() { # <since>: what authd evaluated, by name
+            limit 90 log show --info --debug --style compact --start "$1" --predicate 'process == "authd"' 2>/dev/null \
+              > "$work/authd.log"
+            echo "authd lines: $(wc -l < "$work/authd.log")"
+            grep -iE "right|rule|engine|mechanism|SecurityAgent|denied|succeeded|failed" "$work/authd.log" \
+              | grep -viE "xpc:connection" | cut -c1-300 | tail -n 60
+          }
           since=$(date '+%Y-%m-%d %H:%M:%S')
-          attempt opened "2. user-domain deny, user right allow, nothing pending" security add-trusted-cert -r deny
-          echo "::group::authd, SecurityAgent and trustd while it waited"
-          limit 90 log show --style compact --start "$since" \
-            --predicate 'process == "authd" OR process == "SecurityAgent" OR process == "trustd" OR process == "security" OR subsystem == "com.apple.Authorization"' \
-            2>&1 | grep -viE "no such|^Filtering" | tail -n 120
+          attempt all "5. user-domain deny, every trust right allow" security add-trusted-cert -r deny
+          echo "::group::authd while it waited"
+          authd_rights "$since"
           echo "::endgroup::"
-          echo "::group::Processes"
-          ps -axo pid,user,command | grep -E "SecurityAgent|authorizationhost|security add-trusted" | grep -v grep
-          echo "::endgroup::"
-          # The admin right as well, for a user-domain write
-          limit 30 sudo security authorizationdb write com.apple.trust-settings.admin allow; echo "admin right allow: exit $?"
-          attempt both "3. user-domain deny, user and admin rights allow" security add-trusted-cert -r deny
-          # A trust setting only, on a certificate already in the login keychain
-          new_ca present
-          limit 30 security add-certificates -k "$HOME/Library/Keychains/login.keychain-db" "$work/present.pem"; echo "add-certificates: exit $?"
-          attempt present "4. user-domain deny of a certificate already in the keychain" security add-trusted-cert -r deny -k "$HOME/Library/Keychains/login.keychain-db"
+          ps -axo pid,user,command | grep -E "SecurityAgent|authorizationhost" | grep -v grep
+          limit 10 sudo pkill -x SecurityAgent; echo "pkill SecurityAgent: exit $?"
+          named=$(grep -oE "(com\.apple|system|config)\.[A-Za-z0-9._-]+" "$work/authd.log" | sort -u)
+          echo "rights authd named:"; echo "$named"
+          extra=""
+          for right in $named; do
+            case " $opened " in *" $right "*) ;; *) security authorizationdb read "$right" >/dev/null 2>&1 && extra="$extra $right" ;; esac
+          done
+          if [ -n "$extra" ]; then
+            for right in $extra; do open_right "$right"; done
+            since=$(date '+%Y-%m-%d %H:%M:%S')
+            attempt extra "6. user-domain deny, the rights authd named allow too" security add-trusted-cert -r deny
+            echo "::group::authd while it waited"
+            authd_rights "$since"
+            echo "::endgroup::"
+          else
+            echo "authd named no right that was not already open"
+          fi
 
           # 5. The user domain as the JVM reads it
           echo "::group::trust-settings-export (user domain)"
           limit 30 security trust-settings-export "$work/user.plist"; echo "exit $?"
           [ -f "$work/user.plist" ] && grep -c "<key>kSecTrustSettingsResult</key>" "$work/user.plist"
           echo "::endgroup::"
-          for ca in opened both present; do
+          for ca in all extra; do
             [ -f "$work/$ca.pem" ] && grep -q "$(sha1 "$ca")" "$work/user.plist" 2>/dev/null \
               && echo "EXPORT $ca: present" || echo "EXPORT $ca: absent"
           done
