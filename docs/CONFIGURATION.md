@@ -463,7 +463,7 @@ Only `config.yaml` can declare one, never a template, since the cache serves eve
 maven-repositories:
   - url: https://maven.google.com/
     access: public
-    confirm: sidecar           # or checksum-header
+    confirm: sidecar           # or checksum-header, or etag-sha1
     replaces-releases: false
     fresh: 2h                  # optional, 0 by default
     max-stale: 7d              # optional, 0 by default
@@ -479,9 +479,12 @@ The proxy cannot find out these facts by itself, so each entry states them:
 - `url`: the repository, up to where the Maven coordinates begin.
   A path under no declared URL is relayed uncached.
 - `access`: `public`, or `private` with the `credentials` namespace whose account isx injects there.
-- `confirm`: how a cached copy is checked against upstream.
-  Use `checksum-header` when the server sends an `X-Checksum-SHA1` header with each artifact, as Artifactory does and Nexus 3 does not.
-  Use `sidecar` only when the repository publishes each artifact and its `.sha1` file together and never replaces them.
+- `confirm`: how a cached copy is checked against upstream, one of these three.
+  - `checksum-header`: the server sends an `X-Checksum-SHA1` header with each artifact, as Artifactory does.
+  - `etag-sha1`: the server sends the artifact's SHA-1 as its `ETag`, as a Nexus 3 hosted repository does.
+    A Nexus 3 proxy repository, or a group serving from one, sends its upstream's `ETag` instead.
+    Those artifacts are then checked by their `.sha1` file, or served uncached where that is unsound.
+  - `sidecar`: only when the repository publishes each artifact and its `.sha1` file together and never replaces them.
 - `replaces-releases`: `true` when a release can be uploaded again with other content.
   Such a repository is confirmed before every serve, and never served offline.
 - `fresh` and `max-stale`: as in `artifact-cache:` above, for this repository alone.
@@ -497,7 +500,7 @@ A request to it that carries its own credential is never cached, in case the rep
 
 A private repository is cached only through a credential isx injects, from a tool with a proxy credential for that domain.
 
-It needs `confirm: checksum-header`, so isx does not cache a private Nexus 3 repository yet.
+It needs `confirm: checksum-header` or `etag-sha1`, since a `.sha1` file it can read says nothing about the artifact.
 The proxy keeps a separate cache per credential, and confirms every hit with upstream using that credential.
 An account that loses access is refused at once.
 

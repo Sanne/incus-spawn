@@ -39,6 +39,9 @@ class PrivateMavenRepositoryProxyTest {
     private static final String CONTENT = "private bytes";
     private static final String REAL = "Bearer nexus-real";
     private static final String MOVED = "/repository/releases/org/example/moved/1.0/moved-1.0.jar";
+    /** In a repository confirmed by the SHA-1 it sends as its ETag, as Nexus 3 does (#2336). */
+    private static final String HOSTED = "/repository/hosted/org/example/lib/1.0/lib-1.0.jar";
+    static String sha1;
 
     @TempDir
     static Path tempHome;
@@ -52,6 +55,9 @@ class PrivateMavenRepositoryProxyTest {
     static final List<String> received = new CopyOnWriteArrayList<>();
     /** The credential upstream accepts: the repository revokes an account by changing it. */
     static volatile String accepted = REAL;
+    /** The ETag upstream sends for {@link #HOSTED}, null for none, and the bytes it serves there. */
+    static volatile String etag;
+    static volatile String content = CONTENT;
 
     @BeforeAll
     static void start() throws Exception {
@@ -88,10 +94,15 @@ class PrivateMavenRepositoryProxyTest {
                     credentials: nexus
                     confirm: checksum-header
                     replaces-releases: false
-                """.formatted(NEXUS));
+                  - url: https://%s/repository/hosted/
+                    access: private
+                    credentials: nexus
+                    confirm: etag-sha1
+                    replaces-releases: false
+                """.formatted(NEXUS, NEXUS));
 
         vertx = Vertx.vertx();
-        var sha1 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(CONTENT.getBytes(StandardCharsets.UTF_8)));
+        sha1 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(CONTENT.getBytes(StandardCharsets.UTF_8)));
         upstream = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(CertificateAuthority.loadOrCreate(), NEXUS)))
                 .requestHandler(req -> {
@@ -101,6 +112,10 @@ class PrivateMavenRepositoryProxyTest {
                         req.response().setStatusCode(401).end();
                     } else if (req.path().equals(MOVED)) {
                         req.response().setStatusCode(302).putHeader("Location", JAR).end();
+                    } else if (req.path().equals(HOSTED)) {
+                        // Nexus 3: the SHA-1 as the ETag alone, no X-Checksum-SHA1
+                        if (etag != null) req.response().putHeader("ETag", etag);
+                        req.response().end(req.method() == HttpMethod.HEAD ? "" : content);
                     } else if (req.path().equals(JAR)) {
                         req.response().putHeader("X-Checksum-SHA1", sha1)
                                 .end(req.method() == HttpMethod.HEAD ? "" : CONTENT);
@@ -132,6 +147,8 @@ class PrivateMavenRepositoryProxyTest {
     void reset() throws Exception {
         received.clear();
         accepted = REAL;
+        etag = "\"" + sha1 + "\"";
+        content = CONTENT;
         proxy.overrideUpstream(NEXUS, "127.0.0.1", upstreamPort);
         var dir = ArtifactCacheHandler.privateCacheDir();
         if (Files.isDirectory(dir)) {
@@ -144,6 +161,22 @@ class PrivateMavenRepositoryProxyTest {
     }
 
     private record Answer(int status, String body) {}
+
+    private record Response(int status, String body, String checksumHeader, String etag) {}
+
+    private static Response getWithHeaders(String path) throws Exception {
+        var options = new RequestOptions()
+                .setMethod(HttpMethod.GET)
+                .setServer(SocketAddress.inetSocketAddress(proxy.mitmPort(), "127.0.0.1"))
+                .setHost(NEXUS)
+                .setPort(443)
+                .setURI(path);
+        return client.request(options)
+                .compose(req -> req.putHeader("Authorization", proof()).send())
+                .compose(resp -> resp.body().map(b -> new Response(resp.statusCode(), b.toString(StandardCharsets.UTF_8),
+                        resp.getHeader("X-Checksum-SHA1"), resp.getHeader("ETag"))))
+                .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+    }
 
     private static Answer get(String authorization) throws Exception {
         return get(JAR, authorization);
@@ -168,16 +201,24 @@ class PrivateMavenRepositoryProxyTest {
 
     /** The private cache's copies of the jar, in whichever partition. */
     private static List<Path> cachedCopies() throws Exception {
+        return cachedCopies(JAR);
+    }
+
+    private static List<Path> cachedCopies(String path) throws Exception {
         var dir = ArtifactCacheHandler.privateCacheDir();
         if (!Files.isDirectory(dir)) return List.of();
         try (Stream<Path> files = Files.walk(dir)) {
-            return files.filter(f -> f.endsWith(Path.of(NEXUS).resolve(JAR.substring(1)))).toList();
+            return files.filter(f -> f.endsWith(Path.of(NEXUS).resolve(path.substring(1)))).toList();
         }
     }
 
     private static void awaitCached() throws Exception {
+        awaitCached(JAR);
+    }
+
+    private static void awaitCached(String path) throws Exception {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (cachedCopies().isEmpty()) {
+        while (cachedCopies(path).isEmpty()) {
             assertTrue(System.nanoTime() < deadline, "the download was never cached");
             Thread.sleep(10);
         }
@@ -236,5 +277,51 @@ class PrivateMavenRepositoryProxyTest {
         var answer = get(MOVED, proof());
         assertEquals(302, answer.status(), "followed here, the next hop would go out with no credential");
         assertEquals(List.of("GET " + MOVED + " " + REAL), received);
+    }
+
+    @Test
+    void nexus3IsConfirmedByTheSha1ItSendsAsItsETag() throws Exception {
+        var miss = getWithHeaders(HOSTED);
+        assertEquals(new Response(200, CONTENT, null, null), miss,
+                "a miss's ETag is not yet known to be the SHA-1 of its bytes, so Maven checks its .sha1");
+        awaitCached(HOSTED);
+        assertEquals(List.of("GET " + HOSTED + " " + REAL), received);
+
+        received.clear();
+        assertEquals(new Response(200, CONTENT, sha1, null), getWithHeaders(HOSTED),
+                "a hit confirmed by a credentialed HEAD whose ETag is the copy's SHA-1, which goes to Maven"
+                        + " as X-Checksum-SHA1, never as an ETag the proxy made up");
+        assertEquals(List.of("HEAD " + HOSTED + " " + REAL), received, "one HEAD, the bytes from the cache");
+
+        accepted = "Bearer someone-else";
+        var refused = getWithHeaders(HOSTED);
+        assertEquals(401, refused.status(), "upstream's refusal, not the cached copy");
+    }
+
+    @Test
+    void aChangedETagIsNeverServedFromTheCopy() throws Exception {
+        getWithHeaders(HOSTED);
+        awaitCached(HOSTED);
+
+        content = "replaced bytes";
+        etag = "\"" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1")
+                .digest(content.getBytes(StandardCharsets.UTF_8))) + "\"";
+        assertEquals("replaced bytes", getWithHeaders(HOSTED).body(), "the copy no longer matches upstream's ETag");
+    }
+
+    @Test
+    void anETagThatIsNotTheStrongSha1OfTheBytesNeverCaches() throws Exception {
+        var md5 = HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(CONTENT.getBytes(StandardCharsets.UTF_8)));
+        // Weak, a proxied upstream's MD5, Nexus's merged-metadata form, unquoted, and the SHA-1 of other bytes
+        for (var sent : new String[] {"W/\"" + sha1 + "\"", "\"" + md5 + "\"", "\"{SHA1{" + sha1 + "}}\"", sha1,
+                "\"" + "0".repeat(40) + "\"", null}) {
+            etag = sent;
+            var answer = getWithHeaders(HOSTED);
+            assertEquals(200, answer.status(), "served as relayed: " + sent);
+            assertEquals(CONTENT, answer.body());
+            assertNull(answer.etag(), "never an ETag the proxy made up: " + sent);
+            Thread.sleep(50);
+            assertEquals(List.of(), cachedCopies(HOSTED), "never cached on ETag " + sent);
+        }
     }
 }

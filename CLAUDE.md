@@ -259,7 +259,7 @@ Off by default and host-config only; there is no caller identity, since on macOS
 The name is in bridge DNS only while a port is listed and is never intercepted (design/proxy.md "Exposed host ports").
 
 **Cached Maven repositories** (#2312): the proxy caches the built-in four (`CachedRepository.BUILT_IN`: Central's two names, the Plugin Portal, Gradle distributions) and those `maven-repositories:` in `config.yaml` declares (`MavenRepositories`), one shape for both.
-Each says what the proxy cannot find out: its URL prefix, `public` or `private` with the credential namespace isx injects there, `checksum-header` or `sidecar` confirmation, whether it replaces releases, and its own tiers (0 by default).
+Each says what the proxy cannot find out: its URL prefix, `public` or `private` with the credential namespace isx injects there, `checksum-header`, `etag-sha1` (Nexus 3) or `sidecar` confirmation, whether it replaces releases, and its own tiers (0 by default).
 An unsound or clashing entry is dropped with a warning, never failing config.yaml; one that replaces releases, or is private, is confirmed before every serve and never served offline.
 A private one is cached per injected credential and reached only through a proven request, every hit confirmed with that credential (design/proxy.md "Private repositories").
 `maven-mirrors:` in `config.yaml` (`MavenMirrors`, #2304) names a mirror of a cached public Maven repository that does not replace releases: a miss asks it first (its `.sha1`, then the artifact, with no header of the client's) and the repository when it does not serve it, within half of the client's time, and its copy is committed unconfirmed so the repository confirms it at its first hit (design/proxy.md "A mirror for a repository").

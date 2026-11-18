@@ -43,7 +43,7 @@ class MavenRepositoriesTest {
     @Test
     void anEntryWithEveryRequiredFieldIsKeptWithCautiousTiers() {
         var kept = entries(List.of(entry("url", "https://Maven.Google.com")));
-        assertEquals(List.of(new MavenRepositories.Entry("maven.google.com", "/", false, false,
+        assertEquals(List.of(new MavenRepositories.Entry("maven.google.com", "/", MavenRepositories.Confirm.SIDECAR, false,
                 Duration.ZERO, Duration.ZERO, null)), kept);
         assertEquals(List.of(), warnings);
     }
@@ -54,7 +54,19 @@ class MavenRepositoriesTest {
                 "access", "private", "credentials", "nexus", "confirm", "checksum-header")));
         assertEquals("/repository/releases/", kept.getFirst().pathPrefix());
         assertEquals("nexus", kept.getFirst().credentials());
-        assertTrue(kept.getFirst().checksumHeader());
+        assertEquals(MavenRepositories.Confirm.CHECKSUM_HEADER, kept.getFirst().confirm());
+    }
+
+    @Test
+    void nexus3IsConfirmedByTheSha1ItSendsAsItsETagPrivateOrReplacingReleases() {
+        var kept = entries(List.of(entry("url", "https://nexus.example.com/repository/releases/",
+                        "access", "private", "credentials", "nexus", "confirm", "etag-sha1"),
+                entry("url", "https://nexus.example.com/repository/snapshots/", "confirm", "etag-sha1",
+                        "replaces-releases", true)));
+        assertEquals(List.of(), warnings);
+        assertEquals(List.of(MavenRepositories.Confirm.ETAG_SHA1, MavenRepositories.Confirm.ETAG_SHA1),
+                kept.stream().map(MavenRepositories.Entry::confirm).toList());
+        assertRefused(entry("confirm", "etag"), "confirm: must be checksum-header, etag-sha1 or sidecar");
     }
 
     @Test
@@ -68,7 +80,7 @@ class MavenRepositoriesTest {
     @Test
     void anEntryWithNoSoundConfirmationIsRefused() {
         assertRefused(entry("replaces-releases", true), "no sound confirmation by sidecar");
-        assertRefused(entry("access", "private", "credentials", "nexus"), "needs confirm: checksum-header");
+        assertRefused(entry("access", "private", "credentials", "nexus"), "needs confirm: checksum-header or etag-sha1");
         assertRefused(entry("confirm", "checksum-header", "replaces-releases", true, "fresh", "2h"),
                 "fresh: and max-stale: must be 0");
         assertRefused(entry("access", "private", "credentials", "nexus", "confirm", "checksum-header",

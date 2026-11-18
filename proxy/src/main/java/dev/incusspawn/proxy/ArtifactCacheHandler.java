@@ -1923,16 +1923,21 @@ class ArtifactCacheHandler {
 
     /**
      * Say once per domain that a repository config.yaml declared {@code confirm: checksum-header}
-     * answered an artifact without that header: its copies are then confirmed by the sidecar, or,
-     * where that is unsound, never cached, and nothing else would tell the user why.
+     * or {@code etag-sha1} answered an artifact without that header, or without a SHA-1 as its
+     * {@code ETag}: its copies are then confirmed by the sidecar, or, where that is unsound, never
+     * cached, and nothing else would tell the user why.
      */
     private void warnHeaderless(String domain, Revalidation revalidation) {
         if (CachedRepository.BUILT_IN_DOMAINS.contains(domain) || !warnedHeaderless.add(domain)) return;
-        ProxyLog.warn(domain + " answered an artifact without " + revalidation.header()
-                + ", which maven-repositories: in config.yaml declares it sends (confirm: checksum-header); "
+        var etag = Revalidation.ETAG.equals(revalidation.header());
+        ProxyLog.warn(domain + " answered an artifact without "
+                + (etag ? "its SHA-1 as a strong, quoted ETag" : revalidation.header())
+                + ", which maven-repositories: in config.yaml declares it sends (confirm: "
+                + (etag ? "etag-sha1" : "checksum-header") + "); "
                 + (revalidation.servesOnlyConfirmed() ? "its artifacts are not cached"
                         : "its artifacts are confirmed by their .sha1 instead")
-                + ". Check the declaration against what the server sends.");
+                + ". Check the declaration against what the server sends"
+                + (etag ? " (a Nexus 3 proxy repository sends its upstream's ETag, not the SHA-1)." : "."));
     }
 
     /**
@@ -2051,9 +2056,9 @@ class ArtifactCacheHandler {
         }
         recordHit(tier == ArtifactCacheTiers.Tier.STALE
                 ? ArtifactCacheStats.Hit.TRUSTED_CHECKING : ArtifactCacheStats.Hit.TRUSTED, cached.size());
-        if (revalidation.header() != null) {
+        if (revalidation.clientHeader() != null) {
             var hex = target.checksum().hex(cached.checksum());
-            if (hex != null) clientReq.response().putHeader(revalidation.header(), hex);
+            if (hex != null) clientReq.response().putHeader(revalidation.clientHeader(), hex);
         }
         serveCachedFile(clientReq.response(), target.artifact(), null);
         if (tier == ArtifactCacheTiers.Tier.STALE) {
@@ -2249,9 +2254,9 @@ class ArtifactCacheHandler {
      */
     private void serveConfirmed(HttpServerRequest clientReq, Path artifact,
                                 Revalidation revalidation, SidecarAnswer answer) {
-        if (revalidation.header() != null) {
+        if (revalidation.clientHeader() != null) {
             var hex = revalidation.headerChecksum().hex(answer.body());
-            if (hex != null) clientReq.response().putHeader(revalidation.header(), hex);
+            if (hex != null) clientReq.response().putHeader(revalidation.clientHeader(), hex);
         }
         serveCachedFile(clientReq.response(), artifact, null);
     }
@@ -2427,7 +2432,7 @@ class ArtifactCacheHandler {
      */
     private static Verification mirroredArtifact(Revalidation revalidation, Sidecar checksum, String hex) {
         var expected = hex.getBytes(StandardCharsets.US_ASCII);
-        var header = revalidation.header() != null && revalidation.headerChecksum() == checksum ? revalidation.header() : null;
+        var header = revalidation.clientHeader() != null && revalidation.headerChecksum() == checksum ? revalidation.clientHeader() : null;
         return new Verification(checksum, resp -> Future.succeededFuture(expected), true,
                 VerifiedArtifactStore.NOTHING_ALONGSIDE, Instant.EPOCH, (clientResp, upResp) -> {
                     if (header != null) clientResp.putHeader(header, hex);
