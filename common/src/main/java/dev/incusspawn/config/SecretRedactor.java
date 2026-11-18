@@ -475,10 +475,12 @@ public final class SecretRedactor {
         var source = new int[rawLength];
         // A screen shows what the shown text does until the cursor moves back: most output never does
         Screen screen = null;
+        boolean independentRows = false;
         if (!asPrinted) {
             for (var piece : raw) {
                 if (piece != null && Screen.mayMoveBack(piece)) {
-                    screen = new Screen(rawLength, true, false, true, false);
+                    independentRows = Screen.independentRows(raw);
+                    if (!independentRows) screen = new Screen(rawLength, true, false, true, false);
                     break;
                 }
             }
@@ -503,6 +505,10 @@ public final class SecretRedactor {
         if (screen != null && screen.moved()) {
             var view = screen.view();
             wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
+        }
+        if (independentRows) {
+            var view = Screen.viewRows(rawLength, raw);
+            if (view != null) wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
         }
         // Where terminals or the screen's start can differ, a screen for each other reading: absolute
         // rows counted from the first one used instead of the top, tab stops set as VTE sets them,
@@ -816,6 +822,62 @@ public final class SecretRedactor {
                 }
             }
             return false;
+        }
+
+        /**
+         * A progress line rewritten using carriage returns can only affect its own row.
+         * Combining marks can extend the source span of a cell on an earlier row, so
+         * keep the full screen for those and for controls beyond the ones listed here.
+         */
+        static boolean independentRows(String[] raw) {
+            for (var piece : raw) {
+                if (piece == null) continue;
+                for (int i = 0; i < piece.length(); ) {
+                    int c = piece.codePointAt(i);
+                    if (c != '\r' && c != '\b' && (BuildOutput.actsOnTerminal(c) || cellWidth(c) == 0)) return false;
+                    i += Character.charCount(c);
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Render one row at a time to avoid allocating a screen node for every character
+         * in a long command log with a few progress lines. Keep the rows in one view so
+         * the scrub can still match credentials that span lines.
+         */
+        static View viewRows(int rawLength, String[] raw) {
+            var view = new View(rawLength);
+            boolean moved = false;
+            int offset = 0;
+            for (var piece : raw) {
+                if (piece == null) continue;
+                for (int start = 0; start < piece.length(); ) {
+                    int end = piece.indexOf('\n', start);
+                    if (end < 0) end = piece.length();
+                    if (plainRow(piece, start, end)) {
+                        view.startRow();
+                        for (int i = start; i < end; i++) view.append(piece.charAt(i), offset + i, offset + i);
+                    } else if (start < end) {
+                        var screen = new Screen(end - start, true, false, true, false);
+                        screen.print(piece.substring(start, end), offset + start);
+                        moved |= screen.moved();
+                        screen.appendView(view);
+                    }
+                    start = end + 1;
+                }
+                offset += piece.length();
+            }
+            return moved ? view : null;
+        }
+
+        private static boolean plainRow(String piece, int start, int end) {
+            if (start == end || end - start > MAX_COLUMN) return false;
+            for (int i = start; i < end; i++) {
+                char c = piece.charAt(i);
+                if (c < ' ' || c > '~') return false;
+            }
+            return true;
         }
 
         /** Whether a sequence is a private mode reset that leaves the alternate screen or restores a cursor xterm saved. */
@@ -1639,21 +1701,24 @@ public final class SecretRedactor {
 
         /** What the screen shows, row by row, and the raw characters each of its characters redacts. */
         View view() {
+            var view = new View(nodes + nodes / 8 + 16);
+            appendView(view);
+            return view;
+        }
+
+        private void appendView(View view) {
             // Each row ends at a line break, so the order rows are taken in joins none
             var roots = Arrays.copyOf(removed, removedCount + 2);
             roots[removedCount] = regions[0];
             roots[removedCount + 1] = regions[1];
             var rows = rows(roots);
-            var view = new View(nodes + nodes / 8 + 16);
             var path = new int[64];
-            boolean first = true;
             for (int r = 0; r < rows.length; r++) {
                 int node = cells[rows[r]];
                 // A row whose cells were all deleted shows nothing
                 if (node == 0) continue;
                 // Rows nothing was written to show blank, which ends a token as a line break does
-                if (!first) view.append('\n', -1, -1);
-                first = false;
+                view.startRow();
                 boolean blank = false;
                 int depth = 0;
                 // In column order, the way down kept on a stack: a treap is shallow, not balanced
@@ -1680,7 +1745,6 @@ public final class SecretRedactor {
                     node = right[node];
                 }
             }
-            return view;
         }
     }
 
@@ -1689,11 +1753,17 @@ public final class SecretRedactor {
         final StringBuilder text;
         int[] start;
         int[] end;
+        private boolean hasRow;
 
         View(int capacity) {
             text = new StringBuilder(capacity);
             start = new int[capacity];
             end = new int[capacity];
+        }
+
+        void startRow() {
+            if (hasRow) append('\n', -1, -1);
+            hasRow = true;
         }
 
         void append(char c, int from, int to) {
