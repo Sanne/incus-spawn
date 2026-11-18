@@ -969,11 +969,26 @@ No Codex version is pinned: CI's `tpl-test-codex` installs whatever `@openai/cod
 So a Codex release that changes what this relies on fails CI's next run rather than waiting for a deliberate upgrade, and a user's own template may run a Codex no run has tried.
 It is not yet tested against a real ChatGPT account, and passing these tests does not establish that OpenAI supports the integration; feedback is welcome on #1332.
 
-So far only the first milestone exists: the proxy side and its end-to-end test.
-There is no sign-in or delivery yet; the test's fixture writes the session, the guest's files and the instance's verifiers.
-Sign-in through the official `codex login`, delivery on every start, and clearing inherited verifiers on a copy come next, with the user-facing docs.
+**Sign-in:** `isx init`'s OpenAI step (and `isx account add openai`) offers signing in with ChatGPT beside pasting an API key, for a user who cannot mint one.
+isx drives the two flows Codex's own login drives (`ChatGptSignIn`, built from codex-rs `login/src`): the browser flow, which the step offers first, and the device-code flow for a host whose browser is elsewhere.
+The browser flow is what an organisation's SSO needs: the sign-in happens in the person's browser, at their IdP, and isx only listens on loopback for the redirect -- on Codex's own callback ports (1455, 1457), which OpenAI's auth server allow-lists, with the PKCE pair and the parameters Codex's authorize URL carries.
+The device-code flow is the one-time code at `auth.openai.com/codex/device`, polled until the person entered it; an organisation that disables device authentication refuses it, which is why it is not the default.
+Both end at the same `/oauth/token` the proxy later refreshes at, and every request names Codex's OAuth client id, so the session is one the proxy can answer refreshes for.
+The tokens go to the session store alone, never a file in an instance, and `config.yaml` records only `type: chatgpt` for the account.
+A sign-in again replaces the session, and its new `session_id` invalidates every proof made for the previous one.
+Removing an account leaves its session file behind, owner-only on the host; only an account re-created under the same name would serve it again.
+
+**Delivery:** every start that mints an instance secret also decides its ChatGPT session (`ChatGptStart`, called from the secret rotation's locked write).
+The instance's pinned `openai` account resolves exactly as the proxy resolves it, and a session is served only when that account is a ChatGPT one and still has its session: anything else -- an API-key account, an `inherit` pin, a pin that no longer resolves, a session gone -- leaves the instance with no binding and clears stale stamps in the same write.
+The proofs are keyed with the rotating per-start secret, which is the decision this milestone owed the paragraph above: `InstanceRegistry`'s binding check requires it (`chatgpt-proof-secret-sha256` must be the instance's current `instance-secret-sha256`), a copy gets a secret of its own and so never inherits its source's ChatGPT access, and the stable credential seed's machinery stays untouched.
+The same write records the verifiers, and the delivery exec carries what the guest's Codex reads: `/run/isx/chatgpt-auth` holds the placeholders, and a login profile (`isx-zz-codex-chatgpt.sh`, written by the delivery, so old images get it too) writes `~/.codex/auth.json` from it -- Codex's own file shape, with this instance's placeholder tokens, the real account id, and the key field null as Codex's own login leaves it.
+The profile runs after the API-key one, so a ChatGPT session's file wins when both could apply, and replaces only a file that is absent, holds a placeholder, or holds an earlier delivery's proofs: a user's own `codex login` is never overwritten.
+It also removes the API-key login forcing the build's config.toml carries (`forced_login_method = "api"`, `CodexSetup.configToml`): Codex enforces that restriction by logging the session out and deleting auth.json, so a ChatGPT-serving login takes the line out of isx's own config -- only the line, and only a config holding isx's permissions profile, never a user's own.
+A start that serves no session clears both, so the guest's Codex does not keep a session the host ended.
+A branch is served its session from the copy request on: the same write that mints its secret derives its verifiers against the selection the branch was asked for (`ChatGptStart.stampBranchInto`), so a copy never carries its source's stamps, and one served no session clears what its source had.
+A build does not stamp a ChatGPT session: builds keep their temporary-proof grant, so Codex in a credentialed build stays signed out unless the account is an API-key one.
+
 The route identifies its caller by source address alone, so on macOS, where every container arrives from the VM's address (#1582), it serves no instance yet.
-Its proofs are keyed with the rotating per-start secret, not the stable credential seed the other namespaces now use (`CredentialProof`); which one delivery uses is for the next milestone to decide.
 
 **The session:** `~/.config/incus-spawn/openai/<account>/session.json` (owner-only) holds the tokens, a `session_id` minted at sign-in, a `generation`, and `refreshing` while a refresh is out (`ChatGptSessionStore`, on the mechanics `SessionStore` shares with Google sign-ins, #2443).
 `config.yaml` only names the account and its type.
@@ -982,7 +997,7 @@ OpenAI rotates the refresh token on every use and refuses a reused one, so exact
 **Proofs (#1107):** Every proof is an HMAC keyed with the raw per-start secret, never with its SHA-256, which the guest can read through `/dev/incus` (`ChatGptProof`).
 The refresh proof binds the account and the session id; the access proof is derived from the refresh proof, so a refresh can be answered with the caller's own access proof without the proxy holding the secret.
 The host records only SHA-256 verifiers of both, with `<account>:<session id>` and the hash of the secret they were made with, in instance metadata.
-The verifiers count only while that is still the instance's secret, so a copy, which gets its own, never inherits its source's ChatGPT access along with its files and metadata.
+The verifiers count only while that is still the instance's secret, so a copy, which gets its own, never inherits its source's ChatGPT access along with its files and metadata; delivery re-derives them on every start ("Delivery" below).
 The guest's access token is an unsigned JWT with the real token's expiry and account claims and the access proof as its signature; its refresh token is `rt.isx_<refresh proof>` (`ChatGptPlaceholders`).
 The real id token never reaches a guest: it is signed, and can be exchanged for an API key.
 
@@ -1039,6 +1054,7 @@ After a sign-in again it is discarded, its new refresh token revoked, and the re
 So a proxy that died between the request and the commit, or an answer lost before it reached the proxy, leaves the record behind, and when the next refresh is then refused the host is told to sign in again because a refresh was interrupted.
 
 **Testing:** `ChatGptRouteTest` covers the proof matrix (missing, static, another instance's, a previous session's, the wrong kind, one keyed with the metadata hash, the verifier itself) on both placeholders and both transports, the allowlist and refused shapes on both transports, the body bound and that no body is read before the proof, redirects (handed back, never followed), the refresh rules, and the sign-in-again and removal races.
+`ChatGptSignInTest` drives both sign-in flows against a stub of the auth server, `ChatGptStartTest` the stamps and the guest auth content, and `InstanceSecretRotationTest` the rotation that writes both; `ChatGptAuthFlowTest` drives init's step end to end.
 `.github/scripts/test-chatgpt-session.sh` runs real Codex (CI: the npm release current when `tpl-test-codex` is built) in an instance through the real `isx-proxy` against `.github/scripts/chatgpt-stub.py`.
 It passes only when Codex completes a turn over WebSocket and one over HTTP (the stub refusing the upgrade), with Codex's own refresh relayed once and committed, and the guest holding no real token.
 Nothing in it may leave the machine, and that is checked, not assumed.
