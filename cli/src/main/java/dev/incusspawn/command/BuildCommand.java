@@ -116,6 +116,9 @@ public class BuildCommand extends BaseCommand {
     @Option(name = "missing", hasValue = false, description = "Build only templates that don't exist yet")
     boolean missing;
 
+    @Option(name = "skip-missing-accounts", hasValue = false, description = "With --all, --missing or --out-of-sync: skip each template that pins an account this host has not configured, and what inherits from it, and build the rest")
+    boolean skipMissingAccounts;
+
     @Option(name = "type", description = "Instance type: container, vm, or kvm (overrides image definition)")
     InstanceType type;
 
@@ -297,6 +300,12 @@ public class BuildCommand extends BaseCommand {
 
     CommandResult dispatch(Map<String, ImageDef> defs) {
         var names = this.names == null ? List.<String>of() : this.names.stream().distinct().toList();
+        // A template built by name, or a batch grown from one, keeps refusing a missing account (#2345)
+        if (skipMissingAccounts && (withParents || withDescendants || !(all || missing || outOfSync))) {
+            BuildOutput.error("--skip-missing-accounts works only with --all, --missing or --out-of-sync.",
+                    "A template named on the command line is refused while an account it pins is not configured.");
+            return CommandResult.valueOf(1);
+        }
         if (withParents || withDescendants) {
             var flag = withParents ? "--with-parents" : "--with-descendants";
             if (names.isEmpty()) {
@@ -433,6 +442,9 @@ public class BuildCommand extends BaseCommand {
             BuildOutput.step("All templates are up to date");
             return;
         }
+        var skipped = skippedForAccounts(templatesToRebuild, defs);
+        templatesToRebuild.removeAll(skipped);
+        if (templatesToRebuild.isEmpty()) return;
         requireKnownTools(templatesToRebuild, defs);
         preflight(templatesToRebuild, defs);
 
@@ -611,9 +623,48 @@ public class BuildCommand extends BaseCommand {
         for (var leaf : missingLeaves) {
             collectAllRecursive(leaf, defs, toCheck, seen);
         }
-        requireKnownTools(missingLeaves.stream().map(ImageDef::getName).toList(), defs);
+        var skipped = skippedForAccounts(toCheck, defs);
+        var targets = skipped.isEmpty() ? missingLeaves : withoutSkipped(missingLeaves, skipped, defs);
+        toCheck.removeAll(skipped);
+        requireKnownTools(targets.stream().map(ImageDef::getName).toList(), defs);
         preflight(toCheck, defs);
-        build(missingLeaves, defs);
+        build(targets, defs);
+    }
+
+    /**
+     * The targets of {@code --missing} once {@code skipped} is left out (#2345). Every leaf whose
+     * chain holds a skipped template is skipped itself; a missing template above the skipped ones
+     * that no other leaf builds becomes a target in its place, so it is built as {@code --all} would.
+     */
+    private List<ImageDef> withoutSkipped(List<ImageDef> leaves, Set<String> skipped, Map<String, ImageDef> defs) {
+        var targets = new ArrayList<ImageDef>();
+        var covered = new HashSet<String>();
+        var dropped = new ArrayList<ImageDef>();
+        for (var leaf : leaves) {
+            if (skipped.contains(leaf.getName())) {
+                dropped.add(leaf);
+            } else {
+                targets.add(leaf);
+                ImageDef.chain(leaf, defs).forEach(layer -> covered.add(layer.getName()));
+            }
+        }
+        // The deepest missing template above each dropped leaf's skipped ones, unless a kept leaf builds it
+        var standIns = new LinkedHashMap<String, ImageDef>();
+        for (var leaf : dropped) {
+            var above = ImageDef.chain(leaf, defs).stream().takeWhile(l -> !skipped.contains(l.getName())).toList();
+            for (var layer : above.reversed()) {
+                if (covered.contains(layer.getName())) break;
+                if (!incus.exists(layer.getName())) {
+                    standIns.putIfAbsent(layer.getName(), layer);
+                    break;
+                }
+            }
+        }
+        // One stand-in's chain builds another above it, which as a target of its own would be built twice
+        var below = new HashSet<String>();
+        standIns.values().forEach(t -> ImageDef.ancestors(t, defs).forEach(a -> below.add(a.getName())));
+        standIns.values().stream().filter(t -> !below.contains(t.getName())).forEach(targets::add);
+        return targets;
     }
 
     /**
@@ -2384,6 +2435,7 @@ public class BuildCommand extends BaseCommand {
      * it may build, so a broken definition elsewhere never blocks an unrelated build (#805).
      */
     private static void requireValidAccounts(Collection<String> templates, Map<String, ImageDef> defs) {
+        // A skipped template never reaches here, so this refuses only what the run would build
         var accountError = validateTemplateAccounts(templates, defs);
         if (accountError != null) {
             BuildOutput.error("Cannot build: " + accountError);
@@ -2408,6 +2460,19 @@ public class BuildCommand extends BaseCommand {
      * examined, so a host with no named accounts pays nothing.
      */
     static String validateTemplateAccounts(Collection<String> templates, Map<String, ImageDef> defs) {
+        var errors = templateAccountErrors(templates, defs, true);
+        if (errors.isEmpty()) return null;
+        var first = errors.entrySet().iterator().next();
+        return "template '" + shown(first.getKey()) + "': " + first.getValue();
+    }
+
+    /**
+     * Each of {@code templates} whose {@code accounts:} names something that is not configured,
+     * in order, with why; only the first when {@code firstOnly}.
+     */
+    private static Map<String, String> templateAccountErrors(Collection<String> templates, Map<String, ImageDef> defs,
+                                                             boolean firstOnly) {
+        var errors = new LinkedHashMap<String, String>();
         SpawnConfig config = null;
         for (var name : templates) {
             var selection = ImageDef.resolveAccounts(defs.get(name), defs);
@@ -2417,10 +2482,46 @@ public class BuildCommand extends BaseCommand {
                 AccountSelection.validate(config, selection);
             } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
                 // The namespace and account come from the template's accounts: map (#1228).
-                return "template '" + shown(name) + "': " + shown(e.getMessage());
+                errors.put(name, shown(e.getMessage()));
+                if (firstOnly) break;
             }
         }
-        return null;
+        return errors;
+    }
+
+    /**
+     * Under {@code --skip-missing-accounts}, the templates of a batch to leave out, each named in a
+     * warning before anything is built (#2345): every one whose {@code accounts:} names an account
+     * that is not configured, and every one that inherits from such a one, since its build would
+     * copy an image this run did not build. Without the flag, none: the preflight refuses the run.
+     */
+    private Set<String> skippedForAccounts(List<String> templates, Map<String, ImageDef> defs) {
+        if (!skipMissingAccounts) return Set.of();
+        var errors = templateAccountErrors(templates, defs, false);
+        if (errors.isEmpty()) return Set.of();
+        // Each skipped template under the first template of its chain that names a missing account
+        var byCause = new LinkedHashMap<String, List<String>>();
+        for (var name : templates) {
+            ImageDef.chain(defs.get(name), defs).stream()
+                    .map(ImageDef::getName)
+                    .filter(errors::containsKey)
+                    .findFirst()
+                    .ifPresent(cause -> byCause.computeIfAbsent(cause, k -> new ArrayList<>()).add(name));
+        }
+        var skipped = new LinkedHashSet<String>();
+        byCause.forEach((cause, names) -> {
+            skipped.addAll(names);
+            var inheriting = names.stream().filter(n -> !n.equals(cause)).map(BuildCommand::shown).toList();
+            var details = new ArrayList<String>();
+            details.add(errors.get(cause));
+            if (!inheriting.isEmpty()) {
+                details.add("Also skipped, since " + (inheriting.size() == 1 ? "it inherits" : "they inherit")
+                        + " from it: " + OutputFormat.andList(inheriting) + ".");
+            }
+            BuildOutput.warn("Skipped template '" + shown(cause) + "': an account it selects is not configured.",
+                    details.toArray(String[]::new));
+        });
+        return skipped;
     }
 
     /**

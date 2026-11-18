@@ -95,6 +95,8 @@ class BuildCommandBatchTest {
                 case "--with-descendants" -> cmd.withDescendants = true;
                 case "--out-of-sync" -> cmd.outOfSync = true;
                 case "--missing" -> cmd.missing = true;
+                case "--all" -> cmd.all = true;
+                case "--skip-missing-accounts" -> cmd.skipMissingAccounts = true;
                 default -> names.add(arg);
             }
         }
@@ -517,6 +519,99 @@ class BuildCommandBatchTest {
 
         assertEquals(List.of("tpl-dev"), built);
         assertTrue(warnings.stream().noneMatch(w -> w.contains("Missing credential")), warnings::toString);
+    }
+
+    /**
+     * tpl-pinned pins a GitHub account this host has not configured, and tpl-pinned-child, below it,
+     * selects the one it has: only a host with a {@code readonly} account can build either.
+     */
+    private static final String SKIPPED = "Skipped template 'tpl-pinned': an account it selects is not configured.";
+
+    private void pinnedToAMissingAccount() throws Exception {
+        IsolatedHome.seed("github:\n  token: \"ghp_x\"\n");
+        extraDefs.put("tpl-pinned", ImageDef.parseYaml(
+                "name: tpl-pinned\nparent: tpl-layer\naccounts:\n  github: readonly\n"));
+        extraDefs.put("tpl-pinned-child", ImageDef.parseYaml(
+                "name: tpl-pinned-child\nparent: tpl-pinned\naccounts:\n  github: default\n"));
+    }
+
+    /** By default a batch stops at a missing account before building anything: likely a mistake (#2345). */
+    @Test
+    void aBatchWithATemplatePinnedToAMissingAccountBuildsNothing() throws Exception {
+        pinnedToAMissingAccount();
+
+        assertThrows(BuildCommand.BuildFailedException.class, () -> build("--all"));
+        assertThrows(BuildCommand.BuildFailedException.class, () -> build("--missing"));
+
+        assertEquals(List.of(), built);
+        assertTrue(stderr.contains("Cannot build: template 'tpl-pinned': Account 'readonly' is not configured under 'github'"),
+                stderr);
+    }
+
+    /**
+     * With {@code --skip-missing-accounts}, {@code --all} builds every other template, and names the
+     * skipped one before building, with what inherits from it, even a child that selects a configured
+     * account: it would be copied from an image this run did not build (#2345).
+     */
+    @Test
+    void skipMissingAccountsBuildsEveryOtherTemplateOfAll() throws Exception {
+        pinnedToAMissingAccount();
+
+        assertEquals(0, build("--all", "--skip-missing-accounts"));
+
+        assertEquals(List.of("tpl-base", "tpl-layer", "tpl-isx", "tpl-quarkus", "tpl-other", "tpl-other-child"), built);
+        assertTrue(warningsBeforeBuild.stream().anyMatch(w -> w.startsWith(SKIPPED)), warningsBeforeBuild::toString);
+        assertTrue(stderr.contains("Also skipped, since it inherits from it: tpl-pinned-child."), stderr);
+        assertFalse(stderr.contains("Cannot build"), stderr);
+    }
+
+    /** {@code --missing} and {@code --out-of-sync} skip the same way, and still build the parent of a skipped one. */
+    @Test
+    void skipMissingAccountsBuildsEveryOtherMissingTemplate() throws Exception {
+        pinnedToAMissingAccount();
+        buildsLeaveImages = true;
+
+        assertEquals(0, build("--missing", "--skip-missing-accounts"));
+        assertEquals(List.of("tpl-base", "tpl-layer", "tpl-isx", "tpl-quarkus", "tpl-other", "tpl-other-child"), built);
+
+        built.clear();
+        warnings = List.of();
+        warningsBeforeBuild = null;
+        assertEquals(0, build("--out-of-sync", "--skip-missing-accounts"));
+        assertEquals(List.of(), built);
+        assertTrue(warnings.stream().anyMatch(w -> w.startsWith(SKIPPED)), warnings::toString);
+    }
+
+    /**
+     * {@code --missing} builds a missing parent that only a skipped template inherits from, as
+     * {@code --all} does, each template of its chain once.
+     */
+    @Test
+    void skipMissingAccountsStillBuildsAParentOnlyASkippedTemplateInheritsFrom() throws Exception {
+        IsolatedHome.seed("github:\n  token: \"ghp_x\"\n");
+        extraDefs.put("tpl-solo", ImageDef.parseYaml("name: tpl-solo\n"));
+        extraDefs.put("tpl-solo-mid", ImageDef.parseYaml("name: tpl-solo-mid\nparent: tpl-solo\n"));
+        extraDefs.put("tpl-solo-pinned", ImageDef.parseYaml(
+                "name: tpl-solo-pinned\nparent: tpl-solo-mid\naccounts:\n  github: readonly\n"));
+        buildsLeaveImages = true;
+
+        assertEquals(0, build("--missing", "--skip-missing-accounts"));
+
+        assertEquals(List.of("tpl-base", "tpl-layer", "tpl-isx", "tpl-quarkus", "tpl-other", "tpl-other-child",
+                "tpl-solo", "tpl-solo-mid"), built);
+        assertTrue(warnings.stream().anyMatch(w -> w.startsWith("Skipped template 'tpl-solo-pinned'")), warnings::toString);
+    }
+
+    /** A template named on the command line keeps refusing a missing account, so the flag is refused there. */
+    @Test
+    void skipMissingAccountsIsRefusedForNamedTemplates() throws Exception {
+        pinnedToAMissingAccount();
+
+        assertEquals(1, build("tpl-pinned", "--skip-missing-accounts"));
+        assertEquals(1, build("tpl-pinned", "--with-parents", "--skip-missing-accounts"));
+
+        assertEquals(List.of(), built);
+        assertTrue(stderr.contains("--skip-missing-accounts works only with --all, --missing or --out-of-sync."), stderr);
     }
 
     private static Map<String, ToolSetup> builtInTools() {

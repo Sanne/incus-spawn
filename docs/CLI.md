@@ -142,6 +142,7 @@ isx build [<template>...] [options]
 | `--with-parents` | Rebuild the templates and all their parents unconditionally |
 | `--with-descendants` | Rebuild the templates and all templates inheriting from them |
 | `--missing` | Build only templates that do not exist yet. As with several named templates, a failure skips what inherits from it, the rest still build, and the command exits 1 naming what it did not build |
+| `--skip-missing-accounts` | With `--all`, `--missing` or `--out-of-sync`, skip each template that pins an account this host has not configured, and what inherits from it. The rest build, and a warning names each skipped template |
 | `--type <type>` | Instance type: `container`, `vm` or `kvm`, overriding the image definition. `vm` needs an Incus that runs VMs, which the macOS appliance cannot, and `kvm` passthrough is off on macOS |
 | `--yes` | Skip interactive confirmations |
 | `--skip-git-refresh` | Accepted for compatibility; builds do not refresh host checkouts |
@@ -163,6 +164,12 @@ Several templates build in one invocation:
 
 A target that fails does not stop the others: isx skips what inherits from it and builds the rest.
 The build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt, including a parent that failed to build for a target.
+
+A template whose `accounts:` map pins an account this host has not configured stops the build before anything is built.
+Such a pin is likely a mistake.
+
+With `--all`, `--missing` or `--out-of-sync`, `--skip-missing-accounts` skips that template and what inherits from it, and builds the others.
+The skips do not make the command exit 1, and a template named on the command line is still refused.
 
 ## `isx branch`
 
