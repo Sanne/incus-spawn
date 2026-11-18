@@ -870,12 +870,17 @@ public final class InstanceLifecycle {
             var verifier = dev.incusspawn.proxy.ProofVerifier.stamp(seed.secret(), placeholders);
             var stamp = new HashMap<>(alongside);
             var secret = InstanceSecret.retainInto(stamp, config, seed, verifier);
+            // The ChatGPT session this start serves, keyed with the secret it just minted: the
+            // same write records its verifiers, and the delivery carries what the guest's Codex
+            // reads. Serves none, and stale stamps leave with the same write (#1332)
+            var chatGptAuth = dev.incusspawn.proxy.ChatGptStart.stampInto(stamp, config, secret.secret(),
+                    SpawnConfig.load(), new dev.incusspawn.proxy.ChatGptSessionStore());
             if (stamp.containsKey(Metadata.INSTANCE_SECRET_BOOT)) {
                 var boot = PROOFS_SUFFIX.split(alongside.get(Metadata.INSTANCE_SECRET_BOOT), 2)[0];
                 stamp.put(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(boot, secret.proofGeneration()));
             }
             incus.configSetAll(name, stamp);
-            return secret;
+            return new InstanceSecret.Delivery(secret.secret(), secret.proofSecret(), secret.proofGeneration(), chatGptAuth);
         }
     }
 
@@ -892,7 +897,8 @@ public final class InstanceLifecycle {
                 var config = incus.instanceMetadataOrThrow(name).path("config");
                 var seed = CredentialProof.retain(config.pathText(Metadata.INSTANCE_PROOF_ID, ""),
                         config.pathText(Metadata.INSTANCE_PROOF_SHA256, ""));
-                current = new InstanceSecret.Delivery(planned.secret(), seed.secret(), seed.generation());
+                current = new InstanceSecret.Delivery(planned.secret(), seed.secret(), seed.generation(),
+                        planned.chatGptAuth());
             }
             return deliver.apply(current);
         }

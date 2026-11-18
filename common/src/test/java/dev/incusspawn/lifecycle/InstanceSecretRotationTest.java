@@ -12,6 +12,7 @@ import dev.incusspawn.proxy.ProofToken;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -85,6 +86,89 @@ class InstanceSecretRotationTest {
         assertEquals(InstanceSecret.sha256(second.secret()), recordedHash(daemon, NAME));
     }
 
+    // ── the ChatGPT session a start serves (#1332) ──────────────────────────────
+
+    /** A host configured with a ChatGPT account and a session signed in to it. */
+    private static dev.incusspawn.proxy.ChatGptSessionStore.Session chatGptHost() throws Exception {
+        var configDir = java.nio.file.Files.createDirectories(
+                java.nio.file.Path.of(System.getProperty("user.home"), ".config/incus-spawn"));
+        java.nio.file.Files.writeString(configDir.resolve("config.yaml"), """
+                openai:
+                  accounts:
+                    sso:
+                      type: chatgpt
+                  default: sso
+                """);
+        var enc = java.util.Base64.getUrlEncoder().withoutPadding();
+        var auth = "{\"chatgpt_account_id\":\"acct-ent\"}";
+        var jwt = enc.encodeToString("{}".getBytes()) + "."
+                + enc.encodeToString(("{\"https://api.openai.com/auth\":" + auth + "}").getBytes()) + ".sig";
+        return new dev.incusspawn.proxy.ChatGptSessionStore().create("sso",
+                new dev.incusspawn.proxy.ChatGptSessionStore.Tokens(jwt, jwt, "rt-real", "acct-ent"));
+    }
+
+    @Test
+    void aStartServesTheInstancesChatGptSessionWithTheSecretItMinted() throws Exception {
+        var session = chatGptHost();
+        var daemon = new FakeIncusDaemon().container(NAME,
+                Map.of(Metadata.accountKey("openai"), "sso"));
+
+        var delivery = InstanceLifecycle.rotateInstanceSecret(daemon.client(), NAME);
+
+        var config = daemon.instance(NAME).path("config");
+        assertEquals("sso:" + session.sessionId(), config.pathText(Metadata.CHATGPT_SESSION, ""));
+        var proofs = dev.incusspawn.proxy.ChatGptProof.derive(delivery.secret(), "sso", session.sessionId());
+        assertEquals(dev.incusspawn.proxy.ChatGptProof.verifier(proofs.access()),
+                config.pathText(Metadata.CHATGPT_ACCESS_PROOF_SHA256, ""));
+        assertEquals(dev.incusspawn.proxy.ChatGptProof.verifier(proofs.refresh()),
+                config.pathText(Metadata.CHATGPT_REFRESH_PROOF_SHA256, ""));
+        assertEquals(config.pathText(Metadata.INSTANCE_SECRET_SHA256, ""),
+                config.pathText(Metadata.CHATGPT_PROOF_SECRET_SHA256, ""),
+                "the verifiers are keyed with the secret this start minted");
+
+        // What the delivery exec hands the guest: Codex's auth.json, placeholders only
+        var auth = delivery.chatGptAuth();
+        assertTrue(auth.contains("\"auth_mode\":\"chatgpt\""), auth);
+        assertTrue(auth.contains("rt." + dev.incusspawn.proxy.ChatGptProof.MARKER), auth);
+        assertFalse(auth.contains("rt-real"), "the real refresh token stays on the host: " + auth);
+        assertEquals(auth, InstanceSecret.guestEnv(delivery, false, List.of())
+                .get(InstanceSecret.CHATGPT_DELIVERY_ENV));
+    }
+
+    @Test
+    void aStartThatServesNoChatGptSessionDeliversNoneAndClearsWhatAnEarlierOneStamped() throws Exception {
+        chatGptHost();
+        var stale = Map.of(Metadata.accountKey("openai"), "sso",
+                Metadata.CHATGPT_SESSION, "sso:old",
+                Metadata.CHATGPT_PROOF_SECRET_SHA256, "d".repeat(64));
+        var daemon = new FakeIncusDaemon().container(NAME, stale);
+        // The session is gone: nothing may bind this instance to one
+        new dev.incusspawn.proxy.ChatGptSessionStore().remove("sso");
+
+        var delivery = InstanceLifecycle.rotateInstanceSecret(daemon.client(), NAME);
+
+        var config = daemon.instance(NAME).path("config");
+        assertEquals("", config.pathText(Metadata.CHATGPT_SESSION, ""), "an empty value unsets");
+        assertEquals("", delivery.chatGptAuth());
+        assertEquals("", InstanceSecret.guestEnv(delivery, false, List.of())
+                .get(InstanceSecret.CHATGPT_DELIVERY_ENV));
+    }
+
+    @Test
+    void theGuestScriptsArePosixSh() throws Exception {
+        // The delivery script and the profile it writes run in the guest's sh, as root and as the
+        // instance user: a syntax error would break every start, so it is parsed here first
+        assertEquals(0, syntaxCheck(InstanceSecret.GUEST_SCRIPT), InstanceSecret.GUEST_SCRIPT);
+        assertEquals(0, syntaxCheck(dev.incusspawn.proxy.InstanceSecret.CHATGPT_PROFILE_SCRIPT),
+                "the profile that writes Codex's auth.json");
+    }
+
+    private static int syntaxCheck(String script) throws Exception {
+        var process = new ProcessBuilder("sh", "-n", "-c", script).redirectErrorStream(true).start();
+        process.getInputStream().readAllBytes();
+        return process.waitFor();
+    }
+
     @Test
     void aBranchHasItsOwnSecretFromTheCopyOn() {
         // A branch of a branch: the copy would otherwise carry its source's hash
@@ -99,6 +183,51 @@ class InstanceSecretRotationTest {
         assertTrue(branchHash.matches("[0-9a-f]{64}"), branchHash);
         assertNotEquals(sourceHash, branchHash);
         assertEquals(sourceHash, recordedHash(daemon, "dev-1"), "the source keeps its own");
+    }
+
+    @Test
+    void aBranchIsServedItsChatGPTSessionFromTheCopyOn() throws Exception {
+        var session = chatGptHost();
+        // A source carrying stamps: the copy must not keep them unless they are its own
+        var sourceStamps = new LinkedHashMap<String, String>();
+        sourceStamps.put(Metadata.CHATGPT_SESSION, "sso:old");
+        sourceStamps.put(Metadata.CHATGPT_PROOF_SECRET_SHA256, "e".repeat(64));
+        sourceStamps.put(Metadata.PROFILE, "tpl-dev");
+        var daemon = new FakeIncusDaemon().container("dev-1", sourceStamps);
+        var request = new BranchFlow.Request("dev-1", "dev-2", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of());
+
+        BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of()));
+
+        var config = daemon.instance("dev-2").path("config");
+        assertEquals("sso:" + session.sessionId(), config.pathText(Metadata.CHATGPT_SESSION, ""),
+                "the branch is served its own session, not its source's");
+        assertEquals(config.pathText(Metadata.INSTANCE_SECRET_SHA256, ""),
+                config.pathText(Metadata.CHATGPT_PROOF_SECRET_SHA256, ""),
+                "keyed with the secret the copy request minted");
+        assertEquals(64, config.pathText(Metadata.CHATGPT_ACCESS_PROOF_SHA256, "").length());
+        assertEquals(64, config.pathText(Metadata.CHATGPT_REFRESH_PROOF_SHA256, "").length());
+        // The source keeps what it had
+        assertEquals("sso:old", daemon.instance("dev-1").path("config")
+                .pathText(Metadata.CHATGPT_SESSION, ""));
+    }
+
+    @Test
+    void aBranchServedNoSessionCarriesNoStamps() throws Exception {
+        chatGptHost();
+        // The session is gone: nothing may bind the branch, whatever its source carried
+        new dev.incusspawn.proxy.ChatGptSessionStore().remove("sso");
+        var sourceStamps = new LinkedHashMap<String, String>();
+        sourceStamps.put(Metadata.CHATGPT_SESSION, "sso:old");
+        sourceStamps.put(Metadata.PROFILE, "tpl-dev");
+        var daemon = new FakeIncusDaemon().container("dev-1", sourceStamps);
+        var request = new BranchFlow.Request("dev-1", "dev-2", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of());
+
+        BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of()));
+
+        assertEquals("", daemon.instance("dev-2").path("config").pathText(Metadata.CHATGPT_SESSION, ""),
+                "an empty value unsets what the copy would have inherited");
     }
 
     @Test

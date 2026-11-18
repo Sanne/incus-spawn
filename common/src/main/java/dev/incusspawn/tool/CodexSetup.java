@@ -31,6 +31,16 @@ public class CodexSetup implements ToolSetup {
         return "Codex CLI — OpenAI coding assistant";
     }
 
+    /**
+     * An {@code openai} account's {@code type} says how it authenticates -- a ChatGPT session
+     * (#1332) or an API key -- which belongs to the identity like Claude's auth type does:
+     * unread-key warnings and the account menus must accept it beside the key itself.
+     */
+    @Override
+    public dev.incusspawn.config.AccountShape accountShape() {
+        return dev.incusspawn.config.AccountShape.declared(List.of("apiKey"), List.of("type"));
+    }
+
     @Override
     public ToolDef.ProxyDef proxy() {
         var apiKey = new ToolDef.ConfigEntry();

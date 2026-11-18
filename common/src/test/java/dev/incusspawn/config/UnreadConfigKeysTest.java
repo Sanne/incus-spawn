@@ -59,6 +59,7 @@ class UnreadConfigKeysTest {
                 openai:
                   accounts:
                     default: { apiKey: "sk-x" }
+                    sso: { type: chatgpt }
                   default: default
                 gemini:
                   apiKey: "g-key"

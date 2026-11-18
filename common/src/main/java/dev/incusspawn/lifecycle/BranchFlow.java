@@ -438,9 +438,16 @@ public final class BranchFlow {
                     + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
         }
         // The branch's own secret, its hash stamped by the copy request: no extra write, and no
-        // moment in which the new instance carries the hash of its source's
+        // moment in which the new instance carries the hash of its source's. The ChatGPT session
+        // it is served goes in the same write, keyed with that secret (#1332): a branch never
+        // inherits its source's verifiers, and its delivery writes the guest's Codex auth.json
         var copyConfig = new LinkedHashMap<>(req.extraConfig());
         var secret = InstanceSecret.stampInto(copyConfig, placeholders.join());
+        var chatGptAuth = dev.incusspawn.proxy.ChatGptStart.stampBranchInto(copyConfig,
+                preflight.accounts().get(dev.incusspawn.proxy.ChatGptAccounts.NAMESPACE),
+                secret.secret(), SpawnConfig.load(), new dev.incusspawn.proxy.ChatGptSessionStore());
+        var delivered = new InstanceSecret.Delivery(secret.secret(), secret.proofSecret(),
+                secret.proofGeneration(), chatGptAuth);
         // An instance from the copy on, not its template's base: a branch interrupted before
         // configureBranch would otherwise pass for a template, which isx list -q never shows.
         copyConfig.put(Metadata.TYPE, Metadata.TYPE_CLONE);
@@ -498,7 +505,7 @@ public final class BranchFlow {
         incus.copy(source, name, copyPlan, copyConfig, copyDevices);
         BuildOutput.stepDone();
         try {
-            return configureAndStart(incus, preflight, secret, placeholders.join());
+            return configureAndStart(incus, preflight, delivered, placeholders.join());
         } catch (RuntimeException | Error e) {
             // A proxy-only copy is restricted from the copy request on, but it may not be fully
             // configured, and anyone could start it under the name chosen for a working one (#1979)
