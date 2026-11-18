@@ -251,6 +251,7 @@ See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 `EventLogReader` (`common`) reads it back by incarnation, only on demand: for `isx overview` and for the TUI's Work tab and `o`, never for `isx list` (design/terminal.md "The overview of what each instance did").
 The same reads run a read-only script in each running guest for what its clones hold (`WorkState`, `unknown` whenever the read is not exact) and ask GitHub whether each pull request was merged, with the instance's own GitHub account or not at all (`PullRequestStates`).
 The same exec reads the newest sessions' first ask and closing message of Claude Code, Codex, Pi and opencode (`GuestRead`, one `AgentSessions.GuestReader` each), scrubbed and bounded, for the DONE column; `untouched` only when nothing says otherwise (`AgentSessions.Summary`).
+Gemini CLI's, Copilot's and Bob's sessions are only found, and their agent named as not read (`UnreadSessions`, #2290).
 Several sessions are merged by one model call on the instance's own Claude account, never another, and cached on the host against a fingerprint of what the model is given (`SessionMerge`).
 
 **Exposed host ports** (#2117): `exposed-host-ports:` in `config.yaml` lists loopback ports of the host that every instance with network reaches at `host.isx.internal:<port>`, relayed raw by the proxy (`HostPortRelay`) on the address it already listens on.

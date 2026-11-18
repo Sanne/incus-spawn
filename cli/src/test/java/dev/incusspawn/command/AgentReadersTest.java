@@ -156,26 +156,68 @@ class AgentReadersTest {
         assertEquals("untouched", AgentSessionsTest.run(home).summary(false).from(), "empty directories say nothing");
     }
 
+    /**
+     * Gemini CLI, Copilot and Bob are coding agents no reader reads (#2290): their session files
+     * name them as not read, so an instance only they worked in is never {@code untouched}. What
+     * isx itself writes into their directories at build time says nothing.
+     */
+    @Test
+    void agentsNoReaderReadsAreNamedWhenTheirSessionsAreThere(@TempDir Path home) throws Exception {
+        // What a build writes: settings, an extension, a policy, an MCP configuration
+        Files.writeString(Files.createDirectories(home.resolve(".gemini/extensions/isx")).resolve("GEMINI.md"), "notes");
+        Files.writeString(Files.createDirectories(home.resolve(".gemini/policies")).resolve("isx-auto-approve.toml"), "");
+        Files.writeString(home.resolve(".gemini/settings.json"), "{}");
+        Files.writeString(Files.createDirectories(home.resolve(".copilot")).resolve("mcp-config.json"), "{}");
+        Files.createDirectories(home.resolve(".copilot/session-state"));
+        Files.writeString(Files.createDirectories(home.resolve(".bob/settings")).resolve("settings.json"), "{}");
+        assertEquals("untouched", AgentSessionsTest.run(home).summary(false).from(), "what isx wrote at build is no session");
+
+        Files.writeString(Files.createDirectories(home.resolve(".gemini/tmp/app/chats")).resolve("session-2026-11-18T10-00-1a2b3c4d.jsonl"), "{}\n");
+        Files.writeString(home.resolve(".copilot/session-state/0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0.jsonl"), "{}\n");
+        Files.writeString(Files.createDirectories(home.resolve(".bob/db")).resolve("bob.db"), "not a database");
+
+        var read = AgentSessionsTest.run(home);
+
+        assertEquals(AgentSessions.State.READ, read.sessions().state(), read.sessions().why());
+        assertEquals(List.of("gemini-cli", "copilot", "bob"), read.sessions().otherAgents());
+        var summary = Summary.of(read.sessions(), read.work(), false);
+        assertNull(summary.from(), "never untouched");
+        assertEquals("sessions of gemini-cli, copilot, bob not read", summary.cell());
+    }
+
+    /** Bob's database read by its own tasks: none is no session, and only then. */
+    @Test
+    void bobsDatabaseWithoutTasksIsNoSession(@TempDir Path home) throws Exception {
+        var db = Files.createDirectories(home.resolve(".bob/db")).resolve("bob.db");
+        sqlite(db, "CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, parent_id TEXT REFERENCES tasks(id));");
+        assertEquals("untouched", AgentSessionsTest.run(home).summary(false).from());
+
+        sqlite(db, "INSERT INTO tasks VALUES ('t1', 'file:/app', NULL);");
+        assertEquals(List.of("bob"), AgentSessionsTest.run(home).sessions().otherAgents());
+    }
+
     @Test
     void aReaderThatFailedIsNamedAndNeverBlanksTheOthers() {
         var work = WorkState.HEADER + "\nend\n";
+        // The sections of the agents found but not read come first, and found nothing here
+        var unread = UnreadSessions.ALL.stream().map(u -> u.header() + "\nend\n").reduce("", String::concat);
         var claude = ClaudeSessions.HEADER + "\ntotal 0\nend\n";
         var codex = CodexSessions.HEADER + "\ntotal x\nend\n";
         var pi = PiSessions.HEADER + "\ntotal 0\nend\n";
         var opencode = OpencodeSessions.HEADER + "\ntotal 0\nend\n";
 
-        var oneFailed = GuestRead.parse(0, work + claude + codex + pi + opencode, false).sessions();
+        var oneFailed = GuestRead.parse(0, work + unread + claude + codex + pi + opencode, false).sessions();
         assertEquals(AgentSessions.State.READ, oneFailed.state());
         assertEquals(List.of("codex"), oneFailed.otherAgents());
         assertNull(Summary.of(oneFailed, WorkState.parse(0, work, false), false).from(), "never untouched");
 
-        var cut = GuestRead.parse(0, work + claude + codex.replace("total x", "total 0") + pi + OpencodeSessions.HEADER + "\ntotal 1\n", true);
+        var cut = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + OpencodeSessions.HEADER + "\ntotal 1\n", true);
         assertEquals(List.of("opencode"), cut.sessions().otherAgents(), "the bound cut opencode's section alone");
 
-        var all = GuestRead.parse(0, work + claude.replace("total 0", "total x"), false).sessions();
-        assertEquals(AgentSessions.State.UNKNOWN, all.state(), "no reader answered");
+        var all = GuestRead.parse(0, work + unread + claude.replace("total 0", "total x"), false).sessions();
+        assertEquals(AgentSessions.State.UNKNOWN, all.state(), "no reader answered: the agents found but not read are no reader");
 
-        var untouched = GuestRead.parse(0, work + claude + codex.replace("total x", "total 0") + pi + opencode, false);
+        var untouched = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + opencode, false);
         assertEquals("untouched", Summary.of(untouched.sessions(), untouched.work(), false).from());
     }
 
@@ -213,7 +255,11 @@ class AgentReadersTest {
     /** opencode's database as 1.19.5 made it, plus {@code sql}, in {@code home}. */
     private static Path opencodeDb(Path home, String sql) throws Exception {
         var share = Files.createDirectories(home.resolve(".local/share/opencode"));
-        var db = share.resolve("opencode.db");
+        return sqlite(share.resolve("opencode.db"), sql);
+    }
+
+    /** {@code sql} run on the database {@code db}, which it creates when there is none. */
+    private static Path sqlite(Path db, String sql) throws Exception {
         Process p;
         try {
             p = new ProcessBuilder("sqlite3", db.toString()).redirectErrorStream(true).start();

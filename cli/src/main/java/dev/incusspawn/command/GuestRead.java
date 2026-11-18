@@ -19,15 +19,15 @@ import java.util.concurrent.Future;
  */
 public record GuestRead(WorkState work, AgentSessions sessions) {
 
-    static final List<AgentSessions.GuestReader> READERS =
-            List.of(new ClaudeSessions(), new CodexSessions(), new PiSessions(), new OpencodeSessions());
-
     /**
-     * The whole output kept: the work state's own bound, then room for each reader's newest
-     * sessions, which for a transcript reader is at most about 860 KiB of base64 (Pi's, which also
-     * sends each file's first line).
+     * The agents found but not read come first ({@link UnreadSessions}): their sections are a few
+     * lines, so the output bound never cuts them.
      */
-    static final int MAX_OUTPUT = WorkState.MAX_OUTPUT + READERS.size() * 1024 * 1024;
+    static final List<AgentSessions.GuestReader> READERS = java.util.stream.Stream.concat(UnreadSessions.ALL.stream(),
+            java.util.stream.Stream.of(new ClaudeSessions(), new CodexSessions(), new PiSessions(), new OpencodeSessions())).toList();
+
+    /** The whole output kept: the work state's own bound, then each reader's ({@link AgentSessions.GuestReader#maxOutput}). */
+    static final int MAX_OUTPUT = WorkState.MAX_OUTPUT + READERS.stream().mapToInt(AgentSessions.GuestReader::maxOutput).sum();
 
     static final String SCRIPT = script();
 
@@ -70,7 +70,7 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
             read.add(last && cut ? AgentSessions.unknown("its answer was too long")
                     : READERS.get(r).parse(lines.subList(start, end)));
         }
-        return new GuestRead(work, AgentSessions.merge(agents, read));
+        return new GuestRead(work, AgentSessions.merge(agents, read, READERS.stream().map(AgentSessions.GuestReader::readsSessions).toList()));
     }
 
     /** One instance: read in the guest when it runs, {@link #NOT_READ} when it does not. */

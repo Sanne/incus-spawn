@@ -193,7 +193,7 @@ class AgentSessionsTest {
         var out = new ByteArrayOutputStream();
         var process = new ProcessBuilder("sh", "-c", GuestRead.SCRIPT).directory(home.toFile());
         process.environment().put("HOME", home.toString());
-        for (var override : List.of("CLAUDE_CONFIG_DIR", "CODEX_HOME", "PI_CODING_AGENT_DIR", "XDG_DATA_HOME")) {
+        for (var override : List.of("CLAUDE_CONFIG_DIR", "CODEX_HOME", "PI_CODING_AGENT_DIR", "XDG_DATA_HOME", "GEMINI_CLI_HOME", "COPILOT_HOME")) {
             process.environment().remove(override);
         }
         var p = process.redirectError(ProcessBuilder.Redirect.DISCARD).start();

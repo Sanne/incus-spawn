@@ -55,6 +55,7 @@ class TuiOverviewTest {
                 .createdAt("mine", "2026-11-02T08:00:00Z")
                 .execOutput(dev.incusspawn.command.WorkState.HEADER,
                         dev.incusspawn.command.WorkState.HEADER + "\nrepo 0 2 0 app\nend\n"
+                                + "isx-sessions gemini-cli 1\nend\nisx-sessions copilot 1\nend\nisx-sessions bob 1\nend\n"
                                 + dev.incusspawn.command.ClaudeSessions.HEADER + "\ntotal 1\nsession 1762164000 YQ==\nclose eyJ0eXBlIjoiYXNzaXN0YW50IiwibWVzc2FnZSI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJQb3J0ZWQgdGhlIHBhcnNlciJ9XX19\nend\n"
                                 + dev.incusspawn.command.CodexSessions.HEADER + "\ntotal 0\nend\n"
                                 + dev.incusspawn.command.PiSessions.HEADER + "\ntotal 0\nend\n"
