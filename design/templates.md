@@ -246,22 +246,29 @@ A tool definition is refused the same way with a bare key under `parameters:` or
 
 ## A schema for editors
 
-`site/schema/template.json` is a JSON Schema (draft 7, the dialect every YAML language server reads) for a template file.
-It is published at `https://isx.run/schema/template.json` by `site/build.sh`, with `application/schema+json` set in `site/_headers`.
-The skeleton that `isx templates new` writes starts with the modeline `# yaml-language-server: $schema=...`, so the editor finds it with no setup.
+`site/schema/{template,tool,config,mcp}.json` are JSON Schemas (draft 7, the dialect every YAML language server reads) for the YAML files people edit.
+`site/build.sh` publishes them at `https://isx.run/schema/`, with `application/schema+json` set in `site/_headers`.
+The skeleton that `isx templates new` writes starts with the modeline `# yaml-language-server: $schema=...`, so the editor finds the template schema with no setup.
+`docs/CONFIGURATION.md` "Editor completion" gives the modeline of each file.
 
-The schema is written by hand and held true by `TemplateSchemaTest` (`cli`, tagged `docs`), because the loader's keys, defaults and converters are Java and a generator would have to model each converter anyway.
-The test fails when the loader binds a key the schema lacks, when the schema names a key the loader does not bind, and when a key has no description.
-It reads the bound names the way `TemplateSkeletonTest` does (`@JqName`, else the field, never `@JqIgnore`).
-The `type`, `env[].strategy` and `host-resources[].mode` value sets are compared with the code's.
-The three built-in templates and the skeleton's examples, uncommented, must validate.
+The schemas are written by hand and held true by `EditorSchemasTest` (`cli`, tagged `docs`), because the loaders' keys, defaults and converters are Java and a generator would have to model each converter anyway.
+The test fails when a loader binds a key the schema lacks, when the schema names a key the loader does not bind, and when a key has no description.
+It reads the bound names the way `TemplateSkeletonTest` does (`@JqName`, else the field, never `@JqIgnore`), and follows entries into their own fields.
+The value sets of `type`, `env[].strategy`, `host-resources[].mode`, an auth rule's `type` and a parameter's `type` are compared with the constants the code validates against.
+The built-in templates and tools, the skeleton's examples uncommented and the documented examples of `config.yaml` and `mcp.yaml` must validate.
 
-The schema is stricter than the loader in one way, on purpose: the loader warns about an unknown key and goes on (`MappedDefinition`), where the editor underlines it.
-It is looser where the loader is: a list or mapping may be empty (`packages:` alone), and a checksum or tag of digits may be a number, since YAML reads `0000` as an integer and the loader reads it back as text.
-What a schema cannot say stays in `TemplateValidator`: that a parent exists, a project-local template's confinement, and which keys a trusted template alone may use.
+The template and tool schemas are stricter than the loader in one way, on purpose: the loader warns about an unknown key and goes on (`MappedDefinition`), where the editor underlines it.
+`mcp.yaml` is stricter in the loader too, which refuses the whole file for an unknown key, so its schema forbids one.
+The retired `mcp.yaml` keys stay in its schema, so an editor does not flag a file that still loads.
+`config.yaml` allows any other key at the top, since a tool's `config-namespace` adds a section of its own, and its raw sections (`git-cache` and the rest) name the keys the docs describe without forbidding others.
+The schemas are looser where the loaders are: a list or mapping may be empty (`packages:` alone), and a checksum or tag of digits may be a number, since YAML reads `0000` as an integer and the loader reads it back as text.
+What a schema cannot say stays in the validators: that a parent exists, a project-local template's confinement, and which keys a trusted template alone may use.
 
-The schema is a public contract, since files in the wild name its address: a key is added, never renamed or removed.
-SchemaStore.org registration, which would apply it with no modeline, and schemas for tool, `config.yaml` and `mcp.yaml` files are not done yet.
+isx writes `config.yaml` from its model, which drops comments, so no modeline lasts in that file, and the package never writes `mcp.yaml`.
+Only the template skeleton carries a modeline for that reason.
+
+The schemas are a public contract, since files in the wild name their address: a key is added, never renamed or removed.
+SchemaStore.org registration, which would apply them with no modeline, is not done yet.
 
 ## Tool System
 

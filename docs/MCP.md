@@ -88,6 +88,8 @@ host-tools:
 | `summary-model` | `haiku` | The model that answers the tools' `ask` inside the instance. |
 | `host-tools` | none | User-defined MCP tools that run a command on the host. Each key is a tool name with `command:`, `description:`, optional `timeout:` (default 60, max 600, 0 = no limit) and `min-interval:` (default 10, 0 = block instead of refuse). |
 
+The first line `# yaml-language-server: $schema=https://isx.run/schema/mcp.json` gives an editor completion and underlines a key `isx mcp` would refuse (see [Editor completion](CONFIGURATION.md#editor-completion)).
+
 A missing or empty file does not approve any template.
 `isx mcp` refuses every call that depends on a file it cannot use, naming `mcp.yaml` and what is wrong, until you fix the file.
 The file is unusable when it is unreadable or malformed, or holds an unknown key or a value `isx mcp` does not accept.

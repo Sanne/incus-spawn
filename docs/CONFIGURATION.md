@@ -13,6 +13,24 @@ This page says where they live, how a credential gets several accounts that temp
 | `.incus-spawn/images/*.yaml` | Project-local template definitions, the ones a cloned repository ships in its `.incus-spawn/` directory |
 | `.incus-spawn/tools/*.yaml` | Project-local tool definitions |
 
+## Editor completion
+
+Each of these YAML files has a JSON Schema, which editors that run the YAML language server use to complete keys, show what each one does and underline a mistake.
+Add its line as the first line of the file.
+
+| File | First line |
+| --- | --- |
+| A template | `# yaml-language-server: $schema=https://isx.run/schema/template.json` |
+| A tool | `# yaml-language-server: $schema=https://isx.run/schema/tool.json` |
+| `config.yaml` | `# yaml-language-server: $schema=https://isx.run/schema/config.json` |
+| `mcp.yaml` | `# yaml-language-server: $schema=https://isx.run/schema/mcp.json` |
+
+`isx templates new` writes the template line for you.
+isx rewrites `config.yaml` when you run `isx init`, which drops a comment, so map that schema to the file in your editor's settings instead.
+
+The `config.yaml` schema does not flag a key it does not know, since a tool you install may add a section of its own.
+The other three flag a misspelled key.
+
 ## Credential accounts
 
 You can configure a credential more than once under different names, for example a personal and a client Claude subscription, or two GitHub identities.
