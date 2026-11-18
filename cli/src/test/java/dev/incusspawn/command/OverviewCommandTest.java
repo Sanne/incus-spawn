@@ -43,6 +43,7 @@ class OverviewCommandTest {
 
     /** What dev-1's guest answers: one clone with work in it, one clean, and one Claude Code session, and none of another agent. */
     private static final String WORK = WorkState.HEADER + "\nrepo 3 1 0 app\nrepo 0 0 0 lib\nend\n"
+            + UnreadSessions.ALL.stream().map(u -> u.header() + "\nend\n").reduce("", String::concat)
             + ClaudeSessions.HEADER + "\ntotal 1\nsession 1793700000 cC9zLmpzb25s\n"
             + "close eyJ0eXBlIjoiYXNzaXN0YW50IiwiaXNTaWRlY2hhaW4iOmZhbHNlLCJtZXNzYWdlIjp7ImNvbnRlbnQiOlt7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IkZpeGVkIHRoZSBwYXJzZXIuXG5QUiAjMTIgaXMgb3Blbi4ifV19fQ==\nend\n"
             + CodexSessions.HEADER + "\ntotal 0\nend\n" + PiSessions.HEADER + "\ntotal 0\nend\n"

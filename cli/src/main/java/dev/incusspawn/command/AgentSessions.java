@@ -16,7 +16,8 @@ import java.util.regex.Pattern;
  *
  * <p>A {@link GuestReader} reads one agent's sessions in the guest, as a section of the overview's
  * one script ({@link GuestRead}): {@link ClaudeSessions}, {@link CodexSessions}, {@link PiSessions}
- * and {@link OpencodeSessions}. What the summary is made
+ * and {@link OpencodeSessions}; {@link UnreadSessions} only finds those of the agents no reader
+ * reads, and names them as not read. What the summary is made
  * of is this record, whatever read it, so a later reader (a content log in the proxy) feeds the
  * same {@link Summary}.
  *
@@ -53,6 +54,19 @@ public record AgentSessions(State state, int total, List<Session> sessions, List
         /** Its section of the script, run as agentuser with {@code HOME} set; it prints {@link #header()} first and {@code end} last. */
         String script();
 
+        /** False for a reader that only finds an agent's sessions and names it ({@link UnreadSessions}). */
+        default boolean readsSessions() {
+            return true;
+        }
+
+        /**
+         * The room its section is given in the output: for a transcript reader its newest
+         * sessions, at most about 860 KiB of base64 (Pi's, which also sends each file's first line).
+         */
+        default int maxOutput() {
+            return 1024 * 1024;
+        }
+
         /** Its section, header and {@code end} included; anything not exactly as the script writes is unknown. */
         AgentSessions parse(List<String> section);
     }
@@ -71,6 +85,15 @@ public record AgentSessions(State state, int total, List<Session> sessions, List
      * read unknown.
      */
     static AgentSessions merge(List<String> agents, List<AgentSessions> all) {
+        return merge(agents, all, java.util.Collections.nCopies(all.size(), true));
+    }
+
+    /**
+     * As {@link #merge(List, List)}, where {@code readsSessions} says which readers read sessions:
+     * one that only finds them ({@link UnreadSessions}) adds the agents it names, and never counts
+     * as a reader that answered.
+     */
+    static AgentSessions merge(List<String> agents, List<AgentSessions> all, List<Boolean> readsSessions) {
         var sessions = new ArrayList<Session>();
         var others = new ArrayList<String>();
         int total = 0;
@@ -83,7 +106,7 @@ public record AgentSessions(State state, int total, List<Session> sessions, List
                 if (!others.contains(agents.get(i))) others.add(agents.get(i));
                 continue;
             }
-            anyRead = true;
+            if (readsSessions.get(i)) anyRead = true;
             total += one.total;
             sessions.addAll(one.sessions);
             for (var other : one.otherAgents) if (!others.contains(other)) others.add(other);

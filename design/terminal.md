@@ -638,7 +638,7 @@ At 80 columns ACTIVE gives way to WORK; it is drawn from 100 columns, DONE from 
 
 **What was done is the agents' own closing messages, read in the same exec** (#2241, part 3).
 `GuestRead` runs one script per running guest, in sections: the work state's first, then one per agent reader (`AgentSessions.GuestReader`), each in its own subshell and parsed on its own.
-So a session read that fails or overflows leaves WORK as it was read: the output bound is 64 KiB for the work section plus 1 MiB per reader, and only the section it cut is not read.
+So a session read that fails or overflows leaves WORK as it was read: the output bound is 64 KiB for the work section plus 1 MiB per reader of sessions, and only the section it cut is not read.
 A reader that failed names its agent as not read, and the other agents' sessions still show (`AgentSessions.merge`); only when no reader answered are the sessions `unknown`.
 The newest eight sessions of all the agents together are kept, and every session is counted, so what a merge is given stays bounded.
 Claude Code, Codex and Pi keep a JSON Lines transcript per session, and one reader serves all three (`JsonlSessions`), each agent saying where its files are and which lines may be what.
@@ -660,6 +660,14 @@ A database is read by its fields, so the query selects: sessions with no `parent
 Neither is a compaction's summary, nor a part opencode made up (`synthetic`) or set aside (`ignored`).
 Each value is cut in the query to one code point past what is kept and sent in hex.
 A database `sqlite3` cannot read (none installed, a schema the query does not know, a damaged file), or the JSON `storage` of an opencode from before its database, makes opencode not read.
+Gemini CLI, GitHub Copilot CLI and Bob have no reader yet, since a reader is written from session files the agent itself wrote, and none were at hand (#2290).
+Their sessions are only found (`UnreadSessions`), and an agent whose sessions are there is named as not read, so an instance only it worked in is never `untouched`.
+Each check looks for session files alone, never the agent's directory, which a build fills with settings, extensions and policies.
+Gemini CLI's are `~/.gemini/tmp/<project>/chats/session-*.jsonl` (`.json` in older versions), a subagent's one directory deeper, read from `@google/gemini-cli-core` 0.68.0.
+Copilot's are the entries of `~/.copilot/session-state`, read from Copilot CLI 1.0.114, which moves an XDG state directory's back there.
+Bob's are the rows of `tasks` in `~/.bob/db/bob.db`, counted with `sqlite3 -readonly` (read from Bob 2.1.0); a database it cannot count names Bob as not read too.
+Their sections come before the readers', each a few lines with a 256-byte share of the bound, so the bound never cuts them.
+A check that answered is not a reader that answered, so when every reader failed the sessions are still `unknown` (`GuestReader.readsSessions`).
 When the newest candidate does not parse, cut at the bound or not JSON, the closing message is unreadable, and an older message is never shown in its place.
 The ask is the same: when the first candidate does not parse, none is shown, never a later message.
 The text is scrubbed as a guest's output is (`SecretRedactor.scrubGuest`), cut to 4,000 code points (500 for the ask), and shown a line at a time through `OutputFormat.oneLine`.
