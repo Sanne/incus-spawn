@@ -83,7 +83,11 @@ public final class ChatGptStart {
         return ChatGptPlaceholders.codexAuth(session.tokens(), proofs);
     }
 
-    /** The session the instance is served for its pinned account, or null when it is served none. */
+    /**
+     * The session the instance is served for its pinned account, or null when it is served none.
+     * A session file that cannot be read or parsed is no session, as a missing one would be:
+     * fail closed, never a start that throws for every instance pinned to the account.
+     */
     private static SessionStore.Session<ChatGptSessionStore.Tokens> sessionFor(SpawnConfig settings, String pinned,
                                                           ChatGptSessionStore store) {
         String account;
@@ -96,6 +100,10 @@ public final class ChatGptStart {
         if (account == null || account.isBlank() || AccountResolver.INHERIT.equals(account)) return null;
         if (!ChatGptAccounts.isChatGpt(settings.tree().path(ChatGptAccounts.NAMESPACE)
                 .path("accounts").path(account))) return null;
-        return store.read(account);
+        try {
+            return store.read(account);
+        } catch (RuntimeException malformedOrUnreadable) {
+            return null;
+        }
     }
 }

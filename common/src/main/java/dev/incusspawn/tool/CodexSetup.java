@@ -261,8 +261,12 @@ public class CodexSetup implements ToolSetup {
      * changes on every start (#1108). Codex sends the key in {@code auth.json} and never reads
      * the variable, and the built-in {@code openai} provider cannot be pointed at one. Only a
      * file still holding a key isx put there is rewritten -- the build's placeholder or a
-     * start's -- so a {@code codex login} of the user's own is left alone. Sourced by every
-     * login shell: POSIX sh, silent, a grep when nothing changed, no variables left behind.
+     * start's -- so a {@code codex login} of the user's own is left alone, and so is a file
+     * holding a ChatGPT session isx delivered while the account still has one: the profile
+     * script that owns that file rewrites it instead. A session whose account has left
+     * ChatGPT for this key is the exception: its profile script went with the session and its
+     * proofs died with it, so this rewrite replaces them. Sourced by every login shell: POSIX
+     * sh, silent, a grep when nothing changed, no variables left behind.
      */
     static final String LOGIN_AUTH_SCRIPT = """
             # Written by isx: Codex reads its key from auth.json, and the key changes on every start (#1108)
@@ -275,6 +279,18 @@ public class CodexSetup implements ToolSetup {
                     case $isx_key in
                       %s|*isx_*)
                         if grep -q '"auth_mode": *"apikey"' "$HOME/.codex/auth.json" 2>/dev/null; then
+                          (umask 077 && printf '{\\n  "auth_mode": "apikey",\\n  "OPENAI_API_KEY": "%%s"\\n}\\n' \\
+                              "$OPENAI_API_KEY" > "$HOME/.codex/auth.json.isx-$$") 2>/dev/null \\
+                            && mv -f "$HOME/.codex/auth.json.isx-$$" "$HOME/.codex/auth.json" 2>/dev/null
+                          rm -f "$HOME/.codex/auth.json.isx-$$"
+                        fi
+                        ;;
+                      *)
+                        # A ChatGPT session isx delivered: its tokens carry isx's marker. Its
+                        # account may have left ChatGPT for this key, and the profile script
+                        # that wrote them went with the session, so the dead proofs are isx's
+                        # to replace -- never a codex login of the user's own
+                        if grep -q isx_ "$HOME/.codex/auth.json" 2>/dev/null; then
                           (umask 077 && printf '{\\n  "auth_mode": "apikey",\\n  "OPENAI_API_KEY": "%%s"\\n}\\n' \\
                               "$OPENAI_API_KEY" > "$HOME/.codex/auth.json.isx-$$") 2>/dev/null \\
                             && mv -f "$HOME/.codex/auth.json.isx-$$" "$HOME/.codex/auth.json" 2>/dev/null
