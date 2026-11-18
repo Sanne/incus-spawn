@@ -339,6 +339,7 @@ See design/doctor.md "Support bundles: redaction by construction" and `.claude/r
 **Project-local definitions are untrusted.**
 `.incus-spawn/` is whatever a cloned repository ships, so project-local templates get only what stays inside their project (#765).
 Their host-resources and `file://` base images are confined to the project on real paths (`HostResourceSetup.collectEffective()`, re-checked at build, branch and start).
+Their local skill sources, a project-local tool's included, are confined the same way at build (`HostResourceSetup.confinedSkillSource`, #2354).
 Their `image_url` may only replace an image their own project imported (the `incus-spawn.project` image stamp, which fails closed).
 Their repos never get host checkout mounts or host-side clones.
 Their `gui: true` is never a branch default (GUI hands over the host's GPU and its Wayland and audio sockets; `--gui` still can).

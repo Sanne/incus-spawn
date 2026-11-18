@@ -684,6 +684,30 @@ The note is what gets it reached for at all (the name alone does not say what it
 Tool skills are installed by `installSkills` alongside the image's, deduplicated against them, and bare names resolve against the *tool's* `skills.repo`, since the tool reaches templates that have never heard of its catalog.
 Most tools declare neither.
 
+**A tool's own skills are pinned to its release** (#2354).
+A skill describes the commands of one release, so a skill read from a moving branch can describe flags the pinned binary does not have, and two hosts could build different skills from one tool file.
+A `skills` block may therefore name `ref` (a tag), `commit` (the commit ID the tag names) and `path` (the directory holding `<name>/SKILL.md`), and its bare names are then read at that commit (`PinnedSkills`).
+The commit ID is the publisher's own name for the content, and anyone can re-derive it from the tag with `git ls-remote`.
+On a cache miss the tag is read too, and a tag that has moved fails the build instead of changing what it installs.
+Every file is downloaded at the commit, never at the tag, and its Git blob ID is checked against the commit's tree.
+That trusts GitHub to serve the commit's tree faithfully, the same trust the release downloads' checksums already place in it.
+What it gives up: no publisher states a checksum for the skills, so a bump is a pin a person reviews, as with `jasolo`.
+The host cache is keyed by commit, so it is immutable and asks nothing once warm.
+Each skill is installed as its whole directory, so a `references/` folder its `SKILL.md` links to arrives too, and a re-pin removes the old directory first, so a dropped file does not linger.
+A tree entry that is a symlink, a submodule or a path with `.` or `..` is refused, as is a file over 8 MiB or a pack over 64 MiB.
+One skill name from two different pins in one layer fails the build, rather than letting the later one silently win.
+Entries without `ref` keep the unpinned behaviour, `main` or `master` and `SKILL.md` alone.
+
+Alternatives that lost.
+Skills from the tool's release archive would share the binary's checksum, but rgctl's tarball holds only the binary and pinchtab ships bare binaries.
+A `sha256` over GitHub's generated source archive breaks whenever GitHub regenerates it, which it does not promise against.
+Running the tool's own installer writes into the home where the build does not see it, and an agent added in a later layer gets nothing.
+A registration pass per agent, as `McpServerRegistration` does for MCP servers, is not needed: Codex, Pi, opencode, Gemini CLI and Copilot read `~/.agents/skills` themselves, and Claude Code reads it through its `~/.claude/skills` link.
+Slash commands stay out of scope, since every agent lays them out differently.
+
+A local skill source of a project-local template or tool is read by the host, so it is confined to its project on real paths, symlinks included, as host-resources are (`HostResourceSetup.confinedSkillSource`).
+The pinned cache lives beside the unpinned one (`skills-pinned/`), never inside it, since an unpinned entry's unchecked `owner/repo@a/b` path could otherwise write where a pinned build trusts the cache.
+
 **Package deduplication**: Before installing packages, the build walks the parent chain and collects all packages from ancestor images and their tools.
 These are subtracted from the current image's package list so derived images only install what's new.
 The build logs both the count being installed and the count already present in ancestors.

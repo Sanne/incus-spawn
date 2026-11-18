@@ -377,8 +377,8 @@ The same file always holds `defaultPermissionMode: allow-all`, so interactive se
 ## Agent Skills
 
 A template can declare [agent skills](https://skills.sh) for the build to install.
-Skills are installed once into the template, at `~/.agents/skills`, the shared location any agent can read, and inherited by every instance branched from it.
-Claude Code finds them through `~/.claude/skills`.
+Skills are installed once into the template, at `~/.agents/skills`, and inherited by every instance branched from it.
+Codex, Pi, opencode, Gemini CLI and Copilot read that directory themselves, and Claude Code finds it through `~/.claude/skills`.
 
 ```yaml
 name: tpl-skills
@@ -416,6 +416,41 @@ Skill source formats:
 A local directory that holds a `SKILL.md` is one skill, named after the directory; otherwise each subdirectory with a `SKILL.md` is one.
 From a GitHub repo, every top-level `<name>/SKILL.md` on `main` or `master` is a skill.
 Only the `SKILL.md` is installed; isx caches the GitHub ones on the host at `~/.cache/incus-spawn/skills/`.
+
+A template or tool in a project's `.incus-spawn/` directory reads a relative local path from the project's root.
+It may name a local directory only inside its project, and the build fails otherwise.
+
+### Skills pinned to a release
+
+A skill describes a tool's commands, so it should come from the same release as the tool's binary.
+Set `ref` to that release's tag and `commit` to the commit the tag names, and the bare names in `list` are read at that commit.
+
+Each one is then installed as its whole directory, so a `references/` folder or a script beside `SKILL.md` arrives too.
+`path` names the directory that holds the skills, when it is not the repository's root.
+An empty `list` installs every skill under `path`.
+
+```yaml
+skills:
+  repo: rgctl/rgctl
+  ref: v0.4.29
+  commit: ab6833d6f9676e22e0dfa059324cd487203cb922
+  path: skills
+  list: [rgctl, rgctl-review]
+```
+
+Take the commit from the publisher's repository, never from a build log:
+
+```shell
+git ls-remote https://github.com/rgctl/rgctl 'refs/tags/v0.4.29^{}'
+```
+
+For a lightweight tag, which has no `^{}` line, take the plain line.
+If the tag later names another commit, a build that fetches the release fails rather than install what it now holds.
+
+isx reads each file at the commit and checks it against the commit's own tree.
+It refuses a skill that holds a symlink or a submodule.
+A pinned release is cached on the host and not fetched again.
+When a template names one skill from two different pins, the build fails.
 
 To find available skills, browse [skills.sh](https://skills.sh).
 
