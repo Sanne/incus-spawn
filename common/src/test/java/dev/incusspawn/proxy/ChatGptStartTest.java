@@ -162,4 +162,20 @@ class ChatGptStartTest {
         assertEquals("", auth);
         assertTrue(updates.isEmpty(), "no start pays for chatgpt keys it does not write: " + updates);
     }
+
+    @Test
+    void anUnreadableSessionFileServesNoSessionAndClearsStaleStamps() throws Exception {
+        signIn();
+        Files.writeString(Path.of(System.getProperty("user.home"),
+                ".config/incus-spawn/openai/" + ACCOUNT + "/session.json"), "not json at all");
+        var updates = new LinkedHashMap<String, String>();
+
+        var auth = ChatGptStart.stampInto(updates, configOf(Map.of(), staleStamps()),
+                InstanceSecret.generate(), SpawnConfig.load(), store);
+
+        // Fail closed, as a missing session would: one bad file must not fail every start of
+        // every instance pinned to the account
+        assertEquals("", auth);
+        for (var key : Metadata.CHATGPT_KEYS) assertEquals("", updates.get(key), key);
+    }
 }

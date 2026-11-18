@@ -157,6 +157,71 @@ class ChatGptAuthFlowTest {
     }
 
     @Test
+    void switchingToAnApiKeyEndsTheHostSessionAndTheChatGptType() throws Exception {
+        var config = seed("""
+                openai:
+                  accounts:
+                    sso:
+                      type: chatgpt
+                  default: sso
+                """);
+        new ChatGptSessionStore().create("sso",
+                new ChatGptSessionStore.Tokens("id", "access", "rt-real", "acct"));
+
+        run(new FakeInit(), config, new ScriptedPrompts().line("r", "k").secret(API_KEY));
+
+        assertEquals(API_KEY, saved("openai.accounts.sso.apiKey"));
+        assertEquals("", saved("openai.accounts.sso.type"),
+                "the account is no longer a ChatGPT one, or the pasted key would be ignored");
+        assertNull(new ChatGptSessionStore().read("sso"),
+                "the session ended with the ChatGPT it left: no refresh token stays behind");
+    }
+
+    @Test
+    void replacingOneAccountsCredentialEndsThatSessionsToo() throws Exception {
+        var config = seed("""
+                openai:
+                  accounts:
+                    sso:
+                      type: chatgpt
+                    keyed:
+                      apiKey: "sk-other"
+                  default: sso
+                """);
+        new ChatGptSessionStore().create("sso",
+                new ChatGptSessionStore.Tokens("id", "access", "rt-real", "acct"));
+
+        run(new FakeInit(), config, new ScriptedPrompts().line("e", "sso", "k").secret(API_KEY));
+
+        assertEquals(API_KEY, saved("openai.accounts.sso.apiKey"));
+        assertEquals("", saved("openai.accounts.sso.type"));
+        assertNull(new ChatGptSessionStore().read("sso"));
+        assertEquals("sk-other", saved("openai.accounts.keyed.apiKey"), "the other account keeps its key");
+    }
+
+    @Test
+    void replacingEveryAccountEndsEachChatGptSessions() throws Exception {
+        var config = seed("""
+                openai:
+                  accounts:
+                    sso:
+                      type: chatgpt
+                    keyed:
+                      apiKey: "sk-other"
+                  default: sso
+                """);
+        new ChatGptSessionStore().create("sso",
+                new ChatGptSessionStore.Tokens("id", "access", "rt-real", "acct"));
+
+        run(new FakeInit(), config, new ScriptedPrompts().line("r", "3").secret(API_KEY));
+
+        assertNull(new ChatGptSessionStore().read("sso"),
+                "the replaced account's session ended with it, nothing points at it anymore");
+        assertEquals(API_KEY, saved("openai.accounts.default.apiKey"));
+        assertEquals("", saved("openai.accounts.sso.apiKey"), "the replaced account is gone");
+    }
+
+    @Test
     void skippingWritesNothing() {
         run(new FakeInit(), new SpawnConfig(), new ScriptedPrompts().line(""));
 

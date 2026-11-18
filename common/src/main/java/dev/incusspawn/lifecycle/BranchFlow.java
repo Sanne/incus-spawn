@@ -324,6 +324,8 @@ public final class BranchFlow {
      * A request that passed {@link #preflight}: nothing has been created yet.
      *
      * @param sourceInstance the source as preflight read it, so {@link #create} need not read it again
+     * @param settings the host's config as preflight read it, for what the copy stamps from it
+     *                 without reading it again
      * @param template the leaf template the source was built from ({@link Inherited#template}), which
      *                 the new branch's default action is resolved against
      * @param defaults the {@link #defaultsFor defaults} for the source, worked out once
@@ -332,6 +334,7 @@ public final class BranchFlow {
      */
     public record Preflight(Request request, Map<String, ImageDef> defs,
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
+                            dev.incusspawn.config.SpawnConfig settings,
                             JqValue sourceInstance, String template, Defaults defaults,
                             IncusClient.NicDevice proxyOnlyNic) {}
 
@@ -480,7 +483,7 @@ public final class BranchFlow {
             requireAccountsAfterAsking(missingAccounts, config, served, accounts, defs, loader);
         }
         var defaults = defaultsFor(req.source(), sourceInstance, defs);
-        return new Preflight(withMcpClient(req, defaults), defs, accounts.accounts(), accounts.origins(),
+        return new Preflight(withMcpClient(req, defaults), defs, accounts.accounts(), accounts.origins(), config,
                 sourceInstance, accounts.inherited().template(), defaults, proxyOnlyNic);
     }
 
@@ -526,10 +529,10 @@ public final class BranchFlow {
         // it is served goes in the same write, keyed with that secret (#1332): a branch never
         // inherits its source's verifiers, and its delivery writes the guest's Codex auth.json
         var copyConfig = new LinkedHashMap<>(req.extraConfig());
-        var secret = InstanceSecret.stampInto(copyConfig, placeholders.join());
+        var secret = InstanceSecret.stampInto(copyConfig, placeholders.join().placeholders());
         var chatGptAuth = dev.incusspawn.proxy.ChatGptStart.stampBranchInto(copyConfig,
                 preflight.accounts().get(dev.incusspawn.proxy.ChatGptAccounts.NAMESPACE),
-                secret.secret(), SpawnConfig.load(), new dev.incusspawn.proxy.ChatGptSessionStore());
+                secret.secret(), preflight.settings(), new dev.incusspawn.proxy.ChatGptSessionStore());
         var delivered = new InstanceSecret.Delivery(secret.secret(), secret.proofSecret(),
                 secret.proofGeneration(), chatGptAuth);
         // An instance from the copy on, not its template's base: a branch interrupted before
@@ -589,7 +592,7 @@ public final class BranchFlow {
         incus.copy(source, name, copyPlan, copyConfig, copyDevices);
         BuildOutput.stepDone();
         try {
-            return configureAndStart(incus, preflight, delivered, placeholders.join());
+            return configureAndStart(incus, preflight, delivered, placeholders.join().placeholders());
         } catch (RuntimeException | Error e) {
             // A proxy-only copy is restricted from the copy request on, but it may not be fully
             // configured, and anyone could start it under the name chosen for a working one (#1979)
