@@ -41,6 +41,13 @@ The run checks up front the templates it is sure to build, each with the layers 
 An ancestor it builds only when missing or outdated is checked by its own build, before it creates anything, so a built parent's tool never refuses its child.
 Only the build refuses, as decided when the check was added: a template may be written and saved first and its tools defined after, so saving, editing and validating it only warn.
 The build used to skip such a tool with a warning, so a typo in `tools:` built an image without it.
+A tool with no distribution for the host's architecture is refused in the same checks, naming the template, the tool and the architectures it has (`BuildCommand.reportUnsupportedTools`, #2357).
+A tool file declares them in `architectures:`; without it, a tool whose every download sets an `arch` other than the host's has none here.
+A Java tool answers through `ToolSetup.unsupportedOn`, which no built-in sets today.
+The build fails rather than skipping the tool, as Sanne decided: a warning is easily missed, and an image without a tool its template lists is not what the template promised.
+This gives up one template serving hosts of both architectures when it lists such a tool; there is no marker that makes a tool optional.
+Validating a template does not check the architecture, since the host that validates it need not be the one that builds it.
+`YamlToolSetup.install` refuses the tool again should a build reach it, so none of its downloads, scripts or files run; its packages are installed in bulk before then.
 Parameters the tool refuses, which stop the build, and each error `ToolDefValidator` finds in a tool file the entry reaches are errors; built-in tools are not checked again.
 A tool file the loader skipped (`ToolDefLoader.loadFailures`) is an error on the entry that names its tool, by its `name:` or else its file name, since the build refuses while it is skipped; for an unknown tool it replaces the unknown-tool warning, being the cause.
 One that names none of the template's tools is a warning on `tools`: the build still refuses, but fixing this template does not help, and the edit loop would otherwise never end valid.

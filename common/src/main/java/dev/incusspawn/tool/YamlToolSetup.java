@@ -71,6 +71,24 @@ public class YamlToolSetup implements ToolSetup {
         return def.getFeature();
     }
 
+    /**
+     * The declared {@code architectures}, else what the downloads say: when every download is for
+     * an architecture and none is for {@code arch}, the tool has no distribution there.
+     */
+    @Override
+    public String unsupportedOn(String arch) {
+        var declared = def.getArchitectures();
+        if (!declared.isEmpty()) {
+            return declared.contains(arch) ? null : "supports only " + String.join(" and ", declared.stream().distinct().toList());
+        }
+        var downloads = def.getDownloads();
+        if (downloads.isEmpty() || downloads.stream().anyMatch(dl -> dl.getArch() == null || dl.getArch().equals(arch))) {
+            return null;
+        }
+        return "has downloads only for "
+                + String.join(" and ", downloads.stream().map(ToolDef.DownloadEntry::getArch).distinct().toList());
+    }
+
     @Override
     public java.util.List<String> packages() {
         return def.getPackages();
@@ -149,8 +167,16 @@ public class YamlToolSetup implements ToolSetup {
 
         // Packages are installed in bulk by BuildCommand before tool.install() is called.
 
-        // 1. Downloads — fetch on host, then copy and/or extract into the container
+        // The build refused this before creating anything; should one reach it anyway, the packages
+        // are already in, but none of the downloads, scripts or files run
         var containerArch = canonicalArch(container.getArchitecture());
+        var unsupported = unsupportedOn(containerArch);
+        if (unsupported != null) {
+            throw new IllegalStateException("Tool '" + def.getName() + "' " + unsupported
+                    + ", and this instance is " + containerArch);
+        }
+
+        // 1. Downloads — fetch on host, then copy and/or extract into the container
         for (var dl : def.getDownloads()) {
             if (dl.getArch() != null && !dl.getArch().equals(containerArch)) {
                 continue;

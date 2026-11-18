@@ -246,6 +246,13 @@ public interface ToolSetup {
     /** Feature flag that must be enabled for this tool to be available. Null means always available. */
     default String feature() { return null; }
 
+    /**
+     * Why this tool cannot be installed on an instance of architecture {@code arch}
+     * ({@code x86_64}, {@code aarch64}), as a phrase that follows the tool's name ("supports only
+     * x86_64"), or null when it can. A build refuses a template that would install it (#2357).
+     */
+    default String unsupportedOn(String arch) { return null; }
+
     /** Packages this tool needs installed via dnf. Used to batch all installs into one call. */
     default java.util.List<String> packages() { return java.util.List.of(); }
 

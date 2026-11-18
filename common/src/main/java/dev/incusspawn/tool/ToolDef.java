@@ -51,6 +51,7 @@ public class ToolDef extends FingerprintCache {
     private List<ImageDef.PackageRepo> packageRepos = List.of();
     private Map<String, ParameterDef> parameters = Map.of();
     private String feature;
+    private List<String> architectures = List.of();
     private ProxyDef proxy;
     @JqName("agent_note")
     private String agentNote;
@@ -92,6 +93,9 @@ public class ToolDef extends FingerprintCache {
     }
     public String getFeature() { return feature; }
     public void setFeature(String feature) { this.feature = feature != null && feature.isBlank() ? null : feature; }
+    /** The architectures the tool can be installed on, as download entries spell them; empty means every one. */
+    public List<String> getArchitectures() { return architectures; }
+    public void setArchitectures(List<String> architectures) { this.architectures = items(architectures); }
     public ProxyDef getProxy() { return proxy; }
     public void setProxy(ProxyDef proxy) { this.proxy = proxy; }
     public String getAgentNote() { return agentNote; }

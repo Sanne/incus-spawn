@@ -59,6 +59,10 @@ class BuildCommandBatchTest {
     /** What BuildOutput warned, before the first build and in all. */
     private List<String> warningsBeforeBuild;
     private List<String> warnings = List.of();
+    /** Everything the last build reported. */
+    private List<RecordingOutput.Event> events = List.of();
+    /** The architecture the build runs on. */
+    private String architecture = "x86_64";
 
     /** Every template of {@link #tree()} built, current, at {@code created}. */
     private void builtAt(Map<String, String> created) {
@@ -86,6 +90,7 @@ class BuildCommandBatchTest {
         tools.forEach(name -> when(cmd.toolDefLoader.find(name)).thenReturn(BuildCommandTest.simpleToolSetup(name)));
         when(cmd.toolDefLoader.allToolSetups()).thenReturn(allToolSetups);
         onLoader.accept(cmd);
+        cmd.architecture = architecture;
         cmd.yes = true;
         cmd.skipGitRefresh = true;
         var names = new ArrayList<String>();
@@ -123,6 +128,7 @@ class BuildCommandBatchTest {
             stderr = String.join("\n", recorder.events().stream()
                     .filter(e -> RecordingOutput.onStderr(e.kind())).map(RecordingOutput.Event::text).toList());
             warnings = recorder.warnings();
+            events = recorder.events();
         }
     }
 
@@ -669,6 +675,72 @@ class BuildCommandBatchTest {
         assertEquals(List.of(), built);
         assertTrue(stderr.contains("Cannot build: template 'tpl-a' uses 'mine', whose requires names 'nonesuch',"
                 + " a tool isx does not know."), stderr);
+    }
+
+    /** A tool that ships only for x86_64, as CoreStory's CLI does, and one that requires it. */
+    private void x86OnlyTool(boolean declared) {
+        var corestory = new ToolDef();
+        corestory.setName("corestory");
+        var download = new ToolDef.DownloadEntry();
+        download.setUrl("https://example.com/corestory-linux-x86_64");
+        download.setDestinationFile("/usr/local/bin/corestory");
+        download.setArch("x86_64");
+        corestory.setDownloads(List.of(download));
+        if (declared) corestory.setArchitectures(List.of("x86_64"));
+        var mine = new ToolDef();
+        mine.setName("mine");
+        mine.setRequires(List.of(new ToolDef.ToolRef("corestory")));
+        onLoader = c -> {
+            when(c.toolDefLoader.find("corestory")).thenReturn(new dev.incusspawn.tool.YamlToolSetup(corestory));
+            when(c.toolDefLoader.find("mine")).thenReturn(new dev.incusspawn.tool.YamlToolSetup(mine));
+        };
+    }
+
+    /**
+     * One definition built for both architectures: on x86_64 the template builds; on aarch64,
+     * where the tool has no distribution, the build is refused before anything is created, with
+     * an error naming the template, the tool and why (#2357), rather than built without it.
+     */
+    @Test
+    void aToolWithNoDistributionForTheHostsArchitectureRefusesTheBuild() {
+        x86OnlyTool(true);
+        extra(List.of("tpl-a", ""));
+        extraDefs.get("tpl-a").setTools(List.of(new ToolDef.ToolRef("corestory")));
+
+        build("tpl-a");
+        assertEquals(List.of("tpl-a"), built);
+        assertFalse(stderr.contains("Cannot build"), stderr);
+
+        built.clear();
+        architecture = "aarch64";
+        assertThrows(BuildCommand.BuildFailedException.class, () -> build("tpl-a"));
+
+        assertEquals(List.of(), built);
+        var errors = events.stream().filter(e -> e.kind() == RecordingOutput.Kind.ERROR).toList();
+        assertEquals(1, errors.size(), events.toString());
+        assertEquals("Cannot build: a tool has no distribution for aarch64.", errors.getFirst().msg());
+        assertEquals(List.of("template 'tpl-a' lists 'corestory', which supports only x86_64.",
+                "Remove the tool from 'tools:', or build the template on a host the tool supports."),
+                errors.getFirst().details());
+        assertTrue(events.stream().noneMatch(e -> e.kind() == RecordingOutput.Kind.WARN), events.toString());
+    }
+
+    /**
+     * Without a declaration, a tool whose every download is for another architecture has no
+     * distribution for this one; a tool that requires it is refused too, naming the entry.
+     */
+    @Test
+    void aToolRequiringOneWhoseDownloadsAreAllForAnotherArchitectureIsRefused() {
+        x86OnlyTool(false);
+        architecture = "aarch64";
+        extra(List.of("tpl-a", ""));
+        extraDefs.get("tpl-a").setTools(List.of(new ToolDef.ToolRef("mine")));
+
+        assertThrows(BuildCommand.BuildFailedException.class, () -> build("tpl-a"));
+
+        assertEquals(List.of(), built);
+        assertTrue(stderr.contains("template 'tpl-a' uses 'mine', which requires 'corestory',"
+                + " which has downloads only for x86_64."), stderr);
     }
 
     /**

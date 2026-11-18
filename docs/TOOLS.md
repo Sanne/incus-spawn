@@ -86,6 +86,7 @@ Every field is optional except `name`.
 | `ready` | Command each start polls until it succeeds, for up to 15 seconds, before handing the instance over; a tool that is not ready in time only warns |
 | `parameters` | Build-time parameters a template sets in its `tools:` list, see [Tool Parameters](#tool-parameters) |
 | `feature` | A feature flag the tool needs; a build skips the tool, with a warning, until the flag is listed under `features:` in `config.yaml` |
+| `architectures` | The architectures the tool can be installed on, `x86_64`, `aarch64` or both; see below |
 | `actions` | Runtime actions the TUI offers when the tool is installed, see [Tool Actions](#tool-actions) |
 | `agent_note` | An always-true fact about this tool that an agent must know before acting |
 | `skills` | Skills to install alongside the tool, teaching an agent how to drive it |
@@ -107,6 +108,11 @@ So it may rely on another tool's variables, such as `JAVA_HOME`.
 
 `verify_as_root: true` is for a verify that needs root, such as `sshd -t`, which reads the host keys.
 It then runs as root in root's own environment (`HOME=/root`, the default `PATH`), without the environment file, so it cannot rely on another tool's variables.
+
+`architectures` lists the architectures a tool has a distribution for.
+Without it, a tool whose every download sets an `arch` supports only those architectures.
+On any other, `isx build` refuses every template that installs the tool, before it builds anything, and names the tool.
+It does not skip the tool, so an image never lacks a tool its template lists.
 
 `agent_note` is explained in [Agent Environment Context](AGENTS.md#agent-environment-context).
 
