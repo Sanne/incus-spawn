@@ -341,6 +341,7 @@ class CredentialSetup {
             BuildOutput.step("Skipped. Configure later with 'isx account add openai'.");
             return;
         }
+        leaveChatGpt(config, target);
         if (target.replaceOthers()) {
             NamespaceAccounts.replaceAll(config, "openai", target.name(), java.util.Map.of("apiKey", key));
         } else {
@@ -348,6 +349,30 @@ class CredentialSetup {
         }
         config.save();
         BuildOutput.step("OpenAI credentials saved.");
+    }
+
+    /**
+     * Takes the accounts this save leaves out of ChatGPT: their host sessions end, so no real
+     * refresh token stays on disk with nothing pointing at it, and the account's {@code type}
+     * goes with its session -- or {@code isChatGpt} would keep answering true and the pasted
+     * key would be ignored. In the guest, the API-key login script replaces the session's
+     * {@code auth.json}, whose proofs died with the session.
+     */
+    private static void leaveChatGpt(SpawnConfig config, AccountTarget target) {
+        var store = new dev.incusspawn.proxy.ChatGptSessionStore();
+        if (target.replaceOthers()) {
+            // "Replace all" clears every account: each ChatGPT one's session ends with it
+            for (var name : NamespaceAccounts.names(config, "openai")) {
+                if ("chatgpt".equals(dev.incusspawn.config.AccountResolver.value(
+                        config.tree(), "openai", name, "type"))) store.remove(name);
+            }
+            return;
+        }
+        if ("chatgpt".equals(dev.incusspawn.config.AccountResolver.value(
+                config.tree(), "openai", target.name(), "type"))) {
+            NamespaceAccounts.put(config, "openai", target.name(), "type", "");
+            store.remove(target.name());
+        }
     }
 
     void setupClaudeAuth(SpawnConfig config, Prompts prompts) {

@@ -70,7 +70,7 @@ class CredentialProofLifecycleTest {
         var beforeReset = daemon.instance("box");
         CredentialProofReset.reset(daemon.client(), "box", (name, generation, hash) -> true);
         var after = daemon.instance("box").path("config");
-        var delivered = InstanceLifecycle.rotateInstanceSecret(daemon.client(), "box", beforeReset, Map.of(), ProofToken.declared());
+        var delivered = InstanceLifecycle.rotateInstanceSecret(daemon.client(), "box", beforeReset, Map.of(), ProofToken.declaredWithConfig());
         var current = daemon.instance("box").path("config");
         assertEquals(after.path(Metadata.INSTANCE_PROOF_ID), current.path(Metadata.INSTANCE_PROOF_ID));
         assertEquals(after.path(Metadata.INSTANCE_PROOF_SHA256), current.path(Metadata.INSTANCE_PROOF_SHA256));
@@ -148,12 +148,13 @@ class CredentialProofLifecycleTest {
         var first = InstanceLifecycle.rotateInstanceSecret(daemon.client(), "box");
         CredentialProofReset.reset(daemon.client(), "box", (name, generation, hash) -> true);
         var currentId = daemon.instance("box").path("config").path(Metadata.INSTANCE_PROOF_ID).asText();
-        var started = InstanceLifecycle.rotateInstanceSecret(daemon.client(), "box", beforeMigration, Map.of(), ProofToken.declared());
+        var started = InstanceLifecycle.rotateInstanceSecret(daemon.client(), "box", beforeMigration, Map.of(), ProofToken.declaredWithConfig());
         assertEquals(currentId, started.proofGeneration());
         assertNotEquals(first.proofSecret(), started.proofSecret());
 
         var instance = daemon.instance("box");
-        var changed = java.util.List.of(new ProofToken.Placeholder("NEW_TOKEN", "new_", "new"));
+        var changed = new ProofToken.Declared(new dev.incusspawn.config.SpawnConfig(),
+                java.util.List.of(new ProofToken.Placeholder("NEW_TOKEN", "new_", "new")));
         var updated = InstanceLifecycle.rotateInstanceSecret(daemon.client(), "box", instance, Map.of(), changed);
         assertEquals(started.proofSecret(), updated.proofSecret());
         var verifiers = ProofVerifier.parse(daemon.instance("box").path("config").path(Metadata.INSTANCE_PROOF_SHA256).asText());
