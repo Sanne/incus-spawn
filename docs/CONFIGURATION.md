@@ -500,7 +500,7 @@ A request to it that carries its own credential is never cached, in case the rep
 
 A private repository is cached only through a credential isx injects, from a tool with a proxy credential for that domain.
 
-It needs `confirm: checksum-header` or `etag-sha1`, since a `.sha1` file it can read says nothing about the artifact.
+It needs `confirm: checksum-header` or `etag-sha1`, since reading its `.sha1` file does not show that the credential may still read the artifact.
 The proxy keeps a separate cache per credential, and confirms every hit with upstream using that credential.
 An account that loses access is refused at once.
 
