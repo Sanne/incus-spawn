@@ -974,6 +974,9 @@ public class TemplatesCommand extends BaseCommand {
             # sources works too: skills: [owner/repo@skill-name]
             # skills:
             #   repo: owner/skills-repo                # catalog that bare skill names are resolved in
+            #   ref: v1.2.0                            # read bare names at this tag, each as its whole directory
+            #   commit: 0123456789abcdef0123456789abcdef01234567 # the commit the tag names: git ls-remote <url> 'refs/tags/<tag>^{}'
+            #   path: skills                           # directory holding <name>/SKILL.md; defaults to the repo's root
             #   list:                                  # owner/repo@skill, owner/repo, ./local-path or a bare name
             #     - owner/skills-repo@skill-name
 

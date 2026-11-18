@@ -276,10 +276,20 @@ public class ImageDef extends DefinitionOrigin {
 
         private final String repo;
         private final List<String> list;
+        private final String ref;
+        private final String commit;
+        private final String path;
 
         public SkillsDef(String repo, List<String> list) {
+            this(repo, list, null, null, null);
+        }
+
+        public SkillsDef(String repo, List<String> list, String ref, String commit, String path) {
             this.repo = repo;
             this.list = items(list);
+            this.ref = ref;
+            this.commit = commit;
+            this.path = path;
         }
 
         /** Default skills catalog, used to resolve bare skill names (e.g. {@code security-review}). */
@@ -288,8 +298,30 @@ public class ImageDef extends DefinitionOrigin {
         /** Skill sources declared in this image. */
         public List<String> getList() { return list; }
 
+        /**
+         * The tag of {@link #getRepo()} its bare names are read at, or null for its default branch.
+         * With a ref, each bare name is a whole skill directory at {@link #getCommit()} (#2354).
+         */
+        public String getRef() { return ref; }
+
+        /** The commit ID {@link #getRef()} names: the pin every file is read at. */
+        public String getCommit() { return commit; }
+
+        /** The directory of {@link #getRepo()} holding the {@code <name>/SKILL.md} directories, or null for its root. */
+        public String getPath() { return path; }
+
+        /** Whether bare names come from a pinned release of {@link #getRepo()}. */
+        public boolean isPinned() { return ref != null; }
+
+        /** Appends the pin's keys to a fingerprint, only when set, so an unpinned definition keeps its fingerprint. */
+        public void appendPin(StringBuilder sb) {
+            if (ref != null) sb.append("skills-ref=").append(ref).append('\n');
+            if (commit != null) sb.append("skills-commit=").append(commit).append('\n');
+            if (path != null) sb.append("skills-path=").append(path).append('\n');
+        }
+
         @Override
-        protected List<String> knownKeys() { return List.of("repo", "list"); }
+        protected List<String> knownKeys() { return List.of("repo", "list", "ref", "commit", "path"); }
     }
 
     @JqMapped
@@ -558,6 +590,7 @@ public class ImageDef extends DefinitionOrigin {
                         .append(r.isHostSource() ? ",host-source=" + r.getHostSource() : "").append('\n'));
         if (skills.getRepo() != null) sb.append("skills-repo=").append(skills.getRepo()).append('\n');
         skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
+        skills.appendPin(sb);
         for (var hr : hostResources) {
             sb.append("hr=").append(hr.getSource()).append(',').append(hr.getPath())
                     .append(',').append(hr.getMode());
