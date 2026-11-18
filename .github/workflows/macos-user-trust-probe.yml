@@ -1,0 +1,124 @@
+name: macOS user-domain trust probe
+
+# Probe for #1631 step 3 (option D), not a check: can a headless GitHub runner write a
+# user-domain trust setting ("Never Trust" in the login keychain) once the authorization right
+# behind it is opened? Without it, add-trusted-cert without -d waits for a SecurityAgent dialog
+# nobody answers (#1515). It changes the runner's authorization database, so it runs only on a
+# discarded GitHub runner, never on the Mac runner or a developer's Mac. The probe is removed
+# once its result is recorded.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/macos-user-trust-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-26]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Probe
+        shell: bash
+        run: |
+          set +e -uo pipefail  # a probe: every step reports, none ends the run
+          # A dialog hang must fail in seconds, not at the job's limit (macOS has no timeout(1))
+          limit() { local s=$1; shift; perl -e 'alarm shift; exec @ARGV' "$s" "$@"; }
+          work=$(mktemp -d)
+          cat > "$work/ca.cnf" <<'CNF'
+          [req]
+          distinguished_name = dn
+          prompt = no
+          [dn]
+          CN = placeholder
+          [v3_ca]
+          basicConstraints = critical,CA:TRUE
+          keyUsage = critical,keyCertSign,cRLSign
+          subjectKeyIdentifier = hash
+          CNF
+          new_ca() {
+            openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$work/$1.key" -out "$work/$1.pem" \
+              -subj "/CN=isx user trust probe $1 ${GITHUB_RUN_ID:-local}-$$" -config "$work/ca.cnf" -extensions v3_ca 2>/dev/null
+          }
+          sha1() { openssl x509 -in "$work/$1.pem" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :; }
+          # Whether the user domain holds a setting for the CA: the exit status of add-trusted-cert alone proves nothing
+          landed() {
+            limit 30 security dump-trust-settings > "$work/dump-$1.txt" 2>&1
+            echo "dump-trust-settings (user domain) exit $?"
+            if grep -q "isx user trust probe $1" "$work/dump-$1.txt"; then
+              echo "RESULT $1: the user domain holds the setting"
+              grep -A6 "isx user trust probe $1" "$work/dump-$1.txt"
+            else
+              echo "RESULT $1: the user domain does not hold the setting"
+              head -n 20 "$work/dump-$1.txt"
+            fi
+          }
+          attempt() { # <ca> <label> <command...>
+            local ca=$1 label=$2; shift 2
+            new_ca "$ca"
+            echo "::group::$label"
+            local start rc
+            start=$(date +%s)
+            limit 45 "$@" "$work/$ca.pem"; rc=$?
+            echo "exit $rc after $(( $(date +%s) - start ))s (142 is the time limit)"
+            landed "$ca"
+            echo "::endgroup::"
+          }
+
+          echo "::group::Runner"
+          sw_vers; id; echo "HOME=$HOME"
+          security list-keychains -d user
+          security default-keychain -d user
+          security login-keychain -d user || true
+          login=$(security login-keychain -d user 2>/dev/null | tr -d ' "')
+          [ -n "$login" ] && security show-keychain-info "$login" 2>&1
+          echo "::endgroup::"
+
+          echo "::group::Authorization rights about trust settings"
+          sudo sqlite3 /var/db/auth.db "select name from rules where name like '%trust%'" 2>&1
+          for right in com.apple.trust-settings.user com.apple.trust-settings.admin; do
+            echo "--- $right"
+            security authorizationdb read "$right" 2>&1
+          done
+          echo "::endgroup::"
+
+          # 1. As the runner is: the #1515 baseline
+          attempt baseline "1. user-domain deny, rights as shipped" security add-trusted-cert -r deny
+
+          # 2. With the user right opened
+          echo "::group::Opening com.apple.trust-settings.user"
+          limit 30 sudo security authorizationdb write com.apple.trust-settings.user allow; echo "exit $?"
+          security authorizationdb read com.apple.trust-settings.user 2>&1
+          echo "::endgroup::"
+          attempt opened "2. user-domain deny, user right allow" security add-trusted-cert -r deny
+
+          # 3. The same, into the login keychain named explicitly
+          if [ -n "$login" ]; then
+            attempt named "3. user-domain deny into $login" security add-trusted-cert -r deny -k "$login"
+          fi
+
+          # 4. A login keychain unlocked by a keychain of the probe's own, if the default one is locked
+          echo "::group::A keychain of the probe's own as the default"
+          own="$work/probe.keychain-db"
+          security create-keychain -p probe "$own" && security unlock-keychain -p probe "$own" \
+            && security list-keychains -d user -s "$own" $(security list-keychains -d user | tr -d '"') \
+            && security default-keychain -d user -s "$own"; echo "exit $?"
+          echo "::endgroup::"
+          attempt own "4. user-domain deny into the probe's own keychain" security add-trusted-cert -r deny -k "$own"
+
+          # 5. The user domain as the JVM reads it
+          echo "::group::trust-settings-export (user domain)"
+          limit 30 security trust-settings-export "$work/user.plist"; echo "exit $?"
+          [ -f "$work/user.plist" ] && grep -c "<key>kSecTrustSettingsResult</key>" "$work/user.plist"
+          echo "::endgroup::"
+          for ca in baseline opened named own; do
+            [ -f "$work/$ca.pem" ] && grep -q "$(sha1 "$ca")" "$work/user.plist" 2>/dev/null \
+              && echo "EXPORT $ca: present" || echo "EXPORT $ca: absent"
+          done
