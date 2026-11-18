@@ -59,6 +59,7 @@ It takes one verb a connection, as the guest's agent does, so `VmControl` sends 
 `vsockForwarderConnectionCount()` is the Incus relay's `held`, read there, never an `lsof` count.
 A VM an older isx started under vfkit (`VmManager.LEGACY_HYPERVISOR`) is still recognised by `isRunning()` and stopped with signals, so no second VM is started on its disks; remove that once no supported upgrade starts from a release that ran vfkit.
 A launcher whose `vm.pid` an older isx deleted is found again through the control socket's `state`, which names its pid (`adoptRunningLauncher`); never start a VM while one answers there.
+Before any launch, `startLocked` also adopts a vfkit or `isx-vm` process whose arguments name this user's `disk.img` (`adoptHypervisorOnDisks`): `vm.pid` alone must never decide that the disks are free.
 HTTP over a Unix socket to a peer that is not Incus is no longer needed by anything; should one come back, it goes through `UnixSocketTransport`, whose watchdog and strict response parser are the tested ones.
 Every response is read through `UnixSocketTransport.socketInput` (#1650): `HttpResponseReader` parses a head a byte at a time, and a bare channel stream made each byte a read call.
 A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past one response belong to the next.
