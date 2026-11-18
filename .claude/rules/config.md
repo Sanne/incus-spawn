@@ -32,7 +32,7 @@ Only `isx destroy --owner` reads it, and only config.yaml declares it: never a t
 `HostRoutes.routes` checks each entry against the intercepted domains and drops a wrong one with a warning naming it; an unknown key drops the entry, so a misspelt `templates:` drops it too, never widens it.
 Keep the entry keyed by name with its filter as a field: #935's per-instance grants go beside `templates:`.
 **Maven repositories** (`maven-repositories:`, `MavenRepositories`, #2312): a raw list, read only from `config.yaml`, never a template or tool, of repositories the proxy caches beside its built-in four.
-Each entry requires `url`, `access` (`public`, or `private` with `credentials: <namespace>`), `confirm` (`checksum-header` or `sidecar`) and `replaces-releases`; `fresh` and `max-stale` default to 0.
+Each entry requires `url`, `access` (`public`, or `private` with `credentials: <namespace>`), `confirm` (`checksum-header`, `etag-sha1` or `sidecar`) and `replaces-releases`; `fresh` and `max-stale` default to 0.
 An entry that is unknown-keyed, unsound (sidecar with replaced releases, private by sidecar, tiers on one confirmed before every serve) or on a domain isx intercepts for something else is dropped with a warning naming it, never failing the file.
 Its domain is intercepted through `ToolProxyResolver.handlerDomains(SpawnConfig)`; the proxy also drops a public entry on a domain a tool injects at, and a private one no tool of its namespace injects at (`CachedRepository.withConfigured`).
 **Maven mirrors** (`maven-mirrors:`, `MavenMirrors`, #2304): a raw list, read only from `config.yaml`, of `repository:` and `mirror:` URLs, each checked by `MavenRepositories.repositoryUrl` (https, port 443, a domain name outside `.internal`, plain path segments).

@@ -6,6 +6,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -24,14 +25,14 @@ import java.util.regex.Pattern;
  * maven-repositories:
  *   - url: https://maven.google.com/
  *     access: public
- *     confirm: sidecar              # or checksum-header
+ *     confirm: sidecar              # or checksum-header, or etag-sha1
  *     replaces-releases: false
  *     fresh: 2h                     # optional, 0 by default
  *     max-stale: 7d                 # optional, 0 by default
  *   - url: https://nexus.example.com/repository/releases/
  *     access: private
  *     credentials: nexus            # the config namespace whose credential the proxy injects there
- *     confirm: checksum-header
+ *     confirm: etag-sha1            # Nexus 3 sends the SHA-1 as its ETag, not as X-Checksum-SHA1
  *     replaces-releases: false
  * </pre>
  *
@@ -44,18 +45,44 @@ import java.util.regex.Pattern;
  */
 public final class MavenRepositories {
 
+    /** How a cached copy is confirmed with upstream, as {@code confirm:} names it. */
+    public enum Confirm {
+        /** The {@code X-Checksum-SHA1} the server computes, sent with the artifact (Central, Artifactory). */
+        CHECKSUM_HEADER("checksum-header"),
+        /** The artifact's SHA-1 as its strong, quoted {@code ETag} (Nexus 3, #2336). */
+        ETAG_SHA1("etag-sha1"),
+        /** The {@code .sha1} sidecar, uploaded apart from the artifact. */
+        SIDECAR("sidecar");
+
+        private final String key;
+
+        Confirm(String key) {
+            this.key = key;
+        }
+
+        /** As written in config.yaml. */
+        public String key() {
+            return key;
+        }
+
+        /** Confirmed by a value the server sends with the artifact itself, never by a sidecar. */
+        public boolean byServer() {
+            return this != SIDECAR;
+        }
+    }
+
     /**
      * One declared repository.
      *
      * @param domain           the host, lower case
      * @param pathPrefix       the path before the Maven coordinates, starting and ending with {@code /}
-     * @param checksumHeader   confirmed by the {@code X-Checksum-SHA1} the server computes, else by the {@code .sha1} sidecar
+     * @param confirm          how a copy is confirmed: by a checksum the server sends with the artifact, or by its sidecar
      * @param replacesReleases the bytes at a release path may be replaced, so a copy is confirmed before every serve
      * @param fresh            served with no check for this long after a confirmation
      * @param maxStale         until then, served at once and confirmed again in the background
      * @param credentials      the config namespace whose credential the proxy injects, or null for a public repository
      */
-    public record Entry(String domain, String pathPrefix, boolean checksumHeader, boolean replacesReleases,
+    public record Entry(String domain, String pathPrefix, Confirm confirm, boolean replacesReleases,
                         Duration fresh, Duration maxStale, String credentials) {
 
         public boolean isPrivate() {
@@ -165,22 +192,18 @@ public final class MavenRepositories {
             default -> throw new Refused("access: must be public or private");
         }
 
-        var confirm = required(map, "confirm");
-        boolean header;
-        switch (confirm) {
-            case "checksum-header" -> header = true;
-            case "sidecar" -> header = false;
-            default -> throw new Refused("confirm: must be checksum-header or sidecar");
-        }
+        var confirmKey = required(map, "confirm");
+        var confirm = Arrays.stream(Confirm.values()).filter(c -> c.key().equals(confirmKey)).findFirst()
+                .orElseThrow(() -> new Refused("confirm: must be checksum-header, etag-sha1 or sidecar"));
         var replaces = map.get("replaces-releases");
         if (!(replaces instanceof Boolean replacesReleases)) throw new Refused("replaces-releases: must be true or false");
-        if (!header && replacesReleases) {
+        if (!confirm.byServer() && replacesReleases) {
             throw new Refused("a repository that replaces releases has no sound confirmation by sidecar,"
-                    + " since a sidecar is uploaded apart from its artifact; it needs confirm: checksum-header");
+                    + " since a sidecar is uploaded apart from its artifact; it needs confirm: checksum-header or etag-sha1");
         }
-        if (!header && credentials != null) {
-            throw new Refused("a private repository needs confirm: checksum-header: only a request for the artifact"
-                    + " itself shows that its credential may still read it");
+        if (!confirm.byServer() && credentials != null) {
+            throw new Refused("a private repository needs confirm: checksum-header or etag-sha1: only a request for the"
+                    + " artifact itself shows that its credential may still read it");
         }
 
         var fresh = duration(map, "fresh", DEFAULT_FRESH);
@@ -189,7 +212,7 @@ public final class MavenRepositories {
             throw new Refused("a copy from a repository that " + (credentials != null ? "is private" : "replaces releases")
                     + " is confirmed before every serve, so fresh: and max-stale: must be 0 or left out");
         }
-        return new Entry(host, prefix, header, replacesReleases, fresh, maxStale, credentials);
+        return new Entry(host, prefix, confirm, replacesReleases, fresh, maxStale, credentials);
     }
 
     /** A repository's URL, cut into the host, lower case, and the path prefix, starting and ending with {@code /}. */

@@ -783,7 +783,11 @@ Each one still says three things the proxy cannot find out about it by itself, b
 Offline serves are unconfirmed, and serves within the tiers are not confirmed now, so they are only what a fetch would return while upstream has not withdrawn or replaced the release.
 Every repository can withdraw one, so this is a duration, not a property: the entry's `fresh` and `max-stale`, which default to 0 for a declared repository.
 A repository that replaces the bytes at a release path (`replaces-releases: true`) is never served on a past confirmation at all, offline and during a backoff included (`Revalidation.servesOnlyConfirmed`), and its sidecars are relayed rather than stored.
-**The confirmation must be sound for that repository**: a server-computed header describes exactly the bytes the server would send, so `confirm: checksum-header` (`X-Checksum-SHA1`, which Central and Artifactory send; Nexus 3 sends none, its `ETag` being the SHA-1) is sound even for changing content.
+**The confirmation must be sound for that repository**: a server-computed header describes exactly the bytes the server would send, so `confirm: checksum-header` (`X-Checksum-SHA1`, which Central and Artifactory send and Nexus 3 does not) is sound even for changing content.
+Nexus 3 sends the SHA-1 as its strong, quoted `ETag` instead, which `confirm: etag-sha1` reads the same way (`Revalidation.HEAD_ETAG`, #2336).
+Nexus 3 makes that `ETag` the blob's SHA-1 in a hosted repository, but a proxy repository keeps its upstream's (Central's is an MD5), so no Nexus version or format is trusted to send it: a copy is committed on its `ETag` only when that is the SHA-1 of its bytes, and a weak, unquoted or `{SHA1{...}}` one counts as none.
+A download with no such `ETag` is handled as a `checksum-header` one without its header: confirmed by its `.sha1` where a sidecar is sound, and otherwise served but not cached.
+A served copy gets that SHA-1 as `X-Checksum-SHA1`, which Maven reads, never as an `ETag` the proxy made up; a miss gets none, since its `ETag` is not yet known to describe its bytes.
 A separately uploaded sidecar is not (`mvn deploy` PUTs the jar and its `.sha1` one by one, so a repository can briefly serve a new jar beside the old `.sha1`).
 So `confirm: sidecar` only fits repositories that publish the two together and never replace them, and an entry declaring both a sidecar and replaced releases is refused at load; a replacing repository's header-less answer is not confirmed by its sidecar either.
 **Whether it is public.**
@@ -803,8 +807,8 @@ The cache sees only the one header the relay would have injected (`ArtifactCache
 Copies live apart per credential, under `.private/<partition>/` in the Maven cache, the partition an HMAC of the namespace, header and value under an owner-only random key (`PrivatePartitions`), so two accounts never share a copy, a confirmation or a single-flight key, and a hashed weak password cannot be tested against a directory name.
 Every hit is confirmed first by a `HEAD` for the artifact itself carrying that credential, and served only on a `200` whose `X-Checksum-SHA1` matches.
 So upstream decides each serve: a revoked account is refused at once, and nothing is served while upstream cannot be asked, offline included.
-That is why a private entry must confirm by `checksum-header`: a sidecar's answer shows that the credential may read the sidecar, not the artifact.
-A declared `checksum-header` repository that answers an artifact without the header is named once in the proxy log, since its copies are then confirmed by sidecar or, where that is unsound, never cached.
+That is why a private entry must confirm by `checksum-header` or `etag-sha1`: a sidecar's answer shows that the credential may read the sidecar, not the artifact.
+A declared `checksum-header` or `etag-sha1` repository that answers an artifact without its header is named once in the proxy log, since its copies are then confirmed by sidecar or, where that is unsound, never cached.
 Its sidecars, metadata and SNAPSHOTs go through the ordinary credentialed relay; a cache error answers 502 rather than relaying without the credential.
 A redirect from a private repository goes to the client, whose next request is proven and credentialed again; followed by the cache it would go out with no credential.
 What it gives up: a private hit always costs one round trip, and a private repository is never available offline.

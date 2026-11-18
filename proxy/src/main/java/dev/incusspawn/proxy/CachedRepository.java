@@ -124,7 +124,11 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
                         + ", so its requests are relayed uncached");
                 continue;
             }
-            var revalidation = (entry.checksumHeader() ? Revalidation.HEAD_CHECKSUM : Revalidation.SIDECAR)
+            var revalidation = (switch (entry.confirm()) {
+                        case CHECKSUM_HEADER -> Revalidation.HEAD_CHECKSUM;
+                        case ETAG_SHA1 -> Revalidation.HEAD_ETAG;
+                        case SIDECAR -> Revalidation.SIDECAR;
+                    })
                     .trustedFor(new ArtifactCacheTiers(entry.fresh(), entry.maxStale()));
             if (entry.replacesReleases() || entry.isPrivate()) revalidation = revalidation.onlyConfirmed();
             all.add(new CachedRepository(entry.domain(), entry.pathPrefix(), Layout.MAVEN, revalidation, entry.credentials()));
