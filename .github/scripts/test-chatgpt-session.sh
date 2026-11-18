@@ -12,10 +12,11 @@
 # Every token is minted by the stub, random per run, and searched for afterwards anywhere the
 # guest can read: a hit is a leak.
 #
-# The instance's guest files and proofs are written by this fixture (M1 has no sign-in or
-# delivery yet): the secret is the instance's own per-start one, the proofs are derived from it as
-# ChatGptProof does (checked against its pinned vector first), and only their SHA-256 verifiers go
-# into instance metadata.
+# The instance's guest files and proofs are written by this fixture, not by a real start's
+# delivery (#1332 has one now, via ChatGptStart; driving this harness through the real start
+# path is the follow-up): the secret is the instance's own per-start one, the proofs are
+# derived from it as ChatGptProof does (checked against its pinned vector first), and only
+# their SHA-256 verifiers go into instance metadata.
 #
 # Its work directory, which holds a copy of the user's CA key, is removed on every exit unless KEEP=1.
 # None of the user's own isx state is touched: the test's proxy runs in a mount namespace that puts

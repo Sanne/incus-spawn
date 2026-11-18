@@ -69,6 +69,16 @@ public final class InstanceSecret {
      * profile to source. In {@code /run} with the secret, so no image or copy carries them.
      */
     public static final String PROOFS_PATH = GUEST_DIR + "/proof-tokens";
+    /** The exec environment variable {@link #GUEST_SCRIPT} takes the ChatGPT session's guest content from. */
+    public static final String CHATGPT_DELIVERY_ENV = "ISX_CHATGPT_AUTH";
+    /**
+     * Where the guest keeps this start's ChatGPT session placeholders, for the login profile
+     * to write Codex's {@code auth.json} from. In {@code /run} with the secret: no image or
+     * copy carries them, and they are proofs, good only while this secret is the instance's.
+     */
+    public static final String CHATGPT_GUEST_PATH = GUEST_DIR + "/chatgpt-auth";
+    /** Written after {@code isx-zz-codex-auth.sh}, so a ChatGPT session's file wins over the API-key one. */
+    static final String CHATGPT_PROFILE_PATH = "/etc/profile.d/isx-zz-codex-chatgpt.sh";
     /** Sourced after {@code isx-env.sh}, whose static placeholders the proofs replace. */
     static final String PROFILE_PATH = "/etc/profile.d/isx-instance-secret.sh";
     static final String RUN_IS_TMPFS = "grep -qs '^[^ ]* /run tmpfs ' /proc/mounts";
@@ -96,8 +106,9 @@ public final class InstanceSecret {
         return stampInto(config, placeholders, CredentialProof.fresh());
     }
 
-    public record Delivery(String secret, String proofSecret, String proofGeneration) {
-        public Delivery(String secret, String proofSecret) { this(secret, proofSecret, ""); }
+    public record Delivery(String secret, String proofSecret, String proofGeneration, String chatGptAuth) {
+        public Delivery(String secret, String proofSecret) { this(secret, proofSecret, "", ""); }
+        public Delivery(String secret, String proofSecret, String proofGeneration) { this(secret, proofSecret, proofGeneration, ""); }
         @Override public String toString() { return "InstanceSecret.Delivery[redacted]"; }
     }
 
@@ -167,11 +178,42 @@ public final class InstanceSecret {
      * <p>The same exec installs Git's GitHub proof helper, including in older images. Then it
      * brings the Claude Code registration of {@code isx mcp} in line with the
      * instance's {@code mcp-caller} grant ({@link McpClientRegistration}), so every start that
-     * delivers a secret reconciles it too.
+     * delivers a secret reconciles it too. A start that serves a ChatGPT session writes its
+     * placeholders and their profile script here too, and one that serves none clears both, so
+     * the guest's Codex never keeps a session the host ended (#1332).
      */
+    /**
+     * The login profile that writes Codex's {@code auth.json} from this start's ChatGPT
+     * placeholders ({@link #CHATGPT_GUEST_PATH}). POSIX sh, silent, no variables left behind;
+     * sorted after {@code isx-zz-codex-auth.sh}, so a ChatGPT session's file replaces the
+     * API-key one isx may also have written, and never the user's own {@code codex login}:
+     * only a file that is absent, holds a placeholder, or holds an earlier delivery's proofs.
+     */
+    public static final String CHATGPT_PROFILE_SCRIPT = "# Written by isx: a ChatGPT session's placeholders, renewed on every start (#1332)\n"
+            + "isx_src=${ISX_CHATGPT_AUTH:-" + CHATGPT_GUEST_PATH + "}\n"
+            + "if [ -r \"$isx_src\" ]; then\n"
+            + "  isx_auth=$HOME/.codex/auth.json\n"
+            + "  mkdir -p \"$HOME/.codex\" 2>/dev/null\n"
+            + "  if [ ! -f \"$isx_auth\" ] || grep -q 'isx_' \"$isx_auth\" 2>/dev/null || grep -qF '\"OPENAI_API_KEY\": \"sk-placeholder\"' \"$isx_auth\" 2>/dev/null; then\n"
+            + "    (umask 077 && cat \"$isx_src\" > \"$isx_auth.isx-$$\" 2>/dev/null) \\\n"
+            + "      && mv -f \"$isx_auth.isx-$$\" \"$isx_auth\" 2>/dev/null\n"
+            + "    rm -f \"$isx_auth.isx-$$\" 2>/dev/null\n"
+            + "  fi\n"
+            + "  # The build's config forces API-key login; a ChatGPT session here would be logged out\n"
+            + "  # and its auth.json deleted. Only isx's own config is patched, only the forcing line\n"
+            + "  # removed: with nothing forced, Codex takes the auth.json it is given\n"
+            + "  if [ -f \"$HOME/.codex/config.toml\" ] && [ -w \"$HOME/.codex/config.toml\" ] \\\n"
+            + "      && grep -q 'forced_login_method = \"api\"' \"$HOME/.codex/config.toml\" 2>/dev/null \\\n"
+            + "      && grep -q 'Running unconstrained in isx' \"$HOME/.codex/config.toml\" 2>/dev/null; then\n"
+            + "    sed -i '/^forced_login_method = \"api\"$/d' \"$HOME/.codex/config.toml\" 2>/dev/null\n"
+            + "  fi\n"
+            + "  unset isx_auth\n"
+            + "fi\n"
+            + "unset isx_src\n";
+
     public static final String GUEST_SCRIPT = "isx_secret=$" + DELIVERY_ENV + "; isx_proofs=$" + PROOFS_DELIVERY_ENV
-            + "; isx_credential_secret=$" + CredentialProof.DELIVERY_ENV
-            + "; unset " + DELIVERY_ENV + " " + PROOFS_DELIVERY_ENV + " " + CredentialProof.DELIVERY_ENV + "; "
+            + "; isx_credential_secret=$" + CredentialProof.DELIVERY_ENV + "; isx_chatgpt=$" + CHATGPT_DELIVERY_ENV
+            + "; unset " + DELIVERY_ENV + " " + PROOFS_DELIVERY_ENV + " " + CredentialProof.DELIVERY_ENV + " " + CHATGPT_DELIVERY_ENV + "; "
             + "[ -n \"$isx_secret\" ] && { i=0; until " + RUN_IS_TMPFS + "; do i=$((i+1)); [ $i -ge 60 ] && break; sleep 0.05; done; "
             + RUN_IS_TMPFS + " && install -d -m 755 " + GUEST_DIR
             + " && rm -f " + PROOFS_PATH
@@ -185,7 +227,15 @@ public final class InstanceSecret {
             + " > " + PROFILE_PATH
             + " && " + GitHubGitCredential.INSTALL_SCRIPT
             + " && printf '%s' 4 > " + GUEST_DIR + "/proof-version"
-            + "; } >/dev/null 2>&1; unset isx_secret isx_proofs isx_credential_secret; true\n"
+            // The ChatGPT session this start serves, or the end of one an earlier start served:
+            // stale placeholders and their profile script go first, so a switched account's
+            // API-key rewrite is left alone (#1332)
+            + " && rm -f " + CHATGPT_GUEST_PATH + " " + CHATGPT_PROFILE_PATH
+            + " && { [ -z \"$isx_chatgpt\" ] || { "
+            + writeForInstanceUser("'%s' \"$isx_chatgpt\"", CHATGPT_GUEST_PATH)
+            + " && printf '%s\\n' " + Container.shellQuote(CHATGPT_PROFILE_SCRIPT) + " > " + CHATGPT_PROFILE_PATH
+            + "; }; }"
+            + "; } >/dev/null 2>&1; unset isx_secret isx_proofs isx_credential_secret isx_chatgpt; true\n"
             + McpClientRegistration.GUEST_SCRIPT;
 
     /**
@@ -254,10 +304,16 @@ public final class InstanceSecret {
      */
     public static Map<String, String> guestEnv(Delivery delivery, boolean mcpCaller,
                                                List<ProofToken.Placeholder> placeholders) {
-        return Map.of(DELIVERY_ENV, requireHex(delivery.secret()), McpClientRegistration.ENV, mcpCaller ? "1" : "0",
-                CredentialProof.DELIVERY_ENV, requireHex(delivery.proofSecret()),
-                GENERATION_ENV, delivery.proofGeneration(),
-                PROOFS_DELIVERY_ENV, ProofToken.profile(delivery.proofSecret(), placeholders));
+        var env = new java.util.LinkedHashMap<String, String>();
+        env.put(DELIVERY_ENV, requireHex(delivery.secret()));
+        env.put(McpClientRegistration.ENV, mcpCaller ? "1" : "0");
+        env.put(CredentialProof.DELIVERY_ENV, requireHex(delivery.proofSecret()));
+        env.put(GENERATION_ENV, delivery.proofGeneration());
+        env.put(PROOFS_DELIVERY_ENV, ProofToken.profile(delivery.proofSecret(), placeholders));
+        // Empty when this start serves no ChatGPT session: the script then clears what an
+        // earlier one left, so the guest's Codex does not keep a session this start ended
+        env.put(CHATGPT_DELIVERY_ENV, delivery.chatGptAuth() == null ? "" : delivery.chatGptAuth());
+        return env;
     }
 
     /** Only what {@link #generate} makes is ever handed to the guest as a secret. */

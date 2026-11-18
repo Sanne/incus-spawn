@@ -175,6 +175,15 @@ class CredentialSetup {
         if ("claude".equals(toolName)) return config.getClaude().hasAuth();
         var proxyDef = tool.proxy();
         if (proxyDef == null) return false;
+        // A ChatGPT session is a configured credential too (#1332): its account holds no API key
+        for (var namespace : tool.credentialNamespaces()) {
+            if (!dev.incusspawn.proxy.ChatGptAccounts.NAMESPACE.equals(namespace)) continue;
+            var account = dev.incusspawn.config.AccountResolver.effectiveAccount(configTree, namespace,
+                    dev.incusspawn.config.AccountResolver.shapeOf(allTools, namespace), null);
+            if (!account.isBlank() && !dev.incusspawn.config.AccountResolver.INHERIT.equals(account)
+                    && dev.incusspawn.proxy.ChatGptAccounts.isChatGpt(configTree.path(namespace)
+                            .path("accounts").path(account))) return true;
+        }
         boolean anyChecked = false;
         for (var entry : proxyDef.getConfiguration().entrySet()) {
             var configDef = entry.getValue();
@@ -204,6 +213,141 @@ class CredentialSetup {
                 dev.incusspawn.config.AccountResolver.shapeOf(allTools, namespace), null);
         return dev.incusspawn.config.AccountResolver.value(configTree, namespace, account,
                 fullPath.substring(namespace.length() + 1));
+    }
+
+    /** The ChatGPT sign-in this step runs; overridable so a flow test drives it without a network. */
+    dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
+        return new dev.incusspawn.proxy.ChatGptSignIn();
+    }
+
+    /**
+     * The openai credential (#1332): a ChatGPT session signed in on the host, or an API key.
+     * A ChatGPT plan, Enterprise included, gives no API key a container could use, so the
+     * session is what those users have: isx signs it in by the device-code flow Codex itself
+     * uses and keeps it in the host's session store, where the proxy answers Codex's requests
+     * from; instances hold only placeholders. An API key stays the platform credential it
+     * always was.
+     */
+    void setupCodexAuth(SpawnConfig config, Prompts prompts) {
+        var namespace = "openai";
+        warnUnreadKeys(config, namespace);
+        AccountTarget target;
+        if (!hasAccountsToPreserve(config, namespace)) {
+            target = AccountTarget.FRESH;
+        } else {
+            var chosen = chooseAccountTarget(config, namespace, "OpenAI", prompts);
+            if (chosen.isEmpty()) return;
+            target = chosen.get();
+        }
+
+        var existing = dev.incusspawn.config.AccountResolver.value(config.tree(), namespace, target.name(), "type");
+        if ("chatgpt".equals(existing)) {
+            BuildOutput.step("OpenAI: configured with a ChatGPT session.");
+            prompts.say("s. Sign in again (replaces the session and every instance proof made from it)");
+            prompts.say("k. Switch to an API key instead");
+            var choice = readInput(prompts.ask("Choice (Enter to keep as-is): "));
+            switch (choice) {
+                case "s" -> { signInChatGptInBrowser(config, target, prompts); return; }
+                case "k" -> { askAndSaveApiKey(config, target, prompts); return; }
+                default -> { return; }
+            }
+        }
+
+        prompts.say("1. Sign in with ChatGPT — for a ChatGPT or ChatGPT Enterprise plan;");
+        prompts.say("   opens your browser, where your organisation's SSO works too,");
+        prompts.say("   and the session stays on this host.");
+        prompts.say("2. Sign in with a one-time code — the same sign-in, for a host");
+        prompts.say("   whose browser is elsewhere");
+        prompts.say("3. Paste an OpenAI API key — for platform.openai.com usage,");
+        prompts.say("   which requires billing credits.");
+        var choice = readInput(prompts.ask("Choice (Enter to skip): "));
+        switch (choice) {
+            case "1" -> signInChatGptInBrowser(config, target, prompts);
+            case "2" -> signInChatGptWithDeviceCode(config, target, prompts);
+            case "3" -> askAndSaveApiKey(config, target, prompts);
+            default -> BuildOutput.step("Skipped. Configure later with 'isx account add openai'.");
+        }
+    }
+
+    /** Signs a ChatGPT session in through the browser, where an organisation's SSO happens. */
+    private void signInChatGptInBrowser(SpawnConfig config, AccountTarget target, Prompts prompts) {
+        var signIn = chatGptSignIn();
+        BuildOutput.step("Sign in with ChatGPT");
+        dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
+        try {
+            tokens = signIn.signInWithBrowser(url -> {
+                if (openUrl(url)) {
+                    BuildOutput.step("Opened your browser — finish the sign-in there.");
+                } else {
+                    BuildOutput.warn("Could not open a browser.",
+                            "Open this address on this machine, in any browser: " + url);
+                }
+            });
+        } catch (Exception e) {
+            BuildOutput.error("the ChatGPT sign-in did not finish: " + e.getMessage());
+            return;
+        }
+        saveChatGptSession(config, target, tokens);
+    }
+
+    /** Signs a ChatGPT session in by the one-time code, for a host whose browser is elsewhere. */
+    private void signInChatGptWithDeviceCode(SpawnConfig config, AccountTarget target, Prompts prompts) {
+        var signIn = chatGptSignIn();
+        dev.incusspawn.proxy.ChatGptSignIn.DeviceCode device;
+        try {
+            device = signIn.requestDeviceCode();
+        } catch (Exception e) {
+            BuildOutput.error("could not reach OpenAI's auth server: " + e.getMessage());
+            return;
+        }
+        BuildOutput.step("Sign in with ChatGPT");
+        prompts.say("Open " + styled(BOLD, device.verificationUrl()));
+        prompts.say("and enter this one-time code: " + styled(BOLD, device.userCode()));
+        if (askYesNo(prompts, "Open the page in your browser now?", true)) {
+            if (openUrl(device.verificationUrl())) {
+                BuildOutput.step("Opened your browser — finish there, then press Enter below.");
+            } else {
+                BuildOutput.warn("Could not open a browser — open the page above manually.");
+            }
+        }
+        dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
+        try {
+            tokens = signIn.awaitAuthorization(device, null);
+        } catch (Exception e) {
+            BuildOutput.error("the ChatGPT sign-in did not finish: " + e.getMessage());
+            return;
+        }
+        saveChatGptSession(config, target, tokens);
+    }
+
+    /** Records a signed-in session as the account's credential. */
+    private void saveChatGptSession(SpawnConfig config, AccountTarget target,
+                                    dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens) {
+        new dev.incusspawn.proxy.ChatGptSessionStore().create(target.name(), tokens);
+        if (target.replaceOthers()) {
+            NamespaceAccounts.replaceAll(config, "openai", target.name(), java.util.Map.of("type", "chatgpt"));
+        } else {
+            NamespaceAccounts.put(config, "openai", target.name(), "type", "chatgpt");
+        }
+        config.save();
+        BuildOutput.step("ChatGPT session saved as account '" + target.name() + "'.");
+    }
+
+    /** Asks for the platform API key and records it as the account's credential. */
+    private void askAndSaveApiKey(SpawnConfig config, AccountTarget target, Prompts prompts) {
+        BuildOutput.step("Create a key at https://platform.openai.com/api-keys (shown once).");
+        var key = askSecret(prompts, "OpenAI API key (or press Enter to skip): ");
+        if (key.isBlank()) {
+            BuildOutput.step("Skipped. Configure later with 'isx account add openai'.");
+            return;
+        }
+        if (target.replaceOthers()) {
+            NamespaceAccounts.replaceAll(config, "openai", target.name(), java.util.Map.of("apiKey", key));
+        } else {
+            NamespaceAccounts.put(config, "openai", target.name(), "apiKey", key);
+        }
+        config.save();
+        BuildOutput.step("OpenAI credentials saved.");
     }
 
     void setupClaudeAuth(SpawnConfig config, Prompts prompts) {
