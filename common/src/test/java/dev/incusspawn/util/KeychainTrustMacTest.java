@@ -197,6 +197,27 @@ class KeychainTrustMacTest {
     }
 
     @Test
+    void aChainThroughADeniedRootsCrossSignedCopyIsNot() throws Exception {
+        // api.github.com sends Sectigo's Root E46 cross-signed by USERTrust ECC: a deny of the self-signed
+        // E46 matched by hash alone never met the chain (#1552). Here older stands for USERTrust ECC and denied for E46 (#1631)
+        var older = CertChain.create("isx keychain test older " + System.nanoTime(), "localhost");
+        var denied = CertChain.create("isx keychain test denied " + System.nanoTime(), "localhost");
+        var olderPem = Files.writeString(temp.resolve("older-root.pem"), DerEncoder.toPem("CERTIFICATE", older.root().getEncoded()));
+        var deniedPem = Files.writeString(temp.resolve("denied-root.pem"), DerEncoder.toPem("CERTIFICATE", denied.root().getEncoded()));
+        toDelete.add(MacKeychainTrust.sha1(older.root()));
+        toDelete.add(MacKeychainTrust.sha1(denied.root()));
+        var chainServer = denied.serve(denied.rootCrossSignedBy(older));
+        try {
+            sudo(SECURITY, "add-trusted-cert", "-d", "-r", "trustRoot", "-k", SYSTEM_KEYCHAIN, olderPem.toString());
+            assertEquals(204, get(chainServer));
+            sudo(SECURITY, "add-trusted-cert", "-d", "-r", "deny", "-k", SYSTEM_KEYCHAIN, deniedPem.toString());
+            assertThrows(SSLHandshakeException.class, () -> get(chainServer));
+        } finally {
+            chainServer.stop(0);
+        }
+    }
+
+    @Test
     void hostCaPropagationHandsGuestsWhatAnAdministratorTrusts() throws Exception {
         // #1530: the set host-ca.propagate installs in instances, from the real Keychain
         var anchor = "isx-" + CertificateAuthority.fingerprintOf(ca) + ".crt";
