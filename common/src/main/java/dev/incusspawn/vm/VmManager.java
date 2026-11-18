@@ -426,6 +426,31 @@ public final class VmManager {
         }
     }
 
+    /**
+     * A hypervisor of this user, {@code isx-vm} or an older isx's vfkit, whose arguments name this
+     * state directory's root disk: the VM, whatever vm.pid says (#2031). An upgrade can lose the
+     * pid file while vfkit runs on (an older isx still open, a crash, a cleaned state directory),
+     * and the pid file is all {@link #isRunning()} reads. Recorded as the VM's pid when found.
+     * Lists this user's processes, so it runs only right before a launch.
+     */
+    static Optional<Long> adoptHypervisorOnDisks() {
+        var disk = Environment.vmDiskImage().toString();
+        Optional<Long> found;
+        try (var processes = ProcessHandle.allProcesses()) {
+            found = processes
+                    .filter(h -> h.info().command().map(c -> c.contains(LAUNCHER) || c.contains(LEGACY_HYPERVISOR)).orElse(false))
+                    .filter(h -> h.info().arguments().map(args -> java.util.Arrays.stream(args).anyMatch(a -> a.contains(disk))).orElse(false))
+                    .map(ProcessHandle::pid)
+                    .findFirst();
+        }
+        found.ifPresent(pid -> {
+            try {
+                Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
+            } catch (IOException ignored) {}
+        });
+        return found;
+    }
+
     static long readPid() {
         try {
             return Long.parseLong(Files.readString(Environment.vmPidFile()).strip());
@@ -452,6 +477,18 @@ public final class VmManager {
         requireMacOs();
         if (isRunning()) {
             BuildOutput.note("VM already running (pid=" + readPid() + ").");
+            return StartResult.ALREADY_RUNNING;
+        }
+        // The last guard before a launch: a hypervisor still running on this user's disks, which
+        // vm.pid does not name (removed, or naming another process), is the VM. Starting a second
+        // one on the same images would corrupt them.
+        var holder = adoptHypervisorOnDisks();
+        if (holder.isPresent()) {
+            BuildOutput.warn("The VM is already running (pid=" + holder.get() + ", " + runningLauncher(holder.get())
+                            + "), though isx had lost track of it; it was not started a second time.",
+                    LEGACY_HYPERVISOR.equals(runningLauncher(holder.get()))
+                            ? "It was started by an isx before the launcher. Run 'isx vm restart' to move it to " + LAUNCHER + "."
+                            : "Run 'isx vm restart' if Incus does not answer.");
             return StartResult.ALREADY_RUNNING;
         }
         try {

@@ -299,6 +299,47 @@ class VmStopTest {
         assertTrue(Files.exists(control), "a live launcher's socket is not cleaned up");
     }
 
+    /**
+     * What Sanne met upgrading from 0.5.2: a vfkit VM still running on this user's disks, which
+     * vm.pid no longer names. A start must find it by the disk in its arguments and adopt it,
+     * never put a second VM on the same images. Linux only, as above.
+     */
+    @Test
+    @org.junit.jupiter.api.condition.DisabledOnOs(OS.MAC)
+    void aVfkitVmThePidFileLostIsFoundByItsDiskBeforeAnyLaunch() throws IOException {
+        stopStandIn();
+        var home = Files.createTempDirectory(Path.of("/tmp"), "isxvm");
+        tempHome = home;
+        originalHome = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        Files.createDirectories(Environment.vmStateDir());
+        var vfkit = home.resolve("vfkit");
+        Files.copy(Path.of("/bin/sh").toRealPath(), vfkit);
+        vfkit.toFile().setExecutable(true);
+        vm = new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
+                "--device", "virtio-blk,path=" + Environment.vmDiskImage()).start();
+        // An unrelated vfkit, another user's or another state directory's, is not the VM.
+        var other = new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
+                "--device", "virtio-blk,path=/elsewhere/disk.img").start();
+        try {
+            assertFalse(VmManager.isRunning(), "no pid file: isRunning() alone cannot see it");
+
+            assertEquals(java.util.Optional.of(vm.pid()), VmManager.adoptHypervisorOnDisks());
+            assertEquals(Long.toString(vm.pid()), Files.readString(Environment.vmPidFile()));
+            assertTrue(VmManager.isRunning());
+            assertTrue(VmManager.runsUnderLegacyHypervisor());
+        } finally {
+            other.destroyForcibly();
+        }
+    }
+
+    @Test
+    void noHypervisorOnTheseDisksIsAdoptedWhenNoneRuns() throws IOException {
+        Files.delete(Environment.vmPidFile());
+        assertTrue(VmManager.adoptHypervisorOnDisks().isEmpty());
+        assertFalse(Files.exists(Environment.vmPidFile()));
+    }
+
     private void startStandInAt(Path home, Path control) throws IOException {
         Files.createDirectories(home);
         tempHome = home;
