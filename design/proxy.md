@@ -133,6 +133,15 @@ The case that found #1552 is covered on both sides (#1631).
 On every platform, `MacKeychainTrustTest` denies Sectigo's real self-signed Root E46 in a user-domain plist and refuses its real copy cross-signed by USERTrust ECC; the certificates come from crt.sh, and `macos-trust-settings/sectigo-e46/README.md` says how they were checked.
 On the runner, `KeychainTrustMacTest` denies a test root admin-wide and refuses a handshake through its copy cross-signed by another trusted test root.
 Neither reads a user-domain deny from a real Keychain, nor shows a native binary refusing a handshake.
+They cannot read a user-domain deny, because no hosted runner can write one (#1631, probed on macOS 15.8 and 26.7 in PR #2369).
+There `security add-trusted-cert -r deny` without `-d` started a SecurityAgent dialog in the runner's own session and waited for an answer until the probe's 45-second limit ended it, and the user domain did not hold the setting afterwards.
+Opening the trust rights in the authorization database did not prevent the dialog.
+With `com.apple.trust-settings.user` and `com.apple.configurationprofiles.userprofile.trustcert` set to `allow`, authd granted `security` its right.
+trustd then asked authd for an authorization of its own, which authd checked against hardcoded rules rather than the database: the session owner, then the owner's password, which ran `builtin:authenticate` in SecurityAgent.
+authd refused to change `com.apple.trust-settings.admin` at all ("not allowed to update right"), even as root.
+A certificate already in the login keychain and an unlocked keychain of the probe's own as the default did not help either, although both attempts ran while an earlier dialog was still pending.
+So beyond `MacKeychainTrustTest`'s plists, only a person at a Mac checks a user-domain deny in a real Keychain.
+The three rounds of the probe are commits of that PR, to run again when a new macOS might behave otherwise.
 
 **Redirect rule cleanup:** `isx proxy uninstall` removes the systemd service **and** cleans up the PREROUTING redirect rule and bridge DNS overrides unconditionally — even if the service removal itself fails.
 `ProxyConfig.clearRedirectRules()` attempts both firewalld and UFW independently (not else-if) so that a system with firewalld installed but inactive still reaches UFW cleanup.

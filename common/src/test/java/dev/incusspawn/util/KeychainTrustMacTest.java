@@ -54,7 +54,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>
  * It goes through {@code SystemTrust.sslContext()} alone, the CLI's entry point, so the same class
  * runs against main's code to show the failure this fixes. A CA trusted in the user's own domain
- * cannot be set up here: that waits for an authorization dialog a runner never answers.
+ * cannot be set up here: that waits for a SecurityAgent dialog a runner never answers, even with the
+ * trust rights opened in the authorization database, since trustd asks under hardcoded rules (#1631).
  */
 @EnabledOnOs(OS.MAC)
 @EnabledIfEnvironmentVariable(named = "ISX_TEST_MUTATE_SYSTEM_KEYCHAIN", matches = "1")
