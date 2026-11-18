@@ -220,6 +220,34 @@ class ProofTokenTest {
     }
 
     /**
+     * A placeholder read that fails keeps the config it was loading for (#1332): the config
+     * decides the ChatGPT session a start serves, and one broken search-path entry must cost
+     * the placeholders alone, never the session -- whose stamps an empty config would clear.
+     */
+    @Test
+    @ExtendWith(TempHome.class)
+    void aPlaceholderReadThatFailsKeepsTheConfigForTheSession() throws Exception {
+        var configDir = java.nio.file.Files.createDirectories(
+                java.nio.file.Path.of(System.getProperty("user.home"), ".config/incus-spawn"));
+        java.nio.file.Files.writeString(configDir.resolve("config.yaml"), """
+                openai:
+                  accounts:
+                    sso:
+                      type: chatgpt
+                  default: sso
+                searchPaths:
+                  - ~
+                """);
+
+        var declared = ProofToken.declaredInBackground().join();
+
+        assertTrue(declared.placeholders().isEmpty(), "the broken search path gave no placeholders");
+        assertEquals("sso", dev.incusspawn.config.AccountResolver.effectiveAccount(
+                declared.settings(), "openai", null),
+                "the account is still there for the ChatGPT stamp to serve");
+    }
+
+    /**
      * Each line replaces the build's own placeholder, or an earlier proof, and nothing else: a
      * value a template's own {@code env:} or the user put in the variable stays theirs.
      */

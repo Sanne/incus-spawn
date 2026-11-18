@@ -78,7 +78,7 @@ public final class InstanceSecret {
      */
     public static final String CHATGPT_GUEST_PATH = GUEST_DIR + "/chatgpt-auth";
     /** Written after {@code isx-zz-codex-auth.sh}, so a ChatGPT session's file wins over the API-key one. */
-    static final String CHATGPT_PROFILE_PATH = "/etc/profile.d/isx-zz-codex-chatgpt.sh";
+    public static final String CHATGPT_PROFILE_PATH = "/etc/profile.d/isx-zz-codex-chatgpt.sh";
     /** Sourced after {@code isx-env.sh}, whose static placeholders the proofs replace. */
     static final String PROFILE_PATH = "/etc/profile.d/isx-instance-secret.sh";
     static final String RUN_IS_TMPFS = "grep -qs '^[^ ]* /run tmpfs ' /proc/mounts";
