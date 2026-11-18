@@ -861,7 +861,7 @@ public class BuildCommand extends BaseCommand {
         }
 
         // Again here: an ancestor the run builds only because it is missing or outdated was not checked up front
-        if (reportUnknownTools(List.of(imageDef), defs)) throw new BuildFailedException(canonicalName);
+        if (reportUnbuildableTools(List.of(imageDef), defs)) throw new BuildFailedException(canonicalName);
 
         if (reportStrandedStorage(incus, canonicalName, tempName)) throw new BuildFailedException(canonicalName);
         boolean vmByOption = imageDef.machineType() != MachineType.VM;
@@ -2360,22 +2360,69 @@ public class BuildCommand extends BaseCommand {
      * refuses its child. Each template's tools are those its build applies ({@link #toolLayers}).
      */
     private void requireKnownTools(Collection<String> templates, Map<String, ImageDef> defs) {
-        if (reportUnknownTools(templates.stream().map(defs::get).toList(), defs)) throw new BuildFailedException();
+        if (reportUnbuildableTools(templates.stream().map(defs::get).toList(), defs)) throw new BuildFailedException();
+    }
+
+    /**
+     * Both refusals, each reported whatever the other found: whether either refused. Each layer's
+     * entries are resolved once, for both.
+     */
+    private boolean reportUnbuildableTools(List<ImageDef> templates, Map<String, ImageDef> defs) {
+        var checked = new ArrayList<LayerChecks>();
+        for (var template : templates) {
+            for (var layer : toolLayers(template, defs)) {
+                checked.add(new LayerChecks(layer, BuildTools.checkEntries(layer, toolDefLoader, toolSetups)));
+            }
+        }
+        return reportUnknownTools(checked) | reportUnsupportedTools(checked);
+    }
+
+    /** A layer's {@code tools:} entries, resolved as its build resolves them. */
+    private record LayerChecks(ImageDef layer, List<BuildTools.EntryCheck> checks) {}
+
+    /** The architecture this host's instances have, and so every build's; a test sets it. */
+    String architecture = ImageDef.hostArch();
+
+    /**
+     * Refuses, naming every one at once, when a template this run builds would install a tool
+     * that cannot be installed on this host's architecture (#2357): a tool with no distribution
+     * for it. The image would lack the tool, or hold only part of it, and a warning is easily
+     * missed, so the build fails rather than skips it, before anything is created.
+     */
+    private boolean reportUnsupportedTools(List<LayerChecks> checked) {
+        var unsupported = new LinkedHashSet<String>();
+        for (var layerChecks : checked) {
+            var layer = layerChecks.layer();
+            for (var check : layerChecks.checks()) {
+                var entry = layer.getTools().get(check.entry()).getName();
+                for (var tool : check.reached()) {
+                    var reason = tool.unsupportedOn(architecture);
+                    if (reason == null) continue;
+                    unsupported.add(BuildTools.unsupportedTool(layer.getName(), entry, tool.name(), reason));
+                }
+            }
+        }
+        if (unsupported.isEmpty()) return false;
+        var details = new ArrayList<String>(unsupported);
+        details.add("Remove the tool from 'tools:', or build the template on a host the tool supports.");
+        var header = unsupported.size() == 1 ? "Cannot build: a tool has no distribution for " + architecture + "."
+                : "Cannot build: tools have no distribution for " + architecture + ".";
+        BuildOutput.error(header, details.toArray(String[]::new));
+        return true;
     }
 
     /** {@link #requireKnownTools}'s check: whether it reported an unknown tool. */
-    private boolean reportUnknownTools(List<ImageDef> templates, Map<String, ImageDef> defs) {
+    private boolean reportUnknownTools(List<LayerChecks> checked) {
         // A set: a tool listed twice, required twice, or in a layer two targets share, is named once
         var unknown = new LinkedHashSet<String>();
         var refused = new LinkedHashSet<String>();
-        for (var template : templates) {
-            for (var layer : toolLayers(template, defs)) {
-                for (var check : BuildTools.checkEntries(layer, toolDefLoader, toolSetups)) {
-                    for (var problem : check.problems()) {
-                        if (problem.kind() != BuildTools.Problem.Kind.UNKNOWN) continue;
-                        unknown.add(BuildTools.unknownTool(layer.getName(), problem));
-                        refused.add(layer.getName());
-                    }
+        for (var layerChecks : checked) {
+            var layer = layerChecks.layer();
+            for (var check : layerChecks.checks()) {
+                for (var problem : check.problems()) {
+                    if (problem.kind() != BuildTools.Problem.Kind.UNKNOWN) continue;
+                    unknown.add(BuildTools.unknownTool(layer.getName(), problem));
+                    refused.add(layer.getName());
                 }
             }
         }

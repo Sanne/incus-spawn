@@ -190,6 +190,18 @@ public final class BuildTools {
         return "template '" + OutputFormat.oneLine(String.valueOf(template)) + "' " + how + ", a tool isx does not know.";
     }
 
+    /**
+     * A tool that cannot be installed on the build's architecture, as one line naming the
+     * template, the {@code tools:} entry that reached it when that is another tool, and
+     * {@code reason}, the tool's own {@link ToolSetup#unsupportedOn} phrase.
+     */
+    static String unsupportedTool(String template, String entry, String tool, String reason) {
+        var how = entry.equals(tool) ? "lists '" + OutputFormat.oneLine(tool) + "'"
+                : "uses '" + OutputFormat.oneLine(entry) + "', which requires '" + OutputFormat.oneLine(tool) + "'";
+        return "template '" + OutputFormat.oneLine(String.valueOf(template)) + "' " + how + ", which "
+                + OutputFormat.oneLine(reason) + ".";
+    }
+
     /** {@code " in template '<name>'"}, or nothing for an unnamed template. */
     private static String in(ImageDef imageDef) {
         var template = java.util.Objects.toString(imageDef.getName(), "");

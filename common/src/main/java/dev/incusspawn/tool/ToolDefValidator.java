@@ -25,6 +25,8 @@ public class ToolDefValidator {
 
     private static final Set<String> VALID_PARAM_TYPES = Set.of(
             "string", "integer", "boolean", "enum");
+    /** The architectures as {@code architectures} and a download's {@code arch} spell them. */
+    static final Set<String> VALID_ARCHITECTURES = Set.of("x86_64", "aarch64");
     private static final Set<String> VALID_AUTH_TYPES = Set.of(
             "basic", "bearer", "header");
 
@@ -71,6 +73,14 @@ public class ToolDefValidator {
             if (!hasExtract && !hasDestinationFile) {
                 errors.add("download entry in '" + def.getName()
                         + "' must set 'extract', 'destination_file', or both");
+            }
+        }
+
+        for (var arch : def.getArchitectures()) {
+            // An error: a misspelt architecture would refuse every build of the tool
+            if (!VALID_ARCHITECTURES.contains(arch)) {
+                errors.add(OutputFormat.oneLine("architectures in '" + def.getName() + "' names '" + arch
+                        + "'; use x86_64 or aarch64"));
             }
         }
 

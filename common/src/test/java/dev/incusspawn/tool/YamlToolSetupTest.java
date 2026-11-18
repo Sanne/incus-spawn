@@ -162,6 +162,52 @@ class YamlToolSetupTest {
         assertEquals("", YamlToolSetup.fileName(null));
     }
 
+    private static ToolDef.DownloadEntry download(String arch) {
+        var dl = new ToolDef.DownloadEntry();
+        dl.setUrl("https://example.com/tool-" + arch);
+        dl.setDestinationFile("/usr/local/bin/tool");
+        dl.setArch(arch);
+        return dl;
+    }
+
+    /** The declared architectures win; without them, downloads all for others mean none here (#2357). */
+    @Test
+    void supportedArchitecturesAreTheDeclaredOnesElseThoseTheDownloadsCover() {
+        var def = new ToolDef();
+        def.setName("t");
+        var setup = new YamlToolSetup(def);
+        assertNull(setup.unsupportedOn("aarch64"), "no downloads, no declaration: every architecture");
+
+        def.setDownloads(List.of(download("x86_64")));
+        assertNull(setup.unsupportedOn("x86_64"));
+        assertEquals("has downloads only for x86_64", setup.unsupportedOn("aarch64"));
+
+        def.setDownloads(List.of(download("x86_64"), download(null)));
+        assertNull(setup.unsupportedOn("aarch64"), "a download for every architecture");
+
+        def.setDownloads(List.of(download("x86_64"), download("aarch64")));
+        assertNull(setup.unsupportedOn("aarch64"));
+
+        def.setArchitectures(List.of("x86_64"));
+        assertEquals("supports only x86_64", setup.unsupportedOn("aarch64"));
+        assertNull(setup.unsupportedOn("x86_64"));
+    }
+
+    /** Should a build reach it anyway, an unsupported tool installs nothing at all. */
+    @Test
+    void anUnsupportedToolInstallsNothing() {
+        var incus = mockIncusWithArch();
+        var def = new ToolDef();
+        def.setName("arm-only");
+        def.setArchitectures(List.of("aarch64"));
+        def.setRun(List.of("echo hi"));
+
+        var e = assertThrows(IllegalStateException.class,
+                () -> new YamlToolSetup(def).install(new Container(incus, CONTAINER), Map.of()));
+        assertEquals("Tool 'arm-only' supports only aarch64, and this instance is x86_64", e.getMessage());
+        verify(incus, only()).getInstanceArchitecture(CONTAINER);
+    }
+
     @Test
     void minimalToolDoesNothing() {
         var incus = mockIncusWithArch();
@@ -459,6 +505,8 @@ class YamlToolSetupTest {
         var def = new ToolDef();
         def.setName("arch-skip");
         def.setDownloads(List.of(dl));
+        // Declared, so the tool installs on x86_64 without this download, which it skips
+        def.setArchitectures(List.of("x86_64", "aarch64"));
 
         var setup = new YamlToolSetup(def, downloadCache);
         setup.install(new Container(incus, CONTAINER), Map.of());

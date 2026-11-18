@@ -13,6 +13,17 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ToolDefValidatorTest {
 
+    @Test void anArchitectureIsXOrAarch64(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("arch.yaml");
+        Files.writeString(file, """
+                name: arch
+                architectures: [x86_64, arm64]
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertEquals(List.of("architectures in 'arch' names 'arm64'; use x86_64 or aarch64"), result.errors());
+        assertEquals(List.of(), result.warnings());
+    }
+
     @Test void lingeringThroughLoginctlWarnsAndTheLingerFileDoesNot(@TempDir Path dir) throws Exception {
         var file = dir.resolve("lingers.yaml");
         Files.writeString(file, """
