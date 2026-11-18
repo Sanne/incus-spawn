@@ -24,6 +24,19 @@ class ToolDefValidatorTest {
         assertEquals(List.of(), result.warnings());
     }
 
+    @Test void aDownloadsArchIsX86OrAarch64(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("dl.yaml");
+        Files.writeString(file, """
+                name: dl
+                downloads:
+                  - url: https://example.com/dl
+                    destination_file: /usr/local/bin/dl
+                    arch: arm64
+                """);
+        assertEquals(List.of("download entry in 'dl' has arch 'arm64'; use x86_64 or aarch64"),
+                ToolDefValidator.validate(file).errors());
+    }
+
     @Test void lingeringThroughLoginctlWarnsAndTheLingerFileDoesNot(@TempDir Path dir) throws Exception {
         var file = dir.resolve("lingers.yaml");
         Files.writeString(file, """
