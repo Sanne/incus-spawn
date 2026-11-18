@@ -1,0 +1,271 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://isx.run/schema/tool.json",
+  "title": "incus-spawn tool",
+  "description": "A tool definition for isx: one YAML file in ~/.config/incus-spawn/tools/ or .incus-spawn/tools/. Only name is required.",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "The tool's name, as a template lists it. Letters, digits, '.', '-' and '_', and it does not start with '.', '-' or '_'."
+    },
+    "description": {
+      "type": "string",
+      "description": "One line shown by isx tools and in build output."
+    },
+    "packages": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "dnf packages to install."
+    },
+    "package_repos": {
+      "type": ["array", "null"],
+      "description": "Additional package repositories to enable, as in a template.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {"const": "copr", "description": "The repository kind. copr is the only one."},
+          "name": {"type": "string", "description": "The repository to enable, as owner/project."}
+        }
+      }
+    },
+    "downloads": {
+      "type": ["array", "null"],
+      "description": "Artifacts to download, cache on the host, and copy or extract into the instance. Each sets extract, destination_file, or both.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url"],
+        "properties": {
+          "url": {"type": "string", "description": "The http:// or https:// download URL. A local address such as localhost is refused."},
+          "sha256": {"type": ["string", "integer"], "description": "SHA-256 checksum. Enables cache reuse and verifies integrity."},
+          "extract": {"type": "string", "description": "Directory in the instance to extract into. Supports .tar.gz, .tgz, .tar.bz2, .tar.xz and .zip."},
+          "destination_file": {"type": "string", "description": "Exact path at which to expose the downloaded file in the instance. ~/ resolves to /home/agentuser/."},
+          "extract_in_container": {"type": "boolean", "default": false, "description": "Extract inside the instance with its tar instead of on the host. A VM ignores it."},
+          "arch": {"enum": ["x86_64", "aarch64"], "description": "Skip the download when the instance has another architecture."},
+          "links": {
+            "type": ["object", "null"],
+            "additionalProperties": {"type": "string"},
+            "description": "Map of source_path: symlink_path to create after extraction."
+          }
+        }
+      }
+    },
+    "run": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Shell commands run as root."
+    },
+    "run_as_user": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Shell commands run as agentuser."
+    },
+    "files": {
+      "type": ["array", "null"],
+      "description": "Files to write in the instance.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "content"],
+        "properties": {
+          "path": {"type": "string", "description": "Where the file goes in the instance."},
+          "content": {"type": "string", "description": "What the file holds. ${param_<name>} takes a parameter's value."},
+          "owner": {"type": "string", "description": "user:group to give the file, and its parent directories in that user's home that root owns."},
+          "merge": {"const": "json", "description": "json to add the content to the JSON file already at path instead of replacing it."}
+        }
+      }
+    },
+    "env": {
+      "type": ["array", "null"],
+      "description": "Environment variables, written to /etc/profile.d/isx-env.sh.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$", "description": "Variable name."},
+          "value": {"type": ["string", "number", "boolean"], "description": "Its value."},
+          "strategy": {
+            "enum": ["set", "set-if-unset", "prepend", "append"],
+            "default": "set",
+            "description": "How the value joins the variable: set (default), set-if-unset, prepend or append."
+          },
+          "separator": {"type": "string", "default": " ", "description": "Between the value and the existing one, for prepend and append."}
+        }
+      }
+    },
+    "requires": {
+      "type": ["array", "null"],
+      "description": "Other tools that must be installed first. An entry is a name, or a map such as idea-backend: {memory: 8g} to pass parameters.",
+      "items": {
+        "oneOf": [
+          {"type": "string"},
+          {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 1,
+            "additionalProperties": {
+              "oneOf": [
+                {"type": "null"},
+                {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean"]}}
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "verify": {
+      "type": "string",
+      "description": "Verification command, logged and non-fatal. Runs as agentuser in a login shell with the image environment."
+    },
+    "verify_as_root": {
+      "type": "boolean",
+      "default": false,
+      "description": "true when the verify needs root. It then runs in root's own environment, without the environment file."
+    },
+    "ready": {
+      "type": "string",
+      "description": "Command each start polls until it succeeds, for up to 15 seconds, before handing the instance over."
+    },
+    "parameters": {
+      "type": ["object", "null"],
+      "description": "Build-time parameters a template sets in its tools: list.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {"enum": ["string", "integer", "boolean", "enum"], "description": "The parameter's type."},
+          "default": {"type": ["string", "number", "boolean"], "description": "Its value when a template does not set it."},
+          "description": {"type": "string", "description": "What the parameter does."},
+          "pattern": {"type": "string", "description": "Regular expression a string value must match."},
+          "min": {"type": "integer", "description": "Smallest value, for an integer."},
+          "max": {"type": "integer", "description": "Largest value, for an integer."},
+          "options": {"type": ["array", "null"], "items": {"type": ["string", "number"]}, "description": "The allowed values, for an enum."},
+          "optional": {"type": "boolean", "default": false, "description": "Whether a template may leave the parameter out with no default."},
+          "reconfigurable": {"type": "boolean", "default": false, "description": "Whether the parameter may change on an existing instance."}
+        }
+      }
+    },
+    "feature": {
+      "type": "string",
+      "description": "A feature flag the tool needs. A build skips the tool, with a warning, until the flag is listed under features: in config.yaml."
+    },
+    "actions": {
+      "type": ["array", "null"],
+      "description": "Runtime actions the TUI offers when the tool is installed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type": "string", "description": "Display text shown in the F9 menu."},
+          "type": {"enum": ["url", "command", "shell", "copy-to-clipboard"], "description": "url opens url in the host browser, command runs command on the host, shell runs command in the instance, copy-to-clipboard copies text."},
+          "id": {"type": "string", "description": "Stable identifier for default-action: tool:action-id."},
+          "requires_running": {"type": "boolean", "default": true, "description": "Whether the instance must be running."},
+          "expand": {"const": "repos", "description": "repos generates one action per declared repository."},
+          "url": {"type": "string", "description": "URL to open in the host browser, for type url."},
+          "command": {"type": "string", "description": "Command to run, for type command (on the host) or shell (in the instance)."},
+          "text": {"type": "string", "description": "Text to copy to the host clipboard, for type copy-to-clipboard."},
+          "auto_return": {"type": "boolean", "default": false, "description": "Return without waiting for a key after the action completes."},
+          "shell_menu": {"type": "boolean", "default": false, "description": "Also show the action in the shell menu."},
+          "shortcut": {"type": "string", "description": "A key that runs the action."}
+        }
+      }
+    },
+    "agent_note": {
+      "type": "string",
+      "description": "An always-true fact about this tool that an agent must know before acting."
+    },
+    "skills": {
+      "description": "Skills to install alongside the tool, teaching an agent how to drive it. Bare names resolve against this tool's own skills.repo.",
+      "oneOf": [
+        {"type": ["array", "null"], "items": {"type": "string"}},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repo": {"type": "string", "description": "Catalog that bare skill names are resolved in."},
+            "list": {"type": "array", "items": {"type": "string"}, "description": "owner/repo@skill, owner/repo, ./local-path or a bare name."}
+          }
+        }
+      ]
+    },
+    "mcp": {
+      "type": ["array", "null"],
+      "description": "MCP servers the tool provides, registered with every coding agent in the image. Each is a stdio command or an HTTPS url.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "description": "The server's name."},
+          "description": {"type": "string", "description": "What the server offers."},
+          "command": {"type": ["array", "null"], "items": {"type": "string"}, "description": "The command that starts a stdio server, and its arguments."},
+          "env": {"type": ["object", "null"], "additionalProperties": {"type": "string"}, "description": "Environment variables for a stdio server."},
+          "url": {"type": "string", "description": "The HTTPS address of a remote server."},
+          "bearer-token-env": {"type": "string", "description": "The variable an agent reads the bearer token from when it connects. One of the tool's own proxy placeholders."}
+        }
+      }
+    },
+    "proxy": {
+      "type": ["object", "null"],
+      "description": "Credential injection rules for the MITM proxy.",
+      "additionalProperties": false,
+      "properties": {
+        "config-namespace": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "description": "The namespace that scopes the config paths. Letters, digits, '.', '-' and '_', starting with a letter or digit."
+        },
+        "configuration": {
+          "type": ["object", "null"],
+          "description": "The host credentials, by key. isx init prompts for each.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {"enum": ["string", "confirm"], "default": "string", "description": "string asks for a value, confirm asks yes or no."},
+              "description": {"type": "string", "description": "The prompt's text."},
+              "secret": {"type": "boolean", "default": false, "description": "Whether the value is a credential: read without echo, redacted in support bundles."},
+              "config-path": {"type": "string", "description": "Where the value is stored in config.yaml, under the namespace's selected account when relative."},
+              "value": {"type": ["string", "number", "boolean"], "description": "A hardcoded literal, which isx init does not prompt for."},
+              "help": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Lines printed before the prompt in place of the description."}
+            }
+          }
+        },
+        "auth": {
+          "type": ["array", "null"],
+          "description": "Entries mapping domains to authentication rules.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "domains": {"type": ["array", "null"], "items": {"type": "string"}, "description": "The domains the rule applies to."},
+              "paths": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Restrict the rule to these request paths."},
+              "type": {"enum": ["basic", "bearer", "header"], "description": "bearer sends Authorization: Bearer <token>, basic sends Authorization: Basic with username and password, header sends the header name with value."},
+              "username": {"type": "string", "description": "For basic: a literal or a ${configKey} reference."},
+              "password": {"type": "string", "description": "For basic: a literal or a ${configKey} reference."},
+              "token": {"type": "string", "description": "For bearer: a literal or a ${configKey} reference."},
+              "name": {"type": "string", "description": "For header: the header's name."},
+              "value": {"type": "string", "description": "For header: the value, with ${configKey} substitution."}
+            }
+          }
+        },
+        "placeholders": {
+          "type": ["array", "null"],
+          "description": "The guest variables that carry proofs. The tool's env: value starts with the prefix followed by placeholder.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "env": {"type": "string", "description": "The environment variable the tool reads its credential from."},
+              "prefix": {"type": "string", "description": "What the variable's value starts with, before isx_ and the proof."}
+            }
+          }
+        }
+      }
+    }
+  }
+}

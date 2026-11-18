@@ -118,8 +118,8 @@ A top-level field outside Pi's five, a tool field other than `functionDeclaratio
 A proven call already in Vertex's form at `api.anthropic.com` is likewise served only as a Claude model call, moved into the account's own project and region (`ClaudeOnVertex`, #1921), else a 403.
 A proven call to be translated is signed only as `POST /v1/messages` or `/v1/messages/count_tokens` with a JSON object for its body, else a 403, so the guest's own path never is.
 
-**Editors get a JSON Schema for a template** (`site/schema/template.json`, published at `isx.run/schema/template.json`).
-The skeleton `isx templates new` writes names it in a `yaml-language-server` modeline, and `TemplateSchemaTest` fails when a key `ImageDef` binds is missing from it, has no description, or when its value sets drift from the code's (design/templates.md "A schema for editors").
+**Editors get a JSON Schema for each YAML file people edit** (`site/schema/{template,tool,config,mcp}.json`, published at `isx.run/schema/`).
+The skeleton `isx templates new` writes names the template one in a `yaml-language-server` modeline, and `EditorSchemasTest` fails when a key `ImageDef`, `ToolDef`, `McpConfig` or `SpawnConfig` binds is missing from its schema, has no description, or when a value set drifts from the code's (design/templates.md "A schema for editors").
 
 ## Build and Test Commands
 

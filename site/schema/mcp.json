@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://isx.run/schema/mcp.json",
+  "title": "incus-spawn mcp.yaml",
+  "description": "What isx mcp lets a local agent do, ~/.config/incus-spawn/mcp.yaml. Only a person edits it. A key isx does not know makes the whole file invalid, so no mistyped restriction is dropped in silence.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "templates": {
+      "type": ["array", "null"],
+      "items": {"type": "string", "minLength": 1},
+      "description": "The only templates an agent may branch from. A missing list approves none."
+    },
+    "max-instances": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 8,
+      "description": "Instances per host user, across sessions, counting creates in flight."
+    },
+    "max-concurrent-tasks": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 8,
+      "description": "Background commands and delegated agents, per host user, across sessions."
+    },
+    "orphan-grace-hours": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 24,
+      "description": "How long an instance outlives the session that held it."
+    },
+    "dormant-after-hours": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 24,
+      "description": "How long an orphan kept only for a task that shows no activity waits before it is stopped, not destroyed."
+    },
+    "dormant-grace-hours": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 168,
+      "description": "How long after it was stopped such an instance is destroyed."
+    },
+    "summary-model": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/\\[\\]-]{0,119}$",
+      "default": "haiku",
+      "description": "The Claude Code model, or alias, that answers a tool's ask inside the instance."
+    },
+    "host-tools": {
+      "type": ["object", "null"],
+      "description": "MCP tools that run a command you wrote on the host. The agent cannot change the command.",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9-]{0,39}$"},
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "description"],
+        "properties": {
+          "command": {"type": "string", "minLength": 1, "description": "Run through bash -c. A tilde expands."},
+          "description": {"type": "string", "minLength": 1, "description": "What the model is told the tool does."},
+          "timeout": {"type": "integer", "minimum": 0, "maximum": 600, "default": 60, "description": "Seconds the command may run. 0 is no limit."},
+          "min-interval": {"type": "integer", "minimum": 0, "maximum": 3600, "default": 10, "description": "Seconds between invocations. 0 is no limit."}
+        }
+      }
+    },
+    "delegate-max-turns": {"description": "Retired: has no effect, and may be deleted."},
+    "delegate-permission-mode": {"description": "Retired: has no effect, and may be deleted."},
+    "delegate-permission-modes": {"description": "Retired: has no effect, and may be deleted."},
+    "codex": {"description": "Retired: has no effect while it holds only sandbox-mode or sandbox-modes, and may be deleted."}
+  }
+}

@@ -122,6 +122,8 @@ Editors that run the YAML language server, such as VS Code, IntelliJ, Neovim and
 Add that line to a template you wrote by hand to get the same.
 isx itself ignores the line.
 
+The other YAML files have schemas too (see [Editor completion](CONFIGURATION.md#editor-completion)).
+
 | Field | What it does | Default |
 |-------|--------------|---------|
 | `image` | Base OS image, for root images only | `images:fedora/44` |

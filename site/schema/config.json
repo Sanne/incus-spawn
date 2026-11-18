@@ -1,0 +1,182 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://isx.run/schema/config.json",
+  "title": "incus-spawn config.yaml",
+  "description": "isx's host configuration, ~/.config/incus-spawn/config.yaml: credential accounts and global settings. isx init writes the credentials, so edit by hand only what the settings below describe. A tool may add a namespace of its own, so another top-level key is not an error.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "claude": {
+      "type": ["object", "null"],
+      "description": "Claude credentials. Accounts by name, and which one is the default.",
+      "properties": {
+        "accounts": {
+          "type": ["object", "null"],
+          "description": "Claude accounts by name. Each has a type, and the fields of that type.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "type": {"enum": ["api-key", "oauth", "vertex"], "description": "api-key is an Anthropic API key, oauth is a Claude Pro or Max token, vertex is Google Cloud Vertex AI."},
+              "apiKey": {"type": "string", "description": "The Anthropic API key, for type api-key."},
+              "oauthToken": {"type": "string", "description": "The token claude setup-token minted, for type oauth."},
+              "cloudMlRegion": {"type": "string", "description": "The Vertex AI region, for type vertex."},
+              "vertexProjectId": {"type": "string", "description": "The Google Cloud project, for type vertex."}
+            }
+          }
+        },
+        "default": {"type": "string", "description": "The account an instance uses unless its template or its own choice names another."}
+      }
+    },
+    "github": {"$ref": "#/definitions/namespace", "description": "GitHub credentials: accounts with a token and an email, and which is the default."},
+    "openai": {"$ref": "#/definitions/namespace", "description": "OpenAI credentials: accounts with an apiKey, and which is the default."},
+    "bob": {"$ref": "#/definitions/namespace", "description": "Bob credentials: accounts with an apiKey and licenseConsent, and which is the default."},
+    "features": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Feature flags to turn on. A tool that names a feature in its feature: key builds only when it is listed."
+    },
+    "searchPaths": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Directories to load templates and tools from, each with images/ and tools/ subdirectories. A tilde expands."
+    },
+    "host-path": {
+      "type": "string",
+      "description": "Retired: one host directory of checkouts. Read, and written as host-paths."
+    },
+    "host-paths": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "Host directories isx looks in for checkouts, with which it manages git remotes."
+    },
+    "repo-paths": {
+      "type": ["object", "null"],
+      "additionalProperties": {"type": "string"},
+      "description": "A host checkout for each repository, by name."
+    },
+    "incus-bridge-gateway": {
+      "type": "string",
+      "description": "The address of Incus's bridge, when isx cannot find it itself."
+    },
+    "tui-live-refresh": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the TUI updates live as instances change elsewhere. false falls back to polling."
+    },
+    "artifact-cache": {
+      "type": ["object", "null"],
+      "description": "How long the proxy trusts a cached Maven or Gradle artifact's last confirmation with upstream.",
+      "properties": {
+        "fresh": {"$ref": "#/definitions/duration", "description": "How long a confirmation is trusted before the artifact is confirmed again, such as 30m or 2h."},
+        "max-stale": {"$ref": "#/definitions/duration", "description": "How long past that the proxy serves a copy it cannot confirm, such as 7d."}
+      }
+    },
+    "git-cache": {
+      "type": ["object", "null"],
+      "description": "Limits of the cache of clean Git snapshots a build reads. 0 turns persistent retention off.",
+      "properties": {
+        "snapshot-max-mib": {"type": "integer", "minimum": 0, "default": 16384, "description": "The largest snapshot kept, in MiB."},
+        "max-age-days": {"type": "integer", "minimum": 0, "default": 7, "description": "How long an unused snapshot is kept, in days."}
+      }
+    },
+    "git-transfer": {
+      "type": ["object", "null"],
+      "description": "When a Git transfer on the host is ended. 0 turns a bound off.",
+      "properties": {
+        "stall": {"$ref": "#/definitions/duration", "description": "Ended after this long with no output, no I/O and next to no CPU. Default 5m."},
+        "timeout": {"$ref": "#/definitions/duration", "description": "Ended after this long in any case. Default 3h."}
+      }
+    },
+    "ready-timeouts": {
+      "type": ["object", "null"],
+      "description": "How long a start waits for something to answer before it fails.",
+      "properties": {
+        "proxy": {"$ref": "#/definitions/duration", "description": "The proxy after isx proxy install or start. Default 30s."},
+        "container": {"$ref": "#/definitions/duration", "description": "A container. Default 30s."},
+        "vm": {"$ref": "#/definitions/duration", "description": "A virtual machine. Default 2m."}
+      }
+    },
+    "host-routes": {
+      "type": ["object", "null"],
+      "description": "Names instances reach that the proxy forwards to a controller on this host. A name ends in .internal.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target": {"type": "string", "description": "Where the controller listens, on this host's loopback: localhost, a 127.x.x.x address or [::1], with a port."},
+          "templates": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "Required: only instances of these templates may call the route."}
+        }
+      }
+    },
+    "exposed-host-ports": {
+      "type": ["array", "null"],
+      "items": {"type": "integer", "minimum": 1, "maximum": 65535},
+      "description": "Loopback ports of this host that every instance with network reaches at host.isx.internal:<port>."
+    },
+    "maven-repositories": {
+      "type": ["array", "null"],
+      "description": "Maven repositories beyond the built-in ones whose artifacts the proxy caches.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {"type": "string", "description": "The repository, up to where the Maven coordinates begin."},
+          "access": {"enum": ["public", "private"], "description": "public, or private with the credentials namespace whose account isx injects there."},
+          "credentials": {"type": "string", "description": "The credential namespace isx injects, for a private repository."},
+          "confirm": {"enum": ["checksum-header", "sidecar"], "description": "How a cached copy is checked against upstream: checksum-header when the server sends X-Checksum-SHA1, sidecar when each artifact is published with its .sha1 and never replaced."},
+          "replaces-releases": {"type": "boolean", "description": "true when a release can be uploaded again with other content. The repository is then confirmed before every serve."},
+          "fresh": {"$ref": "#/definitions/duration", "description": "As in artifact-cache, for this repository alone. 0 by default."},
+          "max-stale": {"$ref": "#/definitions/duration", "description": "As in artifact-cache, for this repository alone. 0 by default."}
+        }
+      }
+    },
+    "maven-mirrors": {
+      "type": ["array", "null"],
+      "description": "Mirrors the proxy asks first for an artifact its cache does not hold.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "repository": {"type": "string", "description": "A repository the proxy caches: one of Maven Central's two names, the Gradle plugin portal, or a public one declared above."},
+          "mirror": {"type": "string", "description": "The mirror to ask first."}
+        }
+      }
+    },
+    "drivers": {
+      "type": ["object", "null"],
+      "description": "What an external tool that drives isx may do to the instances it owns, by the tool's name.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "destroy": {"type": "boolean", "default": false, "description": "Lets isx destroy --owner <name> delete the instances that tool owns."}
+        }
+      }
+    },
+    "host-ca": {
+      "type": ["object", "null"],
+      "description": "Whether the host's CA certificates are installed in instances.",
+      "additionalProperties": false,
+      "properties": {
+        "propagate": {"type": "boolean", "default": false, "description": "Install the certificates of the host's /etc/pki/ca-trust/source/anchors/ beside the isx CA in every instance."}
+      }
+    }
+  },
+  "definitions": {
+    "duration": {
+      "type": ["string", "integer"],
+      "description": "A duration such as 30s, 5m, 2h or 7d. 0 is none."
+    },
+    "namespace": {
+      "type": ["object", "null"],
+      "properties": {
+        "accounts": {
+          "type": ["object", "null"],
+          "description": "Accounts by name.",
+          "additionalProperties": {"type": ["object", "null"]}
+        },
+        "default": {"type": "string", "description": "The account an instance uses unless its template or its own choice names another."}
+      }
+    }
+  }
+}
