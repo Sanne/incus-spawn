@@ -805,7 +805,7 @@ The guest holds a proof, never the repository's credential: a private entry name
 Only a request that proved that namespace reaches the cache (`MitmProxy.privateRepositoryCredential`, after `authorize`); any other is relayed as it came, its own credential and all, and never cached.
 The cache sees only the one header the relay would have injected (`ArtifactCacheHandler.Credential`), never the request context, so it still cannot choose a credential.
 Copies live apart per credential, under `.private/<partition>/` in the Maven cache, the partition an HMAC of the namespace, header and value under an owner-only random key (`PrivatePartitions`), so two accounts never share a copy, a confirmation or a single-flight key, and a hashed weak password cannot be tested against a directory name.
-Every hit is confirmed first by a `HEAD` for the artifact itself carrying that credential, and served only on a `200` whose `X-Checksum-SHA1` matches.
+Every hit is confirmed first by a `HEAD` for the artifact itself carrying that credential, and served only on a `200` whose `X-Checksum-SHA1`, or for `etag-sha1` whose `ETag`, matches the copy.
 So upstream decides each serve: a revoked account is refused at once, and nothing is served while upstream cannot be asked, offline included.
 That is why a private entry must confirm by `checksum-header` or `etag-sha1`: a sidecar's answer shows that the credential may read the sidecar, not the artifact.
 A declared `checksum-header` or `etag-sha1` repository that answers an artifact without its header is named once in the proxy log, since its copies are then confirmed by sidecar or, where that is unsound, never cached.
