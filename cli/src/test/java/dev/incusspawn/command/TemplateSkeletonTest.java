@@ -47,7 +47,7 @@ class TemplateSkeletonTest {
     private static final Set<Field> INTERNAL = Set.of(field(ImageDef.HostResource.class, "confinedTo"));
 
     /** The first line of an example: a commented-out top-level key. Prose before it in its block stays a comment. */
-    private static final Pattern EXAMPLE_START = Pattern.compile("# [a-z][a-z0-9_-]*:( .*)?");
+    private static final Pattern EXAMPLE_START = Pattern.compile("# (?!yaml-language-server:)[a-z][a-z0-9_-]*:( .*)?");
 
     @Test
     void everyFieldTheParserReadsIsInTheSkeleton() {
@@ -69,6 +69,12 @@ class TemplateSkeletonTest {
         var result = TemplateValidator.validate(file, Map.of("tpl-minimal", new ImageDef()));
         assertEquals(List.of(), result.errors());
         assertFalse(ImageDef.parseFile(file).getRepos().isEmpty());
+    }
+
+    @Test
+    void theSkeletonStartsWithTheSchemaModelineEditorsRead() {
+        assertEquals("# yaml-language-server: $schema=https://isx.run/schema/template.json",
+                TemplatesCommand.SKELETON.lines().findFirst().orElseThrow());
     }
 
     @Test

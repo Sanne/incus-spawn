@@ -6,6 +6,11 @@
 /casts/*
   Content-Type: text/plain; charset=utf-8
 
+# The schemas editors fetch by URL: served as JSON Schema, readable from a browser-based editor too.
+/schema/*
+  Content-Type: application/schema+json; charset=utf-8
+  Access-Control-Allow-Origin: *
+
 # Versioned file names: a change ships under a new name, so browsers may keep these.
 # style.css and copy.js are linked as <name>?v=<content hash> (build.sh), so they count as versioned too.
 /style.css

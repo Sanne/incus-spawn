@@ -1,0 +1,285 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://isx.run/schema/template.json",
+  "title": "incus-spawn template",
+  "description": "A template definition for isx: one YAML file in ~/.config/incus-spawn/images/ or .incus-spawn/images/. Only name is required.",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Unique template name, conventionally prefixed with tpl-."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description, shown in the TUI and by isx templates list."
+    },
+    "parent": {
+      "type": "string",
+      "description": "Parent template to inherit from. Packages, tools and repos are additive. Omit for a root image."
+    },
+    "type": {
+      "enum": ["container", "vm", "kvm"],
+      "description": "Instance type: container (default), vm, or kvm (a container that branches get /dev/kvm passed into). Inherits the parent's type when omitted."
+    },
+    "image": {
+      "type": "string",
+      "default": "images:fedora/44",
+      "description": "Base image, for a root template only. An Incus image, or the alias an image_url download is stored under."
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Container image tarball to download instead of an Incus image. {arch} and {tag} are filled in; file:// is accepted for a locally built image."
+    },
+    "image_tag": {
+      "type": ["string", "number"],
+      "description": "Release tag that replaces {tag} in image_url."
+    },
+    "image_sha256": {
+      "$ref": "#/definitions/perArch",
+      "description": "SHA256 of the image_url download, per architecture."
+    },
+    "vm_image_url": {
+      "type": "string",
+      "description": "VM image tarball to download, used when type is vm. {arch} and {tag} are filled in."
+    },
+    "vm_image_sha256": {
+      "$ref": "#/definitions/perArch",
+      "description": "SHA256 of the vm_image_url download, per architecture."
+    },
+    "pinned": {
+      "type": "boolean",
+      "description": "Keep image_tag instead of tracking the newest release."
+    },
+    "package_repos": {
+      "type": ["array", "null"],
+      "description": "Extra package repositories to enable before installing packages.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "copr",
+            "description": "The repository kind. copr is the only one."
+          },
+          "name": {
+            "type": "string",
+            "description": "The repository to enable, as owner/project."
+          }
+        }
+      }
+    },
+    "packages": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "System packages to install with dnf."
+    },
+    "remove_packages": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "System packages to remove with dnf, before packages are installed."
+    },
+    "mask_services": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "description": "systemd units to mask in the image."
+    },
+    "tools": {
+      "type": ["array", "null"],
+      "description": "Tools to set up. Run isx tools list for the available ones.",
+      "items": {
+        "oneOf": [
+          {"type": "string", "description": "A tool without parameters."},
+          {
+            "type": "object",
+            "description": "A tool with parameters: a single key, the tool's name.",
+            "minProperties": 1,
+            "maxProperties": 1,
+            "additionalProperties": {
+              "oneOf": [
+                {"type": "null"},
+                {
+                  "type": "object",
+                  "description": "The tool's parameters, each its own.",
+                  "additionalProperties": {"type": ["string", "number", "boolean"]}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "repos": {
+      "type": ["array", "null"],
+      "description": "Git repositories to clone as agentuser.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Clone URL (HTTPS)."
+          },
+          "host-source": {
+            "type": "string",
+            "description": "A repository on the host, instead of url: its local branches and tags, including unpushed work. Trusted templates only; no depth."
+          },
+          "path": {
+            "type": "string",
+            "description": "Where to clone it. Defaults to ~/<repo name>."
+          },
+          "branch": {
+            "type": ["string", "number"],
+            "description": "Branch or tag to check out. Defaults to the repository's default branch."
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Keep only this many commits, on this branch only. Omit for all history."
+          },
+          "prime": {
+            "oneOf": [
+              {"type": "string"},
+              {"type": ["array", "null"], "items": {"type": "string"}}
+            ],
+            "description": "Command, or a list of them, run in the clone once cloned. Each stops the rest when it fails."
+          }
+        }
+      }
+    },
+    "skills": {
+      "description": "Agent skills to bake into the image.",
+      "oneOf": [
+        {
+          "type": ["array", "null"],
+          "items": {"type": "string"},
+          "description": "Skill sources: owner/repo@skill, owner/repo or ./local-path."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "Catalog that bare skill names are resolved in."
+            },
+            "list": {
+              "type": ["array", "null"],
+              "items": {"type": "string"},
+              "description": "owner/repo@skill, owner/repo, ./local-path or a bare name."
+            }
+          }
+        }
+      ]
+    },
+    "host-resources": {
+      "type": ["array", "null"],
+      "description": "Host files and directories to share with instances.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source"],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Host path, or a URL with mode copy."
+          },
+          "path": {
+            "type": "string",
+            "description": "Path in the instance. Defaults to the same path under /home/agentuser."
+          },
+          "mode": {
+            "enum": ["readonly", "overlay", "copy"],
+            "default": "readonly",
+            "description": "readonly (default), overlay or copy."
+          }
+        }
+      }
+    },
+    "env": {
+      "type": ["array", "null"],
+      "description": "Environment variables, written to /etc/profile.d/isx-env.sh.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$",
+            "description": "Variable name."
+          },
+          "value": {
+            "type": ["string", "number", "boolean"],
+            "description": "Its value."
+          },
+          "strategy": {
+            "enum": ["set", "set-if-unset", "prepend", "append"],
+            "default": "set",
+            "description": "How the value joins the variable: set (default), set-if-unset, prepend or append."
+          },
+          "separator": {
+            "type": "string",
+            "default": " ",
+            "description": "Between the value and the existing one, for prepend and append."
+          }
+        }
+      }
+    },
+    "accounts": {
+      "type": ["object", "null"],
+      "additionalProperties": {"type": "string"},
+      "description": "Credential account per namespace, such as claude: work, overriding that namespace's default in config.yaml."
+    },
+    "gui": {
+      "type": "boolean",
+      "description": "GUI passthrough by default for container branches in a Wayland session. Never for a project-local template; isx branch --no-gui opts out."
+    },
+    "coordinator": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Branches are coordinators that drive isx over MCP. Ignored in a project-local template.",
+      "properties": {
+        "isx-control-capability": {
+          "type": "boolean",
+          "description": "Whether branches are coordinators. On by default exactly when control-over lists any."
+        },
+        "control-over": {
+          "type": ["array", "null"],
+          "items": {"type": "string"},
+          "description": "The templates a branch may control, of those mcp.yaml approves."
+        }
+      }
+    },
+    "workdir": {
+      "type": "string",
+      "description": "Directory a shell starts in. Inherited from the parent, else the first repo."
+    },
+    "shell-command": {
+      "type": "string",
+      "description": "Command to run instead of the login shell."
+    },
+    "default-action": {
+      "type": "string",
+      "description": "Tool action that Enter in the TUI and isx run start: a tool, or tool:action-id, or - for a shell instead of the parent's."
+    },
+    "agent_note": {
+      "type": "string",
+      "description": "An always-true fact an agent must know before acting. It costs tokens in every session, so add one only when leaving it out would cause a wrong action."
+    },
+    "deprecated": {
+      "type": ["boolean", "string"],
+      "description": "Marks the template as on its way out: true, or what to use instead. It still builds, but builds of it and of its children warn."
+    }
+  },
+  "definitions": {
+    "perArch": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "x86_64": {"type": ["string", "integer"]},
+        "aarch64": {"type": ["string", "integer"]}
+      }
+    }
+  }
+}

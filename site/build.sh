@@ -37,6 +37,10 @@ for c in "$SCRIPT_DIR"/demo/*-web.cast; do
   cp "$c" "$OUT_DIR/casts/$(basename "$c" -web.cast).cast"
 done
 
+# The JSON Schemas editors read for isx's YAML files, at stable addresses (design/templates.md "A schema for editors")
+mkdir -p "$OUT_DIR/schema"
+cp "$SCRIPT_DIR"/schema/*.json "$OUT_DIR/schema/"
+
 # The docs pages: README.md at /docs, every docs/*.md at /docs/<name>, with the sitemap and
 # llms-full.txt that list them (site/render.js)
 MARKED=$(mktemp -d)

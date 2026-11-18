@@ -929,6 +929,7 @@ public class TemplatesCommand extends BaseCommand {
     }
 
     static final String SKELETON = """
+            # yaml-language-server: $schema=https://isx.run/schema/template.json
             # Template definition for incus-spawn: every field isx reads, one note each.
             # Only 'name' is required; uncomment what you need.
 

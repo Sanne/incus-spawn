@@ -115,6 +115,13 @@ See the built-in [`minimal.yaml`](../common/src/main/resources/images/minimal.ya
 All fields are optional except `name`.
 `isx templates new` writes them all into the new file, commented out.
 
+### Editor completion
+
+The first line of a new template names a JSON Schema, `# yaml-language-server: $schema=https://isx.run/schema/template.json`.
+Editors that run the YAML language server, such as VS Code, IntelliJ, Neovim and Helix, then complete the keys, show what each one does and underline a misspelled key.
+Add that line to a template you wrote by hand to get the same.
+isx itself ignores the line.
+
 | Field | What it does | Default |
 |-------|--------------|---------|
 | `image` | Base OS image, for root images only | `images:fedora/44` |
