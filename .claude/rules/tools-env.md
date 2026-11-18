@@ -72,6 +72,9 @@ Tools can declare `skills:` themselves (same `SkillsDef` shape as images, expose
 Bare skill names in a tool resolve against the **tool's** `skills.repo`, not the image's.
 Tools the layer only *reconfigures* are skipped.
 An ancestor installed them, so their skills are already in the image, and re-fetching would make a parameter-only rebuild depend on the skill source still being reachable -- the same reason `collectEffectiveSkills` subtracts ancestor skills.
+A `skills` block with `ref` (a tag), `commit` (the commit it names) and `path` reads its bare names at that commit, each as its whole directory, through `PinnedSkills` (#2354, design/templates.md "A tool's own skills are pinned to its release").
+Every file is read at the commit and checked against its tree's blob ID, a moved tag fails, and the cache is keyed by commit; a re-pin `rm -rf`s the old directory before `filePushRecursive`.
+`SkillsDefConverter.pinProblem` refuses a `ref` without its full `commit`, and the pin is fingerprinted only when set.
 Both fields are opt-in and most built-ins declare neither; `mvnd` carries a note because the bare name gives an agent no reason to prefer it over `mvn`, while `zmx`/`starship` need nothing.
 Don't restate the tool's `description`, and don't list what's installed -- the generated file already does that.
 Notes are best written reactively, after observing an agent get something wrong; speculative ones tend to spend context on advice nobody needed.

@@ -20,6 +20,7 @@ A `file://` base image URL in a project-local template gets the same check (`Hos
 Project-local templates get no host repo references and are skipped by `HostRepoRefresh.collectAllRepos()`.
 Their `image_url` may only replace an image their own project imported (`incus-spawn.project` image stamp; trusted builds refuse or re-import project-stamped images, `BuildCommand.requireImageTrustedFor`).
 Project-local tools cannot declare `proxy:` (`ToolProxyResolver.rejectProjectLocalProxy()`).
+A local skill source (`./dir`, `/dir`) of a project-local template or tool is resolved against the project and confined to it on real paths, symlinks included, at build (`HostResourceSetup.confinedSkillSource`, `SkillInstaller.ProjectTools`, #2354).
 Any new capability that reaches host state outside the project, such as host paths, host-only sources, or credentials, needs the same gate.
 Host routes (#936) are one: only `config.yaml`'s `host-routes:` declares them, and a project-local instance never passes one.
 `coordinator:` (#1812) is another: a project-local definition's is ignored with a warning at load and in `TemplateValidator`, makes no coordinator by default, and gives a coordinator no scope (`McpScope`).

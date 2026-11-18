@@ -111,6 +111,7 @@ It then runs as root in root's own environment (`HOME=/root`, the default `PATH`
 `agent_note` is explained in [Agent Environment Context](AGENTS.md#agent-environment-context).
 
 `skills` takes the same forms as the image-level field, but bare names resolve against this tool's own `skills.repo`.
+A tool that ships its own skills pins them to the release its binary comes from, with `ref`, `commit` and `path`, as [Agent Skills](AGENTS.md#agent-skills) shows.
 
 isx ignores a key it does not know, at the top level of a tool file or inside one of its entries, with a warning when the tool loads.
 The warning names where the key is (`downloads[0].sha265`) and the key you probably meant.
