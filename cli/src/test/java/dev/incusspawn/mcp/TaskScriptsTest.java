@@ -2207,8 +2207,7 @@ class TaskScriptsTest {
         Files.writeString(d.resolve("cwd"), cwd + "\n");
         // claude --resume fix opens the picker on "fix", from where this task's conversation can be picked.
         for (var args : List.of("--resume fix", "--resume=")) {
-            var pb = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'while read -r line; do :; done' " + args)
-                    .directory(work.toFile());
+            var pb = sighupEnds("exec -a claude bash -c 'while read -r line; do :; done' " + args).directory(work.toFile());
             pb.environment().remove(TaskScripts.TASK_ENV);
             var person = pb.start();
             try {
@@ -2239,7 +2238,7 @@ class TaskScriptsTest {
         claudeTranscript();
         Files.writeString(d.resolve("cwd"), cwd + "\n");
         // A person's claude in the task's directory, on a conversation of their own.
-        var pb = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'while read -r line; do :; done' --resume 0b7d1e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d")
+        var pb = sighupEnds("exec -a claude bash -c 'while read -r line; do :; done' --resume 0b7d1e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d")
                 .directory(work.toFile());
         pb.environment().remove(TaskScripts.TASK_ENV);
         var other = pb.start();
@@ -2396,6 +2395,35 @@ class TaskScriptsTest {
 
     private record Joined(int exit, String stderr) {}
 
+    /**
+     * {@code command} in bash, with SIGHUP back at its default, as a guest process started by
+     * {@code incus exec} has it. A test run under {@code nohup} would otherwise hand its ignore down,
+     * and a non-interactive shell cannot undo a signal ignored when it started, so a stand-in agent
+     * would outlive a reclaim's SIGHUP (#2338). {@code env} execs, so the process keeps its pid.
+     * An {@code env} without {@code --default-signal} (before GNU coreutils 8.31, or busybox) starts
+     * plain bash instead, so every test using it still runs there.
+     */
+    private static ProcessBuilder sighupEnds(String command) {
+        return RESET_SIGHUP
+                ? new ProcessBuilder("env", "--default-signal=HUP", "bash", "-c", command)
+                : new ProcessBuilder("bash", "-c", command);
+    }
+
+    private static final boolean RESET_SIGHUP = canResetSighup();
+
+    /** Whether this {@code env} has {@code --default-signal}, as {@code BuildInterruptTest} asks for SIGINT. */
+    private static boolean canResetSighup() {
+        try {
+            return new ProcessBuilder("env", "--default-signal=HUP", "true").redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD).start().waitFor() == 0;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
     /** {@code command} as a person's {@code isx shell} runs it, with no terminal and nothing on stdin. */
     private Process start(String command) throws IOException {
         return start(command, Map.of());
@@ -2403,7 +2431,7 @@ class TaskScriptsTest {
 
     /** {@link #start}, with {@code env} set after the defaults are cleared. */
     private Process start(String command, Map<String, String> env) throws IOException {
-        var pb = new ProcessBuilder("bash", "-c", command).directory(home.toFile());
+        var pb = sighupEnds(command).directory(home.toFile());
         pb.environment().put("HOME", home.toString());
         pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
         pb.environment().remove(TaskScripts.TASK_ENV);
