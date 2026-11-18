@@ -129,6 +129,10 @@ Why not the alternatives:
 `macos-keychain-trust.yml` builds the native CLI on macOS weekly and on a change to this code, and `release.yml` smoke-tests each released macOS binary, through `isx doctor --format=json`.
 MDM-delivered CAs cannot be reproduced on a runner, since a configuration profile cannot be installed headless.
 Each check uses a CA of its own and never changes or removes a trust setting: on a runner that waited for an authorization nobody gives (#1515), as user-domain trust always does, so the user domain is left out of the checks too; `MacKeychainTrustTest` covers its denies with plists on every platform.
+The case that found #1552 is covered on both sides (#1631).
+On every platform, `MacKeychainTrustTest` denies Sectigo's real self-signed Root E46 in a user-domain plist and refuses its real copy cross-signed by USERTrust ECC; the certificates come from crt.sh, and `macos-trust-settings/sectigo-e46/README.md` says how they were checked.
+On the runner, `KeychainTrustMacTest` denies a test root admin-wide and refuses a handshake through its copy cross-signed by another trusted test root.
+Neither reads a user-domain deny from a real Keychain, nor shows a native binary refusing a handshake.
 
 **Redirect rule cleanup:** `isx proxy uninstall` removes the systemd service **and** cleans up the PREROUTING redirect rule and bridge DNS overrides unconditionally — even if the service removal itself fails.
 `ProxyConfig.clearRedirectRules()` attempts both firewalld and UFW independently (not else-if) so that a system with firewalld installed but inactive still reaches UFW cleanup.
