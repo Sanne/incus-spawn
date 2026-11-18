@@ -22,11 +22,11 @@ set -euo pipefail
 #
 # Requirements: build-essential flex bison bc libelf-dev libssl-dev
 
-KERNEL_VERSION="7.3.4"
+KERNEL_VERSION="7.3.5"
 # sha256 of linux-${KERNEL_VERSION}.tar.xz, taken from kernel.org's signed
 # sha256sums.asc (https://cdn.kernel.org/pub/linux/kernel/v<major>.x/), never
 # from a build log. A version bump updates both lines.
-KERNEL_SHA256="b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f"
+KERNEL_SHA256="8f293f83d54f0b7b9be56863ebc5e4ea79d73e530b4ae55c572be97ef39f0990"
 KERNEL_MAJOR="${KERNEL_VERSION%%.*}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
