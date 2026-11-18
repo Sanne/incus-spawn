@@ -57,7 +57,7 @@ class TemplateSkeletonTest {
         // Fields bound by a converter name their entries' keys there, not in Java fields.
         absent(keys(new EnvEntryListConverter().toJqValue(List.of(EnvEntry.set("A", "b")))),
                 keys(tree.asMap().get("env"))).forEach(key -> missing.add("env." + key));
-        absent(keys(new SkillsDefConverter().toJqValue(new ImageDef.SkillsDef("r", List.of()))),
+        absent(keys(new SkillsDefConverter().toJqValue(new ImageDef.SkillsDef("r", List.of(), "t", "c", "p"))),
                 keys(tree.asMap().get("skills"))).forEach(key -> missing.add("skills." + key));
         assertEquals(List.of(), missing, "fields the parser reads that the new-template skeleton does not show");
     }

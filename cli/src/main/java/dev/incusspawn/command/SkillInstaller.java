@@ -4,9 +4,11 @@ import dev.incusspawn.config.Jjq;
 import dev.incusspawn.Environment;
 import dev.incusspawn.command.BuildCommand.BuildFailedException;
 import dev.incusspawn.command.BuildTools.ResolvedTool;
+import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.tool.PinnedSkills;
 import dev.incusspawn.util.SystemTrust;
 
 import java.io.IOException;
@@ -18,9 +20,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /** Installs the agent skills a template and its tools declare, fetched on the host. */
@@ -38,18 +43,42 @@ final class SkillInstaller {
 
     /**
      * Install agent skills declared in the image definition.
-     * Fetches SKILL.md files on the host and writes them directly into the container.
+     * Fetches skills on the host and writes them directly into the container.
      * Deduplicates against skills already declared by ancestor images.
+     * {@code projectTools} has no default: a caller that left it out would read a project-local
+     * tool's local skill source from anywhere on the host.
      */
     static void installSkills(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
-                       List<ResolvedTool> tools) {
+                       List<ResolvedTool> tools, ProjectTools projectTools) {
+        installSkills(container, imageDef, defs, tools, projectTools, new PinnedSkills());
+    }
+
+    /** The project-local tools of a build ({@code .incus-spawn/tools/}) and the project they come from. */
+    record ProjectTools(Set<String> names, Path root) {
+        static final ProjectTools NONE = new ProjectTools(Set.of(), null);
+
+        static ProjectTools of(dev.incusspawn.tool.ToolDefLoader loader) {
+            var root = loader.projectRoot();
+            return root == null ? NONE : new ProjectTools(loader.projectLocalToolNames(), root);
+        }
+    }
+
+    static void installSkills(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
+                       List<ResolvedTool> tools, ProjectTools projectTools, PinnedSkills pinnedSkills) {
         // A skill can be declared by the image or by a tool it installs. Tools carry the
         // procedures that drive them, so the skill travels with the tool into every
         // template using it. Dedupe: two sources can name the same skill.
         var resolvedSet = new LinkedHashSet<String>();
+        // A pinned pack's bare names, or ALL for every skill under its path (#2354).
+        var packs = new LinkedHashMap<PinnedSkills.Pack, LinkedHashSet<String>>();
+        var imageSkills = imageDef.getSkills();
         for (var entry : collectEffectiveSkills(imageDef, defs)) {
-            resolvedSet.add(resolveSkillOrFail(entry, imageDef.getSkills().getRepo(),
-                    "image definition"));
+            if (imageSkills.isPinned() && isBare(entry)) {
+                packs.computeIfAbsent(pack(imageSkills), k -> new LinkedHashSet<>()).add(entry);
+            } else {
+                resolvedSet.add(resolveSkillOrFail(confinedToProject(imageDef, entry),
+                        imageSkills.getRepo(), "image definition"));
+            }
         }
         for (var tool : tools) {
             // A reconfigureOnly tool was installed by an ancestor, so its skills came with
@@ -59,15 +88,19 @@ final class SkillInstaller {
             // reachable. This mirrors collectEffectiveSkills subtracting ancestor skills.
             if (tool.reconfigureOnly()) continue;
             var toolSkills = tool.setup().skills();
-            for (var entry : toolSkills.getList()) {
-                resolvedSet.add(resolveSkillOrFail(entry, toolSkills.getRepo(),
-                        "tool '" + tool.name() + "'"));
+            for (var entry : declared(toolSkills)) {
+                if (toolSkills.isPinned() && isBare(entry)) {
+                    packs.computeIfAbsent(pack(toolSkills), k -> new LinkedHashSet<>()).add(entry);
+                } else {
+                    resolvedSet.add(resolveSkillOrFail(confinedToProject(tool.name(), projectTools, entry),
+                            toolSkills.getRepo(), "tool '" + tool.name() + "'"));
+                }
             }
         }
-        if (resolvedSet.isEmpty()) return;
+        if (resolvedSet.isEmpty() && packs.isEmpty()) return;
         var resolvedNames = new ArrayList<>(resolvedSet);
 
-        try (var skillsGroup = BuildOutput.group("Skills", resolvedNames.size() + " to install")) {
+        try (var skillsGroup = BuildOutput.group("Skills", (resolvedNames.size() + packs.size()) + " to install")) {
 
             var http = SystemTrust.httpClient().connectTimeout(Duration.ofSeconds(10))
                     .followRedirects(HttpClient.Redirect.NORMAL).build();
@@ -81,7 +114,8 @@ final class SkillInstaller {
                     var skills = fetchSkills(resolved, http, cache);
                     for (var skill : skills) {
                         var skillDir = SKILLS_DIR + "/" + skill.name();
-                        container.exec("mkdir", "-p", skillDir);
+                        // Replace the directory, so no file of a parent's pinned release is left beside this SKILL.md.
+                        container.exec("sh", "-c", "rm -rf -- \"$1\" && mkdir -p -- \"$1\"", "sh", skillDir);
                         container.writeFile(skillDir + "/SKILL.md", skill.content());
                     }
                     BuildOutput.stepDone();
@@ -92,6 +126,12 @@ final class SkillInstaller {
                     throw new BuildFailedException();
                 }
             }
+
+            // Pinned packs go last: each skill replaces whatever an unpinned source wrote under its name.
+            var installedFrom = new LinkedHashMap<String, PinnedSkills.Pack>();
+            for (var pack : packs.entrySet()) {
+                installPack(container, pack.getKey(), pack.getValue(), installedFrom, pinnedSkills, http);
+            }
         }
         // Fix ownership so agentuser owns the agents / skills directories
         container.exec("chown", "-R", "agentuser:agentuser", AGENTS_DIR);
@@ -100,6 +140,111 @@ final class SkillInstaller {
         container.sh("[ ! -d /home/agentuser/.claude ] || [ -L /home/agentuser/.claude/skills ]"
                 + " || { rm -rf /home/agentuser/.claude/skills"
                 + " && ln -sfn " + SKILLS_DIR + " /home/agentuser/.claude/skills; }");
+    }
+
+    /** The name a pinned pack's empty {@code list} stands for: every skill under its path. */
+    private static final String ALL = "";
+
+    private static PinnedSkills.Pack pack(ImageDef.SkillsDef skills) {
+        return new PinnedSkills.Pack(skills.getRepo(), skills.getRef(), skills.getCommit(), skills.getPath());
+    }
+
+    /** A pack's entries: its list, or {@link #ALL} for a pinned pack that names none. */
+    private static List<String> declared(ImageDef.SkillsDef skills) {
+        return skills.isPinned() && skills.getList().isEmpty() ? List.of(ALL) : skills.getList();
+    }
+
+    /** Whether an entry is a bare skill name, which resolves against its pack's {@code repo}. */
+    private static boolean isBare(String entry) {
+        return !entry.contains("://") && !entry.startsWith(".") && !entry.startsWith("/") && !entry.contains("/");
+    }
+
+    /** What makes two declarations the same skill: a pinned bare name is its pack's commit and path too. */
+    private static String identity(ImageDef.SkillsDef skills, String entry) {
+        if (!skills.isPinned() || !isBare(entry)) return entry;
+        return "pinned:" + skills.getRepo() + "@" + skills.getCommit() + "/"
+                + (skills.getPath() == null ? "" : skills.getPath()) + ":" + entry;
+    }
+
+    /**
+     * Installs each skill of a pinned pack as its whole directory, after removing what an
+     * earlier pin left there, so a file the new release dropped does not linger.
+     */
+    private static void installPack(Container container, PinnedSkills.Pack pack, Set<String> names,
+            Map<String, PinnedSkills.Pack> installedFrom, PinnedSkills pinnedSkills, HttpClient http) {
+        BuildOutput.stepStart(pack.describe());
+        Map<String, Path> fetched;
+        try {
+            fetched = pinnedSkills.fetch(pack, names.contains(ALL) ? List.of() : names, http);
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            BuildOutput.stepBreak();
+            BuildOutput.error("could not fetch skills from " + pack.describe() + ": " + BaseCommand.failure(e));
+            throw new BuildFailedException();
+        }
+        // A name merged with an install-everything declaration of the same pack is still required.
+        for (var name : names) {
+            if (!name.equals(ALL) && !fetched.containsKey(name)) {
+                BuildOutput.stepBreak();
+                BuildOutput.error("could not fetch skill '" + name + "' from " + pack.describe()
+                        + ": no " + name + "/SKILL.md at commit " + pack.commit());
+                throw new BuildFailedException();
+            }
+        }
+        var toPush = new LinkedHashMap<String, Path>();
+        for (var skill : fetched.entrySet()) {
+            var earlier = installedFrom.putIfAbsent(skill.getKey(), pack);
+            if (earlier != null) {
+                if (sameContent(earlier, pack)) continue;
+                BuildOutput.stepBreak();
+                BuildOutput.error("skill '" + skill.getKey() + "' is declared from both " + earlier.describe()
+                        + " (" + earlier.commit() + ") and " + pack.describe() + " (" + pack.commit() + ")",
+                        "Pin both declarations to the same release, or drop one.");
+                throw new BuildFailedException();
+            }
+            toPush.put(SKILLS_DIR + "/" + skill.getKey(), skill.getValue());
+        }
+        if (!toPush.isEmpty()) {
+            // One exec removes every directory an earlier pin left, rather than one per skill.
+            var rm = new ArrayList<String>(List.of("rm", "-rf", "--"));
+            rm.addAll(toPush.keySet());
+            container.exec(rm.toArray(String[]::new)).assertSuccess("Failed to replace skills in " + SKILLS_DIR);
+            for (var dir : toPush.values()) container.filePushRecursive(dir.toString(), SKILLS_DIR);
+        }
+        BuildOutput.stepDone(String.join(", ", fetched.keySet()));
+    }
+
+    private static boolean sameContent(PinnedSkills.Pack a, PinnedSkills.Pack b) {
+        return a.repo().equals(b.repo()) && a.commit().equals(b.commit()) && a.path().equals(b.path());
+    }
+
+    /**
+     * A local skill source of a project-local template, as a real path inside its project (#2354):
+     * a cloned repository must not copy the host's files into a container, as for host-resources.
+     */
+    private static String confinedToProject(ImageDef def, String entry) {
+        if (def.getProjectRoot() == null || !isLocal(entry)) return entry;
+        try {
+            return HostResourceSetup.confinedSkillSource(def, entry);
+        } catch (HostResourceSetup.HostPathOutsideProjectException e) {
+            BuildOutput.error(e.getMessage());
+            throw new BuildFailedException();
+        }
+    }
+
+    /** The same for a project-local tool's local skill source: a cloned repository ships it too. */
+    private static String confinedToProject(String tool, ProjectTools projectTools, String entry) {
+        if (!projectTools.names().contains(tool) || !isLocal(entry)) return entry;
+        try {
+            return HostResourceSetup.confinedSkillSource(tool, projectTools.root(), entry);
+        } catch (HostResourceSetup.HostPathOutsideProjectException e) {
+            BuildOutput.error(e.getMessage());
+            throw new BuildFailedException();
+        }
+    }
+
+    private static boolean isLocal(String entry) {
+        return entry.startsWith("./") || entry.startsWith("/");
     }
 
     /** A fetched skill ready to be written into the container. */
@@ -120,7 +265,7 @@ final class SkillInstaller {
             dev.incusspawn.tool.SkillsCache cache)
             throws IOException, InterruptedException {
         // Local path
-        if (source.startsWith("./") || source.startsWith("/")) {
+        if (isLocal(source)) {
             return fetchLocalSkills(Path.of(source));
         }
 
@@ -203,16 +348,24 @@ final class SkillInstaller {
 
     /**
      * Collect skills declared in this image, minus any already declared by ancestor images.
+     * A pinned bare name counts as already declared only at the same commit and path, so a
+     * child that re-pins a skill installs the new release.
      */
     static List<String> collectEffectiveSkills(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var skills = new LinkedHashSet<>(imageDef.getSkills().getList());
-        if (skills.isEmpty()) return List.of();
+        var own = imageDef.getSkills();
+        var entries = declared(own);
+        if (entries.isEmpty()) return List.of();
 
-        var ancestorSkills = new LinkedHashSet<String>();
+        var ancestorSkills = new HashSet<String>();
         for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            ancestorSkills.addAll(ancestor.getSkills().getList());
+            for (var entry : declared(ancestor.getSkills())) {
+                ancestorSkills.add(identity(ancestor.getSkills(), entry));
+            }
         }
-        skills.removeAll(ancestorSkills);
+        var skills = new LinkedHashSet<String>();
+        for (var entry : entries) {
+            if (!ancestorSkills.contains(identity(own, entry))) skills.add(entry);
+        }
         return new ArrayList<>(skills);
     }
 

@@ -231,6 +231,44 @@ public final class HostResourceSetup {
         if (escape != null) throw outsideProject(def, "base image '" + resolved + "'", escape);
     }
 
+    /**
+     * A project-local template's local skill source ({@code ./dir} or {@code /dir}) as the real path
+     * it reads, resolved against its project and confined to it (#2354). The host reads every
+     * {@code SKILL.md} below, so a symlink anywhere in it must stay inside the project too.
+     */
+    public static String confinedSkillSource(ImageDef def, String source) {
+        if (def.getProjectRoot() == null) return source;
+        var root = realPath(def.getProjectRoot());
+        var escape = skillSourceEscape(root, source);
+        if (escape != null) throw outsideProject(def, "skill source '" + source + "'", escape);
+        return realPathOfExistingPrefix(root.resolve(source).normalize(), new int[1]).toString();
+    }
+
+    /**
+     * {@link #confinedSkillSource(ImageDef, String)} for a project-local tool ({@code .incus-spawn/tools/}),
+     * which is as untrusted as a project-local template: {@code projectRoot} is its project.
+     */
+    public static String confinedSkillSource(String tool, Path projectRoot, String source) {
+        var root = realPath(projectRoot);
+        var escape = skillSourceEscape(root, source);
+        if (escape != null) {
+            throw new HostPathOutsideProjectException("Tool '" + shown(tool) + "' is project-local,\n"
+                    + "  so the host paths it uses must stay inside the project directory " + shown(root) + ",\n"
+                    + "  but skill source '" + shown(source) + "' " + shown(escape) + ".\n"
+                    + "  A cloned repository must not be able to copy your files into a container.\n"
+                    + "  If you trust this tool, move it to ~/.config/incus-spawn/tools/ or a configured search path.");
+        }
+        return realPathOfExistingPrefix(root.resolve(source).normalize(), new int[1]).toString();
+    }
+
+    /** Why {@code source}, resolved against the real path {@code root}, reads outside it, or null. */
+    private static String skillSourceEscape(Path root, String source) {
+        var resolved = root.resolve(source).normalize();
+        var escape = findEscape(resolved, root, "copy");
+        if (escape != null) return escape;
+        return realPathOfExistingPrefix(resolved, new int[1]) == null ? UNRESOLVABLE : null;
+    }
+
     public static HostPathOutsideProjectException outsideProject(ImageDef def, String what, String escape) {
         return new HostPathOutsideProjectException("Template '" + shown(def.getName()) + "' is project-local ("
                 + shown(def.getSource()) + "),\n"

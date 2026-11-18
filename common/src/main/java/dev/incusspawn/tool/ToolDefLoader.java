@@ -178,6 +178,13 @@ public class ToolDefLoader {
         return source != null ? source : "built-in";
     }
 
+    /** The project whose {@code .incus-spawn/tools/} this loader reads, or null when it reads none. */
+    public Path projectRoot() {
+        if (projectToolsDir == null) return null;
+        var parent = projectToolsDir.toAbsolutePath().normalize().getParent();
+        return parent == null ? null : parent.getParent();
+    }
+
     /**
      * Return the names of tools whose resolved definition came from the project-local directory.
      * These tools are CWD-dependent and invisible to the proxy daemon.

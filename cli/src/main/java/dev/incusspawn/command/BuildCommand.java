@@ -1551,7 +1551,8 @@ public class BuildCommand extends BaseCommand {
         bindInstalledRuntimes(container);
         maskServices(container, imageDef);
         // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
-        installSkills(container, imageDef, defs, toolResolution.effective());
+        installSkills(container, imageDef, defs, toolResolution.effective(),
+                SkillInstaller.ProjectTools.of(toolDefLoader));
         cloneRepos(container, imageDef, defs, machineType);
         // After the repos' prime commands, which may download a runtime (a Gradle toolchain into
         // ~/.gradle/jdks); the parent's path units do not settle in time before the stop.
@@ -1797,6 +1798,7 @@ public class BuildCommand extends BaseCommand {
         var chain = ImageDef.chain(imageDef, defs);
 
         var allTools = new ArrayList<ResolvedTool>();
+        var projectTools = SkillInstaller.ProjectTools.of(toolDefLoader);
         for (var layer : chain) {
             if (chain.size() > 1) {
                 BuildOutput.note("Applying layer: " + layer.getName());
@@ -1810,7 +1812,7 @@ public class BuildCommand extends BaseCommand {
             writeEnvFile(container, imageDef, defs, allTools, canonicalName);
             runToolSetup(container, toolResolution, ImageDef.resolveAccounts(imageDef, defs));
             maskServices(container, layer);
-            installSkills(container, layer, defs, toolResolution.effective());
+            installSkills(container, layer, defs, toolResolution.effective(), projectTools);
             // Before the layer's primes, which may use a JDK its tools just installed, run
             // isx-trust themselves, or need it run again (RepoCloner.runPrime).
             if (layer.getRepos().stream().anyMatch(ImageDef.RepoEntry::hasPrime)) {

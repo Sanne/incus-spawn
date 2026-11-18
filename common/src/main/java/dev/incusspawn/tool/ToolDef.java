@@ -542,6 +542,7 @@ public class ToolDef extends FingerprintCache {
         }
         if (skills.getRepo() != null) sb.append("skills-repo=").append(skills.getRepo()).append('\n');
         skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
+        skills.appendPin(sb);
         // Registered with every agent in the image, so a changed entry is a changed image
         for (var m : mcp) {
             sb.append("mcp=").append(m.name).append(',').append(m.description).append(',')
