@@ -11,6 +11,7 @@ The self-signed E46 has the same SHA-256 as the one in Fedora's `tls-ca-bundle.p
 `openssl verify -partial_chain` accepts the cross-signed copy under the USERTrust ECC root of that bundle, and DV E36 under the self-signed E46.
 
 That `api.github.com` sends DV E36 and this cross-signed copy, and that the Apple roots keychain holds this self-signed E46, was not checked here: an inspecting proxy stood between this download and GitHub.
+The Mac runner confirmed both on 2026-11-18, on macOS 27.2.1 with a direct connection: `SystemRootCertificates.keychain` holds E46 with this SHA-1, and `api.github.com` sent DV E36 and this cross-signed E46, byte for byte these files.
 The leaf is left out: it expires within the year, and a test cannot serve it without its key.
 
 There is no recorded user-domain plist.
