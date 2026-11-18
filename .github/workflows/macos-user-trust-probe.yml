@@ -62,7 +62,7 @@ jobs:
           }
           attempt() { # <ca> <label> <command...>
             local ca=$1 label=$2; shift 2
-            new_ca "$ca"
+            [ -f "$work/$ca.pem" ] || new_ca "$ca"
             echo "::group::$label"
             local start rc
             start=$(date +%s)
@@ -89,36 +89,35 @@ jobs:
           done
           echo "::endgroup::"
 
-          # 1. As the runner is: the #1515 baseline
-          attempt baseline "1. user-domain deny, rights as shipped" security add-trusted-cert -r deny
-
-          # 2. With the user right opened
+          # Round 2: the right is opened before any attempt, so no dialog left pending by a
+          # baseline attempt can block the later ones; the log says what authd waited for.
           echo "::group::Opening com.apple.trust-settings.user"
           limit 30 sudo security authorizationdb write com.apple.trust-settings.user allow; echo "exit $?"
-          security authorizationdb read com.apple.trust-settings.user 2>&1
           echo "::endgroup::"
-          attempt opened "2. user-domain deny, user right allow" security add-trusted-cert -r deny
-
-          # 3. The same, into the login keychain named explicitly
-          if [ -n "$login" ]; then
-            attempt named "3. user-domain deny into $login" security add-trusted-cert -r deny -k "$login"
-          fi
-
-          # 4. A login keychain unlocked by a keychain of the probe's own, if the default one is locked
-          echo "::group::A keychain of the probe's own as the default"
-          own="$work/probe.keychain-db"
-          security create-keychain -p probe "$own" && security unlock-keychain -p probe "$own" \
-            && security list-keychains -d user -s "$own" $(security list-keychains -d user | tr -d '"') \
-            && security default-keychain -d user -s "$own"; echo "exit $?"
+          since=$(date '+%Y-%m-%d %H:%M:%S')
+          attempt opened "2. user-domain deny, user right allow, nothing pending" security add-trusted-cert -r deny
+          echo "::group::authd, SecurityAgent and trustd while it waited"
+          limit 90 log show --style compact --start "$since" \
+            --predicate 'process == "authd" OR process == "SecurityAgent" OR process == "trustd" OR process == "security" OR subsystem == "com.apple.Authorization"' \
+            2>&1 | grep -viE "no such|^Filtering" | tail -n 120
           echo "::endgroup::"
-          attempt own "4. user-domain deny into the probe's own keychain" security add-trusted-cert -r deny -k "$own"
+          echo "::group::Processes"
+          ps -axo pid,user,command | grep -E "SecurityAgent|authorizationhost|security add-trusted" | grep -v grep
+          echo "::endgroup::"
+          # The admin right as well, for a user-domain write
+          limit 30 sudo security authorizationdb write com.apple.trust-settings.admin allow; echo "admin right allow: exit $?"
+          attempt both "3. user-domain deny, user and admin rights allow" security add-trusted-cert -r deny
+          # A trust setting only, on a certificate already in the login keychain
+          new_ca present
+          limit 30 security add-certificates -k "$HOME/Library/Keychains/login.keychain-db" "$work/present.pem"; echo "add-certificates: exit $?"
+          attempt present "4. user-domain deny of a certificate already in the keychain" security add-trusted-cert -r deny -k "$HOME/Library/Keychains/login.keychain-db"
 
           # 5. The user domain as the JVM reads it
           echo "::group::trust-settings-export (user domain)"
           limit 30 security trust-settings-export "$work/user.plist"; echo "exit $?"
           [ -f "$work/user.plist" ] && grep -c "<key>kSecTrustSettingsResult</key>" "$work/user.plist"
           echo "::endgroup::"
-          for ca in baseline opened named own; do
+          for ca in opened both present; do
             [ -f "$work/$ca.pem" ] && grep -q "$(sha1 "$ca")" "$work/user.plist" 2>/dev/null \
               && echo "EXPORT $ca: present" || echo "EXPORT $ca: absent"
           done
