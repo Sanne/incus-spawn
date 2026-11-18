@@ -20,7 +20,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -101,15 +100,16 @@ class ManifestCacheProxyTest {
 
     @BeforeEach
     void reset() throws Exception {
-        var dir = ManifestCache.dir();
-        if (Files.exists(dir)) {
-            try (var tree = Files.walk(dir)) {
-                for (var file : tree.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(file);
-            }
-        }
         // A repository of its own, so the proxy's memory of which ones it checked starts empty
         repository = "acme/app" + repositories.incrementAndGet();
-        latest.put(repository, "{\"manifests\":[],\"n\":1}");
+        // An empty cache: the last one is moved aside, not deleted, since a write a previous test's
+        // proxy still makes would fail a delete (#2370); a rename cannot. Such a write resolves its
+        // path by name, so it lands in the new cache, harmlessly: it is keyed by another repository
+        // or by a digest of another test's bytes
+        var dir = ManifestCache.dir();
+        if (Files.exists(dir)) Files.move(dir, dir.resolveSibling("manifests-before-" + repositories.get()));
+        // Bytes of its own too, so no copy a previous test left is this one's
+        latest.put(repository, "{\"manifests\":[],\"n\":1,\"repository\":\"" + repository + "\"}");
         hits.clear();
         throttled = false;
         corrupt = false;
@@ -162,7 +162,7 @@ class ManifestCacheProxyTest {
     void cachedTagIsConfirmedWithAHeadAndServedFromTheCopy() throws Exception {
         var first = pull("latest", CALLER);
         assertOk(first, latest.get(repository));
-        awaitCopy(latest.get(repository));
+        awaitTagged(latest.get(repository));
 
         var second = pull("latest", CALLER);
 
@@ -224,9 +224,10 @@ class ManifestCacheProxyTest {
         awaitCopy(latest.get(repository));
         var privateRepository = repository;
         repository = "acme/public" + repositories.incrementAndGet();
-        latest.put(repository, "{\"manifests\":[],\"public\":true}");
+        latest.put(repository, "{\"manifests\":[],\"public\":true,\"repository\":\"" + repository + "\"}");
         publicRepositories.add(repository);
         assertOk(pull("latest", CALLER), latest.get(repository));
+        awaitTagged(latest.get(repository));
         awaitPublic();
         throttled = true;
 
@@ -240,21 +241,21 @@ class ManifestCacheProxyTest {
     @Test
     void movedTagIsFetchedAgain() throws Exception {
         assertOk(pull("latest", CALLER), latest.get(repository));
-        awaitCopy(latest.get(repository));
-        latest.put(repository, "{\"manifests\":[],\"n\":2}");
+        awaitTagged(latest.get(repository));
+        latest.put(repository, "{\"manifests\":[],\"n\":2,\"repository\":\"" + repository + "\"}");
 
         assertOk(pull("latest", CALLER), latest.get(repository));
 
         assertEquals(2, hits("GET", "latest", CALLER));
-        // Committed before the next test empties the cache under it
-        awaitCopy(latest.get(repository));
+        // Committed before the next test starts, so no late write of this one's lands in its cache
+        awaitTagged(latest.get(repository));
     }
 
     /** A caller the registry refuses gets the registry's refusal, never the copy another caller's pull left. */
     @Test
     void callerTheRegistryRefusesGetsItsRefusalNotTheCopy() throws Exception {
         assertOk(pull("latest", CALLER), latest.get(repository));
-        awaitCopy(latest.get(repository));
+        awaitTagged(latest.get(repository));
 
         var refused = pull("latest", null);
 
@@ -267,7 +268,7 @@ class ManifestCacheProxyTest {
     void throttledPublicTagIsServedUnconfirmed() throws Exception {
         publicRepositories.add(repository);
         assertOk(pull("latest", CALLER), latest.get(repository));
-        awaitCopy(latest.get(repository));
+        awaitTagged(latest.get(repository));
         awaitPublic();
         throttled = true;
 
@@ -278,7 +279,7 @@ class ManifestCacheProxyTest {
     @Test
     void throttledPrivateTagIsNotServed() throws Exception {
         assertOk(pull("latest", CALLER), latest.get(repository));
-        awaitCopy(latest.get(repository));
+        awaitTagged(latest.get(repository));
         // The anonymous check's last step: a HEAD with the anonymous token, refused
         var digest = digestOf(latest.get(repository));
         await(() -> hits("HEAD", digest, "Bearer " + ANONYMOUS_TOKEN) > 0, "The repository was never checked");
@@ -299,18 +300,15 @@ class ManifestCacheProxyTest {
     void digestPushedAfterTheRepositoryWasMadePrivateIsNotServedUnconfirmed() throws Exception {
         publicRepositories.add(repository);
         assertOk(pull("latest", CALLER), latest.get(repository));
-        awaitCopy(latest.get(repository));
+        awaitTagged(latest.get(repository));
         awaitPublic();
         publicRepositories.remove(repository);
-        latest.put(repository, "{\"manifests\":[],\"private\":true}");
+        latest.put(repository, "{\"manifests\":[],\"private\":true,\"repository\":\"" + repository + "\"}");
         var pushed = digestOf(latest.get(repository));
         assertOk(pull("latest", CALLER), latest.get(repository));
-        awaitCopy(latest.get(repository));
+        awaitTagged(latest.get(repository));
         // The new digest's own check, refused: its last step is the HEAD with the anonymous token
         await(() -> hits("HEAD", pushed, "Bearer " + ANONYMOUS_TOKEN) > 0, "The new digest was never checked");
-        // And the tag now names it: written apart from the copy, so waited for too
-        var tag = ManifestCache.tag(REGISTRY, repository, "latest", List.of(TYPE));
-        await(() -> pushed.equals(ManifestCache.resolvedDigest(tag)), "The tag was never recorded at the new digest");
         throttled = true;
 
         var byTag = pull("latest", CALLER);
@@ -332,7 +330,7 @@ class ManifestCacheProxyTest {
         assertOk(pull(digest, CALLER), latest.get(repository));
 
         assertEquals(2, hits("GET", digest, CALLER));
-        // Committed before the next test empties the cache under it
+        // Committed before the next test starts, so no late write of this one's lands in its cache
         awaitCopy(latest.get(repository));
     }
 
@@ -371,6 +369,17 @@ class ManifestCacheProxyTest {
     void awaitPublic() throws InterruptedException {
         var digest = digestOf(latest.get(repository));
         await(() -> ManifestCache.isPublic(REGISTRY, repository, digest), "The manifest was never found public");
+    }
+
+    /**
+     * Waits for a pull of the tag {@code latest} to be cached: the copy, and the tag recorded at its
+     * digest, which the proxy writes apart from the copy and after its answer (#2370).
+     */
+    void awaitTagged(String body) throws InterruptedException {
+        awaitCopy(body);
+        var digest = digestOf(body);
+        var tag = ManifestCache.tag(REGISTRY, repository, "latest", List.of(TYPE));
+        await(() -> digest.equals(ManifestCache.resolvedDigest(tag)), "The tag was never recorded at " + digest);
     }
 
     static void awaitCopy(String body) throws InterruptedException {
