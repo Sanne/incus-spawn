@@ -155,7 +155,7 @@ The proxy must be running for every instance that has a network.
 `isx init` installs it as a service, systemd on Linux and launchd on macOS, or you run `isx proxy start` in a terminal of its own.
 isx checks that the proxy is reachable and compatible before a build, a branch or a shell.
 
-The proxy also caches container image layers and build artifacts on the host, so the same dependency is never downloaded twice ([Caching](docs/CONFIGURATION.md#caching)).
+The proxy also caches container image layers and build artifacts on the host, so the same dependency is never downloaded twice, and the registries see fewer requests from your address ([Caching](docs/CONFIGURATION.md#caching)).
 
 ### Credentials reach the login environment
 
