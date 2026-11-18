@@ -353,6 +353,10 @@ public final class VmManager {
             if (isVmProcess(pid)) return true;
         } catch (IOException | NumberFormatException ignored) {}
         if (adoptRunningLauncher()) return true;
+        // A pid file naming no VM: a hypervisor still on this user's disks is the VM, and its
+        // sockets must not be removed as stale before it is found (#2031). Rare, so the listing
+        // costs nothing on the path of a running or a stopped VM.
+        if (adoptHypervisorOnDisks().isPresent()) return true;
         cleanupStaleFiles();
         return false;
     }
@@ -441,8 +445,10 @@ public final class VmManager {
      * A hypervisor of this user, {@code isx-vm} or an older isx's vfkit, whose arguments name this
      * state directory's root disk: the VM, whatever vm.pid says (#2031). An upgrade can lose the
      * pid file while vfkit runs on (an older isx still open, a crash, a cleaned state directory),
-     * and the pid file is all {@link #isRunning()} reads. Recorded as the VM's pid when found.
-     * Lists this user's processes, so it runs only right before a launch.
+     * and the pid file is all {@link #isRunning()} reads. Recorded as the VM's pid when found, and
+     * not reported when that record fails, so the next {@link #isRunning()} agrees. Lists this
+     * user's processes, so it runs only before a launch and when vm.pid names no VM, never when
+     * vm.pid is right.
      */
     static Optional<Long> adoptHypervisorOnDisks() {
         var disk = Environment.vmDiskImage().toString();
@@ -450,16 +456,22 @@ public final class VmManager {
         try (var processes = ProcessHandle.allProcesses()) {
             found = processes
                     .filter(h -> h.info().command().map(c -> c.contains(LAUNCHER) || c.contains(LEGACY_HYPERVISOR)).orElse(false))
-                    .filter(h -> h.info().arguments().map(args -> java.util.Arrays.stream(args).anyMatch(a -> a.contains(disk))).orElse(false))
+                    .filter(h -> h.info().arguments().map(args -> java.util.Arrays.stream(args).anyMatch(a -> namesDisk(a, disk))).orElse(false))
                     .map(ProcessHandle::pid)
                     .findFirst();
         }
-        found.ifPresent(pid -> {
-            try {
-                Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
-            } catch (IOException ignored) {}
-        });
+        if (found.isEmpty()) return found;
+        try {
+            Files.writeString(Environment.vmPidFile(), String.valueOf(found.get()));
+        } catch (IOException e) {
+            return Optional.empty();
+        }
         return found;
+    }
+
+    /** {@code isx-vm}'s {@code --disk <path>} argument, or vfkit's {@code virtio-blk,path=<path>[,...]}. */
+    private static boolean namesDisk(String arg, String disk) {
+        return arg.equals(disk) || arg.endsWith(",path=" + disk) || arg.contains(",path=" + disk + ",");
     }
 
     static long readPid() {
@@ -495,9 +507,10 @@ public final class VmManager {
         // one on the same images would corrupt them.
         var holder = adoptHypervisorOnDisks();
         if (holder.isPresent()) {
-            BuildOutput.warn("The VM is already running (pid=" + holder.get() + ", " + runningLauncher(holder.get())
+            var hypervisor = runningLauncher(holder.get());
+            BuildOutput.warn("The VM is already running (pid=" + holder.get() + (hypervisor == null ? "" : ", " + hypervisor)
                             + "), though isx had lost track of it; it was not started a second time.",
-                    LEGACY_HYPERVISOR.equals(runningLauncher(holder.get()))
+                    LEGACY_HYPERVISOR.equals(hypervisor)
                             ? "It was started by an isx before the launcher. Run 'isx vm restart' to move it to " + LAUNCHER + "."
                             : "Run 'isx vm restart' if Incus does not answer.");
             return StartResult.ALREADY_RUNNING;
@@ -606,7 +619,8 @@ public final class VmManager {
      *                  disks cut off may need recovery; false for disks that are deleted next
      */
     private static StopResult stopLocked(boolean disksKept) {
-        if (!isRunning()) {
+        // runningOrAdopted: a stop and every disk change after it must see a VM vm.pid lost.
+        if (!runningOrAdopted()) {
             BuildOutput.note("VM not running.");
             cleanupStaleFiles();
             return StopResult.NOT_RUNNING;
@@ -1308,7 +1322,7 @@ public final class VmManager {
         try (var ignored = acquireVmLock()) {
             long size = dataDiskSizeBytes();
             if (size <= 0) size = parseDiskSize(diskSize());
-            if (isRunning()) {
+            if (runningOrAdopted()) {
                 // stopLocked() itself throws if the hypervisor doesn't exit, which is exactly
                 // what must hold here: a lingering process means the disk it still writes to
                 // must not be replaced.
@@ -1401,7 +1415,7 @@ public final class VmManager {
             throw new VmException("No data disk found at " + dataImage
                     + "\nRun 'isx vm start' once to create it before resizing.");
         }
-        if (isRunning()) {
+        if (runningOrAdopted()) {
             throw new VmException("VM is running. Stop it ('isx vm stop') before resizing the data disk.");
         }
         long target = parseDiskSize(newSize);

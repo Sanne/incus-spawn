@@ -56,7 +56,7 @@ public class ResetCommand extends BaseCommand {
 
         boolean proxyInstalled = ProxyService.isInstalled();
 
-        boolean vmRunning = Platform.isMacOS() && VmManager.isRunning();
+        boolean vmRunning = Platform.isMacOS() && VmManager.runningOrAdopted();
         boolean vmDisksExist = Platform.isMacOS() && (
                 Files.exists(Environment.vmDiskImage()) || Files.exists(Environment.vmDataImage()));
 

@@ -388,7 +388,7 @@ public class CleanCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            if (VmManager.isRunning()) {
+            if (VmManager.runningOrAdopted()) {
                 BuildOutput.error("the VM is running.", "Stop it first with 'isx vm stop'.");
                 return CommandResult.valueOf(1);
             }
@@ -441,7 +441,7 @@ public class CleanCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            if (VmManager.isRunning()) {
+            if (VmManager.runningOrAdopted()) {
                 BuildOutput.error("the VM is running.", "Stop it first with 'isx vm stop'.");
                 return CommandResult.valueOf(1);
             }

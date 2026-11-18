@@ -333,6 +333,53 @@ class VmStopTest {
         }
     }
 
+    /**
+     * A pid file naming another process (here this JVM) while vfkit still runs on the disks: the
+     * VM is found before its sockets are cleaned up as stale, so a restart can still ask the
+     * guest to shut down rather than kill it. Linux only, as above.
+     */
+    @Test
+    @org.junit.jupiter.api.condition.DisabledOnOs(OS.MAC)
+    void aStalePidFileDoesNotRemoveTheSocketsOfAVfkitVmOnTheseDisks() throws IOException {
+        stopStandIn();
+        var home = Files.createTempDirectory(Path.of("/tmp"), "isxvm");
+        tempHome = home;
+        originalHome = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        Files.createDirectories(Environment.vmStateDir());
+        var vfkit = home.resolve("vfkit");
+        Files.copy(Path.of("/bin/sh").toRealPath(), vfkit);
+        vfkit.toFile().setExecutable(true);
+        vm = new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
+                "--device", "virtio-blk,path=" + Environment.vmDiskImage()).start();
+        Files.writeString(Environment.vmPidFile(), Long.toString(ProcessHandle.current().pid()));
+        Files.writeString(Environment.vmAgentSocket(), "");
+
+        assertTrue(VmManager.isRunning());
+        assertEquals(Long.toString(vm.pid()), Files.readString(Environment.vmPidFile()));
+        assertTrue(Files.exists(Environment.vmAgentSocket()), "the live VM's agent socket is kept");
+    }
+
+    /** `isx vm stop` of a vfkit VM whose pid file was lost stops it, rather than saying "not running". */
+    @Test
+    @org.junit.jupiter.api.condition.DisabledOnOs(OS.MAC)
+    void aStopReachesAVfkitVmThePidFileLost() throws IOException {
+        stopStandIn();
+        var home = Files.createTempDirectory(Path.of("/tmp"), "isxvm");
+        tempHome = home;
+        originalHome = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        Files.createDirectories(Environment.vmStateDir());
+        var vfkit = home.resolve("vfkit");
+        Files.copy(Path.of("/bin/sh").toRealPath(), vfkit);
+        vfkit.toFile().setExecutable(true);
+        vm = new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
+                "--device", "virtio-blk,path=" + Environment.vmDiskImage()).start();
+
+        assertEquals(VmManager.StopResult.SIGNALLED, VmManager.stopToDelete());
+        assertFalse(vm.isAlive());
+    }
+
     @Test
     void noHypervisorOnTheseDisksIsAdoptedWhenNoneRuns() throws IOException {
         Files.delete(Environment.vmPidFile());

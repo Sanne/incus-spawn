@@ -410,7 +410,8 @@ This recognition is the one vfkit name left in the code (`VmManager.LEGACY_HYPER
 It goes once no supported upgrade starts from a release that ran vfkit.
 `isRunning()` reads `vm.pid` alone, so a pid file lost while vfkit runs (an older isx still open, a crash, a cleaned state directory) would let a start put `isx-vm` on the disks vfkit holds.
 So the last step before a launch looks for a hypervisor of this user, `isx-vm` or vfkit, whose arguments name this state directory's `disk.img`, adopts it as the VM, and launches nothing (`adoptHypervisorOnDisks`).
-It lists processes, so it runs only right before a launch, never on the branch, start or shell path of a running VM.
+`isRunning()` does the same when `vm.pid` names no VM, before it removes the VM's sockets as stale, so a restart can still ask that guest to shut down.
+It lists processes, so it runs only before a launch and when `vm.pid` names no VM, never on the branch, start or shell path of a running VM.
 The other way round holds too: an older isx still running after the upgrade, an open TUI or an `isx mcp` session, takes an `isx-vm` pid for a stale one and deletes `vm.pid` and the vsock sockets.
 The control socket survives, since that isx never knew it, and its `state` names the launcher's pid, so `isRunning()` records it again (`adoptRunningLauncher`) rather than let the next start put a second VM on the same disks.
 Incus stays unreachable until `isx vm restart` brings the sockets back; the upgrade notes say to quit such processes first.
