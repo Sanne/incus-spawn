@@ -42,6 +42,10 @@ class PrivateMavenRepositoryProxyTest {
     /** In a repository confirmed by the SHA-1 it sends as its ETag, as Nexus 3 does (#2336). */
     private static final String HOSTED = "/repository/hosted/org/example/lib/1.0/lib-1.0.jar";
     static String sha1;
+    static String md5;
+    /** A public Nexus 3 proxy repository: its ETag is the MD5 its upstream sent, its .sha1 the SHA-1. */
+    private static final String PROXIED_HOST = "proxied.example.test";
+    private static final String PROXIED = "/repository/maven-central/org/example/lib/1.0/lib-1.0.jar";
 
     @TempDir
     static Path tempHome;
@@ -99,16 +103,29 @@ class PrivateMavenRepositoryProxyTest {
                     credentials: nexus
                     confirm: etag-sha1
                     replaces-releases: false
-                """.formatted(NEXUS, NEXUS));
+                  - url: https://%s/repository/maven-central/
+                    access: public
+                    confirm: etag-sha1
+                    replaces-releases: false
+                """.formatted(NEXUS, NEXUS, PROXIED_HOST));
 
         vertx = Vertx.vertx();
+        md5 = HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(CONTENT.getBytes(StandardCharsets.UTF_8)));
         sha1 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(CONTENT.getBytes(StandardCharsets.UTF_8)));
         upstream = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(CertificateAuthority.loadOrCreate(), NEXUS)))
                 .requestHandler(req -> {
                     var auth = req.getHeader("Authorization");
                     received.add(req.method() + " " + req.path() + " " + auth);
-                    if (!accepted.equals(auth)) {
+                    if (req.authority() != null && req.authority().host().equals(PROXIED_HOST)) {
+                        if (req.path().equals(PROXIED)) {
+                            req.response().putHeader("ETag", "\"" + md5 + "\"").end(req.method() == HttpMethod.HEAD ? "" : CONTENT);
+                        } else if (req.path().equals(PROXIED + ".sha1")) {
+                            req.response().end(sha1);
+                        } else {
+                            req.response().setStatusCode(404).end();
+                        }
+                    } else if (!accepted.equals(auth)) {
                         req.response().setStatusCode(401).end();
                     } else if (req.path().equals(MOVED)) {
                         req.response().setStatusCode(302).putHeader("Location", JAR).end();
@@ -150,6 +167,9 @@ class PrivateMavenRepositoryProxyTest {
         etag = "\"" + sha1 + "\"";
         content = CONTENT;
         proxy.overrideUpstream(NEXUS, "127.0.0.1", upstreamPort);
+        proxy.overrideUpstream(PROXIED_HOST, "127.0.0.1", upstreamPort);
+        Files.deleteIfExists(proxiedCopy());
+        Files.deleteIfExists(Sidecar.SHA1.storedFile(proxiedCopy()));
         var dir = ArtifactCacheHandler.privateCacheDir();
         if (Files.isDirectory(dir)) {
             try (var files = Files.walk(dir)) {
@@ -191,6 +211,23 @@ class PrivateMavenRepositoryProxyTest {
                 .setURI(path);
         return client.request(options)
                 .compose(req -> req.putHeader("Authorization", authorization).send())
+                .compose(resp -> resp.body().map(b -> new Answer(resp.statusCode(), b.toString(StandardCharsets.UTF_8))))
+                .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+    }
+
+    private static Path proxiedCopy() {
+        return Environment.mavenCacheDir().resolve(PROXIED_HOST).resolve(PROXIED.substring(1));
+    }
+
+    private static Answer getProxied() throws Exception {
+        var options = new RequestOptions()
+                .setMethod(HttpMethod.GET)
+                .setServer(SocketAddress.inetSocketAddress(proxy.mitmPort(), "127.0.0.1"))
+                .setHost(PROXIED_HOST)
+                .setPort(443)
+                .setURI(PROXIED);
+        return client.request(options)
+                .compose(req -> req.send())
                 .compose(resp -> resp.body().map(b -> new Answer(resp.statusCode(), b.toString(StandardCharsets.UTF_8))))
                 .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
     }
@@ -311,7 +348,6 @@ class PrivateMavenRepositoryProxyTest {
 
     @Test
     void anETagThatIsNotTheStrongSha1OfTheBytesNeverCaches() throws Exception {
-        var md5 = HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(CONTENT.getBytes(StandardCharsets.UTF_8)));
         // Weak, a proxied upstream's MD5, Nexus's merged-metadata form, unquoted, and the SHA-1 of other bytes
         for (var sent : new String[] {"W/\"" + sha1 + "\"", "\"" + md5 + "\"", "\"{SHA1{" + sha1 + "}}\"", sha1,
                 "\"" + "0".repeat(40) + "\"", null}) {
@@ -323,5 +359,24 @@ class PrivateMavenRepositoryProxyTest {
             Thread.sleep(50);
             assertEquals(List.of(), cachedCopies(HOSTED), "never cached on ETag " + sent);
         }
+    }
+
+    @Test
+    void aPublicNexusProxyRepositorysMd5ETagFallsBackToItsSha1Sidecar() throws Exception {
+        assertEquals(new Answer(200, CONTENT), getProxied());
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!Files.exists(proxiedCopy())) {
+            assertTrue(System.nanoTime() < deadline, "the download was never cached through its .sha1");
+            Thread.sleep(10);
+        }
+        assertEquals(List.of("GET " + PROXIED + " null", "GET " + PROXIED + ".sha1 null"), received,
+                "an MD5 ETag is no SHA-1, so the download is checked against its sidecar");
+        assertTrue(proxy.artifactCache.warnedHeaderless.contains("https://" + PROXIED_HOST + "/repository/maven-central/"),
+                "the repository is named by its URL");
+
+        received.clear();
+        assertEquals(new Answer(200, CONTENT), getProxied());
+        assertEquals(List.of("HEAD " + PROXIED + " null", "GET " + PROXIED + ".sha1 null"), received,
+                "a hit is confirmed through the sidecar when the HEAD's ETag is no SHA-1");
     }
 }
