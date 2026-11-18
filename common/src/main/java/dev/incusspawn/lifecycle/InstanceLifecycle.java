@@ -679,14 +679,14 @@ public final class InstanceLifecycle {
     /** {@link #startForUse}, with its {@link #secretLock} held. */
     private static JqValue startHeld(IncusClient incus, String name, JqValue instance, MachineType machineType,
                                      Output out) {
-        var placeholders = ProofToken.declaredInBackground();
+        var declared = ProofToken.declaredInBackground();
         var secret = ProxyOnlyAcl.explaining(incus, name, instance, () -> {
             prepareForStart(incus, name, instance, out);
             // A VM branched or built before #1238 still has Secure Boot on: it goes in the write the
             // secret makes anyway
             var delivery = rotateInstanceSecret(incus, name, instance, machineType == MachineType.VM
                     && !"false".equals(instance.path("config").path(SECURE_BOOT).asText())
-                    ? Map.of(SECURE_BOOT, "false") : Map.of(), placeholders.join());
+                    ? Map.of(SECURE_BOOT, "false") : Map.of(), declared.join());
             try {
                 startInstance(incus, name, out);
             } catch (RuntimeException e) {
@@ -696,7 +696,7 @@ public final class InstanceLifecycle {
         });
         // A --no-start branch is first started here, with neither its SSH keys nor its Host entry (#1640)
         return awaitReady(incus, name, machineType, instance, secret, Metadata.isMcpCaller(instance),
-                placeholders, out);
+                declared, out);
     }
 
     /**
@@ -709,7 +709,7 @@ public final class InstanceLifecycle {
      */
     private static JqValue awaitReady(IncusClient incus, String name, MachineType machineType, JqValue instance,
                                       InstanceSecret.Delivery secret, boolean mcpCaller,
-                                      CompletableFuture<List<ProofToken.Placeholder>> placeholders,
+                                      CompletableFuture<ProofToken.Declared> declared,
                                       Output out) {
         var ssh = RuntimeSetup.hasSshCapability(instance);
         // A container's address before the shell, as a branch has it (#801): exec answers before
@@ -721,7 +721,7 @@ public final class InstanceLifecycle {
         var answer = new String[1];
         var booted = withCurrentProofs(incus, name, secret, current -> {
             answer[0] = incus.waitForReady(name, machineType, guestScript,
-                    InstanceSecret.guestEnv(current, mcpCaller, placeholders.join()));
+                    InstanceSecret.guestEnv(current, mcpCaller, declared.join().placeholders()));
             return recordSecretBoot(incus, name, machineType, current.proofGeneration());
         });
         if (ssh) {
@@ -828,16 +828,16 @@ public final class InstanceLifecycle {
         // Before, not after: once the restart returns the guest is booting, when Incus API calls
         // contend with it. A restart that then fails leaves a guest whose secret no longer
         // matches, which is refused -- the safe way for it to go wrong.
-        var placeholders = ProofToken.declaredInBackground();
+        var declared = ProofToken.declaredInBackground();
         // To the caller's output: the TUI's log, since it owns the terminal here; a refusal throws, which it reports
         var secret = ProxyOnlyAcl.explaining(incus, name, instance, () -> {
             enforceNetworkMode(incus, name, instance, out);
-            var delivery = rotateInstanceSecret(incus, name, instance, Map.of(), placeholders.join());
+            var delivery = rotateInstanceSecret(incus, name, instance, Map.of(), declared.join());
             incus.restart(name);
             return delivery;
         });
         // As on a start, from the listing: no request of its own, and the pin stays current (#1640, #1863)
-        awaitReady(incus, name, machineType, instance, secret, mcpCaller, placeholders, out);
+        awaitReady(incus, name, machineType, instance, secret, mcpCaller, declared, out);
     }
 
     /**
@@ -851,17 +851,19 @@ public final class InstanceLifecycle {
      * ({@link dev.incusspawn.proxy.InstanceRegistry#identify}).
      */
     static InstanceSecret.Delivery rotateInstanceSecret(IncusClient incus, String name) {
-        return rotateInstanceSecret(incus, name, incus.instanceMetadataOrThrow(name), Map.of(), ProofToken.declared());
+        return rotateInstanceSecret(incus, name, incus.instanceMetadataOrThrow(name), Map.of(),
+                ProofToken.declaredWithConfig());
     }
 
     /** {@link #rotateInstanceSecret}, with {@code alongside} recorded in the same write. */
     static InstanceSecret.Delivery rotateInstanceSecret(IncusClient incus, String name, JqValue instance, Map<String, String> alongside,
-                                                java.util.List<ProofToken.Placeholder> placeholders) {
+                                                ProofToken.Declared declared) {
         try (var ignored = CredentialProof.lock(name)) {
             // Reset marks the old generation before changing Incus. Only stale listings,
             // migrations and changed declarations need a read under the lock.
             var config = instance.path("config");
             var generation = config.pathText(Metadata.INSTANCE_PROOF_ID, "");
+            var placeholders = declared.placeholders();
             var namespaces = placeholders.stream().filter(p -> p.problem().isEmpty())
                     .map(ProofToken.Placeholder::namespace).collect(java.util.stream.Collectors.toSet());
             if (generation.isBlank() || CredentialProof.invalidated(generation)
@@ -877,9 +879,10 @@ public final class InstanceLifecycle {
             var secret = InstanceSecret.retainInto(stamp, config, seed, verifier);
             // The ChatGPT session this start serves, keyed with the secret it just minted: the
             // same write records its verifiers, and the delivery carries what the guest's Codex
-            // reads. Serves none, and stale stamps leave with the same write (#1332)
+            // reads. Serves none, and stale stamps leave with the same write (#1332). The config
+            // is the one this start already read for its placeholders, never another read
             var chatGptAuth = dev.incusspawn.proxy.ChatGptStart.stampInto(stamp, config, secret.secret(),
-                    SpawnConfig.load(), new dev.incusspawn.proxy.ChatGptSessionStore());
+                    declared.settings(), new dev.incusspawn.proxy.ChatGptSessionStore());
             if (stamp.containsKey(Metadata.INSTANCE_SECRET_BOOT)) {
                 var boot = PROOFS_SUFFIX.split(alongside.get(Metadata.INSTANCE_SECRET_BOOT), 2)[0];
                 stamp.put(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(boot, secret.proofGeneration()));
@@ -997,14 +1000,14 @@ public final class InstanceLifecycle {
                                   boolean mcpCaller, Output out) {
         String failure;
         try {
-            var placeholders = ProofToken.declaredInBackground();
+            var declared = ProofToken.declaredInBackground();
             var secret = rotateInstanceSecret(incus, name, instance,
                     bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt)),
-                    placeholders.join());
+                    declared.join());
             // GUEST_SCRIPT never fails, so the same exec asks whether the secret is now there:
             // a write it skipped would otherwise give a VM a new secret on every shell, silently
             var delivery = withCurrentProofs(incus, name, secret, current -> {
-                var result = incus.shellExec(name, InstanceSecret.guestEnv(current, mcpCaller, placeholders.join()), "sh", "-c",
+                var result = incus.shellExec(name, InstanceSecret.guestEnv(current, mcpCaller, declared.join().placeholders()), "sh", "-c",
                         GuestHostname.afterSecret(name, instance) + InstanceSecret.GUEST_CHECK);
                 if (bootedAt != null && !secret.proofGeneration().equals(current.proofGeneration())) {
                     incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt, current.proofGeneration()));

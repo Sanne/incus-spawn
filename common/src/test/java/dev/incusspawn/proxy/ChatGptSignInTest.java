@@ -29,6 +29,8 @@ class ChatGptSignInTest {
     static volatile int pollsUntilGranted = 1;
     /** Whether the token endpoint refuses the exchange, as a failed sign-in does. */
     static volatile boolean refuseExchange;
+    /** The answer of a poll the stub already granted, as OpenAI's auth server answers a grant asked for twice. */
+    static volatile boolean granted;
 
     HttpServer stub;
     String issuer;
@@ -40,6 +42,7 @@ class ChatGptSignInTest {
         exchangeBody = null;
         pollsUntilGranted = 1;
         refuseExchange = false;
+        granted = false;
         // A dead "browser" thread must fail the test in seconds, not hang for the sign-in's
         // full fifteen-minute patience
         ChatGptSignIn.testBrowserWait = java.time.Duration.ofSeconds(20);
@@ -56,10 +59,13 @@ class ChatGptSignInTest {
                     out.write(answer.getBytes(StandardCharsets.UTF_8));
                 }
                 case "/api/accounts/deviceauth/token" -> {
+                    // A device grant is handed out once: the poll that earns it is answered, and
+                    // every later ask for the same code is refused, as OpenAI's auth server does
                     if (seen.stream().filter(s -> s.startsWith("POST /api/accounts/deviceauth/token")).count()
-                            <= pollsUntilGranted) {
+                            <= pollsUntilGranted || granted) {
                         exchange.sendResponseHeaders(403, -1);
                     } else {
+                        granted = true;
                         exchangeBody = body;
                         var answer = "{\"authorization_code\":\"auth-code-1\",\"code_challenge\":\"chal\","
                                 + "\"code_verifier\":\"verifier-1\"}";
@@ -132,8 +138,8 @@ class ChatGptSignInTest {
             assertTrue(decoded.contains(entry.getKey() + "=" + entry.getValue()),
                     entry.getKey() + " missing from " + decoded);
         }
-        assertTrue(seen.stream().filter(s -> s.startsWith("POST /api/accounts/deviceauth/token")).count() >= 3,
-                "polled until the person finished: " + seen);
+        assertTrue(seen.stream().filter(s -> s.startsWith("POST /api/accounts/deviceauth/token")).count() == 3,
+                "the grant is read from the poll that earned it, never asked for again: " + seen);
     }
 
     @Test
@@ -144,18 +150,39 @@ class ChatGptSignInTest {
         assertThrows(IOException.class, () -> signIn.awaitAuthorization(device, null));
     }
 
+    @Test
+    void theGrantIsHandedOutOnceAndReadFromThePollThatEarnedIt() throws Exception {
+        // pollsUntilGranted stays 1: the first poll is refused, the second grants, and a third
+        // ask -- what reading the code from a second request would do -- is refused in turn
+        var tokens = signIn.awaitAuthorization(signIn.requestDeviceCode(), null);
+
+        assertEquals("at-real", tokens.accessToken());
+        assertEquals("rt-real", tokens.refreshToken());
+    }
+
     // ── the browser flow, for an organisation whose SSO the device code cannot reach ──
 
     /** Connects to the loopback listener as the browser would, and answers with the response's status. */
     private static int browseTo(String target) throws Exception {
+        return browseToFully(target).status();
+    }
+
+    /** The response the listener answers a browser's request with, status and body. */
+    private record Answered(int status, String body) {}
+
+    private static Answered browseToFully(String target) throws Exception {
         try (var socket = new java.net.Socket("127.0.0.1", callbackPort())) {
             socket.setSoTimeout(10_000);
             socket.getOutputStream().write(("GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1\r\n"
                     + "Connection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
             socket.getOutputStream().flush();
-            var line = new java.io.BufferedReader(new java.io.InputStreamReader(
-                    socket.getInputStream(), StandardCharsets.ISO_8859_1)).readLine();
-            return line == null ? 0 : Integer.parseInt(line.substring(9, 12));
+            var reader = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    socket.getInputStream(), StandardCharsets.ISO_8859_1));
+            var line = reader.readLine();
+            var body = new StringBuilder();
+            for (var rest = reader.readLine(); rest != null; rest = reader.readLine()) body.append(rest);
+            return line == null ? new Answered(0, "")
+                    : new Answered(Integer.parseInt(line.substring(9, 12)), body.toString());
         }
     }
 
@@ -265,5 +292,93 @@ class ChatGptSignInTest {
             thread.start();
         }));
         assertTrue(refused.getMessage().contains("access_denied"), refused.getMessage());
+    }
+
+    @Test
+    void anErrorFromAnotherSignInsCallbackDoesNotEndThisOne() throws Exception {
+        var finished = new java.util.concurrent.CompletableFuture<Void>();
+        var thread = new Thread(() -> {
+            try {
+                // A local page or stale tab carrying an error, for a state this sign-in never made
+                if (browseTo(CALLBACK + "?error=access_denied&state=someone-elses-state") != 400) {
+                    finished.completeExceptionally(new IllegalStateException("a foreign error was taken for this sign-in's"));
+                }
+                var state = paramOf(lastAuthorizeUrl, "state");
+                if (browseTo(CALLBACK + "?code=browser-code-1&state=" + state) != 200) {
+                    finished.completeExceptionally(new IllegalStateException("the real callback was refused"));
+                }
+                finished.complete(null);
+            } catch (Exception e) {
+                finished.completeExceptionally(e);
+            }
+        });
+
+        var tokens = signIn.signInWithBrowser(url -> {
+            lastAuthorizeUrl = url;
+            thread.start();
+        });
+
+        thread.join(10_000);
+        finished.get(1, java.util.concurrent.TimeUnit.SECONDS);
+        assertEquals("at-real", tokens.accessToken(), "the foreign error never reached the exchange");
+    }
+
+    @Test
+    void aRefusedSignInsDescriptionIsEscapedInTheAnswer() {
+        var answered = new java.util.concurrent.CompletableFuture<Answered>();
+        var thread = new Thread(() -> {
+            try {
+                answered.complete(browseToFully(CALLBACK + "?error=access_denied"
+                        + "&error_description=%3Cscript%3Ealert(1)%3C/script%3E"
+                        + "&state=" + paramOf(lastAuthorizeUrl, "state")));
+            } catch (Throwable e) {
+                browserFailure = e;
+            }
+        });
+
+        assertThrows(IOException.class, () -> signIn.signInWithBrowser(url -> {
+            lastAuthorizeUrl = url;
+            thread.start();
+        }));
+        var page = answered.join();
+        assertEquals(400, page.status());
+        assertTrue(page.body().contains("&lt;script&gt;"), page.body());
+        assertFalse(page.body().contains("<script>"), "the description is text on the page, never markup: " + page.body());
+    }
+
+    @Test
+    void aPreconnectThatClosesOrStaysIdleDoesNotEndTheWait() throws Exception {
+        ChatGptSignIn.testReadTimeout = java.time.Duration.ofMillis(300);
+        try {
+            var finished = new java.util.concurrent.CompletableFuture<Void>();
+            var thread = new Thread(() -> {
+                try {
+                    // A browser preconnect: closed without a request
+                    new java.net.Socket("127.0.0.1", callbackPort()).close();
+                    // And one that stays idle past the read timeout
+                    try (var idle = new java.net.Socket("127.0.0.1", callbackPort())) {
+                        Thread.sleep(900);
+                    }
+                    var state = paramOf(lastAuthorizeUrl, "state");
+                    if (browseTo(CALLBACK + "?code=browser-code-1&state=" + state) != 200) {
+                        finished.completeExceptionally(new IllegalStateException("the real callback was refused"));
+                    }
+                    finished.complete(null);
+                } catch (Exception e) {
+                    finished.completeExceptionally(e);
+                }
+            });
+
+            var tokens = signIn.signInWithBrowser(url -> {
+                lastAuthorizeUrl = url;
+                thread.start();
+            });
+
+            thread.join(10_000);
+            finished.get(1, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals("at-real", tokens.accessToken(), "the preconnects never ended the wait");
+        } finally {
+            ChatGptSignIn.testReadTimeout = null;
+        }
     }
 }

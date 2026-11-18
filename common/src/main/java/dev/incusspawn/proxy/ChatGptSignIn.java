@@ -53,6 +53,8 @@ public class ChatGptSignIn {
     private static final Duration BROWSER_WAIT = Duration.ofMinutes(15);
     /** The wait a test runs with, so a failure surfaces in seconds; production uses {@link #BROWSER_WAIT}. */
     static volatile Duration testBrowserWait;
+    /** The per-connection read timeout a test runs with; production uses 10 seconds. */
+    static volatile Duration testReadTimeout;
     /**
      * The ports Codex's login itself listens on, tried in this order: OpenAI's auth server
      * allow-lists exactly these redirect URIs (codex-rs: "Keep in sync with the Codex CLI Hydra
@@ -126,8 +128,11 @@ public class ChatGptSignIn {
                     .put("device_auth_id", JqString.of(code.deviceAuthId()))
                     .put("user_code", JqString.of(code.userCode()))
                     .build().toJsonString();
-            var status = postForStatus(issuer + "/api/accounts/deviceauth/token", body);
-            switch (status) {
+            // The grant is handed out once: an OAuth device grant answers the poll that earned it
+            // and refuses a second ask for the same code, so this poll's own 200 body is the only
+            // place the authorization code and verifier may be read from
+            var response = post(issuer + "/api/accounts/deviceauth/token", body);
+            switch (response.statusCode()) {
                 // 403 and 404 are the server saying "not yet" (codex-rs poll_for_token)
                 case 403, 404 -> {
                     if (note != null) note.accept("waiting for the sign-in to finish");
@@ -135,14 +140,14 @@ public class ChatGptSignIn {
                             .toMillis());
                 }
                 case 200 -> {
-                    var answer = postJson(issuer + "/api/accounts/deviceauth/token", body);
+                    var answer = parse(response.body(), "the auth server's answer");
                     authorizationCode = answer.pathText("authorization_code", "");
                     codeVerifier = answer.pathText("code_verifier", "");
                     if (authorizationCode.isEmpty() || codeVerifier == null || codeVerifier.isEmpty()) {
                         throw new IOException("OpenAI's auth server granted the code without one to exchange");
                     }
                 }
-                default -> throw new IOException("OpenAI's auth server answered " + status
+                default -> throw new IOException("OpenAI's auth server answered " + response.statusCode()
                         + " while waiting for the sign-in");
             }
         }
@@ -218,8 +223,10 @@ public class ChatGptSignIn {
 
     /**
      * One connection at a time, until the browser lands on the callback: anything else the
-     * browser sends on the way is answered and forgotten. A mismatched state is refused without
-     * ending the wait, so a stale tab cannot finish a sign-in it did not start.
+     * browser sends on the way is answered and forgotten. A browser preconnect to the callback
+     * port goes idle or closes without a request, so neither ends the wait. A mismatched state
+     * is refused without ending the wait either, so a stale tab or a local page cannot finish,
+     * or fail, a sign-in it did not start.
      */
     private String awaitCallback(ServerSocket listener, String state) throws IOException, InterruptedException {
         var wait = testBrowserWait == null ? BROWSER_WAIT : testBrowserWait;
@@ -227,18 +234,33 @@ public class ChatGptSignIn {
         while (System.nanoTime() < deadline) {
             // Never 0, which would block past the deadline forever
             listener.setSoTimeout(Math.max(1, (int) Duration.ofNanos(deadline - System.nanoTime()).toMillis()));
-            try (var socket = listener.accept()) {
-                socket.setSoTimeout(10_000);
+            Socket socket;
+            try {
+                socket = listener.accept();
+            } catch (java.net.SocketTimeoutException deadlineReached) {
+                break;
+            }
+            try (socket) {
+                socket.setSoTimeout((int) (testReadTimeout == null ? Duration.ofSeconds(10) : testReadTimeout)
+                        .toMillis());
                 var request = readRequest(socket);
+                if (request == null) continue;
                 var params = parseQuery(request.getOrDefault("query", ""));
                 if (!CALLBACK_PATH.equals(request.get("path"))) {
                     answer(socket, 404, "Not isx's to answer");
                     continue;
                 }
+                // This sign-in's state first: only its own callback may end it, with a code or
+                // an error, whatever else the query carries
+                if (!state.equals(params.get("state"))) {
+                    answer(socket, 400, "State mismatch");
+                    continue;
+                }
                 var error = params.get("error");
                 if (error != null && !error.isEmpty()) {
-                    answer(socket, 400, "The sign-in was refused: " + error
-                            + (params.get("error_description") == null ? "" : " (" + params.get("error_description") + ")"));
+                    var description = params.get("error_description");
+                    answer(socket, 400, "The sign-in was refused: " + escapeHtml(error)
+                            + (description == null ? "" : " (" + escapeHtml(description) + ")"));
                     throw new IOException("OpenAI's auth server refused the sign-in: " + error);
                 }
                 var code = params.get("code");
@@ -246,36 +268,40 @@ public class ChatGptSignIn {
                     answer(socket, 400, "The sign-in carried no authorization code");
                     throw new IOException("the sign-in's callback carried no authorization code");
                 }
-                if (!state.equals(params.get("state"))) {
-                    answer(socket, 400, "State mismatch");
-                    continue;
-                }
                 answer(socket, 200, "<html><body><h2>Signed in to isx.</h2>You can close this tab.</body></html>");
                 return code;
-            } catch (java.net.SocketTimeoutException deadlineReached) {
-                break;
             }
         }
         throw new IOException("the sign-in did not finish in " + wait.toMinutes() + " minutes");
     }
 
-    /** A request's method, path, query and headers, read as text lines. */
+    /**
+     * A request's method, path, query and headers, read as text lines, or null when the
+     * connection went idle or closed without sending one: a browser preconnect does both.
+     */
     private static Map<String, String> readRequest(Socket socket) throws IOException {
         var out = new HashMap<String, String>();
         var reader = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
-        var line = reader.readLine();
-        if (line == null) throw new IOException("the browser closed the connection without a request");
+        String line;
+        try {
+            line = reader.readLine();
+            for (var header = reader.readLine(); header != null && !header.isEmpty(); header = reader.readLine()) {
+                var colon = header.indexOf(':');
+                if (colon > 0) out.putIfAbsent("header:" + header.substring(0, colon).trim().toLowerCase(java.util.Locale.ROOT),
+                        header.substring(colon + 1).trim());
+            }
+        } catch (java.net.SocketTimeoutException idleConnection) {
+            return null;
+        } catch (IOException closedWithoutARequest) {
+            return null;
+        }
+        if (line == null) return null;
         var parts = line.split(" ");
         if (parts.length >= 2) {
             var target = parts[1];
             var q = target.indexOf('?');
             out.put("path", q < 0 ? target : target.substring(0, q));
             out.put("query", q < 0 ? "" : target.substring(q + 1));
-        }
-        for (var header = reader.readLine(); header != null && !header.isEmpty(); header = reader.readLine()) {
-            var colon = header.indexOf(':');
-            if (colon > 0) out.putIfAbsent("header:" + header.substring(0, colon).trim().toLowerCase(java.util.Locale.ROOT),
-                    header.substring(colon + 1).trim());
         }
         return out;
     }
@@ -289,6 +315,22 @@ public class ChatGptSignIn {
         socket.getOutputStream().write(head.getBytes(StandardCharsets.ISO_8859_1));
         socket.getOutputStream().write(bytes);
         socket.getOutputStream().flush();
+    }
+
+    /** {@code text} for an HTML body: no character of it can open a tag, an attribute or an entity. */
+    private static String escapeHtml(String text) {
+        var out = new StringBuilder();
+        text.codePoints().forEach(c -> {
+            switch (c) {
+                case '<' -> out.append("&lt;");
+                case '>' -> out.append("&gt;");
+                case '&' -> out.append("&amp;");
+                case '"' -> out.append("&quot;");
+                case '\'' -> out.append("&#39;");
+                default -> out.appendCodePoint(c);
+            }
+        });
+        return out.toString();
     }
 
     private static Map<String, String> parseQuery(String query) {
@@ -348,23 +390,19 @@ public class ChatGptSignIn {
     }
 
     private JqValue postJson(String url, String json) throws IOException, InterruptedException {
-        var request = HttpRequest.newBuilder(URI.create(url))
-                .timeout(REQUEST_TIMEOUT)
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json)).build();
-        var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        var response = post(url, json);
         if (response.statusCode() != 200) {
             throw new IOException("OpenAI's auth server answered HTTP " + response.statusCode());
         }
         return parse(response.body(), "the auth server's answer");
     }
 
-    private int postForStatus(String url, String json) throws IOException, InterruptedException {
+    private HttpResponse<String> post(String url, String json) throws IOException, InterruptedException {
         var request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(REQUEST_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json)).build();
-        return client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode();
+        return client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     private static JqValue parse(String body, String what) {
