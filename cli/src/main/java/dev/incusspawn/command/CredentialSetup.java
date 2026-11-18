@@ -323,6 +323,11 @@ class CredentialSetup {
     /** Records a signed-in session as the account's credential. */
     private void saveChatGptSession(SpawnConfig config, AccountTarget target,
                                     dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens) {
+        if (target.replaceOthers()) {
+            // Before the replace clears them: each ChatGPT account's session ends with it, so no
+            // real refresh token stays on disk with nothing pointing at it
+            endChatGptSessions(config);
+        }
         new dev.incusspawn.proxy.ChatGptSessionStore().create(target.name(), tokens);
         if (target.replaceOthers()) {
             NamespaceAccounts.replaceAll(config, "openai", target.name(), java.util.Map.of("type", "chatgpt"));
@@ -359,19 +364,27 @@ class CredentialSetup {
      * {@code auth.json}, whose proofs died with the session.
      */
     private static void leaveChatGpt(SpawnConfig config, AccountTarget target) {
-        var store = new dev.incusspawn.proxy.ChatGptSessionStore();
         if (target.replaceOthers()) {
-            // "Replace all" clears every account: each ChatGPT one's session ends with it
-            for (var name : NamespaceAccounts.names(config, "openai")) {
-                if ("chatgpt".equals(dev.incusspawn.config.AccountResolver.value(
-                        config.tree(), "openai", name, "type"))) store.remove(name);
-            }
+            endChatGptSessions(config);
             return;
         }
         if ("chatgpt".equals(dev.incusspawn.config.AccountResolver.value(
                 config.tree(), "openai", target.name(), "type"))) {
             NamespaceAccounts.put(config, "openai", target.name(), "type", "");
-            store.remove(target.name());
+            new dev.incusspawn.proxy.ChatGptSessionStore().remove(target.name());
+        }
+    }
+
+    /**
+     * Ends every ChatGPT account's host session: what "replace all" clears, whatever replaces
+     * it -- a session left behind keeps its refresh token on disk with nothing pointing at it,
+     * and a later account of the same name would serve it again.
+     */
+    private static void endChatGptSessions(SpawnConfig config) {
+        var store = new dev.incusspawn.proxy.ChatGptSessionStore();
+        for (var name : NamespaceAccounts.names(config, "openai")) {
+            if ("chatgpt".equals(dev.incusspawn.config.AccountResolver.value(
+                    config.tree(), "openai", name, "type"))) store.remove(name);
         }
     }
 

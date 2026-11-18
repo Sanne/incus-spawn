@@ -101,12 +101,44 @@ class CodexCallTimeTokenTest {
                   "tokens": {"id_token": "i.isx_x", "access_token": "a.isx_y", "refresh_token": "rt.isx_z"}
                 }
                 """);
+        // No session is delivered: the profile script a delivery writes is not there
+        var script = withoutSessionProfile();
 
-        login(Map.of("OPENAI_API_KEY", PROOF));
+        assertEquals("", GuestShell.login(home, script, Map.of("OPENAI_API_KEY", PROOF), "true"));
 
         var root = read(auth);
         assertEquals("apikey", root.path("auth_mode").asText());
         assertEquals(PROOF, root.path("OPENAI_API_KEY").asText());
+    }
+
+    @Test
+    void loginLeavesAChatGptSessionAloneWhileItsProfileScriptOwnsTheFile() throws Exception {
+        // A session is delivered: the file is the chatgpt profile's to write, after this script,
+        // and flipping it to an API key on the way would serve a Codex in another shell a file
+        // that is neither credential
+        var dir = Files.createDirectories(home.resolve(".codex"));
+        var auth = dir.resolve("auth.json");
+        Files.writeString(auth, """
+                {
+                  "auth_mode": "chatgpt",
+                  "OPENAI_API_KEY": null,
+                  "tokens": {"id_token": "i.isx_x", "access_token": "a.isx_y", "refresh_token": "rt.isx_z"}
+                }
+                """);
+        var before = Files.readString(auth);
+        var delivered = Files.createTempFile(home, "isx-zz-codex-chatgpt", ".sh");
+        var script = CodexSetup.LOGIN_AUTH_SCRIPT
+                .replace(dev.incusspawn.proxy.InstanceSecret.CHATGPT_PROFILE_PATH, delivered.toString());
+
+        assertEquals("", GuestShell.login(home, script, Map.of("OPENAI_API_KEY", PROOF), "true"));
+
+        assertEquals(before, Files.readString(auth), "the session's profile owns the file, not this script");
+    }
+
+    /** The login script with the session profile's path pointing where no session wrote it. */
+    private String withoutSessionProfile() {
+        return CodexSetup.LOGIN_AUTH_SCRIPT.replace(dev.incusspawn.proxy.InstanceSecret.CHATGPT_PROFILE_PATH,
+                home.resolve("no-session-delivered.sh").toString());
     }
 
     /** What {@link CodexSetup} writes at build time. */

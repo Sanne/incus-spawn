@@ -230,6 +230,30 @@ class ChatGptAuthFlowTest {
     }
 
     @Test
+    void signingInAgainOverEveryAccountEndsTheReplacedAccountsSessions() throws Exception {
+        var config = seed("""
+                openai:
+                  accounts:
+                    sso:
+                      type: chatgpt
+                    keyed:
+                      apiKey: "sk-other"
+                  default: sso
+                """);
+        new ChatGptSessionStore().create("sso",
+                new ChatGptSessionStore.Tokens("id", "access", "rt-old", "acct-old"));
+
+        run(new FakeInit(), config, new ScriptedPrompts().line("r", "1"));
+
+        assertNull(new ChatGptSessionStore().read("sso"),
+                "the replaced account's session ended with it: no refresh token stays behind");
+        var replaced = new ChatGptSessionStore().read("default");
+        assertNotNull(replaced, "the new account holds the signed-in session");
+        assertEquals("rt-real", replaced.tokens().refreshToken());
+        assertEquals("", saved("openai.accounts.sso.type"), "the replaced account is gone");
+    }
+
+    @Test
     void aFailedSignInLeavesTheConfigAlone() {
         var init = new FakeInit() {
             @Override
