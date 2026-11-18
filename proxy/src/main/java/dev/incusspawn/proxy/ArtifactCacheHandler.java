@@ -1918,19 +1918,25 @@ class ArtifactCacheHandler {
     private static final List<String> CLIENT_CREDENTIAL_HEADERS = List.of("Authorization", "Cookie",
             "Private-Token", "Job-Token", "Deploy-Token", "X-JFrog-Art-Api", "X-Api-Key");
 
-    // Declared repositories already warned about for answering without their checksum header
+    // Declared repositories already warned about for answering without their checksum header, by URL:
+    // one Nexus host often serves a hosted and a proxy repository, and each is named on its own
     final Set<String> warnedHeaderless = ConcurrentHashMap.newKeySet();
 
     /**
-     * Say once per domain that a repository config.yaml declared {@code confirm: checksum-header}
-     * or {@code etag-sha1} answered an artifact without that header, or without a SHA-1 as its
-     * {@code ETag}: its copies are then confirmed by the sidecar, or, where that is unsound, never
-     * cached, and nothing else would tell the user why.
+     * Say once per repository that one config.yaml declared {@code confirm: checksum-header} or
+     * {@code etag-sha1} answered an artifact at {@code path} without that header, or without a
+     * SHA-1 as its {@code ETag}: its copies are then confirmed by the sidecar, or, where that is
+     * unsound, never cached, and nothing else would tell the user why.
      */
-    private void warnHeaderless(String domain, Revalidation revalidation) {
-        if (CachedRepository.BUILT_IN_DOMAINS.contains(domain) || !warnedHeaderless.add(domain)) return;
+    private void warnHeaderless(String domain, String path, Revalidation revalidation) {
+        if (CachedRepository.BUILT_IN_DOMAINS.contains(domain)) return;
+        var cached = repositories.get(domain);
+        var repository = cached == null ? null : repositoryOf(cached, path);
+        if (repository == null) repository = privateRepository(domain, path);
+        var url = repository == null ? "https://" + domain + "/" : "https://" + domain + repository.pathPrefix();
+        if (!warnedHeaderless.add(url)) return;
         var etag = Revalidation.ETAG.equals(revalidation.header());
-        ProxyLog.warn(domain + " answered an artifact without "
+        ProxyLog.warn(url + " answered an artifact without "
                 + (etag ? "its SHA-1 as a strong, quoted ETag" : revalidation.header())
                 + ", which maven-repositories: in config.yaml declares it sends (confirm: "
                 + (etag ? "etag-sha1" : "checksum-header") + "); "
@@ -2447,13 +2453,14 @@ class ArtifactCacheHandler {
      */
     private void download(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                           ArtifactTarget target, String ref) {
-        var sidecarPath = clientReq.path() + target.checksum().extension;
+        var path = clientReq.path();
+        var sidecarPath = path + target.checksum().extension;
         fetchCacheAndServe(clientReq, started, domain, target.artifact(), ref, target.credential(),
                 Verification.ofArtifact(target.checksum(), upResp -> {
                     var hex = revalidation.checksumFrom(upResp);
                     if (hex != null) return Future.succeededFuture(hex.getBytes(StandardCharsets.US_ASCII));
                     // Served, not cached: a sidecar would be no sound check of these bytes
-                    if (revalidation.header() != null) warnHeaderless(domain, revalidation);
+                    if (revalidation.header() != null) warnHeaderless(domain, path, revalidation);
                     if (revalidation.servesOnlyConfirmed() && revalidation.header() != null) return Future.succeededFuture(null);
                     return fetchSidecar(domain, sidecarPath).map(answer -> answer.status() == 200 ? answer.body() : null);
                 }));
@@ -2696,7 +2703,7 @@ class ArtifactCacheHandler {
                             var status = resp.statusCode();
                             if (status != 200) return new SidecarAnswer(status, null, true);
                             var hex = revalidation.checksumFrom(resp);
-                            if (hex == null) warnHeaderless(domain, revalidation);
+                            if (hex == null) warnHeaderless(domain, path, revalidation);
                             return hex == null ? null : new SidecarAnswer(200, hex.getBytes(StandardCharsets.US_ASCII), true);
                         })))))
                 .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE))

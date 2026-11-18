@@ -799,7 +799,7 @@ class ArtifactCacheProxyTest {
         publish(DECLARED, DECLARED_JAR, "v1", "SHA-1", ".sha1");
         assertEquals("v1", get(DECLARED, DECLARED_JAR).text());
         // Named once the download is verified, which may end after the client has the body
-        await("the declaration to be named in the log", () -> proxy.artifactCache.warnedHeaderless.contains(DECLARED));
+        await("the declaration to be named in the log", () -> proxy.artifactCache.warnedHeaderless.contains("https://" + DECLARED + "/repo/"));
         assertFalse(Files.exists(cached(DECLARED, DECLARED_JAR)),
                 "a sidecar is no sound check where releases are replaced, so nothing is cached");
         assertEquals(0, hitsOn(DECLARED, DECLARED_JAR + ".sha1"));
