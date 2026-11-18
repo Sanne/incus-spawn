@@ -56,8 +56,10 @@ class DefinitionTextTableTest {
     void toolsShowShowsDefinitionTextOnSafeLines() throws Exception {
         var tool = tool();
         var output = print(out -> ToolsCommand.Show.print(out, tool, "/tmp/p\u001b[2J"));
-        // One line per field, parameter line, action, download and domain, and one per heading.
-        assertSafe(output, 15);
+        // One line per field, parameter line, action, download and domain, and one per heading;
+        // the download's arch matches no architecture, so an Architectures line too.
+        assertSafe(output, 16);
+        assertTrue(output.contains("  Architectures: none"), output);
         assertTrue(output.contains("  Description:  a [2J 2J b c d e f"), output);
         assertTrue(output.contains("      first second [2J"), output);
         assertTrue(output.contains("    Open now [2J (url )"), output);

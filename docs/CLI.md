@@ -1102,7 +1102,7 @@ The fields of each command, in order:
 | `isx init --plan` | one record per step: `step`, `title`, `state`, `who`, `asks`, `changes`, `commands`, `sudo_commands`, `files`, `note`, `purpose`, `check_commands`, `sudo_script` ([`isx init`](#isx-init) says what they mean) |
 | `isx templates` | `name`, `parent`, `source`, `description`, `built`, `built_at`, `version_outdated`, `definition_changed`, `parent_rebuilt` |
 | `isx tools list` | `name`, `source`, `description` |
-| `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains` |
+| `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains`, `architectures` |
 | `isx tools validate` | `name`, `path`, `valid`, `findings` (each `severity`, `message`) |
 | `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem`, `pinned_by`, `following` |
 | `isx account show <instance>` | one record per namespace: `namespace`, `account`, `description`, `chosen_by`, `chosen_in`, `template`, `template_account`, `problem`, `identity_pending`, `template_problem` |
