@@ -74,6 +74,11 @@ public class ToolDefValidator {
                 errors.add("download entry in '" + def.getName()
                         + "' must set 'extract', 'destination_file', or both");
             }
+            // Compared as written: any other spelling never matches, so the download never runs
+            if (dl.getArch() != null && !VALID_ARCHITECTURES.contains(dl.getArch())) {
+                errors.add(OutputFormat.oneLine("download entry in '" + def.getName() + "' has arch '" + dl.getArch()
+                        + "'; use x86_64 or aarch64"));
+            }
         }
 
         for (var arch : def.getArchitectures()) {
