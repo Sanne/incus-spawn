@@ -144,11 +144,25 @@ class QueryCommandFormatTest {
                   "parameters" : [ ],
                   "actions" : [ ],
                   "downloads" : [ ],
-                  "proxy_domains" : [ "api.example.com", "uploads.example.com" ]
+                  "proxy_domains" : [ "api.example.com", "uploads.example.com" ],
+                  "architectures" : [ "x86_64", "aarch64" ]
                 }
                 """, json(record));
-        assertEquals("example\tAn example\tbuilt-in\t-\tnodejs\tjq,git\t-\t-\t-\tapi.example.com,uploads.example.com\n",
+        assertEquals("example\tAn example\tbuilt-in\t-\tnodejs\tjq,git\t-\t-\t-\tapi.example.com,uploads.example.com\tx86_64,aarch64\n",
                 plain(List.of(record)));
+    }
+
+    /** A tool with no distribution for an architecture says so, in both formats (#2357). */
+    @Test
+    void toolsShowNamesOnlyTheArchitecturesTheToolSupports() {
+        var def = new ToolDef();
+        def.setName("corestory");
+        def.setArchitectures(List.of("x86_64"));
+        var tool = new dev.incusspawn.tool.YamlToolSetup(def);
+        assertEquals(List.of("x86_64"), ToolsCommand.Show.record(tool, "built-in").get("architectures"));
+        var out = new ByteArrayOutputStream();
+        ToolsCommand.Show.print(new PrintStream(out, true, StandardCharsets.UTF_8), tool, "built-in");
+        assertTrue(out.toString(StandardCharsets.UTF_8).contains("  Architectures: x86_64\n"), out.toString());
     }
 
     @Test

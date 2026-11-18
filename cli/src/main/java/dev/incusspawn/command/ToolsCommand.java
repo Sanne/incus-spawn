@@ -166,7 +166,16 @@ public class ToolsCommand extends BaseCommand {
                 }
             }
             record.put("proxy_domains", domains);
+            record.put("architectures", architectures(tool));
             return record;
+        }
+
+        /**
+         * The architectures a build can install {@code tool} on, declared or inferred from its
+         * downloads, as {@code isx build} decides ({@link ToolSetup#unsupportedOn}).
+         */
+        static List<String> architectures(ToolSetup tool) {
+            return dev.incusspawn.config.BaseImagePin.ARCHES.stream().filter(arch -> tool.unsupportedOn(arch) == null).toList();
         }
 
         /** The {@code table} format: the tool's details, one per line. */
@@ -176,6 +185,10 @@ public class ToolsCommand extends BaseCommand {
             line(out, "  Source:        " + source);
             if (tool.feature() != null) {
                 line(out, "  Feature gate:  " + tool.feature());
+            }
+            var architectures = architectures(tool);
+            if (architectures.size() < dev.incusspawn.config.BaseImagePin.ARCHES.size()) {
+                line(out, "  Architectures: " + (architectures.isEmpty() ? "none" : String.join(", ", architectures)));
             }
 
             printRequires(out, tool);

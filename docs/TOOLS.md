@@ -35,7 +35,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `headroom` | Headroom context optimization for Claude Code |
 
 Run `isx tools list -v` to see all available tools, including user-defined definitions and project-local definitions, which a cloned repository ships in `.incus-spawn/`.
-Use `isx tools show <name>` to inspect a tool's dependencies, packages, configurable parameters, downloads, TUI actions and proxy domains.
+Use `isx tools show <name>` to inspect a tool's dependencies, packages, configurable parameters, downloads, TUI actions, proxy domains and the architectures it can be installed on.
 Use `isx tools validate <file-or-name>` to check a tool definition before a build uses it.
 
 ## Custom Tools
