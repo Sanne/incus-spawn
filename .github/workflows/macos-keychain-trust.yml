@@ -12,6 +12,9 @@ on:
     paths:
       - 'common/src/main/java/dev/incusspawn/util/MacKeychainTrust.java'
       - 'common/src/main/java/dev/incusspawn/util/SystemTrust.java'
+      - 'common/src/main/java/dev/incusspawn/util/DeniedChainTrustManager.java'
+      # The proxy's upstream trust; the smoke builds the CLI alone, so it checks only the classes both share (#1631)
+      - 'proxy/src/main/java/dev/incusspawn/proxy/Upstream.java'
       # What the smoke reads the result through
       - 'cli/src/main/java/dev/incusspawn/command/DoctorCommand.java'
       - '.github/scripts/macos-keychain-smoke.sh'
