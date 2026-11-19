@@ -475,13 +475,18 @@ class RepoCloner {
             if (hasReference) {
                 try {
                     long detaching = System.nanoTime();
-                    if (ref.hasDevice()) detachedOk = mounts.detach(idx);
+                    if (ref.hasDevice()) {
+                        // False until the removal answers: a detach that throws leaves the device mounted
+                        detachedOk = false;
+                        detachedOk = mounts.detach(idx);
+                    }
                     preparationTimings.merge(idx,
                             "detach=" + (System.nanoTime() - detaching) / 1_000_000 + "ms", (a, b) -> a + ", " + b);
                     if (detachedOk) releasePrepared(idx);
-                    // Before the count-down, so a prime woken by it already sees the failure.
-                    if (!detachedOk) failureSeen.set(true);
                 } finally {
+                    // Before the count-down, so a prime woken by it already sees the failure, a
+                    // clone or detach that threw included (#2380).
+                    if (!detachedOk || !clone.success()) failureSeen.set(true);
                     if (!repo.isHostSource() && rawReference(planned)) referencesDetached.countDown();
                 }
             }
