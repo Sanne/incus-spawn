@@ -146,6 +146,14 @@ trustd then asked authd for an authorization of its own, which authd checked aga
 authd refused to change `com.apple.trust-settings.admin` at all ("not allowed to update right"), even as root.
 A certificate already in the login keychain and an unlocked keychain of the probe's own as the default did not help either, although both attempts ran while an earlier dialog was still pending.
 So beyond `MacKeychainTrustTest`'s plists, only a person at a Mac checks a user-domain deny in a real Keychain.
+`scripts/macos-keychain-deny-check.sh` guides that person through the manual test that found #1552 (#1631).
+It asks them to mark Root E46 "Never Trust" in Keychain Access, then checks that `isx update-base --list` is refused and that `isx doctor` counts one more deny.
+After `isx proxy restart`, an instance's `curl https://api.github.com` must get a 502 from the proxy.
+It then asks them to set E46 back to "Use System Defaults", and checks that all three recover.
+It is also the only check of an instance's request against a Keychain deny, and of the reset.
+The script never writes a trust setting and never uses sudo, so the only risk it leaves is a person who stops before the reset, which it tells them how to undo.
+It concludes nothing when its premises fail: `api.github.com` must still send E46 cross-signed by USERTrust ECC, the instance's curl must be served by `incus-spawn MITM CA`, and `security dump-trust-settings` must show the person's change in the user domain.
+Run it on a Mac before releasing a change to the Keychain trust code: `MacKeychainTrust`, `SystemTrust`, `DeniedChainTrustManager` or the proxy's `Upstream`.
 The three rounds of the probe are commits of that PR, to run again when a new macOS might behave otherwise.
 
 **Redirect rule cleanup:** `isx proxy uninstall` removes the systemd service **and** cleans up the PREROUTING redirect rule and bridge DNS overrides unconditionally — even if the service removal itself fails.
