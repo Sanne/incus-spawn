@@ -205,6 +205,37 @@ class WorkflowAptInstallTest {
     }
 
     @Test
+    void theLastAttemptKeepsOnlyTheFallback() throws Exception {
+        // #2388: all three ubuntu.com mirrors resolved but timed out, each attempt dropped one,
+        // and the three attempts ran out before the fallback listed fourth was ever tried first
+        var run = runWithFallback(FALLBACK, "update", RUNNER_MIRRORS
+                .replace("https://archive", "https://slow.archive").replace("https://security", "https://slow.security"), "zsh");
+        assertEquals(0, run.exit(), run.out());
+        assertEquals(3, run.apt().stream().filter(c -> c.endsWith(" update")).count(), "still three attempts: " + run.apt());
+        assertEquals(List.of(FALLBACK + "\tpriority:4"), run.mirrors());
+        assertTrue(run.out().contains("keeping only the fallback mirror"), run.out());
+        assertInstalledOnceFromDownloads(run, "zsh");
+    }
+
+    @Test
+    void theFallbackGetsTheLastAttemptHoweverLongTheList() throws Exception {
+        var list = new StringBuilder();
+        for (int i = 1; i <= 5; i++) list.append("https://slow").append(i).append(".ubuntu.com/ubuntu/\tpriority:").append(i).append('\n');
+        var run = runWithFallback(FALLBACK, "update", list.toString(), "zsh");
+        assertEquals(0, run.exit(), run.out());
+        assertEquals(3, run.apt().stream().filter(c -> c.endsWith(" update")).count(), "the bound stays three attempts: " + run.apt());
+        assertEquals(List.of(FALLBACK + "\tpriority:6"), run.mirrors());
+    }
+
+    @Test
+    void withoutAFallbackTheLastAttemptStillDropsOneMirror() throws Exception {
+        var run = run("update", RUNNER_MIRRORS.replace("https://archive", "https://slow.archive"), "zsh");
+        assertEquals(0, run.exit(), run.out());
+        assertEquals(List.of("https://security.ubuntu.com/ubuntu/\tpriority:3"), run.mirrors());
+        assertFalse(run.out().contains("keeping only the fallback"), run.out());
+    }
+
+    @Test
     void theFallbackIsListedLastAndResolvingMirrorsStay() throws Exception {
         var run = runWithFallback(FALLBACK, "none", RUNNER_MIRRORS.replace("https://security", "https://unresolvable.security").strip(), "zsh");
         assertEquals(0, run.exit(), run.out());
