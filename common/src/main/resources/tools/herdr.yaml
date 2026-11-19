@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: herdr
 description: herdr 0.9.5 – terminal workspace manager for agents, reached from the host's herdr over SSH
 requires:

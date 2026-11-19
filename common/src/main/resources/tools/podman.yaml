@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: podman
 description: Podman container runtime configured for Testcontainers
 

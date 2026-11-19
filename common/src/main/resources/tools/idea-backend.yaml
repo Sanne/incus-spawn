@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: idea-backend
 description: JetBrains IntelliJ IDEA Remote Development backend 2026.3
 requires:

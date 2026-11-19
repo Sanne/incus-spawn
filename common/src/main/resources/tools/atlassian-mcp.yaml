@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: atlassian-mcp
 description: Atlassian MCP server for Jira and Confluence
 agent_note: |

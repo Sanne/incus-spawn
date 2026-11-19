@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/template.json
 name: tpl-dev
 description: Podman, GitHub CLI, Starship
 parent: tpl-minimal

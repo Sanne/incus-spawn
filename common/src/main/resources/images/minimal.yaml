@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/template.json
 name: tpl-minimal
 description: Base OS only
 # Fedora's /tmp is a tmpfs, emptied by every restart: keep it on disk (#1561)
