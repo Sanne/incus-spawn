@@ -421,11 +421,13 @@ It now prints `INCONCLUSIVE` per target instead of `ok`, so the report stops rea
 
 Neither binary reads Java serialized objects, so the JDK's object reader stays out of both images (#458).
 That is less code to ship, and no deserialization gadget surface for a future bug to reach.
-Four paths kept it in, and a substitution cuts each one.
+Four paths keep it in, and three substitutions cut them.
 The JDK's JCEKS keystore reached it twice: `JceKeyStore.engineLoad`, from the default SSL context, and `JceKeyStore.engineGetKey` → `KeyProtector.unseal` → `SealedObject`, from `KeyManagerFactory.init` → `KeyStore.getKey`.
 `NativeImageSubstitutions` (`common`) makes both throw.
 Neither binary uses JCEKS, and with `engineLoad` throwing a JCEKS keystore never initializes, so `KeyStore.getKey` throws before it reaches `engineGetKey`.
-Vert.x reaches it in the proxy through `SerializableCodec` on the event bus and through `Checker.copySerializable` for shared data, which `VertxDeserializationSubstitutions` (`proxy`) cuts; the proxy uses neither feature.
+Vert.x reaches it in the proxy through `Checker.copySerializable` for shared data and through `SerializableCodec` on the event bus.
+In Vert.x 5 both go through `SerializableUtils.fromBytes`, which `VertxDeserializationSubstitutions` (`proxy`) makes throw; the proxy uses neither feature.
+Vert.x 4's `SerializableCodec` built its own reader, so it needed a second substitution, which went with the move to Quarkus 4 (#2377).
 The `engineGetKey` path alone cost the proxy 384 KiB and 366 methods (docs/dev/PERFORMANCE-NOTES.md "Java deserialization in the native images").
 
 Both builds pass `-H:AbortOnMethodReachable=java.io.ObjectInputStream.readObject0`, so a new path fails the build instead of growing the binary silently.
@@ -438,8 +440,8 @@ That makes the type reachable without compiling any of its code.
 `TreeMap.buildFromSorted` still calls `ObjectInputStream.readObject(Class)`, but with no reader ever created the analysis goes no further.
 
 What it gives up: a dependency that really needs Java deserialization fails the native build until its path is substituted or the gate is lifted with a reason.
-The Vert.x substitutions break local event-bus delivery of a `Serializable` body and `Serializable` values in a Vert.x `LocalMap`, both unused here.
-An opt-in switch for them in Quarkus itself is proposed in #529.
+The Vert.x substitution breaks local event-bus delivery of a `Serializable` body and `Serializable` values in a Vert.x `LocalMap`, both unused here.
+An opt-in switch for it in Quarkus itself is proposed in #529.
 
 ## Regular expressions are compiled once
 

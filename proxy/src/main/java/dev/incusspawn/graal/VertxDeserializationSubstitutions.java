@@ -3,30 +3,11 @@ package dev.incusspawn.graal;
 import com.oracle.svm.core.annotate.Substitute;
 import com.oracle.svm.core.annotate.TargetClass;
 
-import io.vertx.core.buffer.Buffer;
-
-// CodecManager → SerializableCodec.decodeFromWire()/transform()
-//     → CheckedClassNameObjectInputStream (extends ObjectInputStream)
-// Safe: we use Vert.x only as an HTTP server (MITM proxy).
-
-@TargetClass(className = "io.vertx.core.eventbus.impl.codecs.SerializableCodec")
-final class Target_io_vertx_core_eventbus_impl_codecs_SerializableCodec {
-
-    @Substitute
-    public Object decodeFromWire(int pos, Buffer buffer) {
-        throw new UnsupportedOperationException(
-                "Vert.x SerializableCodec is excluded from native image");
-    }
-
-    @Substitute
-    public Object transform(Object obj) {
-        throw new UnsupportedOperationException(
-                "Vert.x SerializableCodec is excluded from native image");
-    }
-}
-
 // Checker.copySerializable() → SerializableUtils.fromBytes() → ObjectInputStream
-// Safe: we do not use Vert.x shared data structures.
+// SerializableCodec.decodeFromWire()/transform() → SerializableUtils.fromBytes() → ObjectInputStream
+// Safe: we use neither Vert.x shared data structures nor Serializable event-bus bodies.
+// On Vert.x 4 SerializableCodec built its own reader and needed a substitution of its own;
+// Vert.x 5 (Quarkus 4) routes it through fromBytes, so this one cut covers both (#2377).
 
 @TargetClass(className = "io.vertx.core.impl.SerializableUtils")
 final class Target_io_vertx_core_impl_SerializableUtils {
