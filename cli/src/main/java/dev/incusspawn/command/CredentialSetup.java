@@ -247,17 +247,17 @@ class CredentialSetup {
             prompts.say("k. Switch to an API key instead");
             var choice = readInput(prompts.ask("Choice (Enter to keep as-is): "));
             switch (choice) {
-                case "s" -> { signInChatGptInBrowser(config, target, prompts); return; }
+                case "s" -> { signInChatGptInBrowser(config, target); return; }
                 case "k" -> { askAndSaveApiKey(config, target, prompts); return; }
                 default -> { return; }
             }
         }
 
         prompts.say("1. Sign in with ChatGPT — for a ChatGPT or ChatGPT Enterprise plan;");
-        prompts.say("   isx prints an address you open in your browser, where your");
-        prompts.say("   organisation's SSO works too, and the session stays on this");
-        prompts.say("   host. isx signs in as Codex's own client, which OpenAI has");
-        prompts.say("   not endorsed — you opt in knowingly.");
+        prompts.say("   isx prints an address you open in a browser on this host,");
+        prompts.say("   where your organisation's SSO works too, and the session");
+        prompts.say("   stays on this host. isx signs in as Codex's own client,");
+        prompts.say("   which OpenAI has not endorsed — you opt in knowingly.");
         prompts.say("2. Sign in with a one-time code — the same sign-in, for a host");
         prompts.say("   whose browser is elsewhere; not yet tested against the real");
         prompts.say("   service.");
@@ -265,8 +265,8 @@ class CredentialSetup {
         prompts.say("   which requires billing credits.");
         var choice = readInput(prompts.ask("Choice (Enter to skip): "));
         switch (choice) {
-            case "1" -> signInChatGptInBrowser(config, target, prompts);
-            case "2" -> signInChatGptWithDeviceCode(config, target, prompts);
+            case "1" -> signInChatGptInBrowser(config, target);
+            case "2" -> signInChatGptWithDeviceCode(config, target);
             case "3" -> askAndSaveApiKey(config, target, prompts);
             default -> BuildOutput.step("Skipped. Configure later with 'isx account add openai'.");
         }
@@ -277,14 +277,17 @@ class CredentialSetup {
      * The address is printed, never opened for the person: they click or paste it themselves,
      * and the redirect answers only a browser on this host.
      */
-    private void signInChatGptInBrowser(SpawnConfig config, AccountTarget target, Prompts prompts) {
+    private void signInChatGptInBrowser(SpawnConfig config, AccountTarget target) {
         var signIn = chatGptSignIn();
         BuildOutput.step("Sign in with ChatGPT");
         dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
         try {
             tokens = signIn.signInWithBrowser(url -> {
-                prompts.say("Open this address in a browser on this machine, then finish the sign-in there:");
-                prompts.say(url);
+                // A report between questions, so through BuildOutput rather than the prompts'
+                // conversation (#1703); the address plain, on its own line, so nothing stands
+                // between a terminal's link detection and the URL
+                BuildOutput.step("Open this address in a browser on this machine, then finish the sign-in there:");
+                BuildOutput.step(url);
             });
         } catch (Exception e) {
             BuildOutput.error("the ChatGPT sign-in did not finish: " + e.getMessage());
@@ -294,7 +297,7 @@ class CredentialSetup {
     }
 
     /** Signs a ChatGPT session in by the one-time code, for a host whose browser is elsewhere. */
-    private void signInChatGptWithDeviceCode(SpawnConfig config, AccountTarget target, Prompts prompts) {
+    private void signInChatGptWithDeviceCode(SpawnConfig config, AccountTarget target) {
         var signIn = chatGptSignIn();
         dev.incusspawn.proxy.ChatGptSignIn.DeviceCode device;
         try {
@@ -304,11 +307,14 @@ class CredentialSetup {
             return;
         }
         BuildOutput.step("Sign in with ChatGPT");
-        // The address is printed plain, on its own line: the person clicks it or pastes it
-        // themselves, and no bolding stands between a terminal's link detection and the URL
-        prompts.say("Open this address in a browser on this machine:");
-        prompts.say(device.verificationUrl());
-        prompts.say("and enter this one-time code: " + styled(BOLD, device.userCode()));
+        // A report between questions, so through BuildOutput rather than the prompts'
+        // conversation (#1703). The address is printed plain, on its own line: no bolding
+        // stands between a terminal's link detection and the URL. Any device serves, for the
+        // one-time code carries the sign-in -- "on this machine" would send a headless host's
+        // user nowhere, and this path exists for exactly them.
+        BuildOutput.step("Open this address on any device:");
+        BuildOutput.step(device.verificationUrl());
+        BuildOutput.step("and enter this one-time code: " + styled(BOLD, device.userCode()));
         dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
         try {
             tokens = signIn.awaitAuthorization(device, null);
@@ -319,14 +325,17 @@ class CredentialSetup {
         saveChatGptSession(config, target, tokens);
     }
 
-    /** Records a signed-in session as the account's credential. */
+    /**
+     * Records a signed-in session as the account's credential. The replaced accounts' sessions
+     * end only once the new account is on disk: a failed {@code create} or save leaves
+     * config.yaml still naming them, and their sessions must outlive that naming.
+     */
     private void saveChatGptSession(SpawnConfig config, AccountTarget target,
                                     dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens) {
-        if (target.replaceOthers()) {
-            // Before the replace clears them: each ChatGPT account's session ends with it, so no
-            // real refresh token stays on disk with nothing pointing at it
-            endChatGptSessions(config);
-        }
+        // Read before the replace clears them from the config, the target's own name left
+        // out: create() just gave that a fresh session
+        List<String> replaced = List.of();
+        if (target.replaceOthers()) replaced = chatGptAccounts(config, target.name());
         new dev.incusspawn.proxy.ChatGptSessionStore().create(target.name(), tokens);
         if (target.replaceOthers()) {
             NamespaceAccounts.replaceAll(config, "openai", target.name(), java.util.Map.of("type", "chatgpt"));
@@ -334,6 +343,7 @@ class CredentialSetup {
             NamespaceAccounts.put(config, "openai", target.name(), "type", "chatgpt");
         }
         config.save();
+        endChatGptSessions(replaced);
         BuildOutput.step("ChatGPT session saved as account '" + target.name() + "'.");
     }
 
@@ -345,46 +355,51 @@ class CredentialSetup {
             BuildOutput.step("Skipped. Configure later with 'isx account add openai'.");
             return;
         }
-        leaveChatGpt(config, target);
+        // Which ChatGPT sessions this key ends, read before the save changes the config; they
+        // end only after the save succeeded, or a failed save leaves config.yaml naming
+        // ChatGPT accounts whose sessions are already gone
+        var leaving = new ArrayList<String>();
+        if (target.replaceOthers()) {
+            leaving.addAll(chatGptAccounts(config, null));
+        } else if ("chatgpt".equals(dev.incusspawn.config.AccountResolver.value(
+                config.tree(), "openai", target.name(), "type"))) {
+            leaving.add(target.name());
+            // The account's type goes with its session -- or isChatGpt would keep answering
+            // true and the pasted key would be ignored. In the guest, the API-key login
+            // script replaces the session's auth.json, whose proofs died with the session.
+            NamespaceAccounts.put(config, "openai", target.name(), "type", "");
+        }
         if (target.replaceOthers()) {
             NamespaceAccounts.replaceAll(config, "openai", target.name(), java.util.Map.of("apiKey", key));
         } else {
             NamespaceAccounts.put(config, "openai", target.name(), "apiKey", key);
         }
         config.save();
+        endChatGptSessions(leaving);
         BuildOutput.step("OpenAI credentials saved.");
     }
 
     /**
-     * Takes the accounts this save leaves out of ChatGPT: their host sessions end, so no real
-     * refresh token stays on disk with nothing pointing at it, and the account's {@code type}
-     * goes with its session -- or {@code isChatGpt} would keep answering true and the pasted
-     * key would be ignored. In the guest, the API-key login script replaces the session's
-     * {@code auth.json}, whose proofs died with the session.
+     * The ChatGPT accounts a save that replaces every account leaves behind, read before it
+     * changes the config: {@code keep} names the one whose own session stays (the account the
+     * save just gave a fresh session). A session left behind keeps its refresh token on disk
+     * with nothing pointing at it, and a later account of the same name would serve it again.
      */
-    private static void leaveChatGpt(SpawnConfig config, AccountTarget target) {
-        if (target.replaceOthers()) {
-            endChatGptSessions(config);
-            return;
+    private static List<String> chatGptAccounts(SpawnConfig config, String keep) {
+        var names = new ArrayList<String>();
+        for (var name : NamespaceAccounts.names(config, "openai")) {
+            if (name.equals(keep)) continue;
+            if ("chatgpt".equals(dev.incusspawn.config.AccountResolver.value(
+                    config.tree(), "openai", name, "type"))) names.add(name);
         }
-        if ("chatgpt".equals(dev.incusspawn.config.AccountResolver.value(
-                config.tree(), "openai", target.name(), "type"))) {
-            NamespaceAccounts.put(config, "openai", target.name(), "type", "");
-            new dev.incusspawn.proxy.ChatGptSessionStore().remove(target.name());
-        }
+        return names;
     }
 
-    /**
-     * Ends every ChatGPT account's host session: what "replace all" clears, whatever replaces
-     * it -- a session left behind keeps its refresh token on disk with nothing pointing at it,
-     * and a later account of the same name would serve it again.
-     */
-    private static void endChatGptSessions(SpawnConfig config) {
+    /** Ends the named accounts' host sessions, what named them having just left the config. */
+    private static void endChatGptSessions(List<String> names) {
+        if (names.isEmpty()) return;
         var store = new dev.incusspawn.proxy.ChatGptSessionStore();
-        for (var name : NamespaceAccounts.names(config, "openai")) {
-            if ("chatgpt".equals(dev.incusspawn.config.AccountResolver.value(
-                    config.tree(), "openai", name, "type"))) store.remove(name);
-        }
+        for (var name : names) store.remove(name);
     }
 
     void setupClaudeAuth(SpawnConfig config, Prompts prompts) {

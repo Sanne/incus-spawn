@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.proxy.ChatGptSessionStore;
 import dev.incusspawn.proxy.ChatGptSignIn;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -76,16 +77,18 @@ class ChatGptAuthFlowTest {
         return new ScriptedPrompts().line("2");
     }
 
-    private static void run(FakeInit init, SpawnConfig config, ScriptedPrompts prompts) {
-        init.setupCodexAuth(config, prompts);
+    /** Runs the step and answers it, recording what it reported: the address reports go through BuildOutput, not the prompts' conversation (#1703). */
+    private static RecordingOutput run(FakeInit init, SpawnConfig config, ScriptedPrompts prompts) {
+        var output = RecordingOutput.during(() -> init.setupCodexAuth(config, prompts));
         prompts.assertFullyConsumed();
+        return output;
     }
 
     @Test
     void aChatGptSignInRecordsTheAccountAndKeepsTheSessionOnTheHost() {
         var init = new FakeInit();
         var prompts = chooseChatGpt();
-        run(init, new SpawnConfig(), prompts);
+        var output = run(init, new SpawnConfig(), prompts);
 
         assertEquals("chatgpt", saved("openai.accounts.default.type"));
         var session = new ChatGptSessionStore().read("default");
@@ -93,9 +96,11 @@ class ChatGptAuthFlowTest {
         assertEquals("rt-real", session.tokens().refreshToken());
         assertEquals("acct-ent", session.tokens().accountId());
         assertEquals(1, init.signIn.browserSignIns);
-        var conversation = String.join("\n", prompts.conversation());
-        assertTrue(conversation.contains("https://auth.openai.com/oauth/authorize?response_type=code"),
-                "the address is printed for the person to open, never opened for them: " + conversation);
+        var said = String.join("\n", output.lines());
+        assertTrue(said.contains("https://auth.openai.com/oauth/authorize?response_type=code"),
+                "the address is printed for the person to open, never opened for them: " + said);
+        assertTrue(said.contains("in a browser on this machine"),
+                "the browser flow's redirect answers only a browser on this host: " + said);
     }
 
     @Test
@@ -110,13 +115,15 @@ class ChatGptAuthFlowTest {
 
     @Test
     void thePersonSeesTheVerificationUrlAndTheOneTimeCode() {
-        var prompts = chooseDeviceCode();
-        run(new FakeInit(), new SpawnConfig(), prompts);
+        var output = run(new FakeInit(), new SpawnConfig(), chooseDeviceCode());
 
-        var conversation = String.join("\n", prompts.conversation());
-        assertTrue(conversation.contains("https://auth.openai.com/codex/device"), conversation);
-        assertTrue(conversation.contains("ABCD-EFGH"), "the code is the one thing to show: " + conversation);
-        assertFalse(conversation.contains("rt-real"), "the tokens are never shown: " + conversation);
+        var said = String.join("\n", output.lines());
+        assertTrue(said.contains("Open this address on any device"),
+                "the one-time code carries the sign-in from any device, not only a browser on"
+                        + " this host: " + said);
+        assertTrue(said.contains("https://auth.openai.com/codex/device"), said);
+        assertTrue(said.contains("ABCD-EFGH"), "the code is the one thing to show: " + said);
+        assertFalse(said.contains("rt-real"), "the tokens are never shown: " + said);
     }
 
     @Test
