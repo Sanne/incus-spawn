@@ -268,7 +268,8 @@ The schemas are looser where the loaders are: a list or mapping may be empty (`p
 What a schema cannot say stays in the validators: that a parent exists, a project-local template's confinement, and which keys a trusted template alone may use.
 
 isx writes `config.yaml` from its model, which drops comments, so no modeline lasts in that file, and the package never writes `mcp.yaml`.
-Only the template and tool files carry a modeline for that reason: the skeleton, the built-in templates and tools (`EditorSchemasTest`), and so the template overrides `isx templates edit` copies from them.
+Only the template and tool files carry a modeline for that reason, bar one example: the skeleton, the built-in templates and tools (`EditorSchemasTest`), and so the template overrides `isx templates edit` copies from them.
+The one exception is the `mcp.yaml` example in docs/MCP.md, which carries its line because people copy it.
 
 The schemas are a public contract, since files in the wild name their address: a key is added, never renamed or removed.
 SchemaStore.org registration, which would apply them with no modeline, is not done yet.
