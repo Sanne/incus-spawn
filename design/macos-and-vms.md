@@ -11,18 +11,18 @@ The transport depends on the platform:
 The CLI speaks plain HTTP/1.1 over this socket — no TLS, no authentication (access is governed by Unix socket permissions and the `incus-admin` group).
 WebSocket-based exec sessions (for `isx shell`, file push, etc.) use the same socket.
 
-**macOS** (via VM): Incus runs inside a VM managed by vfkit.
+**macOS** (via VM): Incus runs inside a VM that isx's own launcher, `isx-vm`, runs on Virtualization.framework.
 The CLI connects via a **vsock tunnel** — a direct host↔VM communication channel that bypasses the IP network entirely:
 
 ```
 UnixSocketTransport (plain HTTP/1.1)
   → ~/.local/state/incus-spawn/vm.incus.sock  (Unix socket on host)
-    → vfkit virtio-vsock device (port 8443)
+    → isx-vm's relay to the virtio-vsock device (port 8443)
       → socat VSOCK-LISTEN:8443 inside VM
         → /run/incus/unix.socket (Incus daemon)
 ```
 
-vfkit exposes the VM's vsock port 8443 as a Unix domain socket on the host.
+`isx-vm` exposes the VM's vsock port 8443 as a Unix domain socket on the host.
 Inside the VM, socat bridges the vsock listener to the Incus daemon's local Unix socket.
 The result is that the macOS path reuses the same `UnixSocketTransport` as Linux — plain HTTP, no TLS, no certificates.
 
@@ -50,7 +50,7 @@ A fast operation still costs one wait, which the request budgets pin; `Operation
 
 The vsock tunnel as vfkit ran it (`AF_VSOCK` across `host unix socket → vfkit → in-VM socat → Incus`) did **not reliably propagate connection close/EOF** — particularly after macOS sleep/resume, when in-flight streams were left half-open.
 Since #2031 isx runs the VM with its own launcher, `isx-vm`, whose relay closes both sides of a connection on the first EOF; the compensations below stay until each is retired with Mac evidence.
-Where the host-to-guest half of it comes from is in "Where the vsock leak comes from" below, and the relay that replaces vfkit's is in "The launcher's relay".
+Where the host-to-guest half of it comes from is in "Where the vsock leak comes from" below, and the relay that replaced vfkit's is in "The launcher's relay".
 That single fault surfaced in two directions and shaped several design choices:
 
 - **Exec completion is derived from the operation, not the socket.**
@@ -87,7 +87,7 @@ That single fault surfaced in two directions and shaped several design choices:
 
 - **The forwarder leaks, so it needs a backstop and a recovery path.**
   The same close-propagation gap means the in-VM `socat` forwarder never reaps connections whose close didn't cross the boundary.
-  They pile up as vfkit-held host fds and degrade every new connection (observed: hundreds of leaked streams, `list` latency from sub-second to ~30s).
+  They piled up as vfkit-held host fds and degraded every new connection (observed: hundreds of leaked streams, `list` latency from sub-second to ~30s).
   Mitigations: a `socat -T` **inactivity timeout** reaps orphaned children (sized above the 120s `/wait` long-poll, with keepalives so live connections are never reaped); a **keep-alive connection cache** (`ConnectionPool`/`KeepAliveConnection`, via `requestPooled`) reuses a warm connection for short request-path calls (`get`/`post`/`/wait`) instead of reconnecting each time, cutting the churn that feeds the leak (exec WebSocket fds are per-operation and not poolable); and a per-process connection gauge + high-water mark in `UnixSocketTransport` makes accumulation visible.
 
 - **A cut-off exchange is an error, never a smaller success.**
@@ -116,7 +116,7 @@ That single fault surfaced in two directions and shaped several design choices:
   Before lxc/incus@2cb2549, incusd wraps its local Unix listener in a `StarttlsListener` whose `Accept()` peeks 8 bytes to detect a STARTTLS upgrade, synchronously and with no deadline.
   So a connection that has sent nothing blocks every connection behind it until it speaks or closes (found by the vsock-bridged CI boot: a new request completed exactly when a silent one finally sent its first bytes).
   On Linux a client's close reaches incusd at once and unblocks the peek.
-  Through vfkit it may never arrive, and then the forwarder keeps the silent connection open until `socat -T` reaps it -- up to 180s with no API at all, which reads exactly like the field "wedged tunnel" that `forwarder-restart` clears instantly by killing the child.
+  Through vfkit it often never arrived, and then the forwarder kept the silent connection open until `socat -T` reaped it -- up to 180s with no API at all, which read exactly like the field "wedged tunnel" that `forwarder-restart` cleared instantly by killing the child.
   isx therefore never opens a tunnel connection without writing a request straight away.
   The one place that used to (the vsock branch of `diagnoseConnectionFailure`, a connect-and-close reachability check that ran precisely when the tunnel was struggling) now sends a real `GET /1.0` under the probe timeout.
   The server-side fix belongs upstream.
@@ -126,7 +126,7 @@ That single fault surfaced in two directions and shaped several design choices:
   The 7.0.2 LTS release has it, and the appliance's incusd is now built from that release (#2104, `appliance/incus/`, see `appliance/DESIGN.md`).
   On an appliance built since then, a silent or partial connection stalls nothing, and incusd closes it after 3s, well before the forwarder's backstop.
   An older appliance is still affected, so the rule above stays.
-  incusd also closes idle keep-alive connections after 30s (`IdleTimeout`), a close vfkit may not deliver either.
+  incusd also closes idle keep-alive connections after 30s (`IdleTimeout`), a close vfkit did not always deliver either.
   So `ConnectionPool`'s TTL (5s) must stay well under it.
 
 - **The forwarder's accept queue must absorb one exec.** socat's default listen backlog is 5, and a vsock listener with a full accept queue refuses the connection rather than letting it wait.
@@ -150,7 +150,7 @@ That single fault surfaced in two directions and shaped several design choices:
 The mitigations above treat the tunnel's lost closes as a given.
 Most of the bridge that loses them is open source, and reading it points to a concrete cause for the host-to-guest direction.
 That cause is confirmed: a relay with vfkit's logic in front of a real vsock on Linux fails the same two checks, with the same counts, as vfkit does on a Mac.
-This section is the record of every tunnel fault isx works around, who owns the code at fault, and what follows (#785, #2030, #2031).
+This section is the record of every tunnel fault isx worked around under vfkit, who owns the code at fault, and what follows (#785, #2030, #2031).
 It does not list the bugs fixed under #774: those were isx's own parsers, which read an EOF from a lossy tunnel as a normal end.
 
 ### Who owns which part of the tunnel
@@ -173,10 +173,10 @@ Three of the four layers between isx and the guest are open source, and the one 
 
 ### The faults, and what isx does about each
 
-| # | symptom | seen in | what isx does today |
+| # | symptom | seen in | what isx did about it under vfkit |
 |---|---|---|---|
 | P1 | A connection the host closes does not close in the guest. The forwarder's `socat` children and vfkit's fds on `vm.incus.sock` pile up, and new connections slow down (a sub-second `isx list` took about 30 s). | #253, #676, #791, #2031 | the `socat -T 180` backstop; `ConnectionPool` to cut churn; `isx doctor`'s leak localization; the agent's `forwarder-restart` |
-| P2 | vfkit stops serving `vm.incus.sock` while the agent socket on the same vsock device works. `connect()` succeeds, then no byte arrives, and the guest never sees the connection. Only a VM restart recovers. | #253, #676, #791, #1874 | `LeakLayer.VFKIT` detection; fail fast with "run `isx vm restart`" |
+| P2 | vfkit stopped serving `vm.incus.sock` while the agent socket on the same vsock device worked. `connect()` succeeded, then no byte arrived, and the guest never saw the connection. Only a VM restart recovered. | #253, #676, #791, #1874 | leak-layer detection (`LeakLayer.LAUNCHER` today); fail fast with "run `isx vm restart`" |
 | P3 | Exec WebSocket close frames do not arrive, and an interactive shell's teardown stalls about 8 s. | #254 | completion from the operation's `/wait`; the adaptive drain and force-close; keepalive pings on every fd |
 | P4 | Streams go half-open across macOS sleep and resume. Reads block forever and shells die. | #248, #253 | keepalive pings; the event stream's silence limit (50 s); request watchdogs; reconnect in `InstanceEventWatcher` |
 | P5 | The guest clock ran 32 h behind after a wake. #204 and #290 blamed vfkit's `--timesync`, but the guest agent never listened (it bound to the host's CID), so vfkit had nothing to reach (#2282). | #204, #290, #2282 | chrony in the guest; the `isx.time` seed at boot; the agent on any CID, with `/dev/rtc0` in the kernel |
@@ -269,11 +269,12 @@ This is unconfirmed.
 
 ### What may still be Virtualization.framework's
 
-Whether the framework carries a close the host makes on its descriptor to the guest cannot be read from source, and no relay can repair it if it does not.
-vfkit never makes that close, so the Mac data so far does not answer it.
-The same holds for sleep and resume: the half-open streams of P4 may be a separate fault of the framework.
-They may also be the leak above, made visible by a backlog that builds up while the Mac sleeps.
-Both are measured on a Mac with a relay that does close (#2031 stage 2).
+Whether the framework carries a close the host makes on its descriptor to the guest could not be read from source, and no relay could repair it if it did not.
+vfkit never made that close, so its Mac data could not answer it.
+The same held for sleep and resume: the half-open streams of P4 might have been a separate fault of the framework, or the leak above made visible by a backlog built up while the Mac slept.
+Both were measured on a Mac with `isx-vm`, whose relay does close (#2031, stages 2 and 3).
+A host-side close reached the guest, and every tunnel check passed.
+Across a sleep, the launcher ended all 20 connections held before it, and the API answered 40 ms after the wake, where vfkit had kept all 20 open (docs/dev/PERFORMANCE-NOTES.md "The launcher's machine after a sleep, with the agent fixed, on a Mac").
 
 ### What follows
 
@@ -303,7 +304,7 @@ The alternatives fit less well: krunkit is a different engine that hardcodes a w
 
 A connection isx closes is closed in the guest at once, so nothing piles up for a timeout to reap.
 That is what the relay in `launcher/` is for (#2031).
-Until the launcher ships, a Mac still runs vfkit's relay, and the relay here runs only in tests and as CI's bridge.
+A Mac runs it in `isx-vm` ("The launcher's machine"), and CI runs it as the bridge to the appliance's vsock ports.
 
 `launcher/` is a Swift package, outside the Maven build.
 Its module `IsxRelay` holds the relay and imports no framework, only the C library and `Synchronization` for one mutex.
@@ -327,7 +328,7 @@ So the code that decides when a connection ends is the same in both places.
   No client of the tunnel does that: `UnixSocketTransport` never half-closes, since Incus cancels a request on one, and `VmAgentClient` keeps its write side open until the agent hangs up.
   A new tunnel client must do the same.
   The first run of `isx-vm` on a Mac met one that did not: the appliance's tunnel checks made their agent calls through `nc`, and Apple's `nc` shuts its write side down at the end of its input.
-  Every agent call under `isx-vm` came back empty, while under vfkit the same calls had always passed, since vfkit's relay does not carry that half-close to the guest.
+  Every agent call under `isx-vm` came back empty, while under vfkit the same calls had always passed, since vfkit's relay did not carry that half-close to the guest.
   The checks now call the agent with `appliance/agent-call.pl`, which keeps its write side open on every host, and `appliance/test-agent-call.sh` holds it to that in CI on Linux and macOS.
   The relay was left as it is: one that passed the half-close on would still lose the answer of `forwarder-restart`, since the guest's `socat` waits only half a second after an EOF, and one that held the EOF back would be vfkit's relay again.
   In return the relay does not depend on the framework carrying `SHUT_WR`, which nobody has measured.
@@ -376,7 +377,7 @@ The test's guest refuses every dial from then on, so a connection the relay acce
 The relay itself never closes its listener, but a launcher that stops serving a socket must not close it under `serve()` either.
 
 What CI cannot show is the framework's half: that a close on its descriptor reaches the guest, and how the relay behaves under bursts, held connections and sleep on a Mac.
-Those are measured against vfkit on the Mac runner before anything ships, with the prototype of the next section.
+Those were measured against vfkit on the Mac runner before the launcher shipped, with its prototype ("The measurement and the rule").
 
 ## The launcher's machine
 
@@ -454,11 +455,11 @@ That lead grows only in a sleep, so a stamp more than half a second below the le
 The stamp is taken before the guest is dialled, so a connection whose dial the sleep interrupted counts as made before it, and is ended when that dial returns.
 The guest does not run while its host sleeps, so its clock is behind by the time asleep.
 The launcher sends the host's time to the guest agent (`guest-set-time`), on a connection of its own for each wake, tried up to five times a second apart since the guest is waking too.
-vfkit keeps one connection for all wakes and stops setting the clock for good when that one cannot be made.
+vfkit kept one connection for all wakes and stopped setting the clock for good when that one could not be made.
 The clock is set for one wake at a time, on a serial queue, since the guest agent serves one client at a time.
-The appliance's agent listens since #2282, and on a Mac it answers `guest-set-time` under vfkit.
-Whether a wake sets the clock, under either program, is unmeasured until `appliance/launcher-on-mac.sh --sleep` runs on a Mac with the fixed appliance.
-After a sleep of 62 s the guest was 59 s behind 10 s after the wake, with vfkit as with `isx-vm` (docs/dev/PERFORMANCE-NOTES.md "The launcher's machine with 192 connections held, and after a sleep, on a Mac").
+The appliance's agent listens since #2282, and on a Mac it answered `guest-set-time` under vfkit as well.
+With an appliance from before that fix, after a sleep of 62 s the guest was 59 s behind 10 s after the wake, with vfkit as with `isx-vm` (docs/dev/PERFORMANCE-NOTES.md "The launcher's machine with 192 connections held, and after a sleep, on a Mac").
+With the fixed appliance, the guest's clock was set after a 62 s sleep under `isx-vm`; vfkit's VM came back 61 s behind in the same round, but its tunnel had wedged earlier in it, and outside a bench round vfkit set the clock within a second (docs/dev/PERFORMANCE-NOTES.md "The launcher's machine after a sleep, with the agent fixed, on a Mac").
 A second wake while the first is still being served sets the clock again afterwards, since the guest stood still once more.
 The launcher learns of a wake from two clocks, one that counts the time asleep and one that does not (`SleepWatch`), read every two seconds.
 That needs no system notification, so no AppKit and no IOKit in a program with no other use for them.
@@ -552,7 +553,7 @@ Before this, each path failed in a lower layer: the build in QEMU's absence insi
 
 It is not ruled out.
 It has not been done because nobody has needed it yet.
-It needs four layers, listed in [`appliance/DESIGN.md`](../appliance/DESIGN.md) "No nested virtualization": the appliance kernel, vfkit's `--nested`, QEMU and its firmware in the appliance, and isx's own `/dev/kvm` check.
+It needs four layers, listed in [`appliance/DESIGN.md`](../appliance/DESIGN.md) "No nested virtualization": the appliance kernel, nested virtualization in `isx-vm`, QEMU and its firmware in the appliance, and isx's own `/dev/kvm` check.
 It would also raise the hardware floor to an M3 or later on macOS 15, and grow the appliance by roughly 150 MB.
 A VM in the appliance sits two hypervisor levels down, where #1240 measured a 49 s boot under one level of nesting (docs/dev/PERFORMANCE-NOTES.md "VM boot: where the wait goes").
 So the VM image boot work on Sanne/incus-spawn-images#12 is a prerequisite for it being usable at all.
@@ -719,7 +720,7 @@ The full reasoning is in #1584.
 
 ### A Linux appliance mode
 
-On Linux isx drives the host's own Incus, and the appliance VM runs only under vfkit on macOS.
+On Linux isx drives the host's own Incus, and the appliance VM runs only under `isx-vm` on macOS.
 A Linux appliance mode, with isx booting and managing the same VM as on a Mac, is a possible future: for a host whose Incus cannot be installed or upgraded, or to develop the appliance on Linux with isx in the loop.
 `VmManager` once had a QEMU backend for it, but no released isx could reach it: `isx vm` is registered only on macOS, and every other caller of `VmManager` is behind a macOS check.
 It was removed so that fixes stop landing on a path no user runs (#1695).

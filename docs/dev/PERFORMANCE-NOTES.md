@@ -1297,6 +1297,23 @@ The cause was in the appliance and held for vfkit too: before #2293, `rcS` start
 That was confirmed on Linux, on the x86_64 appliance under QEMU with a vsock device: the host's dial to port 1024 is reset while the tunnel's port answers, and `qemu-ga` run by hand says "Failed to bind socket: Address not available".
 The clock was read once, 10 s after the wake, so how long the guest stays behind before chrony steps it was not measured.
 
+## The launcher's machine after a sleep, with the agent fixed, on a Mac (issue #2031)
+
+One round of `bench/vm-launcher-compare.sh --sleep` on the Mac runner on 2026-11-18, recorded on the issue as stage 3's hop 4.
+The new side was PR #2316 at `567336d9` built native (`0.5.3-dev.1+24`) with its appliance 0.5.3, whose `qemu-ga` listens since #2293; the old side was Homebrew's isx 0.5.2 under vfkit.
+
+| A sleep with 20 event streams held | vfkit | `isx-vm` |
+|---|---|---|
+| asleep for | 63 s | 62 s |
+| of the 20, still open on the host after the wake | 20 | 0 |
+| the API answers after the wake | 37 ms | 40 ms |
+| the guest's clock less the host's, before the sleep | -2 s | -2 s |
+| the guest's clock less the host's, after the wake | -61 s | 0 s |
+
+`isx-vm` logged "woke after 59 s asleep, dropped 20 connections" and then "set the guest's clock".
+vfkit's tunnel had wedged earlier in the same round, and a vfkit VM outside a bench round set the clock within a second on #2282, so its -61 s is not a measure of `--timesync` alone.
+One sample a side.
+
 ## The vsock tunnel's relay under load, on Linux (issue #2031)
 
 Measured on 2026-11-13 in a quiet window, in an isx VM under nested KVM (x86_64, 8 vCPUs, 16 GiB, QEMU 11.1.3), with the scripts as #2197 first proposed them.

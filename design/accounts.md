@@ -89,7 +89,7 @@ A hash two instances share comes only from an `incus copy` made outside isx, and
 Unlike an address, a proof never names a stopped instance, even its only holder: a stopped instance sends no requests, and a listing taken before its start costs only the refresh `authorize` makes on a miss.
 The host's own traffic (loopback, or from the listener's address) is never identified this way, and a caller at a known instance's address is always held to that instance's proofs.
 Linux keeps the strict address check, which is what stops a proof replayed from another instance; that protection never existed on macOS, where the address does not identify an instance.
-`integration-tests` boots the appliance in `remote` mode (`appliance/test-proxy-remote.sh`, #1585) on a tap network shaped like vfkit's NAT.
+`integration-tests` boots the appliance in `remote` mode (`appliance/test-proxy-remote.sh`, #1585) on a tap network shaped like `isx-vm`'s NAT.
 Two containers' requests to the gateway's `:443` must reach a host listener on the MITM port, and both must arrive from the VM's leased address.
 The listener stands in for `isx-proxy`.
 The real `isx-proxy` and `isx` run in their macOS roles in CI's `macos-role` job, from a test-only build that is never released (#1800, design/testing.md "The macOS roles, tested on Linux").

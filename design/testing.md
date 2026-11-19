@@ -154,7 +154,7 @@ A question is an `Output.prompt`, so the terminal shows it at the step indent an
 Every question in `cli/command` is asked this way, `isx update-base`'s choice between tracking and pinning and `isx run`'s wait after an action included.
 Init's narration sits at the same step indent as every command's, for consistency, so the step boxes alone keep init's own look.
 
-**The macOS tunnel, without a Mac**: the compensations described in design/macos-and-vms.md "macOS vsock robustness" exist because of how vfkit's tunnel *behaves*, and Java never touches vsock -- vfkit hands the host an ordinary Unix socket.
+**The macOS tunnel, without a Mac**: the compensations described in design/macos-and-vms.md "macOS vsock robustness" exist because of how vfkit's tunnel *behaved*, and Java never touches vsock -- the launcher hands the host an ordinary Unix socket, as vfkit did.
 So the behaviour is faked instead of the hypervisor.
 `LossyIncusServer` (test scope, `common/src/test/.../incus/`) binds a real Unix socket, speaks just enough of the REST API for exec (`POST .../exec`, the four fd WebSockets, operation `/wait`), and can withhold close frames and EOF, keep sending output after the process exits, accept and never answer, stall after reading a request, drop an idle keep-alive connection, or truncate a body.
 `IncusApiLossyTunnelTest` asserts exec completes from `/wait` with no close frame, `/wait` is re-polled while `Running`, the adaptive drain both extends for late output and stops at its ceiling, every exec fd is pinged, and `tryConnect` fails at the probe timeout.

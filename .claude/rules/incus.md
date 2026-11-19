@@ -132,7 +132,7 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
   A `socat -T` inactivity backstop reaps them (the forwarder and agent listeners also set `backlog=128`: socat's default of 5 refused concurrent connects, and one exec opens about five).
   `isx doctor` diagnoses it (host-side connection gauge in `UnixSocketTransport` / `vm status` vs the in-VM `isx-agent`'s socat count, localizing the launcher vs forwarder) and can restart the forwarder via the agent **without rebooting the VM**.
   `ClientLog` is a file-only (TUI-safe) diagnostic log for expected-but-noisy events like stale-connection recycling.
-  The leak's source is vfkit's relay, which waits for both directions to end and cannot tell the guest that the host closed (design/macos-and-vms.md "Where the vsock leak comes from", reproduced on Linux).
+  The leak's source was vfkit's relay, which waited for both directions to end and could not tell the guest that the host closed (design/macos-and-vms.md "Where the vsock leak comes from", reproduced on Linux).
   The replacement is the relay in `launcher/` (Swift package, module `IsxRelay`, #2031): it ends a connection as soon as either side ends and closes both sides, and its accept loop goes on after a failed accept.
   It gives up half-close, which isx never sends, so do not add one to a tunnel client.
   A script's `nc` is such a client on a Mac, whose `nc` always shuts its write side down after its input: the appliance's scripts call the agent with `appliance/agent-call.pl` instead (`test-agent-call.sh`).
