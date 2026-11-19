@@ -17,6 +17,9 @@
 # then each index waits out the resolver on every listed mirror.
 # So the list gains a mirror outside ubuntu.com, and mirrors whose host does not resolve are
 # dropped before the first attempt; the archive's signatures are checked whichever mirror serves it.
+# Each failed attempt drops one mirror, so with three ubuntu.com mirrors ahead of it the fallback
+# was never tried first when all three timed out (#2388). So the last attempt keeps only the
+# fallback when it is listed, whatever the list's length, and the bound stays three attempts.
 set -euo pipefail
 
 if [ $# -eq 0 ]; then
@@ -111,6 +114,17 @@ drop_first_mirror() {
     keep_lines $(awk -v n="$first" 'NR != n { print NR }' "$MIRRORS")
 }
 
+# Keeps only the fallback mirror for the last attempt, when it is listed and another is too.
+keep_only_fallback() {
+    [ -n "$FALLBACK_MIRROR" ] && [ -f "$MIRRORS" ] || return 1
+    local line
+    line=$(awk -v m="$FALLBACK_MIRROR" '$1 == m { print NR; exit }' "$MIRRORS")
+    [ -n "$line" ] || return 1
+    [ "$(grep -Ecv '^[[:space:]]*(#|$)' "$MIRRORS" || true)" -gt 1 ] || return 1
+    echo "apt-install: last attempt, keeping only the fallback mirror $FALLBACK_MIRROR"
+    keep_lines "$line"
+}
+
 # Runs one network phase under the time bound; reports and fails when it stalls or fails.
 phase() {
     local what=$1 rc=0
@@ -131,7 +145,11 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
             apt-get -q "${NET_OPTS[@]}" install -y --download-only "$@"; then
         exec apt-get -qq install -y --no-download "$@"
     fi
-    [ "$attempt" -lt "$ATTEMPTS" ] && drop_first_mirror
+    if [ "$attempt" -eq $((ATTEMPTS - 1)) ]; then
+        keep_only_fallback || drop_first_mirror
+    elif [ "$attempt" -lt "$ATTEMPTS" ]; then
+        drop_first_mirror
+    fi
 done
 echo "::error::apt-install: no attempt of $ATTEMPTS installed $*"
 exit 1

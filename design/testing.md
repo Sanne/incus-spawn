@@ -62,6 +62,10 @@ Killing either phase leaves the system as it was; dpkg runs once, after everythi
 A bound with no fallback would only turn a lost job into a failed one, since the same mirror stays slow for the next attempt.
 Another afternoon the runners' resolver failed every `ubuntu.com` name for hours, so each index waited out the resolver on every mirror and all three attempts ran out (#2146).
 So the script first lists `https://mirrors.edge.kernel.org/ubuntu/` last, and drops every mirror whose host does not resolve, unless none does.
+Each failed attempt drops one mirror, so the fallback listed fourth never got its turn the day all three `ubuntu.com` mirrors resolved but timed out (#2388).
+So the last attempt keeps only the fallback, when it is listed, however long the list.
+The bound stays three attempts, at most 12 minutes, which a 20-minute job such as `macos-role` still fits.
+That last attempt gives up the remaining `ubuntu.com` mirror, which had failed in every attempt that day.
 A ports list, an arm64 runner's, gets no fallback, since that mirror carries amd64's archive only.
 The archive's signatures are checked whichever mirror serves it.
 `WorkflowAptInstallTest` fails on a workflow that runs apt directly, and drives the script against a stand-in `apt-get` that stalls on a named mirror and a stand-in resolver.
