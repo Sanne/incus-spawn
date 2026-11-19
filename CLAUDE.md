@@ -110,6 +110,9 @@ They are stored once in `/etc/isx/agent-instructions.md`; Claude's `/etc/claude-
 Codex gets them rendered as `additional_developer_instructions` in `/etc/codex/requirements.toml` (`ToolSetup.renderEnvironmentContext`), never `~/.codex/AGENTS.md`.
 Gemini API keys stay in host-side `gemini` accounts; the guest's `GEMINI_API_KEY` carries that namespace's proof, verified before the proxy injects `x-goog-api-key` at `generativelanguage.googleapis.com`.
 Google OAuth is outside this integration; see `.claude/rules/tools-env.md`.
+The `antigravity` tool (`AntigravitySetup`, #2366) runs Google's `agy` in its Gemini API key mode on the same `gemini` account and placeholder: it sends `X-Goog-Api-Key` to `generativelanguage.googleapis.com` like Gemini CLI.
+Its Google sign-in and ADC modes would keep a credential in the guest and are not configured; its pinned binary's self-updater is off (`AGY_CLI_DISABLE_AUTO_UPDATE`).
+Its instructions are an always-on rule, `~/.gemini/config/rules/isx.md`, whose front matter comes before the heading `AgentInstructions` reads.
 Pi's `google` provider spends the same `gemini` account, and its `google-vertex` provider (isx also takes `vertex`) the Claude Vertex AI account (#1114).
 Its `GOOGLE_CLOUD_API_KEY` carries the claude proof to `aiplatform.googleapis.com`, a built-in intercepted domain.
 There the proxy serves only Gemini model calls in Vertex's express form (`GeminiOnVertex`), moved into the account's project and region and signed with the host's gcloud token.
@@ -258,7 +261,7 @@ See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 `EventLogReader` (`common`) reads it back by incarnation, only on demand: for `isx overview` and for the TUI's Work tab and `o`, never for `isx list` (design/terminal.md "The overview of what each instance did").
 The same reads run a read-only script in each running guest for what its clones hold (`WorkState`, `unknown` whenever the read is not exact) and ask GitHub whether each pull request was merged, with the instance's own GitHub account or not at all (`PullRequestStates`).
 The same exec reads the newest sessions' first ask and closing message of Claude Code, Codex, Pi and opencode (`GuestRead`, one `AgentSessions.GuestReader` each), scrubbed and bounded, for the DONE column; `untouched` only when nothing says otherwise (`AgentSessions.Summary`).
-Gemini CLI's, Copilot's and Bob's sessions are only found, and their agent named as not read (`UnreadSessions`, #2290).
+Gemini CLI's, Antigravity CLI's, Copilot's and Bob's sessions are only found, and their agent named as not read (`UnreadSessions`, #2290).
 Several sessions are merged by one model call on the instance's own Claude account, never another, and cached on the host against a fingerprint of what the model is given (`SessionMerge`).
 
 **Exposed host ports** (#2117): `exposed-host-ports:` in `config.yaml` lists loopback ports of the host that every instance with network reaches at `host.isx.internal:<port>`, relayed raw by the proxy (`HostPortRelay`) on the address it already listens on.
@@ -329,7 +332,7 @@ Downloads are cached on the host, then either extracted into the target, copied 
 VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock.
 
 **Tools declare MCP servers once, and every agent in the image gets them (#2206).**
-A tool's `mcp:` entries are a stdio `command` or an HTTPS `url`, with nothing specific to one agent; an agent takes them by implementing `ToolSetup.mcpClient()` (`McpClients`: Claude Code, Codex, Pi, opencode).
+A tool's `mcp:` entries are a stdio `command` or an HTTPS `url`, with nothing specific to one agent; an agent takes them by implementing `ToolSetup.mcpClient()` (`McpClients`: Claude Code, Codex, Pi, opencode, and Gemini CLI, Antigravity CLI, Copilot and Bob by a merge into their JSON config).
 `McpServerRegistration` registers the whole chain's servers with every such agent once per build, after every tool and every layer's clones, so tool order and the layer that installed an agent decide nothing; a new tool declares its server there rather than calling an agent's CLI from `run_as_user`, which only the Claude-only `headroom` and `idea-backend`'s loopback server still do.
 A credential reaches a server only as `bearer-token-env`, a variable each agent reads when it connects, and the loader requires it to be one of the tool's own `proxy.placeholders`, sent to one of its `proxy.auth` domains.
 `${isx_repo_paths}` names the template's clones (design/mcp.md "Tools declare MCP servers for every agent", `.claude/rules/tools-env.md`).

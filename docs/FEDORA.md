@@ -23,6 +23,7 @@ Some come from isx at build time, some from the `tpl-minimal` template, and some
 | With Pi or opencode, an `AGENTS.md` at the filesystem root | Pi reads context from every directory above its own, so isx puts its instructions at the root and `~/.pi/agent/AGENTS.md` stays yours; opencode's settings name the same file | `/AGENTS.md`, a link from the `pi` or `opencode` tool |
 | With Pi, an isx footer extension | Pi's footer names isx and the instance, as Claude Code's status line does | `/etc/isx/pi/isx-status.ts`, listed in `~/.pi/agent/settings.json` by the `pi` tool |
 | With Codex CLI, system requirements | Codex adds them to your own instructions, so `~/.codex/AGENTS.md` and `~/.codex/config.toml` stay yours | `/etc/codex/requirements.toml`, written by the `codex` tool |
+| With Antigravity CLI, an isx rule | Antigravity CLI loads every rule in its global rules directory, so your own `~/.gemini/GEMINI.md` and `AGENTS.md` stay yours | `~/.gemini/config/rules/isx.md`, written by the `antigravity` tool |
 | With Gemini CLI, an isx extension | Gemini CLI loads the extension's context beside your own `~/.gemini/GEMINI.md`, which stays yours | `~/.gemini/extensions/isx/`, a manifest and a copy written by the `gemini-cli` tool |
 | With Claude Code, its managed policy | Claude Code loads it before your own `CLAUDE.md` files, which stay yours | `/etc/claude-code/CLAUDE.md`, a link from the `claude` tool |
 | A VM's `dnf` refuses kernel packages | The VM boots the image's own kernel | `/etc/dnf/libdnf5.conf.d/isx-kernel.conf` |

@@ -14,7 +14,7 @@ A program that drives `isx mcp` from code has [a page of its own](MCP-PROTOCOL.m
 `isx init` asks, for each template that installs a coding agent, whether agents may use it.
 
 An agent can create instances from any template you approve and run commands in them.
-It can hand a task only to Claude Code, Codex, Pi or opencode, so `isx init` marks a template with Gemini CLI, Bob Shell or GitHub Copilot CLI as create and exec only.
+It can hand a task only to Claude Code, Codex, Pi or opencode, so `isx init` marks a template with Gemini CLI, Antigravity CLI, Bob Shell or GitHub Copilot CLI as create and exec only.
 
 When Claude Code is installed on the host, `isx init` also registers `isx mcp` in Claude Code for all projects.
 

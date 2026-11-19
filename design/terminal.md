@@ -660,10 +660,11 @@ A database is read by its fields, so the query selects: sessions with no `parent
 Neither is a compaction's summary, nor a part opencode made up (`synthetic`) or set aside (`ignored`).
 Each value is cut in the query to one code point past what is kept and sent in hex.
 A database `sqlite3` cannot read (none installed, a schema the query does not know, a damaged file), or the JSON `storage` of an opencode from before its database, makes opencode not read.
-Gemini CLI, GitHub Copilot CLI and Bob have no reader yet, since a reader is written from session files the agent itself wrote, and none were at hand (#2290).
+Gemini CLI, Antigravity CLI, GitHub Copilot CLI and Bob have no reader yet, since a reader is written from session files the agent itself wrote, and none were at hand (#2290).
 Their sessions are only found (`UnreadSessions`), and an agent whose sessions are there is named as not read, so an instance only it worked in is never `untouched`.
 Each check looks for session files alone, never the agent's directory, which a build fills with settings, extensions and policies.
 Gemini CLI's are `~/.gemini/tmp/<project>/chats/session-*.jsonl` (`.json` in older versions), a subagent's one directory deeper, read from `@google/gemini-cli-core` 0.68.0.
+Antigravity CLI's are `~/.gemini/antigravity-cli/conversations/<id>.db`, one per conversation, read from the files agy 1.5.12 wrote; Gemini CLI's check never counts them, nor theirs Gemini CLI's (#2366).
 Copilot's are the entries of `~/.copilot/session-state`, read from Copilot CLI 1.0.114, which moves an XDG state directory's back there.
 Bob's are the rows of `tasks` in `~/.bob/db/bob.db`, counted with `sqlite3 -readonly` (read from Bob 2.1.0); a database it cannot count names Bob as not read too.
 Their sections come before the readers', each a few lines with a 256-byte share of the bound, so the bound never cuts them.
