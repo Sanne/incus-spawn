@@ -1020,6 +1020,45 @@ Each row is the median of alternated `bench/run.sh --skip-build` runs, per Hyper
   `bench/run.sh` reports as its headline the phase with the most throughput, which differed between runs of the same binary.
   Its p50 then jumped by 7x between runs that measured the same latency per phase.
 
+## Quarkus 4.0.0 against CR1 (issue #2377)
+
+Measured on 2026-11-19 in a KVM isx instance (x86_64, 8 vCPUs), with Oracle GraalVM 25.0.5.0.3 and unprofiled native builds.
+Base is `main` at 8b5d05c7 on CR1, head the same tree with only the version bump, which keeps every library version CR1 manages.
+Both builds received the same `native-image` arguments, compared word by word from the build logs.
+
+| Binary | CR1 bytes | 4.0.0 bytes | Reachable types / methods, CR1 | 4.0.0 |
+|---|---|---|---|---|
+| CLI | 40,832,120 | 40,897,656 | 14,156 / 71,991 | 14,158 / 71,992 |
+| Proxy | 106,958,160 | 106,892,624 | 13,481 / 72,955 | 13,477 / 72,956 |
+
+- **The sizes are unchanged, within the noise of a rebuild.**
+  Each binary moved by 64 KiB, in opposite directions.
+  Two builds of the proxy that reached the same 72,956 methods differed by 128 KiB in their `-O3` code area, so a 64 KiB delta tells nothing.
+  Reachable types are as noisy: a second build of the final commit reached 14,156 types in the CLI and 13,480 in the proxy, with the same methods and sizes to the byte.
+- **Dropping the event-bus substitution changes nothing measurable.**
+  Built without it, the 4.0.0 proxy reached the same types and methods, since Vert.x 5's `SerializableCodec` reads through `SerializableUtils.fromBytes`, which the remaining substitution already cuts.
+- **Startup is unchanged.**
+  It was measured in a quiet window, with the binaries above and no other build, test or benchmark running on the host.
+  The two versions ran alternately, and each comparison ran twice with the order swapped; each cell gives both runs.
+
+| Startup | CR1 | 4.0.0 |
+|---|---|---|
+| CLI `--version`, median of 300 | 7.16 / 7.13 ms | 7.14 / 7.12 ms |
+| CLI `--help`, median of 300 | 5.43 / 5.44 ms | 5.44 / 5.45 ms |
+| Proxy, process start to `/health` 200, median of 20 | 22.9 / 22.7 ms | 22.7 / 22.7 ms |
+
+- **The differences are smaller than the spread of one binary.**
+  The CLI runs' p10 to p90 spread was about 0.4 ms, against at most 0.04 ms between any two medians of one row.
+- **How the proxy was timed.**
+  It was started directly (`isx-proxy --gateway-ip <bridge>`), as `bench/run.sh` does, but `/health` was polled every 2 ms rather than every 250 ms.
+  So these figures are far below the 260 ms recorded for CR1 against Beta3, which the 250 ms poll dominated.
+- **Why the CLI figures are above CR1's recorded 2.5 ms.**
+  That 2.5 ms was measured on another box, so only the two columns of this table compare with each other.
+  `--version` also asks the local Incus daemon for its version, which is why it costs more than `--help`.
+  `--help` asks the daemon nothing, which is why `bench/run.sh` uses it.
+- **Throughput was not measured.**
+  The libraries it depends on did not change from CR1.
+
 ## Upstream responses off their connection's event loop (issue #2176)
 
 Measured on 2026-11-12 in a Linux container box (x86_64), Vert.x 5.2.3, NIO transport.
