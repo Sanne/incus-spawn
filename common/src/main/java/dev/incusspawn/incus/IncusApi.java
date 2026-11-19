@@ -199,7 +199,7 @@ class IncusApi {
      * <p>Without lxc/incus@2cb2549 (appliances built before #1313), incusd's local listener
      * peeks 8 bytes inside {@code Accept()} with no deadline ({@code StarttlsListener}), so a
      * connection that sends nothing stalls every <em>new</em> API connection until it speaks or
-     * closes. Through vfkit a close is not reliably
+     * closes. Through vfkit, which ran the VM before isx-vm (#2031), a close was not reliably
      * propagated, so a connect-and-close probe can leave the forwarder holding exactly such a
      * connection, wedging the whole API until the forwarder's {@code socat -T} reaps it (#774).
      */
@@ -815,8 +815,8 @@ class IncusApi {
 
                 // Completion for an INTERACTIVE op cannot be taken from waitForExecOp the way the
                 // non-interactive execWebSocket does: the daemon does not finalize an interactive
-                // operation until the fd "0" websocket is torn down, and over the vfkit vsock the
-                // daemon's fd "0" close frame is not reliably delivered. Gating the teardown on
+                // operation until the fd "0" websocket is torn down, and over a lossy vsock tunnel
+                // (vfkit's was one) the daemon's fd "0" close frame is not reliably delivered. Gating the teardown on
                 // op-finalization (as execWebSocket does) therefore deadlocks — the client waits
                 // for the op to finish while the daemon waits for the client to close fd "0".
                 //

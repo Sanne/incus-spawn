@@ -5,9 +5,9 @@ set -uo pipefail
 # the data path between a container and a proxy outside the VM: the guest's DNAT of the bridge
 # gateway's port 443 to the host, and the masquerade on the way out.
 #
-# On macOS vfkit NATs the VM onto a host bridge, and isx-proxy listens on the host side of it.
+# On macOS isx-vm NATs the VM onto a host bridge, and isx-proxy listens on the host side of it.
 # Here a tap device plays that bridge: the host holds its first address and serves the VM a DHCP
-# lease on it, so the guest's default route is the host, as under vfkit. A socat listener on the
+# lease on it, so the guest's default route is the host, as under isx-vm. A socat listener on the
 # host's MITM port stands in for isx-proxy. It answers every connection with the address it came
 # from and the first line it read, which is what the proxy has to identify a caller by.
 #
@@ -27,7 +27,7 @@ set -uo pipefail
 #   ACCEL              QEMU acceleration arguments (default: KVM when /dev/kvm is usable).
 #   CONSOLE_LOG        where to keep the VM's console (default: a temporary file).
 #   VSOCK_BRIDGE       path of isx-vsock-bridge (launcher/, #2031), to bridge the Incus vsock port
-#                      with the relay isx is to ship in place of vfkit's. Default: socat.
+#                      with the relay isx-vm ships. Default: socat.
 #
 # Prints one PASS/FAIL line per check and exits non-zero if any check failed.
 
@@ -35,7 +35,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${1:-$SCRIPT_DIR/build}"
 BOOT_DEADLINE="${BOOT_DEADLINE:-120}"
 
-# The VM's network, standing in for vfkit's NAT (192.168.64.0/24 there). The host is .1.
+# The VM's network, standing in for isx-vm's NAT (192.168.64.0/24 there). The host is .1.
 TAP=isxtap0
 NET_PREFIX=192.168.177
 HOST_IP=$NET_PREFIX.1
@@ -108,7 +108,7 @@ summary() {
 check() { if eval "$1"; then pass "$2"; else fail "$2${3:+ ($3)}"; fi; }
 require() { check "$@" || true; [ "$FAIL" -eq 0 ] || summary; }
 
-echo "-- Host side of the VM network (vfkit's NAT stand-in) --"
+echo "-- Host side of the VM network (isx-vm's NAT stand-in) --"
 ip link del "$TAP" 2>/dev/null
 ip tuntap add dev "$TAP" mode tap || die "could not create $TAP"
 ip addr add "$HOST_IP/24" dev "$TAP"

@@ -9,11 +9,11 @@ set -uo pipefail
 # that says macOS. It is never released.
 #
 # Everything else is as on a Mac, with stand-ins for what only macOS has:
-#  - vfkit: QEMU boots the appliance with isx's kernel command line (isx.proxy=remote) and the MAC
+#  - isx-vm: QEMU boots the appliance with isx's kernel command line (isx.proxy=remote) and the MAC
 #    isx gives the VM. Its Incus and agent vsock ports are bridged onto the sockets isx looks
 #    for, by the launcher's relay when VSOCK_BRIDGE names it (as CI does), else by socat, and
 #    vm.pid names QEMU, which VmManager.isRunning() accepts.
-#  - vfkit's NAT: a tap device holds the host's address, dnsmasq leases the VM an address and
+#  - isx-vm's NAT: a tap device holds the host's address, dnsmasq leases the VM an address and
 #    serves it DNS, and the host masquerades the VM's traffic to the internet, which the builds need.
 #    So every container reaches the proxy from the VM's address, as on a Mac.
 #  - macOS's DHCP leases: /var/db/dhcpd_leases names the VM's lease, which is where
@@ -46,7 +46,7 @@ set -uo pipefail
 #   build-dir          holds vmlinuz and disk.img, booted with snapshot=on (left unchanged).
 #   BOOT_DEADLINE      seconds to wait for ISX READY (default 120).
 #   VSOCK_BRIDGE       path of isx-vsock-bridge (launcher/, #2031), to bridge the vsock ports with
-#                      the relay isx is to ship in place of vfkit's. Default: socat.
+#                      the relay isx-vm ships. Default: socat.
 #   KEEP_LOGS          directory to copy the console, proxy and build logs into.
 #   HOLD               when set, waits before cleaning up until the file it names is removed,
 #                      so the instances, the VM and the proxy can be looked at.
@@ -121,7 +121,7 @@ ADDED_HOSTS=""
 # The host's net.ipv4.ip_forward before this run, put back on exit.
 FORWARDING=""
 MADE_VAR_DB=""
-# The VM's way out, as vfkit's NAT gives it: table, then the rule.
+# The VM's way out, as isx-vm's NAT gives it: table, then the rule.
 NAT_RULES=(
     "nat POSTROUTING -s $NET_PREFIX.0/24 ! -d $NET_PREFIX.0/24 -j MASQUERADE"
     "filter FORWARD -i $TAP -j ACCEPT"
@@ -199,7 +199,7 @@ as_user() {
 isx() { as_user timeout 600 "$WORK/bin/isx" "$@" < /dev/null; }
 incus_() { as_user timeout 120 incus "$@" < /dev/null; }
 
-echo "-- Stand-ins for vfkit's NAT, macOS's leases and Keychain, and GitHub --"
+echo "-- Stand-ins for isx-vm's NAT, macOS's leases and Keychain, and GitHub --"
 mkdir -p "$WORK/bin" "$WORK/echo" "$STATE" "$CONFIG"
 chown -R "$RUN_AS" "$WORK"
 # user.home is what isx reads, and Java takes it from the password database, not $HOME.

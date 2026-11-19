@@ -24,11 +24,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A fake Incus daemon on a real Unix socket that can misbehave the way the macOS vfkit vsock
- * tunnel does -- no VM, no Mac.
+ * tunnel did before isx-vm replaced it (#2031) -- no VM, no Mac.
  *
- * On macOS, Java only ever sees vfkit's tunnel as a Unix socket; the transport workarounds in
+ * On macOS, Java only ever sees the VM's tunnel as a Unix socket; the transport workarounds in
  * {@link UnixSocketTransport}, {@link KeepAliveConnection}, {@link ConnectionPool} and
- * {@link IncusApi} exist because of how that tunnel <em>behaves</em> (close frames and EOF that
+ * {@link IncusApi} exist because of how vfkit's tunnel <em>behaved</em> (close frames and EOF that
  * never arrive, connections that stall or vanish while idle), not because the wire is vsock. So
  * the behaviour is faked here and the compensations are asserted against it.
  *
@@ -73,7 +73,7 @@ final class LossyIncusServer implements AutoCloseable {
     volatile Framing framing = Framing.LENGTH;
 
     // --- exec behaviour ---
-    /** false reproduces vfkit: no close frame ever arrives, and the fds are never closed. */
+    /** false reproduces vfkit's tunnel: no close frame ever arrives, and the fds are never closed. */
     volatile boolean sendCloseFrames = true;
     volatile String stdout = "";
     volatile String stderr = "";

@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 
 /**
  * VM network utilities — MAC address management and IP discovery.
- * On macOS with vfkit NAT networking, the VM gets a DHCP lease.
+ * On macOS with the launcher's NAT networking, the VM gets a DHCP lease.
  * We assign a fixed MAC and look up the IP from the macOS DHCP leases file.
  */
 public final class VmNetwork {

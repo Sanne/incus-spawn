@@ -55,8 +55,8 @@ class UnixSocketTransport implements IncusTransport {
 
     // Diagnostics: track how many transport connections are open at once. Every
     // request and every WebSocket opens a fresh connection (we intentionally do not
-    // pool), and on macOS each one is a vsock stream held by vfkit until the guest
-    // forwarder closes it. A climbing high-water mark is the signature of the socat
+    // pool), and on macOS each one is a vsock stream held by the launcher's relay until
+    // either side closes it. A climbing high-water mark is the signature of the socat
     // forwarder leaking streams, so this is the cheapest way to see it accumulate.
     private static final java.util.concurrent.atomic.AtomicInteger OPEN_CONNECTIONS =
             new java.util.concurrent.atomic.AtomicInteger();
