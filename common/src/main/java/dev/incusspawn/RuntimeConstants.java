@@ -1,5 +1,6 @@
 package dev.incusspawn;
 
+import dev.incusspawn.tool.AntigravitySetup;
 import dev.incusspawn.tool.BobSetup;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
@@ -48,7 +49,7 @@ public final class RuntimeConstants {
      */
     public static final List<ToolSetup> CDI_TOOLS = List.of(
             new ClaudeSetup(), new GhSetup(), new PiSetup(), new BobSetup(), new CodexSetup(), new CopilotSetup(),
-            new GeminiSetup(), new OpencodeSetup()
+            new GeminiSetup(), new OpencodeSetup(), new AntigravitySetup()
     );
 
     private RuntimeConstants() {}

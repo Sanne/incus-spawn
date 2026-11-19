@@ -109,6 +109,45 @@ class McpServerRegistrationTest {
         assertFalse(script.contains("'mine'"), script);
     }
 
+    /**
+     * A server an agent refuses (Antigravity CLI's with a bearer token variable, #2366) is warned
+     * about, never written and never recorded, so a later build cannot take an entry of that name
+     * the user made for one isx wrote; one isx did record for it before is removed.
+     */
+    @Test
+    void aServerAnAgentRefusesIsNeitherWrittenNorRecorded() throws Exception {
+        var incus = incus("picky srv\npicky gone\n", "");
+        var applied = new java.util.ArrayList<String>();
+        var picky = new dev.incusspawn.tool.McpClient() {
+            @Override public String agent() { return "picky"; }
+            @Override public String refuses(McpServer server) { return server.name().equals("srv") ? "it cannot" : null; }
+            @Override public String addScript(McpServer server) { throw new UnsupportedOperationException(); }
+            @Override public String removeScript(String name) { throw new UnsupportedOperationException(); }
+            @Override public void apply(Container container, List<McpServer> servers, List<String> stale) {
+                applied.add(servers.stream().map(McpServer::name).toList() + " stale " + stale);
+            }
+        };
+        var agent = new ToolSetup() {
+            @Override public String name() { return "picky"; }
+            @Override public dev.incusspawn.tool.McpClient mcpClient() { return picky; }
+            @Override public void install(Container container, Map<String, String> resolvedParams) {}
+        };
+        var tools = List.of(server(), new BuildTools.ResolvedTool("picky", agent, Map.of()),
+                new BuildTools.ResolvedTool("claude", new ClaudeSetup(), Map.of()));
+
+        var output = dev.incusspawn.util.RecordingOutput.during(() ->
+                McpServerRegistration.register(new Container(incus, "test"), new ImageDef(), Map.of(), tools));
+
+        assertEquals(List.of("[] stale [srv, gone]"), applied, "what isx recorded for it goes, nothing else");
+        assertTrue(output.events().stream().anyMatch(e -> e.kind() == dev.incusspawn.util.RecordingOutput.Kind.WARN
+                && e.msg().equals("picky does not get the MCP server srv")), output.events().toString());
+        var shell = ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq("test"), eq("sh"), eq("-c"), shell.capture());
+        var record = shell.getAllValues().stream().filter(s -> s.contains(McpServerRegistration.RECORD)).toList();
+        assertTrue(record.stream().anyMatch(s -> s.contains("claude srv")), record.toString());
+        assertTrue(record.stream().noneMatch(s -> s.contains("picky")), record.toString());
+    }
+
     @Test
     void aServerWhoseCommandIsMissingFailsTheBuild() throws Exception {
         var incus = incus(null, "srv-bin\n");

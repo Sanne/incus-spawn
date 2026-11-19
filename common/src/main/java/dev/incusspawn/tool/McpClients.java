@@ -170,6 +170,47 @@ public final class McpClients {
         return entry.build();
     }
 
+    /**
+     * Antigravity CLI: {@code mcpServers} in {@code ~/.gemini/config/mcp_config.json}, a remote
+     * server under {@code serverUrl}, as {@code agy mcp add} writes it. It expands no variable in
+     * that file (its own plugin guide says so, and a {@code ${VAR}} header reaches the server as
+     * written), so it refuses a server whose bearer token is read from a variable: the proof would
+     * have to be written there.
+     */
+    public static final McpClient ANTIGRAVITY = refusingBearerServers(
+            jsonFile("antigravity", AntigravitySetup.MCP_CONFIG_PATH, true, McpClients::antigravityEntry));
+
+    static JqObject antigravityEntry(McpServer server) {
+        var entry = JqObject.builder(4);
+        if (server.stdio()) {
+            stdio(entry, server);
+        } else {
+            entry.put("serverUrl", server.url());
+        }
+        return entry.build();
+    }
+
+    /** {@code client}, refusing every server whose bearer token is read from a variable. */
+    private static McpClient refusingBearerServers(McpClient client) {
+        return new McpClient() {
+            @Override public String agent() { return client.agent(); }
+
+            @Override public String refuses(McpServer server) {
+                return server.bearerTokenEnv() == null ? null
+                        : "It reads no variable in its MCP config, so the server's bearer token, "
+                                + server.bearerTokenEnv() + ", would have to be written there.";
+            }
+
+            @Override public String addScript(McpServer server) { return client.addScript(server); }
+
+            @Override public String removeScript(String name) { return client.removeScript(name); }
+
+            @Override public void apply(Container container, List<McpServer> servers, List<String> stale) {
+                client.apply(container, servers, stale);
+            }
+        };
+    }
+
     /** Copilot CLI: {@code mcpServers} in {@code ~/.copilot/mcp-config.json}, a file it does not create until asked. */
     public static final McpClient COPILOT = jsonFile("copilot", CopilotSetup.MCP_CONFIG_PATH, true, McpClients::copilotEntry);
 
