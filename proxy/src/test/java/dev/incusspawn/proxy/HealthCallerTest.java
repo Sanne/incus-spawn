@@ -55,4 +55,18 @@ class HealthCallerTest {
                 MitmProxy.healthRoute(io.vertx.core.http.HttpMethod.DELETE, "/health", () -> true));
         assertEquals(MitmProxy.HealthRoute.NOT_FOUND, MitmProxy.healthRoute(get, null, () -> true));
     }
+
+    /**
+     * A reason {@code /health} carries may hold any control character. RFC 8259 forbids each one raw
+     * inside a string, so a strict reader of {@code /health}, such as a script's, would reject it.
+     */
+    @Test
+    void everyControlCharacterIsEscapedSoStrictJsonReadsTheText() {
+        var text = "line one\nline\u0001two\u001f \"quoted\" \\ end";
+        var escaped = MitmProxy.escapeJson(text);
+        assertTrue(escaped.chars().noneMatch(c -> c < 0x20), "no control character left raw: " + escaped);
+        var info = ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\",\"version\":\"1\",\"authError\":\""
+                + escaped + "\"}");
+        assertEquals(text, info.authError(), "and the CLI reads it back unchanged");
+    }
 }

@@ -3145,9 +3145,24 @@ public class MitmProxy {
         return configFingerprint.toolDirs();
     }
 
-    private static String escapeJson(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+    /** {@code s} as the inside of a JSON string; every control character escaped, which strict JSON requires. */
+    static String escapeJson(String s) {
+        var out = new StringBuilder(s.length() + 8);
+        for (int i = 0; i < s.length(); i++) {
+            var c = s.charAt(i);
+            switch (c) {
+                case '\\' -> out.append("\\\\");
+                case '"' -> out.append("\\\"");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (c < 0x20) out.append(String.format("\\u%04x", (int) c));
+                    else out.append(c);
+                }
+            }
+        }
+        return out.toString();
     }
 
 
