@@ -224,6 +224,37 @@ class ChatGptAuthFlowTest {
     }
 
     @Test
+    void aSessionThatCannotBeRemovedDoesNotStopTheOthersEnding() throws Exception {
+        var config = seed("""
+                openai:
+                  accounts:
+                    sso:
+                      type: chatgpt
+                    other:
+                      type: chatgpt
+                  default: sso
+                """);
+        var store = new ChatGptSessionStore();
+        store.create("sso", new ChatGptSessionStore.Tokens("id", "access", "rt-sso", "acct"));
+        store.create("other", new ChatGptSessionStore.Tokens("id", "access", "rt-other", "acct"));
+        // A session the store cannot remove: session.json as a directory deleteIfExists refuses
+        // to empty, so the first removal of the step fails
+        var stuck = Path.of(System.getProperty("user.home"), ".config/incus-spawn/openai/sso/session.json");
+        Files.delete(stuck);
+        Files.createDirectories(stuck.resolve("occupied"));
+
+        var output = run(new FakeInit(), config, new ScriptedPrompts().line("r", "3").secret(API_KEY));
+
+        assertNull(store.read("other"), "the removal after the failed one still ran");
+        assertTrue(Files.exists(stuck), "the failed removal left the session behind, as warned");
+        var warned = String.join("\n", output.warnings());
+        assertTrue(warned.contains("'sso'"), "the warning names the session left behind: " + warned);
+        var said = String.join("\n", output.lines());
+        assertTrue(said.contains("OpenAI credentials saved"),
+                "the step finishes rather than aborting after the save: " + said);
+    }
+
+    @Test
     void skippingWritesNothing() {
         run(new FakeInit(), new SpawnConfig(), new ScriptedPrompts().line(""));
 
