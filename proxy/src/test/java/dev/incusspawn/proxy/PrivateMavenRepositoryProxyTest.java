@@ -23,6 +23,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -62,6 +63,8 @@ class PrivateMavenRepositoryProxyTest {
     /** The ETag upstream sends for {@link #HOSTED}, null for none, and the bytes it serves there. */
     static volatile String etag;
     static volatile String content = CONTENT;
+    /** How many partitions earlier tests' resets moved aside, each to a name of its own. */
+    static final AtomicInteger resets = new AtomicInteger();
 
     @BeforeAll
     static void start() throws Exception {
@@ -170,11 +173,14 @@ class PrivateMavenRepositoryProxyTest {
         proxy.overrideUpstream(PROXIED_HOST, "127.0.0.1", upstreamPort);
         Files.deleteIfExists(proxiedCopy());
         Files.deleteIfExists(Sidecar.SHA1.storedFile(proxiedCopy()));
+        // Empty partitions: each is moved aside, not deleted, since a previous test's proxy may still
+        // be discarding a download it did not cache, and a file it removes after the listing would
+        // fail the delete (#2379); a rename cannot. The key stays, and the proxy keeps it in memory
         var dir = ArtifactCacheHandler.privateCacheDir();
         if (Files.isDirectory(dir)) {
-            try (var files = Files.walk(dir)) {
-                for (var file : files.filter(Files::isRegularFile).filter(f -> !f.getFileName().toString().equals(".key")).toList()) {
-                    Files.delete(file);
+            try (var partitions = Files.list(dir)) {
+                for (var partition : partitions.filter(Files::isDirectory).toList()) {
+                    Files.move(partition, tempHome.resolve("private-before-" + resets.incrementAndGet()));
                 }
             }
         }
