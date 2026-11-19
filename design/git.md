@@ -41,6 +41,8 @@ Progress is rendered by the shared `TerminalProgress` helper as one animated bra
 Off an ANSI terminal `RepoCloner`'s parallel block reports each repository as it ends, from its state (`TerminalProgress.run` with `plainDone`): a step when ready, a warning when it failed.
 On any terminal the start of a failed repository's command and the end of its log are one warning (#1703).
 Any clone failure is surfaced after the batch and aborts the build.
+A worker that dies with a throwable it did not record names it, never a bare `prepare failed`: an `Error` by its class and message, an exception by its message (#2380).
+`TerminalProgress.run` rethrows what a task let escape once the batch is over.
 Which repos have a host reference is decided on the host before the parallel section; each worker attaches its own reference just before its clone and detaches it as soon as the clone is done (#826).
 Attaches and detaches share a lock, because a device removal is a read-modify-write of the whole device map, and an attach that lands between the read and the write makes Incus refuse it: the retries below are bounded, and a burst of parallel attaches could exhaust them.
 The removal itself is safe without the lock: its PUT carries the read's `ETag` as `If-Match`, so Incus refuses it with 412 when anything changed since, and `IncusClient.devicesRemoveAll` reads and writes again, up to `CONFLICT_ATTEMPTS` (#1234).

@@ -116,8 +116,10 @@ public final class HostRepoRefresh {
                             states.set(idx, new TaskProgress(FetchState.FAILED,
                                     result.reason(), result.details()));
                         }
-                    } catch (Exception e) {
-                        states.set(idx, new TaskProgress(FetchState.FAILED, e.getMessage()));
+                    } catch (Exception | Error e) {
+                        // An Error too: the refresh is best effort, and the warning names what ended the fetch
+                        states.set(idx, new TaskProgress(FetchState.FAILED,
+                                e instanceof Error ? e.toString() : e.getMessage()));
                     }
                 },
                 (idx, frame) -> formatFetchLine(tasks.get(idx), states.get(idx), frame),

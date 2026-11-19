@@ -58,6 +58,16 @@ class TerminalProgressTest {
     }
 
     @Test
+    void aTaskThatThrowsIsRethrownOnceEveryTaskHasEnded() {
+        var done = new CopyOnWriteArrayList<Integer>();
+        var thrown = assertThrows(OutOfMemoryError.class, () -> TerminalProgress.run(3, 3, i -> {
+            if (i == 1) throw new OutOfMemoryError("test");
+        }, (i, f) -> "", done::add));
+        assertEquals("test", thrown.getMessage());
+        assertEquals(java.util.Set.of(0, 1, 2), java.util.Set.copyOf(done), "every task was still reported");
+    }
+
+    @Test
     void runWithZeroTasksDoesNothing() {
         var done = new CopyOnWriteArrayList<Integer>();
         assertDoesNotThrow(() -> TerminalProgress.run(0, 4, i -> {
