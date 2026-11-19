@@ -192,6 +192,8 @@ Key design:
   WebSocket failures after acceptance name relay setup.
   Unrecognized proofs wait for the next permitted listing on a shared timer and worker, with a bounded wait; independent credentials pass through immediately.
   A failed listing clears credential verifiers and acknowledgement state.
+  The proxy keeps one `IncusClient`, which connects again after a failed connection, so a proxy launchd started before the Mac's VM answered recovers without a restart (#2386).
+  While the listing fails or hangs, host-only `/health` carries `incusError` (`InstanceRegistry.listingProblem`), which `isx proxy status` flags as credentials not injected and its record reports as `incus_error`.
   `isx account reset-proofs` writes the new generation and verifiers under the instance proof lock, signals the proxy and polls host-only `GET /credential-proofs?instance=<name>`.
   Success requires both the expected generation and verifier fingerprint; timeout is an error, and authorized requests and WebSockets continue.
   A running guest receives the new credential seed and tokens without changing its MCP secret; failed delivery leaves recovery pending.

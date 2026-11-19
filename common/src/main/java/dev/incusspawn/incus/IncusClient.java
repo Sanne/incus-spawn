@@ -46,30 +46,104 @@ public class IncusClient {
                         : " Create one with: isx doctor");
     }
 
-    private volatile boolean apiInitialized;
+    /**
+     * How long a failed connection is kept before a call tries again (#2386). A long-lived client,
+     * the proxy's above all, must not keep a failure for its whole life: it would never read Incus
+     * again. Within the interval a call fails at once, so a stopped VM costs no connect per call.
+     */
+    static final long RECONNECT_INTERVAL_MS = 2_000L;
+
+    /** A connection that failed: when, and why, as diagnosed once right after. */
+    private record Failure(long at, String reason) {}
+
+    private final java.util.function.Supplier<IncusApi> firstConnect;
+    private final java.util.function.Supplier<IncusApi> reconnect;
+    private final java.util.function.Supplier<String> diagnose;
+    private final java.util.function.LongSupplier clock;
+    private final java.util.concurrent.locks.ReentrantLock connecting = new java.util.concurrent.locks.ReentrantLock();
+    /** Kept once connected, for the life of the client. */
     private volatile IncusApi api;
+    /** The last connection that failed, while {@link #api} is null; null before the first attempt. */
+    private volatile Failure failure;
 
     public IncusClient() {
+        // Monotonic: a wall clock stepped back would postpone the retry by as much
+        this(IncusClient::connectWithRetry, IncusApi::tryConnect, IncusClient::diagnoseUnreachable,
+                () -> System.nanoTime() / 1_000_000L);
         this.readyTimeouts = ReadyTimeoutsConfig.fromConfig();
     }
 
     /** Talk to {@code api} instead of discovering the local daemon; lets tests count requests. */
     IncusClient(IncusApi api) {
+        this(() -> api, () -> api, () -> "unreachable", () -> System.nanoTime() / 1_000_000L);
         this.api = api;
-        this.apiInitialized = true;
+    }
+
+    /**
+     * Connect with {@code firstConnect}, and after a failure with {@code reconnect} once
+     * {@link #RECONNECT_INTERVAL_MS} has passed on {@code clock}; {@code diagnose} says why a
+     * connection failed.
+     */
+    IncusClient(java.util.function.Supplier<IncusApi> firstConnect, java.util.function.Supplier<IncusApi> reconnect,
+                java.util.function.Supplier<String> diagnose, java.util.function.LongSupplier clock) {
+        this.firstConnect = firstConnect;
+        this.reconnect = reconnect;
+        this.diagnose = diagnose;
+        this.clock = clock;
         this.readyTimeouts = ReadyTimeouts.DEFAULT;
     }
 
+    /**
+     * The connection, or null when none could be made. The first call connects, and concurrent
+     * first callers wait for it. After a failure, the first call past the interval tries once
+     * more, and a call meanwhile, or while that try runs, returns null at once.
+     */
     private IncusApi api() {
-        if (!apiInitialized) {
-            synchronized (this) {
-                if (!apiInitialized) {
-                    api = connectWithRetry();
-                    apiInitialized = true;
-                }
+        var connected = api;
+        if (connected != null) return connected;
+        if (failure == null) {
+            connecting.lock();
+            try {
+                if (api == null && failure == null) attempt(firstConnect);
+            } finally {
+                connecting.unlock();
             }
+            return api;
+        }
+        if (!retryDue() || !connecting.tryLock()) return null;
+        try {
+            if (api == null && retryDue()) attempt(reconnect);
+        } finally {
+            connecting.unlock();
         }
         return api;
+    }
+
+    private boolean retryDue() {
+        var last = failure;
+        return last == null || clock.getAsLong() - last.at() >= RECONNECT_INTERVAL_MS;
+    }
+
+    private void attempt(java.util.function.Supplier<IncusApi> connector) {
+        var result = connector.get();
+        if (result != null) {
+            api = result;
+            failure = null;
+        } else {
+            failure = new Failure(clock.getAsLong(), diagnose.get());
+        }
+    }
+
+    /**
+     * Why this client holds no connection: the diagnosis of its last attempt, and that it tries
+     * again. Never a fresh probe, which would say the socket is "accessible" when this client's
+     * own connection failed (#2386). No relative time, since a caller may keep the message.
+     */
+    private String connectionFailure() {
+        var last = failure;
+        if (last == null) return diagnoseUnreachable();
+        return "This process's last connection to Incus failed; it tries again on a request "
+                + RECONNECT_INTERVAL_MS / 1000 + " s or more after it. " + last.reason();
     }
 
     private static IncusApi connectWithRetry() {
@@ -88,20 +162,14 @@ public class IncusClient {
     }
 
     IncusApi http() {
+        var before = failure;
         var result = api();
         if (result == null) {
-            throw new IncusException(unreachable());
+            var last = failure;
+            // An attempt this call made is its own answer; an earlier one says when it was
+            throw new IncusException(last != null && last != before ? last.reason() : connectionFailure());
         }
         return result;
-    }
-
-    /** Why this client found no daemon, read once: {@link #api()} keeps its null for the client's life. */
-    private volatile String unreachable;
-
-    private String unreachable() {
-        var why = unreachable;
-        if (why == null) unreachable = why = diagnoseUnreachable();
-        return why;
     }
 
     /**
@@ -575,7 +643,8 @@ public class IncusClient {
      */
     public String checkConnectivity() {
         if (api() != null) return null;
-        return unreachable();
+        var last = failure;
+        return last != null ? last.reason() : diagnoseUnreachable();
     }
 
     /**
