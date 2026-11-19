@@ -250,8 +250,10 @@ class PrivateMavenRepositoryProxyTest {
     private static List<Path> cachedCopies(String path) throws Exception {
         var dir = ArtifactCacheHandler.privateCacheDir();
         if (!Files.isDirectory(dir)) return List.of();
-        try (Stream<Path> files = Files.walk(dir)) {
-            return files.filter(f -> f.endsWith(Path.of(NEXUS).resolve(path.substring(1)))).toList();
+        // Each partition's copy by its name, never a walk: a walk reads the attributes of a temp file
+        // the proxy may remove before it gets there, and fails (#2379)
+        try (Stream<Path> partitions = Files.list(dir)) {
+            return partitions.map(p -> p.resolve(NEXUS).resolve(path.substring(1))).filter(Files::exists).toList();
         }
     }
 
