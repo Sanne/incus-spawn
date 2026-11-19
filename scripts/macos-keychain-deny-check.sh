@@ -115,8 +115,12 @@ cli_reads_releases() {
   fi
 }
 
-# The guest's curl, as "<issuer> <status>"; a missing value is "-"
-guest_curl_cmd="curl -sv -o /dev/null -w 'isx-status=%{http_code}\n' --max-time 60 $URL 2>&1 | grep -E 'issuer:|^isx-status='"
+# The guest's curl, as "<issuer> <status> <body>"; a missing value is "-". The body is kept apart
+# from curl's trace, and named only when it is the proxy's answer to a failed upstream connection
+# (Upstream.java, sent only when the connection upstream failed): any other 502, such as a
+# credential failure or a timeout, is not the deny.
+UPSTREAM_FAILED="Upstream connection failed"
+guest_curl_cmd="f=\$(mktemp); curl -sv -o \"\$f\" -w 'isx-status=%{http_code}\n' --max-time 60 $URL 2>&1 | grep -E 'issuer:|^isx-status='; grep -qx '$UPSTREAM_FAILED' \"\$f\" && echo isx-body=upstream-failed; rm -f \"\$f\""
 guest_curl() {
   local out
   if [ -n "$via_ssh" ]; then
@@ -129,10 +133,11 @@ guest_curl() {
     local line
     while IFS= read -r line && [ -n "$line" ]; do out="$out$line"$'\n'; done
   fi
-  local issuer status
+  local issuer status body
   if printf '%s\n' "$out" | grep -q "issuer:.*$MITM_CA"; then issuer=proxy; else issuer=-; fi
   status=$(printf '%s\n' "$out" | sed -n 's/^isx-status=\([0-9]*\).*/\1/p' | head -n 1)
-  echo "$issuer ${status:--}"
+  if printf '%s\n' "$out" | grep -qx 'isx-body=upstream-failed'; then body=upstream-failed; else body=-; fi
+  echo "$issuer ${status:--} $body"
 }
 
 restart_proxy() {
@@ -163,7 +168,7 @@ user_denies_e46 && stop "the user domain already denies E46: set it to \"Use Sys
 baseline_denied=$(doctor_denied)
 say "  isx doctor counts $baseline_denied denied CA(s)"
 restart_proxy
-read -r issuer status <<<"$(guest_curl)"
+read -r issuer status body <<<"$(guest_curl)"
 [ "$issuer" = proxy ] \
   || stop "the guest's curl was not served by isx's proxy (issuer not \"$MITM_CA\"): give an instance whose template installs the github tool"
 [ "$status" = 200 ] || stop "the guest's curl got HTTP $status before any deny"
@@ -192,12 +197,12 @@ else
   fail "isx doctor does not count the deny ($baseline_denied before, $denied now)"
 fi
 restart_proxy
-read -r issuer status <<<"$(guest_curl)"
-if [ "$issuer" = proxy ] && [ "$status" = 502 ]; then
+read -r issuer status body <<<"$(guest_curl)"
+if [ "$issuer" = proxy ] && [ "$status" = 502 ] && [ "$body" = upstream-failed ]; then
   # The CLI reached api.github.com just before and was refused on the deny, so the network is up
-  pass "the guest's curl gets 502 from the proxy, which could not complete its upstream handshake"
+  pass "the guest's curl gets the proxy's 502 \"$UPSTREAM_FAILED\": it could not complete its upstream handshake"
 else
-  fail "the guest's curl was not refused by the proxy (issuer: $issuer, HTTP $status; expected the proxy and 502)"
+  fail "the guest's curl was not refused by the proxy (issuer: $issuer, HTTP $status, body: $body; expected the proxy, 502 and \"$UPSTREAM_FAILED\")"
 fi
 
 # ---- 3. The reset ----
@@ -221,7 +226,7 @@ else
   fail "isx doctor counts $denied denied CA(s) after the reset, $baseline_denied before the deny"
 fi
 restart_proxy
-read -r issuer status <<<"$(guest_curl)"
+read -r issuer status body <<<"$(guest_curl)"
 if [ "$issuer" = proxy ] && [ "$status" = 200 ]; then
   pass "the guest's curl gets 200 through the proxy again"
 else
