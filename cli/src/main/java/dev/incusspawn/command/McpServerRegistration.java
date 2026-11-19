@@ -52,7 +52,7 @@ final class McpServerRegistration {
             if (!servers.isEmpty()) {
                 BuildOutput.warn("No agent in this template takes MCP servers",
                         "Not registered: " + servers.stream().map(s -> s.server().name()).collect(Collectors.joining(", ")),
-                        "Add claude, codex, pi, opencode, gemini-cli, copilot or bob to the template to use them");
+                        "Add claude, codex, pi, opencode, gemini-cli, antigravity, copilot or bob to the template to use them");
             }
             // Without reading the record, which costs every agent-less build an exec: a record
             // names only agents installed in this rootfs, and a copied rootfs never loses a tool.
@@ -65,17 +65,27 @@ final class McpServerRegistration {
         if (servers.isEmpty() && recorded.isEmpty()) return;
 
         requireCommands(container, servers);
-        var declared = servers.stream().map(s -> s.server().name()).collect(Collectors.toSet());
         var record = new ArrayList<String>();
         try (var group = BuildOutput.group("MCP servers", servers.stream()
                 .map(s -> s.server().name()).collect(Collectors.joining(", ")))) {
             for (var client : clients) {
+                var taken = new ArrayList<McpServer>();
+                for (var server : servers) {
+                    var why = client.refuses(server.server());
+                    if (why == null) {
+                        taken.add(server.server());
+                    } else {
+                        BuildOutput.warn(client.agent() + " does not get the MCP server " + server.server().name(), why);
+                    }
+                }
+                // What isx wrote before and does not write now, a server the agent refuses included
+                var names = taken.stream().map(McpServer::name).collect(Collectors.toSet());
                 var stale = recorded.getOrDefault(client.agent(), Set.of()).stream()
-                        .filter(name -> !declared.contains(name)).toList();
+                        .filter(name -> !names.contains(name)).toList();
                 BuildOutput.stepStart("Registering with " + client.agent());
-                client.apply(container, servers.stream().map(Declared::server).toList(), stale);
+                client.apply(container, taken, stale);
                 BuildOutput.stepDone();
-                for (var server : servers) record.add(client.agent() + " " + server.server().name());
+                for (var server : taken) record.add(client.agent() + " " + server.name());
             }
         }
         if (record.isEmpty()) {

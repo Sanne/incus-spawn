@@ -17,6 +17,13 @@ public interface McpClient {
     /** The agent's name, as the tool is named, for the build's record and its messages. */
     String agent();
 
+    /**
+     * Why this agent cannot be given {@code server}, or null when it can. A server it refuses is
+     * neither written to its config nor recorded as isx's, so an entry of that name the user made
+     * is never taken for one isx wrote.
+     */
+    default String refuses(McpServer server) { return null; }
+
     /** Shell that adds {@code server}, replacing an entry of the same name. */
     String addScript(McpServer server);
 

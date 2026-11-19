@@ -194,4 +194,27 @@ class McpServerEntryTest {
         assertTrue(copilot.contains("\"type\":\"local\"") && copilot.contains("\"type\":\"http\"")
                 && copilot.contains("\"tools\":[\"*\"]"), copilot);
     }
+
+    /**
+     * Antigravity CLI reads no variable in its MCP config (#2366), so it refuses a server whose
+     * bearer token is one; every other server is written in the form {@code agy mcp add} writes.
+     */
+    @Test
+    void antigravityRefusesAServerWhoseTokenWouldHaveToBeWritten() {
+        assertSame(McpClients.ANTIGRAVITY, new AntigravitySetup().mcpClient());
+        var plain = new McpServer("docs", null, List.of(), Map.of(), "https://docs.example.com/mcp", null);
+        assertNull(McpClients.ANTIGRAVITY.refuses(STDIO));
+        assertNull(McpClients.ANTIGRAVITY.refuses(plain));
+        assertTrue(McpClients.ANTIGRAVITY.refuses(HTTP).contains("ATLASSIAN_MCP_AUTH"), McpClients.ANTIGRAVITY.refuses(HTTP));
+        assertNull(McpClients.GEMINI.refuses(HTTP), "the others resolve the variable when they connect");
+
+        var mine = "{\"mcpServers\": {\"mine\": {\"command\": \"m\"}}}";
+        var merged = (JqObject) JqValues.parse(McpClients.mergeServers(mine, "p", List.of(STDIO, plain),
+                List.of(), McpClients::antigravityEntry));
+        var servers = (JqObject) merged.get("mcpServers");
+        assertEquals(java.util.Set.of("mine", "jasolo", "docs"), new java.util.HashSet<>(servers.keys()));
+        assertEquals("{\"command\":\"java\",\"args\":[\"-jar\",\"/opt/jasolo/jasolo.jar\"],\"env\":{\"JASOLO_GIT_ROOTS\":\"/home/agentuser/q\"}}",
+                servers.get("jasolo").toJsonString());
+        assertEquals("{\"serverUrl\":\"https://docs.example.com/mcp\"}", servers.get("docs").toJsonString());
+    }
 }
