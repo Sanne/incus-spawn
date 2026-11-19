@@ -59,8 +59,9 @@ case "$verb" in
         ;;
     socat-count)
         # In-guest count of forwarder socat processes (parent + per-connection children).
-        # Compared against the host-side vfkit fd count, this locates where streams leak:
-        # if this is low while the host count is high, vfkit is not reaping (link 2);
+        # Compared against the connections the launcher's relay holds, this locates where
+        # streams leak: if this is low while the host count is high, the launcher is
+        # holding closed connections (link 2);
         # if both are high, the forwarder is lingering children (link 3).
         pgrep -f "$FORWARDER_MATCH" 2>/dev/null | wc -l | tr -d '[:space:]'
         echo
@@ -70,7 +71,7 @@ case "$verb" in
         ;;
     forwarder-restart)
         # Recover a leaked/wedged forwarder without rebooting the VM: drop every forwarder
-        # socat (parent + children, freeing the host fds vfkit pinned) and relaunch it.
+        # socat (parent + children, freeing the host connections they held) and relaunch it.
         # The agent's own listener is untouched (different cmdline).
         #
         # Detach the relaunch with setsid so the new forwarder neither inherits this
