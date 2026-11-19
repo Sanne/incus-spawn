@@ -64,19 +64,25 @@ public class GhSetup implements ToolSetup {
     }
 
     /**
-     * The commit email belongs to an identity as much as the token does, so it moves into the
-     * account with it. It is not a proxy entry -- nothing injects it -- so it has to be named.
+     * The commit email and name belong to an identity as much as the token does, so they move
+     * into the account with it. They are not proxy entries -- nothing injects them -- so they
+     * have to be named.
      */
     @Override
     public dev.incusspawn.config.AccountShape accountShape() {
-        return dev.incusspawn.config.AccountShape.declared(List.of("token"), List.of("token", "email"));
+        return dev.incusspawn.config.AccountShape.declared(List.of("token"), List.of("token", "email", "name"));
     }
 
-    /** The commit email, when the account names one: which identity it is, without the token. */
+    /** The configured identity, when the account names one: which identity it is, without the token. */
     @Override
     public String describeAccount(SpawnConfig config, String accountName) {
+        var name = AccountResolver.value(config, NAMESPACE, accountName, "name");
         var email = AccountResolver.value(config, NAMESPACE, accountName, "email");
-        return email == null || email.isBlank() ? "" : "commits as " + email;
+        var hasName = name != null && !name.isBlank();
+        var hasEmail = email != null && !email.isBlank();
+        if (!hasName && !hasEmail) return "";
+        if (hasName && hasEmail) return "commits as " + name + " <" + email + ">";
+        return hasName ? "commits as " + name : "commits as " + email;
     }
 
     /**
@@ -101,7 +107,8 @@ public class GhSetup implements ToolSetup {
         // [user], and claiming its name here would make every use try, and fail, to re-derive.
         if (token.isBlank()) return "";
         var email = AccountResolver.value(config, NAMESPACE, account, "email");
-        return account + IDENTITY_FINGERPRINT_SEPARATOR + fingerprint(token + "\0" + email);
+        var name = AccountResolver.value(config, NAMESPACE, account, "name");
+        return account + IDENTITY_FINGERPRINT_SEPARATOR + fingerprint(token + "\0" + email + "\0" + name);
     }
 
     private static final String IDENTITY_FINGERPRINT_SEPARATOR = "#";
@@ -303,7 +310,9 @@ public class GhSetup implements ToolSetup {
         }
 
         var login = parts[0];
-        var name = parts.length >= 2 && !parts[1].isEmpty() ? parts[1] : login;
+        var configName = AccountResolver.value(config, NAMESPACE, accountName, "name");
+        var name = !configName.isBlank() ? configName
+                : parts.length >= 2 && !parts[1].isEmpty() ? parts[1] : login;
 
         var configEmail = AccountResolver.value(config, NAMESPACE, accountName, "email");
         var email = configEmail.isBlank() ? null : configEmail;

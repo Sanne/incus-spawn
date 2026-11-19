@@ -272,6 +272,24 @@ class GhSetupTest {
     }
 
     @Test
+    void configNameOverridesApiName(@TempDir Path home) throws IOException {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+        ghApiUserReturns(incus, "octocat\tThe Octocat\t\n");
+        ghApiEmailsReturns(incus, "12345+testuser@users.noreply.github.com\n");
+
+        var setup = new GhSetup();
+        withNameConfig(home, "Custom Name", () ->
+                setup.install(new Container(incus, CONTAINER), java.util.Map.of()));
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"),
+                contains("Custom Name"));
+        verify(incus, never()).execInContainer(eq(CONTAINER), eq("agentuser"),
+                contains("The Octocat"));
+    }
+
+    @Test
     void usesLoginAsNameWhenDisplayNameEmpty() {
         var incus = stubIncus();
         noExistingConfig(incus);
@@ -304,9 +322,17 @@ class GhSetupTest {
     // --- Test helpers ---
 
     private static void withTokenConfig(Path home, Runnable action) throws IOException {
+        withGitHubConfig(home, "github:\n  token: ghp_test123\n", action);
+    }
+
+    private static void withNameConfig(Path home, String name, Runnable action) throws IOException {
+        withGitHubConfig(home, "github:\n  token: ghp_test123\n  name: \"" + name + "\"\n", action);
+    }
+
+    private static void withGitHubConfig(Path home, String yaml, Runnable action) throws IOException {
         var configDir = home.resolve(".config/incus-spawn");
         Files.createDirectories(configDir);
-        Files.writeString(configDir.resolve("config.yaml"), "github:\n  token: ghp_test123\n");
+        Files.writeString(configDir.resolve("config.yaml"), yaml);
         var prev = System.getProperty("user.home");
         System.setProperty("user.home", home.toString());
         try {
@@ -355,6 +381,20 @@ class GhSetupTest {
 
         verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("Acme Bot"));
         verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("bot@acme.example"));
+    }
+
+    @Test
+    void aRepointUsesConfigNameOverApiName(@TempDir Path home) throws IOException {
+        var incus = stubIncus();
+        existingIdentity(incus);
+        ghApiUserReturns(incus, "acme-bot\tAcme Bot\t\n");
+        ghApiEmailsReturns(incus, "bot@acme.example\n");
+
+        withNameConfig(home, "Override Name", () ->
+                new GhSetup().rebakeForAccount(new Container(incus, CONTAINER), "default"));
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("Override Name"));
+        verify(incus, never()).execInContainer(eq(CONTAINER), eq("agentuser"), contains("Acme Bot"));
     }
 
     /**

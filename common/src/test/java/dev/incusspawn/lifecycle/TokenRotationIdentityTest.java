@@ -33,6 +33,20 @@ class TokenRotationIdentityTest {
                 """.formatted(meToken, meEmail));
     }
 
+    private static SpawnConfig configWithName(String meToken, String meEmail, String meName) throws Exception {
+        return Jjq.spawnConfig("""
+                github:
+                  accounts:
+                    me:
+                      token: "%s"
+                      email: "%s"
+                      name: "%s"
+                    bot:
+                      token: "ghp_bot"
+                  default: me
+                """.formatted(meToken, meEmail, meName));
+    }
+
     private static SpawnConfig config(String meToken) throws Exception {
         return config(meToken, "me@example.com");
     }
@@ -68,6 +82,13 @@ class TokenRotationIdentityTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.accountIdentityKey("github"), builtWith(config("ghp_userA"), "me")));
         assertEquals(Map.of("github", "me"), stale(daemon, config("ghp_userA", "other@example.com")));
+    }
+
+    @Test
+    void changingTheConfiguredNameMarksTheIdentityStale() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.accountIdentityKey("github"), builtWith(config("ghp_userA"), "me")));
+        assertEquals(Map.of("github", "me"), stale(daemon, configWithName("ghp_userA", "me@example.com", "Other Name")));
     }
 
     @Test
