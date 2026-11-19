@@ -78,7 +78,7 @@ Bumps the kernel the VM base image and the macOS appliance build, \`$KERNEL_FILE
 
 \`KERNEL_SHA256\` is taken from kernel.org's [sha256sums.asc](https://cdn.kernel.org/pub/linux/kernel/v$major.x/sha256sums.asc), verified against the committed autosigner key by \`update-kernel-pin.sh\`; \`kernel-pin-signed.yml\` checks it again with main's script and key. Changes: https://cdn.kernel.org/pub/linux/kernel/v$major.x/ChangeLog-$version
 
-Before merging: a Mac boot of this appliance kernel under vfkit, recorded by \`appliance/test-kernel-on-mac.sh <this PR>\` on the bare-metal Mac; \`kernel-mac-verified\` fails until then (ci.md, #791). A newer release replaces this PR's commit, and the boot has to be repeated.
+Before merging: a Mac boot of this appliance kernel under \`isx-vm\`, recorded by \`appliance/test-kernel-on-mac.sh <this PR>\` on the bare-metal Mac; \`kernel-mac-verified\` fails until then (ci.md, #791). A newer release replaces this PR's commit, and the boot has to be repeated.
 
 Once merged, the images repo's \`ISX_REF\` has to follow for VMs to get it, and an isx release for the appliance (#1355).
 MD
