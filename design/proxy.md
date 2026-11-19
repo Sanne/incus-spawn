@@ -967,12 +967,18 @@ This is an **experimental compatibility mechanism**.
 It is built from OpenAI's documentation and the open-source Codex client (codex-rs, `rust-v0.162.1`), and verified against a local stub of OpenAI's token endpoint and the Codex backend, with Codex 0.162.1 when it was written and Codex 0.166.0 since.
 No Codex version is pinned: CI's `tpl-test-codex` installs whatever `@openai/codex` npm serves when it is built (`CodexSetup`), and the test logs `codex --version`.
 So a Codex release that changes what this relies on fails CI's next run rather than waiting for a deliberate upgrade, and a user's own template may run a Codex no run has tried.
-It is not yet tested against a real ChatGPT account, and passing these tests does not establish that OpenAI supports the integration; feedback is welcome on #1332.
+The browser sign-in is verified against a real ChatGPT Enterprise workspace's SSO; the device-code path is not yet tested against the real service, since that workspace disables device authentication.
+Passing these tests does not establish that OpenAI supports the integration; feedback is welcome on #1332.
 
 **Sign-in:** `isx init`'s OpenAI step (and `isx account add openai`) offers signing in with ChatGPT beside pasting an API key, for a user who cannot mint one.
 isx drives the two flows Codex's own login drives (`ChatGptSignIn`, built from codex-rs `login/src`): the browser flow, which the step offers first, and the device-code flow for a host whose browser is elsewhere.
+isx runs the sign-in itself, which replaces the #1332 design's plan to run the host's `codex login` into a private `CODEX_HOME`.
+What that keeps: no Codex install on the host, no dependency on how Codex stores its session, and a sign-in the tests drive against a stub, in plain Java.
+What it costs: isx speaks to OpenAI's auth server under a client id the published pages document for Codex, not for a third program, so a change to the scopes, the callback ports or the endpoints breaks sign-in until an isx release, and OpenAI has not said how it regards this.
+It is accepted because the account type is experimental and opt-in, the sign-in runs once per account from the host, and the proxy already depends on Codex's internals for the refresh request and the backend paths.
+Delivery and the proxy do not depend on how the session was obtained, so the sign-in can later be replaced -- by `codex login`, or by a documented flow -- without touching the rest.
 The browser flow is what an organisation's SSO needs: the sign-in happens in the person's browser, at their IdP, and isx only listens on loopback for the redirect -- on Codex's own callback ports (1455, 1457), which OpenAI's auth server allow-lists, with the PKCE pair and the parameters Codex's authorize URL carries.
-The device-code flow is the one-time code at `auth.openai.com/codex/device`, polled until the person entered it; an organisation that disables device authentication refuses it, which is why it is not the default.
+The device-code flow is the one-time code at `auth.openai.com/codex/device`, polled until the person entered it; an organisation that disables device authentication refuses it, which is why it is not the default, and it is not yet tested against the real service.
 Both end at the same `/oauth/token` the proxy later refreshes at, and every request names Codex's OAuth client id, so the session is one the proxy can answer refreshes for.
 The tokens go to the session store alone, never a file in an instance, and `config.yaml` records only `type: chatgpt` for the account.
 A sign-in again replaces the session, and its new `session_id` invalidates every proof made for the previous one.
