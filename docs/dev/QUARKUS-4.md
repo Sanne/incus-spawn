@@ -1,12 +1,12 @@
 # Quarkus 4
 
-This is the record of moving incus-spawn from Quarkus 3.40.1.1 to Quarkus 4.0.0.CR1.
-The port was first made on Beta2 and then moved to Beta3 and CR1; what each release changed is recorded beside each item.
+This is the record of moving incus-spawn from Quarkus 3.40.1.1 to Quarkus 4.0.0.
+The port was first made on Beta2 and then moved to Beta3, CR1 and the final 4.0.0; what each release changed is recorded beside each item.
 We are Quarkus maintainers, and we use this project to validate Quarkus 4 on a real application before it ships.
 So we treat each prerelease as a final release: every problem still open is written down here, and the Q-* and V-* items go back upstream.
 An item is removed once a release fixes it.
 
-| | Quarkus 3.40.1.1 | Quarkus 4.0.0.CR1 |
+| | Quarkus 3.40.1.1 | Quarkus 4.0.0 |
 |---|---|---|
 | Vert.x | 4.5.35 | 5.2.3 |
 | Netty | 4.1.139 | 4.2.20 |
@@ -55,6 +55,26 @@ Every remaining change is in the proxy; `common` and `cli` compile and pass unch
 
 ## Verification
 
+The final 4.0.0 manages the same Vert.x, Netty, Jackson, SmallRye Config and GraalVM SDK versions as CR1, so the move from CR1 is a version bump with no code change (#2377).
+It was checked on Oracle GraalVM 25.0.5.0.3, x86_64, against CR1 at 8b5d05c7:
+
+- **`mvn package`**: all three modules pass: common runs 3613 tests, cli 2934 and the proxy 1171.
+- **Native, unprofiled**: both builds are given the same `native-image` arguments, byte for byte.
+  The CLI is 40,897,656 bytes against 40,832,120 on CR1, and the proxy 106,892,624 against 106,958,160.
+  Each differs by 64 KiB, within the noise of rebuilding one commit: the proxy's `-O3` code area alone moved by 128 KiB between two builds that reached the same 72,956 methods.
+  Each reaches one more method than on CR1; reachable types differ by a few even between two builds of the same commit.
+- **Startup is unchanged**, measured in a quiet window with the binaries above, alternated and run twice in swapped order.
+  The CLI's `--version` took a median 7.12 to 7.14 ms on 4.0.0 against 7.13 to 7.16 ms on CR1, and `--help` 5.44 to 5.45 ms against 5.43 to 5.44 ms, over 300 runs each.
+  The proxy answered its first `/health` a median 22.7 ms after its process started on both versions, over 20 starts each.
+- **Native, against a real Incus** (a KVM guest, so not nested): `isx build tpl-minimal`, a branch, a stop and a start, all with the native CLI.
+  From the branch, the native proxy intercepted, verified and cached a Maven artifact, and relayed an npm packument and an unintercepted site.
+- **One cleanup**: the proxy no longer needs the event-bus deserialization substitution, since Vert.x 5's `SerializableCodec` reads through `SerializableUtils.fromBytes`, which the shared-data substitution already cuts (design/native-image.md "Java deserialization is not compiled in").
+  4.0.0 did not change this: the substitution has cut nothing since the move to Vert.x 5, and CR1 already had the same 5.2.3, so it was found by this upgrade's inventory of workarounds.
+  The shared-data one is still needed: without it the native build fails its `readObject0` gate.
+
+The figures are in `PERFORMANCE-NOTES.md`, "Quarkus 4.0.0 against CR1".
+Throughput was not measured for 4.0.0, since no library it depends on changed from CR1.
+
 CR1 keeps Beta3's Vert.x 5.2.3 and Netty 4.2.20, so the move from Beta3 is a version bump with no code change.
 It was checked on Oracle GraalVM 25.0.4.1.1, x86_64, against Beta3 at 8b8fd9b4 (#2169):
 
@@ -101,12 +121,13 @@ That run has not been repeated on CR1.
 ## Feedback for the Quarkus team
 
 Q-1 is fixed in CR1 and removed (quarkusio/quarkus#58134).
-Q-3 and Q-7 are confirmed against CR1's sources, and Q-8 and Q-10 are partly fixed there; Q-12 is new in Beta3.
+Q-3, Q-7, Q-8 and the `--enable-url-protocols` part of Q-10 still hold in 4.0.0's sources and native build, as they did in CR1, which partly fixed Q-8 and Q-10.
+Q-12 is new in Beta3 and was not rechecked against 4.0.0.
 Q-9 is confirmed against Beta3, and Q-11 was noted during the port; neither is rechecked.
 
 - **Q-3: Jackson 3 core is always reachable in Vert.x native images.**
   `VertxCoreProcessor` registers `io.vertx.core.json.jackson.v3.JacksonCodec` for reflection unconditionally, which adds 0.87 MiB with no JSON in use.
-  Unchanged in CR1; not filed yet.
+  Unchanged in CR1 and 4.0.0; not filed yet.
 - **Q-7 (undocumented default): `io.netty.noUnsafe=true` in native.**
   It changes buffer performance for TLS-heavy native apps, and neither the migration guide nor the release notes mention it.
 - **Q-8 (stale tuning): `quarkus.netty.allocator-max-order` is inert by default.**
@@ -119,7 +140,7 @@ Q-9 is confirmed against Beta3, and Q-11 was noted during the port; neither is r
   Its Jackson defaults table omits `SORT_PROPERTIES_ALPHABETICALLY`, which silently changes serialized output.
   The CDI API group change and the `smallrye-common-vertx-context` rename are missing, and both matter to explicit exclusions and enforcer rules.
 - **Q-10 (minor).**
-  The native build still passes the deprecated `--enable-url-protocols` in CR1.
+  The native build still passes the deprecated `--enable-url-protocols` in 4.0.0.
   The `NativeConfig` javadoc no longer names `jdk-21` builder images (quarkusio/quarkus#57953, Beta3).
   The uber-jar builder warns about duplicate Jackson 2 and 3 license files, which the BOM itself produces.
   `vertx-core` hard-depends on the HTTP/3, QUIC and tcnative classes: none reaches a native image, but all sit on the JVM classpath.
