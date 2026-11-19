@@ -257,7 +257,7 @@ The helper reads the current proof file per request, including outside login she
 `isx doctor` inside an instance checks the exported ones against the secret file (`DoctorCommand.instanceCredentialFindings`, #1109); the proofs file's format is read back only by `ProofToken.delivered`, beside `profile`, so the two change together.
 A placeholder token in the guest is read when the tool runs, never fixed by a build (#1108): where a tool reads a file instead of its variable, a login script in `/etc/profile.d/isx-zz-*` rewrites the file from the variable.
 An isx running inside an instance shares that instance's grant for a namespace only when its account there is the reserved `inherit` (#1110): its proxy swaps the instance's proofs for the parent's, derived from `/run/isx/credential-secret` (`InheritedProof`).
-An `openai` account may be `type: chatgpt` (#1332, experimental): the ChatGPT session stays on the host, signed in by the device-code flow Codex's own login uses and delivered as proof-bearing look-alikes on every start, and `ChatGptRoute` serves an explicit allowlist of Codex operations.
+An `openai` account may be `type: chatgpt` (#1332, experimental): the ChatGPT session stays on the host, signed in by the browser flow Codex's own login uses (the device-code flow beside it, for a host whose browser is elsewhere) and delivered as proof-bearing look-alikes on every start, and `ChatGptRoute` serves an explicit allowlist of Codex operations.
 See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 
 **A Git identity no account supplies** (#2410): `git-identity:` in `config.yaml` (`GitIdentity`) names the author agents commit as when no GitHub account gives one.
