@@ -11,8 +11,9 @@
 # that running instances have open through it.
 #
 # Usage: macos-keychain-deny-check.sh <instance>
-# The instance must be running, and its template must install the github tool, which makes the
-# proxy intercept api.github.com. With sshd in the template, the script runs curl there itself;
+# The instance must be running, and its template must install the github tool. With a GitHub
+# account in isx (isx account add github), that makes the proxy intercept api.github.com.
+# With sshd in the template, the script runs curl there itself;
 # without it, it asks you to run curl in `isx shell <instance>` and paste what it prints.
 # Run it with the isx you want to test first on PATH, or with ISX=/path/to/isx.
 # It exits 0 when every check passed, 1 when one failed, and 2 when it could not run a check.
@@ -170,7 +171,7 @@ say "  isx doctor counts $baseline_denied denied CA(s)"
 restart_proxy
 read -r issuer status body <<<"$(guest_curl)"
 [ "$issuer" = proxy ] \
-  || stop "the guest's curl was not served by isx's proxy (issuer not \"$MITM_CA\"): give an instance whose template installs the github tool"
+  || stop "the guest's curl was not served by isx's proxy (issuer not \"$MITM_CA\"): give an instance whose template installs the github tool, with a GitHub account in isx (isx account add github)"
 [ "$status" = 200 ] || stop "the guest's curl got HTTP $status before any deny"
 say "  isx update-base --list reads the release list, and the guest's curl gets 200 through the proxy"
 
