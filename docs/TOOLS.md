@@ -720,7 +720,6 @@ The name `isx` is reserved for isx's own server.
 
 A server that a tool no longer declares is removed from each agent at the next build.
 An entry you add to an agent yourself is left alone.
-Gemini CLI, Copilot and Bob do not receive these servers yet.
 
 ### Tool Actions
 
