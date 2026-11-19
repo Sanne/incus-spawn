@@ -438,6 +438,34 @@ public final class SecretRedactor {
         return new Scrubbed(scrub.text, Map.copyOf(scrub.hits));
     }
 
+    /** Whether {@link #scrubGuest} renders these pieces row by row, so a test can pin that path. */
+    static boolean scrubsRowByRow(String... raw) {
+        return rendering(raw, asPrinted(raw)) == Rendering.ROWS;
+    }
+
+    /** How {@link #scrubGuest} rebuilds what a terminal shows of the raw pieces. */
+    private enum Rendering { NONE, SCREEN, ROWS }
+
+    /**
+     * No screen when the cursor never moves back. Rows one at a time when no row can change
+     * another (#2376), which keeps a long log with a few progress lines from holding a screen
+     * node per character. Otherwise the whole screen.
+     */
+    private static Rendering rendering(String[] raw, boolean asPrinted) {
+        if (asPrinted) return Rendering.NONE;
+        for (var piece : raw) {
+            if (piece != null && Screen.mayMoveBack(piece)) {
+                return Screen.independentRows(raw) ? Rendering.ROWS : Rendering.SCREEN;
+            }
+        }
+        return Rendering.NONE;
+    }
+
+    private static boolean asPrinted(String[] raw) {
+        for (var piece : raw) if (piece != null && !BuildOutput.showsAsPrinted(piece)) return false;
+        return true;
+    }
+
     /**
      * What a guest printed, in {@code raw} pieces, as it is shown ({@link BuildOutput#guestText},
      * each piece on its own) and saved: with every credential shape redacted that a scrub of the
@@ -452,15 +480,10 @@ public final class SecretRedactor {
     public static String scrubGuest(String... raw) {
         // Shown as printed, the common case: a raw scrub would find the same spans, so neither
         // the second scrub nor the map from shown to raw characters is needed
-        boolean asPrinted = true;
+        boolean asPrinted = asPrinted(raw);
         boolean drawn = true;
-        for (var piece : raw) {
-            if (piece == null) continue;
-            if (!BuildOutput.showsAsPrinted(piece)) {
-                asPrinted = false;
-                break;
-            }
-            if (drawn && piece.codePoints().anyMatch(SecretRedactor::mayDrawNoCell)) drawn = false;
+        for (int i = 0; asPrinted && drawn && i < raw.length; i++) {
+            if (raw[i] != null && raw[i].codePoints().anyMatch(SecretRedactor::mayDrawNoCell)) drawn = false;
         }
         if (asPrinted && drawn) {
             var printed = new StringBuilder();
@@ -474,17 +497,8 @@ public final class SecretRedactor {
         for (var piece : raw) rawLength += piece == null ? 0 : piece.length();
         var source = new int[rawLength];
         // A screen shows what the shown text does until the cursor moves back: most output never does
-        Screen screen = null;
-        boolean independentRows = false;
-        if (!asPrinted) {
-            for (var piece : raw) {
-                if (piece != null && Screen.mayMoveBack(piece)) {
-                    independentRows = Screen.independentRows(raw);
-                    if (!independentRows) screen = new Screen(rawLength, true, false, true, false);
-                    break;
-                }
-            }
-        }
+        var rendering = rendering(raw, asPrinted);
+        Screen screen = rendering == Rendering.SCREEN ? new Screen(rawLength, true, false, true, false) : null;
         for (var piece : raw) {
             if (piece == null) continue;
             var shown = BuildOutput.shownGuestText(piece);
@@ -506,7 +520,7 @@ public final class SecretRedactor {
             var view = screen.view();
             wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
         }
-        if (independentRows) {
+        if (rendering == Rendering.ROWS) {
             var view = Screen.viewRows(rawLength, raw);
             if (view != null) wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
         }
