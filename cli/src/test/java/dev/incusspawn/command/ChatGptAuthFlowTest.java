@@ -59,17 +59,10 @@ class ChatGptAuthFlowTest {
 
     static class FakeInit extends CredentialSetup {
         final FakeSignIn signIn = new FakeSignIn();
-        final List<String> opened = new ArrayList<>();
 
         @Override
         dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
             return signIn;
-        }
-
-        @Override
-        boolean openUrl(String url) {
-            opened.add(url);
-            return true;
         }
     }
 
@@ -78,9 +71,9 @@ class ChatGptAuthFlowTest {
         return new ScriptedPrompts().line("1");
     }
 
-    /** The one-time-code path: the menu, then no browser at its question. */
+    /** The one-time-code path: the menu alone, for the sign-in prints its address and code itself. */
     private static ScriptedPrompts chooseDeviceCode() {
-        return new ScriptedPrompts().line("2", "n");
+        return new ScriptedPrompts().line("2");
     }
 
     private static void run(FakeInit init, SpawnConfig config, ScriptedPrompts prompts) {
@@ -91,7 +84,8 @@ class ChatGptAuthFlowTest {
     @Test
     void aChatGptSignInRecordsTheAccountAndKeepsTheSessionOnTheHost() {
         var init = new FakeInit();
-        run(init, new SpawnConfig(), chooseChatGpt());
+        var prompts = chooseChatGpt();
+        run(init, new SpawnConfig(), prompts);
 
         assertEquals("chatgpt", saved("openai.accounts.default.type"));
         var session = new ChatGptSessionStore().read("default");
@@ -99,8 +93,9 @@ class ChatGptAuthFlowTest {
         assertEquals("rt-real", session.tokens().refreshToken());
         assertEquals("acct-ent", session.tokens().accountId());
         assertEquals(1, init.signIn.browserSignIns);
-        assertTrue(init.opened.contains("https://auth.openai.com/oauth/authorize?response_type=code"),
-                "the browser is opened at the authorize URL, where SSO happens");
+        var conversation = String.join("\n", prompts.conversation());
+        assertTrue(conversation.contains("https://auth.openai.com/oauth/authorize?response_type=code"),
+                "the address is printed for the person to open, never opened for them: " + conversation);
     }
 
     @Test
