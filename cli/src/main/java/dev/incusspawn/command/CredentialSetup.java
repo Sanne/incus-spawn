@@ -254,9 +254,10 @@ class CredentialSetup {
         }
 
         prompts.say("1. Sign in with ChatGPT — for a ChatGPT or ChatGPT Enterprise plan;");
-        prompts.say("   opens your browser, where your organisation's SSO works too,");
-        prompts.say("   and the session stays on this host. isx signs in as Codex's own");
-        prompts.say("   client, which OpenAI has not endorsed — you opt in knowingly.");
+        prompts.say("   isx prints an address you open in your browser, where your");
+        prompts.say("   organisation's SSO works too, and the session stays on this");
+        prompts.say("   host. isx signs in as Codex's own client, which OpenAI has");
+        prompts.say("   not endorsed — you opt in knowingly.");
         prompts.say("2. Sign in with a one-time code — the same sign-in, for a host");
         prompts.say("   whose browser is elsewhere; not yet tested against the real");
         prompts.say("   service.");
@@ -271,19 +272,19 @@ class CredentialSetup {
         }
     }
 
-    /** Signs a ChatGPT session in through the browser, where an organisation's SSO happens. */
+    /**
+     * Signs a ChatGPT session in through the browser, where an organisation's SSO happens.
+     * The address is printed, never opened for the person: they click or paste it themselves,
+     * and the redirect answers only a browser on this host.
+     */
     private void signInChatGptInBrowser(SpawnConfig config, AccountTarget target, Prompts prompts) {
         var signIn = chatGptSignIn();
         BuildOutput.step("Sign in with ChatGPT");
         dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
         try {
             tokens = signIn.signInWithBrowser(url -> {
-                if (openUrl(url)) {
-                    BuildOutput.step("Opened your browser — finish the sign-in there.");
-                } else {
-                    BuildOutput.warn("Could not open a browser.",
-                            "Open this address on this machine, in any browser: " + url);
-                }
+                prompts.say("Open this address in a browser on this machine, then finish the sign-in there:");
+                prompts.say(url);
             });
         } catch (Exception e) {
             BuildOutput.error("the ChatGPT sign-in did not finish: " + e.getMessage());
@@ -303,15 +304,11 @@ class CredentialSetup {
             return;
         }
         BuildOutput.step("Sign in with ChatGPT");
-        prompts.say("Open " + styled(BOLD, device.verificationUrl()));
+        // The address is printed plain, on its own line: the person clicks it or pastes it
+        // themselves, and no bolding stands between a terminal's link detection and the URL
+        prompts.say("Open this address in a browser on this machine:");
+        prompts.say(device.verificationUrl());
         prompts.say("and enter this one-time code: " + styled(BOLD, device.userCode()));
-        if (askYesNo(prompts, "Open the page in your browser now?", true)) {
-            if (openUrl(device.verificationUrl())) {
-                BuildOutput.step("Opened your browser — finish there, then press Enter below.");
-            } else {
-                BuildOutput.warn("Could not open a browser — open the page above manually.");
-            }
-        }
         dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
         try {
             tokens = signIn.awaitAuthorization(device, null);
