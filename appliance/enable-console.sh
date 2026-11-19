@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Enable passwordless root auto-login on serial consoles.
-# Patches a disk image for debugging via QEMU (-serial stdio) or vfkit console.
+# Patches a disk image for debugging via QEMU (-serial stdio) or isx-vm's hvc0 console.
 # The appliance already starts gettys on available serial devices via rcS.
 # This script removes the root password so login doesn't require one.
 #

@@ -3,9 +3,9 @@
 # Scheduled 30s after boot by rcS.
 #
 # Output goes to whichever console the kernel was actually given: ttyS0 on
-# x86_64 QEMU, ttyAMA0 on aarch64 QEMU, hvc0 on vfkit. It is read from the
+# x86_64 QEMU, ttyAMA0 on aarch64 QEMU, hvc0 on isx-vm. It is read from the
 # cmdline rather than probed for -- see incus-spawn-smoke-test for why a probe
-# is not safe. This matters most here: diag.sh polls its vfkit logfile for the
+# is not safe. This matters most here: diag.sh polls the VM's console log for the
 # "end diagnostics" sentinel, so output sent to a stub tty means a 60s hang and
 # an empty report, from the one tool you reach for when the VM will not boot.
 
