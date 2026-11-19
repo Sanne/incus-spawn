@@ -51,7 +51,8 @@ Key jobs:
 - **`macos-role`**: `isx` and `isx-proxy` in their macOS roles, on Linux (#1800).
   It makes the macOS-role test build from `uber-jar-smoke`'s jars (`scripts/macos-role-build.sh`) and runs `appliance/test-macos-role.sh` with the x86_64 appliance under KVM -- see below.
   It uploads only its logs, on failure; `PlatformRoleBuildGuardTest` keeps it the only job that makes the test build
-- **`macos-keychain-trust.yml`** (`native-keychain-smoke`, `macos-15`): builds the native CLI on macOS weekly, by hand and on a PR touching `MacKeychainTrust`, `SystemTrust`, `DeniedChainTrustManager` or the proxy's `Upstream`, and runs `.github/scripts/macos-keychain-smoke.sh`, which `release.yml` also runs on each macOS binary: a CA trusted in the System keychain must appear in `isx doctor --format=json`, and one denied there must not (#1467)
+- **`macos-keychain-trust.yml`** (`native-keychain-smoke`, `macos-15`): builds the native CLI and proxy on macOS weekly, by hand and on a PR touching `MacKeychainTrust`, `SystemTrust`, `DeniedChainTrustManager`, the proxy's `Upstream` or what the smoke goes through, and runs `.github/scripts/macos-keychain-smoke.sh`, which `release.yml` also runs on each macOS CLI: a CA trusted in the System keychain must appear in `isx doctor --format=json`, and one denied there must not (#1467).
+  Given the proxy too, it points `api.github.com` at a local server in `/etc/hosts` and fakes the VM's lease, and both native binaries must accept a chain through a root's copy cross-signed by a trusted root, then refuse it once that root's self-signed certificate is denied, in a handshake the server sees aborted (#1631)
 - **`build-native-cli`**: builds the CLI native image, uploads artifact
 - **`build-native-proxy`**: builds the proxy native image, uploads artifact
 - **`integration-tests (x86_64)`, `integration-tests (aarch64)`**: a matrix.
