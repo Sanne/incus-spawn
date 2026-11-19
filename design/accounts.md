@@ -493,7 +493,8 @@ When a re-point makes it stale, the tool is asked to bring the instance in line.
 `GhSetup.canRebakeForAccount()` is true, and `rebakeForAccount` clears the git identity and asks the API again — which resolves *through the proxy*, so it answers for the new account without this code knowing which one that is.
 `InstanceLifecycle.reconcileAccountIdentities` does this, and only stamps back on success.
 
-GitHub's stamp is the account name plus a fingerprint of its token, configured email and configured name (`<account>#<12 hex of SHA-256>`), not the name alone.
+GitHub's stamp is the account name plus a fingerprint of its token, configured email and, when set, configured name (`<account>#<12 hex of SHA-256>`), not the name alone.
+The configured name is included only when non-blank, so an account with no name keeps the fingerprint it had before the field was added.
 The name alone missed the most ordinary change of all (#281).
 Replacing an account's token with another user's keeps the name, so nothing was stale.
 Every instance -- and every child template, which inherits its parent's `.gitconfig` and whose gh setup skips an identity already present -- went on committing as the previous user while pushing as the new one.

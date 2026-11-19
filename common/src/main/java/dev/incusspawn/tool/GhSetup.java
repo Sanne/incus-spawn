@@ -88,12 +88,15 @@ public class GhSetup implements ToolSetup {
     /**
      * The account name plus a fingerprint of what the identity is derived from:
      * {@code user.name} and {@code user.email} come from whoever the token belongs to (and the
-     * configured email), so any change of account is a change of identity -- unlike Claude,
-     * where two accounts of the same auth mode leave the image identical.
+     * configured email and name, when set), so any change of account is a change of identity --
+     * unlike Claude, where two accounts of the same auth mode leave the image identical.
      *
      * <p>The name alone is not enough: replacing an account's token with another user's keeps
      * the name, and the instance would go on committing as the previous user while pushing as
      * the new one (#281). The fingerprint is a truncated hash, never the token.
+     *
+     * <p>The configured name is included only when non-blank, so an account with no name
+     * configured keeps the same fingerprint it had before this field was added.
      */
     @Override
     public String bakedAccountIdentity(SpawnConfig config, String accountName) {
@@ -108,7 +111,8 @@ public class GhSetup implements ToolSetup {
         if (token.isBlank()) return "";
         var email = AccountResolver.value(config, NAMESPACE, account, "email");
         var name = AccountResolver.value(config, NAMESPACE, account, "name");
-        return account + IDENTITY_FINGERPRINT_SEPARATOR + fingerprint(token + "\0" + email + "\0" + name);
+        var material = token + "\0" + email + (name.isBlank() ? "" : "\0" + name);
+        return account + IDENTITY_FINGERPRINT_SEPARATOR + fingerprint(material);
     }
 
     private static final String IDENTITY_FINGERPRINT_SEPARATOR = "#";

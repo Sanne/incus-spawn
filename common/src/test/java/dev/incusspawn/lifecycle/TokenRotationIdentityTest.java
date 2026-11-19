@@ -91,6 +91,20 @@ class TokenRotationIdentityTest {
         assertEquals(Map.of("github", "me"), stale(daemon, configWithName("ghp_userA", "me@example.com", "Other Name")));
     }
 
+    /**
+     * An account with no configured name must keep the fingerprint the released formula
+     * produced (SHA-256 of "token\0email", no trailing \0), so upgrading isx does not
+     * mark every existing instance stale.
+     */
+    @Test
+    void noConfiguredNameKeepsTheReleasedFingerprint() throws Exception {
+        // me#0c4c53f0d954 is the first 12 hex of SHA-256("ghp_userA\0me@example.com"),
+        // the formula every released isx used before the name field was added.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.accountIdentityKey("github"), "me#0c4c53f0d954"));
+        assertEquals(Map.of(), stale(daemon, config("ghp_userA")));
+    }
+
     @Test
     void anUnchangedAccountIsNotStale() throws Exception {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
