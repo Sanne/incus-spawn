@@ -86,15 +86,16 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
+        "required": ["name", "value"],
         "properties": {
           "name": {"type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$", "description": "Variable name."},
-          "value": {"type": ["string", "number", "boolean"], "description": "Its value."},
+          "value": {"type": ["string", "number", "boolean", "null"], "description": "Its value. Empty sets the variable empty."},
           "strategy": {
             "enum": ["set", "set-if-unset", "prepend", "append"],
             "default": "set",
             "description": "How the value joins the variable: set (default), set-if-unset, prepend or append."
           },
-          "separator": {"type": "string", "default": " ", "description": "Between the value and the existing one, for prepend and append."}
+          "separator": {"type": ["string", "null"], "default": " ", "description": "Between the value and the existing one, for prepend and append. Left empty, it is the default; \"\" joins with nothing."}
         }
       }
     },

@@ -215,6 +215,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
+        "required": ["name", "value"],
         "properties": {
           "name": {
             "type": "string",
@@ -222,8 +223,8 @@
             "description": "Variable name."
           },
           "value": {
-            "type": ["string", "number", "boolean"],
-            "description": "Its value."
+            "type": ["string", "number", "boolean", "null"],
+            "description": "Its value. Empty sets the variable empty."
           },
           "strategy": {
             "enum": ["set", "set-if-unset", "prepend", "append"],
@@ -231,9 +232,9 @@
             "description": "How the value joins the variable: set (default), set-if-unset, prepend or append."
           },
           "separator": {
-            "type": "string",
+            "type": ["string", "null"],
             "default": " ",
-            "description": "Between the value and the existing one, for prepend and append."
+            "description": "Between the value and the existing one, for prepend and append. Left empty, it is the default; \"\" joins with nothing."
           }
         }
       }
