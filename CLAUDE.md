@@ -119,7 +119,9 @@ A proven call already in Vertex's form at `api.anthropic.com` is likewise served
 A proven call to be translated is signed only as `POST /v1/messages` or `/v1/messages/count_tokens` with a JSON object for its body, else a 403, so the guest's own path never is.
 
 **Editors get a JSON Schema for each YAML file people edit** (`site/schema/{template,tool,config,mcp}.json`, published at `isx.run/schema/`).
-The skeleton `isx templates new` writes names the template one in a `yaml-language-server` modeline, and `EditorSchemasTest` fails when a key `ImageDef`, `ToolDef`, `McpConfig` or `SpawnConfig` binds is missing from its schema, has no description, or when a value set drifts from the code's (design/templates.md "A schema for editors").
+The skeleton `isx templates new` writes names the template one in a `yaml-language-server` modeline.
+`EditorSchemasTest` fails when a schema lacks a key that `ImageDef`, `ToolDef`, `McpConfig` or `SpawnConfig` binds, or one that a closed section of `config.yaml` or `mcp.yaml` accepts (`MavenRepositories.KEYS` and the like).
+It also fails when a key has no description or a value set drifts from the code's (design/templates.md "A schema for editors").
 
 ## Build and Test Commands
 

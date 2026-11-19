@@ -4,8 +4,12 @@ import com.networknt.schema.InputFormat;
 import com.networknt.schema.Schema;
 import com.networknt.schema.SchemaRegistry;
 import com.networknt.schema.SpecificationVersion;
+import dev.incusspawn.config.Drivers;
 import dev.incusspawn.config.EnvEntry;
+import dev.incusspawn.config.HostRoutes;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.MavenMirrors;
+import dev.incusspawn.config.MavenRepositories;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
@@ -95,6 +99,29 @@ class EditorSchemasTest {
         compare(SpawnConfig.class, JqYaml.parse(Files.readString(SCHEMAS.resolve("config.json"))), "", false,
                 Set.of(), problems);
         assertEquals(List.of(), problems);
+    }
+
+    @Test
+    void theClosedSectionsOfConfigAndMcpNameTheKeysTheirLoadersAccept() throws IOException {
+        var config = JqYaml.parse(Files.readString(SCHEMAS.resolve("config.json"))).path("properties");
+        var mcp = JqYaml.parse(Files.readString(SCHEMAS.resolve("mcp.json"))).path("properties");
+        // Each section below refuses another key, so a key its loader adds would be flagged in every editor
+        assertEquals(privateSet(MavenRepositories.class, "KEYS"),
+                keysOf(config.path("maven-repositories").path("items")));
+        assertEquals(Arrays.stream(MavenRepositories.Confirm.values()).map(MavenRepositories.Confirm::key)
+                        .collect(java.util.stream.Collectors.toSet()),
+                enumOf(config.path("maven-repositories").path("items").path("properties").path("confirm")));
+        assertEquals(privateSet(MavenMirrors.class, "KEYS"), keysOf(config.path("maven-mirrors").path("items")));
+        assertEquals(privateSet(HostRoutes.class, "KEYS"), keysOf(config.path("host-routes").path("additionalProperties")));
+        assertEquals(privateSet(Drivers.class, "KEYS"), keysOf(config.path("drivers").path("additionalProperties")));
+        assertEquals(privateSet(McpConfig.class, "HOST_TOOL_KEYS"),
+                keysOf(mcp.path("host-tools").path("additionalProperties")));
+    }
+
+    /** The keys a section of a schema names, which must refuse any other. */
+    private static Set<String> keysOf(JqValue section) {
+        assertFalse(section.path("additionalProperties").asBoolean(true), "the section refuses another key");
+        return new LinkedHashSet<>(section.path("properties").asMap().keySet());
     }
 
     private static void compare(Class<?> type, JqValue schema, String prefix, boolean recurse,
@@ -234,6 +261,27 @@ class EditorSchemasTest {
                 artifactory: {token: x}
                 """));
         assertFalse(errors(config, "host-ca: {propagate: maybe}\n").isEmpty(), "a wrong value is flagged");
+        // What HostCaConfig.of honours
+        assertEquals(List.of(), errors(config, "host-ca: true\n"));
+        assertEquals(List.of(), errors(config, "host-ca: {propagate: \"true\"}\n"));
+        // What the loaders drop an entry for lacking
+        assertFalse(errors(config, "maven-repositories: [{url: \"https://a/\", access: public}]\n").isEmpty(),
+                "a repository needs confirm: and replaces-releases:");
+        assertFalse(errors(config, "host-routes: {a.isx.internal: {target: \"127.0.0.1:1\"}}\n").isEmpty(),
+                "a route needs templates:");
+        assertFalse(errors(config, "host-routes: {a.isx.internal: {target: \"127.0.0.1:1\", templates: [\" \"]}}\n").isEmpty(),
+                "a blank template name is flagged");
+        assertFalse(errors(config, "maven-mirrors: [{repository: \"https://a/\"}]\n").isEmpty(),
+                "a mirror entry needs mirror:");
+        assertFalse(errors(config, """
+                maven-repositories: [{url: "https://a/", access: private, confirm: checksum-header, replaces-releases: false}]
+                """).isEmpty(), "a private repository needs credentials:");
+        assertFalse(errors(config, """
+                maven-repositories: [{url: "https://a/", access: public, credentials: x, confirm: sidecar, replaces-releases: false}]
+                """).isEmpty(), "credentials: is only for a private repository");
+        // What Drivers and HostCaConfig.of read as nothing granted
+        assertEquals(List.of(), errors(config, "drivers: {orca:}\n"));
+        assertEquals(List.of(), errors(config, "host-ca: {propagate:}\n"));
     }
 
     private static Schema compiled(String file) throws IOException {
@@ -272,6 +320,9 @@ class EditorSchemasTest {
         assertFalse(errors("name: tpl-x\ntype: lxc\n").isEmpty(), "a type outside the set is flagged");
         assertFalse(errors("description: no name\n").isEmpty(), "name is required");
         assertTrue(errors("name: tpl-x\ndeprecated: true\ntools: [a, {b: {c: d}}]\n").isEmpty());
+        // An empty value: sets the variable empty, and an empty separator: is the default
+        assertEquals(List.of(), errors("name: tpl-x\nenv: [{name: A, value:, strategy: append, separator:}]\n"));
+        assertFalse(errors("name: tpl-x\nenv: [{name: A}]\n").isEmpty(), "an env entry needs value:");
     }
 
     private static void assertValid(String what, String yaml) {

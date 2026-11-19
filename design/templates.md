@@ -254,7 +254,10 @@ The skeleton that `isx templates new` writes starts with the modeline `# yaml-la
 The schemas are written by hand and held true by `EditorSchemasTest` (`cli`, tagged `docs`), because the loaders' keys, defaults and converters are Java and a generator would have to model each converter anyway.
 The test fails when a loader binds a key the schema lacks, when the schema names a key the loader does not bind, and when a key has no description.
 It reads the bound names the way `TemplateSkeletonTest` does (`@JqName`, else the field, never `@JqIgnore`), and follows entries into their own fields.
-The value sets of `type`, `env[].strategy`, `host-resources[].mode`, an auth rule's `type` and a parameter's `type` are compared with the constants the code validates against.
+The value sets of `env[].strategy`, `host-resources[].mode`, an auth rule's `type`, a parameter's `type`, a tool's architectures and `maven-repositories[].confirm` are compared with the constants the code validates against.
+The set of a template's `type` is written in the test, since the code does not check `type` against a set: it compares it with `vm` and `kvm`, and reads anything else as a container.
+Some sections of `config.yaml` and `mcp.yaml` have loaders that refuse an unknown key: `maven-repositories`, `maven-mirrors`, `host-routes`, `drivers` and `host-tools`.
+Their schemas refuse one too, and the test compares their keys with the loaders' own key sets.
 The built-in templates and tools, the skeleton's examples uncommented and the documented examples of `config.yaml` and `mcp.yaml` must validate.
 
 The template and tool schemas are stricter than the loader in one way, on purpose: the loader warns about an unknown key and goes on (`MappedDefinition`), where the editor underlines it.

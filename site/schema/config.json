@@ -102,9 +102,10 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
+        "required": ["target", "templates"],
         "properties": {
           "target": {"type": "string", "description": "Where the controller listens, on this host's loopback: localhost, a 127.x.x.x address or [::1], with a port."},
-          "templates": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "Required: only instances of these templates may call the route."}
+          "templates": {"type": "array", "items": {"type": "string", "pattern": "\\S"}, "minItems": 1, "description": "Required: only instances of these templates may call the route."}
         }
       }
     },
@@ -119,6 +120,10 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
+        "required": ["url", "access", "confirm", "replaces-releases"],
+        "if": {"properties": {"access": {"const": "private"}}},
+        "then": {"required": ["credentials"]},
+        "else": {"not": {"required": ["credentials"]}},
         "properties": {
           "url": {"type": "string", "description": "The repository, up to where the Maven coordinates begin."},
           "access": {"enum": ["public", "private"], "description": "public, or private with the credentials namespace whose account isx injects there."},
@@ -136,6 +141,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
+        "required": ["repository", "mirror"],
         "properties": {
           "repository": {"type": "string", "description": "A repository the proxy caches: one of Maven Central's two names, the Gradle plugin portal, or a public one declared above."},
           "mirror": {"type": "string", "description": "The mirror to ask first."}
@@ -146,7 +152,7 @@
       "type": ["object", "null"],
       "description": "What an external tool that drives isx may do to the instances it owns, by the tool's name.",
       "additionalProperties": {
-        "type": "object",
+        "type": ["object", "null"],
         "additionalProperties": false,
         "properties": {
           "destroy": {"type": "boolean", "default": false, "description": "Lets isx destroy --owner <name> delete the instances that tool owns."}
@@ -154,11 +160,11 @@
       }
     },
     "host-ca": {
-      "type": ["object", "null"],
-      "description": "Whether the host's CA certificates are installed in instances.",
+      "type": ["object", "boolean", "null"],
+      "description": "Whether the host's CA certificates are installed in instances. true or false alone is the same as propagate: with that value.",
       "additionalProperties": false,
       "properties": {
-        "propagate": {"type": "boolean", "default": false, "description": "Install the certificates of the host's /etc/pki/ca-trust/source/anchors/ beside the isx CA in every instance."}
+        "propagate": {"enum": [true, false, "true", "false", null], "default": false, "description": "Install the certificates of the host's /etc/pki/ca-trust/source/anchors/ beside the isx CA in every instance."}
       }
     }
   },
