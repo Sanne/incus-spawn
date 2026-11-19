@@ -967,6 +967,7 @@ class SecretRedactorTest {
         var start = line.repeat(50_000);
         var end = line.repeat(50_000) + "[INFO] BUILD SUCCESS ⭐\t2m\n";
 
+        assertTrue(SecretRedactor.scrubsRowByRow(start, progress + rewrittenKey, end));
         var scrubbed = SecretRedactor.scrubGuest(start, progress + rewrittenKey, end);
 
         assertFalse(scrubbed.contains(body));
