@@ -185,6 +185,29 @@ class AgentReadersTest {
         assertEquals("sessions of gemini-cli, copilot, bob not read", summary.cell());
     }
 
+    /**
+     * Antigravity CLI's conversations name it as not read (#2366), and they are not Gemini CLI's,
+     * though both keep their files under {@code ~/.gemini}: what the build writes there for it, and
+     * Gemini CLI's own files, say nothing about it.
+     */
+    @Test
+    void antigravityConversationsAreItsOwnNotGeminiClis(@TempDir Path home) throws Exception {
+        // What a build writes for it: settings, onboarding, the isx rule, an MCP configuration
+        Files.writeString(Files.createDirectories(home.resolve(".gemini/antigravity-cli/cache")).resolve("onboarding.json"), "{}");
+        Files.writeString(home.resolve(".gemini/antigravity-cli/settings.json"), "{}");
+        Files.writeString(Files.createDirectories(home.resolve(".gemini/config/rules")).resolve("isx.md"), "notes");
+        Files.writeString(home.resolve(".gemini/config/mcp_config.json"), "{}");
+        Files.createDirectories(home.resolve(".gemini/antigravity-cli/conversations"));
+        assertEquals("untouched", AgentSessionsTest.run(home).summary(false).from(), "what isx wrote at build is no session");
+
+        Files.writeString(home.resolve(".gemini/antigravity-cli/conversations/94739f6c-d0df-4ecd-9113-4ec4a007e331.db"), "not a database");
+        assertEquals(List.of("antigravity"), AgentSessionsTest.run(home).sessions().otherAgents());
+
+        Files.writeString(Files.createDirectories(home.resolve(".gemini/tmp/app/chats")).resolve("session-2026-11-18T10-00-1a2b3c4d.jsonl"), "{}\n");
+        Files.delete(home.resolve(".gemini/antigravity-cli/conversations/94739f6c-d0df-4ecd-9113-4ec4a007e331.db"));
+        assertEquals(List.of("gemini-cli"), AgentSessionsTest.run(home).sessions().otherAgents());
+    }
+
     /** Bob's database read by its own tasks: none is no session, and only then. */
     @Test
     void bobsDatabaseWithoutTasksIsNoSession(@TempDir Path home) throws Exception {

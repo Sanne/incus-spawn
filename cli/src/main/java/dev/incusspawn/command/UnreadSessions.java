@@ -4,8 +4,8 @@ import java.util.List;
 
 /**
  * The sessions of a coding agent that the overview does not read, only finds (#2290): Gemini CLI,
- * GitHub Copilot CLI and Bob. When an agent's session files are there, it is named among
- * {@link AgentSessions#otherAgents} as not read, so an instance it worked in never reads as
+ * Antigravity CLI, GitHub Copilot CLI and Bob. When an agent's session files are there, it is named
+ * among {@link AgentSessions#otherAgents} as not read, so an instance it worked in never reads as
  * {@code untouched}. Its closing messages are not shown: a reader is written from session files
  * the agent itself wrote, as the others were, and none were at hand.
  *
@@ -25,6 +25,16 @@ public final class UnreadSessions implements AgentSessions.GuestReader {
             [ -n "$(find "$g"/*/chats -mindepth 1 -maxdepth 2 -name 'session-*.json*' -type f -print -quit 2>/dev/null)" ] && echo unread
             """);
 
+    /**
+     * Antigravity CLI's conversations, {@code ~/.gemini/antigravity-cli/conversations/<id>.db}, one
+     * per conversation, beside the build's settings in that directory but never Gemini CLI's (#2366).
+     * Where it keeps them was read from the files {@code agy} 1.5.12 wrote.
+     */
+    static final UnreadSessions ANTIGRAVITY = new UnreadSessions("antigravity", """
+            a=$HOME/.gemini/antigravity-cli/conversations
+            [ -n "$(find "$a" -mindepth 1 -maxdepth 1 -name '*.db' -type f -print -quit 2>/dev/null)" ] && echo unread
+            """);
+
     /** Copilot's {@code ~/.copilot/session-state}, one entry per session; an XDG location is migrated back there. */
     static final UnreadSessions COPILOT = new UnreadSessions("copilot", """
             [ -n "$(ls -A "${COPILOT_HOME:-$HOME/.copilot}/session-state" 2>/dev/null)" ] && echo unread
@@ -42,7 +52,7 @@ public final class UnreadSessions implements AgentSessions.GuestReader {
             fi
             """);
 
-    static final List<UnreadSessions> ALL = List.of(GEMINI, COPILOT, BOB);
+    static final List<UnreadSessions> ALL = List.of(GEMINI, ANTIGRAVITY, COPILOT, BOB);
 
     private final String agent;
     private final String header;
