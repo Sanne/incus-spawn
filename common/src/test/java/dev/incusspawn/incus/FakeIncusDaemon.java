@@ -442,6 +442,16 @@ public final class FakeIncusDaemon implements IncusTransport {
         return client;
     }
 
+    /**
+     * A client that reaches this daemon only while {@code up} holds when it connects, on
+     * {@code clock}: an Incus that does not answer yet, as a VM still booting (#2386).
+     */
+    public IncusClient clientReachableWhen(java.util.function.BooleanSupplier up, java.util.function.LongSupplier clock) {
+        var api = new IncusApi(this);
+        java.util.function.Supplier<IncusApi> connect = () -> up.getAsBoolean() ? api : null;
+        return new IncusClient(connect, connect, () -> "the Incus API did not answer", clock);
+    }
+
     public synchronized IncusClient client() {
         var client = new IncusClient(new IncusApi(this));
         if (subvolumeListing != null) client.subvolumeLister = pool -> subvolumeListing;

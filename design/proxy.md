@@ -370,6 +370,14 @@ The signal goes to whatever proxy runs on the machine, so unit tests must never 
 The one seam is in `signalAccountRefresh()` itself, and the test home extensions (`TempHome`, `IsolatedHome`) replace it with a counter for the classes that use them -- so one opt-in covers every caller a test reaches, rather than each caller needing a hook of its own (#871).
 Containers reach `/health` too, so the PID goes only to host callers (`MitmProxy.isHostCaller`: loopback, or a source equal to the bridge address the endpoint listens on -- a container's source is its own address, which `security.ipv4_filtering` stops it spoofing).
 
+**Incus unreachable in `/health`** (#2386): while the proxy cannot read the instance list, it injects no credentials, since a failed listing clears every proof.
+So `/health` says why to host callers (`incusError`, from `InstanceRegistry.listingProblem`), and `isx proxy status` flags it under the running proxy and reports it as `incus_error`.
+The reason names host paths, such as the VM's vsock socket, so a container is not told, as it is not told the PID.
+The exit code stays 0: the proxy runs and serves, as with an auth error.
+The state clears on the first listing that succeeds.
+It was found on a Mac whose proxy launchd started before the VM's Incus answered: the proxy's one `IncusClient` kept that failed connection for life, and every proof was refused until a restart.
+The client now connects again after `IncusClient.RECONNECT_INTERVAL_MS` and keeps a connection once made (`.claude/rules/incus.md`).
+
 **Version drift detection**: The proxy health check (run before builds, branches, and shell access) compares the running proxy's version against the CLI version.
 If they differ and the proxy runs as a service, the service is restarted, whether or not instances are running.
 A proxy run in the foreground only gets a warning with the command to restart it.

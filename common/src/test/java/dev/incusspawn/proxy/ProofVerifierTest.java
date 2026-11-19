@@ -70,6 +70,32 @@ class ProofVerifierTest {
                 "cached verifiers cannot authorize after a failed refresh");
     }
 
+    /**
+     * The proxy's one client could not reach Incus when it started, as a Mac's VM still booting:
+     * once Incus answers, a refresh lists again and proofs are accepted, with no restart (#2386).
+     */
+    @Test
+    void proofsAreAcceptedAgainOnceIncusAnswersAfterAFailedFirstConnection() {
+        var up = new java.util.concurrent.atomic.AtomicBoolean();
+        var now = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("guest", "container", "Running", Map.of(Metadata.STATIC_IP, "10.1.2.3",
+                        Metadata.INSTANCE_PROOF_SHA256, ProofVerifier.stamp(SECRET, DECLARED)));
+        var registry = new InstanceRegistry(daemon.clientReachableWhen(up::get, now::get), now::get);
+        var proofs = Map.of("github", List.of(ProofToken.derive(SECRET, "github")));
+
+        assertFalse(registry.refresh(), "Incus does not answer yet");
+        assertNull(registry.prove("10.1.2.3", proofs));
+        assertTrue(registry.listingProblem().matches("The listing at \\d\\d:\\d\\d:\\d\\d failed: the Incus API did not answer"),
+                "what isx proxy status shows: " + registry.listingProblem());
+
+        up.set(true);
+        now.addAndGet(60_000);
+        assertTrue(registry.refresh(), "the same client connects now");
+        assertNotNull(registry.prove("10.1.2.3", proofs));
+        assertNull(registry.listingProblem());
+    }
+
     @Test
     void whereTheAddressNamesNoInstanceTheProofAloneIdentifiesTheCaller() {
         // macOS: every container reaches the proxy from the VM's address (#1582)

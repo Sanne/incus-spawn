@@ -53,6 +53,25 @@ class StatusCommandOutputTest {
         assertEquals(recorded.resultLines(), recorded.lines(), "nothing but the report");
     }
 
+    /** A proxy that cannot read Incus injects no credentials, and its report says so with why (#2386). */
+    @Test
+    void aProxyThatCannotReadIncusSaysCredentialsAreNotInjected() {
+        var build = BuildInfo.instance();
+        var info = new ProxyInfo(build.version(), build.gitSha(), "native", null, false, true, null, -1,
+                build.version(), List.of(), "vsock socket exists but the Incus API did not answer\nThe VM may still be booting.");
+        var recorded = new RecordingOutput();
+
+        assertEquals(0, ProxyCommand.Status.reportRunning(ProxyStatus.RUNNING, info, "10.0.0.1", null, true, false,
+                recorded.results()), "the proxy runs and serves; the exit code is unchanged");
+        var lines = recorded.resultLines();
+        var flag = lines.indexOf("  >>> Credentials are not injected: the proxy cannot read the instance list from Incus.");
+        assertTrue(flag > 0, lines.toString());
+        assertEquals("      vsock socket exists but the Incus API did not answer", lines.get(flag + 1));
+        assertEquals("      The VM may still be booting.", lines.get(flag + 2));
+        assertEquals("vsock socket exists but the Incus API did not answer\nThe VM may still be booting.",
+                ProxyCommand.Status.record(ProxyStatus.RUNNING, info, "10.0.0.1", true, "systemd", null).get("incus_error"));
+    }
+
     @Test
     void proxyDownIsReportedOnStdoutWithItsExitCode() {
         assertEquals(1, ProxyCommand.Status.reportDown(ProxyStatus.NOT_RUNNING, false, false, outStream));

@@ -24,6 +24,11 @@ paths:
 `IncusClient` communicates with the Incus daemon via its REST API.
 On Linux, requests go over a Unix domain socket (`UnixSocketTransport`); on macOS, over a vsock tunnel exposed as a Unix socket (same `UnixSocketTransport`).
 `IncusApi.tryConnect()` selects Linux Unix sockets -> vsock Unix socket.
+An `IncusClient` keeps a connection once made, so the branch/start/shell path connects once per process.
+A failed connection is not kept (#2386): the first call after `IncusClient.RECONNECT_INTERVAL_MS` (2 s) tries one `tryConnect` again, and a call meanwhile fails at once.
+Its error is the diagnosis taken right after that attempt, never a fresh probe, which would call the socket "accessible" while this client holds no connection.
+It names no relative time, since a caller may keep it (the proxy's registry does).
+A long-lived client (the proxy above all, also the TUI and `isx mcp`) thus recovers once Incus answers; `IncusClientReconnectTest` drives it through the package-private connector and clock seam.
 There is no HTTPS fallback (the old HTTPS-over-TCP path was removed -- it hit macOS Local Network prompts and VPN socket filters, and two transports made field issues undiagnosable; `HttpsTransport` remains in the tree but is unwired).
 `IncusApi` handles request serialization, async operation waiting, and WebSocket-based exec (capture, stream, PTY).
 An operation `/wait` that times out answers 200 with the operation still `Running`, so `waitForOperation` re-polls while it is `Running`/`Pending`/`Cancelling`, up to a 4-hour ceiling, then throws (a `Cancelled` one throws too) -- never treats a timed-out poll as done (#1089; `OperationWaitTest`).

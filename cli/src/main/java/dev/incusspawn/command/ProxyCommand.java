@@ -154,6 +154,12 @@ public class ProxyCommand extends BaseCommand {
                 // Under the drift it explains, past its ">>> "
                 if (drift.futileReason() != null) out.println(FIELD_INDENT.repeat(3) + drift.futileReason());
                 if (ownInfo.hasAuthError()) out.println(flagged(urgent, "Auth error: " + ownInfo.authError()));
+                if (ownInfo.hasIncusError()) {
+                    out.println(flagged(urgent, "Credentials are not injected: the proxy cannot read the instance list from Incus."));
+                    // The reason spans lines (its advice); each under the flag, spaced like the drift's
+                    ownInfo.incusError().lines().filter(line -> !line.isBlank())
+                            .forEach(line -> out.println(FIELD_INDENT.repeat(3) + OutputFormat.oneLine(line.strip())));
+                }
             }
             out.println(field("Health endpoint", "http://" + healthIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health"));
             out.println(field("MITM port", ProxyConfig.DEFAULT_MITM_PORT));
@@ -238,6 +244,7 @@ public class ProxyCommand extends BaseCommand {
                 record.put("drift", null);
                 record.put("auth_error", null);
                 record.put("restart_helps", null);
+                record.put("incus_error", null);
             }
         }
 
@@ -289,6 +296,8 @@ public class ProxyCommand extends BaseCommand {
             record.put("foreign_holder", null);
             // version stays the POM version, which every snapshot shares; this names the build (#2007).
             record.put("display_version", known ? info.displayVersion() : null);
+            // Why the proxy cannot read instances from Incus, refusing every proof meanwhile (#2386)
+            record.put("incus_error", info != null && info.hasIncusError() ? info.incusError() : null);
             return record;
         }
     }

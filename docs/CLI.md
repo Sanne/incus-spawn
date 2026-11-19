@@ -1109,7 +1109,7 @@ The fields of each command, in order:
 | `isx tools validate` | `name`, `path`, `valid`, `findings` (each `severity`, `message`) |
 | `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem`, `pinned_by`, `following` |
 | `isx account show <instance>` | one record per namespace: `namespace`, `account`, `description`, `chosen_by`, `chosen_in`, `template`, `template_account`, `problem`, `identity_pending`, `template_problem` |
-| `isx proxy status` | `status`, `version`, `git_sha`, `runtime`, `dns_overrides`, `drift`, `auth_error`, `health_endpoint`, `mitm_port`, `service_installed`, `managed_by`, `restart_helps`, `check_error`, `pid`, `pid_owner`, `foreign_holder`, `display_version` |
+| `isx proxy status` | `status`, `version`, `git_sha`, `runtime`, `dns_overrides`, `drift`, `auth_error`, `health_endpoint`, `mitm_port`, `service_installed`, `managed_by`, `restart_helps`, `check_error`, `pid`, `pid_owner`, `foreign_holder`, `display_version`, `incus_error` |
 | `isx proxy activity` | one record per instance: `instance`, `counting_since`, `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes`, `model_requests`, `model_in_flight`, `last_model_request_at`, `last_model_response_at`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `identified_by_proof`, `refused_proofs`, `refused_address_misses`, `registry_stale`, `unplaced_running`, `last_address_miss_at`, `throttled_domains`, `upstream_refusals`, `served_unconfirmed` |
 | `isx doctor` | one record per check: `level`, `label`, `detail`, `remediation` |
 | `isx vm status` | `running`, `pid`, `rest_api` (always empty since the launcher replaced vfkit), `log`, `appliance`, `appliance_pending`, `vsock_connections`, `incus_reachable`, `incus_error`, `vsock_connections_high`, `launcher`, `control_socket` |
@@ -1188,6 +1188,7 @@ On that next start or shell, isx also fills in an identity missing from an insta
 | `pid`, `pid_owner` | The process of the proxy that answered, and its owner; `null` when it did not say |
 | `foreign_holder` | Whether that proxy is not the installed service's process, while `managed_by` still names the service; `null` with no service |
 | `display_version` | The running proxy's version as people read it, such as `0.5.0-dev.2+3` for a snapshot, where `version` is the version builds are compared by |
+| `incus_error` | Why the proxy cannot read the instance list from Incus; `null` when it can. While it cannot, it injects no credentials. |
 
 The record is printed in every state, and the exit code follows the [exit codes](#exit-codes) table.
 So `unknown` exits 1 like `not_running`: read `status` to tell them apart.

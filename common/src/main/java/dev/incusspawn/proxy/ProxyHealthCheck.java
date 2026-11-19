@@ -37,13 +37,25 @@ public final class ProxyHealthCheck {
      * {@code version} for older proxies; drift comparisons always use {@code version}.
      * {@code unboundHostPorts} are the {@code exposed-host-ports:} something else holds on the
      * proxy's address, sent to host callers only, as {@code pid} is (#2117).
+     * {@code incusError} says why the proxy cannot read the instance list from Incus, which
+     * refuses every credential proof until it can; empty when it can, or from a container or an
+     * older proxy, which do not say (#2386).
      */
     public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
                             boolean configDrifted, boolean dnsConfigured, String authError,
-                            long pid, String displayVersion, List<Integer> unboundHostPorts) {
+                            long pid, String displayVersion, List<Integer> unboundHostPorts,
+                            String incusError) {
         public ProxyInfo {
             if (displayVersion == null || displayVersion.isBlank()) displayVersion = version;
             unboundHostPorts = unboundHostPorts == null ? List.of() : List.copyOf(unboundHostPorts);
+            if (incusError == null) incusError = "";
+        }
+
+        public ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
+                         boolean configDrifted, boolean dnsConfigured, String authError, long pid,
+                         String displayVersion, List<Integer> unboundHostPorts) {
+            this(version, gitSha, runtime, caFingerprint, configDrifted, dnsConfigured, authError, pid,
+                    displayVersion, unboundHostPorts, "");
         }
 
         public ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
@@ -65,6 +77,7 @@ public final class ProxyHealthCheck {
 
         public boolean isLegacy() { return version == null || version.isEmpty(); }
         public boolean hasAuthError() { return authError != null && !authError.isEmpty(); }
+        public boolean hasIncusError() { return !incusError.isEmpty(); }
         public String authRemediationHint() {
             if (authError == null) return "isx init";
             if (authError.contains("gcloud")) return "gcloud auth login";
@@ -348,7 +361,8 @@ public final class ProxyHealthCheck {
                     textOrEmpty(node, "authError"),
                     Jjq.longOr(node.getField("pid"), -1),
                     textOrEmpty(node, "displayVersion"),
-                    unboundHostPorts(node));
+                    unboundHostPorts(node),
+                    textOrEmpty(node, "incusError"));
         } catch (Exception e) {
             return new ProxyInfo("", "", "", "", false, true, "");
         }

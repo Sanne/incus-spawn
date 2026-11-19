@@ -246,6 +246,8 @@ public final class InstanceRegistry {
     private final Object listed = new Object();
     private long listedThrough;
     private volatile Snapshot snapshot = EMPTY;
+    /** Why the last listing failed, and when it ended; null once one succeeds. */
+    private volatile String listingError;
 
     public InstanceRegistry(IncusClient incus) {
         this(incus, System::currentTimeMillis);
@@ -446,6 +448,18 @@ public final class InstanceRegistry {
         return snapshot.listingFailed() || started > 0 && clock.getAsLong() - started > LISTING_HUNG_AFTER_MS;
     }
 
+    /**
+     * Why the proxy cannot read the instance list now, for {@code isx proxy status} (#2386): the
+     * last listing's error, or that the one under way has not answered. Null while
+     * {@link #listingUnavailable} is false. Non-blocking.
+     */
+    public String listingProblem() {
+        if (!listingUnavailable()) return null;
+        var error = listingError;
+        if (snapshot.listingFailed() && error != null) return error;
+        return "The listing under way has not answered for more than " + LISTING_HUNG_AFTER_MS / 1000 + " s";
+    }
+
     /** Whether the snapshot is old enough that a refresh is worth doing. */
     public boolean isStale() {
         return clock.getAsLong() - snapshot.takenAt() > STALE_AFTER_MS;
@@ -493,6 +507,7 @@ public final class InstanceRegistry {
             // At least 1: 0 is idle and CLAIMED is below. Inside the try, so finally always releases the claim
             listingStartedAt.set(Math.max(1, clock.getAsLong()));
             snapshot = new Snapshot(parse(incus.listJsonConfig()), clock.getAsLong(), VIEWS.incrementAndGet(), false);
+            listingError = null;
             return true;
         } catch (RuntimeException e) {
             // Retain attribution and account pins, but revoke credential authorization
@@ -502,6 +517,10 @@ public final class InstanceRegistry {
             var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
                     previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of(), Map.of(), Map.of(),
                     previous.running(), Map.of());
+            // The reason before the failed snapshot, so listingProblem never reads one without it
+            listingError = "The listing at " + java.time.LocalTime.ofInstant(java.time.Instant.ofEpochMilli(clock.getAsLong()),
+                    java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+                    + " failed: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             snapshot = new Snapshot(withoutProofs, clock.getAsLong(), snapshot.view(), true);
             ProxyLog.warn("Instance registry refresh failed: " + e.getMessage());
             return false;

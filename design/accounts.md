@@ -310,6 +310,7 @@ The shared timer observes the one-second listing floor and bounds the wait even 
 Independent credentials do not wait for proof refresh.
 Concurrent credential checks share the refresh.
 A failed registry refresh clears credential verifiers while retaining the account snapshot, so unavailable Incus cannot keep authorizing stale proofs indefinitely.
+The proxy's Incus client connects again after a failed connection, so a proxy started before Incus answers, as a Mac's at boot, recovers on a later refresh instead of refusing every proof until it is restarted (#2386).
 Warnings about isx placeholders are deduplicated and bounded, never print authentication values, and point to recovery instructions.
 Account refusals retain the known account reason.
 Unexpected credential-refusal and WebSocket setup failures log only the exception class because exception messages can contain authentication headers.

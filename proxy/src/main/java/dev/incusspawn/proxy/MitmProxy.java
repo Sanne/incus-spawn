@@ -3043,10 +3043,26 @@ public class MitmProxy {
                 + (isHostCaller(req) ? ",\"pid\":" + ProcessHandle.current().pid() : "")
                 // Host-only too: which exposed ports something else holds is the host's business
                 + (isHostCaller(req) ? unboundHostPortsJson() : "")
+                // Host-only: the reason names host paths, such as the VM's vsock socket
+                + (isHostCaller(req) ? incusErrorJson() : "")
                 + "}";
         req.response()
                 .putHeader("Content-Type", "application/json")
                 .end(body);
+    }
+
+    /**
+     * {@code ,"incusError":"..."}: why the instance list cannot be read from Incus, which refuses
+     * every credential proof until it can (#2386), or nothing.
+     */
+    private String incusErrorJson() {
+        var registry = instanceRegistry;
+        var problem = registry == null ? null : registry.listingProblem();
+        if (problem == null) return "";
+        // Without instance traffic nothing lists again, so the next status would repeat a
+        // failure Incus has since recovered from; rate-limited like a miss, never waited for
+        if (registry.wantsMissRefresh()) scheduleRegistryRefresh(registry);
+        return ",\"incusError\":\"" + escapeJson(problem) + "\"";
     }
 
     /** {@code ,"unboundHostPorts":[...]}: the listed exposed ports the relay could not bind, or nothing. */
