@@ -227,6 +227,42 @@ class EditorSchemasTest {
         }
     }
 
+    /** A built-in definition is what people copy, so it names its schema the way the skeleton does. */
+    @Test
+    void theBuiltInTemplatesAndToolsNameTheirSchemaOnTheFirstLine() throws IOException {
+        var resources = Path.of("..", "common", "src", "main", "resources");
+        var missing = new ArrayList<String>();
+        for (var file : ImageDef.BUILTIN_FILES) {
+            checkModeline(resources.resolve("images").resolve(file), "template", missing);
+        }
+        for (var file : ToolDefLoader.BUILTIN_TOOLS) {
+            checkModeline(resources.resolve("tools").resolve(file), "tool", missing);
+        }
+        assertEquals(List.of(), missing);
+    }
+
+    /** The project templates this repository ships carry the header too, and take the schema they name. */
+    @Test
+    void theRepositorysProjectTemplatesNameAndTakeTheirSchema() throws IOException {
+        var missing = new ArrayList<String>();
+        for (var dir : List.of(Path.of("..", ".incus-spawn", "images"), Path.of("..", "bench", ".incus-spawn", "images"))) {
+            try (var files = Files.list(dir)) {
+                for (var path : files.filter(ToolDefLoader::isToolFile).sorted().toList()) {
+                    checkModeline(path, "template", missing);
+                    assertValid(path.toString(), Files.readString(path));
+                }
+            }
+        }
+        assertEquals(List.of(), missing);
+    }
+
+    private static void checkModeline(Path path, String kind, List<String> missing) throws IOException {
+        var expected = "# yaml-language-server: $schema=https://isx.run/schema/" + kind + ".json";
+        if (!Files.readAllLines(path).getFirst().equals(expected)) {
+            missing.add(path.getFileName().toString());
+        }
+    }
+
     @Test
     void theMcpAndConfigSchemasTakeTheirDocumentedExamples() throws IOException {
         var mcp = compiled("mcp.json");
