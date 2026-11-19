@@ -236,7 +236,7 @@ Keeping the test build out of a release is `check-platform-role.sh` in `release.
 Findings this surfaced, each fixed or documented where it lives: the forwarder's socat listen backlog (default 5) refused concurrent connects (3/16, 12/32), and one exec opens about five; incusd's local listener stalled every new connection behind one that had sent nothing (see `incus.md`; fixed by a backport in #1313); incusd closes idle keep-alive connections after 30s.
 
 The host half is covered in `unit-tests`.
-The Java compensations for the tunnel's behaviour under vfkit (exec completion via `/wait`, the adaptive drain, per-fd keepalive pings, the watchdogs, stale-connection recycling, the fast `tryConnect` probe) run against `LossyIncusServer`, a fake daemon on a Unix socket that misbehaves the way the tunnel does -- see `incus.md`.
+The Java compensations for the tunnel's behaviour under vfkit (exec completion via `/wait`, the adaptive drain, per-fd keepalive pings, the watchdogs, stale-connection recycling, the fast `tryConnect` probe) run against `LossyIncusServer`, a fake daemon on a Unix socket that misbehaves the way vfkit's tunnel did -- see `incus.md`.
 Still uncovered: the launcher's machine itself, and boots under its hvc0 console and devices.
 So anything touching the kernel config, the console, or the boot path still needs a boot on a Mac before it ships (#791).
 For the appliance kernel this is a check, not a habit: **`kernel-mac-verified`** (`.github/workflows/kernel-mac-verified.yml`, #1355) fails a PR whose merge changes the kernel's inputs until a Mac boot of a build with exactly those inputs is recorded.
