@@ -15,6 +15,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `pi` | Pi: AI coding assistant |
 | `opencode` | opencode: AI coding assistant |
 | `gemini-cli` | Gemini CLI: Google coding assistant (proxied Gemini API key) |
+| `antigravity` | Antigravity CLI (`agy`): Google coding agent (uses the Gemini API key) |
 | `bob` | Bob Shell: IBM AI coding assistant |
 | `codex` | Codex CLI: OpenAI coding assistant |
 | `copilot` | GitHub Copilot CLI: AI coding assistant (shares `gh` token) |
@@ -720,6 +721,7 @@ The name `isx` is reserved for isx's own server.
 
 A server that a tool no longer declares is removed from each agent at the next build.
 An entry you add to an agent yourself is left alone.
+Antigravity CLI reads no variable in its MCP config, so it does not get a server with `bearer-token-env`.
 
 ### Tool Actions
 
@@ -728,7 +730,7 @@ From the CLI, `isx run <instance> --action <tool:action-id>` invokes one.
 Running `isx run <instance>` with no `--action` flag executes the template's default action.
 
 Actions can be declared in YAML tool definitions or programmatically by Java/CDI tools.
-The built-in `claude`, `pi`, `opencode`, `gemini-cli`, `bob` and `codex` tools each contribute a shell action that launches the agent when a template's `tools` list includes them.
+The built-in `claude`, `pi`, `opencode`, `gemini-cli`, `antigravity`, `bob` and `codex` tools each contribute a shell action that launches the agent when a template's `tools` list includes them.
 
 #### Action entry fields
 

@@ -101,7 +101,7 @@ No value reaches the terminal with a control character raw (#1118): `plain` turn
 `isx overview` (`OverviewCommand`, #2241) is the one command that reads the proxy's event log, on demand; its fields are pinned by `OverviewCommandTest`.
 It also runs `WorkState`'s read-only script in each running guest (fails closed: `unknown`, never `clean`) and asks GitHub about the pull requests with each instance's own account (`PullRequestStates`, no request without one), both on demand only.
 The same exec reads the newest sessions of Claude Code, Codex and Pi (`JsonlSessions`: `ClaudeSessions`, `CodexSessions`, `PiSessions`) and of opencode (`OpencodeSessions`, its database through `sqlite3 -readonly`), one `GuestRead` section each.
-Gemini CLI's, Copilot's and Bob's are only found (`UnreadSessions`, first among the sections), and their agent named as not read; a new coding agent gets a reader or such a check.
+Gemini CLI's, Antigravity CLI's, Copilot's and Bob's are only found (`UnreadSessions`, first among the sections), and their agent named as not read; a new coding agent gets a reader or such a check.
 So `untouched` (`AgentSessions.Summary`) needs every read to have succeeded and nothing to say the instance was used; a reader that failed names its agent as not read and leaves the others' sessions shown (`AgentSessions.merge`).
 Two or more closing messages are merged by one model call on the instance's own Claude account (`SessionMerge.target`, no call without one), cached per incarnation against a hash of the whole question (`SessionMerge.Cache`).
 `isx list` outside the TUI (`ListCommand.printListing`) reads the instance listing once (`-q` at `recursion=1`, since completion runs it on every TAB) and never loads definitions.

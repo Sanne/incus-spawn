@@ -78,7 +78,7 @@ A container's wait looks for an address on `eth0` and starts its `systemd-networ
 A template whose network never comes up fails its update with the build's diagnostics, and no step that needs the network runs.
 
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
-Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent: Anthropic, OpenAI, Gemini API or Gemini on Vertex provider), `opencode` (opencode: Anthropic, OpenAI or Gemini API provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
+Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent: Anthropic, OpenAI, Gemini API or Gemini on Vertex provider), `opencode` (opencode: Anthropic, OpenAI or Gemini API provider), `antigravity` (Antigravity CLI, `agy`: the Gemini API key), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
 
 Each image definition specifies:
 - `name` — container name (required)
@@ -379,6 +379,24 @@ Install, reconfigure and inherited-tool refresh remove the old login-notice scri
 The action retains `bash -lc gemini` so zmx launches in existing instances still reach that login guard until they are rebuilt.
 Inherited-tool refresh sets the API-key auth selection while preserving the parent's model and other settings.
 Interactive Gemini requires this selection even when the environment supplies a key; headless Gemini can infer it from the environment.
+
+**Antigravity CLI runs on the Gemini API key.**
+`AntigravitySetup` (`antigravity`) installs Google's `agy`, the terminal agent that replaced Gemini CLI for Google's personal plans (#2366).
+**Chosen:** its Gemini API key mode, `modelProvider: gemini` with `GEMINI_API_KEY`, spending the `gemini` namespace through Gemini CLI's proxy entry as Pi and opencode do.
+Probed with agy 1.5.12, it sends the key as `X-Goog-Api-Key` to `generativelanguage.googleapis.com` (`POST /v1beta/models/<model>:streamGenerateContent`), the header route Gemini CLI's entry already injects, so the proxy needed no change.
+It runs headless (`agy -p`) with no earlier sign-in, and trusts the MITM CA through the system store.
+**Alternatives:** its Google sign-in, which would let an AI Pro or Ultra plan pay, keeps an OAuth token in the guest's keyring; its ADC and Gemini Enterprise modes read credentials in the guest and call hosts no route serves.
+Both would put a credential in the instance, which no isx agent may hold, so the integration gives up subscription billing.
+The desktop app and IDE need a GUI that isx cannot show on macOS, and the app's SSH connection is a separate question.
+**The pin:** Google's installer reads the newest release from a manifest and checks its sha512; isx pins the sha256 of the tarballs that manifest named, after that check.
+`AGY_CLI_DISABLE_AUTO_UPDATE=true` keeps the self-updater from replacing the pin.
+**Settings** are merged into `~/.gemini/antigravity-cli/settings.json`, keeping the user's keys: every tool call and artifact proceeds (`toolPermission`, `artifactReviewPolicy`), files outside the workspace are reachable, the terminal sandbox is off, and the home is trusted.
+It trusts a folder by its exact path, so another folder asks once.
+The first-run questions are skipped by `cache/onboarding.json`, which the build writes only when it is missing.
+**Instructions** go to `~/.gemini/config/rules/isx.md`, which agy loads only after front matter saying when the rule applies (`trigger: always_on`).
+`AgentInstructions` therefore reads a rendered file's heading after a front matter block, so it still tells its own file from a template's.
+**MCP:** agy reads no variable in `~/.gemini/config/mcp_config.json`, and a `${VAR}` header reaches the server as written, so its client refuses a server with `bearer-token-env` (`McpClient.refuses`): the build warns, and records the server as written for agy only when it was, so an entry of that name the user made is never removed as isx's.
+**What it still sends:** agy also reports to `play.googleapis.com`, Google's logging service, which no documented setting turns off; it carries at most the guest's proof, never the key.
 
 `OpencodeSetup` installs `opencode-ai` through `NpmGlobalInstall`, then runs the package's `postinstall.mjs`, which `--ignore-scripts` skipped (#2211).
 Until it runs, `opencode` is a stub that only says so; the script puts the platform package's binary in its place, installs that package itself when npm dropped it, and fails when it cannot.

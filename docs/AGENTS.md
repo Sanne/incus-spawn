@@ -295,6 +295,50 @@ A rebuild also removes the copy an older build left in `~/.gemini/GEMINI.md`, un
 Launching with `--extensions` naming other extensions leaves the primer out.
 The tool leaves `context.fileName` unset.
 
+## Antigravity CLI
+
+Google's [Antigravity CLI](https://antigravity.google/docs/cli/reference/), `agy`, is the terminal agent that replaced Gemini CLI for Google's personal plans.
+isx runs it with the [Gemini API key](https://aistudio.google.com/apikey) you configured for Gemini CLI, so it needs no setup of its own in `isx init`.
+Add it to a template with `tools: [antigravity]`:
+
+```yaml
+name: tpl-antigravity-dev
+parent: tpl-minimal
+tools:
+  - antigravity
+default-action: antigravity
+```
+
+The instance gets the same `GEMINI_API_KEY` proof placeholder as Gemini CLI.
+`agy` sends it to `generativelanguage.googleapis.com`, where the proxy checks it and adds the selected key.
+Select a named account as for Gemini CLI, with `accounts: { gemini: work }` or `--account gemini=work`.
+
+Signing in with a Google account is not supported, so an AI Pro or AI Ultra plan does not pay for its requests.
+`agy` keeps that sign-in in the instance's keyring, which would put a credential inside the instance.
+Every request is billed to the Gemini API key instead.
+The Antigravity desktop app and IDE are not supported either.
+
+### What the build sets up
+
+The tool installs a pinned `agy` release from Google's download bucket, checked against its SHA-256, and links it as `/usr/local/bin/agy`.
+It sets `AGY_CLI_DISABLE_AUTO_UPDATE`, so `agy` never replaces the pinned release itself; a new release comes with a new isx.
+It writes these settings into `~/.gemini/antigravity-cli/settings.json`, keeping any others there:
+
+- `modelProvider: gemini`, the Gemini API key mode;
+- every tool call and artifact proceeding without a question, with files outside the workspace reachable;
+- no terminal sandbox, which would need a container inside the instance;
+- your home folder trusted, so `agy` asks once for each other folder you start it in;
+- no tips and no feedback surveys.
+
+It also marks the first-run questions as answered.
+Every build writes the [environment primer](#agent-environment-context) to `~/.gemini/config/rules/isx.md`, a rule `agy` always loads.
+Your own `~/.gemini/GEMINI.md` and `AGENTS.md` stay yours.
+
+MCP servers that tools declare go to `~/.gemini/config/mcp_config.json`.
+`agy` reads no variable in that file, so a server that takes its token from `bearer-token-env` is left out, with a warning.
+`agy` also reports usage to Google's logging service at `play.googleapis.com`, which isx does not turn off.
+That traffic carries no credential, since the instance holds only the proof placeholder.
+
 ## Bob Shell
 
 Bob Shell is IBM's AI-powered coding assistant, and signs in with an IBM API key ([create one here](https://bob.ibm.com/docs/ide/account/api-keys#create-an-api-key)).

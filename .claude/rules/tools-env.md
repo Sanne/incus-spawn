@@ -19,7 +19,7 @@ paths:
   The base image ships no system bus, so logind is opt-in per tool (#1520): a tool that lingers or installs a systemd user unit lists `dbus-broker` and `systemd-pam` in `packages:` and writes `/var/lib/systemd/linger/agentuser` directly (podman, headroom); `loginctl enable-linger` fails at build time, and `ToolDefValidator.lingersThroughLoginctl` warns on it, from the loader too.
   `ToolDefValidationTest` checks the built-ins.
   Environment variables are declared via `env:` entries and collected centrally by `GuestProvisioning.writeEnvFile()`.
-- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `CopilotSetup`, `GhSetup`, `PiSetup`, `BobSetup`, `GeminiSetup`, `OpencodeSetup`).
+- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `CopilotSetup`, `GhSetup`, `PiSetup`, `BobSetup`, `GeminiSetup`, `OpencodeSetup`, `AntigravitySetup`).
   Declare env vars via `envEntries(Map<String,String>)` method.
   Tools can declare a `feature()` to gate themselves behind an opt-in feature flag in `SpawnConfig.features` (no built-in tool does today -- `codex` graduated out of the `openai` flag).
 - npm CLIs install through `NpmGlobalInstall`.
@@ -59,6 +59,11 @@ Install, reconfigure and `refreshInherited` remove the old `/etc/profile.d/isx-g
 Inherited-tool refresh sets the API-key auth selection while preserving the parent's model and other settings; interactive Gemini requires this selection even with `GEMINI_API_KEY` set.
 Existing instances need a template rebuild and a new branch; the action keeps `bash -lc gemini` so their legacy login notice still guards launches through zmx until then.
 Google OAuth remains outside this API-key integration.
+`AntigravitySetup` (`antigravity`) installs Google's `agy` from a tarball pinned by sha256 (the release manifest's sha512 checked when the pin was taken), links `/usr/local/bin/agy`, and exports `AGY_CLI_DISABLE_AUTO_UPDATE=true` so the pin is what runs.
+It has no proxy entry: it spends the `gemini` namespace through Gemini CLI's, exporting the same `GEMINI_API_KEY` placeholder, which agy sends as `X-Goog-Api-Key` to `generativelanguage.googleapis.com` with `modelProvider: gemini` (#2366).
+Its Google sign-in and ADC modes would keep a credential in the guest and stay unconfigured.
+It merges its settings into `~/.gemini/antigravity-cli/settings.json` (every tool call proceeds, no terminal sandbox, the home trusted), writes `cache/onboarding.json` when missing, and takes the instructions as an always-on rule, `~/.gemini/config/rules/isx.md`, with front matter before the heading.
+Its MCP client merges `~/.gemini/config/mcp_config.json` and leaves out a server with `bearer-token-env`, since agy expands no variable there.
 Pi's `google` provider is the Gemini API too: `PiSetup` exports the same `GEMINI_API_KEY` placeholder and spends the `gemini` namespace (#1114).
 Its `google-vertex` provider (isx's `vertex` is written as Pi's `google-vertex`) spends the Claude Vertex AI account through `GOOGLE_CLOUD_API_KEY`, whose prefix is `AIza` and namespace `claude`; see `proxy.md`.
 
@@ -82,7 +87,7 @@ Notes are best written reactively, after observing an agent get something wrong;
 **Tools declare MCP servers once** (#2206, design/mcp.md "Tools declare MCP servers for every agent").
 A tool's `mcp:` entries (`ToolDef.McpEntry`, `ToolSetup.mcpServers`, resolved into `McpServer`) are a stdio `command` with `env`, or an HTTPS `url` with `bearer-token-env`; no key belongs to one agent.
 `McpServerRegistration.register` runs once per build, in both build paths, after every tool's setup and every layer's clones, over the whole chain's tools (an ancestor's tool a layer reconfigures counts once, with the layer's parameters).
-It registers every server with every agent whose `ToolSetup.mcpClient()` is set (`McpClients`: Claude Code, Codex and Pi through their own `mcp add`/`mcp remove` as agentuser, opencode, Gemini CLI, Copilot and Bob by a merge into their JSON config), so a tool declares its server there rather than calling an agent's CLI from `run_as_user` or its own install (`headroom`, Claude-only by design, and `idea-backend`'s loopback `http://` server, which `mcp:` does not take, still do).
+It registers every server with every agent whose `ToolSetup.mcpClient()` is set (`McpClients`: Claude Code, Codex and Pi through their own `mcp add`/`mcp remove` as agentuser, opencode, Gemini CLI, Antigravity CLI, Copilot and Bob by a merge into their JSON config, Antigravity CLI without a server whose token is a variable), so a tool declares its server there rather than calling an agent's CLI from `run_as_user` or its own install (`headroom`, Claude-only by design, and `idea-backend`'s loopback `http://` server, which `mcp:` does not take, still do).
 A new agent implements `mcpClient()`; nothing else changes.
 Root's record `/var/lib/isx/mcp-servers` (`<agent> <server>` lines) lets a later build remove a server no tool declares any more; an entry isx did not record is left alone.
 A build with no agent does not read the record: a copied rootfs never loses a tool, so only a child built from a parent image older than a definition that dropped its agent keeps that agent's entries, until the stale parent is rebuilt.

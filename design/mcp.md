@@ -708,7 +708,7 @@ A plugin system loaded at run time is not trivial in a native image, and nothing
 A tool declares the MCP servers it provides once, as `mcp:` entries (#2206).
 Each entry is either a stdio `command` with an `env`, or an HTTPS `url` with an optional `bearer-token-env`, and none of its keys belongs to one agent.
 An agent takes part by implementing `ToolSetup.mcpClient()` (`McpClients`), so a new agent gets every tool's servers, and a new tool reaches every agent, with no change to the other side.
-Claude Code, Codex, Pi, opencode, Gemini CLI, Copilot and Bob implement it, and a template whose servers no agent takes is warned about.
+Claude Code, Codex, Pi, opencode, Gemini CLI, Antigravity CLI, Copilot and Bob implement it, and a template whose servers no agent takes is warned about.
 jasolo, the first built-in that needs it, is an ordinary tool with one entry.
 
 **Chosen:** one build step, `McpServerRegistration`, run once per build in both build paths, after every tool's setup and every layer's repositories, over the tools of the whole template chain.
@@ -718,6 +718,8 @@ Claude Code, Codex and Pi are driven through their own `mcp add` and `mcp remove
 opencode's `mcp add` has no remove and rewrites the `opencode.json` of the directory it runs in, so isx merges its entries into the user config `OpencodeSetup` already writes.
 Gemini CLI, Bob Shell and Copilot are merged the same way, into the `mcpServers` of `~/.gemini/settings.json`, `~/.bob/settings/settings.json` and `~/.copilot/mcp-config.json`, with every other key kept.
 Gemini's `gemini mcp add` would expand a token into the file, which the merge avoids.
+Antigravity CLI is merged into `~/.gemini/config/mcp_config.json`, a remote server under `serverUrl`, as its own `agy mcp add` writes it.
+It expands no variable there, so its client refuses a server with `bearer-token-env` (`McpClient.refuses`): a warning names each one, and the record lists only what was written, so an entry of that name the user made is never taken for isx's.
 Pi gets `--exposure direct`, as `isx`'s own entry does, so the tools are declared to its model as Claude Code declares them; that choice is the adapter's, never the tool's.
 Root records what it registered in `/var/lib/isx/mcp-servers`, one `<agent> <server>` per line, so a later build removes a server no tool declares any more and leaves an entry isx did not make alone.
 A stdio command not on agentuser's PATH fails the build, since every agent would list a server that cannot start and say so only when a session tries it.

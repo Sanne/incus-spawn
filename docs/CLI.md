@@ -409,7 +409,7 @@ That means no agent session, no work in any clone, and no activity in the event 
 When one agent's sessions cannot be read, DONE names that agent as not read, and the instance is never `untouched`.
 opencode's sessions are read with `sqlite3`, which its tool installs.
 
-DONE does not show the closing messages of Gemini CLI, GitHub Copilot CLI or Bob yet.
+DONE does not show the closing messages of Gemini CLI, Antigravity CLI, GitHub Copilot CLI or Bob yet.
 When their sessions are in an instance, DONE names those agents as not read, and the instance is never `untouched`.
 
 The session text is scrubbed of anything shaped like a credential and cut to a bound.
