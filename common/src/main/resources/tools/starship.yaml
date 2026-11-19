@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: starship
 description: Starship cross-shell prompt 1.27.0 with incus-spawn indicator
 

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/template.json
 # The template bench/run.sh and bench/cli.sh branch their throwaway instances from: a JVM for the
 # load generator the model loads run inside an instance, and an SSH server for the ssh-proxy flows.
 # Build it from bench/:  isx build tpl-isx-bench --yes

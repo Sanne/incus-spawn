@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: maven-3
 description: Apache Maven 3.10.1
 

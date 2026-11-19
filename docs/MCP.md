@@ -67,6 +67,7 @@ Nothing is available until you approve templates in `~/.config/incus-spawn/mcp.y
 An agent can never approve a template: `isx mcp` reads this file on every call and has no way to write it.
 
 ```yaml
+# yaml-language-server: $schema=https://isx.run/schema/mcp.json
 templates: [tpl-java, tpl-dev]
 max-instances: 8
 host-tools:

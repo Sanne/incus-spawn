@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: orca
 description: What the Orca agent orchestrator needs to run its server and agents over SSH
 requires:

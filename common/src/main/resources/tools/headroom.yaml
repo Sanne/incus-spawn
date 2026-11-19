@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: headroom
 description: Headroom context optimization for Claude Code
 requires:
