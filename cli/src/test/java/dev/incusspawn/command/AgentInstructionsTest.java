@@ -44,6 +44,9 @@ class AgentInstructionsTest {
     @BeforeEach
     void stubs() throws IOException {
         stub("chown", "echo \"$@\" >> \"$(dirname \"$0\")/chown.log\"");
+        // As in the base image (no awk) and on macOS (a BSD sed): the script uses neither
+        stub("sed", "exit 2");
+        stub("awk", "exit 2");
     }
 
     @Test
@@ -217,6 +220,63 @@ class AgentInstructionsTest {
         run("# incus-spawn environment\nv2", linked());
 
         assertFalse(Files.exists(at(CODEX)));
+    }
+
+    /**
+     * Antigravity's rule loads only with front matter before it (#2366): the heading after the
+     * block still marks the file as isx's, so a rebuild replaces it and a build without the tool
+     * removes it, while a rule the template wrote there is kept.
+     */
+    @Test
+    void aRenderedFileWithFrontMatterIsStillIsxs() throws Exception {
+        var rule = new dev.incusspawn.tool.AntigravitySetup();
+        var path = rule.environmentContextPath();
+        run("# incus-spawn environment\nv1",
+                List.of(new AgentInstructions.Location(path, rule.renderEnvironmentContext("# incus-spawn environment\nv1"))));
+        assertEquals("---\ntrigger: always_on\n---\n# incus-spawn environment\nv1\n", Files.readString(at(path)));
+        assertEquals("agentuser:agentuser " + at(path) + "\n", Files.readString(bin.resolve("chown.log")),
+                "a rendered file in the home is agentuser's");
+
+        var output = run("# incus-spawn environment\nv2",
+                List.of(new AgentInstructions.Location(path, rule.renderEnvironmentContext("# incus-spawn environment\nv2"))));
+        assertFalse(output.contains(AgentInstructions.KEPT), output);
+        assertTrue(Files.readString(at(path)).endsWith("# incus-spawn environment\nv2\n"));
+
+        run("# incus-spawn environment\nv3", linked());
+        assertFalse(Files.exists(at(path)), "no tool declares it any more");
+
+        Files.createDirectories(at(path).getParent());
+        Files.writeString(at(path), "---\ntrigger: always_on\n---\n# the template's own rule\n");
+        output = run("# incus-spawn environment\nv4",
+                List.of(new AgentInstructions.Location(path, rule.renderEnvironmentContext("# incus-spawn environment\nv4"))));
+        assertEquals(AgentInstructions.KEPT + path + "\n", output);
+        assertEquals("---\ntrigger: always_on\n---\n# the template's own rule\n", Files.readString(at(path)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new AgentInstructions.Location(path, "---\ntrigger: always_on\n---\nx = 1"));
+        assertThrows(IllegalArgumentException.class,
+                () -> new AgentInstructions.Location(path, "---\n# incus-spawn environment\n"));
+        var long_ = "---\n" + "k: v\n".repeat(AgentInstructions.FRONT_MATTER_LINES - 1) + "---\n# incus-spawn environment\n";
+        assertThrows(IllegalArgumentException.class, () -> new AgentInstructions.Location(path, long_),
+                "a block the script would not read past is refused here too");
+        assertTrue(AgentInstructions.script("", "x", List.of()).contains("[ \"$n\" -lt " + AgentInstructions.FRONT_MATTER_LINES + " ]"));
+    }
+
+    /** The script reads front matter as far as the Java check does: a block closing on line 40, and no further. */
+    @Test
+    void theScriptReadsFrontMatterAsFarAsTheBound() throws Exception {
+        var path = new dev.incusspawn.tool.AntigravitySetup().environmentContextPath();
+        var rendered = List.of(new AgentInstructions.Location(path, "---\ntrigger: always_on\n---\n# incus-spawn environment\nnew\n"));
+        var atBound = "---\n" + "k: v\n".repeat(AgentInstructions.FRONT_MATTER_LINES - 2) + "---\n# incus-spawn environment\nold\n";
+        Files.createDirectories(at(path).getParent());
+
+        Files.writeString(at(path), atBound);
+        assertEquals("", run("# incus-spawn environment\nv1", rendered), "a block closing on line 40 is isx's");
+        assertTrue(Files.readString(at(path)).endsWith("new\n"));
+
+        var pastBound = "---\n" + "k: v\n".repeat(AgentInstructions.FRONT_MATTER_LINES - 1) + "---\n# incus-spawn environment\nold\n";
+        Files.writeString(at(path), pastBound);
+        assertEquals(AgentInstructions.KEPT + path + "\n", run("# incus-spawn environment\nv1", rendered));
+        assertEquals(pastBound, Files.readString(at(path)));
     }
 
     @Test

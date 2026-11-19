@@ -29,7 +29,8 @@ import java.util.List;
  * <p>The store is replaced by a rename and every location is linked again on each build, so a
  * location a tool replaced with a file of its own is relinked rather than left stale. A location
  * no installed tool declares any more is removed when isx wrote it: a link to the store, or a
- * file that starts with the generator's heading, which also covers the copies older builds left
+ * file that starts with the generator's heading (after a YAML front matter block, for an agent
+ * whose rule files need one, as Antigravity's do), which also covers the copies older builds left
  * at {@link #LEGACY} (the managed policy was written whether or not claude was installed, and
  * Gemini's went to the user's own {@code ~/.gemini/GEMINI.md} before #1784). A file
  * a template put there itself is kept.
@@ -59,11 +60,33 @@ final class AgentInstructions {
      */
     record Location(String path, String rendered) {
         Location {
-            if (rendered != null && !rendered.startsWith(AgentContextGenerator.HEADING + "\n")) {
-                throw new IllegalArgumentException(path + " must start with the line " + AgentContextGenerator.HEADING);
+            if (rendered != null && !startsWithHeading(rendered)) {
+                throw new IllegalArgumentException(path + " must start with the line " + AgentContextGenerator.HEADING
+                        + ", after a front matter block if it has one");
             }
         }
     }
+
+    /**
+     * Whether {@code rendered} opens with the generator's heading, or with a YAML front matter
+     * block and the heading straight after it: how {@code isx_heading} in the script tells a file
+     * isx wrote from one a template wrote.
+     */
+    static boolean startsWithHeading(String rendered) {
+        var lines = rendered.split("\n", FRONT_MATTER_LINES + 2);
+        if (!lines[0].equals(FRONT_MATTER)) return lines[0].equals(AgentContextGenerator.HEADING) && lines.length > 1;
+        // As isx_heading reads it: the block closes by line FRONT_MATTER_LINES, the heading next
+        for (int i = 1; i < Math.min(lines.length - 1, FRONT_MATTER_LINES); i++) {
+            if (lines[i].equals(FRONT_MATTER)) return lines[i + 1].equals(AgentContextGenerator.HEADING) && i + 2 < lines.length;
+        }
+        return false;
+    }
+
+    /** The last line a front matter block may close on: {@code isx_heading}'s {@code [ "$n" -lt 40 ]} too. */
+    static final int FRONT_MATTER_LINES = 40;
+
+    /** The line that opens and closes a YAML front matter block. */
+    static final String FRONT_MATTER = "---";
 
     private AgentInstructions() {
     }
@@ -106,9 +129,20 @@ final class AgentInstructions {
         sb.append("r=").append(Container.shellQuote(root)).append('\n');
         sb.append("heading=").append(Container.shellQuote(AgentContextGenerator.HEADING)).append('\n');
         sb.append("""
+                isx_heading() {
+                  l=$(head -n 1 "$1" 2>/dev/null) || return 0
+                  if [ "$l" != '---' ]; then printf '%s\\n' "$l"; return 0; fi
+                  # The shell alone: macOS's sed refuses GNU's grouping, and the base image has no awk
+                  n=1
+                  { IFS= read -r _
+                    while [ "$n" -lt 40 ] && IFS= read -r x; do
+                      n=$((n + 1))
+                      if [ "$x" = '---' ]; then IFS= read -r h && printf '%s\\n' "$h"; return 0; fi
+                    done; } 2>/dev/null < "$1"
+                }
                 isx_stale() {
                   { [ -f "$r$1" ] || [ -L "$r$1" ]; } || return 0
-                  if [ "$r$1" -ef "$store" ] || [ "$(head -n 1 "$r$1" 2>/dev/null)" = "$heading" ]; then rm -f "$r$1"; fi
+                  if [ "$r$1" -ef "$store" ] || [ "$(isx_heading "$r$1")" = "$heading" ]; then rm -f "$r$1"; fi
                 }
                 isx_place() {
                   if [ -d "$r$1" ]; then echo "$1 is a directory, not the agent's file" >&2; return 1; fi
@@ -124,10 +158,11 @@ final class AgentInstructions {
                 }
                 isx_render() {
                   isx_place "$1"
-                  if [ -s "$r$1" ] && [ "$(head -n 1 "$r$1" 2>/dev/null)" != "$heading" ]; then
+                  if [ -s "$r$1" ] && [ "$(isx_heading "$r$1")" != "$heading" ]; then
                     echo "isx-kept $1"; return 0
                   fi
                   cat > "$r$1.isx-new" && chmod 0644 "$r$1.isx-new" && mv -f "$r$1.isx-new" "$r$1"
+                  if [ -n "$2" ]; then chown agentuser:agentuser "$r$1"; fi
                 }
                 """);
 
@@ -155,7 +190,9 @@ final class AgentInstructions {
         for (var location : declared) {
             var path = Container.shellQuote(location.path());
             if (location.rendered() != null) {
-                sb.append(Container.heredoc("isx_render " + path, location.rendered().strip()));
+                // A file in agentuser's home is agentuser's, as a copy there is
+                var owned = location.path().startsWith(GuestProvisioning.AGENTUSER_HOME + "/") ? " own" : "";
+                sb.append(Container.heredoc("isx_render " + path + owned, location.rendered().strip()));
             } else {
                 sb.append(location.path().startsWith(GuestProvisioning.AGENTUSER_HOME + "/") ? "isx_copy " : "isx_link ")
                         .append(path);
