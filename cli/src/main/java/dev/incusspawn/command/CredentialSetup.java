@@ -255,9 +255,11 @@ class CredentialSetup {
 
         prompts.say("1. Sign in with ChatGPT — for a ChatGPT or ChatGPT Enterprise plan;");
         prompts.say("   opens your browser, where your organisation's SSO works too,");
-        prompts.say("   and the session stays on this host.");
+        prompts.say("   and the session stays on this host. isx signs in as Codex's own");
+        prompts.say("   client, which OpenAI has not endorsed — you opt in knowingly.");
         prompts.say("2. Sign in with a one-time code — the same sign-in, for a host");
-        prompts.say("   whose browser is elsewhere");
+        prompts.say("   whose browser is elsewhere; not yet tested against the real");
+        prompts.say("   service.");
         prompts.say("3. Paste an OpenAI API key — for platform.openai.com usage,");
         prompts.say("   which requires billing credits.");
         var choice = readInput(prompts.ask("Choice (Enter to skip): "));
