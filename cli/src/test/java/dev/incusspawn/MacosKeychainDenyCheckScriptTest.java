@@ -57,11 +57,11 @@ class MacosKeychainDenyCheckScriptTest {
     @Test
     void withoutSshThePersonPastesWhatTheGuestsCurlPrinted() throws Exception {
         var proxied = "*  issuer: CN=incus-spawn MITM CA\n";
-        var run = run(Map.of("NO_SSH", "1"), proxied + "isx-status=200\n\n" + "\n" + proxied + "isx-status=502\n\n"
+        var run = run(Map.of("NO_SSH", "1"), proxied + "isx-status=200\n\n" + "\n" + proxied + "isx-status=502\nisx-body=upstream-failed\n\n"
                 + "\n" + proxied + "isx-status=200\n\n");
         assertEquals(0, run.exit(), run.output());
         assertTrue(run.output().contains("run `isx shell dev`"), run.output());
-        assertTrue(run.output().contains("PASS: the guest's curl gets 502 from the proxy"), run.output());
+        assertTrue(run.output().contains("PASS: the guest's curl gets the proxy's 502 \"Upstream connection failed\""), run.output());
     }
 
     @Test
@@ -71,6 +71,13 @@ class MacosKeychainDenyCheckScriptTest {
         assertTrue(run.output().contains("FAIL: isx update-base --list read GitHub's release list through a denied root"), run.output());
         assertTrue(run.output().contains("FAIL: isx doctor does not count the deny"), run.output());
         assertTrue(run.output().contains("FAIL: the guest's curl was not refused by the proxy (issuer: proxy, HTTP 200"), run.output());
+    }
+
+    @Test
+    void aProxy502ForAnotherReasonIsNotTheDeny() throws Exception {
+        var run = run(Map.of("OTHER_502", "1"));
+        assertEquals(1, run.exit(), run.output());
+        assertTrue(run.output().contains("FAIL: the guest's curl was not refused by the proxy (issuer: proxy, HTTP 502, body: -"), run.output());
     }
 
     @Test
@@ -140,7 +147,8 @@ class MacosKeychainDenyCheckScriptTest {
                 [ "$last" = true ] && exit 0
                 if [ -n "${NOT_INTERCEPTED:-}" ]; then echo "*  issuer: C=GB; O=Sectigo Limited; CN=Sectigo Public Server Authentication CA DV E36"
                 else echo "*  issuer: CN=incus-spawn MITM CA"; fi
-                if %s; then echo isx-status=502; else echo isx-status=200; fi
+                if %s; then echo isx-status=502; [ -n "${OTHER_502:-}" ] || echo isx-body=upstream-failed
+                else echo isx-status=200; fi
                 """.formatted(denied));
         stub("openssl", "printf '%s' \"$CHAIN\"\n");
         stub("uname", "echo \"${OS_NAME:-Darwin}\"\n");

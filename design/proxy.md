@@ -148,7 +148,7 @@ A certificate already in the login keychain and an unlocked keychain of the prob
 So beyond `MacKeychainTrustTest`'s plists, only a person at a Mac checks a user-domain deny in a real Keychain.
 `scripts/macos-keychain-deny-check.sh` guides that person through the manual test that found #1552 (#1631).
 It asks them to mark Root E46 "Never Trust" in Keychain Access, then checks that `isx update-base --list` is refused and that `isx doctor` counts one more deny.
-After `isx proxy restart`, an instance's `curl https://api.github.com` must get a 502 from the proxy.
+After `isx proxy restart`, an instance's `curl https://api.github.com` must get the proxy's 502 "Upstream connection failed", which it sends only when its connection upstream failed.
 It then asks them to set E46 back to "Use System Defaults", and checks that all three recover.
 It is also the only check of an instance's request against a Keychain deny, and of the reset.
 The script never writes a trust setting and never uses sudo, so the only risk it leaves is a person who stops before the reset, which it tells them how to undo.
