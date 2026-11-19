@@ -1,8 +1,9 @@
 name: macOS Keychain trust (native)
 
-# The native CLI is built on macOS only by release.yml, so a native-only break in how isx reads
-# the Keychain's trust settings (#1467) would otherwise surface at release time. This builds it
-# weekly, on a change to that code, and by hand, and runs the Keychain smoke against it.
+# The native binaries are built on macOS only by release.yml, so a native-only break in how isx
+# reads the Keychain's trust settings (#1467), or refuses a chain it denies (#1552), would otherwise
+# surface at release time. This builds the CLI and the proxy weekly, on a change to that code, and
+# by hand, and runs the Keychain smoke against both.
 on:
   schedule:
     - cron: '17 4 * * 1'
@@ -13,10 +14,15 @@ on:
       - 'common/src/main/java/dev/incusspawn/util/MacKeychainTrust.java'
       - 'common/src/main/java/dev/incusspawn/util/SystemTrust.java'
       - 'common/src/main/java/dev/incusspawn/util/DeniedChainTrustManager.java'
-      # The proxy's upstream trust; the smoke builds the CLI alone, so it checks only the classes both share (#1631)
+      # The proxy's upstream trust, which the smoke's handshake goes through (#1631)
       - 'proxy/src/main/java/dev/incusspawn/proxy/Upstream.java'
       # What the smoke reads the result through
       - 'cli/src/main/java/dev/incusspawn/command/DoctorCommand.java'
+      - 'cli/src/main/java/dev/incusspawn/command/UpdateBaseCommand.java'
+      - 'cli/src/main/java/dev/incusspawn/baseimage/BaseImageReleases.java'
+      # How the proxy finds the made-up lease and listens without a VM
+      - 'common/src/main/java/dev/incusspawn/vm/VmNetwork.java'
+      - 'proxy/src/main/java/dev/incusspawn/proxy/ProxyMain.java'
       - '.github/scripts/macos-keychain-smoke.sh'
       - '.github/workflows/macos-keychain-trust.yml'
 
@@ -52,8 +58,8 @@ jobs:
           restore-keys: |
             macos-maven-native-keychain-smoke-
 
-      - name: Build CLI native image
-        run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' -B -ntp package -Dnative -DskipTests -Dnative.optimization=-Ob -pl cli -am
+      - name: Build CLI and proxy native images
+        run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' -B -ntp package -Dnative -DskipTests -Dnative.optimization=-Ob -pl cli,proxy -am
 
       - name: Keychain trust smoke
-        run: .github/scripts/macos-keychain-smoke.sh cli/target/incus-spawn-*-runner
+        run: .github/scripts/macos-keychain-smoke.sh cli/target/incus-spawn-*-runner proxy/target/incus-spawn-proxy-*-runner
