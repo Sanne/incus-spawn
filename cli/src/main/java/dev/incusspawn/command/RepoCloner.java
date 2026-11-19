@@ -353,8 +353,16 @@ class RepoCloner {
             var labels = repos.stream().map(RepoCloner::repoDisplayName).toList();
             try {
                 TerminalProgress.run(repos.size(), repos.size(),
-                        idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
-                                limiter, referencesDetached, mounts, accessChecked),
+                        idx -> {
+                            try {
+                                prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
+                                        limiter, referencesDetached, mounts, accessChecked);
+                            } catch (Exception | Error e) {
+                                // What the worker did not record itself, so the report names it (#2380)
+                                failureSeen.set(true);
+                                states.set(idx, StepProgress.failed("prepare failed: " + failureText(e), null));
+                            }
+                        },
                         (idx, frame) -> formatStepLine(labels.get(idx),
                                 repos.get(idx).sourceDescription(), states.get(idx), frame, "Ready"),
                         idx -> reportPlain(labels.get(idx), states.get(idx)));
@@ -935,12 +943,23 @@ class RepoCloner {
             states.set(idx, StepProgress.failed("prime", run.command(),
                     run.label().isBlank() ? failed : failed + ": " + run.label(), run.output()));
             return false;
-        } catch (Exception e) {
-            var message = e.getMessage();
-            var why = message == null || message.isBlank() ? e.getClass().getName() : message.replace('\r', ' ');
-            states.set(idx, StepProgress.failed("prime", null, "prime failed: " + why, null));
+        } catch (Exception | Error e) {
+            // An Error too: the build log's hook runs on this path once the prime has succeeded (#2380)
+            states.set(idx, StepProgress.failed("prime", null, "prime failed: " + failureText(e), null));
             return false;
         }
+    }
+
+    /**
+     * What a worker met, for its failure line: an exception's message, or its class when it has
+     * none; an {@link Error}'s class and message, since its message alone ("Java heap space") does
+     * not say what happened.
+     */
+    static String failureText(Throwable e) {
+        var message = e.getMessage();
+        var why = e instanceof Error ? e.toString()
+                : message == null || message.isBlank() ? e.getClass().getName() : message;
+        return why.replace('\r', ' ');
     }
 
     /**

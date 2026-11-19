@@ -2,6 +2,7 @@ package dev.incusspawn.util;
 
 import java.io.PrintStream;
 import java.util.ArrayList;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
@@ -21,6 +22,10 @@ import java.util.regex.Pattern;
  * {@code task} performs the work for index {@code i} and mutates that state,
  * while {@code animatedLine} renders it and {@code plainDone} reports it. Concurrency is bounded
  * to {@code maxConcurrency}.
+ *
+ * <p>A task should record how it failed in that state; one that throws anyway, an {@link Error}
+ * included, is rethrown by {@link #run} once every task has ended and been reported, so no failure
+ * is lost with the thread that met it.
  */
 public final class TerminalProgress {
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
@@ -85,23 +90,25 @@ public final class TerminalProgress {
      * {@code frame}. Off one, each task is reported as it ends, one at a time, through
      * {@code plainDone}, given the task's index: so a caller says how it ended by kind from its
      * state, rather than as a pre-rendered line.
+     * What a task threw is rethrown once the batch is over: the first, the others suppressed by it.
      */
     public static void run(int taskCount, int maxConcurrency,
                            IntConsumer task,
                            BiFunction<Integer, Integer, String> animatedLine,
                            IntConsumer plainDone) {
         if (taskCount == 0) return;
-        if (isAnsiTerminal()) {
-            animate(taskCount, maxConcurrency, task, animatedLine);
-        } else {
-            plainEach(taskCount, maxConcurrency, task, plainDone);
-        }
+        var thrown = isAnsiTerminal()
+                ? animate(taskCount, maxConcurrency, task, animatedLine)
+                : plainEach(taskCount, maxConcurrency, task, plainDone);
+        if (thrown instanceof RuntimeException e) throw e;
+        if (thrown instanceof Error e) throw e;
+        if (thrown != null) throw new IllegalStateException(thrown);
     }
 
     /** Plain mode: each task, then {@code done} with its index, one at a time, even if it threw. */
-    private static void plainEach(int taskCount, int maxConcurrency, IntConsumer task, IntConsumer done) {
+    private static Throwable plainEach(int taskCount, int maxConcurrency, IntConsumer task, IntConsumer done) {
         var lock = new Object();
-        awaitAll(taskCount, maxConcurrency, i -> {
+        return awaitAll(taskCount, maxConcurrency, i -> {
             try {
                 task.accept(i);
             } finally {
@@ -111,7 +118,7 @@ public final class TerminalProgress {
         });
     }
 
-    private static void animate(int taskCount, int maxConcurrency,
+    private static Throwable animate(int taskCount, int maxConcurrency,
                                 IntConsumer task,
                                 BiFunction<Integer, Integer, String> line) {
         var out = TerminalStreams.out();
@@ -136,8 +143,9 @@ public final class TerminalProgress {
         });
         ticker.scheduleAtFixedRate(redraw, 80, 80, TimeUnit.MILLISECONDS);
 
+        Throwable thrown;
         try {
-            awaitAll(taskCount, maxConcurrency, task);
+            thrown = awaitAll(taskCount, maxConcurrency, task);
         } finally {
             ticker.shutdownNow();
             try { ticker.awaitTermination(200, TimeUnit.MILLISECONDS); }
@@ -147,6 +155,7 @@ public final class TerminalProgress {
         synchronized (lock) {
             redrawLines(taskCount, line, out, 0, width);
         }
+        return thrown;
     }
 
     private static void redrawLines(int taskCount, BiFunction<Integer, Integer, String> line,
@@ -162,7 +171,8 @@ public final class TerminalProgress {
         out.flush();
     }
 
-    private static void awaitAll(int taskCount, int maxConcurrency, IntConsumer task) {
+    /** Run every task and wait for all of them; what the first to throw threw, the others' suppressed, or null. */
+    private static Throwable awaitAll(int taskCount, int maxConcurrency, IntConsumer task) {
         var limiter = new Semaphore(Math.max(1, maxConcurrency));
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var futures = new ArrayList<Future<?>>(taskCount);
@@ -174,10 +184,24 @@ public final class TerminalProgress {
                     finally { limiter.release(); }
                 }));
             }
+            Throwable thrown = null;
             for (var f : futures) {
-                try { f.get(); }
-                catch (Exception e) { /* per-task failures are recorded in task state */ }
+                while (true) {
+                    try {
+                        f.get();
+                    } catch (ExecutionException e) {
+                        if (thrown == null) thrown = e.getCause();
+                        else if (e.getCause() != thrown) thrown.addSuppressed(e.getCause());
+                    } catch (InterruptedException e) {
+                        // Wait again, as the executor's close would, so what this task threw is not lost
+                        continue;
+                    } catch (java.util.concurrent.CancellationException e) {
+                        // Nothing cancels a task; one that was has nothing to report
+                    }
+                    break;
+                }
             }
+            return thrown;
         }
     }
 }

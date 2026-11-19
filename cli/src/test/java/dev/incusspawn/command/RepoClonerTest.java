@@ -671,6 +671,47 @@ class RepoClonerTest {
     }
 
     @Test
+    void aPrimeThatDiesWithAnErrorNamesIt() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        primeAnswers(incus, OK);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenAnswer(invocation -> {
+            String script = invocation.getArgument(2);
+            if (script.startsWith("cd ")) throw new OutOfMemoryError("test");
+            return OK;
+        });
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "npm install")));
+
+        var ex = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(ex.getMessage().contains("app: prime failed: java.lang.OutOfMemoryError: test"), ex.getMessage());
+    }
+
+    @Test
+    void aWorkerThatDiesOutsideThePrimeNamesWhatKilledIt() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        primeAnswers(incus, OK);
+        // Nothing on the clone's path catches an Error: only the worker's own guard sees it.
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenAnswer(invocation -> {
+            String script = invocation.getArgument(2);
+            if (script.contains("git clone")) throw new StackOverflowError("deep");
+            return OK;
+        });
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "npm install")));
+
+        var ex = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(ex.getMessage().contains("app: prepare failed: java.lang.StackOverflowError: deep"), ex.getMessage());
+    }
+
+    @Test
     void aShortenedCommandKeepsWholeCharacters() {
         var command = "x".repeat(38) + "😀😀😀";
         assertEquals("x".repeat(38) + "😀…", RepoCloner.shortCommand(command));
