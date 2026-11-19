@@ -44,7 +44,7 @@ class RemoteProxyTestCmdlineTest {
         assertEquals(VmNetwork.ISX_VM_MAC, assignment(MACOS_ROLE_SCRIPT, script, "VM_MAC"));
         var m = Pattern.compile("-append \"([^\"]*)\"").matcher(script);
         if (!m.find()) fail(MACOS_ROLE_SCRIPT + " no longer passes -append");
-        // The console is QEMU's own, not vfkit's
+        // The console is QEMU's own, not the launcher's
         var booted = m.group(1).replace(" console=$CONSOLE", "").replace("$GATEWAY", assignment(MACOS_ROLE_SCRIPT, script, "GATEWAY"))
                 .replace("$MITM_PORT", assignment(MACOS_ROLE_SCRIPT, script, "MITM_PORT"));
         // Less the console, the clock and the shared folder, which the script has no part of

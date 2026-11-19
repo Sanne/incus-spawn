@@ -12,7 +12,7 @@ import java.util.Map;
  * momentary concurrency (up to {@link #MAX_IDLE}) and evicts connections idle longer than
  * {@link #IDLE_TTL_NANOS} — well under the forwarder's -T 180 so a parked connection is never
  * reaped out from under us, and under incusd's own 30s {@code IdleTimeout}, which closes idle
- * keep-alive connections from its side (a close vfkit may never deliver to us).
+ * keep-alive connections from its side (a close a lossy tunnel, as vfkit's was, may never deliver to us).
  *
  * It is a CACHE, never a bottleneck: {@link #borrow} returns null on a miss and the caller
  * opens a fresh (overflow) connection; {@link #release} parks a live connection if there is

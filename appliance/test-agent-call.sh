@@ -5,7 +5,7 @@ set -uo pipefail
 # tunnel needs of a client: it never shuts its write side down before the agent has answered.
 #
 # A Mac found the reason (#2031). The scripts used to pipe the verb into nc, and Apple's nc
-# shuts its write side down at the end of its input. vfkit's relay does not carry that to
+# shuts its write side down at the end of its input. vfkit's relay did not carry that to
 # the guest, so the checks passed under vfkit; the launcher's relay ends the connection
 # there, as designed, and every agent call under isx-vm came back empty. CI did not see it:
 # Ubuntu's nc leaves the write side open.

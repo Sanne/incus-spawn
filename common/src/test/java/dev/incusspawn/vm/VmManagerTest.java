@@ -105,7 +105,7 @@ class VmManagerTest {
     }
 
     /**
-     * #1695: the appliance runs only under vfkit on macOS. On Linux isx uses the host's Incus, and
+     * #1695: the appliance runs only under isx-vm on macOS. On Linux isx uses the host's Incus, and
      * a start is refused before it creates a disk or launches anything.
      */
     @Test
@@ -354,7 +354,7 @@ class VmManagerTest {
     }
 
     @Test
-    void recoverReachabilityFailsFastWhenLayerIsVfkit() {
+    void recoverReachabilityFailsFastWhenLayerIsLauncher() {
         var restarts = new java.util.concurrent.atomic.AtomicInteger();
         boolean ok = VmManager.recoverReachability(
                 secs -> false,                                      // grace fails
@@ -384,7 +384,7 @@ class VmManagerTest {
     // --- leakLayer (moved from DoctorCommandTest — canonical location is VmManager) ---
 
     @Test
-    void leakLayerLocatesVfkitWhenGuestCountStaysLow() {
+    void leakLayerLocatesLauncherWhenGuestCountStaysLow() {
         assertEquals(VmManager.LeakLayer.LAUNCHER, VmManager.leakLayer(300, 5));
         assertEquals(VmManager.LeakLayer.LAUNCHER, VmManager.leakLayer(100, 50), "boundary: guest*2 == host");
     }

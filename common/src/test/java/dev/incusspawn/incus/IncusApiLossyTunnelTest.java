@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * {@link IncusApi} exec and probing against a {@link LossyIncusServer} that behaves like the
- * macOS vfkit tunnel: close frames and EOF never arrive, output keeps flowing after the process
+ * macOS vfkit tunnel did before isx-vm replaced it (#2031): close frames and EOF never arrive, output keeps flowing after the process
  * exits, and a wedged tunnel accepts connections without answering. Each test pins one
  * compensation that otherwise only a Mac would exercise.
  */
@@ -76,7 +76,7 @@ class IncusApiLossyTunnelTest {
     @Test
     @Timeout(10)
     void execCompletesFromWaitWhenNoCloseFrameEverArrives() {
-        server.sendCloseFrames = false; // vfkit: the fds stay open and silent forever
+        server.sendCloseFrames = false; // as under vfkit: the fds stay open and silent forever
         server.stdout = "hello";
         server.stderr = "warning";
         server.exitCode = 7;
@@ -484,7 +484,7 @@ class IncusApiLossyTunnelTest {
     }
 
     // incusd stalls every new connection behind one that has sent nothing (its local listener
-    // peeks 8 bytes inside Accept(), with no deadline), and vfkit may never deliver the close
+    // peeks 8 bytes inside Accept(), with no deadline), and a lossy tunnel (vfkit's was) may never deliver the close
     // that would release it. So the vsock diagnosis must speak, not merely connect.
     @Test
     @Timeout(10)
