@@ -55,6 +55,7 @@ github:
     acme-bot:
       token: "ghp_..."
       email: "bot@acme.example"
+      name: "Acme CI"
   default: personal
 ```
 
@@ -123,6 +124,8 @@ The branch dialog (F4) lets you pick accounts too.
 
 Changes take effect on the instance's next request, with no restart.
 An instance switched to another GitHub account takes that account's git identity on its next start or shell.
+The `name` and `email` fields on a GitHub account override the git identity that would otherwise come from the GitHub profile.
+When unset, they are derived from the GitHub API.
 The exception is switching between Claude auth modes (Pro/Max, API key, Vertex), which needs a template built for that mode ([#866](https://github.com/Sanne/incus-spawn/issues/866)).
 
 Changing a default switches every instance that follows it to the new account; `isx init` lists those instances first and lets you keep them on their current account.

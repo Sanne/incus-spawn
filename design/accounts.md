@@ -51,7 +51,7 @@ Claude's rules won, for every namespace:
 What the resolver needs to know about a namespace is an `AccountShape`, declared rather than coded.
 `ToolSetup.accountShape()` derives it from the tool's proxy definition: its `secret: true` entries are the credential (so a leftover `github.email`, or the `apiKey: ""` older releases wrote for every namespace, is not an account), every entry the user supplies is held per account, and `confirm` entries — Bob's licence consent — stay at the namespace level, where every account inherits them.
 Two built-in tools override it.
-`GhSetup` names `email` as per-account, because the commit email belongs to an identity but is not something the proxy injects.
+`GhSetup` names `email` and `name` as per-account, because the commit identity belongs to an account but neither is something the proxy injects.
 `ClaudeConfig.ACCOUNT_SHAPE` recognises the flat Vertex setup (`useVertex: true` is not a secret) and judges each account by its type.
 That judgement is the shape's one hook, `problem(account, namespace)`.
 An unusable account is skipped when picking a default, and pinning it is refused as "configured but incomplete: <why>" rather than "not configured", because an incomplete account is easy to overlook in `isx init` (#742).
@@ -486,7 +486,7 @@ The instance and template lookups are overridable seams on `CredentialSetup`, so
 Credentials never enter a container, so re-pointing an instance between two accounts that the image cannot tell apart takes effect on its next request with nothing inside restarting.
 Two tools *can* tell them apart, and each does so differently.
 `ClaudeSetup.envEntries()` writes a different set of variables for each auth mode into `/etc/profile.d/isx-env.sh`, so what it bakes is the **mode** — two accounts of one mode remain interchangeable.
-`GhSetup` derives `user.name` and `user.email` from whoever the token belongs to, so what it bakes is the **account** — any change is a change of identity.
+`GhSetup` derives `user.name` and `user.email` from the configured `name` and `email` if set, else from whoever the token belongs to, so what it bakes is the **account** — any change is a change of identity.
 
 `ToolSetup.bakedAccountIdentity()` returns whichever of those applies, or `""` for a namespace whose credential is pure header substitution.
 The build stamps it as `user.incus-spawn.account-identity.<namespace>`.
@@ -494,7 +494,7 @@ When a re-point makes it stale, the tool is asked to bring the instance in line.
 `GhSetup.canRebakeForAccount()` is true, and `rebakeForAccount` clears the git identity and asks the API again — which resolves *through the proxy*, so it answers for the new account without this code knowing which one that is.
 `InstanceLifecycle.reconcileAccountIdentities` does this, and only stamps back on success.
 
-GitHub's stamp is the account name plus a fingerprint of its token and configured email (`<account>#<12 hex of SHA-256>`), not the name alone.
+GitHub's stamp is the account name plus a fingerprint of its token, configured email and configured name (`<account>#<12 hex of SHA-256>`), not the name alone.
 The name alone missed the most ordinary change of all (#281).
 Replacing an account's token with another user's keeps the name, so nothing was stale.
 Every instance -- and every child template, which inherits its parent's `.gitconfig` and whose gh setup skips an identity already present -- went on committing as the previous user while pushing as the new one.
