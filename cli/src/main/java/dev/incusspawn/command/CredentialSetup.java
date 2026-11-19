@@ -395,11 +395,24 @@ class CredentialSetup {
         return names;
     }
 
-    /** Ends the named accounts' host sessions, what named them having just left the config. */
+    /**
+     * Ends the named accounts' host sessions, what named them having just left the config.
+     * Every name is tried: this runs after {@code config.save()}, so one failure aborting the
+     * step would leave the later sessions' refresh tokens on disk with nothing to roll back to.
+     */
     private static void endChatGptSessions(List<String> names) {
         if (names.isEmpty()) return;
         var store = new dev.incusspawn.proxy.ChatGptSessionStore();
-        for (var name : names) store.remove(name);
+        for (var name : names) {
+            try {
+                store.remove(name);
+            } catch (java.io.UncheckedIOException e) {
+                BuildOutput.warn("Could not end the ChatGPT session of account '" + name + "': "
+                                + BaseCommand.failure(e),
+                        "Its refresh token stays on disk with nothing pointing at it.",
+                        "Sign in again with 'isx init' to replace the session it left behind.");
+            }
+        }
     }
 
     void setupClaudeAuth(SpawnConfig config, Prompts prompts) {
