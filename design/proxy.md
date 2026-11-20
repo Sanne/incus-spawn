@@ -1351,7 +1351,8 @@ What it gives up: a repository that sent a real 404 with a positive `Retry-After
 Its domain would go into backoff, a miss would be waited out for up to about 25 s, and the client would get a `429` where a 404 let it move on to its next repository.
 A cache's domain reads it this way on every request, also those it relays without caching, such as `maven-metadata.xml` and SNAPSHOTs, for which Maven would record a 404 as missing until its update policy asks again (`Upstream.relayedStatus`).
 A private repository's domain is read this way too, though it keeps no backoff (`Upstream.cacheDomains`).
-Any other domain's 404 passes on as it came.
+The container registries' manifest cache reads it the same way, on its confirming `HEAD` and on a miss, whose answer `Upstream.relayResponse` sends as a `429`.
+Any other 404 passes on as it came, a registry's on a request it relays without caching included.
 A `Retry-After` of 0, or one that cannot be read, asks for no wait, so that 404 keeps its meaning.
 
 Every relayed domain passes the answer on whole: `Upstream.copyResponseHead` copies the status and every header but `Connection` and `Transfer-Encoding`.
