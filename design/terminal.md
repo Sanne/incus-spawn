@@ -7,7 +7,7 @@ How isx writes to the terminal, for people and for scripts, and how the TUI keep
 All multi-step command output follows a consistent visual language, centralized in `BuildOutput` (`common/.../util/BuildOutput.java`).
 All output helpers live there; individual commands should not define their own ANSI constants or formatting patterns.
 Beyond build/branch, this governs the other lifecycle commands too — `vm` (start/stop/resize), `destroy`, `update-all`, `update-base`, and `project` — plus the shared `VmManager`.
-(`isx init`'s large interactive first-run flow is the one deliberate exception, kept in its own style for now: its boxed, numbered headers stay, but the lines under them report outcomes rather than attempts, its `[n/N]` counter is counted from the list of steps rather than written down, and host commands show their output only when they fail (#906; the rules are in `.claude/rules/commands.md`, "Init output").)
+(`isx init`'s large interactive first-run flow is the one deliberate exception, kept in its own style for now: its boxed, numbered headers stay for a step that asks the person something (the steps that ask nothing show as one block, #2406), but the lines under them report outcomes rather than attempts, its `[n/N]` counter is counted from the list of steps rather than written down, and host commands show their output only when they fail (#906; the rules are in `.claude/rules/commands.md`, "Init output").)
 
 **Every line under a header is one of five kinds, picked without judgement** (#1791):
 

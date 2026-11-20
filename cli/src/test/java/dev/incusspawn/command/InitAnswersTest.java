@@ -77,7 +77,8 @@ class InitAnswersTest {
                     file + " asks through a console, not the terminal gate");
         }
         var gate = java.nio.file.Files.readString(Path.of("src/main/java/dev/incusspawn/command/InitCommand.java"));
-        assertTrue(gate.matches("(?s).*Prompts prompts\\(\\) \\{[^}]*return Prompts\\.terminal\\(\\);.*"), "prompts() is Prompts.terminal()");
+        assertTrue(gate.matches("(?s).*Prompts prompts\\(\\) \\{[^}]*return (announcing\\()?Prompts\\.terminal\\(\\)\\)?;.*"),
+                "prompts() is Prompts.terminal(), at most wrapped so a plumbing step's question shows its header");
     }
 
     @Test
