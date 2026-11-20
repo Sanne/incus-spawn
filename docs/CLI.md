@@ -172,6 +172,11 @@ Such a pin is likely a mistake.
 With `--all`, `--missing` or `--out-of-sync`, `--skip-missing-accounts` skips that template and what inherits from it, and builds the others.
 The skips do not make the command exit 1, and a template named on the command line is still refused.
 
+A template whose tools need a credential that is not configured still builds.
+At a terminal, isx asks for each such credential before building, once any rebuild is confirmed, with the step `isx account add` runs for it.
+Skip one, and the build warns that `isx branch` will refuse the template.
+With `--yes` or without a terminal, it only warns.
+
 ## `isx branch`
 
 Create a new instance as a copy-on-write clone of a template or of an existing instance.
@@ -202,6 +207,10 @@ isx branch <name> [options]
 | `--mcp-client` | Let the instance drive isx over MCP at `https://mcp.isx.internal/mcp`, as a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). The default for a template whose `coordinator:` block says so: `isx-control-capability`, true when `control-over` lists templates. Copies of the instance never inherit this permission |
 | `--no-mcp-client` | Do not make the instance a coordinator, even if the template makes coordinators by default |
 | `--format=<format>` | `table` (the default), `plain` to print only the new name, or `json` to add how to reach it, with progress on stderr and no shell opened. See [Scripting isx](#isx-branch-fields) |
+
+isx refuses a branch that lacks a credential its tools need, naming the command that configures it.
+At a terminal, it first asks for the credential with the step `isx account add` runs for it, and goes ahead once it is configured.
+With `--format`, with `--owner`, without a terminal, and from `isx mcp` or the TUI, it is refused without a question.
 
 ## `isx shell`
 

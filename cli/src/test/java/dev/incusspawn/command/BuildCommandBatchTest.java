@@ -89,9 +89,9 @@ class BuildCommandBatchTest {
         cmd.toolDefLoader = mock(ToolDefLoader.class);
         tools.forEach(name -> when(cmd.toolDefLoader.find(name)).thenReturn(BuildCommandTest.simpleToolSetup(name)));
         when(cmd.toolDefLoader.allToolSetups()).thenReturn(allToolSetups);
+        cmd.yes = true;
         onLoader.accept(cmd);
         cmd.architecture = architecture;
-        cmd.yes = true;
         cmd.skipGitRefresh = true;
         var names = new ArrayList<String>();
         for (var arg : args) {
@@ -108,6 +108,8 @@ class BuildCommandBatchTest {
         cmd.names = names.isEmpty() ? null : names;
         var recorder = new RecordingOutput();
         doAnswer(i -> {
+            // What the real one does once the build goes ahead
+            cmd.askPendingAccounts();
             if (warningsBeforeBuild == null) warningsBeforeBuild = recorder.warnings();
             var name = i.<ImageDef>getArgument(0).getName();
             built.add(name);
@@ -525,6 +527,111 @@ class BuildCommandBatchTest {
 
         assertEquals(List.of("tpl-dev"), built);
         assertTrue(warnings.stream().noneMatch(w -> w.contains("Missing credential")), warnings::toString);
+    }
+
+    /** A build at a terminal, without {@code --yes}, whose missing accounts are asked for through {@code prompts}. */
+    private void atATerminal(ScriptedPrompts prompts) throws Exception {
+        MissingAccountsAskTest.acme();
+        var tools = new LinkedHashMap<>(builtInTools());
+        tools.putAll(new ToolDefLoader().allToolSetups().entrySet().stream()
+                .filter(e -> e.getKey().equals("acme"))
+                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+        allToolSetups = tools;
+        extraDefs.put("tpl-dev", ImageDef.parseYaml("name: tpl-dev\nparent: tpl-base\ntools: [gh, acme]\n"));
+        builtAt(Map.of("tpl-base", "2026-10-01T09:00:00"));
+        onLoader = c -> {
+            when(c.toolDefLoader.find("acme")).thenReturn(tools.get("acme"));
+            c.yes = false;
+            var setup = MissingAccountsAskTest.ScriptedInit.with(prompts);
+            doAnswer(i -> {
+                asked++;
+                return setup;
+            }).when(c).accountSetup();
+        };
+    }
+
+    private int asked;
+
+    /**
+     * At a terminal the build asks for each missing account before it starts (#2405): what is
+     * given is configured and no longer warned of, and what is skipped is warned of as before.
+     */
+    @Test
+    void aBuildAtATerminalAsksForEachMissingAccountFirst() throws Exception {
+        // GitHub skipped; Acme given
+        var prompts = new ScriptedPrompts().line("n", "y").secret("acme-secret");
+        atATerminal(prompts);
+
+        assertEquals(0, build("tpl-dev"));
+
+        prompts.assertFullyConsumed();
+        assertEquals(List.of("tpl-dev"), built);
+        assertEquals("acme-secret", IsolatedHome.saved("acmeCloud.accounts.default.apiKey"));
+        assertEquals(List.of("Missing credential: GitHub personal access token. "
+                        + "'isx branch' will refuse tpl-dev until it is configured with 'isx account add github'."),
+                warningsBeforeBuild.stream().filter(w -> w.startsWith("Missing credential")).toList());
+    }
+
+    /**
+     * A batch rebuild asks for accounts only once it is confirmed: a person who turns the rebuild
+     * down has typed no secret for it, and one who goes ahead is asked before anything is built.
+     */
+    @Test
+    void aBatchAsksForAccountsOnlyOnceItIsConfirmed() throws Exception {
+        var accounts = new ScriptedPrompts().line("n", "y").secret("acme-secret");
+        atATerminal(accounts);
+        daemon.container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.BUILD_VERSION, NOW));
+        var asks = onLoader;
+        var confirmation = new String[]{"n"};
+        onLoader = c -> {
+            asks.accept(c);
+            doAnswer(i -> ScriptedPrompts.lines(confirmation[0])).when(c).prompts();
+        };
+
+        build("tpl-dev", "--with-parents");
+        assertEquals(List.of(), built);
+        assertEquals(List.of(), accounts.questions(), "declined: nothing asked");
+
+        confirmation[0] = "y";
+        assertEquals(0, build("tpl-dev", "--with-parents"));
+        accounts.assertFullyConsumed();
+        assertEquals("acme-secret", IsolatedHome.saved("acmeCloud.accounts.default.apiKey"));
+        assertFalse(built.isEmpty());
+        assertEquals(List.of("Missing credential: GitHub personal access token. "
+                        + "'isx branch' will refuse tpl-dev until it is configured with 'isx account add github'."),
+                warningsBeforeBuild.stream().filter(w -> w.startsWith("Missing credential")).toList());
+    }
+
+    /** A caller that has just asked turns the question off: the build warns as without a terminal. */
+    @Test
+    void aCallerCanTurnTheQuestionOff() throws Exception {
+        atATerminal(new ScriptedPrompts());
+        var asks = onLoader;
+        onLoader = c -> {
+            asks.accept(c);
+            c.askForAccounts = false;
+        };
+
+        assertEquals(0, build("tpl-dev"));
+
+        assertEquals(0, asked);
+        assertEquals(2, warnings.stream().filter(w -> w.startsWith("Missing credential")).count(), warnings::toString);
+    }
+
+    /** {@code --yes} is a build nobody watches: nothing is asked. */
+    @Test
+    void withYesNothingIsAsked() throws Exception {
+        atATerminal(new ScriptedPrompts());
+        var asks = onLoader;
+        onLoader = c -> {
+            asks.accept(c);
+            c.yes = true;
+        };
+
+        assertEquals(0, build("tpl-dev"));
+
+        assertEquals(0, asked);
+        assertEquals(2, warnings.stream().filter(w -> w.startsWith("Missing credential")).count(), warnings::toString);
     }
 
     /**

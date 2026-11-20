@@ -123,9 +123,23 @@ public final class CredentialCheck {
     public static String stepCommand(String toolName, Map<String, ToolSetup> allTools) {
         var tool = allTools.get(toolName);
         var namespace = tool == null || tool.proxy() == null ? "" : tool.proxy().getConfigNamespace();
-        if (toolName.equals(namespaceOwner(namespace, allTools))) return "isx account add " + namespace;
-        if (toolName.equals(credentialTool(toolName, allTools))) return "isx account add " + toolName;
+        if (toolName.equals(namespaceOwner(namespace, allTools))) return ACCOUNT_ADD + namespace;
+        if (toolName.equals(credentialTool(toolName, allTools))) return ACCOUNT_ADD + toolName;
         return "isx init";
+    }
+
+    /** The command {@link Missing} names when one step configures it, before the step's name. */
+    private static final String ACCOUNT_ADD = "isx account add ";
+
+    /**
+     * The tool among {@code allTools} whose credential step configures {@code missing}, as
+     * {@code isx account add} would run it; {@code null} when its command is {@code isx init} or
+     * names no step there. The caller chooses {@code allTools}, so a step is taken only from tools
+     * it trusts, whatever tools found the gap.
+     */
+    public static String stepTool(Missing missing, Map<String, ToolSetup> allTools) {
+        if (!missing.command().startsWith(ACCOUNT_ADD)) return null;
+        return credentialTool(missing.command().substring(ACCOUNT_ADD.length()), allTools);
     }
 
     /**
@@ -155,7 +169,7 @@ public final class CredentialCheck {
         if (tool != null && hasCredentialStep(tool) && !toolName.equals(owner)) {
             return new Missing(credential, stepCommand(toolName, allTools), notes);
         }
-        return new Missing(credential, owner != null ? "isx account add " + namespace : "isx init", notes);
+        return new Missing(credential, owner != null ? ACCOUNT_ADD + namespace : "isx init", notes);
     }
 
     /**
@@ -182,8 +196,7 @@ public final class CredentialCheck {
                                Map<String, String> selection, Map<String, ToolSetup> allTools,
                                Map<String, ToolSetup> served) {
         try {
-            var gaps = gaps(config.tree(), AccountSelection.byNamespace(served), config, template, allDefs,
-                    selection, allTools, served, trustedTools(config));
+            var gaps = gaps(config, template, allDefs, selection, allTools, served);
             if (!gaps.inherited().isEmpty() && InheritedProof.parentSecret() == null) {
                 return InheritedProof.notNestedMessage(gaps.inherited().getFirst());
             }
@@ -194,6 +207,30 @@ public final class CredentialCheck {
             // Callers validate the selection first; this only keeps a stale one from escaping.
             return e.getMessage();
         }
+    }
+
+    /**
+     * What {@link #check(SpawnConfig, ImageDef, Map, Map, Map, Map)} reports missing, one entry
+     * per credential; empty when it reports nothing or something no account can fix: a credential
+     * that must come from a parent instance, or an unknown account.
+     */
+    public static List<Missing> missing(SpawnConfig config, ImageDef template, Map<String, ImageDef> allDefs,
+                                        Map<String, String> selection, Map<String, ToolSetup> allTools,
+                                        Map<String, ToolSetup> served) {
+        try {
+            var gaps = gaps(config, template, allDefs, selection, allTools, served);
+            if (!gaps.inherited().isEmpty() && InheritedProof.parentSecret() == null) return List.of();
+            return gaps.missing();
+        } catch (AccountResolver.UnknownAccountException e) {
+            return List.of();
+        }
+    }
+
+    private static Gaps gaps(SpawnConfig config, ImageDef template, Map<String, ImageDef> allDefs,
+                             Map<String, String> selection, Map<String, ToolSetup> allTools,
+                             Map<String, ToolSetup> served) {
+        return gaps(config.tree(), AccountSelection.byNamespace(served), config, template, allDefs,
+                selection, allTools, served, trustedTools(config));
     }
 
     /**

@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.CredentialCheck;
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.McpScope;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
@@ -294,7 +296,7 @@ public class BranchCommand extends BaseCommand {
         BranchFlow.Preflight preflight;
         RuntimeSetup.RuntimeConfig prefetched;
         try {
-            preflight = BranchFlow.preflight(incus, request);
+            preflight = BranchFlow.preflight(incus, request, ImageDef.loadAll(), asksForAccounts() ? this::askForMissing : null);
             prefetched = BranchFlow.create(incus, preflight);
         } catch (BranchFlow.BranchException e) {
             if (!e.reported()) BuildOutput.error(failure(e));
@@ -309,6 +311,38 @@ public class BranchCommand extends BaseCommand {
         }
         BuildOutput.success(name + " ready");
         return new Created(resolvedSource, preflight, prefetched, mcpScope);
+    }
+
+    /** Who asks for the accounts a branch lacks: init's credential steps, at a terminal; overridden by tests. */
+    InitCommand accountSetup() {
+        return new InitCommand();
+    }
+
+    /**
+     * Whether a missing account is asked for: only at a terminal, so without one the branch is
+     * refused where and as it always was, and not when a script reads the answer ({@code --format})
+     * or another tool drives the instance ({@code --owner}), which must fail fast rather than wait
+     * at a question on the terminal they run in.
+     */
+    private boolean asksForAccounts() {
+        return owner == null && OutputFormat.parse(format) == OutputFormat.TABLE && accountSetup().prompts() != null;
+    }
+
+    /**
+     * Asks, at a terminal, for the accounts {@code template} needs and lacks, before the branch
+     * is refused for them (#2405): whether any was set up. Without one nothing is asked.
+     */
+    boolean askForMissing(String template, List<CredentialCheck.Missing> missing) {
+        var needing = new LinkedHashMap<CredentialCheck.Missing, List<String>>();
+        missing.forEach(credential -> needing.put(credential, List.of(template)));
+        try {
+            return accountSetup().askForMissing(needing);
+        } catch (Exception e) {
+            BuildOutput.warn("Account setup failed: " + e.getMessage(),
+                    "'isx account add' sets the account up later.");
+            // Something may have been written before it failed, and the check says what is still missing
+            return true;
+        }
     }
 
     /** {@code named}, the source given or {@linkplain #detectSource detected}, if it exists. */
