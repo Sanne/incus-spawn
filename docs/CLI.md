@@ -16,13 +16,31 @@ isx
 ## `isx init`
 
 Set up the host once: install Incus, configure credentials and their [accounts](CONFIGURATION.md#credential-accounts), and test connectivity.
-Running it again is safe, and is how you add, rename or remove an account.
+Running it again is safe.
+
+At a terminal, a second run asks none of the questions the first one asked, and ends with a menu of the steps you can run again.
 On a fresh Linux host it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
 
 ```shell
 isx init [--no-sudo] [--search-path=<dir>,...] [--code-dir=<dir>,...] [--fork-templates] [--service | --no-service] [--format=table|plain|json]
 isx init --plan [--format=table|plain|json]
 ```
+
+### One step by name
+
+```shell
+isx init credentials | search-paths | code-directories | mcp
+```
+
+Each of these runs one step alone and leaves the rest of the host as it is.
+
+`credentials` adds, renames or removes an account, as `isx account add` does with no name.
+`search-paths` adds template directories, and offers to fork the community templates.
+`code-directories` adds the directories that hold your repositories.
+`mcp` approves the templates an agent on this host may use, as `isx mcp setup` does.
+
+The flags that answer a step, such as `--search-path`, work here too.
+`isx doctor` notes a step you have not set up, without counting it as a problem.
 
 ### Without a terminal
 

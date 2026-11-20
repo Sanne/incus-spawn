@@ -36,6 +36,7 @@ import dev.incusspawn.Platform;
 import dev.incusspawn.util.HostPath;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 import org.aesh.command.option.OptionList;
 import dev.incusspawn.util.Privilege;
@@ -99,6 +100,9 @@ public class InitCommand extends BaseCommand {
     @Option(name = "plan", hasValue = false,
             description = "Say what init would change on this host and who must do each step, changing nothing")
     boolean plan;
+
+    @Argument(description = "Run one step alone: credentials, search-paths, code-directories or mcp")
+    String only;
 
     // Output for scripts (#1036): see OutputFormat for what plain and json promise.
     @Option(name = "format", completer = Completers.Format.class,
@@ -172,12 +176,17 @@ public class InitCommand extends BaseCommand {
      * ({@link Environment#hasBeenInitialized()}): re-running init after an upgrade is the common case.
      */
     static void printSetupBanner(String platform, String info) {
-        var configured = Files.exists(Environment.initCompleteMarker())
-                || Files.exists(Environment.configDir().resolve("config.yaml"));
+        var configured = isConfigured();
         printBanner("isx — " + (configured ? "Setup" : "First-Time Setup") + platform,
                 configured ? "Reviewing your existing configuration"
                         : "Configuring your isolated development environment",
                 info);
+    }
+
+    /** Whether init ran here before, by any marker or a config file: a re-run, not a first one. */
+    static boolean isConfigured() {
+        return Files.exists(Environment.initCompleteMarker())
+                || Files.exists(Environment.configDir().resolve("config.yaml"));
     }
 
     void startStep(String title, String... hintLines) {
@@ -344,7 +353,9 @@ public class InitCommand extends BaseCommand {
         }
 
         try {
-            var result = new InitCommand().doExecute();
+            var init = new InitCommand();
+            init.automatic = true;
+            var result = init.doExecute();
             return result.getResultValue() == 0 && hasBeenInitialized();
         } catch (Exception e) {
             // A missing or blank message would say nothing, and init would fail silently
@@ -409,6 +420,15 @@ public class InitCommand extends BaseCommand {
     @Override
     protected CommandResult doExecute() throws Exception {
         var outputFormat = OutputFormat.parse(format);
+        if (only != null) {
+            if (plan) throw new IllegalArgumentException("--plan reads every step; run it without a step name");
+            if (service || noService || noSudo || outputFormat != OutputFormat.TABLE) {
+                throw new IllegalArgumentException("'isx init " + OutputFormat.oneLine(only)
+                        + "' takes only the flags that answer it: --search-path, --code-dir or --fork-templates");
+            }
+            checkAnswers();
+            return CommandResult.valueOf(runOne(only));
+        }
         if (plan) {
             if (answersGiven()) throw new IllegalArgumentException("--plan only reads; the answers to init's questions go without it");
             return printPlan(outputFormat);
@@ -479,6 +499,7 @@ public class InitCommand extends BaseCommand {
 
     /** The run itself, in whatever format its summary goes. */
     CommandResult runInit() throws Exception {
+        rerun = Files.exists(Environment.initCompleteMarker()) && prompts() != null && OutputFormat.parse(format) == OutputFormat.TABLE && !answersGiven();
         // From here this process elevates nothing: every sudo is the script's (#2074)
         if (noSudo) Privilege.forbid();
         if (!requireIncusHost()) return CommandResult.valueOf(1);
@@ -516,6 +537,7 @@ public class InitCommand extends BaseCommand {
             return handOver(waiting.changes);
         }
 
+        offerMenu();
         var next = new ArrayList<>(List.of(nextSteps(linuxServices(proxyServiceInstalled.get()))));
         if (continued) next.addAll(GROUP_PENDING);
         printCompletionBox(next.toArray(String[]::new));
@@ -833,6 +855,7 @@ public class InitCommand extends BaseCommand {
         var servicesInstalled = new AtomicBoolean();
 
         runSteps(macOsSetup(), finalSteps(macOsServicesStep(servicesInstalled)));
+        offerMenu();
 
         printCompletionBox(nextSteps(servicesInstalled.get() ? Services.INSTALLED
                 : skipped.contains("macos-services") ? Services.INSTALL_VM_AND_PROXY : Services.START_VM_AND_PROXY));
@@ -924,26 +947,133 @@ public class InitCommand extends BaseCommand {
 
     /** As {@link #runSteps(List, List)}, with the first {@code done} steps of {@code setup} run by the process that started this one. */
     void runSteps(List<InitStep> setup, List<InitStep> finish, int done) throws Exception {
+        // A re-run at a terminal asks nothing it asked before: those steps are in the menu after it (#2407)
+        var asks = !rerun;
+        var shown = asks ? finish : finish.stream().filter(s -> !DEFERRED.contains(s.id())).toList();
         currentStep = (int) numbered(setup.subList(0, done));
-        totalSteps = (int) (numbered(setup) + 1 + numbered(finish));
-        totalKnown = false;
+        totalSteps = (int) (numbered(setup) + (asks ? 1 : 0) + numbered(shown));
+        totalKnown = !asks;
         try {
             for (var step : setup.subList(done, setup.size())) begin(step);
             closePlumbingBlock();
-            runRest(finish);
+            runRest(shown, asks);
         } finally {
             closePlumbingBlock();
         }
     }
 
-    private void runRest(List<InitStep> finish) throws Exception {
-        var credentialSteps = credentialSteps();
-        totalSteps += credentialSteps.size();
-        totalKnown = true;
-        for (var step : credentialSteps) begin(step);
+    private void runRest(List<InitStep> finish, boolean asks) throws Exception {
+        if (asks) {
+            var credentialSteps = credentialSteps();
+            totalSteps += credentialSteps.size();
+            totalKnown = true;
+            for (var step : credentialSteps) begin(step);
+        }
         credentials.closeHttpClient();
         gitRemoteHelper().run().run();
         for (var step : finish) begin(step);
+    }
+
+    /**
+     * The steps a person runs when they need them, by name ({@code isx init <step>}), and from the
+     * menu a re-run shows (#2407): each asks a question only an established user can answer.
+     */
+    static final List<String> DEFERRED = List.of("credentials", "search-paths", "code-directories", "mcp");
+
+    /** What each of {@link #DEFERRED} is for, in one line of the menu. */
+    static final Map<String, String> PURPOSE = Map.of(
+            "credentials", "The accounts the proxy injects for your agents and tools",
+            "search-paths", "Where isx finds templates of your own, and the templates repository",
+            "code-directories", "Your repositories on this host, for fast clones and Git remotes",
+            "mcp", "Which templates an agent on this host may create instances from");
+
+    /** Whether this run is init again at a terminal, which shows {@link #DEFERRED} as a menu rather than asking each. */
+    boolean rerun;
+
+    /** Whether {@link #requireInit} started this run for another command, which then carries on: no menu. */
+    boolean automatic;
+
+    /** The step of {@link #DEFERRED} named {@code id}. */
+    InitStep deferredStep(String id) {
+        return switch (id) {
+            case "credentials" -> credentialSetup();
+            case "mcp" -> mcpStep();
+            case "search-paths" -> searchPathsStep();
+            case "code-directories" -> codeDirectoriesStep();
+            default -> throw new IllegalArgumentException(id);
+        };
+    }
+
+    /**
+     * {@code isx init <step>}: runs one of {@link #DEFERRED} alone, and nothing else, as
+     * {@code isx mcp setup} runs the approvals.
+     *
+     * @return the exit code
+     */
+    int runOne(String id) throws Exception {
+        if (!DEFERRED.contains(id)) {
+            BuildOutput.error("no init step named '" + OutputFormat.oneLine(id) + "'.",
+                    "Steps that run alone: " + String.join(", ", DEFERRED) + ".");
+            return 1;
+        }
+        if (id.equals("credentials")) {
+            if (prompts() == null) {
+                BuildOutput.error("'isx init credentials' asks for the credential, so it needs a terminal.");
+                return 1;
+            }
+            return addCredential(null);
+        }
+        // As 'isx mcp setup': the step says which templates are built, which only Incus knows
+        if (id.equals("mcp") && incus == null && prompts() != null) this.incus = RuntimeServices.incus();
+        currentStep = 0;
+        totalSteps = 1;
+        totalKnown = true;
+        begin(deferredStep(id));
+        return 0;
+    }
+
+    /** The menu of {@link #DEFERRED} on a re-run at a terminal, until the person presses Enter. */
+    void offerMenu() throws Exception {
+        if (!rerun || automatic) return;
+        var prompts = prompts();
+        if (prompts == null) return;
+        while (true) {
+            var entries = planEntries(DEFERRED.stream().map(this::deferredStep).toList());
+            var width = entries.stream().mapToInt(e -> InitPlan.stateLabel(e.assessment()).length()).max().orElse(0);
+            BuildOutput.section("More setup, also run alone as 'isx init <step>'");
+            for (int i = 0; i < entries.size(); i++) prompts.say(menuLine(i + 1, entries.get(i), width));
+            var answer = readInput(prompts.ask("Run which (number or name, Enter to finish): "));
+            if (answer.isEmpty()) return;
+            var id = menuChoice(answer);
+            if (id == null) {
+                prompts.say("No step '" + OutputFormat.oneLine(answer) + "'.");
+                continue;
+            }
+            try {
+                runOne(id);
+            } catch (Exception e) {
+                // One step failing leaves init done and the menu open for the others
+                BuildOutput.error(failure(e));
+            }
+        }
+    }
+
+    /** One line of the menu: its number, the step's name, where it stands and what it is for. */
+    static String menuLine(int number, InitPlan.Entry entry, int stateWidth) {
+        return String.format("%d  %-17s %-" + Math.max(1, stateWidth) + "s %s", number, entry.step(),
+                InitPlan.stateLabel(entry.assessment()), PURPOSE.get(entry.step()));
+    }
+
+    /** The step of {@link #DEFERRED} that {@code answer}, a number from the menu or a name, chooses; null for none. */
+    static String menuChoice(String answer) {
+        answer = answer.toLowerCase(java.util.Locale.ROOT);
+        if (DEFERRED.contains(answer)) return answer;
+        try {
+            var n = Integer.parseInt(answer);
+            return n >= 1 && n <= DEFERRED.size() ? DEFERRED.get(n - 1) : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** The steps chosen at Credential Setup, which {@link #credentialSteps} runs. */
@@ -1127,23 +1257,31 @@ public class InitCommand extends BaseCommand {
     /** The steps both platforms end with, the last being {@code service}. */
     List<InitStep> finalSteps(InitStep service) {
         return List.of(
-                new InitStep("search-paths", "Template Search Paths", new String[]{
-                        "Local directories where isx looks for custom image and",
-                        "tool definitions. Definitions found here can extend or",
-                        "override the built-in templates. Each directory should",
-                        "contain images/ and/or tools/ subdirectories with YAML",
-                        "files."}, this::setupSearchPaths, this::planSearchPaths),
-                new InitStep("code-directories", "Code Directories", new String[]{
-                        "Directories on your host containing git repositories (e.g.",
-                        "~/code). Enables fast reference clones inside containers",
-                        "and automatic git remote management — repos cloned from",
-                        "these paths get a remote named after the instance, to push",
-                        "and pull directly between container and host without",
-                        "round-tripping through GitHub. Your host files are never",
-                        "directly exposed to containers."}, this::setupHostPaths, this::planHostPaths),
+                searchPathsStep(),
+                codeDirectoriesStep(),
                 mcpStep(),
                 new InitStep("dns", "DNS Configuration", DNS_HINT, this::setupBridgeDns, this::planBridgeDns),
                 service);
+    }
+
+    InitStep searchPathsStep() {
+        return new InitStep("search-paths", "Template Search Paths", new String[]{
+                "Local directories where isx looks for custom image and",
+                "tool definitions. Definitions found here can extend or",
+                "override the built-in templates. Each directory should",
+                "contain images/ and/or tools/ subdirectories with YAML",
+                "files."}, this::setupSearchPaths, this::planSearchPaths);
+    }
+
+    InitStep codeDirectoriesStep() {
+        return new InitStep("code-directories", "Code Directories", new String[]{
+                "Directories on your host containing git repositories (e.g.",
+                "~/code). Enables fast reference clones inside containers",
+                "and automatic git remote management — repos cloned from",
+                "these paths get a remote named after the instance, to push",
+                "and pull directly between container and host without",
+                "round-tripping through GitHub. Your host files are never",
+                "directly exposed to containers."}, this::setupHostPaths, this::planHostPaths);
     }
 
     /** Agent Access over MCP, which {@code isx mcp setup} also runs alone (#2077). */
@@ -1503,7 +1641,7 @@ public class InitCommand extends BaseCommand {
         if (prompts != null) {
             credentials.setupPathList(getter, setter, skipMessage, config, prompts);
         } else {
-            BuildOutput.note("Skipped: no terminal. Add directories with " + flag + ", or run 'isx init' at a terminal.");
+            BuildOutput.note("Skipped: no terminal. Add directories with " + flag + ", or run 'isx init " + step + "' at a terminal.");
             skipped.add(step);
             credentials.printCurrentPaths(getter.apply(config));
         }
@@ -1985,7 +2123,7 @@ public class InitCommand extends BaseCommand {
         setupPathList(
                 SpawnConfig::getHostPaths,
                 SpawnConfig::setHostPaths,
-                "No host paths configured. Add them later by re-running 'isx init'"
+                "No host paths configured. Add them later with 'isx init code-directories'"
                         + " or editing ~/.config/incus-spawn/config.yaml",
                 "code-directories", codeDirAnswers, "--code-dir");
     }

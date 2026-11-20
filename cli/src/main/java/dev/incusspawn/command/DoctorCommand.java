@@ -361,6 +361,36 @@ public class DoctorCommand extends BaseCommand {
         findings.add(checkConfigFile());
         findings.add(checkCaCertificate());
         findings.addAll(checkCredentials());
+        try {
+            // With no config.yaml, checkConfigFile already says to run 'isx init', which asks each of them
+            if (Files.exists(SpawnConfig.file())) findings.addAll(notSetUp(SpawnConfig.loadStrict()));
+        } catch (IOException e) {
+            // An unreadable config.yaml reads as empty: checkConfigFile already says it is invalid
+        }
+        return findings;
+    }
+
+    /**
+     * A note for each step a person runs when they want it ({@code isx init <step>}, #2407) and
+     * has not: a capability not set up, which is never a problem.
+     * An unreadable {@code mcp.yaml} is not noted here: approvals it may hold are not missing,
+     * and {@link #mcpClientFindings} reports it where a coordinator depends on it.
+     */
+    static List<Finding> notSetUp(SpawnConfig config) {
+        var findings = new ArrayList<Finding>();
+        if (config.getSearchPaths().isEmpty()) {
+            findings.add(Finding.note("Template search paths", "(none: run 'isx init search-paths' to add yours)"));
+        }
+        if (config.getHostPaths().isEmpty()) {
+            findings.add(Finding.note("Code directories", "(none: run 'isx init code-directories' to add yours)"));
+        }
+        try {
+            if (McpConfig.load().templates().isEmpty()) {
+                findings.add(Finding.note("Agent access over MCP", "(no template approved: run 'isx init mcp')"));
+            }
+        } catch (McpConfig.Invalid e) {
+            // Said by the MCP checks
+        }
         return findings;
     }
 
