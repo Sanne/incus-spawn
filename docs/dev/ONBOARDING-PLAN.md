@@ -26,19 +26,47 @@ The first run should end with an agent running in a machine of its own, and ask 
 A first run of `isx init` asks its questions first, then works with nobody watching, in this order:
 
 1. It reads the host without changing it: which agents are installed and signed in, which credentials exist, and what the plumbing still needs.
-2. It says in a few lines what the run will do and how long it takes.
+2. It says in a few lines what the run will do and how long it takes, and starts the downloads in the background.
 3. It asks for the user's preferred agent, with the one found on the host preselected.
 4. It sets up the one credential that agent spends, and verifies it.
    A credential found on the host is confirmed with one answer, and a `gh` login found there is offered in the same answer.
 5. On Linux it asks for the sudo password, the last thing it asks.
 6. It does the host plumbing, shown as one progress block, and installs the services.
-7. It builds the built-in agent template.
-8. It branches that template and opens the agent.
+7. It builds the built-in agent template, waiting first for any download still running.
+8. It prints the completion message, then asks whether to open a first agent now.
 
 **Every question comes before the long work.**
 The plumbing and the first build take minutes, and a question in the middle of them waits for a person who has left.
 This gives up something: a person whose plumbing then fails has already given a credential.
 The credential is saved on the host, so the next run does not ask for it again.
+
+**The downloads start before the first question.**
+The base image is the longest wait of a first run, and on macOS the VM's image is another.
+Both are fetched by the host into its download cache (`DownloadCache`), checked against their pinned checksums, and need neither Incus nor sudo.
+So init starts them as soon as it has told the person, and they run while the person answers.
+The preferred agent's own download starts when that answer is given.
+These rules hold for the background downloads:
+
+- They print nothing while a question is on screen.
+  When a step needs a file that is still downloading, that step shows the download's progress and waits.
+- A download that failed in the background is not reported while the person answers.
+  The step that needs the file retries it in the foreground and reports the failure there.
+- `isx init --plan` downloads nothing, since it only reads.
+- A person who stops init early keeps what finished, and an unfinished file is discarded or resumed, never used.
+- On a fresh Linux host init continues in a second process under `sg incus-admin`.
+  Only one process downloads a file, and the other waits for it under a `HostLock`.
+
+This gives up one thing: a person who leaves at the first question has already downloaded several hundred megabytes into the cache.
+
+**The first agent opens only when the person says so.**
+An agent takes the whole terminal, so opening one unasked would hide the completion message.
+Init prints that message first, with the command that opens an agent later, and asks as its last line:
+
+```
+Open your first agent now? [Y/n]
+```
+
+Without a terminal it does not ask and opens nothing.
 
 **The services are installed without a question.**
 Today init asks whether to install them, and nearly everyone wants them; `--no-service` still declines.
