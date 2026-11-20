@@ -1343,12 +1343,16 @@ That is the `429`, its `Retry-After` and rate-limit headers, and its body.
 Build tools, `git`, `gh` and the agents decide how long to wait from those, so an answer the proxy rewrote would make them retry too early or give up.
 The proxy absorbs a `429` only by serving a cached copy in its place, or on a cache miss by waiting and asking again while the client's budget allows ("Wait out a 429 on a cache miss", #2302).
 
-A `404` that carries a `Retry-After` is a rate limit too, and the caches read it as a `429` (`Upstream.status`, #2422).
+A `404` that carries a positive `Retry-After` is a rate limit too, and the caches read it as a `429` (`Upstream.status`, #2422).
 Maven Central's edge sends a throttled host such a 404 for artifacts it has, as CI saw for `junit-4.13.2.pom` with `Retry-After: 37500`, while its 404 for a missing artifact has no `Retry-After`.
 Read as a 404, it told Maven `Could not find artifact`, which Maven then remembers in the guest's `~/.m2`, and a confirmation answered with it evicted a good copy as withdrawn.
 Read as a `429`, it starts the domain's backoff, serves cached copies unconfirmed, is waited out on a miss, and reaches the client as a `429` with upstream's headers and body.
-What it gives up: a server that sent a real 404 with a `Retry-After` would get a `429` reported in its place, which a client retries instead of failing at once.
-Only the caches read it this way; a relayed domain's 404 passes on as it came.
+What it gives up: a repository that sent a real 404 with a positive `Retry-After` would have each missing artifact handled as a throttle.
+Its domain would go into backoff, a miss would be waited out for up to about 25 s, and the client would get a `429` where a 404 let it move on to its next repository.
+A cache's domain reads it this way on every request, also those it relays without caching, such as `maven-metadata.xml` and SNAPSHOTs, for which Maven would record a 404 as missing until its update policy asks again (`Upstream.relayedStatus`).
+A private repository's domain is read this way too, though it keeps no backoff (`Upstream.cacheDomains`).
+Any other domain's 404 passes on as it came.
+A `Retry-After` of 0, or one that cannot be read, asks for no wait, so that 404 keeps its meaning.
 
 Every relayed domain passes the answer on whole: `Upstream.copyResponseHead` copies the status and every header but `Connection` and `Transfer-Encoding`.
 So does a Maven or Gradle cache miss that upstream does not answer with a `200` or a redirect, through `Upstream.relayResponse`, a `429` once its wait no longer fits.

@@ -182,6 +182,14 @@ class ArtifactCacheHandler {
         }
         privateRepositories = CachedRepository.byDomain(privateOnes);
         upstream.backoffDomains = backoffDomains(cached);
+        upstream.cacheDomains = cacheDomains(cached);
+    }
+
+    /** {@link Upstream#cacheDomains} while {@code cached} are the cached repositories. */
+    static Set<String> cacheDomains(List<CachedRepository> cached) {
+        var domains = new java.util.HashSet<>(NPM_DOMAINS);
+        for (var repository : cached) domains.add(repository.domain());
+        return Set.copyOf(domains);
     }
 
     /** {@link Upstream#backoffDomains} while {@code cached} are the cached repositories. */
