@@ -29,7 +29,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * does the file work; when the queue is full a line is dropped and counted, and the next line
  * written says how many were. Retention is by size alone: the file rolls over at
  * {@link #MAX_FILE_BYTES} and keeps {@link #KEPT} older files, so the log never holds more than
- * about {@code (KEPT + 1) * MAX_FILE_BYTES}.
+ * about {@code (KEPT + 1) * MAX_FILE_BYTES} of lines. The oldest file is first folded, on the writer
+ * thread, into daily sums beside the log ({@link EventLogFold}, #2429): lines queued meanwhile wait.
  */
 final class EventLog implements AutoCloseable {
 
@@ -230,7 +231,12 @@ final class EventLog implements AutoCloseable {
     private void roll() throws IOException {
         // A rollover that fails is not retried on every line: the file just grows until the next one
         size = 0;
-        Files.deleteIfExists(older(KEPT));
+        // The oldest file is folded into the aggregate before it goes (#2429); one that cannot be folded
+        // stays, and the file just grows until the next rollover
+        if (Files.exists(older(KEPT))) {
+            EventLogFold.fold(file, older(KEPT), Instant.now());
+            Files.delete(older(KEPT));
+        }
         for (int i = KEPT - 1; i >= 1; i--) {
             if (Files.exists(older(i))) Files.move(older(i), older(i + 1), StandardCopyOption.REPLACE_EXISTING);
         }

@@ -584,10 +584,10 @@ Beside it they show what only the instance and GitHub know: what its clones hold
 The TUI's view is the instance table with other columns, so the rows, the marks and F8 are the table's own, and marked rows are destroyed together as anywhere else.
 The Work tab is that view in a tab, and `o` stays for a person already on the instance table (Sanne on #2264).
 
-`EventLogReader` (`common`) reads the log's five files, oldest first, and matches a line to an instance by its incarnation, the listing's `created_at` (#1063).
+`EventLogReader` (`common`) reads the sums of what rolled out and then the log's five files, oldest first, and matches a line to an instance by its incarnation, the listing's `created_at` (#1063).
 A rename keeps an instance's lines, and a name branched again starts with none.
 A line the proxy wrote without an incarnation is matched by name, so it may be an earlier instance's of that name.
-The log keeps about 80 MiB, so the counts start at its oldest line, which the TUI's title and the line under the table name, with the lines the proxy lost.
+The log keeps about 80 MiB of lines and daily sums beyond, so the counts start at its oldest line, which the TUI's title and the line under the table name, with the lines the proxy lost.
 
 The log is read only when a person asks: on `isx overview`, on `o`, on entering the Work tab, and on `r` while the overview is shown.
 The guests and GitHub are asked on the same occasions, never on a live refresh.

@@ -116,4 +116,51 @@ class EventLogTest {
         var activity = new ApiActivity();
         activity.begin("w", "", 0).end();
     }
+
+    @Test
+    void theOldestFileIsFoldedIntoSumsThatTheReaderStillTotals() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        int calls = 16 * (EventLog.KEPT + 3);
+        try (var log = new EventLog(file, 4096)) {
+            log.push(new EventLog.Push(Instant.parse("2026-01-01T00:00:00Z"), "w", "inc", "o/r", 200, 1,
+                    java.util.List.of("refs/heads/fix"), java.util.List.of()));
+            for (int i = 0; i < calls; i++) {
+                log.modelCall(new EventLog.ModelCall(Instant.now().minusSeconds(86400 + calls).plusSeconds(i), "w", "inc",
+                        "d", "m", 200, 1, 1, 2, 3, 4));
+                if (i % 20 == 0) log.flush();
+            }
+            log.flush();
+        }
+        assertTrue(Files.exists(dir.resolve("events.jsonl.sums")));
+        assertFalse(Files.exists(dir.resolve("events.jsonl." + (EventLog.KEPT + 1))));
+        var effort = dev.incusspawn.proxy.EventLogReader.read(file).of("w", "inc");
+        assertEquals(calls, effort.modelCalls(), "every call is in the totals, folded or not");
+        assertEquals(calls * 2L, effort.outputTokens());
+        assertEquals(1, effort.branches().size(), "the push line of a deleted file is kept as written");
+    }
+
+    @Test
+    void aFileFoldedBeforeACrashIsNotSummedTwiceAndAnUnfoldableOneStays() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        var old = dir.resolve("events.jsonl.4");
+        Files.writeString(old, "{\"t\":\"2026-01-01T00:00:00Z\",\"kind\":\"model\",\"instance\":\"w\","
+                + "\"incarnation\":\"i\",\"model\":\"m\",\"status\":529,\"output_tokens\":5}\n"
+                + "{\"t\":\"2026-01-01T00:00:01Z\",\"kind\":\"instance\",\"x\":1,\"future\":{\"a\":[1]}}\n");
+        EventLogFold.fold(file, old, Instant.parse("2026-02-01T00:00:00Z"));
+        EventLogFold.fold(file, old, Instant.parse("2026-02-01T00:00:00Z")); // deletion never happened
+        var sums = Files.readString(dir.resolve("events.jsonl.sums"));
+        assertTrue(sums.contains("\"calls\":1"), sums);
+        assertTrue(sums.contains("\"kind\":\"instance\""), "small lines are kept");
+        assertEquals(1, sums.lines().filter(l -> l.contains("model_sum")).count());
+        Files.delete(old);
+        assertEquals(1, dev.incusspawn.proxy.EventLogReader.read(file).of("w", "i").modelCalls());
+        Files.writeString(old, "{\"t\":\"2026-01-01T00:00:00Z\",\"kind\":\"model\",\"instance\":\"w\","
+                + "\"incarnation\":\"i\",\"model\":\"m\",\"status\":529,\"output_tokens\":5}\n"
+                + "{\"t\":\"2026-01-01T00:00:01Z\",\"kind\":\"instance\",\"x\":1,\"future\":{\"a\":[1]}}\n");
+        // A sums path that cannot be written leaves the old file for the next rollover
+        Files.delete(dir.resolve("events.jsonl.sums"));
+        Files.createDirectory(dir.resolve("events.jsonl.sums"));
+        assertThrows(java.io.IOException.class, () -> EventLogFold.fold(file, old, Instant.now()));
+        assertTrue(Files.exists(old));
+    }
 }

@@ -1154,6 +1154,14 @@ Writing costs the request path one `offer` onto a bounded queue; one platform th
 When the queue is full or the write fails a line is lost, and the next line written says how many were (`kind: dropped`).
 The log gives up completeness under load for a request path that never waits on it.
 Retention is by size alone: the file rolls over at 16 MiB and four older files are kept (`events.jsonl.1` to `.4`), about 80 MiB at most, with no timer and no state beyond the file.
+Before the oldest file is deleted it is folded into `events.jsonl.sums` (`EventLogFold`, #2429), on the writer thread, so lines queued during a fold wait for it.
+A `model` line becomes a sum by UTC day, instance, incarnation, task run, model and exact status (so a day's 429s and 529s stay countable in the file, though the overview reads only calls and tokens), holding the calls, the four token counts, the duration and the first and last time.
+A `dropped` line becomes a count per day, and every other line, such as a push, a pull request or a later isx's instance and task lines, is kept as written, since they are few and tie an instance to its work.
+The sums hold ids and never labels, so purposes and names are joined at read time.
+The fold writes a temporary file and renames it over the sums before the old file is deleted, and one it cannot write leaves the old file for the next rollover.
+A `folded` marker holds each folded file's SHA-256, so a file that survived a crash between rename and delete is not summed twice.
+`EventLogReader` reads the sums first, so a reader started in that window counts the file twice until the next rollover.
+Rows older than 400 days are dropped from the sums, which otherwise grow by days times instances.
 Both the directory and the files are owner-only.
 The first call of each instance incarnation is preceded by one `kind: instance` line (#2427): the time, `instance`, `incarnation`, `template`, `purpose` (the person's, else `isx mcp`'s) and `session` (the `isx mcp` session holding it), each empty when the instance has none.
 The proxy writes it from the registry's listing, so an instance made by `isx branch` has one too, and only when the listing's view of the name is the incarnation that called, so a name branched again never takes the old one's description.
