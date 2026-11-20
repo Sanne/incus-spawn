@@ -163,6 +163,15 @@
         }
       }
     },
+    "git-identity": {
+      "type": ["object", "null"],
+      "description": "The name and email agents commit under when no GitHub account gives them one. isx init writes it only after you say yes.",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "description": "The user.name of the agents' commits."},
+        "email": {"type": "string", "description": "The user.email of the agents' commits."}
+      }
+    },
     "host-ca": {
       "type": ["object", "boolean", "null"],
       "description": "Whether the host's CA certificates are installed in instances. true or false alone is the same as propagate: with that value.",

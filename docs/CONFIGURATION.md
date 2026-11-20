@@ -278,6 +278,26 @@ drivers:
 An external tool never destroys an instance it does not own, such as your own branch of one of its instances.
 An entry isx cannot read does not grant any permission, and isx says which entry and why.
 
+## A Git identity for agents
+
+An agent commits under the name and email of its GitHub account.
+Without a GitHub account it has no name to commit under, so its commits fail.
+`git-identity:` names the identity agents commit under when no GitHub account gives them one:
+
+```yaml
+git-identity:
+  name: Jane Doe
+  email: jane@example.org
+```
+
+`isx init` offers your own `git config` name and email when you set up no GitHub account, and writes this key only if you answer yes.
+Without a terminal it writes the key only when you pass `--git-identity-from-host`.
+You may also write the key yourself.
+
+A template gets the identity when it is built, and keeps a GitHub account's identity where it has one.
+The build output and `isx doctor` name the identity agents commit under and where it came from.
+An instance stores it in `/etc/gitconfig`, which the agent's own `~/.gitconfig` overrides.
+
 ## A service on the host
 
 A service listening only on your host's loopback, such as Ollama, can be made reachable from every instance.

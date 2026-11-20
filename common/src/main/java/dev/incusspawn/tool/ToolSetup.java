@@ -234,6 +234,14 @@ public interface ToolSetup {
     default String unbakedIdentityWarning(String accountName) { return null; }
 
     /**
+     * {@link #unbakedIdentityWarning(String)}, knowing the config the build read: an identity
+     * config.yaml supplies some other way may make the warning untrue.
+     */
+    default String unbakedIdentityWarning(dev.incusspawn.config.SpawnConfig config, String accountName) {
+        return unbakedIdentityWarning(accountName);
+    }
+
+    /**
      * What an {@link #bakedAccountIdentity} stamp becomes when account {@code from} is renamed
      * to {@code to}, or {@code null} when the stamp does not name the account -- a Claude auth
      * mode, which an account's name could coincide with without being it. Pure string work, so

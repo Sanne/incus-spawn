@@ -257,6 +257,10 @@ An isx running inside an instance shares that instance's grant for a namespace o
 An `openai` account may be `type: chatgpt` (#1332, experimental, proxy side only so far): the ChatGPT session stays on the host, guests hold proof-bearing look-alikes, and `ChatGptRoute` serves an explicit allowlist of Codex operations.
 See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 
+**A Git identity no account supplies** (#2410): `git-identity:` in `config.yaml` (`GitIdentity`) names the author agents commit as when no GitHub account gives one.
+isx writes it only after a person's yes: init's question, where Enter is No, or `--git-identity-from-host` (`AgentGitIdentityStep`).
+A build writes it to the guest's `/etc/gitconfig`, marked as isx's, which gh's `~/.gitconfig` overrides, so the account-identity stamps and reconcile never see it (`AgentGitIdentity`, design/accounts.md "A Git identity no account supplies").
+
 **The event log** (#2241): the proxy appends one JSON line per ended model call, push and pull request opened to `~/.local/state/incus-spawn/events/events.jsonl` (`EventLog`), holding no content and never read back to decide routing; the file rolls at 16 MiB keeping four (design/proxy.md "The event log").
 `EventLogReader` (`common`) reads it back by incarnation, only on demand: for `isx overview` and for the TUI's Work tab and `o`, never for `isx list` (design/terminal.md "The overview of what each instance did").
 The same reads run a read-only script in each running guest for what its clones hold (`WorkState`, `unknown` whenever the read is not exact) and ask GitHub whether each pull request was merged, with the instance's own GitHub account or not at all (`PullRequestStates`).

@@ -564,6 +564,27 @@ The deeper fix would be to stop telling the container which mode it is in at all
 So dropping `CLAUDE_CODE_USE_VERTEX` and always baking the standard placeholder would make all three Claude types environmentally identical and every swap live.
 The open risks are Vertex model-ID mapping and the non-messages endpoints that currently fall through to `api.anthropic.com`; both want measuring against a real Vertex project rather than arguing about.
 
+## A Git identity no account supplies (#2410)
+
+Without a GitHub account an agent has no name to commit under, since only `gh` writes one.
+`git-identity:` in config.yaml names one for that case (`GitIdentity`), and isx writes the key only after a person said yes to it.
+`isx init` asks once the credentials are set and only when no GitHub account is usable, showing the host's own `git config` name and email (`AgentGitIdentityStep`).
+Enter is No, and without a terminal the answer is No unless `--git-identity-from-host` gives it.
+This gives up the convenience of a first run that commits without a question: committing under a person's own name is acceptable only as a choice they saw.
+
+A build writes the key to the guest's `/etc/gitconfig` (`AgentGitIdentity`), not to the agent's `~/.gitconfig`, where `gh` writes the account's identity.
+Git reads the system file first, so the account's identity wins wherever there is one, in any order the two are written.
+Nothing the account code decides by changes: `GhSetup.lacksBakedIdentity` reads `~/.gitconfig` alone, so a template built with the fallback is still stamped `<none>`, and an account configured later is derived into its branches by the reconcile above.
+Written to `~/.gitconfig` instead, the fallback would read as a baked identity, and an older template's first reconcile would stamp it as the account's.
+The system file reaches a template without `gh` too.
+Its lines carry `isx.git-identity = config.yaml`, so a build after the key is removed takes them out again.
+A system identity a template wrote itself carries no marker, and the build neither overwrites nor removes it, even when it holds only a name or only an email.
+The build report then says that config.yaml's identity was not written, and why.
+A write that fails fails the build: each `git config` in the guest's script exits on its own failure, since `set -e` does not stop at a failed command inside an `&&` list.
+The build names whom agents commit as and the file it came from, and `GhSetup`'s "no author" warning is not given while the key is set (`ToolSetup.unbakedIdentityWarning(SpawnConfig, String)`).
+`isx doctor` names the key on the host, and inside an instance the identity Git resolves with its source (`git config --show-origin`).
+A change to the key reaches a template at its next build, never a running branch.
+
 ## The help assistant (`isx ask`)
 
 **AI help credentials (`isx ask` / `?` in the TUI):** `AiHelpClient.targets()` lists the accounts satisfying `ClaudeAccount::servesDirectApi` (the default account first), then `openai`; the first is the one used by default.

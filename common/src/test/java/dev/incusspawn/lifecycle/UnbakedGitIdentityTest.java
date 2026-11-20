@@ -89,6 +89,21 @@ class UnbakedGitIdentityTest {
         assertEquals(List.of(new GhSetup().unbakedIdentityWarning("")), warnings);
     }
 
+    /**
+     * The git-identity of config.yaml (#2410) is no account's: the stamp still says none, so an
+     * account configured later is derived into the branches, and the build does not say that
+     * commits have no author, since they have that identity's.
+     */
+    @Test
+    void aBuildWithAFallbackIdentityIsStillStampedAsHavingNoAccountIdentity() {
+        var config = withoutToken();
+        config.useGitIdentity(new dev.incusspawn.config.GitIdentity("Jane Doe", "jane@example.org"));
+        var warnings = new ArrayList<String>();
+        assertEquals(verified(Metadata.ACCOUNT_IDENTITY_NONE),
+                build(config, Map.of(), new RecordingGh(), true, warnings));
+        assertEquals(List.of(), warnings);
+    }
+
     @Test
     void aBuildWithoutGhIsStampedWithNothingButVerified() {
         assertEquals(Map.of(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true"), builtStamps(withoutToken(), Set.of()),

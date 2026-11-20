@@ -154,6 +154,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Vertex AI: container in Vertex mode vs standard mode
 - [Credential accounts and proofs](design/accounts.md)
   - Credential accounts
+  - A Git identity no account supplies (#2410)
   - The help assistant (`isx ask`)
 - [Host resources](design/host-resources.md)
   - Host Resources

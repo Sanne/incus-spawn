@@ -30,6 +30,9 @@ See design/host-resources.md "Project-local templates are confined to their proj
 **Drivers** (`drivers:`, `Drivers`, #1720): a raw section like `host-routes:`; a tool name (`Metadata.ownerNameProblem`, never `mcp`) mapped to `destroy:` (a boolean, default false).
 An unknown key, a wrong type or a bad name drops the entry with a warning, and a dropped entry grants nothing.
 Only `isx destroy --owner` reads it, and only config.yaml declares it: never a template, never the tool.
+**Git identity** (`git-identity:`, `GitIdentity`, #2410): a raw section of `name:` and `email:`, the author agents commit as when no GitHub account gives one.
+Only a person's yes writes it (`AgentGitIdentityStep`: init's question, Enter is No, or `--git-identity-from-host`); a wrong section is ignored with a warning and sets no identity.
+A build writes it to the guest's `/etc/gitconfig` (`AgentGitIdentity`), which gh's `~/.gitconfig` overrides, so the account-identity stamps and reconcile never see it (design/accounts.md "A Git identity no account supplies").
 **Host routes** (`host-routes:`, `HostRoutes`): a raw section like `artifact-cache:`, so any shape loads and is written back as it was; a name under `.internal` mapped to `target:` (`host:port` on loopback) and a required, non-empty `templates:` list (no route admits every instance; decided on #936).
 `HostRoutes.routes` checks each entry against the intercepted domains and drops a wrong one with a warning naming it; an unknown key drops the entry, so a misspelt `templates:` drops it too, never widens it.
 Keep the entry keyed by name with its filter as a field: #935's per-instance grants go beside `templates:`.

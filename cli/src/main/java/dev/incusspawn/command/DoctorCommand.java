@@ -297,6 +297,7 @@ public class DoctorCommand extends BaseCommand {
         findings.addAll(checkHostConfig());
         // Layer 1b: when isx runs inside an instance, the credentials it was given
         findings.addAll(checkInstanceCredentials());
+        findings.addAll(checkInstanceGitIdentity());
 
         // Layer 2: Incus daemon
         boolean incusUp;
@@ -655,7 +656,78 @@ public class DoctorCommand extends BaseCommand {
         var findings = new ArrayList<>(credentialFindings(config, ToolProxyResolver.proxyToolSetups(config),
                 toolInUse(), Inheritance.here()));
         findings.addAll(unreadKeyFindings(config.tree(), UnreadConfigKeys.trustedTools(config)));
+        var gitIdentity = hostGitIdentityFinding(config);
+        if (gitIdentity != null) findings.add(gitIdentity);
         return findings;
+    }
+
+    /**
+     * The {@code git-identity:} of config.yaml (#2410): whom agents commit as where no GitHub
+     * account gives them a name, or why the section is ignored; null when there is none.
+     */
+    static Finding hostGitIdentityFinding(SpawnConfig config) {
+        var problems = new ArrayList<String>();
+        var identity = config.gitIdentity(problems::add);
+        if (identity != null) {
+            return Finding.ok("Git identity for agents", "(" + identity + ", from the git-identity in config.yaml,"
+                    + " for templates built with no GitHub account)");
+        }
+        if (problems.isEmpty()) return null;
+        return Finding.warn("Git identity for agents", "(" + problems.getFirst() + ")",
+                new Remediation("Give git-identity in config.yaml a name: and an email:", false, null));
+    }
+
+    /**
+     * Inside an instance, whom this user's commits are made as and where that came from (#2410):
+     * the GitHub account's identity in {@code ~/.gitconfig}, the git-identity of config.yaml in
+     * {@code /etc/gitconfig}, or none.
+     */
+    private List<Finding> checkInstanceGitIdentity() {
+        if (!Files.exists(Path.of(dev.incusspawn.proxy.CredentialProof.GUEST_PATH))) return List.of();
+        if (!dev.incusspawn.util.HostPath.isOnPath("git")) return List.of();
+        return List.of(instanceGitIdentityFinding(gitConfig("--show-origin", "--get", "user.name")
+                + gitConfig("--show-origin", "--get", "user.email")
+                + gitConfig("--file", dev.incusspawn.lifecycle.AgentGitIdentity.SYSTEM_FILE, "--get",
+                        dev.incusspawn.lifecycle.AgentGitIdentity.MARKER_KEY)));
+    }
+
+    /** The finding for what {@code git config --show-origin} printed for the name, then the email. */
+    static Finding instanceGitIdentityFinding(String showOrigin) {
+        var effective = dev.incusspawn.lifecycle.AgentGitIdentity.parse(showOrigin);
+        if (effective == null) {
+            return Finding.warn("Git identity", "(none: commits made here have no author)",
+                    new Remediation("On the host, add a GitHub account with 'isx account add github', or run"
+                            + " 'isx init --git-identity-from-host', then rebuild the template", false, null));
+        }
+        // The guest's own text, on one line
+        return Finding.ok("Git identity", "(" + OutputFormat.oneLine(effective.identity().toString())
+                + ", from " + effective.source().description() + ")");
+    }
+
+    /** What {@code git config <args>} prints, or nothing when the key is unset. */
+    private static String gitConfig(String... args) {
+        try {
+            var command = new ArrayList<String>(List.of("git", "config"));
+            command.addAll(List.of(args));
+            // From /, as a build reads it: a repository's own identity is not the instance's
+            var process = new ProcessBuilder(command)
+                    .directory(new java.io.File("/"))
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")))
+                    .start();
+            // The wait first, so a hung git cannot block the read; one line fits the pipe
+            if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return "";
+            }
+            var out = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            return process.exitValue() == 0 ? out : "";
+        } catch (IOException e) {
+            return "";
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "";
+        }
     }
 
     /**
