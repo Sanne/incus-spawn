@@ -94,12 +94,31 @@ public final class EventLogReader {
     }
 
     /**
+     * What an instance was, from the {@code instance} line the proxy wrote when it first saw the
+     * incarnation (#2427); the newest line wins, so a purpose set later replaces the first. Each
+     * text is empty when the instance had none, and is the guest-reachable stamp's text: untrusted,
+     * to be shown through {@code OutputFormat.oneLine}. {@code at} is the newest line's time.
+     */
+    public record Described(Instant at, String template, String purpose, String session) {}
+
+    /**
      * The whole log, read once. {@code since} is the time of its oldest readable line, null when
      * there is none; {@code files} says whether any file was there at all.
      */
     public record Log(Map<String, Effort> byIncarnation, Map<String, Effort> byName, Instant since,
-                      long droppedLines, long unreadableLines, boolean files) {
-        public static final Log EMPTY = new Log(Map.of(), Map.of(), null, 0, 0, false);
+                      long droppedLines, long unreadableLines, boolean files,
+                      Map<String, Described> describedByIncarnation, Map<String, Described> describedByName) {
+        public static final Log EMPTY = new Log(Map.of(), Map.of(), null, 0, 0, false, Map.of(), Map.of());
+
+        /**
+         * What the instance of this name and incarnation was, or null when the log has no line for
+         * it, as with a log an older proxy wrote or one that rolled past it. The incarnation's line
+         * is never replaced by another of the same name; the name's own is only for a line written without one.
+         */
+        public Described described(String name, String incarnation) {
+            var byCreation = incarnation == null || incarnation.isEmpty() ? null : describedByIncarnation.get(incarnation);
+            return byCreation != null ? byCreation : describedByName.get(name);
+        }
 
         /** What the instance of this name and incarnation ({@code created_at}) did. */
         public Effort of(String name, String incarnation) {
@@ -168,6 +187,8 @@ public final class EventLogReader {
     private static final class Reading {
         final Map<String, Tally> byIncarnation = new LinkedHashMap<>();
         final Map<String, Tally> byName = new HashMap<>();
+        final Map<String, Described> describedByIncarnation = new HashMap<>();
+        final Map<String, Described> describedByName = new HashMap<>();
         Instant since;
         long dropped, unreadable;
         boolean files;
@@ -206,8 +227,20 @@ public final class EventLogReader {
             }
             var name = line.pathText("instance", "");
             if (name.isEmpty()) return;
-            if (!kind.equals("model") && !kind.equals("github")) return; // a kind of a later isx
+            if (!kind.equals("model") && !kind.equals("github") && !kind.equals("instance")) return; // a kind of a later isx
             var incarnation = line.pathText("incarnation", "");
+            // An instance line describes; it gives no instance an effort it did not make
+            if (kind.equals("instance")) {
+                var d = new Described(at, line.pathText("template", ""), line.pathText("purpose", ""),
+                        line.pathText("session", ""));
+                var kept = (incarnation.isEmpty() ? describedByName : describedByIncarnation)
+                        .get(incarnation.isEmpty() ? name : incarnation);
+                if (kept == null || !at.isBefore(kept.at())) {
+                    (incarnation.isEmpty() ? describedByName : describedByIncarnation)
+                            .put(incarnation.isEmpty() ? name : incarnation, d);
+                }
+                return;
+            }
             var tally = (incarnation.isEmpty() ? byName : byIncarnation)
                     .computeIfAbsent(incarnation.isEmpty() ? name : incarnation, k -> new Tally());
             switch (kind) {
@@ -250,7 +283,8 @@ public final class EventLogReader {
             byIncarnation.forEach((k, t) -> incarnations.put(k, t.effort()));
             var names = new HashMap<String, Effort>();
             byName.forEach((k, t) -> names.put(k, t.effort()));
-            return new Log(Map.copyOf(incarnations), Map.copyOf(names), since, dropped, unreadable, files);
+            return new Log(Map.copyOf(incarnations), Map.copyOf(names), since, dropped, unreadable, files,
+                    Map.copyOf(describedByIncarnation), Map.copyOf(describedByName));
         }
     }
 

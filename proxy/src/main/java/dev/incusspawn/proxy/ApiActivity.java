@@ -39,6 +39,12 @@ final class ApiActivity {
     /** Where each ended model call is recorded (#2241); null records nothing. */
     private volatile EventLog events;
 
+    /** What an instance is, for its {@code instance} line (#2427); null describes nothing. */
+    private volatile java.util.function.Function<String, InstanceRegistry.Description> describer;
+    /** The description last written per instance and incarnation, so a line is written once and again only when it changes. */
+    private final ConcurrentHashMap<String, InstanceRegistry.Description> described = new ConcurrentHashMap<>();
+    private static final int DESCRIBED_MAX = 4096;
+
     ApiActivity() {
         this(System::currentTimeMillis);
     }
@@ -51,6 +57,33 @@ final class ApiActivity {
     /** Records every model call that ends from now on in {@code events}, null for none. */
     void recordTo(EventLog events) {
         this.events = events;
+    }
+
+    /** Describes each instance in the event log from {@code describer}, which may return null. */
+    void describeWith(java.util.function.Function<String, InstanceRegistry.Description> describer) {
+        this.describer = describer;
+    }
+
+    /**
+     * Writes the instance line of {@code instance} before its first event-log line, and another
+     * when its description changed (the last line wins). Nothing is written when the listing's
+     * view of the name is not the incarnation that called: the next call tries again.
+     */
+    private void describe(EventLog log, String instance, String incarnation) {
+        var lookup = describer;
+        if (lookup == null || instance == null) return;
+        var description = lookup.apply(instance);
+        if (description == null || !java.util.Objects.equals(description.incarnation(), incarnation == null ? "" : incarnation)) return;
+        var key = instance + "\0" + description.incarnation();
+        if (description.equals(described.get(key))) return;
+        // Bounded: a flush only repeats lines, the reader taking the last
+        if (described.size() >= DESCRIBED_MAX) described.clear();
+        described.put(key, description);
+        // A line the log dropped is tried again with the next call
+        if (!log.instance(new EventLog.Instance(Instant.ofEpochMilli(clock.getAsLong()), instance, description.incarnation(),
+                description.template(), description.purpose(), description.session()))) {
+            described.remove(key, description);
+        }
     }
 
     /**
@@ -89,6 +122,8 @@ final class ApiActivity {
      */
     Exchange begin(String instance, String incarnation, long view) {
         var started = clock.getAsLong();
+        var log = events;
+        if (log != null) describe(log, instance, incarnation);
         return new Exchange(charge(instance, incarnation, view, c -> {
             synchronized (c) {
                 c.requests++;
@@ -381,7 +416,9 @@ final class ApiActivity {
         var log = events;
         if (log == null || instance == null) return null;
         var kind = GitHubCall.classify(domain, method, path, encoded);
-        return kind == null ? null : new GitHubCall(log, instance, incarnation, kind, path, clock.getAsLong());
+        if (kind == null) return null;
+        describe(log, instance, incarnation);
+        return new GitHubCall(log, instance, incarnation, kind, path, clock.getAsLong());
     }
 
     /** One model call. Ends once, however its response finishes: completed, failed or abandoned. */

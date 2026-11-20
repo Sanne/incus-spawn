@@ -258,6 +258,7 @@ An `openai` account may be `type: chatgpt` (#1332, experimental, proxy side only
 See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 
 **The event log** (#2241): the proxy appends one JSON line per ended model call, push and pull request opened to `~/.local/state/incus-spawn/events/events.jsonl` (`EventLog`), holding no content and never read back to decide routing; the file rolls at 16 MiB keeping four (design/proxy.md "The event log").
+A `kind: instance` line precedes an incarnation's first logged call with its template, purpose and `isx mcp` session (#2427), written by the proxy from the registry's listing; its text is the instance's stamps, so untrusted, and a later line for the same incarnation replaces it (`EventLogReader.Log.described`).
 `EventLogReader` (`common`) reads it back by incarnation, only on demand: for `isx overview` and for the TUI's Work tab and `o`, never for `isx list` (design/terminal.md "The overview of what each instance did").
 The same reads run a read-only script in each running guest for what its clones hold (`WorkState`, `unknown` whenever the read is not exact) and ask GitHub whether each pull request was merged, with the instance's own GitHub account or not at all (`PullRequestStates`).
 The same exec reads the newest sessions' first ask and closing message of Claude Code, Codex, Pi and opencode (`GuestRead`, one `AgentSessions.GuestReader` each), scrubbed and bounded, for the DONE column; `untouched` only when nothing says otherwise (`AgentSessions.Summary`).

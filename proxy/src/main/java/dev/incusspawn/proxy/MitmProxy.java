@@ -147,7 +147,7 @@ public class MitmProxy {
      * Each instance's model calls and all its traffic, for {@code /activity} (#898, #935).
      * Replaced only by a test, before any request, to give it a clock of its own.
      */
-    ApiActivity apiActivity = new ApiActivity();
+    ApiActivity apiActivity = describingActivity();
 
     /** ChatGPT sessions held on the host for Codex in instances (#1332). */
     final ChatGptRoute chatGpt;
@@ -371,6 +371,15 @@ public class MitmProxy {
 
     public void setDnsConfigured(boolean configured) {
         this.dnsConfigured = configured;
+    }
+
+    private ApiActivity describingActivity() {
+        var activity = new ApiActivity();
+        activity.describeWith(name -> {
+            var registry = instanceRegistry;
+            return registry == null ? null : registry.description(name);
+        });
+        return activity;
     }
 
     /** The registry callers are identified by, or null before {@link #setIncusClient}. */
