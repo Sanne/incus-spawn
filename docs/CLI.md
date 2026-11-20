@@ -292,7 +292,7 @@ The instance must be running: `isx exec` does not start it, and exits if it is s
 The command runs as `agentuser` in a login shell, with no terminal.
 Its stdout and stderr are those of `isx exec`, and isx reports its own progress on stderr.
 
-`isx exec` exits with the exit code of the command, or 125 when isx fails before the command runs, such as for a stopped instance.
+`isx exec` exits with the exit code of the command, or 125 when isx fails instead of the command, such as for a stopped instance.
 
 Each word after `--` reaches the command unchanged.
 For pipes or `&&`, run a shell:
@@ -302,7 +302,10 @@ isx exec my-box -- bash -c 'make test | tee test.log'
 ```
 
 Start the instance with [`isx start`](#isx-start) and stop it with [`isx stop`](#isx-stop).
+
 Interrupting `isx exec` ends the command in the instance.
+So does closing what reads its output, as in `isx exec my-box -- yes | head -1`, and then `isx exec` exits 141.
+It waits for a command for up to four hours, then ends it and exits 125.
 
 ## `isx purpose`
 
@@ -1313,7 +1316,7 @@ A plain `ssh <name>` uses the instance's own Host block, which never starts a st
 | 0 | Success, including a listing with no results |
 | 1 | The command failed, with the reason on stderr |
 | 2 | The command line could not be parsed, with the usage on stderr |
-| 125 | `isx exec`: isx failed before the command ran |
+| 125 | `isx exec`: isx failed, not the command |
 | 3 | `isx proxy status` only: the proxy runs on an old bridge address |
 | 4 | `isx vm stop --require-clean`: the VM is stopped, but with signals rather than a guest shutdown. `isx proxy status`: the proxy holding its ports is another user's |
 | 75 | `isx init --no-sudo`: steps that need root are waiting in the script it names, for you to run |

@@ -123,6 +123,15 @@ class ExecScriptTest {
     }
 
     @Test
+    void aRunThatEndsLeavesNoPidFileAndKeepsItsExitCode() throws Exception {
+        // A stale one would name a session id the guest may since have given to something else
+        var r = run(build(home.toString(), Map.of(), "test -f \"$HOME/.isx-mcp/run/exec-1-1.pid\" && exit 9", null));
+        assertEquals(9, r.exit(), "the pid file is there while the command runs; " + r.stderr());
+        assertFalse(Files.exists(home.resolve(".isx-mcp/run/exec-1-1.pid")), "and gone once it ended");
+        assertEquals(0, run(build(home.toString(), Map.of(), "true", null)).exit());
+    }
+
+    @Test
     void theRunsOwnBookkeepingLeavesTheCallersEnvironmentAlone() throws Exception {
         var r = run(build(home.toString(), Map.of("w", "mine"), "echo \"$w\"", null));
         assertEquals("mine\n", r.stdout());
@@ -139,7 +148,7 @@ class ExecScriptTest {
         try {
             assertTrue(p.waitFor(10, TimeUnit.SECONDS), "the run waited on a FIFO");
             assertEquals("ran\n", new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
-            assertTrue(Files.isRegularFile(pidFile), "the FIFO is replaced, never written through");
+            assertFalse(Files.exists(pidFile), "the FIFO is replaced, never written through, and the pid file then removed");
         } finally {
             p.descendants().forEach(ProcessHandle::destroyForcibly);
             p.destroyForcibly();
