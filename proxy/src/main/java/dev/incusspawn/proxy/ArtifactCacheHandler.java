@@ -336,9 +336,10 @@ class ArtifactCacheHandler {
                             req.headers().remove("Accept-Encoding");
                             return afterConnect(upstream.sendProbe(req, (resp, read) -> resp.end().map(v -> {
                                 var digest = ManifestCache.usableDigest(resp.getHeader("Docker-Content-Digest"));
-                                return resp.statusCode() == 200
+                                var status = Upstream.status(resp);
+                                return status == 200
                                         ? new SidecarAnswer(200, digest == null ? null : digest.getBytes(StandardCharsets.US_ASCII), true)
-                                        : new SidecarAnswer(resp.statusCode(), null, true, errorHeaders(resp));
+                                        : new SidecarAnswer(status, null, true, errorHeaders(resp));
                             })));
                         }))
                 .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE));
@@ -432,7 +433,7 @@ class ArtifactCacheHandler {
             // The copy is served as stored, so it is stored as sent
             upReq.headers().remove("Accept-Encoding");
             upReq.send().onSuccess(upResp -> {
-                upstream.throttles.answered(domain, upResp.statusCode());
+                upstream.throttles.answered(domain, Upstream.status(upResp));
                 var answered = ManifestCache.usableDigest(upResp.getHeader("Docker-Content-Digest"));
                 var digest = tag == null ? reference : answered;
                 var type = upResp.getHeader("Content-Type");
@@ -523,7 +524,7 @@ class ArtifactCacheHandler {
         return retryOnceAfterConnect(() -> upstream.requestWithAsyncDns(upstream.probeClient, options)
                 .compose(req -> afterConnect(upstream.sendProbe(req, (resp, read) -> resp.end().map(v -> {
                     var challenge = resp.getHeader("WWW-Authenticate");
-                    return new SidecarAnswer(resp.statusCode(), null, true,
+                    return new SidecarAnswer(Upstream.status(resp), null, true,
                             challenge == null ? List.of() : List.of(Map.entry("WWW-Authenticate", challenge)));
                 })))));
     }
@@ -591,7 +592,7 @@ class ArtifactCacheHandler {
             upReq.headers().remove("Accept-Encoding");
 
             upReq.send().onSuccess(upResp -> {
-                var statusCode = upResp.statusCode();
+                var statusCode = Upstream.status(upResp);
                 // Every answer, a redirect included: the domain answered, whatever its target says
                 upstream.throttles.answered(domain, statusCode);
 
@@ -768,7 +769,7 @@ class ArtifactCacheHandler {
             redReq.putHeader("Host", redirectHost);
 
             redReq.send().onSuccess(redResp -> {
-                var statusCode = redResp.statusCode();
+                var statusCode = Upstream.status(redResp);
                 // The target's own limit, under its own name, not the domain that redirected there
                 upstream.throttles.answered(redirectHost, statusCode);
                 if (statusCode == 200) {
@@ -1130,13 +1131,14 @@ class ArtifactCacheHandler {
                 return;
             }
             // Under the host the resume asked, a redirect's target included, not the domain the client named
-            upstream.throttles.answered(resp.request().authority().host(), resp.statusCode());
-            if (resp.statusCode() == 206 && resumesAt(resp, resumeAt)) {
+            var status = Upstream.status(resp);
+            upstream.throttles.answered(resp.request().authority().host(), status);
+            if (status == 206 && resumesAt(resp, resumeAt)) {
                 attach(resp);
                 resumeWhenWritable();
             } else {
                 resp.request().reset();
-                if (resp.statusCode() >= 500 || resp.statusCode() == 429) {
+                if (status >= 500 || status == 429) {
                     // An overloaded upstream, as a stall often is: tried again like a failed connect
                     broken(new IOException("upstream answered " + resp.statusCode()), true);
                     return;
@@ -2374,7 +2376,7 @@ class ArtifactCacheHandler {
             req.idleTimeout(wait);
             req.putHeader("Host", mirror.host());
             req.send().onSuccess(resp -> {
-                var status = resp.statusCode();
+                var status = Upstream.status(resp);
                 // Under the mirror's own name: its limit is not the repository's
                 upstream.throttles.answered(mirror.host(), status);
                 if (status == 200) {
@@ -2700,7 +2702,7 @@ class ArtifactCacheHandler {
         if (credential != null) options.putHeader(credential.header(), credential.value());
         return retryOnceAfterConnect(() -> upstream.requestWithAsyncDns(upstream.probeClient, options)
                         .compose(req -> afterConnect(upstream.sendProbe(req, (resp, read) -> resp.end().map(v -> {
-                            var status = resp.statusCode();
+                            var status = Upstream.status(resp);
                             if (status != 200) return new SidecarAnswer(status, null, true);
                             var hex = revalidation.checksumFrom(resp);
                             if (hex == null) warnHeaderless(domain, path, revalidation);
@@ -2805,7 +2807,7 @@ class ArtifactCacheHandler {
     private static Future<SidecarAnswer> readSmallBody(HttpClientResponse resp, int maxBytes, Runnable read) {
         var promise = Promise.<SidecarAnswer>promise();
         var body = Buffer.buffer();
-        var status = resp.statusCode();
+        var status = Upstream.status(resp);
         // An error goes to the client with these when nothing stands in for it: when to retry, and what its body is
         var headers = status >= 500 || status == 429 ? errorHeaders(resp) : List.<Map.Entry<String, String>>of();
         resp.handler(chunk -> {

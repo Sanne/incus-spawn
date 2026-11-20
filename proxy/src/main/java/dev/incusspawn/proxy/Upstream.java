@@ -229,7 +229,7 @@ class Upstream {
         // Over when the response has ended, not when the exchange has: it may go on to follow a redirect
         var over = Promise.<Void>promise();
         var result = req.send().compose(resp -> {
-            throttles.answered(req.authority().host(), resp.statusCode());
+            throttles.answered(req.authority().host(), status(resp));
             read.run();
             resp.end().onComplete(r -> over.tryComplete());
             return exchange.apply(resp, read);
@@ -279,7 +279,7 @@ class Upstream {
         return connected.andThen(ar -> {
             if (ar.succeeded()) {
                 ar.result().response().onSuccess(resp -> {
-                    if (resp.statusCode() == 429) throttled(host, resp.getHeader("Retry-After"), sent);
+                    if (status(resp) == 429) throttled(host, resp, sent);
                     else endBackoff(host, sent);
                 });
             } else if (cutShort && isTimeout(ar.cause())) {
@@ -298,13 +298,14 @@ class Upstream {
      * start it again, at the same length, so a lasting rate limit costs one refused request per
      * backoff.
      */
-    private void throttled(String host, String retryAfter, long sent) {
+    private void throttled(String host, HttpClientResponse resp, long sent) {
+        var retryAfter = resp.getHeader("Retry-After");
         var given = DownloadCache.retryAfter(retryAfter);
         var length = given != null ? given : Duration.ofSeconds(UNREACHABLE_BACKOFF_SECONDS);
         if (length.isZero()) {
             endBackoff(host, sent);
         } else if (startBackoff(host, length)) {
-            ProxyLog.warn(host + " answered 429" + (given != null ? " (Retry-After " + retryAfter.trim() + ")" : "")
+            ProxyLog.warn(host + " answered " + resp.statusCode() + (given != null ? " (Retry-After " + retryAfter.trim() + ")" : "")
                     + "; " + servingUnconfirmed(host, length.toSeconds()));
         }
     }
@@ -905,6 +906,16 @@ class Upstream {
         upReq.headers().remove("Expect");
     }
 
+    /**
+     * Upstream's status as a cache reads it: a 404 that says when to ask again is a rate limit, which
+     * Maven Central's edge sends a throttled host in place of a 429 (#2422), so it reads as 429. A 404
+     * for a missing artifact carries no {@code Retry-After}, and keeps its meaning.
+     */
+    static int status(HttpClientResponse resp) {
+        var status = resp.statusCode();
+        return status == 404 && resp.getHeader("Retry-After") != null ? 429 : status;
+    }
+
     /** Upstream's status and headers, for a response relayed as it is. */
     void copyResponseHead(HttpClientResponse upResp, HttpServerResponse clientResp) {
         clientResp.setStatusCode(upResp.statusCode());
@@ -946,6 +957,10 @@ class Upstream {
     /** Relays upstream's response, head and body, as {@link #relayBody} does the body. */
     void relayResponse(HttpServerRequest clientReq, String domain, HttpClientResponse upResp, long since) {
         copyResponseHead(upResp, clientReq.response());
+        // A rate limit, never "not found": Maven would remember that the artifact does not exist
+        if (status(upResp) != upResp.statusCode()) {
+            clientReq.response().setStatusCode(429).setStatusMessage("Too Many Requests");
+        }
         relayBody(clientReq, domain, new ResponseHold(upResp), since);
     }
 

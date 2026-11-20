@@ -2544,6 +2544,68 @@ class ArtifactCacheProxyTest {
         assertThrottledAsUpstreamSent(get(CENTRAL, JAR), "later");
     }
 
+    /**
+     * Maven Central's edge answers a rate-limited client 404 with a {@code Retry-After} (#2422), where
+     * an artifact it does not have gets no {@code Retry-After}: a throttle, as a 429 is.
+     */
+    static Reply throttledAsNotFound(String body) {
+        return new Reply(404, body.getBytes(), null, null, Map.of("Retry-After", "17",
+                "X-RateLimit-Remaining", "0", "Content-Type", "application/json"));
+    }
+
+    @Test
+    void notFoundWithRetryAfterOnAMissReachesTheClientAsA429() throws Exception {
+        routes.put(CENTRAL + " " + JAR, throttledAsNotFound("later"));
+        var before = proxy.upstream.throttles.snapshot().get(CENTRAL);
+        var refusals = before == null ? 0 : before.refusals();
+
+        // A 404 would tell Maven the artifact does not exist, and it would remember that
+        assertThrottledAsUpstreamSent(get(CENTRAL, JAR), "later");
+        assertTrue(proxy.upstream.throttles.snapshot().get(CENTRAL).refusals() > refusals,
+                "counted as the refusal it is");
+    }
+
+    @Test
+    void notFoundWithRetryAfterOnASidecarReachesTheClientAsA429() throws Exception {
+        routes.put(CENTRAL + " " + JAR + ".sha1", throttledAsNotFound("{\"slow\":\"down\"}"));
+        assertThrottledAsUpstreamSent(get(CENTRAL, JAR + ".sha1"), "{\"slow\":\"down\"}");
+    }
+
+    @Test
+    void notFoundWithRetryAfterAtARedirectTargetReachesTheClientAsA429() throws Exception {
+        var plugin = "/m2/org/example/redirected/1.0/redirected-1.0.pom";
+        var target = "/maven2/org/example/redirected/1.0/redirected-1.0.pom";
+        routes.put(PORTAL + " " + plugin, new Reply(302, null, "https://" + CENTRAL + target));
+        routes.put(CENTRAL + " " + target, throttledAsNotFound("later"));
+        assertEquals(429, get(PORTAL, plugin).status());
+    }
+
+    @Test
+    void notFoundWithRetryAfterOnAProbeServesTheCachedCopyAndStartsTheBackoff() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+
+        routes.put(CENTRAL + " " + JAR, throttledAsNotFound(""));
+        hits.clear();
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertEquals(1, headsOn(CENTRAL, JAR));
+        assertTrue(Files.exists(cached(CENTRAL, JAR)), "a throttle says nothing of a withdrawal");
+        assertTrue(proxy.artifactCache.inBackoff(CENTRAL), "it starts the backoff a 429 starts");
+    }
+
+    @Test
+    void notFoundWithRetryAfterOnASidecarDoesNotEvictTheCachedCopy() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+
+        routes.put(CENTRAL + " " + JAR + ".sha1", throttledAsNotFound(""));
+        routes.put(CENTRAL + " " + JAR, throttledAsNotFound(""));
+        get(CENTRAL, JAR + ".sha1");
+        assertTrue(Files.exists(cached(CENTRAL, JAR)), "a throttle is not a withdrawal");
+    }
+
     @Test
     void throttledProbeStartsTheBackoff() throws Exception {
         publishJar(CENTRAL, JAR, "v1");

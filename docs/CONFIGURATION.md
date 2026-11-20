@@ -442,6 +442,9 @@ Without isx, Maven never checks a release again once it is in `~/.m2`, so any fi
 A build that gets HTTP 429 (Too Many Requests) was refused by the registry, not by isx.
 Registries such as Maven Central and Docker Hub count requests per public address or per account, so a host on a shared office or CI address reaches the limit sooner.
 
+Maven Central sometimes refuses with HTTP 404 and a `Retry-After` header, for an artifact it has.
+The proxy treats that 404 as a 429, and reports it to the build tool as one, so the build does not fail with `Could not find artifact`.
+
 Sonatype's advice to heavy users of Central is to put a shared cache between their builds and Central, so that Central sees fewer requests from one address ([Sonatype's explanation](https://central.sonatype.org/faq/429-no-repo-manager/)).
 The proxy is that cache for every template and instance on the host: ten instances that build the same project ask Central once.
 

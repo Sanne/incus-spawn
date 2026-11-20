@@ -434,6 +434,8 @@ Key design:
   The mirror's `.sha1` goes out as the repository's checksum header, so Maven does not ask a throttling Central for it; the copy is checked against it and committed unconfirmed (`Instant.EPOCH`, `mirroredArtifact`), keyed under the repository, so its first hit is confirmed there.
   Only a miss the repository said nothing about goes to the mirror (no copy, or a `~/.m2` probe that was unreachable, throttled or failed), never the download after an eviction, which would bring a withdrawn or changed release straight back.
   Past the tiers, only an unreachable upstream (`SidecarAnswer.unreachable()`: connect failure, 5xx or 429) serves unconfirmed.
+  A `404` with a `Retry-After` is a 429 everywhere a cache reads upstream's status (`Upstream.status`, #2422): Maven Central's edge sends one to a throttled host, while its 404 for a missing artifact has no `Retry-After`.
+  It starts the backoff, is waited out, never evicts as a withdrawal would, and reaches the client as a `429` (`Upstream.relayResponse`), since Maven remembers a 404 as a missing artifact.
   A refused connect starts a 30s per-domain backoff, and a 429 one as long as its `Retry-After` up to 60s, else 30s (`Upstream.startBackoff`, #2301).
   It ends on time, or on an answer to a request sent after its latest start that is not a 429, or is a 429 with `Retry-After: 0`.
   A Maven, Gradle or npm miss answered `429` is first waited out on the domain's schedule within the client's budget, at most until 5s before Gradle's 30s read timeout (`ArtifactCacheHandler.throttleDelay`, #2302).
