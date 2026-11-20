@@ -141,7 +141,7 @@ What the proxy can sign in as:
 | Claude Pro or Max | Claude Code (`claude`), Pi (`pi`), opencode (`opencode`) | the token from `claude setup-token`; the proxy adds the OAuth bearer token |
 | Vertex AI | Claude Code (`claude`), Pi (`pi`), opencode (`opencode`) | your project and region; the proxy translates each request and signs it with the host's GCP credentials, which never enter the instance |
 | OpenAI API key | Codex CLI (`codex`), Pi (`pi`), opencode (`opencode`) | the key |
-| Gemini API key | Gemini CLI (`gemini-cli`), Antigravity CLI (`antigravity`), Pi (`pi`), opencode (`opencode`) | the key |
+| Gemini API key, or a Google account for Antigravity CLI | Gemini CLI (`gemini-cli`), Antigravity CLI (`antigravity`), Pi (`pi`), opencode (`opencode`) | the key, or the session of a sign-in made from an instance |
 | IBM API key | Bob Shell (`bob`) | the key |
 | GitHub token | `gh`, `git`, GitHub Copilot CLI (`copilot`) | the token |
 | Atlassian API token | the `atlassian-mcp` tool, for Jira and Confluence | your account email and the token |
@@ -321,7 +321,7 @@ It signs in through the proxy with an account you configured in `isx init`, whos
 | Pi | `pi` | Claude's credentials, the OpenAI key or the Gemini key |
 | opencode | `opencode` | Claude's credentials, the OpenAI key or the Gemini key |
 | Gemini CLI | `gemini-cli` | a Gemini API key |
-| Antigravity CLI | `antigravity` | the Gemini API key |
+| Antigravity CLI | `antigravity` | the Gemini API key, or a Google account |
 | Bob Shell | `bob` | an IBM API key |
 | GitHub Copilot CLI | `copilot` | the GitHub token `gh` uses |
 

@@ -47,6 +47,9 @@ A nested container, a sandbox or anything started without that environment does 
 Plain Git is the one exception: for HTTPS requests to `github.com` it presents the GitHub proof through a credential helper isx installs system-wide, so a clone of a private repository works without `gh`.
 The helper reads the current proof on every request, outside login shells and after a reset too, and does not store it.
 
+Antigravity CLI on a Google account reads its sign-in from a file rather than a variable.
+A login script writes that file from the Gemini proof in `GEMINI_API_KEY`, so it holds placeholders that the proxy swaps for the session the host keeps.
+
 ### Sharing a token
 
 Nested instances with their own accounts keep their own authentication and destination.

@@ -15,7 +15,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `pi` | Pi: AI coding assistant |
 | `opencode` | opencode: AI coding assistant |
 | `gemini-cli` | Gemini CLI: Google coding assistant (proxied Gemini API key) |
-| `antigravity` | Antigravity CLI (`agy`): Google coding agent (uses the Gemini API key) |
+| `antigravity` | Antigravity CLI (`agy`): Google coding agent (uses the Gemini API key or a Google account) |
 | `bob` | Bob Shell: IBM AI coding assistant |
 | `codex` | Codex CLI: OpenAI coding assistant |
 | `copilot` | GitHub Copilot CLI: AI coding assistant (shares `gh` token) |

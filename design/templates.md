@@ -380,13 +380,15 @@ The action retains `bash -lc gemini` so zmx launches in existing instances still
 Inherited-tool refresh sets the API-key auth selection while preserving the parent's model and other settings.
 Interactive Gemini requires this selection even when the environment supplies a key; headless Gemini can infer it from the environment.
 
-**Antigravity CLI runs on the Gemini API key.**
+**Antigravity CLI runs on the Gemini API key or on a Google sign-in the host keeps.**
 `AntigravitySetup` (`antigravity`) installs Google's `agy`, the terminal agent that replaced Gemini CLI for Google's personal plans (#2366).
-**Chosen:** its Gemini API key mode, `modelProvider: gemini` with `GEMINI_API_KEY`, spending the `gemini` namespace through Gemini CLI's proxy entry as Pi and opencode do.
+**Chosen:** the mode follows the build's `gemini` account.
+An API key account gives its Gemini API key mode, `modelProvider: gemini` with `GEMINI_API_KEY`, spending the namespace through Gemini CLI's proxy entry as Pi and opencode do.
 Probed with agy 1.5.12, it sends the key as `X-Goog-Api-Key` to `generativelanguage.googleapis.com` (`POST /v1beta/models/<model>:streamGenerateContent`), the header route Gemini CLI's entry already injects, so the proxy needed no change.
 It runs headless (`agy -p`) with no earlier sign-in, and trusts the MITM CA through the system store.
-**Alternatives:** its Google sign-in, which would let an AI Pro or Ultra plan pay, keeps an OAuth token in the guest's keyring; its ADC and Gemini Enterprise modes read credentials in the guest and call hosts no route serves.
-Both would put a credential in the instance, which no isx agent may hold, so the integration gives up subscription billing.
+A `type: google` account gives its Google sign-in, which lets an AI Pro or Ultra plan pay (#2443): the build leaves `modelProvider` out and installs a login script that derives agy's token file from the proof in `GEMINI_API_KEY`, and the proxy keeps the session on the host (design/proxy.md "Antigravity CLI's Google sign-in stays on the host").
+The mode is a baked identity (`google` or `api-key`), re-derived in place when the account moves across modes, since agy reads its settings and token file when it starts.
+**Alternatives:** its ADC and Gemini Enterprise modes read credentials in the guest and call hosts no route serves, so they stay unconfigured.
 The desktop app and IDE need a GUI that isx cannot show on macOS, and the app's SSH connection is a separate question.
 **The pin:** Google's installer reads the newest release from a manifest and checks its sha512; isx pins the sha256 of the tarballs that manifest named, after that check.
 `AGY_CLI_DISABLE_AUTO_UPDATE=true` keeps the self-updater from replacing the pin.

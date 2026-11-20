@@ -58,10 +58,13 @@ The `gemini` namespace uses the generic account menu and config tree, so no type
 Install, reconfigure and `refreshInherited` remove the old `/etc/profile.d/isx-gemini-login.sh` notice.
 Inherited-tool refresh sets the API-key auth selection while preserving the parent's model and other settings; interactive Gemini requires this selection even with `GEMINI_API_KEY` set.
 Existing instances need a template rebuild and a new branch; the action keeps `bash -lc gemini` so their legacy login notice still guards launches through zmx until then.
-Google OAuth remains outside this API-key integration.
+Google OAuth remains outside Gemini CLI's integration; Antigravity CLI's Google sign-in is served apart (#2443, below).
 `AntigravitySetup` (`antigravity`) installs Google's `agy` from a tarball pinned by sha256 (the release manifest's sha512 checked when the pin was taken), links `/usr/local/bin/agy`, and exports `AGY_CLI_DISABLE_AUTO_UPDATE=true` so the pin is what runs.
 It has no proxy entry: it spends the `gemini` namespace through Gemini CLI's, exporting the same `GEMINI_API_KEY` placeholder, which agy sends as `X-Goog-Api-Key` to `generativelanguage.googleapis.com` with `modelProvider: gemini` (#2366).
-Its Google sign-in and ADC modes would keep a credential in the guest and stay unconfigured.
+With a `gemini` account of `type: google` (#2443) the build leaves `modelProvider` out and writes `/etc/profile.d/isx-zz-antigravity.sh`, which seeds agy's file token store (`~/.gemini/antigravity-cli/antigravity-oauth-token`, used when there is no keyring) with `ya29.isx_<digest>` and `1//isx_<digest>` from `GEMINI_API_KEY`, and patches an isx look-alike of another digest; agy then signs in through the proxy (`GoogleAuthRoute`, `proxy.md`).
+The mode is its baked identity (`google` or `api-key`), re-derived by `rebakeForAccount`; `install(c, params, selection)` and `reconfigure(c, params, selection)` read the template's account, so a child template's own `accounts:` give its inherited copy the mode its stamp names.
+`GeminiSetup.ACCOUNT_SHAPE` holds the namespace's typed accounts (`type` and `apiKey`), `hostedSignIn()` offers the Google account in `isx init`, and `describeAccount` names the session's email.
+Its ADC mode would keep a credential in the guest and stays unconfigured.
 It merges its settings into `~/.gemini/antigravity-cli/settings.json` (every tool call proceeds, no terminal sandbox, the home trusted), writes `cache/onboarding.json` when missing, and takes the instructions as an always-on rule, `~/.gemini/config/rules/isx.md`, with front matter before the heading.
 Its MCP client merges `~/.gemini/config/mcp_config.json` and leaves out a server with `bearer-token-env`, since agy expands no variable there.
 Pi's `google` provider is the Gemini API too: `PiSetup` exports the same `GEMINI_API_KEY` placeholder and spends the `gemini` namespace (#1114).
