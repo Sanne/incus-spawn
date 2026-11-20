@@ -34,7 +34,7 @@ A first run of `isx init` asks its questions first, then works with nobody watch
 5. It offers to set up a GitHub account for the agent, which the person may skip; see "Git in the first run".
 6. On Linux it asks for the sudo password, the last thing it asks.
 7. It does the host plumbing, shown as one progress block, and installs the services.
-8. It builds the built-in agent template, waiting first for any download still running.
+8. It builds the built-in agent template, or `tpl-minimal` when the person chose no agent, waiting first for any download still running.
 9. It prints the completion message, then asks whether to open a first agent now.
 
 **Every question comes before the long work.**
@@ -73,7 +73,8 @@ Two things are missing today, and a first run that downloads in the background m
 The change: a download in progress is kept under a name derived from its URL, held under a `HostLock`.
 A later run that finds one continues it from where it stopped, when the server can resume it, and from byte 0 otherwise.
 The checksum is checked over the whole file as today, and a file that fails it is deleted and fetched once more from byte 0.
-Temporary files of the old kind that no process holds are deleted when the cache is next used.
+Temporary files of the old kind are deleted when the cache is next used, once they are old enough that no download can still be writing them.
+Today's code takes no lock on such a file, so its age is the only sign that an older isx is not still writing it.
 
 **The first agent opens only when the person says so.**
 An agent takes the whole terminal, so opening one unasked would hide the completion message.
@@ -96,6 +97,19 @@ What changes is the end of the run:
 - The completion message says the agent has no account yet, and gives the command that adds one.
 - Init does not ask whether to open a first agent, because it could not sign in.
 - The first `isx branch` at a terminal asks for the credential, as "Missing accounts are asked for when a build needs them" describes.
+
+**On a fresh Linux host the answers are given once, to the first process.**
+There init's first plumbing step adds the user to `incus-admin`, and init then runs its whole command again as a new process under `sg incus-admin` (`InitCommand.continueInGroup`).
+Today that process is told only that it is a continuation.
+Under this plan it must ask nothing, since the questions came before the plumbing:
+
+- Every answer that is a setting is written to `config.yaml` before the handover: the preferred agent, the credential, the GitHub account and the commit identity.
+  The continuation reads them there.
+- An answer that stores nothing is passed to the continuation beside the marker it already gets: that the questions were asked, and which were declined.
+  These are the agent's credential declined, the GitHub account skipped, the identity answered No, and "none for now".
+  None of them is a secret.
+- The continuation asks no question of the first run, and treats a declined one as declined.
+- The first process stays alive until the continuation ends, as today, so the downloads it started go on.
 
 **The services are installed without a question.**
 Today init asks whether to install them, and nearly everyone wants them; `--no-service` still declines.
@@ -135,7 +149,7 @@ A person may use several agents, and the preference is only the one isx reaches 
 
 **Nobody has to choose one.**
 "None for now" is one of the choices.
-Init then skips the agent's credential, builds the built-in base template in place of the agent template, and ends with a plain machine the person can open a shell in.
+Init then skips the agent's credential, builds `tpl-minimal` in place of the agent template, and ends with a plain machine the person can open a shell in.
 An agent found on the host is chosen by Enter.
 When none is found, no choice is selected by Enter, so isx does not pick a vendor for the person.
 
@@ -189,8 +203,11 @@ What init reads, per agent:
 Claude Code's stored session is a short-lived token and a refresh token.
 If the refresh token rotates on use, the proxy and the host's Claude Code would sign each other out.
 Whether it rotates is not verified, and the design does not depend on it.
-Init detects the subscription and runs `claude setup-token`, which it can already do, so the proxy holds a long-lived token of its own.
-The person confirms once in the browser, and pastes nothing.
+Init detects the subscription and runs `claude setup-token`, so the proxy holds a long-lived token of its own.
+Today init can run that command, and the person then pastes the token it prints (`CredentialSetup.setupClaudeOauth`).
+What the detection saves is the question of which kind of account to set up, not the paste.
+Reading the token without a paste is new work, and belongs to the new first run (#2412).
+It is done only if the command's output can be read while the command keeps the terminal, and the paste stays otherwise.
 
 **An API key and a Vertex project and region are taken directly.**
 Each is shown masked (`maskSecret`) with where it was found, and one question covers them.
@@ -289,7 +306,7 @@ Today the built-in templates are `tpl-minimal`, `tpl-dev` and `tpl-java`, and no
 A first agent therefore needs a hand-written template.
 
 isx ships one built-in agent template, whose agent is the person's stored preference.
-Init builds it and branches it, and the Quick Start no longer asks anyone to write YAML before their first agent runs.
+Init builds it and offers to open it, and the Quick Start no longer asks anyone to write YAML before their first agent runs.
 Writing a template becomes the second thing a person learns, when they want a project's tools and repositories.
 
 ## Templates: the person's preferences are not a layer
@@ -321,6 +338,7 @@ Each block below is a change of its own, with its own tests, and most are useful
 The new init is then mostly an arrangement of them.
 Each has an issue, which names the issues it depends on and those that wait for it.
 Only two orderings are required: #2404 before #2411, and every other block before #2412.
+Until #2409 lands, #2411 covers the base image and the VM's image alone, since the agent template's own downloads are not known before the preferred agent is.
 
 **First, three that depend on nothing and help today's users:**
 
