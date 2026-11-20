@@ -552,3 +552,18 @@ items:
     files:
       - cli/pom.xml
     fields: [json-schema-validator.version]
+  antigravity:
+    # A person merges it: Google signs nothing, and isx's delegation parses what agy prints and the
+    # conversations it writes, which no CI job runs against a model. Google releases about daily, and
+    # the 24h floor counts from the tarballs' upload, not from when the manifests made the build stable.
+    class: review
+    within: series
+    cooling: 24h
+    judgement: build
+    source:
+      type: antigravity
+    verify:
+      type: publisher-sums
+    files:
+      - common/src/main/java/dev/incusspawn/tool/AntigravitySetup.java
+    fields: [version, build, sha256.x86_64, sha256.aarch64]
