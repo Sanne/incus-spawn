@@ -215,6 +215,8 @@ It never runs a command that starts something: the MCP step reads Claude Code's 
 It shares its commands and checks with the step's run, as constants or helpers both call, so the two cannot drift; `InitPlanTest` runs both on the same fake host and compares the commands.
 A step is `done`, `pending`, `optional` (it only offers) or `unknown` (unreadable without sudo), and names who must act: `none`, `sudo`, `secret` or `approval`.
 A new step gets a planner and a test of it; its JSON fields (`InitPlan.record`) are a contract.
+Credential Setup's planner adds `HostAgentProbe.note` to its `note`: the coding agents found on the host, read by `HostAgentProbe.probe()` (#2408), which `isx doctor` also lists as `NOTE` findings (`DoctorCommand.hostAgentFindings`).
+The probe reads files and the environment only, never runs an agent or opens the Keychain, and returns no credential (`HostAgentProbeTest` puts one in every fixture); an agent whose files do not read or parse is not found.
 
 **`isx init --no-sudo`** (#2074) runs nothing as root: `Privilege.forbid()` makes every guarded runner refuse a command that elevates (`Privilege.check`, called by `InitCommand`'s runners, `CowPoolBacking.runCapturingStderr`, `ProxyService.runQuiet`, `UfwCheck.readBeforeRules` and the rest; `PrivilegeGateTest` holds every file naming `"sudo"` to it).
 `privilegedStepsLeft` plans, collects every sudo change of a step not done (`InitPlan.privileged`), writes their root lines (`InitPlan.Change.script`, the plan's `sudo_script`) as one script to `Environment.privilegedInitScript()`, and exits `EXIT_WAITING_ON_PERSON` (75).
