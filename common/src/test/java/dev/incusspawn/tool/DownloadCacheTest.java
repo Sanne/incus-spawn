@@ -770,6 +770,12 @@ class DownloadCacheTest {
 
     @Test
     void twoDownloadsOfOneUrlMakeOneRequest(@TempDir Path cacheDir) throws Exception {
+        twoDownloadsOfOneUrl(cacheDir.resolve("checked"), sha256Of(BODY));
+        // Without a checksum too: the cache name proves the file is this URL's (#2418)
+        twoDownloadsOfOneUrl(cacheDir.resolve("unchecked"), null);
+    }
+
+    private static void twoDownloadsOfOneUrl(Path cacheDir, String sha) throws Exception {
         var requests = new AtomicInteger();
         var secondWaits = new CountDownLatch(1);
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -788,7 +794,6 @@ class DownloadCacheTest {
         server.start();
         try {
             var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/asset";
-            var sha = sha256Of(BODY);
             var first = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
                 try {
                     return new DownloadCache(cacheDir, uri -> false).downloadAllowingLocalFile(url, sha, DownloadCache.Listener.NONE);
@@ -806,22 +811,92 @@ class DownloadCacheTest {
                     });
             assertEquals(first.get(30, java.util.concurrent.TimeUnit.SECONDS), second);
             assertArrayEquals(BODY, Files.readAllBytes(second));
-            assertEquals(1, requests.get(), "the second download took the first one's file");
+            assertEquals(1, requests.get(), "the second download took the first one's file, sha256 " + sha);
         } finally {
             server.stop(0);
         }
     }
 
     @Test
-    void withoutAChecksumAWaitNeverTakesAnotherUrlsFile(@TempDir Path cacheDir) throws Exception {
-        // Two URLs whose cache names collide: "Aa" and "BB" have the same String.hashCode, and so
-        // does everything around them. One is a project-local definition's, served slowly so that
-        // it holds the lock; the trusted one waits for it and must not take its file.
+    void withoutAChecksumAWaitNeverTakesAFileFromBeforeItAsked(@TempDir Path cacheDir) throws Exception {
+        // The process it waited for failed, so the file under the name is an earlier download's
+        var requests = new AtomicInteger();
+        var secondWaits = new java.util.concurrent.CountDownLatch(1);
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/asset", ex -> {
+            if (requests.incrementAndGet() == 1) {
+                try {
+                    secondWaits.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                ex.sendResponseHeaders(404, -1);
+                ex.close();
+                return;
+            }
+            whole(ex, BODY, V1, BODY.length);
+        });
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/asset";
+            Files.createDirectories(cacheDir);
+            Files.writeString(cacheDir.resolve(DownloadCache.cacheFilename(url)), "earlier");
+            var first = java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    new DownloadCache(cacheDir, uri -> false).download(url, null);
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+            while (requests.get() == 0) Thread.sleep(5);
+            var second = new DownloadCache(cacheDir, uri -> false).downloadAllowingLocalFile(url, null,
+                    new DownloadCache.Listener() {
+                        @Override
+                        public void waitingForAnother() {
+                            secondWaits.countDown();
+                        }
+                    });
+            assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> first.get(30, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(0, secondWaits.getCount(), "the second download waited for the first");
+            assertArrayEquals(BODY, Files.readAllBytes(second), "fetched again, not the earlier file");
+            assertEquals(2, requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void urlsWithTheSameHashCodeGetTheirOwnNames() {
+        // "Aa" and "BB" have the same String.hashCode, and so does everything around them: an older
+        // isx gave these two URLs one cached file (#2418).
+        var trusted = "https://example.com/Aa/asset";
+        var other = "https://example.com/BB/asset";
+        assertEquals(trusted.hashCode(), other.hashCode());
+        assertNotEquals(DownloadCache.cacheFilename(trusted), DownloadCache.cacheFilename(other));
+    }
+
+    @Test
+    void aLongBasenameKeepsItsEndAndFitsWithItsRecord() {
+        var url = "https://example.com/" + "é".repeat(300) + "-tool.tar.gz";
+        var name = DownloadCache.cacheFilename(url);
+        assertTrue(name.endsWith("-tool.tar.gz"), "the extension extraction reads is kept: " + name);
+        assertTrue((name + DownloadCache.META_SUFFIX).getBytes(StandardCharsets.UTF_8).length
+                <= DownloadCache.MAX_NAME_BYTES, name);
+        assertTrue(name.matches("[0-9a-f]{64}-é+-tool\\.tar\\.gz"), "cut between characters, never inside one: " + name);
+    }
+
+    @Test
+    void urlsWithTheSameHashCodeNeverShareAFile(@TempDir Path cacheDir) throws Exception {
+        // A project-local definition's URL with the same String.hashCode as a trusted one, served
+        // slowly while the trusted one downloads: neither waits for the other, and neither gets the
+        // other's bytes.
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         var base = "http://127.0.0.1:" + server.getAddress().getPort();
         var trusted = base + "/Aa/asset";
         var other = base + "/BB/asset";
-        assertEquals(DownloadCache.cacheFilename(trusted), DownloadCache.cacheFilename(other), "the names collide");
+        assertEquals(trusted.hashCode(), other.hashCode(), "the hash codes collide");
         var trustedWaits = new CountDownLatch(1);
         var otherAsked = new CountDownLatch(1);
         server.createContext("/BB/asset", ex -> {
@@ -837,9 +912,9 @@ class DownloadCacheTest {
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
         try {
-            var first = java.util.concurrent.CompletableFuture.runAsync(() -> {
+            var first = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
                 try {
-                    new DownloadCache(cacheDir, uri -> false).download(other, null);
+                    return new DownloadCache(cacheDir, uri -> false).download(other, null);
                 } catch (IOException e) {
                     throw new java.io.UncheckedIOException(e);
                 }
@@ -852,9 +927,14 @@ class DownloadCacheTest {
                             trustedWaits.countDown();
                         }
                     });
-            assertEquals(0, trustedWaits.getCount(), "the trusted download waited for the other");
-            assertArrayEquals(BODY, Files.readAllBytes(result), "the trusted URL's own bytes, fetched again");
-            first.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals(1, trustedWaits.getCount(), "the trusted download waited for the other");
+            assertArrayEquals(BODY, Files.readAllBytes(result));
+            // The other finishes after the trusted one returned its file, and does not replace it.
+            trustedWaits.countDown();
+            var otherResult = first.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            assertNotEquals(result, otherResult);
+            assertArrayEquals(BODY, Files.readAllBytes(result), "the trusted file is still the trusted URL's");
+            assertArrayEquals(CHANGED, Files.readAllBytes(otherResult));
         } finally {
             server.stop(0);
         }
@@ -876,13 +956,18 @@ class DownloadCacheTest {
             Files.setLastModifiedTime(f, java.nio.file.attribute.FileTime.fromMillis(week));
         }
         var recent = Files.writeString(cacheDir.resolve(DownloadCache.PARTIAL_DIR).resolve("2-new.tar"), "half");
+        // Cached under an older isx's name, which nothing looks up any more (#2418)
+        var oldName = Files.writeString(cacheDir.resolve("1a2b3c4-old.tar.gz"), "old");
+        Files.setLastModifiedTime(oldName, java.nio.file.attribute.FileTime.fromMillis(hour));
+        // An older isx still running may have just written this one
+        Files.writeString(cacheDir.resolve("abc-fresh.tar.gz"), "just written");
 
         // A cache hit is a use too
         var url = "https://example.com/tool.tar.gz";
         var cached = Files.writeString(cacheDir.resolve(DownloadCache.cacheFilename(url)), "cached");
         new DownloadCache(cacheDir, uri -> false).download(url, DownloadCache.computeSha256(cached));
 
-        assertEquals(List.of(cacheDir.relativize(cached).toString(), "download-456.tmp",
+        assertEquals(List.of(cacheDir.relativize(cached).toString(), "abc-fresh.tar.gz", "download-456.tmp",
                 cacheDir.relativize(recent).toString()), leftovers(cacheDir));
     }
 
