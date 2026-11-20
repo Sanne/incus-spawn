@@ -121,6 +121,32 @@ A template installs an agent only by listing it in `tools:`, as today.
 The answer decides two things: which credential init sets up on the host, and which agent the built-in first template lists.
 A template that does not list an agent gets none, whatever the preference is.
 
+**What the preference means.**
+It answers one question for isx: which agent to use where nothing names one.
+Three things read it:
+
+- Init, to know which credential to offer.
+- The built-in agent template, which lists that agent.
+- Later, a template that asks for the user's preferred agent in place of naming one.
+
+It does not limit anything.
+A template that names another agent installs that agent, and its account is asked for when the template is built.
+A person may use several agents, and the preference is only the one isx reaches for by default.
+
+**Nobody has to choose one.**
+"None for now" is one of the choices.
+Init then skips the agent's credential, builds the built-in base template in place of the agent template, and ends with a plain machine the person can open a shell in.
+An agent found on the host is chosen by Enter.
+When none is found, no choice is selected by Enter, so isx does not pick a vendor for the person.
+
+**With no preference, whatever needs one asks for it.**
+A build of the built-in agent template, or of a template that asks for the user's preferred agent, asks the question at a terminal.
+Without a terminal it refuses and names the command that sets the preference.
+
+**The preference can be changed later, with one command.**
+Templates that read it are then out of date and are rebuilt, as after any change to a definition.
+The agent a built template holds does not change until then.
+
 **The answer is stored.**
 It is one key in `config.yaml`, the user's preferred agent.
 The built-in agent template reads it, so the first agent needs no YAML written by hand.
