@@ -237,7 +237,9 @@ Init keeps this to one step that the person may skip, and never decides the iden
 
 **Init offers a GitHub account, and the person may skip it.**
 The step says what the account is for: the agent's access to GitHub, and the name on its commits.
-A `gh` login found on the host is one of the choices, and it is not chosen by Enter, since it is the person's own account with all of its access.
+A `gh` login found on the host is offered as one of the choices, agreed on 2026-11-20.
+Using it must be an explicit request: the choice names the account's login, says that the agent would act with that account's own access, and is taken only when the person types it.
+Enter never chooses it.
 With an account set up, the first agent has GitHub access and that account's identity, as today.
 
 **A person who skips is asked about the commits, and must answer.**
