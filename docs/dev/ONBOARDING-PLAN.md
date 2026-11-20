@@ -23,12 +23,25 @@ The first run should end with an agent running in a machine of its own, and ask 
 
 ## Minimal init
 
-`isx init` does four things on a first run, in this order:
+A first run of `isx init` asks its questions first, then works with nobody watching, in this order:
 
-1. The host plumbing, shown as one progress block.
-2. One question: which coding agent the person wants in their machines.
-3. One credential, the one that agent spends.
-4. It builds that agent's built-in template and opens a first branch of it.
+1. It reads the host without changing it: which agents are installed and signed in, which credentials exist, and what the plumbing still needs.
+2. It says in a few lines what the run will do and how long it takes.
+3. It asks for the user's preferred agent, with the one found on the host preselected.
+4. It sets up the one credential that agent spends, and verifies it.
+   A credential found on the host is confirmed with one answer, and a `gh` login found there is offered in the same answer.
+5. On Linux it asks for the sudo password, the last thing it asks.
+6. It does the host plumbing, shown as one progress block, and installs the services.
+7. It builds the built-in agent template.
+8. It branches that template and opens the agent.
+
+**Every question comes before the long work.**
+The plumbing and the first build take minutes, and a question in the middle of them waits for a person who has left.
+This gives up something: a person whose plumbing then fails has already given a credential.
+The credential is saved on the host, so the next run does not ask for it again.
+
+**The services are installed without a question.**
+Today init asks whether to install them, and nearly everyone wants them; `--no-service` still declines.
 
 **The plumbing is one block.**
 Each of today's steps keeps its work and its planner (`InitCommand.InitStep`), so `isx init --plan` and `--no-sudo` read as they do now.
@@ -52,7 +65,7 @@ The answer decides two things: which credential init sets up on the host, and wh
 A template that does not list an agent gets none, whatever the preference is.
 
 **The answer is stored.**
-It is one key in `config.yaml`, the person's default agent.
+It is one key in `config.yaml`, the user's preferred agent.
 The built-in agent template reads it, so the first agent needs no YAML written by hand.
 It is also the first field of a personal profile; see "Templates: the person's preferences are not a layer" below.
 
@@ -153,7 +166,7 @@ Three changes are proposed:
 
 - **A personal profile.**
   The agent, its model, and the person's own tools and packages are declared once, per user.
-  A template still opts in: it asks for "the person's agent" where today it names one, and the profile says which agent that is.
+  A template still opts in: it asks for "the user's preferred agent" where today it names one, and the profile says which agent that is.
   A template that does not ask gets nothing from the profile.
   Project templates then hold only what the project needs, and are shared unedited.
   The open questions are how a template asks, and where the profile sits in the copy-on-write layers so that project images still share a base.
