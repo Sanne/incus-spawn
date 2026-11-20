@@ -78,8 +78,9 @@ When hiding a new command: add it to `HIDDEN_COMMANDS` (which `NOT_COMPLETED` is
 `isx stop` stops under the lock and the `stopping` mark (`InstanceDestroyer.stopMarkedIf`, shared with `isx mcp`'s held stop), and a stopped instance is success.
 `isx exec <instance> -- <command> [args...]` (`ExecCommand`) runs the command in a running instance through `ExecScript` (`common` `incus/`) as `agentuser` in a login shell, in the template's workdir, with no terminal and stdin only under `-i`.
 It never starts or stops the instance: one read refuses a missing or stopped one, and a running one lacking its boot's secret gets it (`InstanceLifecycle.giveSecretIfMissing`).
-It exits with the command's code, or `ExecCommand.ISX_FAILED` (125) when isx fails before the command runs.
-Each word after `--` is shell-quoted, so the guest's `bash -c` gets it as one word, and a shutdown hook kills the command's session in the guest if isx is interrupted (design/instances.md "Running one command: `isx exec`").
+It exits with the command's code, or `ExecCommand.ISX_FAILED` (125) when isx fails instead: before the command runs, when the exec fails under it, or when Incus gives no exit code.
+Each word after `--` is shell-quoted, so the guest's `bash -c` gets it as one word.
+Whenever isx stops waiting it kills the command's session in the guest: a shutdown hook on interrupt, and isx itself on a failed exec, a missing exit code or a closed output (`ClosedOutputGuard`, exit 141) (design/instances.md "Running one command: `isx exec`").
 `isx ssh-proxy --start` uses a running container no isx process holds as it is only when its boot holds its secret (`InstanceLifecycle.readyForThisBoot`, one read per connection), and prepares any other.
 Without `--start` (a plain `ssh <name>`) it never starts anything, but a running box whose boot lacks its secret is given it from the same read (`InstanceLifecycle.giveSecretIfMissing`, reporting to stderr only), as `isx mcp` does (#1975).
 An instance without `Metadata.PARENT`, which `InstancePrep.prepare` refuses, is connected to but never given a secret.

@@ -170,6 +170,69 @@ class ExecCommandTest {
         assertEquals(List.of(5), daemon.execStdinFrames());
     }
 
+    /** The scripts of every exec, in order, each {@code su - agentuser -c <script>}. */
+    private static List<String> scripts(FakeIncusDaemon daemon) {
+        return daemon.execs().stream().map(e -> e.command().get(4)).toList();
+    }
+
+    @Test
+    void anExecThatFailsExits125NotTheCommandsOne() {
+        // Incus serves no exec: the POST is refused, as a broken daemon or a just-stopped box would
+        var daemon = new FakeIncusDaemon().instance("dev", "container", "Running", Map.of());
+        var exit = new int[1];
+        var recorded = RecordingOutput.during(() -> exit[0] = assertDoesNotThrow(() ->
+                command("dev", "true").exec(daemon.client(), null, new ByteArrayOutputStream(),
+                        new ByteArrayOutputStream()).getResultValue()));
+        assertEquals(ExecCommand.ISX_FAILED, exit[0]);
+        assertTrue(recorded.events(RecordingOutput.Kind.ERROR).getFirst().msg().startsWith("could not run the command in dev: "),
+                recorded.events().toString());
+        var scripts = scripts(daemon);
+        assertEquals(2, scripts.size(), "the command, then its kill in case it started: " + scripts);
+        assertTrue(scripts.get(1).contains("kill -TERM"), scripts.get(1));
+    }
+
+    @Test
+    void anExecWithoutAnExitCodeExits125AndEndsTheCommand() {
+        // The wait's ceiling or a lost operation: Incus gives no exit code, and the command may run on
+        var daemon = running(Map.of()).servesExecs().operationsAnswer("Failure");
+        assertEquals(ExecCommand.ISX_FAILED, run(command("dev", "sleep", "infinity"), daemon, null, new ByteArrayOutputStream()));
+        var scripts = scripts(daemon);
+        assertEquals(2, scripts.size(), scripts.toString());
+        var first = scripts.getFirst();
+        var from = first.indexOf("/run/cli-") + "/run/".length();
+        var runId = first.substring(from, first.indexOf(".pid", from));
+        assertTrue(scripts.get(1).contains("kill -TERM") && scripts.get(1).contains("/" + runId + ".pid"),
+                "the kill names the same run: " + scripts.get(1));
+    }
+
+    @Test
+    void whenNothingReadsTheOutputAnyMoreTheCommandIsEnded() {
+        // `isx exec box -- yes | head -1`: the pipe closed, and a PrintStream only records it
+        var gone = new java.io.PrintStream(new java.io.OutputStream() {
+            @Override
+            public void write(int b) throws java.io.IOException {
+                throw new java.io.IOException("Broken pipe");
+            }
+        });
+        var daemon = running(Map.of()).execOutput("yes", "y\ny\n");
+        var exit = new int[1];
+        RecordingOutput.during(() -> exit[0] = assertDoesNotThrow(() ->
+                command("dev", "yes").exec(daemon.client(), null, gone, new ByteArrayOutputStream()).getResultValue()));
+        assertEquals(ExecCommand.OUTPUT_CLOSED, exit[0], "a shell's code for a command SIGPIPE ended");
+        var scripts = scripts(daemon);
+        assertEquals(2, scripts.size(), scripts.toString());
+        assertTrue(scripts.get(1).contains("kill -TERM"), scripts.get(1));
+    }
+
+    @Test
+    void eachRunHasItsOwnId() {
+        var first = ExecCommand.runId();
+        var second = ExecCommand.runId();
+        assertNotEquals(first, second, "a pid the host reuses must not make two runs one");
+        assertTrue(first.startsWith("cli-" + ProcessHandle.current().pid() + "-"), first);
+        assertDoesNotThrow(() -> dev.incusspawn.incus.ExecScript.requireId(first));
+    }
+
     @Test
     void aMalformedCommandLineExits125AndRunsNothing() {
         var daemon = running(Map.of()).servesExecs();
