@@ -291,6 +291,7 @@ git-identity:
 ```
 
 `isx init` offers your own `git config` name and email when you set up no GitHub account, and writes this key only if you answer yes.
+After the first run, `isx init credentials` asks it again.
 Without a terminal it writes the key only when you pass `--git-identity-from-host`.
 You may also write the key yourself.
 
