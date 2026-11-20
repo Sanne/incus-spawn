@@ -131,7 +131,21 @@ public class DownloadCache {
 
         /** Another isx process, or another thread of this one, is downloading the same URL, and this one waits for it. */
         default void waitingForAnother() {}
+
+        /**
+         * While this one waits, how far the other download has got: the bytes in its partial file,
+         * read about every {@link #WATCH_INTERVAL}, when its record names this URL and its length
+         * (a download with a checksum, from a server that can resume it). Called on a thread of its
+         * own, never after the wait ends.
+         */
+        default void anotherReceived(long bytes, long total) {}
     }
+
+    /** A download a build will make, with the checksum that lets a copy fetched ahead be reused. */
+    public record Pinned(String url, String sha256) {}
+
+    /** How often a waiting download reads how far the other one has got. */
+    static final Duration WATCH_INTERVAL = Duration.ofMillis(250);
 
     private final Path cacheDir;
     private final Predicate<URI> hostLocal;
@@ -213,8 +227,9 @@ public class DownloadCache {
         if (sha256 != null && matches(cached, sha256, listener)) return cached;
 
         HostLock lock;
+        var watch = new Watch(cacheDir.resolve(PARTIAL_DIR).resolve(filename), url, listener);
         try {
-            lock = HostLock.acquire(lockFile(filename), "downloading " + url, message -> listener.waitingForAnother(),
+            lock = HostLock.acquire(lockFile(filename), "downloading " + url, message -> watch.start(),
                     LOCK_TIMEOUT);
         } catch (HostLock.HostLockException e) {
             // Interrupted while waiting: the caller is cancelling, so nothing is downloaded
@@ -222,6 +237,8 @@ public class DownloadCache {
             // A holder that never finishes, or a cache on a filesystem without locks: download into a
             // file of this process's own, as before there was a lock, so nothing else writes to it.
             lock = null;
+        } finally {
+            watch.stop();
         }
         try {
             // Another process may have downloaded it meanwhile, which only the checksum can prove: the
@@ -234,6 +251,89 @@ public class DownloadCache {
             return fetchInto(transfer, uri, url, sha256, localFile, cached, listener);
         } finally {
             if (lock != null) lock.close();
+        }
+    }
+
+    /**
+     * Reports, while this download waits for the lock, how far the holder has got: it writes to the
+     * partial file named for the URL, and its record names the length. So a build that starts while
+     * a download fetched ahead is still running shows that download's progress, whether a thread of
+     * this process or another process holds it.
+     */
+    private static final class Watch {
+        private final Path partial;
+        private final Path meta;
+        private final String url;
+        private final Listener listener;
+        private Thread thread;
+
+        Watch(Path partial, String url, Listener listener) {
+            this.partial = partial;
+            this.meta = partial.resolveSibling(partial.getFileName() + META_SUFFIX);
+            this.url = url;
+            this.listener = listener;
+        }
+
+        /**
+         * Called on the waiting thread when the lock is found held: once for another thread of this
+         * process and again for another process when both held it, so only the first starts a watch.
+         */
+        void start() {
+            listener.waitingForAnother();
+            if (listener == Listener.NONE || thread != null) return;
+            thread = Thread.ofVirtual().name("download-watch").start(this::run);
+        }
+
+        void stop() {
+            var t = thread;
+            if (t == null) return;
+            t.interrupt();
+            try {
+                // Joined so no report arrives after the wait ends
+                t.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        private void run() {
+            long last = -1;
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    var total = total();
+                    if (total > 0 && Files.exists(partial)) {
+                        var bytes = Files.size(partial);
+                        if (bytes != last && !Thread.currentThread().isInterrupted()) {
+                            listener.anotherReceived(bytes, total);
+                            last = bytes;
+                        }
+                    }
+                    Thread.sleep(WATCH_INTERVAL);
+                } catch (InterruptedException e) {
+                    return;
+                } catch (IOException | RuntimeException e) {
+                    // The holder may replace or delete the file at any moment; read again next time
+                    try {
+                        Thread.sleep(WATCH_INTERVAL);
+                    } catch (InterruptedException stopped) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        /**
+         * The length the holder's record names, when it is this URL's; otherwise {@code -1}, and
+         * nothing is reported: the cache name is a short hash of the URL, so a file without this
+         * URL's record may be another URL's (a download without a checksum keeps none).
+         */
+        private long total() {
+            try {
+                var lines = Files.readAllLines(meta);
+                return lines.size() == 3 && lines.get(0).equals(url) ? Long.parseLong(lines.get(2)) : -1;
+            } catch (IOException | RuntimeException e) {
+                return -1;
+            }
         }
     }
 

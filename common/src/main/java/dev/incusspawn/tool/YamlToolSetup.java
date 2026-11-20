@@ -94,6 +94,18 @@ public class YamlToolSetup implements ToolSetup {
         return def.getPackages();
     }
 
+    /** The download entries {@link #install} fetches for {@code arch} that carry a checksum. */
+    @Override
+    public java.util.List<DownloadCache.Pinned> pinnedDownloads(String arch) {
+        var pinned = new java.util.ArrayList<DownloadCache.Pinned>();
+        for (var dl : def.getDownloads()) {
+            if (dl.getArch() != null && !dl.getArch().equals(canonicalArch(arch))) continue;
+            if (!hasText(dl.getUrl()) || !hasText(dl.getSha256())) continue;
+            pinned.add(new DownloadCache.Pinned(dl.getUrl(), dl.getSha256()));
+        }
+        return pinned;
+    }
+
     @Override
     public java.util.List<dev.incusspawn.config.ImageDef.PackageRepo> packageRepos() {
         return def.getPackageRepos();

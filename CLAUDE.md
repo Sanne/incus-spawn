@@ -330,6 +330,7 @@ Without that answer it serves only a digest an anonymous check found public in t
 **YAML tool downloads:** `ToolDef` download entries may set `extract`, `destination_file`, or both.
 Downloads are cached on the host, then either extracted into the target, copied to the exact destination path, or processed both ways.
 VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock.
+A tool that fetches a pinned file declares it in `ToolSetup.pinnedDownloads`, so `BuildDownloads.plan` lists it and `BackgroundDownloads` can fetch it ahead of the build, silently (#2411, design/host-resources.md "A build's downloads can start ahead of it").
 
 **Tools declare MCP servers once, and every agent in the image gets them (#2206).**
 A tool's `mcp:` entries are a stdio `command` or an HTTPS `url`, with nothing specific to one agent; an agent takes them by implementing `ToolSetup.mcpClient()` (`McpClients`: Claude Code, Codex, Pi, opencode, and Gemini CLI, Antigravity CLI, Copilot and Bob by a merge into their JSON config).

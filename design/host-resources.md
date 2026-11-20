@@ -287,6 +287,17 @@ So it applies to all definitions, trusted or not:
   A file that fails its checksum is deleted, and fetched once more from byte 0 when it held bytes from more than one response; a file fetched whole that fails is wrong at its source, so it fails at once.
   A failure leaves a resumable partial file for the next run, and deletes anything else.
   Every use of the cache deletes `download-*.tmp` files (an older isx's, or those of a download that could not take its lock) that nobody has written to for an hour, and partial files nobody has continued for a week whose lock is free.
+  A download that waits for another reports how far that one has got (`Listener.anotherReceived`): about every 250 ms it reads the size of the partial file, and the length from its record, only when the record names its own URL.
+  So a build that waits for a file fetched ahead, by this process or another, shows that download's progress instead of a bare wait.
+- **A build's downloads can start ahead of it** (#2411).
+  `BuildDownloads.plan` lists what a build of a template will download: the base image, a VM's disk image when it builds a VM, and each layer's tools' pinned downloads (`ToolSetup.pinnedDownloads`), down to the first layer already built.
+  It lists only a file with a checksum at an `http(s)` URL, since a build downloads any other file again, and a `file://` base image is a local copy that gains nothing.
+  It resolves a tracked base image as the build does, without its notes (`BuildCommand.trackedBaseImageQuietly`), so the two fetch the same release.
+  `BackgroundDownloads` fetches that list into the cache on a daemon thread, one file at a time, and reports nothing, progress and failure alike, since a question may be on screen.
+  It fetches through `DownloadCache.download`, so the limits on a definition's URL hold here too: `http(s)` only, and no host-local address.
+  The build then finds a cache hit, or waits for a file still being fetched under its URL's lock, or fetches again a file that failed and reports why, continuing what was fetched when the server can resume it.
+  This gives up some bandwidth: a person who stops before the build has fetched files it never uses, and a project-local template's files are fetched before the build checks its base image may replace the alias.
+  On macOS the appliance's kernel and disk image are not in the plan: they are downloaded without a checksum, so a copy fetched ahead could not be reused.
 - **DNS rebinding cannot split check from connect.**
   A rebinding domain answers with a public address for the check and `127.0.0.1` for the connection.
   But both resolve through the JDK's in-process address cache, which keeps a successful lookup for 30 seconds whatever TTL the DNS answer carries, so the connection a few milliseconds after the check sees the same address.

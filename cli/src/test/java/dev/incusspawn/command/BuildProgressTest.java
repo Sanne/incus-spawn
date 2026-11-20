@@ -284,6 +284,21 @@ class BuildProgressTest {
     }
 
     @Test
+    void aDownloadWaitingForAnotherShowsThatOnesProgress() {
+        // #2411: a build that starts while a download fetched ahead still runs
+        var progress = new BuildProgress.TransferProgress();
+        progress.waitingForAnother();
+        assertEquals("waiting for another isx process downloading it", progress.detail());
+        progress.anotherReceived(2048, 4096);
+        assertTrue(progress.detail().startsWith("another isx download: 50%  2.0 KB / 4.0 KB"), progress.detail());
+        assertFalse(progress.fetched(), "this one fetched nothing itself");
+        // A second wait on the same listener starts its own count: no rate before a second of it
+        progress.waitingForAnother();
+        progress.anotherReceived(3072, 4096);
+        assertEquals("another isx download: 75%  3.0 KB / 4.0 KB", progress.detail());
+    }
+
+    @Test
     void transferProgressDescribesEachPhase() {
         var progress = new BuildProgress.TransferProgress();
         assertEquals("connecting", progress.detail());
