@@ -158,7 +158,7 @@ class TuiOverviewTest {
         assertEquals(1, reads.size(), "entering the tab reads, once");
         readsFinish();
         var work = screen(tui, 120);
-        assertTrue(work.contains("[Work]"), work);
+        assertTrue(work.lines().anyMatch(l -> l.contains("Instances 2   Work")), work);
         assertTrue(work.contains("Work since Nov 1") && !work.contains("o: back"), work);
         assertTrue(work.lines().anyMatch(l -> l.contains("WORK") && l.contains("ACTIVE")), work);
         var ws = work.lines().filter(l -> l.contains(" ws ")).findFirst().orElseThrow();

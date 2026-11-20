@@ -11,19 +11,19 @@
 
 
 
-          ╔ Warnings (3) ════════════════════════════════════════════════════════════════════════════════════╗
-          ║ 09:50:02 ⚠ tool 'gradle' is defined twice in ~/.config/incus-spawn/tools                         ║
-          ║                                                                                                  ║
-          ║ 09:44:30 ⚠ inbox directory not found: /home/me/inbox (device removed).                           ║
-          ║              To mount it again, recreate it; the next start of b1 does.                          ║
-          ║                                                                                                  ║
-          ║ 09:41:07 ⚠ podman.yaml: Env entry 'export DOCKER_HOST=unix:///var/run/docker.sock' is a shell    ║
-          ║            string, which is not supported; use a structured entry:                               ║
-          ║              - name: DOCKER_HOST                                                                 ║
-          ║                value: unix:///var/run/docker.sock                                                ║
-          ║                                                                                                  ║
-          ║  Esc Close   c Clear                                                                             ║
-          ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+          ╭ Warnings (3) ────────────────────────────────────────────────────────────────────────────────────╮
+          │ 09:50:02 ⚠ tool 'gradle' is defined twice in ~/.config/incus-spawn/tools                         │
+          │                                                                                                  │
+          │ 09:44:30 ⚠ inbox directory not found: /home/me/inbox (device removed).                           │
+          │              To mount it again, recreate it; the next start of b1 does.                          │
+          │                                                                                                  │
+          │ 09:41:07 ⚠ podman.yaml: Env entry 'export DOCKER_HOST=unix:///var/run/docker.sock' is a shell    │
+          │            string, which is not supported; use a structured entry:                               │
+          │              - name: DOCKER_HOST                                                                 │
+          │                value: unix:///var/run/docker.sock                                                │
+          │                                                                                                  │
+          │  Esc Close   c Clear                                                                             │
+          ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 
 

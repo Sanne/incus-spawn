@@ -2,7 +2,12 @@ package dev.incusspawn.tui;
 
 import dev.tamboui.style.Color;
 
-/** The TUI's colours: named ANSI colours and 256-colour palette entries, never RGB (#1681). */
+/**
+ * The TUI's colours, by the role each plays (design/visual-language.md "Colour"). A theme is made
+ * for one terminal: every colour is fitted to the depth that terminal is known to draw
+ * ({@link ColorDepth#fit}), so no RGB escape reaches a terminal that has not proven it reads one
+ * (#1681), and its surfaces are tinted from the terminal's own background when that is known.
+ */
 public record TuiTheme(
         // Panel chrome
         Color panelBorderFocused,
@@ -13,6 +18,12 @@ public record TuiTheme(
 
         // Text
         Color textDim,
+        Color textFaint,
+
+        // Brand
+        Color accent,
+        Color accentAlt,
+        Color onAccent,
 
         // Context / status bar
         Color contextBg,
@@ -31,7 +42,6 @@ public record TuiTheme(
         Color inputBg,
         Color inputInactiveBg,
         Color placeholderFg,
-        Color modalShadow,
 
         // Function key bar
         Color barBg,
@@ -48,106 +58,122 @@ public record TuiTheme(
         Color statusFailure,
         Color checkEnabled,
         Color checkDisabled,
-        Color focusedLabel
+        Color focusedLabel,
+
+        // What the theme was made for: the terminal's background as far as it is known, for
+        // blending only and never drawn, then dark or light and the colour depth
+        Color canvas,
+        boolean darkTerminal,
+        ColorDepth depth
 ) {
 
+    /** The dark theme for a terminal of unknown background that draws the 256-colour palette. */
     public static TuiTheme dark() {
-        return new TuiTheme(
-                // Panel chrome
-                Color.CYAN,
-                Color.DARK_GRAY,
-                Color.DARK_GRAY,
-                Color.WHITE,
-                Color.indexed(239),
-
-                // Text
-                Color.GRAY,
-
-                // Context / status bar
-                Color.indexed(235),
-                Color.WHITE,
-                Color.GRAY,
-                Color.LIGHT_CYAN,
-                Color.indexed(17),
-                Color.LIGHT_RED,
-
-                // Modal
-                Color.indexed(238),
-                Color.indexed(189),
-                Color.CYAN,
-                Color.LIGHT_CYAN,
-                Color.LIGHT_RED,
-                Color.indexed(240),
-                Color.indexed(236),
-                Color.indexed(60),
-                Color.indexed(232),
-
-                // Function key bar
-                Color.CYAN,
-                Color.WHITE,
-                Color.BLACK,
-                Color.indexed(23),
-                Color.indexed(30),
-
-                // Semantic
-                Color.GREEN,
-                Color.GRAY,
-                Color.YELLOW,
-                Color.GREEN,
-                Color.RED,
-                Color.GREEN,
-                Color.GRAY,
-                Color.WHITE
-        );
+        return of(true, null, ColorDepth.INDEXED);
     }
 
+    /** The light theme for a terminal of unknown background that draws the 256-colour palette. */
     public static TuiTheme light() {
+        return of(false, null, ColorDepth.INDEXED);
+    }
+
+    /** The background assumed when the terminal does not say its own. */
+    static final Color.Rgb DARK_BACKGROUND = new Color.Rgb(0x14, 0x16, 0x1b);
+    static final Color.Rgb LIGHT_BACKGROUND = new Color.Rgb(0xff, 0xff, 0xff);
+
+    /**
+     * The theme for a terminal: dark or light, on {@code background} (its own, as RGB, or null when
+     * it did not say), every colour fitted to {@code depth}.
+     */
+    static TuiTheme of(boolean dark, int[] background, ColorDepth depth) {
+        Color.Rgb base = background != null && background.length == 3
+                ? new Color.Rgb(clamp(background[0]), clamp(background[1]), clamp(background[2]))
+                : dark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
+        // Surfaces are the terminal's background moved towards its opposite: a raised one a little,
+        // an input more, so each stays apart from the one it sits on after fitting to 256 colours
+        Color lift = dark ? Color.rgb(255, 255, 255) : Color.rgb(0, 0, 0);
+        Color accent = dark ? Color.hex("#5fd7e6") : Color.hex("#0e7490");
+        Color accentAlt = dark ? Color.hex("#a78bfa") : Color.hex("#7c3aed");
+        Color ok = dark ? Color.hex("#8bd5a0") : Color.hex("#15803d");
+        Color warn = dark ? Color.hex("#f2c97d") : Color.hex("#b45309");
+        Color danger = dark ? Color.hex("#f28b82") : Color.hex("#b91c1c");
+        Color text = dark ? Color.hex("#e6e9ef") : Color.hex("#1f2328");
+        Color muted = dark ? Color.hex("#9aa3b2") : Color.hex("#57606a");
+        Color faint = dark ? Color.hex("#626b7a") : Color.hex("#8c959f");
+        Color border = ColorDepth.mix(base, lift, dark ? 0.22 : 0.20);
+        Color raised = ColorDepth.mix(base, lift, dark ? 0.08 : 0.05);
+        Color inputInactive = ColorDepth.mix(base, lift, dark ? 0.13 : 0.09);
+        Color input = ColorDepth.mix(base, lift, dark ? 0.20 : 0.14);
+        Color selection = ColorDepth.mix(base, accent, dark ? 0.24 : 0.18);
+        Color onAccent = dark ? Color.hex("#0b1014") : Color.hex("#ffffff");
+        if (depth == ColorDepth.ANSI) {
+            // Sixteen colours hold no tint: a surface is the terminal's own background, told apart
+            // by its border, and the selection is the one filled row
+            raised = Color.RESET;
+            input = dark ? Color.DARK_GRAY : Color.GRAY;
+            inputInactive = Color.RESET;
+            selection = dark ? Color.DARK_GRAY : Color.GRAY;
+            border = dark ? Color.DARK_GRAY : Color.GRAY;
+            onAccent = dark ? Color.BLACK : Color.WHITE;
+        }
         return new TuiTheme(
                 // Panel chrome
-                Color.BLUE,
-                Color.GRAY,
-                Color.indexed(146),
-                Color.BLACK,
-                Color.indexed(250),
+                depth.fit(accent),
+                depth.fit(border),
+                depth.fit(selection),
+                depth.fit(text),
+                depth.fit(border),
 
                 // Text
-                Color.DARK_GRAY,
+                depth.fit(muted),
+                depth.fit(faint),
 
-                // Context / status bar
-                Color.indexed(253),
-                Color.BLACK,
-                Color.DARK_GRAY,
-                Color.BLUE,
-                Color.indexed(189),
-                Color.RED,
+                // Brand
+                depth.fit(accent),
+                depth.fit(accentAlt),
+                depth.fit(onAccent),
+
+                // Context / status bar: neither is a band
+                Color.RESET,
+                depth.fit(text),
+                depth.fit(muted),
+                depth.fit(accent),
+                Color.RESET,
+                depth.fit(danger),
 
                 // Modal
-                Color.indexed(255),
-                Color.indexed(235),
-                Color.BLUE,
-                Color.BLUE,
-                Color.RED,
-                Color.indexed(254),
-                Color.indexed(231),
-                Color.indexed(247),
-                Color.indexed(250),
+                depth.fit(raised),
+                depth.fit(text),
+                depth.fit(ColorDepth.mix(base, accent, 0.55)),
+                depth.fit(accent),
+                depth.fit(danger),
+                depth.fit(input),
+                depth.fit(inputInactive),
+                depth.fit(faint),
 
                 // Function key bar
-                Color.BLUE,
-                Color.WHITE,
-                Color.WHITE,
-                Color.indexed(104),
-                Color.indexed(67),
+                Color.RESET,
+                depth.fit(accent),
+                depth.fit(muted),
+                depth.fit(faint),
+                depth.fit(border),
 
                 // Semantic
-                Color.GREEN,
-                Color.DARK_GRAY,
-                Color.YELLOW,
-                Color.GREEN,
-                Color.RED,
-                Color.GREEN,
-                Color.DARK_GRAY,
-                Color.BLACK
-        );
+                depth.fit(ok),
+                depth.fit(faint),
+                depth.fit(warn),
+                depth.fit(ok),
+                depth.fit(danger),
+                depth.fit(ok),
+                depth.fit(faint),
+                depth.fit(text),
+
+                base,
+                dark,
+                depth);
+    }
+
+    private static int clamp(int channel) {
+        return Math.clamp(channel, 0, 255);
     }
 }

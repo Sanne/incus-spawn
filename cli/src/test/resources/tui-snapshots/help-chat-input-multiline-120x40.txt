@@ -8,25 +8,25 @@
 
 
 
-                    ╔ AI Help ═════════════════════════════════════════════════════════════════════╗
-                    ║ Ask anything about isx: an AI model answers from the project's               ║
-                    ║ documentation. Your question is sent to the AI account below, which is       ║
-                    ║ billed for it.                                                               ║
-                    ║                                                                              ║
-                    ║  ▸ Question:                                                                 ║
-                    ║    Why does this fail?                                                       ║
-                    ║                                                                              ║
-                    ║      Error: proxy CA not trusted                                             ║
-                    ║      at MitmProxy.handshake                                                  ║
-                    ║                                                                              ║
-                    ║                                                                              ║
-                    ║    [ ] Attach my template and tool definitions (~12.2 KB)                    ║
-                    ║        Helps the AI answer questions about your own setup.                   ║
-                    ║                                                                              ║
-                    ║    AI account: work (Anthropic API key)                                      ║
-                    ║                                                                              ║
-                    ║  Ctrl+S Ask   Enter New line   Tab Next field   Esc Close                    ║
-                    ╚══════════════════════════════════════════════════════════════════════════════╝
+                    ╭ AI Help ─────────────────────────────────────────────────────────────────────╮
+                    │ Ask anything about isx: an AI model answers from the project's               │
+                    │ documentation. Your question is sent to the AI account below, which is       │
+                    │ billed for it.                                                               │
+                    │                                                                              │
+                    │  ▸ Question:                                                                 │
+                    │    Why does this fail?                                                       │
+                    │                                                                              │
+                    │      Error: proxy CA not trusted                                             │
+                    │      at MitmProxy.handshake                                                  │
+                    │                                                                              │
+                    │                                                                              │
+                    │    [ ] Attach my template and tool definitions (~12.2 KB)                    │
+                    │        Helps the AI answer questions about your own setup.                   │
+                    │                                                                              │
+                    │    AI account: work (Anthropic API key)                                      │
+                    │                                                                              │
+                    │  Ctrl+S Ask   Enter New line   Tab Next field   Esc Close                    │
+                    ╰──────────────────────────────────────────────────────────────────────────────╯
 
 
 

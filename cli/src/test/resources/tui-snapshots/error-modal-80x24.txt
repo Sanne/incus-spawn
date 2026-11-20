@@ -5,15 +5,15 @@
 
 
 
-                    ╔ Error ═══════════════════════════════╗
-                    ║  The MITM proxy is not running.      ║
-                    ║                                      ║
-                    ║  Start it:                           ║
-                    ║    isx proxy start                   ║
-                    ║                                      ║
-                    ║  any key Dismiss                     ║
-                    ║                                      ║
-                    ╚══════════════════════════════════════╝
+                    ╭ Error ───────────────────────────────╮
+                    │  The MITM proxy is not running.      │
+                    │                                      │
+                    │  Start it:                           │
+                    │    isx proxy start                   │
+                    │                                      │
+                    │  any key Dismiss                     │
+                    │                                      │
+                    ╰──────────────────────────────────────╯
 
 
 

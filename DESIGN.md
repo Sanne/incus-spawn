@@ -138,6 +138,15 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The main screen's tabs
   - Terminals the TUI cannot assume
   - The overview of what each instance did
+- [The TUI's visual language](design/visual-language.md)
+  - What the rules are for
+  - Colour
+  - Text
+  - Glyphs
+  - Layout
+  - Motion
+  - Trying a change
+  - Adding to the TUI
 - [Network](design/network.md)
   - Network Modes
   - DNS: static resolv.conf + bridge dnsmasq

@@ -1,24 +1,24 @@
  isx   1.2.3  ● 2 containers running
- [Overview]  Templates 1   Instances 3   Work                   ←/→ Switch view
-╭ Templates ───────────────────────────────────────────────────────────────────╮
-│  NAME                    BUILT                DISK     DESCRIPTION           │
-│  tpl-minimal             unknown !            -        Minimal Fedora        │
-│                                ! = outdated  △ = changed  ↑ = parent rebuilt │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭ Instances ───────────────────────────────────────────────────────────────────╮
-│  NAME        STATUS      IP          PARENT      RUNTIME    AGE        DISK  │
-│ ●alpha       Running                 tpl-minimal container  -          -     │
-│▸ beta        Running                 tpl-minimal container  -          -     │
-│ ●gamma       Stopped                 tpl-minimal container  -          -     │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+ Overview   Templates 1   Instances 3   Work                    ←/→ Switch view
+ Templates ─────────────────────────────────────────────────────────────────────
+   NAME                    BUILT                DISK     DESCRIPTION
+   tpl-minimal             unknown !            -        Minimal Fedora
+                                      ! outdated   △ changed   ↑ parent rebuilt
+ Instances ─────────────────────────────────────────────────────────────────────
+   NAME        STATUS      IP          PARENT      RUNTIME    AGE        DISK
+  ●alpha       ● Running               tpl-minimal container  -          -
+ ▸ beta        ● Running               tpl-minimal container  -          -
+  ●gamma       ○ Stopped               tpl-minimal container  -          -
+
+
+
+
+
+
+
+
+
+
+
  beta  from tpl-minimal  [proxy]  Space Mark  ● 2 marked, Esc clears
-│F1Info │F2Shell│F3Detai│F4Branc│F5Build│F6Renam│F7Stop │F8Destr│F9Actio│F10Quit
+ F1Info F2Shell F3Detai F4Branc F5Build F6Renam F7Stop  F8Destr F9Actio F10Quit

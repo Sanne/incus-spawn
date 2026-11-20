@@ -4,18 +4,18 @@
 
 
 
-             ╔ Stop 3 instances ══════════════════════════════════╗
-             ║                                                    ║
-             ║ This will stop:                                    ║
-             ║   alpha                                            ║
-             ║   beta                                             ║
-             ║   mcp-tpl-isx-agent-1482-design-a1b2               ║
-             ║                                                    ║
-             ║ Not running, left as is: gamma, delta.             ║
-             ║                                                    ║
-             ║  y Stop   any key Cancel                           ║
-             ║                                                    ║
-             ╚════════════════════════════════════════════════════╝
+             ╭ Stop 3 instances ──────────────────────────────────╮
+             │                                                    │
+             │ This will stop:                                    │
+             │   alpha                                            │
+             │   beta                                             │
+             │   mcp-tpl-isx-agent-1482-design-a1b2               │
+             │                                                    │
+             │ Not running, left as is: gamma, delta.             │
+             │                                                    │
+             │  y Stop   any key Cancel                           │
+             │                                                    │
+             ╰────────────────────────────────────────────────────╯
 
 
 

@@ -274,7 +274,9 @@ class TuiDigitKeysTest {
         var seven = buffer.get(f7 + 1, 23).style();
         assertEquals(Optional.of(tui.theme.barKeyFg()), seven.fg(), "the digit is in the key colour");
         assertTrue(seven.effectiveModifiers().contains(Modifier.BOLD), "and bold");
-        assertEquals(Optional.of(tui.theme.barLabelFg()), f.fg(), "the F is in the label colour");
+        assertEquals(Optional.of(tui.theme.barKeyFg()), f.fg(), "the F is in the key colour too");
+        assertFalse(f.effectiveModifiers().contains(Modifier.BOLD), "but not bold: the digit is what is pressed");
+        assertEquals(Optional.of(tui.theme.barLabelFg()), buffer.get(f7 + 2, 23).style().fg(), "the label is quieter");
         int f10 = bar.indexOf("F10Quit");
         assertEquals(Optional.of(tui.theme.barKeyFg()), buffer.get(f10 + 2, 23).style().fg(), "F10's key is its 0");
     }

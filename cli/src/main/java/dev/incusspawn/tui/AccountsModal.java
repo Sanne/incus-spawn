@@ -166,7 +166,7 @@ final class AccountsModal {
         int height = Math.min(screen.height() - 2, 2 + 2 + lines + errorLines + 2);
         var area = ModalRenderer.centerRect(screen, width, height);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(modal.styledTitle(" Credential accounts: " + instance + " ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))

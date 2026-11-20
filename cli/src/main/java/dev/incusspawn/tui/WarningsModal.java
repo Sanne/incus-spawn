@@ -86,7 +86,7 @@ final class WarningsModal {
         var title = entries.isEmpty() ? " Warnings "
                 : " Warnings (" + entries.size() + ") ";
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(modal.styledTitle(title, modal.warn()))
                 .borderStyle(Style.EMPTY.fg(modal.warn()))
                 .style(Style.EMPTY.bg(modal.bg()))

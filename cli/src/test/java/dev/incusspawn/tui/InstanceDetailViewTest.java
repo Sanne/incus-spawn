@@ -143,11 +143,11 @@ class InstanceDetailViewTest {
         int label = lines.get(y).indexOf("Pull requests:");
         assertEquals(List.of(label, label, label), List.of(lines.get(done).indexOf("Done:"),
                 lines.get(asked).indexOf("Asked:"), lines.get(closing).indexOf("Closing:")), "every label at one indent");
-        assertTrue(lines.get(done + 1).replace("\u2551", "").isBlank(), "a blank line after Done: " + lines.get(done + 1));
-        assertTrue(lines.get(closing - 1).replace("\u2551", "").isBlank(), "a blank line before Closing: " + lines.get(closing - 1));
+        assertTrue(lines.get(done + 1).replace("\u2502", "").isBlank(), "a blank line after Done: " + lines.get(done + 1));
+        assertTrue(lines.get(closing - 1).replace("\u2502", "").isBlank(), "a blank line before Closing: " + lines.get(closing - 1));
         assertEquals(value, lines.get(asked).indexOf("word"));
         assertEquals(value, lines.get(asked + 1).indexOf("word"), "the rest of a long ask under its value: " + lines.get(asked + 1));
-        assertTrue(lines.get(asked + 1).substring(lines.get(asked + 1).indexOf('\u2551') + 1, value).isBlank(), lines.get(asked + 1));
-        assertTrue(lines.get(y - 1).replace("\u2551", "").isBlank(), "a blank line before the pull requests: " + lines.get(y - 1));
+        assertTrue(lines.get(asked + 1).substring(lines.get(asked + 1).indexOf('\u2502') + 1, value).isBlank(), lines.get(asked + 1));
+        assertTrue(lines.get(y - 1).replace("\u2502", "").isBlank(), "a blank line before the pull requests: " + lines.get(y - 1));
     }
 }

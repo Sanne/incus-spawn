@@ -518,7 +518,7 @@ The focused panel is always on screen: an action that focuses the other panel, s
 
 **The tab bar costs one row.**
 It could not share the header band, which at 80 columns is already full with the version, the running count or a warning, and the storage gauge.
-The showing tab is in brackets as well as in colour, for terminals without colour.
+Each tab is a filled cell, and the showing one is bold as well as in the selection's fill, for terminals without colour ([The TUI's visual language](visual-language.md)).
 A one-panel tab carries its row count, which is what says how much a tab holds while it is out of sight.
 
 **What this gives up.**
@@ -536,13 +536,15 @@ tamboui clears the screen before its first frame, since 0.7.0 (#597).
 Ctrl+L clears it again in any mode, for output something else wrote over the TUI, after its reload so the screen is not blank meanwhile.
 tamboui clears again only on resize, so Ctrl+L is still isx's.
 
-**The theme uses no RGB colours.**
+**No RGB colour is written unless the terminal proved it reads one.**
 tamboui writes an RGB colour as a 24-bit escape whatever the terminal supports, and Termius drew every one of them in the same green.
 The `isx` badge, the disabled function keys and the scrollbar track became green, and RGB backgrounds became black.
-`TuiTheme` takes a 256-colour palette entry instead, the nearest one unless that would merge two colours that sit together, such as a modal and its inactive input.
-The dark theme's dialogs lose their slight blue tint and become grey.
-It is used everywhere rather than when `COLORTERM` is unset, because SSH does not pass `COLORTERM` on, so most remote sessions would lose it anyway.
-`TuiThemeTest` fails on an RGB colour in either theme.
+The theme is written in RGB and fitted to the terminal's `ColorDepth` before anything is drawn.
+Truecolor is used only where the terminal says it draws it or `ISX_COLORS=truecolor` asks for it, and every other terminal gets the nearest 256-colour palette entry.
+SSH does not pass `COLORTERM` on, so most remote sessions get the palette, as every session did while the theme held palette entries only.
+`TuiTheme.of` fits each colour of the theme, and `ColorFit`, the last step of every frame, fits what a blend drew.
+`TuiThemeTest` fails on an RGB colour in a theme below truecolor, on one left in a fitted frame, and on two surfaces that sit together and fit to the same entry.
+The rest is in [The TUI's visual language](visual-language.md) "Colour depth".
 
 **Keys are read in their legacy encoding.**
 Pi and Claude Code turn on the kitty keyboard protocol, and Pi also xterm's `modifyOtherKeys`.

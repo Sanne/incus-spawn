@@ -339,7 +339,7 @@ final class BranchModal {
         int width = Math.max(accountRows == 0 ? 54 : 64, Math.min(hintsWidth + 4, screen.width() - 4));
         var modalArea = ModalRenderer.centerRect(screen, width, height);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(modal.styledTitle(" Branch from '" + branchSourceName + "' ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))

@@ -29,7 +29,7 @@ public class HelpContext {
             "help/design/host-resources.md", "help/design/instances.md", "help/design/macos-and-vms.md",
             "help/design/mcp.md", "help/design/native-image.md", "help/design/network.md", "help/design/proxy.md",
             "help/design/storage.md", "help/design/templates.md", "help/design/terminal.md", "help/design/testing.md",
-            "help/design/upstream.md");
+            "help/design/upstream.md", "help/design/visual-language.md");
     private static volatile String cachedBasePrompt;
 
     static String introduction(BuildInfo build) {
