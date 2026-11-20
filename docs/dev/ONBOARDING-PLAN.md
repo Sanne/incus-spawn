@@ -315,13 +315,49 @@ Three changes are proposed:
   For any template, one view shows where each definition comes from, what it inherits, and what overrides what.
   Definitions come from four places today: built in, `~/.config/incus-spawn/`, search paths and a project's `.incus-spawn/`.
 
-## Order of work
+## Building blocks, in the order to build them
 
-1. Minimal init: the plumbing as one block, and the deferred steps as a menu on a second run.
-2. The preferred agent, stored, with the built-in agent template.
-3. Init ends by building and branching that template.
-4. Detection of the host's agents and their account kind, with one confirmation.
-5. Deferred steps offered when a command first needs them.
-6. The personal profile, the catalog and the chain view, each after a design of its own.
+Each block below is a change of its own, with its own tests, and most are useful before the new first run exists.
+The new init is then mostly an arrangement of them.
 
-Items 1 to 3 remove and reorder what exists, and they change the first ten minutes.
+**First, three that depend on nothing and help today's users:**
+
+1. **Downloads that survive an interruption.**
+   "Recovering an interrupted download": the named partial file, the lock, the resume across runs and the removal of orphaned temporary files.
+   Every build gains from it.
+2. **Missing accounts asked for at build and branch.**
+   "Missing accounts are asked for when a build needs them", for any credential a tool declares.
+   No step of init can be deferred safely until this exists.
+3. **Init's steps in a compact form.**
+   One line per step as it completes, and the step's hint only when it fails.
+   It changes what a run shows and nothing it does.
+
+**Then four that the new first run is assembled from:**
+
+4. **One step of init run by name, and the menu.**
+   Each deferred step becomes something a person can run alone, as `isx mcp setup` already is.
+   A second `isx init` lists them with their state, from what `--plan` already reads.
+5. **A read-only probe of the host's agents.**
+   For each supported agent: whether it is installed, whether it is signed in, the kind of account and the model.
+   It changes nothing and holds no secret, so it is tested against made-up home directories.
+   `isx init --plan` and `isx doctor` report it first, before init acts on it.
+6. **The user's preferred agent.**
+   The key in `config.yaml`, the command that shows and sets it, and the way a template asks for it.
+   The built-in agent template is the first to ask.
+   This is the largest block: the loader, the editor schema, the out-of-date check and the docs lists all learn the new construct.
+7. **A Git identity that no GitHub account supplies.**
+   The key in `config.yaml`, its explicit question, and where it is reported.
+   Today only the `gh` tool writes an identity, so a template without `gh` needs another place to write one.
+
+**Then two that only the new first run uses:**
+
+8. **Downloads started ahead of the build.**
+   Given a template, what its build will download, fetched in the background with progress a later step can show.
+   It needs block 1.
+9. **The new first run.**
+   The order of "Minimal init", the questions before the work, the services without a question, and the closing question.
+
+**After those:** the personal profile beyond the agent, the catalog and the chain view, each after a design of its own.
+
+**To check before block 9:** that the agent template builds without its credential.
+Today's build warns that such a template cannot be branched, which suggests it does, but this was not run.
