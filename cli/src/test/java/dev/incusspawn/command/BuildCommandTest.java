@@ -25,6 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -35,6 +37,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -2441,11 +2444,27 @@ class BuildCommandTest {
 
     /** A build launch against {@code daemon}, started the way a build starts it. */
     private static BuildCommand.Launched launch(FakeIncusDaemon daemon, String image, boolean reimportable) {
-        var cmd = new BuildCommand();
-        cmd.incus = daemon.client();
-        var def = trusted("tpl-x");
-        return cmd.launchBuildInstance(image, "tpl-x-rebuilding", MachineType.CONTAINER, "tpl-x", reimportable,
-                () -> new BuildCommand.Launched(cmd.startBuild("tpl-x-rebuilding", def, Map.of("tpl-x", def)), null));
+        // startBuild derives a credential proof, which writes the host key under the home (#2433)
+        Path home;
+        try {
+            home = Files.createTempDirectory("isx-home");
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        var result = new AtomicReference<BuildCommand.Launched>();
+        try {
+            InitCommandTest.withHome(home, () -> {
+                var cmd = new BuildCommand();
+                cmd.incus = daemon.client();
+                var def = trusted("tpl-x");
+                result.set(cmd.launchBuildInstance(image, "tpl-x-rebuilding", MachineType.CONTAINER, "tpl-x",
+                        reimportable, () -> new BuildCommand.Launched(
+                                cmd.startBuild("tpl-x-rebuilding", def, Map.of("tpl-x", def)), null)));
+            });
+        } finally {
+            dev.incusspawn.FileTrees.deleteQuietly(home);
+        }
+        return result.get();
     }
 
     @Test
