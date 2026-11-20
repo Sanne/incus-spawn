@@ -69,6 +69,12 @@ The credential namespaces that *do* have a Java class (`GitHubConfig`, `BobConfi
 Without that an `accounts:` block would deserialize to nothing and then be **deleted** by the next save — the same credential-destroying shape as the `putAccount` bug found in review.
 Namespaces with no Java class at all were already safe: they land in `SpawnConfig.getExtras()`.
 
+**An account whose credential is a session the host keeps (#2443).**
+A `gemini` account of `type: google` holds no key: its credential is the Google sign-in Antigravity CLI makes through the proxy, kept in `~/.config/incus-spawn/gemini/<account>/session.json` (`GoogleSessionStore`), as a ChatGPT session is for `openai`.
+`GeminiSetup.ACCOUNT_SHAPE` judges such an account usable with no key and answers `credentialOutsideConfig` for it, which is the one hook `ToolProxyResolver.missingSecrets` and `findUnresolved` need: neither a branch check nor the proxy's startup report calls it incomplete for lacking `apiKey`.
+`isx init` offers it beside the key through `ToolSetup.hostedSignIn`, a declaration, so no step branches on the namespace; `describeAccount` names the signed-in email, never a token.
+Which mode the build baked is the tool's baked identity, so a pin across modes is reconciled like a GitHub re-point (design/proxy.md "Antigravity CLI's Google sign-in stays on the host").
+
 **How the proxy tells callers apart.**
 One shared proxy on `DEFAULT_MITM_PORT` still serves every instance, but it now identifies the caller by source address.
 Every branch is given a static IP (`InstanceLifecycle.configureBranch`, recorded as `user.incus-spawn.static-ip`) and the iptables REDIRECT that sends `:443` to the proxy preserves the source address.

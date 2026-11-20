@@ -62,6 +62,21 @@ github:
 You do not need to write this by hand: `isx init` adds, renames and removes accounts and sets the default.
 Re-run it any time to change them.
 
+A Gemini account may be a Google account instead of a key, for Antigravity CLI on an AI Pro or AI Ultra plan:
+
+```yaml
+gemini:
+  accounts:
+    home:
+      type: google
+    work:
+      apiKey: "AIza..."
+  default: home
+```
+
+It holds no secret here.
+Antigravity CLI signs in from an instance, and the proxy keeps the session on this host in `~/.config/incus-spawn/gemini/home/`, as [Antigravity CLI](AGENTS.md#signing-in-with-a-google-account) describes.
+
 isx ignores a key it does not read in a tool's credential section, such as `openai.token` written where `openai.apiKey` is meant.
 `isx init`, `isx account add` and `isx doctor` name the ignored key, and so does the error when a template needs that credential.
 

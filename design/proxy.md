@@ -975,7 +975,7 @@ Sign-in through the official `codex login`, delivery on every start, and clearin
 The route identifies its caller by source address alone, so on macOS, where every container arrives from the VM's address (#1582), it serves no instance yet.
 Its proofs are keyed with the rotating per-start secret, not the stable credential seed the other namespaces now use (`CredentialProof`); which one delivery uses is for the next milestone to decide.
 
-**The session:** `~/.config/incus-spawn/openai/<account>/session.json` (owner-only) holds the tokens, a `session_id` minted at sign-in, a `generation`, and `refreshing` while a refresh is out (`ChatGptSessionStore`).
+**The session:** `~/.config/incus-spawn/openai/<account>/session.json` (owner-only) holds the tokens, a `session_id` minted at sign-in, a `generation`, and `refreshing` while a refresh is out (`ChatGptSessionStore`, on the mechanics `SessionStore` shares with Google sign-ins, #2443).
 `config.yaml` only names the account and its type.
 OpenAI rotates the refresh token on every use and refuses a reused one, so exactly one party may refresh: the proxy, relaying the guest Codex's own refresh request.
 
@@ -1050,6 +1050,65 @@ It leaves the developer's own isx state alone: its proxy runs in a mount namespa
 Neither `$HOME` nor `-Duser.home` would do: Java reads its home from the password database, and a native image ignores the property.
 The real directories are checked unchanged, and a proxy that was running is started again on exit, an interrupted run included.
 
+### Antigravity CLI's Google sign-in stays on the host (#2443)
+
+Antigravity CLI's personal plans (AI Pro, AI Ultra) pay only for a Google sign-in, and its API key mode is slower and billed to the key (#2443).
+The sign-in is an OAuth session, which must stay on the host like every credential, so a `gemini` account of `type: google` holds it there (`GoogleSessionStore`, `~/.config/incus-spawn/gemini/<account>/session.json`) and the proxy turns the guest's look-alikes into it (`GoogleAuthRoute`).
+This follows the ChatGPT design above, with three differences, each because of how `agy` and Google behave.
+It was built from a probe of agy 1.5.12 against a stub of Google's endpoints, not against Google: the probe recorded the sign-in's code exchange, the refresh, every backend call of a session and where agy keeps its token.
+
+**The sign-in happens in the instance, and isx holds no client credentials.**
+agy signs in with a PKCE flow whose browser step ends at `https://antigravity.google/oauth-callback`; without a browser it prints the URL and takes the code the page shows.
+The user opens the URL on the host, signs in, pastes the code into agy, and agy exchanges it at `oauth2.googleapis.com/token` with its own client id and client secret.
+The proxy relays that exchange as sent for an instance whose `gemini` account is a Google one, keeps Google's answer as the account's session (a sign-in again replaces it), and answers the guest with look-alikes.
+An exchange of agy's client id from such an instance in a form isx does not recognise is refused, never relayed: relayed, Google's real tokens would land in the guest, which the account exists to prevent.
+For the same reason a token request over 64 KiB is answered 413, never relayed unread: a token request is never that large, and relaying it would be the one request a Google-account instance could pad past every check.
+So isx never holds Google's client secret, and the official binary is the OAuth client.
+**Alternatives:** a host-side sign-in in `isx init` with agy's client id and secret embedded in isx, as third-party tools do: the cleanest flow, but Google's credentials in isx's source and a token exchange isx makes in agy's name.
+Reading agy's token from the host's keyring after a sign-in on the host: a keyring format isx would have to follow, and a host that may have no agy.
+**What this gives up:** the one-time authorization code passes through the guest.
+It is spent by the proxy's exchange within seconds, and a `--proxy-only` instance can send it nowhere else; in full network mode a hostile process that caught the user's paste could exchange it directly, so sign in from a `--proxy-only` instance when that matters.
+On macOS the address names no instance, so the exchange carries nothing that says which instance sent it.
+There the proxy keeps a sign-in only for the one instance that proved itself and was told to sign in within the last 15 minutes: agy's first request on the seeded token file is a refresh carrying the instance's proof, refused with "no Google session yet" when the account has none, and that refusal is what opens the window.
+An exchange no such instance asked for, or that two asked for at once, is refused, never relayed: relayed, the real tokens would land in whichever instance sent it, and on macOS an API-key instance's own sign-in and a Google-account instance's look the same.
+So on macOS an instance on an API key account cannot sign agy in to Google through the proxy while a Google account is configured, and a Google-account instance that signed out in agy signs in again from a new login shell, whose script seeds the file that makes agy ask first.
+**Accepted, and documented rather than closed (Sanne, #2448):** while that instance's window is open, the proxy cannot tell its exchange from another instance's on the Mac, so a sign-in another instance completes in those minutes is kept as the account's session.
+It takes the user's own browser sign-in to complete, so what can happen is that the session becomes the identity the user signed in as from another box, never that a guest obtains a token; the user pages say to sign in from one instance at a time.
+
+**The look-alikes carry the instance's `gemini` proof, not a session-bound proof.**
+The access placeholder is `ya29.isx_<digest>` and the refresh placeholder `1//isx_<digest>`, with the digest the instance's `GEMINI_API_KEY` already carries (`GooglePlaceholders`, `ProofToken.derive`).
+So the session belongs to the account as an API key does: a copy or a reset gets new look-alikes by the mechanism every proof uses, and a sign-in again does not cut earlier proofs off, since the host decides what the account's session is.
+agy keeps its token in the OS keyring, and without one, as no instance has, in `~/.gemini/antigravity-cli/antigravity-oauth-token`; the login script `/etc/profile.d/isx-zz-antigravity.sh` derives that file from the variable (the #1108 pattern).
+A missing file is seeded with the look-alikes and an expiry in the past, in a home agy is configured in (its directory exists; agy's `/logout` removes the file alone), so agy's first request is a refresh: answered from the session, or refused with a message when the account has not signed in, which makes agy show its sign-in.
+The proxy holds no credential seed, so at the exchange it cannot mint the instance's proof: it mints a digest for that run, honoured from memory for a day and bound to the instance that signed in (at an address the registry names, that instance on that account; on macOS, that instance still running), and the next login's script replaces it with the proof.
+A proxy restart forgets it; agy's refresh is then refused and the next login shell repairs the file.
+
+**Refreshes ride the guest's own request.**
+Google's token endpoint wants the client secret on a refresh too, so the proxy sends agy's request with the real refresh token in place of the placeholder, when the real token is within five minutes of expiry or the backend refused it, else it answers from the session.
+Google does not rotate the refresh token, so a lost answer costs nothing; the single-flight and 30 s throttle are kept as for ChatGPT.
+The look-alikes' `expires_in` is the real token's, so agy refreshes when the host needs to.
+The id token the guest gets is unsigned and holds the email alone, which agy shows in its header and checks no signature on.
+A guest's `/logout` deletes its file and sends nothing; a revocation naming a placeholder is answered locally, so the host session never ends from a guest.
+
+**The host is the boundary at the backend, not a method list.**
+A proven request to `daily-cloudcode-pa.googleapis.com` or `cloudcode-pa.googleapis.com` is relayed with the session's token when its path is `/v1internal:<method>` or `/v1internal/<resource>`, with one `Authorization`, a `Host` that is the TLS name and a target no server decodes into another path.
+Only a 401 from those two hosts marks the session's token refused; userinfo judges nothing.
+agy calls dozens of `/v1internal` methods in one session (`loadCodeAssist`, `fetchAvailableModels`, `retrieveUserQuotaSummary`, `listExperiments`, `cascadeNuxes`, `streamGenerateContent` and more) and a release adds some, and every one reaches the user's own Antigravity data.
+The session's token has the `cloud-platform` scope, which reaches far more than Code Assist, so what matters is that the proxy sends it to these hosts and `GET /oauth2/v2/userinfo` on `www.googleapis.com` and nowhere else.
+**Alternative rejected:** ChatGPT's exact method list, which would break agy at each release for no gain here.
+Everything else to the four hosts is relayed untouched; interception is per host while any Google account exists (`GoogleAccounts.enabledBy`, shared with the CLI's DNS writers through `ToolProxyResolver.handlerDomains`).
+
+**The build derives the mode from the account.**
+For a Google account the build leaves `modelProvider` out of agy's settings, since agy exits on `modelProvider: gemini` with no key, and installs the login script; for an API key account it writes `modelProvider: gemini` and removes both.
+That is a baked identity (`AntigravitySetup.bakedAccountIdentity`: `google` or `api-key`), re-derived on a built instance when its account moves across modes, since agy reads both files when it starts.
+A `type: google` account holds no key, so `GeminiSetup.ACCOUNT_SHAPE` judges it usable without one and `AccountShape.credentialOutsideConfig` keeps `CredentialCheck` and the proxy's startup report from calling it incomplete.
+`isx init` offers it beside the key (`ToolSetup.hostedSignIn`), and `isx account list` describes it by its session's email, never its tokens.
+Gemini CLI, Pi and opencode read the API key alone, so an instance on a Google account gives them nothing to spend.
+
+**Testing:** `GoogleAuthRouteTest` runs the real proxy against a stub of the four hosts with the requests the probe recorded: the exchange that becomes a session and the placeholders it answers, a key account's and a stranger's exchange relayed untouched, an oversized one refused, the macOS window and its refusals, the proof matrix on the backend, refused paths and shapes, refreshes answered and relayed, Google's refusals, the local revocation, and a minted digest forgotten by a restart.
+`AntigravitySetupTest` runs the login script in a shell against each state of the token file.
+Nothing here was tried against Google or a real Antigravity plan, and the integration is experimental until it is.
+
 ## Credential Isolation
 
 Real API keys and tokens never enter containers, regardless of network mode.
@@ -1066,6 +1125,7 @@ A started instance's placeholders are proof tokens (`gho_isx_<digest>`, see desi
 | Pi Gemini on Vertex | Placeholder `AIzaplaceholder` in `GOOGLE_CLOUD_API_KEY` (claude namespace) | Pi's `google-vertex` provider sends Vertex's express form to `aiplatform.googleapis.com`; the proxy moves it into the Vertex account's project and region and injects the host's gcloud Bearer token. Only Gemini model calls are served, with only the body fields Pi sends |
 | OpenAI API key | Placeholder `sk-placeholder` in `OPENAI_API_KEY` (and, for `codex`, copied into `~/.codex/auth.json` at login) | Proxy replaces `Authorization: Bearer` header with real key for `api.openai.com`. Used by `codex` and by `pi` with `provider: openai` |
 | GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
+| Google sign-in (Antigravity CLI) | `ya29.isx_<digest>` and `1//isx_<digest>` in `~/.gemini/antigravity-cli/antigravity-oauth-token`, written by a login script from `GEMINI_API_KEY` | The proxy relays a proven request to the Code Assist hosts and userinfo with the session's access token, and a refresh with its refresh token; the session comes from a sign-in agy made through the proxy (#2443) |
 
 **A placeholder is read when the tool runs, never fixed at build time (#1108).**
 The placeholders become stable per-instance proofs derived from the credential seed, which the proxy checks before it injects anything (#1107, #1100).
@@ -1084,6 +1144,7 @@ What each tool reads, checked against its source or binary:
 | Pi | `ANTHROPIC_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, after a stored `~/.pi/agent/auth.json` that isx never writes | Nothing more |
 | opencode | `OPENCODE_ANTHROPIC_API_KEY` through its settings' `{env:...}` reference, or `OPENAI_API_KEY` / `GEMINI_API_KEY` for its `openai` and `google` providers | Nothing more |
 | Bob | `BOBSHELL_API_KEY`, copied into `BOB_API_KEY`; nothing stored | Nothing more |
+| Antigravity CLI, Google sign-in | `~/.gemini/antigravity-cli/antigravity-oauth-token`, its file store when there is no keyring (probed: no instance has one) | `/etc/profile.d/isx-zz-antigravity.sh` seeds the file with look-alikes carrying the proof in `GEMINI_API_KEY`, and brings look-alikes of another digest to it; a real token is left alone |
 | YAML tools with a `proxy:` entry | Whatever the author wrote | The loader warns when a tool's `files:` or build steps hold the value of one of its own variables named as a credential, if that value is no path, URL or phrase (`ToolDefValidator.embeddedTokens`): read the variable when the tool runs |
 
 The two login scripts are named `isx-zz-*` so they sort after every other `isx-*.sh` in `/etc/profile.d`, and see the values a start exports rather than the build's.

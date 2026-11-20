@@ -298,7 +298,7 @@ The tool leaves `context.fileName` unset.
 ## Antigravity CLI
 
 Google's [Antigravity CLI](https://antigravity.google/docs/cli/reference/), `agy`, is the terminal agent that replaced Gemini CLI for Google's personal plans.
-isx runs it with the [Gemini API key](https://aistudio.google.com/apikey) you configured for Gemini CLI, so it needs no setup of its own in `isx init`.
+isx runs it on the `gemini` account you configured in `isx init`: a [Gemini API key](https://aistudio.google.com/apikey), or a Google account for an AI Pro or AI Ultra plan.
 Add it to a template with `tools: [antigravity]`:
 
 ```yaml
@@ -309,14 +309,42 @@ tools:
 default-action: antigravity
 ```
 
-The instance gets the same `GEMINI_API_KEY` proof placeholder as Gemini CLI.
+With an API key account, the instance gets the same `GEMINI_API_KEY` proof placeholder as Gemini CLI.
 `agy` sends it to `generativelanguage.googleapis.com`, where the proxy checks it and adds the selected key.
 Select a named account as for Gemini CLI, with `accounts: { gemini: work }` or `--account gemini=work`.
 
-Signing in with a Google account is not supported, so an AI Pro or AI Ultra plan does not pay for its requests.
-`agy` keeps that sign-in in the instance's keyring, which would put a credential inside the instance.
-Every request is billed to the Gemini API key instead.
-The Antigravity desktop app and IDE are not supported either.
+### Signing in with a Google account
+
+Choose "Google account" for Gemini in `isx init` to let an AI Pro or AI Ultra plan pay for `agy`.
+The account holds no key, and `isx init` saves it as `type: google`.
+The sign-in happens the first time `agy` runs in an instance built on it.
+
+`agy` shows a Google sign-in link.
+Open it on this machine, sign in, and paste the code the page shows back into `agy`.
+The proxy keeps the session on the host, and the instance holds only placeholders.
+
+Every instance on that account shares the session, and a sign-in again from any of them replaces it.
+`isx account list` shows which Google account is signed in.
+In `agy`, `/logout` forgets the sign-in in that instance only, and the next login shell signs it back in.
+
+This integration was built against a recording of what `agy` sends, not against a Google account.
+Treat it as experimental and report what you see.
+
+On macOS the proxy cannot tell instances apart by address, so it keeps a sign-in only for the instance that just asked for one.
+Start `agy` from a login shell in the instance.
+
+For the next few minutes the proxy takes a Google sign-in completed from any instance as that one's.
+Sign in from one instance at a time.
+
+After `/logout` in `agy`, open a new login shell before you sign in again.
+While a Google account is configured, an instance on a Gemini API key cannot sign `agy` in to Google on macOS.
+
+The sign-in code passes through the instance once.
+In full network mode a hostile program in the instance could exchange that code elsewhere during those seconds.
+Sign in from a `--proxy-only` instance when that matters.
+
+Gemini CLI, Pi and opencode use API keys only, so an instance on a Google account gives them no Gemini credential.
+The Antigravity desktop app and IDE are not supported.
 
 ### What the build sets up
 
@@ -324,7 +352,7 @@ The tool installs a pinned `agy` release from Google's download bucket, checked 
 It sets `AGY_CLI_DISABLE_AUTO_UPDATE`, so `agy` never replaces the pinned release itself; a new release comes with a new isx.
 It writes these settings into `~/.gemini/antigravity-cli/settings.json`, keeping any others there:
 
-- `modelProvider: gemini`, the Gemini API key mode;
+- `modelProvider: gemini`, the Gemini API key mode, when the account is an API key; with a Google account the key is left out, so `agy` signs in;
 - every tool call and artifact proceeding without a question, with files outside the workspace reachable;
 - no terminal sandbox, which would need a container inside the instance;
 - your home folder trusted, so `agy` asks once for each other folder you start it in;
@@ -332,6 +360,9 @@ It writes these settings into `~/.gemini/antigravity-cli/settings.json`, keeping
 
 It also marks the first-run questions as answered.
 It installs Node.js as well, which `isx mcp` needs to hand a task to `agy` ([MCP](MCP.md)).
+
+With a Google account it writes a login script that keeps `agy`'s token file holding the instance's placeholders.
+No sign-in token is ever stored in the instance.
 Every build writes the [environment primer](#agent-environment-context) to `~/.gemini/config/rules/isx.md`, a rule `agy` always loads.
 Your own `~/.gemini/GEMINI.md` and `AGENTS.md` stay yours.
 
