@@ -1,24 +1,24 @@
 
 
 
-  ╔ AI Help ═════════════════════════════════════════════════════════════════╗
-  ║ Ask anything about isx: an AI model answers from the project's           ║
-  ║ documentation. Your question is sent to the AI account below, which is   ║
-  ║ billed for it.                                                           ║
-  ║                                                                          ║
-  ║  ▸ Question:                                                             ║
-  ║    I have a template tpl-java that builds fine, but when I branch it the ║
-  ║    Maven repository cache seems to be empty and every build downloads    ║
-  ║    the internet again. Is the cache supposed to be shared between        ║
-  ║    branches, and if so what could be preventing it?                      ║
-  ║                                                                          ║
-  ║    [ ] Attach my template and tool definitions (~12.2 KB)                ║
-  ║        Helps the AI answer questions about your own setup.               ║
-  ║                                                                          ║
-  ║    AI account: work (Anthropic API key)                                  ║
-  ║                                                                          ║
-  ║  Ctrl+S Ask   Enter New line   Tab Next field   Esc Close                ║
-  ╚══════════════════════════════════════════════════════════════════════════╝
+  ╭ AI Help ─────────────────────────────────────────────────────────────────╮
+  │ Ask anything about isx: an AI model answers from the project's           │
+  │ documentation. Your question is sent to the AI account below, which is   │
+  │ billed for it.                                                           │
+  │                                                                          │
+  │  ▸ Question:                                                             │
+  │    I have a template tpl-java that builds fine, but when I branch it the │
+  │    Maven repository cache seems to be empty and every build downloads    │
+  │    the internet again. Is the cache supposed to be shared between        │
+  │    branches, and if so what could be preventing it?                      │
+  │                                                                          │
+  │    [ ] Attach my template and tool definitions (~12.2 KB)                │
+  │        Helps the AI answer questions about your own setup.               │
+  │                                                                          │
+  │    AI account: work (Anthropic API key)                                  │
+  │                                                                          │
+  │  Ctrl+S Ask   Enter New line   Tab Next field   Esc Close                │
+  ╰──────────────────────────────────────────────────────────────────────────╯
 
 
 

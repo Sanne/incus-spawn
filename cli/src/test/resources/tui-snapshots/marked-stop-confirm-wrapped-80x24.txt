@@ -4,18 +4,18 @@
 
 
 
-             ╔ Stop 30 instances ═════════════════════════════════╗
-             ║                                                    ║
-             ║ This will stop box-1, box-2, box-3, box-4,         ║
-             ║ box-5, box-6, box-7, box-8, box-9, box-10,         ║
-             ║ box-11, box-12, box-13, box-14, box-15, box-16,    ║
-             ║ box-17, box-18, box-19, box-20, box-21, box-22,    ║
-             ║ box-23, box-24, box-25, box-26, box-27, box-28,    ║
-             ║ box-29, box-30.                                    ║
-             ║                                                    ║
-             ║  y Stop   any key Cancel                           ║
-             ║                                                    ║
-             ╚════════════════════════════════════════════════════╝
+             ╭ Stop 30 instances ─────────────────────────────────╮
+             │                                                    │
+             │ This will stop box-1, box-2, box-3, box-4,         │
+             │ box-5, box-6, box-7, box-8, box-9, box-10,         │
+             │ box-11, box-12, box-13, box-14, box-15, box-16,    │
+             │ box-17, box-18, box-19, box-20, box-21, box-22,    │
+             │ box-23, box-24, box-25, box-26, box-27, box-28,    │
+             │ box-29, box-30.                                    │
+             │                                                    │
+             │  y Stop   any key Cancel                           │
+             │                                                    │
+             ╰────────────────────────────────────────────────────╯
 
 
 

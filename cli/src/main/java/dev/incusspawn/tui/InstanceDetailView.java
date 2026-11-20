@@ -116,7 +116,7 @@ public final class InstanceDetailView {
 
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(modal.styledTitle(" " + selected.name() + " ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))

@@ -35,11 +35,18 @@ final class ModalRenderer {
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private final TuiTheme theme;
+    private final Motion motion;
     private final Checkbox checkbox;
     private final Select select;
 
+    /** For a dialog drawn on its own: nothing moves. */
     ModalRenderer(TuiTheme theme) {
+        this(theme, new Motion(theme));
+    }
+
+    ModalRenderer(TuiTheme theme, Motion motion) {
         this.theme = theme;
+        this.motion = motion;
         this.checkbox = Checkbox.builder()
                 .checkedColor(theme.checkEnabled())
                 .uncheckedColor(theme.checkDisabled())
@@ -85,27 +92,13 @@ final class ModalRenderer {
         }
     }
 
+    /**
+     * A dialog's surface: raised from the screen by its tint and a thin frame, with no shadow. The
+     * dimmed screen behind it already says it is on top.
+     */
     void renderBlock(Frame frame, Block block, Rect modalArea) {
-        renderShadow(frame, modalArea);
         frame.buffer().fill(modalArea, new Cell(" ", Style.EMPTY.bg(theme.modalBg())));
         frame.renderWidget(block, modalArea);
-    }
-
-    private void renderShadow(Frame frame, Rect area) {
-        var buf = frame.buffer();
-        var shadowCell = new Cell(" ", Style.EMPTY.bg(theme.modalShadow()));
-        var bufArea = buf.area();
-        int shadowRight = area.right();
-        int shadowBottom = area.bottom();
-        for (int y = area.y() + 1; y <= shadowBottom && y < bufArea.bottom(); y++) {
-            for (int dx = 0; dx < 2; dx++) {
-                int x = shadowRight + dx;
-                if (x < bufArea.right()) buf.set(x, y, shadowCell);
-            }
-        }
-        for (int x = area.x() + 2; x < shadowRight + 2 && x < bufArea.right(); x++) {
-            if (shadowBottom < bufArea.bottom()) buf.set(x, shadowBottom, shadowCell);
-        }
     }
 
     Title styledTitle(String text, Color color) {
@@ -114,7 +107,7 @@ final class ModalRenderer {
 
     void addKey(List<Span> spans, String key, String label) {
         spans.add(Span.styled(" " + key, Style.EMPTY.bold().fg(theme.modalAccent()).bg(theme.modalBg())));
-        spans.add(Span.styled(" " + label + "  ", Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg())));
+        spans.add(Span.styled(" " + label + "  ", Style.EMPTY.fg(theme.textDim()).bg(theme.modalBg())));
     }
 
     /** The columns a hint line built with {@link #addKey} takes, without the padding after its last label. */
@@ -211,7 +204,7 @@ final class ModalRenderer {
                                   TextInputState inputState) {
         var modalArea = centerRect(screen, 54, 7);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(styledTitle(" " + title + " ", theme.modalBorder()))
                 .borderStyle(Style.EMPTY.fg(theme.modalBorder()))
                 .style(Style.EMPTY.bg(theme.modalBg()))
@@ -253,7 +246,7 @@ final class ModalRenderer {
         int textWidth = wrappedLines.stream().mapToInt(CharWidth::of).max().orElse(0);
         var modalArea = centerRect(screen, Math.max(CONFIRM_TEXT_WIDTH, textWidth) + 6, confirmModalHeight(wrappedLines.size()));
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(styledTitle(title, borderColor))
                 .borderStyle(Style.EMPTY.fg(borderColor))
                 .style(Style.EMPTY.bg(theme.modalBg()))
@@ -393,7 +386,7 @@ final class ModalRenderer {
         int width = Math.min(lines.stream().mapToInt(CharWidth::of).max().orElse(30) + 6, screen.width() - 4);
         var modalArea = centerRect(screen, Math.max(width, 40), height);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(styledTitle(" Error ", theme.modalWarn()))
                 .borderStyle(Style.EMPTY.fg(theme.modalWarn()))
                 .style(Style.EMPTY.bg(theme.modalBg()))
@@ -419,15 +412,17 @@ final class ModalRenderer {
         int width = Math.min(CharWidth.of(message) + 8, screen.width() - 4);
         var modalArea = centerRect(screen, width, 3);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .borderStyle(Style.EMPTY.fg(theme.modalAccent()))
                 .style(Style.EMPTY.bg(theme.modalBg()))
                 .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
-        frame.renderWidget(Paragraph.from(Line.styled(
-                " " + message,
-                Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg()))), block.inner(modalArea));
+        var inner = block.inner(modalArea);
+        frame.renderWidget(Paragraph.from(Line.from(
+                Span.styled(motion.spinner() + " ", Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())),
+                Span.styled(message, Style.EMPTY.fg(theme.textDim()).bg(theme.modalBg())))), inner);
+        motion.shimmer(new Rect(inner.x() + 2, inner.y(), Math.max(0, inner.width() - 2), 1));
     }
 
     int renderScrollableContent(Frame frame, Rect contentArea,
@@ -458,7 +453,7 @@ final class ModalRenderer {
         if (scrollbarArea != null) {
             var scrollbar = Scrollbar.builder()
                     .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
-                    .thumbStyle(Style.EMPTY.fg(accent()))
+                    .thumbStyle(Style.EMPTY.fg(theme.textFaint()))
                     .trackStyle(Style.EMPTY.fg(theme.scrollbarTrack()))
                     .style(Style.EMPTY.bg(bg()))
                     .build();

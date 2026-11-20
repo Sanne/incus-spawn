@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
-import static dev.incusspawn.tui.UsageFormat.bar;
 import static dev.incusspawn.tui.UsageFormat.gibShort;
 import static dev.incusspawn.tui.UsageFormat.runningSummary;
 import dev.incusspawn.command.InstanceListing.InstanceInfo;
@@ -51,26 +50,25 @@ final class MainScreen {
     private static final int HEADER_BAR_MAX = 32;  // cap so the bar stays a gauge, not a ruler
 
     /**
-     * Render the always-present header band above the panels: a bold accent "brand chip" on the
-     * left for app identity, and — when pool usage is available — a compact storage gauge
-     * right-aligned on the same row. The gauge's fill colour signals the threshold
-     * (green → amber → red) while the segment glyphs carry the level independently of colour, so
-     * it reads on mono terminals too. Both the gauge and (last) its bar drop out on narrow
-     * terminals so the brand always survives.
+     * The header row above the panels: the brand chip on the left and, when pool usage is known, a
+     * compact storage gauge at the right. The gauge's colour says the threshold (good, caution,
+     * bad) and its line's weight the level, so it reads without colour. The count of running
+     * instances, then the gauge's line, then the gauge drop out on a narrow terminal, so the brand
+     * always stays.
      */
     void renderHeader(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        fillBackground(frame, area, tui.theme.contextBg());
         if (area.width() <= 0) return;
-        var bg = tui.theme.contextBg();
+        // The header is not a band: only the chip is filled
+        var bg = Color.RESET;
 
-        // Left: brand chip (reverse-video accent tag) + dim version. Stands out, ~5 cells.
+        // Left: brand chip (accent tag) + dim version. Stands out, ~5 cells.
         var left = new ArrayList<Span>();
-        left.add(Span.styled(" isx ", Style.EMPTY.bold().fg(bg).bg(tui.theme.contextAccentFg())));
+        left.add(Span.styled(" isx ", Style.EMPTY.bold().fg(tui.theme.onAccent()).bg(tui.theme.accent())));
         int leftW = 5;
         var version = tui.displayVersion();
         if (version != null && !version.isBlank()) {
             var vtext = "  " + version;
-            left.add(Span.styled(vtext, Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
+            left.add(Span.styled(vtext, Style.EMPTY.fg(tui.theme.textFaint()).bg(bg)));
             leftW += vtext.length();
         }
 
@@ -99,11 +97,14 @@ final class MainScreen {
 
             if (avail - candidateW >= 0) {                        // gauge (maybe sans bar) fits
                 gaugeW = candidateW;
-                gauge.add(Span.styled(glabel, Style.EMPTY.bold().fg(tui.theme.contextPrimaryFg()).bg(bg)));
+                gauge.add(Span.styled(glabel, Style.EMPTY.fg(critical ? fillColor : tui.theme.textDim()).bg(bg)));
                 if (barInner >= 1) {
-                    gauge.add(Span.styled("▕", Style.EMPTY.fg(fillColor).bg(bg)));
-                    gauge.add(Span.styled(bar(percent, barInner), Style.EMPTY.fg(fillColor).bg(bg)));
-                    gauge.add(Span.styled("▏", Style.EMPTY.fg(fillColor).bg(bg)));
+                    // A line, heavy as far as the pool is used and light beyond: the weight says the
+                    // level where there is no colour
+                    int cells = barInner + 2;
+                    int used = Math.clamp(Math.round(percent / 100f * cells), percent > 0 ? 1 : 0, cells);
+                    gauge.add(Span.styled("━".repeat(used), Style.EMPTY.fg(fillColor).bg(bg)));
+                    gauge.add(Span.styled("─".repeat(cells - used), Style.EMPTY.fg(tui.theme.panelBorderUnfocused()).bg(bg)));
                 }
                 gauge.add(Span.styled(readout, Style.EMPTY.fg(fillColor).bg(bg)));
                 if (low) {
@@ -187,16 +188,19 @@ final class MainScreen {
         int width = 0;
         for (var view : Tui.View.values()) {
             boolean showing = view == tui.view;
-            var text = (showing ? " [" : "  ") + tabLabel(view) + (showing ? "]" : " ");
-            spans.add(Span.styled(text, showing
-                    ? Style.EMPTY.bold().fg(tui.theme.panelBorderFocused())
-                    : Style.EMPTY.fg(tui.theme.textDim())));
-            width += text.length();
+            // Each tab is a filled cell, so where a label begins and ends is drawn and not guessed
+            // from the gaps: the showing one in the selection's fill, which says "you are here"
+            // for a row too, and bold, so it reads where a terminal has no tint
+            spans.add(Span.styled(" " + tabLabel(view) + " ", showing
+                    ? Style.EMPTY.bold().fg(tui.theme.accent()).bg(tui.theme.highlightBg())
+                    : Style.EMPTY.fg(tui.theme.textDim()).bg(tui.theme.modalBg())));
+            spans.add(Span.raw(" "));
+            width += 3 + tabLabel(view).length();
         }
         int gap = area.width() - width - TABS_HINT.length();
         if (gap >= 2) {
             spans.add(Span.raw(" ".repeat(gap)));
-            spans.add(Span.styled(TABS_HINT, Style.EMPTY.fg(tui.theme.textDim())));
+            spans.add(Span.styled(TABS_HINT, Style.EMPTY.fg(tui.theme.textFaint())));
         }
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
@@ -225,16 +229,48 @@ final class MainScreen {
         return n;
     }
 
+    /** The rows a panel takes beside its table's rows: its title rule and the table's header. */
+    static final int PANEL_ROWS = 2;
+
+    /**
+     * A panel: a rule across its top that carries its title, and nothing at its sides or below.
+     * The focused panel's title is in the accent; the cursor says the same without colour. The
+     * padding keeps the table as wide as it was inside a frame, so the column thresholds hold.
+     */
+    private Block panel(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, String title, boolean focused) {
+        var block = Block.builder()
+                .borders(java.util.EnumSet.of(Borders.TOP)).borderType(BorderType.PLAIN)
+                .borderStyle(Style.EMPTY.fg(tui.theme.panelBorderUnfocused()))
+                .padding(dev.tamboui.layout.Padding.horizontal(1)).build();
+        frame.renderWidget(block, area);
+        // Drawn after the rule: a block gives its title the rule's colour
+        if (area.height() > 0) {
+            frame.buffer().setLine(area.left(), area.top(), Line.from(Span.styled(title, focused
+                    ? Style.EMPTY.bold().fg(tui.theme.accent()) : Style.EMPTY.fg(tui.theme.textDim()))), area.width());
+        }
+        return block;
+    }
+
+    /** A table's header: quiet, since the rows are what is read. */
+    private Style headerStyle() {
+        return Style.EMPTY.fg(tui.theme.textFaint());
+    }
+
+    /** The row under the cursor: the one filled row on the screen. */
+    private Style selectionStyle() {
+        return Style.EMPTY.bg(tui.theme.highlightBg()).bold();
+    }
+
+    /** The key a row's flash is found by: an instance's name. */
+    static String instanceKey(String name) {
+        return "instance:" + name;
+    }
+
     void renderTemplateTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
         boolean focused = tui.focusedPanel == Tui.Panel.TEMPLATES;
-        var borderColor = focused ? tui.theme.panelBorderFocused() : tui.theme.panelBorderUnfocused();
 
         if (tui.templateEntries.isEmpty()) {
-            var block = Block.builder()
-                    .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                    .title(" Templates ")
-                    .borderStyle(Style.EMPTY.fg(borderColor)).build();
-            frame.renderWidget(block, area);
+            var block = panel(frame, area, " Templates ", focused);
             var inner = block.inner(area);
             if (inner.height() > 0) {
                 frame.renderWidget(Paragraph.from(
@@ -244,11 +280,7 @@ final class MainScreen {
             return;
         }
 
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" Templates ")
-                .borderStyle(Style.EMPTY.fg(borderColor)).build();
-        frame.renderWidget(block, area);
+        var block = panel(frame, area, " Templates ", focused);
         var inner = block.inner(area);
 
         boolean showLegend = tui.anyTemplateOutdated || tui.anyDefinitionChanged || tui.anyParentRebuilt
@@ -279,7 +311,7 @@ final class MainScreen {
 
         var tableBuilder = Table.builder()
                 .header(Row.from("NAME", "BUILT", "DISK", "DESCRIPTION")
-                        .style(Style.EMPTY.bold().fg(focused ? tui.theme.panelBorderFocused() : tui.theme.panelBorderUnfocused())))
+                        .style(headerStyle()))
                 .rows(tui.templateRows)
                 .widths(Constraint.min(14), Constraint.length(20), Constraint.length(8), Constraint.fill())
                 .highlightSymbol(focused ? "\u25b8 " : "  ")
@@ -287,7 +319,7 @@ final class MainScreen {
                 .highlightSpacing(Table.HighlightSpacing.ALWAYS);
 
         if (focused) {
-            var highlightStyle = Style.EMPTY.bg(tui.theme.highlightBg()).fg(tui.theme.highlightFg());
+            var highlightStyle = selectionStyle();
             // Preserve modifiers from selected row if it has a pending operation
             var selected = tui.selectedTemplate();
             if (selected != null && !selected.pendingOp().isEmpty()) {
@@ -309,7 +341,7 @@ final class MainScreen {
         if (scrollArea != null) {
             var scrollbar = Scrollbar.builder()
                     .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
-                    .thumbStyle(Style.EMPTY.fg(borderColor))
+                    .thumbStyle(Style.EMPTY.fg(tui.theme.textFaint()))
                     .trackStyle(Style.EMPTY.fg(tui.theme.scrollbarTrack()))
                     .build();
             var scrollState = new ScrollbarState()
@@ -338,11 +370,70 @@ final class MainScreen {
         }
     }
 
+    /**
+     * What moves on the instance rows: each row says where it is, for a flash that follows it, and
+     * a row with an operation under way turns its still glyph into the spinner and shimmers.
+     */
+    private void renderRowMotion(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect tableArea, int offset) {
+        var buffer = frame.buffer();
+        for (int row = offset; row < tui.tableRows.size(); row++) {
+            int y = tableArea.top() + 1 + row - offset;
+            if (y >= tableArea.bottom()) break;
+            var instance = tui.instanceOnRow(row);
+            if (instance == null) continue;
+            var area = new dev.tamboui.layout.Rect(tableArea.left(), y, tableArea.width(), 1);
+            tui.motion.row(instanceKey(instance.name()), area);
+            if (instance.pendingOp().isEmpty() || !tui.motion.on()) continue;
+            for (int x = area.left(); x < area.right(); x++) {
+                var cell = buffer.get(x, y);
+                if (Motion.SPINNER_STILL.equals(cell.symbol())) buffer.set(x, y, cell.symbol(tui.motion.spinner()));
+            }
+            // The name, which is what the operation is about: the cursor gutter is not text
+            tui.motion.shimmer(new dev.tamboui.layout.Rect(area.left() + 2, y,
+                    Math.min(instance.name().length(), Math.max(0, area.width() - 2)), 1));
+        }
+    }
+
+    /** No instance yet: the logo, and the one thing to do next, in the middle of the panel. */
+    private void renderEmptyInstances(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect inner) {
+        var lines = new ArrayList<Line>();
+        if (inner.height() >= Glyphs.LOGO.length + 4) {
+            for (var row : Glyphs.LOGO) lines.add(gradient(row));
+            lines.add(Line.from(""));
+        }
+        lines.add(Line.styled("No instances yet", Style.EMPTY.bold()));
+        if (inner.height() >= 2) {
+            lines.add(Line.from(
+                    Span.styled("Select a template and press ", Style.EMPTY.fg(tui.theme.textDim())),
+                    Span.styled("Enter", Style.EMPTY.bold().fg(tui.theme.accent())),
+                    Span.styled(" to branch one", Style.EMPTY.fg(tui.theme.textDim()))));
+        }
+        int top = inner.top() + Math.max(0, (inner.height() - lines.size()) / 2);
+        for (int i = 0; i < lines.size() && top + i < inner.bottom(); i++) {
+            frame.renderWidget(Paragraph.builder().text(Text.from(lines.get(i)))
+                    .alignment(dev.tamboui.layout.Alignment.CENTER).build(),
+                    new dev.tamboui.layout.Rect(inner.left(), top + i, inner.width(), 1));
+        }
+    }
+
+    /** {@code text} drawn from the accent to its second colour, cell by cell: for the logo alone. */
+    private Line gradient(String text) {
+        var spans = new ArrayList<Span>();
+        int last = Math.max(1, text.length() - 1);
+        for (int i = 0; i < text.length(); i++) {
+            var colour = tui.theme.depth().blends()
+                    ? tui.theme.depth().fit(ColorDepth.mix(tui.theme.accent(), tui.theme.accentAlt(), i / (double) last))
+                    : tui.theme.accent();
+            spans.add(Span.styled(String.valueOf(text.charAt(i)), Style.EMPTY.bold().fg(colour)));
+        }
+        return Line.from(spans);
+    }
+
     private void renderLegend(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        var text = "! = outdated  \u25b3 = changed  \u2191 = parent rebuilt "
-                + (tui.anyMissingDefinition ? " \u25cc = no definition " : "");
+        var text = "! outdated   \u25b3 changed   \u2191 parent rebuilt"
+                + (tui.anyMissingDefinition ? "   \u25cc no definition" : "");
         var padding = Math.max(0, area.width() - text.length());
-        var style = Style.EMPTY.fg(tui.theme.textDim());
+        var style = Style.EMPTY.fg(tui.theme.textFaint());
         frame.renderWidget(Paragraph.from(Line.from(
                 Span.styled(" ".repeat(padding) + text, style))), area);
     }
@@ -369,31 +460,14 @@ final class MainScreen {
     void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                       TableState tableState) {
         boolean focused = tui.focusedPanel == Tui.Panel.INSTANCES;
-        var borderColor = focused ? tui.theme.panelBorderFocused() : tui.theme.panelBorderUnfocused();
 
         if (tui.entries.isEmpty()) {
-            var block = Block.builder()
-                    .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                    .title(" Instances ")
-                    .borderStyle(Style.EMPTY.fg(borderColor)).build();
-            frame.renderWidget(block, area);
-            var inner = block.inner(area);
-            if (inner.height() > 1) {
-                var hint = Layout.vertical()
-                        .constraints(Constraint.length(inner.height() / 2), Constraint.length(1))
-                        .split(inner);
-                frame.renderWidget(Paragraph.from(
-                        Line.styled("  No instances. Select a template and press Enter to create one.",
-                                Style.EMPTY.fg(tui.theme.textDim()))), hint.get(1));
-            }
+            var block = panel(frame, area, " Instances ", focused);
+            renderEmptyInstances(frame, block.inner(area));
             return;
         }
 
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(tui.overviewShown() ? overviewTitle() : " Instances ")
-                .borderStyle(Style.EMPTY.fg(borderColor)).build();
-        frame.renderWidget(block, area);
+        var block = panel(frame, area, tui.overviewShown() ? overviewTitle() : " Instances ", focused);
         var inner = block.inner(area);
 
         int visibleRows = Math.max(inner.height() - 1, 1);
@@ -442,7 +516,7 @@ final class MainScreen {
         }
         var tableBuilder = Table.builder()
                 .header(Row.from(headers.toArray(String[]::new))
-                        .style(Style.EMPTY.bold().fg(focused ? tui.theme.panelBorderFocused() : tui.theme.panelBorderUnfocused())))
+                        .style(headerStyle()))
                 .rows(shownRows)
                 .widths(widths)
                 .highlightSymbol(focused ? "\u25b8 " : "  ")
@@ -450,7 +524,7 @@ final class MainScreen {
                 .highlightSpacing(Table.HighlightSpacing.ALWAYS);
 
         if (focused) {
-            var highlightStyle = Style.EMPTY.bg(tui.theme.highlightBg()).fg(tui.theme.highlightFg());
+            var highlightStyle = selectionStyle();
             // Preserve modifiers from selected row if it has a pending operation
             var selected = tui.selectedEntry(tableState);
             if (selected != null && !selected.pendingOp().isEmpty()) {
@@ -468,11 +542,12 @@ final class MainScreen {
 
         frame.renderStatefulWidget(tableBuilder.build(), actualArea, tableState);
         renderMarks(frame, actualArea, tableState.offset(), tui.tableRows.size(), tui::instanceRowMarked);
+        renderRowMotion(frame, actualArea, tableState.offset());
 
         if (scrollArea != null) {
             var scrollbar = Scrollbar.builder()
                     .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
-                    .thumbStyle(Style.EMPTY.fg(borderColor))
+                    .thumbStyle(Style.EMPTY.fg(tui.theme.textFaint()))
                     .trackStyle(Style.EMPTY.fg(tui.theme.scrollbarTrack()))
                     .build();
             var scrollState = new ScrollbarState()
@@ -609,12 +684,8 @@ final class MainScreen {
                 + (lost > 0 ? ", " + lost + (lost == 1 ? " line lost" : " lines lost") : "") + reading + back;
     }
 
-    private record KeyItem(Line line, int width) {}
-
     void renderToolbar(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                 TableState tableState, boolean hasStatus) {
-        fillBackground(frame, area, tui.theme.barBg());
-
         var template = tui.selectedTemplate();
         boolean hasTemplate = template != null;
         boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus());
@@ -647,15 +718,12 @@ final class MainScreen {
             var isError = singleLine.startsWith("Failed") || singleLine.startsWith("Invalid")
                     || singleLine.startsWith("Template");
             var isWarning = singleLine.startsWith("⚠") || singleLine.startsWith("Warning");
-            var statusBg = tui.theme.statusBarBg();
+            // A message is told from the screen by its colour and its mark, never by a filled band
             var msgFg = isError ? tui.theme.statusBarErrorFg()
-                    : isWarning ? tui.theme.statusWarning() : tui.theme.contextPrimaryFg();
-            frame.renderWidget(
-                    Paragraph.builder()
-                            .text(Text.from(Line.styled(" " + singleLine,
-                                    Style.EMPTY.bold().fg(msgFg))))
-                            .style(Style.EMPTY.bg(statusBg))
-                            .build(), rows.get(0));
+                    : isWarning ? tui.theme.statusWarning() : tui.theme.accent();
+            var mark = isError ? Glyphs.FAILED + " " : isWarning ? "" : "";
+            frame.renderWidget(Paragraph.from(Line.styled(" " + mark + singleLine,
+                    Style.EMPTY.fg(msgFg))), rows.get(0));
             if (tui.searchActive) {
                 renderSearchBar(frame, rows.get(1));
             } else {
@@ -801,7 +869,7 @@ final class MainScreen {
 
         int width = 0;
         if (!running.isEmpty()) {
-            width += 15; // " Running: X "
+            width += 17; // " ⠋ Running: X "
             int toShow = Math.min(running.size(), 2);
             for (int i = 0; i < toShow; i++) {
                 width += running.get(i).displayName().length() + 5; // name + "... "
@@ -831,12 +899,18 @@ final class MainScreen {
 
         // Show running tasks
         if (!running.isEmpty()) {
-            spans.add(Span.styled(" Running: " + running.size() + " ",
+            spans.add(Span.styled(" " + tui.motion.spinner() + " Running: " + running.size() + " ",
                     Style.EMPTY.fg(tui.theme.statusWarning()).bg(tui.theme.contextBg())));
+            int namesFrom = area.left() + 14 + String.valueOf(running.size()).length();
+            int namesWidth = 0;
             for (var task : running.stream().limit(2).toList()) {
-                spans.add(Span.styled(" " + task.displayName() + "... ",
-                        Style.EMPTY.fg(tui.theme.contextPrimaryFg()).bg(tui.theme.contextBg())));
+                var name = " " + task.displayName() + "... ";
+                spans.add(Span.styled(name,
+                        Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(tui.theme.contextBg())));
+                namesWidth += name.length();
             }
+            tui.motion.shimmer(new dev.tamboui.layout.Rect(namesFrom, area.top(),
+                    Math.max(0, Math.min(namesWidth, area.right() - namesFrom)), 1));
             if (running.size() > 2) {
                 spans.add(Span.styled(" +" + (running.size() - 2) + " more ",
                         Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(tui.theme.contextBg())));
@@ -856,34 +930,67 @@ final class MainScreen {
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
+    /**
+     * The key bar, in the widest form that fits: each key and its label apart ({@code F1 Info})
+     * and spread over the row, the two together ({@code F1Info}), or, on a terminal too narrow for
+     * every label, equal cells that cut the labels. It is not a band: a key is told from its label
+     * by colour and weight.
+     */
     private void renderKeyItems(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                  List<KeyItem> items) {
-        var constraints = items.stream()
-                .map(item -> Constraint.ratio(1, items.size()))
-                .toArray(Constraint[]::new);
-        var cells = Layout.horizontal()
-                .constraints(constraints)
-                .split(area);
+        int spaced = items.stream().mapToInt(item -> item.width() + 1).sum();
+        int packed = items.stream().mapToInt(KeyItem::width).sum();
+        int gaps = items.size() - 1;
+        boolean apart = spaced + 2 * gaps + 1 <= area.width();
+        if (!apart && packed + gaps + 1 > area.width()) {
+            var constraints = items.stream()
+                    .map(item -> Constraint.ratio(1, items.size()))
+                    .toArray(Constraint[]::new);
+            var cells = Layout.horizontal().constraints(constraints).split(area);
+            for (int i = 0; i < items.size(); i++) {
+                var cell = cells.get(i);
+                // One cell less than its share, so a cut label does not run into the next key
+                frame.renderWidget(Paragraph.from(items.get(i).line(false)), new dev.tamboui.layout.Rect(
+                        cell.x() + (i == 0 ? 1 : 0), cell.y(), Math.max(0, cell.width() - 1), cell.height()));
+            }
+            return;
+        }
+        int used = apart ? spaced : packed;
+        // What is left over goes between the keys, evenly, up to a width that still reads as one bar
+        int gap = Math.min(4, (area.width() - 1 - used) / gaps);
+        var spans = new ArrayList<Span>();
+        spans.add(Span.raw(" "));
         for (int i = 0; i < items.size(); i++) {
-            frame.renderWidget(Paragraph.from(items.get(i).line()), cells.get(i));
+            if (i > 0) spans.add(Span.raw(" ".repeat(gap)));
+            spans.addAll(items.get(i).line(apart).spans());
+        }
+        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
+    }
+
+    private record KeyItem(String key, String label, boolean disabled, TuiTheme theme) {
+        /** The cells the key and its label take together, with nothing between them. */
+        int width() {
+            return key.length() + label.length();
+        }
+
+        Line line(boolean apart) {
+            var spans = new ArrayList<Span>();
+            var between = apart ? " " : "";
+            if (disabled) {
+                spans.add(Span.styled(key + between + label, Style.EMPTY.fg(theme.barDisabledFg())));
+            } else {
+                // The digit that stands in for the F-key is the bold part, so "F7" reads as "press 7" too
+                // (#1824): F10's is its 0
+                spans.add(Span.styled(key.substring(0, key.length() - 1), Style.EMPTY.fg(theme.barKeyFg())));
+                spans.add(Span.styled(key.substring(key.length() - 1), Style.EMPTY.bold().fg(theme.barKeyFg())));
+                spans.add(Span.styled(between + label, Style.EMPTY.fg(theme.barLabelFg())));
+            }
+            return Line.from(spans);
         }
     }
 
     private KeyItem makeKey(String key, String label, boolean disabled) {
-        var spans = new ArrayList<Span>();
-        spans.add(Span.styled("│", Style.EMPTY.fg(tui.theme.barSeparatorFg()).bg(tui.theme.barBg())));
-        if (disabled) {
-            spans.add(Span.styled(key, Style.EMPTY.fg(tui.theme.barDisabledFg()).bg(tui.theme.barBg())));
-            spans.add(Span.styled(label, Style.EMPTY.fg(tui.theme.barDisabledFg()).bg(tui.theme.barBg())));
-        } else {
-            // The digit that stands in for the F-key is the bold part, so "F7" reads as "press 7" too
-            // (#1824): F10's is its 0
-            var prefix = key.substring(0, key.length() - 1);
-            spans.add(Span.styled(prefix, Style.EMPTY.fg(tui.theme.barLabelFg()).bg(tui.theme.barBg())));
-            spans.add(Span.styled(key.substring(key.length() - 1), Style.EMPTY.bold().fg(tui.theme.barKeyFg()).bg(tui.theme.barBg())));
-            spans.add(Span.styled(label, Style.EMPTY.fg(tui.theme.barLabelFg()).bg(tui.theme.barBg())));
-        }
-        return new KeyItem(Line.from(spans), 1 + key.length() + label.length());
+        return new KeyItem(key, label, disabled, tui.theme);
     }
 
     private static void fillBackground(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Color bg) {

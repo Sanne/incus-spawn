@@ -2,21 +2,21 @@
 
 
 
-        ╔ Branch from 'tpl-dev' ═══════════════════════════════════════╗
-        ║ Name:                                                        ║
-        ║ dev-1                                                        ║
-        ║ Purpose (optional):                                          ║
-        ║                                                              ║
-        ║                                                              ║
-        ║   CPU (all)   RAM         Disk                               ║
-        ║                                                              ║
-        ║    [ ] GUI passthrough                                       ║
-        ║    [ ] KVM passthrough                                       ║
-        ║    Network < Full internet >                                 ║
-        ║    [ ] MCP control (isx mcp) — off: project-local definition ║
-        ║    [ ] Inbox /path/to/dir                                    ║
-        ║  Enter Confirm   Esc Cancel   ↑↓/Tab Navigate   Space Toggle ║
-        ╚══════════════════════════════════════════════════════════════╝
+        ╭ Branch from 'tpl-dev' ───────────────────────────────────────╮
+        │ Name:                                                        │
+        │ dev-1                                                        │
+        │ Purpose (optional):                                          │
+        │                                                              │
+        │                                                              │
+        │   CPU (all)   RAM         Disk                               │
+        │                                                              │
+        │    [ ] GUI passthrough                                       │
+        │    [ ] KVM passthrough                                       │
+        │    Network < Full internet >                                 │
+        │    [ ] MCP control (isx mcp) — off: project-local definition │
+        │    [ ] Inbox /path/to/dir                                    │
+        │  Enter Confirm   Esc Cancel   ↑↓/Tab Navigate   Space Toggle │
+        ╰──────────────────────────────────────────────────────────────╯
 
 
 

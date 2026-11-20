@@ -1,24 +1,24 @@
-          ╔ Stop 60 instances ══════════════════════════════════════╗
-          ║                                                         ║
-          ║ This will stop mcp-tpl-isx-agent-vm-1482-implement-1,   ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-2,                  ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-3,                  ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-4,                  ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-5,                  ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-6,                  ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-7,                  ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-8,                  ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-9,                  ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-10,                 ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-11,                 ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-12,                 ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-13,                 ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-14,                 ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-15,                 ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-16,                 ║
-          ║ mcp-tpl-isx-agent-vm-1482-implement-17,                 ║
-          ║ … 43 more lines; enlarge the terminal                   ║
-          ║                                                         ║
-          ║  y Stop   any key Cancel                                ║
-          ║                                                         ║
-          ╚═════════════════════════════════════════════════════════╝
+          ╭ Stop 60 instances ──────────────────────────────────────╮
+          │                                                         │
+          │ This will stop mcp-tpl-isx-agent-vm-1482-implement-1,   │
+          │ mcp-tpl-isx-agent-vm-1482-implement-2,                  │
+          │ mcp-tpl-isx-agent-vm-1482-implement-3,                  │
+          │ mcp-tpl-isx-agent-vm-1482-implement-4,                  │
+          │ mcp-tpl-isx-agent-vm-1482-implement-5,                  │
+          │ mcp-tpl-isx-agent-vm-1482-implement-6,                  │
+          │ mcp-tpl-isx-agent-vm-1482-implement-7,                  │
+          │ mcp-tpl-isx-agent-vm-1482-implement-8,                  │
+          │ mcp-tpl-isx-agent-vm-1482-implement-9,                  │
+          │ mcp-tpl-isx-agent-vm-1482-implement-10,                 │
+          │ mcp-tpl-isx-agent-vm-1482-implement-11,                 │
+          │ mcp-tpl-isx-agent-vm-1482-implement-12,                 │
+          │ mcp-tpl-isx-agent-vm-1482-implement-13,                 │
+          │ mcp-tpl-isx-agent-vm-1482-implement-14,                 │
+          │ mcp-tpl-isx-agent-vm-1482-implement-15,                 │
+          │ mcp-tpl-isx-agent-vm-1482-implement-16,                 │
+          │ mcp-tpl-isx-agent-vm-1482-implement-17,                 │
+          │ … 43 more lines; enlarge the terminal                   │
+          │                                                         │
+          │  y Stop   any key Cancel                                │
+          │                                                         │
+          ╰─────────────────────────────────────────────────────────╯

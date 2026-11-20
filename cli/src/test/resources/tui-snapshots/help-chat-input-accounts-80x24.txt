@@ -1,24 +1,24 @@
 
 
-  ╔ AI Help ═════════════════════════════════════════════════════════════════╗
-  ║ Ask anything about isx: an AI model answers from the project's           ║
-  ║ documentation. Your question is sent to the AI account below, which is   ║
-  ║ billed for it.                                                           ║
-  ║                                                                          ║
-  ║    Question:                                                             ║
-  ║    ask anything about isx…                                               ║
-  ║                                                                          ║
-  ║                                                                          ║
-  ║                                                                          ║
-  ║    [ ] Attach my template and tool definitions (~12.2 KB)                ║
-  ║        Helps the AI answer questions about your own setup.               ║
-  ║                                                                          ║
-  ║  ▸ AI account: < work (Anthropic API key) >                              ║
-  ║                ("personal" is not listed: Claude Pro/Max subscriptions   ║
-  ║                only work in Claude Code.)                                ║
-  ║                                                                          ║
-  ║  Ctrl+S/Enter Ask   ←/→ Change   Tab Next field   Esc Close              ║
-  ╚══════════════════════════════════════════════════════════════════════════╝
+  ╭ AI Help ─────────────────────────────────────────────────────────────────╮
+  │ Ask anything about isx: an AI model answers from the project's           │
+  │ documentation. Your question is sent to the AI account below, which is   │
+  │ billed for it.                                                           │
+  │                                                                          │
+  │    Question:                                                             │
+  │    ask anything about isx…                                               │
+  │                                                                          │
+  │                                                                          │
+  │                                                                          │
+  │    [ ] Attach my template and tool definitions (~12.2 KB)                │
+  │        Helps the AI answer questions about your own setup.               │
+  │                                                                          │
+  │  ▸ AI account: < work (Anthropic API key) >                              │
+  │                ("personal" is not listed: Claude Pro/Max subscriptions   │
+  │                only work in Claude Code.)                                │
+  │                                                                          │
+  │  Ctrl+S/Enter Ask   ←/→ Change   Tab Next field   Esc Close              │
+  ╰──────────────────────────────────────────────────────────────────────────╯
 
 
 

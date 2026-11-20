@@ -135,7 +135,7 @@ final class NewTemplateModal {
     void render(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         var modalArea = ModalRenderer.centerRect(screen, 54, 9);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(modal.styledTitle(" New Template ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))

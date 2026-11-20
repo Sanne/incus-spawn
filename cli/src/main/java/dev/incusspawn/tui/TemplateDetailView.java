@@ -130,7 +130,7 @@ final class TemplateDetailView {
 
     void render(Frame frame, Rect screen, InstanceListing.TemplateInfo template) {
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(modal.styledTitle(" " + template.name() + " — " + (compact ? "Compact" : "Tree") + " ",
                         modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))

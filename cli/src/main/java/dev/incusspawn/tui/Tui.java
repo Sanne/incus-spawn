@@ -101,7 +101,9 @@ public class Tui {
     InstanceLockManager lockManager;
 
     final TuiTheme theme = TerminalThemeDetector.detect();
-    private final ModalRenderer modal = new ModalRenderer(theme);
+    /** What moves on screen; still until a runner starts it. */
+    final Motion motion = new Motion(theme);
+    private final ModalRenderer modal = new ModalRenderer(theme, motion);
     /** Warnings from any operation while the TUI runs; the status line holds only one. */
     final WarningLog warningLog = new WarningLog();
     /**
@@ -499,6 +501,24 @@ public class Tui {
                 .tickRate(Duration.ofMillis(100));
     }
 
+    /**
+     * One session on {@code backend}: draws and handles keys until the runner quits. Every frame
+     * ends in {@link ColorFit}, and {@link Motion} runs only here.
+     */
+    void drawUntilQuit(dev.tamboui.terminal.Backend backend) throws Exception {
+        try (var runner = TuiRunner.create(runnerConfig().backend(backend)
+                .postRenderProcessor(new ColorFit(theme.depth())).build())) {
+            motion.start();
+            runner.run((event, tui) -> {
+                boolean redraw = event == Motion.FrameEvent.NEXT ? motion.frameDue() : handleEvent(event, tui);
+                motion.pump(tui);
+                return redraw;
+            }, this::render);
+        } finally {
+            motion.stop();
+        }
+    }
+
     /** Draws the TUI until the user quits; overridable so a test can stand in for the terminal. */
     void runTuiLoop() {
         try {
@@ -584,9 +604,8 @@ public class Tui {
             enterSession(reloadError);
 
             ProxyLog.setSuppressStderr(true);
-            try (var ignored = BuildOutput.bind(drawing);
-                 var runner = TuiRunner.create(runnerConfig().backend(new LegacyKeyboardBackend()).build())) {
-                runner.run(this::handleEvent, this::render);
+            try (var ignored = BuildOutput.bind(drawing)) {
+                drawUntilQuit(new LegacyKeyboardBackend());
             } catch (Exception e) {
                 // The runner is closed and the drawing binding with it: this reaches the terminal
                 BuildOutput.warn("TUI unavailable: " + BaseCommand.failure(e));
@@ -1784,6 +1803,7 @@ public class Tui {
     // --- Rendering ---
 
     private void render(dev.tamboui.terminal.Frame frame, TableState tableState) {
+        motion.beginFrame();
         // Apply background task state BEFORE layout/rendering so this frame uses fresh data
         backgroundTasks.cleanupCompleted(TASK_DISPLAY_DURATION);
         if (detailAccountsStale.getAndSet(false) && mode == Mode.INSTANCE_DETAIL) {
@@ -1821,8 +1841,9 @@ public class Tui {
         int headerHeight = 1;
         boolean showLegend = anyTemplateOutdated || anyDefinitionChanged || anyParentRebuilt || anyMissingDefinition;
         int legendHeight = showLegend ? 1 : 0;
-        int templateIdeal = templateEntries.size() + 3 + legendHeight;
-        int instanceIdeal = entries.size() + 3;
+        // A panel's own rows: its title rule and the table's header
+        int templateIdeal = templateEntries.size() + MainScreen.PANEL_ROWS + legendHeight;
+        int instanceIdeal = entries.size() + MainScreen.PANEL_ROWS;
         int tabsHeight = 1;
         int available = area.height() - footerHeight - headerHeight - tabsHeight;
         int templatePanelHeight;
@@ -1833,7 +1854,7 @@ public class Tui {
         } else if (templateIdeal + instanceIdeal <= available) {
             templatePanelHeight = templateIdeal;
         } else {
-            int minPanel = 5;
+            int minPanel = 4;
             int templateShare = Math.max(minPanel, available * templateIdeal / (templateIdeal + instanceIdeal));
             templatePanelHeight = Math.min(templateIdeal, templateShare);
             templatePanelHeight = Math.max(templatePanelHeight, minPanel);
@@ -1861,6 +1882,7 @@ public class Tui {
         if (progressMessage != null) {
             modal.renderProgressOverlay(frame, area, progressMessage);
         }
+        motion.process(frame.buffer());
     }
 
     /**
@@ -3132,9 +3154,8 @@ public class Tui {
 
         for (var t : templateEntries) {
             var statusDisplay = "not built".equals(t.buildStatus()) ? "not built" : Metadata.ageDescription(t.buildStatus());
-            var statusStyle = "not built".equals(t.buildStatus())
-                    ? Style.EMPTY.fg(theme.statusStopped())
-                    : Style.EMPTY.fg(theme.statusRunning());
+            var statusStyle = Style.EMPTY.fg("not built".equals(t.buildStatus()) ? theme.textFaint() : theme.textDim());
+            var rowStyle = Style.EMPTY;
             var stale = staleness.get(t.name());
             if (stale != null) {
                 var symbols = new StringBuilder();
@@ -3166,16 +3187,17 @@ public class Tui {
             var desc = t.description() == null ? "" : t.description();
 
             // Apply pending operation visual indicators
-            if (!t.pendingOp().isEmpty()) {
-                if (Metadata.OP_DELETING.equals(t.pendingOp())) {
-                    statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM)
-                            .addModifier(dev.tamboui.style.Modifier.ITALIC);
-                } else if (Metadata.OP_STOPPING.equals(t.pendingOp()) || Metadata.OP_RESTARTING.equals(t.pendingOp())) {
-                    statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM);
-                }
+            if (Metadata.OP_DELETING.equals(t.pendingOp())) {
+                rowStyle = rowStyle.addModifier(dev.tamboui.style.Modifier.DIM)
+                        .addModifier(dev.tamboui.style.Modifier.ITALIC);
+            } else if (Metadata.OP_STOPPING.equals(t.pendingOp()) || Metadata.OP_RESTARTING.equals(t.pendingOp())) {
+                rowStyle = rowStyle.addModifier(dev.tamboui.style.Modifier.DIM);
             }
 
-            templateRows.add(Row.from(t.name(), statusDisplay, diskCell(t.diskUsage()), desc).style(statusStyle));
+            boolean isBuilt = !"not built".equals(t.buildStatus());
+            var quiet = Style.EMPTY.fg(theme.textDim());
+            templateRows.add(Row.from(cell(t.name(), isBuilt ? rowStyle : rowStyle.fg(theme.textDim())),
+                    cell(statusDisplay, statusStyle), cell(diskCell(t.diskUsage()), quiet), cell(desc, quiet)).style(rowStyle));
         }
         templatesDefChanged = defChanged;
         templatesParentRebuilt = parentRebuilt;
@@ -3208,29 +3230,52 @@ public class Tui {
         for (var entry : sorted) {
             var age = entry.created().isEmpty() ? "-" : Metadata.ageDescription(entry.created());
             var parent = entry.parent().isEmpty() ? "-" : OutputFormat.oneLine(entry.parent());
-            var statusStyle = switch (entry.status().toUpperCase()) {
-                case "RUNNING" -> Style.EMPTY.fg(theme.statusRunning());
-                case "STOPPED" -> Style.EMPTY.fg(theme.statusStopped());
-                default -> Style.EMPTY;
-            };
+            boolean running = isRunning(entry);
+            boolean stopped = "STOPPED".equalsIgnoreCase(entry.status());
+            boolean busy = !entry.pendingOp().isEmpty();
+            // A row's own style holds only what an operation under way adds; each cell has its colour
+            var rowStyle = Style.EMPTY;
+            if (Metadata.OP_DELETING.equals(entry.pendingOp())) {
+                rowStyle = rowStyle.addModifier(dev.tamboui.style.Modifier.DIM)
+                        .addModifier(dev.tamboui.style.Modifier.ITALIC);
+            } else if (Metadata.OP_STOPPING.equals(entry.pendingOp()) || Metadata.OP_RESTARTING.equals(entry.pendingOp())) {
+                rowStyle = rowStyle.addModifier(dev.tamboui.style.Modifier.DIM);
+            }
+            var stateColor = busy ? theme.statusWarning() : running ? theme.statusRunning()
+                    : stopped ? theme.statusStopped() : theme.statusWarning();
+            var glyph = busy ? Motion.SPINNER_STILL : running ? Glyphs.RUNNING : stopped ? Glyphs.STOPPED : Glyphs.BETWEEN;
+            var status = dev.tamboui.widgets.table.Cell.from(dev.tamboui.text.Line.from(
+                    dev.tamboui.text.Span.styled(glyph + " ", Style.EMPTY.fg(stateColor)),
+                    dev.tamboui.text.Span.styled(busy ? entry.pendingOp() : entry.status(),
+                            Style.EMPTY.fg(running || busy ? stateColor : theme.textDim()))));
+            var nameStyle = running ? Style.EMPTY : Style.EMPTY.fg(theme.textDim());
+            var quiet = Style.EMPTY.fg(theme.textDim());
 
-            // Apply pending operation visual indicators
-            if (!entry.pendingOp().isEmpty()) {
-                if (Metadata.OP_DELETING.equals(entry.pendingOp())) {
-                    statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM)
-                            .addModifier(dev.tamboui.style.Modifier.ITALIC);
-                } else if (Metadata.OP_STOPPING.equals(entry.pendingOp()) || Metadata.OP_RESTARTING.equals(entry.pendingOp())) {
-                    statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM);
-                }
+            var before = statusSeen.put(entry.name(), entry.status() + "/" + entry.pendingOp());
+            if (statusBaseline && !(entry.status() + "/" + entry.pendingOp()).equals(before)) {
+                motion.flash(MainScreen.instanceKey(entry.name()));
             }
 
             // OWNER and PURPOSE last: MainScreen keeps the cells of the columns it has room for
-            tableRows.add(Row.from(entry.name(), entry.status(), entry.ipv4(),
-                    parent, entry.runtime(), age, diskCell(entry.diskUsage()),
-                    dev.incusspawn.command.ListCommand.ownerCell(entry),
-                    dev.incusspawn.command.ListCommand.purposeCell(entry)).style(statusStyle));
+            tableRows.add(Row.from(cell(entry.name(), nameStyle), status, cell(entry.ipv4(), quiet),
+                    cell(parent, quiet), cell(entry.runtime(), quiet), cell(age, quiet),
+                    cell(diskCell(entry.diskUsage()), quiet),
+                    cell(dev.incusspawn.command.ListCommand.ownerCell(entry), quiet),
+                    cell(dev.incusspawn.command.ListCommand.purposeCell(entry), quiet)).style(rowStyle));
             rowToEntry.add(entry);
         }
+        statusSeen.keySet().retainAll((allEntries != null ? allEntries : entries).stream().map(InstanceInfo::name)
+                .collect(java.util.stream.Collectors.toSet()));
+        statusBaseline = true;
+    }
+
+    /** Each instance's status and operation as the rows last showed them: a change flashes its row. */
+    private final Map<String, String> statusSeen = new java.util.HashMap<>();
+    /** False until the rows were built once: the first listing flashes nothing. */
+    private boolean statusBaseline;
+
+    private static dev.tamboui.widgets.table.Cell cell(String text, Style style) {
+        return dev.tamboui.widgets.table.Cell.from(dev.tamboui.text.Span.styled(text == null ? "" : text, style));
     }
 
     private volatile boolean proxyRestartInProgress;

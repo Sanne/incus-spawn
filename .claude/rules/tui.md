@@ -17,7 +17,20 @@ Code running after the runner has closed (the `pendingAction` switch, e.g. `Shel
 tamboui does the first clear itself since 0.7.0, and `TuiScreenClearTest` checks it and Ctrl+L.
 **Every runner config sets `keyboardProtocol(LEGACY)`** (`Tui.runnerConfig()`, and the tests' own builders): tamboui 0.7.0 pushes kitty flags 5 by default, over the flags 0 that `LegacyKeyboardBackend` pushes, and a `HeadlessBackend` cannot write the push at all.
 
-**`TuiTheme` holds no RGB colours**, only named ANSI colours and `Color.indexed` entries (#1681); `TuiThemeTest` fails on one.
+**How the TUI looks and moves follows design/visual-language.md**: colour by role, what may be filled, the glyphs, the layout of a panel and a dialog, and motion.
+Read it before adding a screen, a dialog or a column, and end with its "Adding to the TUI" questions.
+A colour comes from a role of `TuiTheme`, never written in place, and a state glyph from `Glyphs`.
+Only the row under the cursor, a dialog with its inputs and the brand chip are filled: no band, no shadow, no box around a table.
+**No RGB colour is written unless the terminal proved it reads one** (#1681).
+The theme is written in RGB and `TuiTheme.of` fits each colour to the terminal's `ColorDepth` (truecolor on proof or `ISX_COLORS`, else the 256-colour palette, else the sixteen ANSI colours).
+`ColorFit` is the last step of every frame the runner draws and fits what a blend left, so `Tui.drawUntilQuit` is the one place a runner is made.
+`TuiThemeTest` fails on an RGB colour below truecolor and on two surfaces that fit to the same palette entry.
+**Motion is drawn by `Motion`, over a finished frame** (a spinner, a shimmer on the name being worked on, a tint on a row that changed).
+The shimmer's band blends towards `statusWarning` and is undimmed on a dimmed row: grey to white did not show at 256 colours.
+Nothing moves in answer to a key: a dialog's fade-in was tried and read as a slower TUI (Sanne), so what a key opens is whole in its first frame.
+It runs only between `Motion.start` and `stop`, which `drawUntilQuit` calls, so a test's rendering holds still.
+It asks for frames (`Motion.FrameEvent`, 25 a second) only while something moves, so an idle TUI draws nothing; `ISX_MOTION=off` turns it off.
+`scripts/tui-demo.sh` runs the real TUI over a `FakeIncusDaemon` listing (`TuiDemo`, test scope) with no Incus, to look at a change in a real terminal.
 
 **Warnings go to the `WarningLog`, not the status line** (#872).
 `runTuiSessions()` binds its own `drawing` output (`Output.diagnosticsTo(warningLog::add)`, #1703) around each `reloadData()` and the runner, so every warning goes to the log and progress nowhere.
@@ -49,7 +62,7 @@ Two panels (Templates + Instances) with modal dialogs for branching, renaming, a
 **The main screen has tabs** (`Tui.View`, design/terminal.md "The main screen's tabs"): Overview stacks both panels as before tabs existed and is where the TUI opens, Templates and Instances each draw one panel at full height, and Work draws the instance panel with the overview's columns.
 Left and Right (`h`, `l`) move between tabs and stop at either end; Tab and Shift+Tab move the focus to the other panel, which in a one-panel tab shows the other such tab.
 Set the focus with `Tui.focus(Panel)` and the tab with `Tui.show(View)`, never the fields: the two keep the focused panel on screen.
-The tab bar (`MainScreen.renderTabs`) is one row under the header, the showing tab in brackets, each one-panel tab with its row count.
+The tab bar (`MainScreen.renderTabs`) is one row under the header, each tab a filled cell (the showing one bold on the selection's fill, the others on the raised surface, since unfilled labels did not show where one ends: Sanne), each one-panel tab with its row count.
 A new tab is a `View` constant; one with rows of its own names no panel, and adds its rendering to `Tui.render`, its keys to `handleBrowseEvent` and its count to `MainScreen.tabLabel` (none yet: #2241's Work tab is the instance panel, `Tui.overviewShown()`).
 `TuiCharacterisationTest` snapshots each tab and pins the keys.
 The runner's backend is `LegacyKeyboardBackend`, never a bare `PanamaBackend`: it keeps keys in their legacy encoding when a program left the kitty keyboard protocol or `modifyOtherKeys` on, so Esc and Ctrl+C still close a dialog (`KeyboardProtocol`, design/terminal.md "Keys are read in their legacy encoding").
@@ -163,9 +176,10 @@ Env values that look secret (`SecretRedactor`) are masked.
 `rebuildRowData()` records the key in `rowsAgeKey`, and `tickLiveRefresh()` rebuilds the rows when the minute moves on; no Incus call is involved.
 Legacy date-only stamps use calendar days ("today", "yesterday").
 
-**Disk-space metrics**: An always-present **header band** (`MainScreen.renderHeader`) sits above the panels.
-A bold accent "brand chip" (` isx ` reverse-video, plus dim version) anchors app identity on the left, and a compact **storage gauge** is right-aligned on the same row when pool usage is available (fed by `IncusClient.getPoolUsageBytes(findUsablePool())`, cached in `poolUsage`, refreshed by each `reloadData()` and each light live refresh -- never per frame).
-Gauge fill colour is green, amber at `PoolUsage.isLow()` and red at `PoolUsage.isCritical()`, the one rule build diagnostics and doctor share (a percentage and a free-space floor, design/storage.md); at critical it also raises a one-shot status warning.
+**Disk-space metrics**: An always-present **header row** (`MainScreen.renderHeader`, not a filled band) sits above the panels.
+A bold accent "brand chip" (` isx ` on the accent, plus the faint version) anchors app identity on the left, and a compact **storage gauge** is right-aligned on the same row when pool usage is available (fed by `IncusClient.getPoolUsageBytes(findUsablePool())`, cached in `poolUsage`, refreshed by each `reloadData()` and each light live refresh -- never per frame).
+The gauge is a line, heavy as far as the pool is used and light beyond.
+Its colour is green, amber at `PoolUsage.isLow()` and red at `PoolUsage.isCritical()`, the one rule build diagnostics and doctor share (a percentage and a free-space floor, design/storage.md); at critical it also raises a one-shot status warning.
 The gauge bar grows with the terminal (`HEADER_BAR_MIN`..`HEADER_BAR_MAX`, ~width/5).
 Between the two, a quiet **"N running" badge** (`runningSummary`, split by kind -- e.g. `* 2 containers, 1 VM running`, counted across `allEntries` by `runningCounts`) fills the gap; it is lower priority than the gauge and is shown only when it fits the leftover space, so it never evicts the gauge.
 On narrow terminals the badge drops first, then the gauge (then its bar), so the brand always survives; the gauge is simply omitted on `dir` pools that report no usage.
