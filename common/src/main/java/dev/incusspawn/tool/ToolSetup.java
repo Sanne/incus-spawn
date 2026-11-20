@@ -279,6 +279,13 @@ public interface ToolSetup {
     /** Packages this tool needs installed via dnf. Used to batch all installs into one call. */
     default java.util.List<String> packages() { return java.util.List.of(); }
 
+    /**
+     * The files {@link #install} fetches through {@link DownloadCache} with a checksum, for an
+     * instance of {@code arch} ({@code x86_64}, {@code aarch64}), so they can be fetched ahead of
+     * the build (#2411). A download whose version is only known at build time is not listed.
+     */
+    default java.util.List<DownloadCache.Pinned> pinnedDownloads(String arch) { return java.util.List.of(); }
+
     /** Package repositories this tool needs enabled before packages are installed. */
     default java.util.List<ImageDef.PackageRepo> packageRepos() { return java.util.List.of(); }
 
