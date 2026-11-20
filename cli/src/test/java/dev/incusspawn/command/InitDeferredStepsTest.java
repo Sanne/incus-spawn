@@ -39,6 +39,11 @@ class InitDeferredStepsTest {
         }
 
         @Override
+        void offerAgentGitIdentity() {
+            ran.add("git-identity");
+        }
+
+        @Override
         InitStep deferredStep(String id) {
             return step(id);
         }
@@ -63,7 +68,7 @@ class InitDeferredStepsTest {
         var init = new DeferredInit();
         var finish = List.of(init.step("search-paths"), init.step("code-directories"), init.step("mcp"), init.step("proxy-service"));
         RecordingOutput.during(() -> init.runSteps(List.of(), finish));
-        assertEquals(List.of("credentials", "search-paths", "code-directories", "mcp", "proxy-service"), init.ran);
+        assertEquals(List.of("credentials", "git-identity", "search-paths", "code-directories", "mcp", "proxy-service"), init.ran);
     }
 
     @Test
@@ -95,7 +100,8 @@ class InitDeferredStepsTest {
         init.prompts = ScriptedPrompts.lines();
         RecordingOutput.during(() -> assertEquals(0, init.runOne("code-directories")));
         RecordingOutput.during(() -> assertEquals(0, init.runOne("credentials")));
-        assertEquals(List.of("code-directories", "credentials"), init.ran);
+        // Credential Setup is followed by the Git identity question there too (#2410)
+        assertEquals(List.of("code-directories", "credentials", "git-identity"), init.ran);
     }
 
     @Test
@@ -122,5 +128,18 @@ class InitDeferredStepsTest {
         assertEquals("mcp", InitCommand.menuChoice("MCP"));
         assertNull(InitCommand.menuChoice("0"));
         assertNull(InitCommand.menuChoice("dns"));
+    }
+
+    /** A step by name refuses an answer flag it does not read, rather than dropping it unsaid. */
+    @Test
+    void aStepRefusesAnotherStepsAnswer() {
+        var init = new InitCommand();
+        init.codeDirAnswers = List.of("/tmp");
+        assertEquals(List.of("--code-dir"), init.flagsNotFor("mcp"));
+        assertEquals(List.of(), init.flagsNotFor("code-directories"));
+        init.gitIdentityFromHost = true;
+        init.forkTemplates = true;
+        assertEquals(List.of("--fork-templates", "--git-identity-from-host"), init.flagsNotFor("code-directories"));
+        assertEquals(List.of("--fork-templates", "--code-dir"), init.flagsNotFor("credentials"));
     }
 }

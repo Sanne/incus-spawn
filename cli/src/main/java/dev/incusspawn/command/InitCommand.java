@@ -427,8 +427,15 @@ public class InitCommand extends BaseCommand {
         if (only != null) {
             if (plan) throw new IllegalArgumentException("--plan reads every step; run it without a step name");
             if (service || noService || noSudo || outputFormat != OutputFormat.TABLE) {
-                throw new IllegalArgumentException("'isx init " + OutputFormat.oneLine(only)
-                        + "' takes only the flags that answer it: --search-path, --code-dir or --fork-templates");
+                throw new IllegalArgumentException("'isx init " + OutputFormat.oneLine(only) + "' takes only the flags"
+                        + " that answer it: --search-path, --code-dir, --fork-templates or --" + AgentGitIdentityStep.FLAG);
+            }
+            // An unknown name is said as one, not as flags its step would not read
+            var foreign = DEFERRED.contains(only) ? flagsNotFor(only) : List.<String>of();
+            if (!foreign.isEmpty()) {
+                throw new IllegalArgumentException(String.join(", ", foreign)
+                        + (foreign.size() == 1 ? " answers a question 'isx init " : " answer questions 'isx init ")
+                        + OutputFormat.oneLine(only) + "' does not ask");
             }
             checkAnswers();
             return CommandResult.valueOf(runOne(only));
@@ -444,8 +451,22 @@ public class InitCommand extends BaseCommand {
         return printSummary(outputFormat, result);
     }
 
+    /**
+     * The answer flags given that the step {@code id} does not read, so that none is dropped
+     * unsaid: search-paths reads --search-path and --fork-templates, code-directories --code-dir,
+     * credentials (followed by the Git identity question) --git-identity-from-host, mcp none.
+     */
+    List<String> flagsNotFor(String id) {
+        var foreign = new ArrayList<String>();
+        if (searchPathAnswers != null && !id.equals("search-paths")) foreign.add("--search-path");
+        if (forkTemplates && !id.equals("search-paths")) foreign.add("--fork-templates");
+        if (codeDirAnswers != null && !id.equals("code-directories")) foreign.add("--code-dir");
+        if (gitIdentityFromHost && !id.equals("credentials")) foreign.add("--" + AgentGitIdentityStep.FLAG);
+        return foreign;
+    }
+
     private boolean answersGiven() {
-        return searchPathAnswers != null || codeDirAnswers != null || forkTemplates || service || noService;
+        return searchPathAnswers != null || codeDirAnswers != null || forkTemplates || service || noService || gitIdentityFromHost;
     }
 
     /** Refuses answers that contradict each other, or name a directory that is not one, before anything runs. */
@@ -974,7 +995,8 @@ public class InitCommand extends BaseCommand {
             for (var step : credentialSteps) begin(step);
         }
         credentials.closeHttpClient();
-        offerAgentGitIdentity();
+        // A question too: a re-run at a terminal asks it no more than the credentials (#2407)
+        if (asks) offerAgentGitIdentity();
         gitRemoteHelper().run().run();
         for (var step : finish) begin(step);
     }
@@ -1026,7 +1048,10 @@ public class InitCommand extends BaseCommand {
                 BuildOutput.error("'isx init credentials' asks for the credential, so it needs a terminal.");
                 return 1;
             }
-            return addCredential(null);
+            var code = addCredential(null);
+            // Where Credential Setup runs, its Git identity question follows (#2410)
+            if (code == 0) offerAgentGitIdentity();
+            return code;
         }
         // As 'isx mcp setup': the step says which templates are built, which only Incus knows
         if (id.equals("mcp") && incus == null && prompts() != null) this.incus = RuntimeServices.incus();
@@ -1083,7 +1108,16 @@ public class InitCommand extends BaseCommand {
 
     /** Once the credentials are set: this host's Git identity for agents no GitHub account names (#2410). */
     void offerAgentGitIdentity() {
-        AgentGitIdentityStep.offer(SpawnConfig.load(), prompts(), gitIdentityFromHost, this::hostGitIdentity);
+        SpawnConfig config;
+        try {
+            // Strict: load() reads a broken config.yaml as empty, and saving that would drop every account in it
+            config = SpawnConfig.loadStrict();
+        } catch (IOException e) {
+            BuildOutput.warn("Did not offer agents a Git identity: " + dev.incusspawn.config.YamlErrors.friendly("config.yaml", e),
+                    "Fix config.yaml, then run 'isx init credentials'.");
+            return;
+        }
+        AgentGitIdentityStep.offer(config, prompts(), gitIdentityFromHost, this::hostGitIdentity);
     }
 
     /** This host's Git identity, or null; tests answer it instead. */
