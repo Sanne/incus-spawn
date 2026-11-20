@@ -1,5 +1,6 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.incus.ExecScript;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;

@@ -12,16 +12,15 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * {@code isx exec}: a script runs one command in an instance and gets its output and exit code.
- * The instance is prepared as {@code isx start} does it and left running; the command runs as
- * agentuser in a login shell, in the template's workdir, and its words reach the guest unchanged.
+ * {@code isx exec}: a script runs one command in a running instance and gets its output and exit
+ * code. A stopped or missing instance is refused, never started; the command runs as agentuser in
+ * a login shell, in the template's workdir, and its words reach the guest unchanged.
  */
 class ExecCommandTest {
 
@@ -69,11 +68,23 @@ class ExecCommandTest {
         assertFalse(Parsed.stdin);
     }
 
-    private static ExecCommand command(List<String> prepared, String... args) {
+    private static ExecCommand command(String... args) {
         var command = new ExecCommand();
         command.args = List.of(args);
-        command.preparer = (incus, name, out) -> prepared.add(name);
         return command;
+    }
+
+    /** A running container, which isx exec runs in as it is. */
+    private static FakeIncusDaemon running(Map<String, String> config) {
+        return new FakeIncusDaemon().instance("dev", "container", "Running", config);
+    }
+
+    private static int run(ExecCommand command, FakeIncusDaemon daemon, java.io.InputStream in,
+                           ByteArrayOutputStream out) {
+        var exit = new int[1];
+        RecordingOutput.during(() -> exit[0] = assertDoesNotThrow(() ->
+                command.exec(daemon.client(), in, out, new ByteArrayOutputStream()).getResultValue()));
+        return exit[0];
     }
 
     /** The script the one exec ran: {@code su - agentuser -c <script>}. */
@@ -86,97 +97,88 @@ class ExecCommandTest {
     }
 
     @Test
-    void preparesTheInstanceThenRunsTheCommandInItsWorkdirAndPassesOnItsOutputAndExit() {
-        var daemon = new FakeIncusDaemon()
-                .container("dev", Map.of(Metadata.WORKDIR, "/home/agentuser/project"))
+    void runsTheCommandInTheWorkdirOfARunningInstanceAndPassesOnItsOutputAndExit() {
+        var daemon = running(Map.of(Metadata.WORKDIR, "/home/agentuser/project"))
                 .execOutput("make", "built\n")
                 .execExit("make", 3);
-        var prepared = new ArrayList<String>();
         var out = new ByteArrayOutputStream();
-        var command = command(prepared, "dev", "make", "test");
 
-        var exit = new int[1];
-        RecordingOutput.during(() -> exit[0] = assertDoesNotThrow(() ->
-                command.exec(daemon.client(), new StartStopCommandTest.Locks(), null, out, new ByteArrayOutputStream())
-                        .getResultValue()));
+        assertEquals(3, run(command("dev", "make", "test"), daemon, null, out), "the command's exit code is isx's");
 
-        assertEquals(List.of("dev"), prepared, "prepared as isx start does");
         assertEquals("built\n", out.toString(StandardCharsets.UTF_8));
         var script = script(daemon);
         assertTrue(script.contains("cd -- '/home/agentuser/project'"), script);
         assertTrue(script.endsWith("bash -c " + Container.shellQuote("'make' 'test'")), script);
-        assertTrue(daemon.stateActions().isEmpty(), "never stopped: that is isx stop's job");
-        assertEquals(3, exit[0], "the command's exit code is isx's");
+        assertTrue(daemon.stateActions().isEmpty(), "neither started nor stopped");
+    }
+
+    @Test
+    void aStoppedOrMissingInstanceIsRefusedNeverStarted() {
+        var stopped = new FakeIncusDaemon().container("dev", Map.of()).servesExecs();
+        var recorded = RecordingOutput.during(() -> assertEquals(ExecCommand.ISX_FAILED, assertDoesNotThrow(() ->
+                command("dev", "true").exec(stopped.client(), null, new ByteArrayOutputStream(),
+                        new ByteArrayOutputStream()).getResultValue())));
+        assertEquals(new RecordingOutput.Event(RecordingOutput.Kind.ERROR, "dev is not running.", "Start it with 'isx start dev'."),
+                recorded.events(RecordingOutput.Kind.ERROR).getFirst());
+        assertTrue(stopped.stateActions().isEmpty(), "not started");
+        assertTrue(stopped.execs().isEmpty(), "nothing ran");
+
+        var missing = new FakeIncusDaemon().servesExecs();
+        var gone = RecordingOutput.during(() -> assertEquals(ExecCommand.ISX_FAILED, assertDoesNotThrow(() ->
+                command("gone", "true").exec(missing.client(), null, new ByteArrayOutputStream(),
+                        new ByteArrayOutputStream()).getResultValue())));
+        assertEquals("no instance named 'gone' found.", gone.events(RecordingOutput.Kind.ERROR).getFirst().msg());
+        assertTrue(missing.execs().isEmpty());
     }
 
     @Test
     void eachWordStaysOneWordAndNothingInItIsExpandedByIsx() throws Exception {
-        var daemon = new FakeIncusDaemon().container("dev", Map.of()).servesExecs();
-        var args = new ArrayList<>(List.of("dev", "printf", "[%s]", "a b", "$(id)", "it's", "*", ""));
-        var command = command(new ArrayList<>(), args.toArray(String[]::new));
+        var daemon = running(Map.of()).servesExecs();
 
-        RecordingOutput.during(() -> assertEquals(0, assertDoesNotThrow(() ->
-                command.exec(daemon.client(), new StartStopCommandTest.Locks(), null,
-                        new ByteArrayOutputStream(), new ByteArrayOutputStream()).getResultValue())));
+        assertEquals(0, run(command("dev", "printf", "[%s]", "a b", "$(id)", "it's", "*", ""), daemon, null,
+                new ByteArrayOutputStream()));
 
         // What the guest's session runs once it has written its pid file, run here by a real bash
         var script = script(daemon);
-        var run = script.substring(script.indexOf(" isx-exec ") + " isx-exec ".length());
-        var bash = new ProcessBuilder("bash", "-c", run).redirectErrorStream(true).start();
+        var tail = script.substring(script.indexOf(" isx-exec ") + " isx-exec ".length());
+        var bash = new ProcessBuilder("bash", "-c", tail).redirectErrorStream(true).start();
         assertEquals("[a b][$(id)][it's][*][]", new String(bash.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
         assertEquals(0, bash.waitFor());
     }
 
     @Test
     void withoutAWorkdirItRunsInTheHomeAndCwdAndEnvAreTheCommands() {
-        var daemon = new FakeIncusDaemon().container("dev", Map.of()).servesExecs();
-        var command = command(new ArrayList<>(), "dev", "env");
-        RecordingOutput.during(() -> assertDoesNotThrow(() -> command.exec(daemon.client(),
-                new StartStopCommandTest.Locks(), null, new ByteArrayOutputStream(), new ByteArrayOutputStream())));
-        assertTrue(script(daemon).contains("cd -- '.'"), "agentuser's login shell starts in its home");
+        var home = running(Map.of()).servesExecs();
+        run(command("dev", "env"), home, null, new ByteArrayOutputStream());
+        assertTrue(script(home).contains("cd -- '.'"), "agentuser's login shell starts in its home");
 
-        var daemon2 = new FakeIncusDaemon().container("dev", Map.of(Metadata.WORKDIR, "/w")).servesExecs();
-        var given = command(new ArrayList<>(), "dev", "env");
+        var daemon = running(Map.of(Metadata.WORKDIR, "/w")).servesExecs();
+        var given = command("dev", "env");
         given.cwd = "/tmp";
         given.env = List.of("A=1=2", "EMPTY=");
-        RecordingOutput.during(() -> assertDoesNotThrow(() -> given.exec(daemon2.client(),
-                new StartStopCommandTest.Locks(), null, new ByteArrayOutputStream(), new ByteArrayOutputStream())));
-        var script = script(daemon2);
+        run(given, daemon, null, new ByteArrayOutputStream());
+        var script = script(daemon);
         assertTrue(script.contains("cd -- '/tmp'"), script);
         assertTrue(script.contains("export A='1=2'; export EMPTY=''; "), script);
     }
 
     @Test
-    void stdinIsForwardedOnlyWhenAsked() {
-        var daemon = new FakeIncusDaemon().container("dev", Map.of()).servesExecs();
-        var command = command(new ArrayList<>(), "dev", "cat");
-        RecordingOutput.during(() -> assertDoesNotThrow(() -> command.exec(daemon.client(),
-                new StartStopCommandTest.Locks(), new ByteArrayInputStream("hello".getBytes(StandardCharsets.UTF_8)),
-                new ByteArrayOutputStream(), new ByteArrayOutputStream())));
+    void stdinIsForwardedWhenGiven() {
+        var daemon = running(Map.of()).servesExecs();
+        run(command("dev", "cat"), daemon, new ByteArrayInputStream("hello".getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayOutputStream());
         assertEquals(List.of(5), daemon.execStdinFrames());
     }
 
     @Test
-    void isxsOwnFailuresExit125AndRunNothing() {
-        var missing = new FakeIncusDaemon().servesExecs();
-        var gone = new ExecCommand();
-        gone.args = List.of("gone", "true");
-        var recorded = RecordingOutput.during(() -> assertEquals(ExecCommand.ISX_FAILED, assertDoesNotThrow(() ->
-                gone.exec(missing.client(), new StartStopCommandTest.Locks(), null,
-                        new ByteArrayOutputStream(), new ByteArrayOutputStream()).getResultValue())));
-        assertEquals("no instance named 'gone' found.", recorded.events(RecordingOutput.Kind.ERROR).getFirst().msg());
-        assertTrue(missing.execs().isEmpty());
-
-        var daemon = new FakeIncusDaemon().container("dev", Map.of()).servesExecs();
-        var noCommand = command(new ArrayList<>(), "dev");
-        var badEnv = command(new ArrayList<>(), "dev", "true");
+    void aMalformedCommandLineExits125AndRunsNothing() {
+        var daemon = running(Map.of()).servesExecs();
+        var badEnv = command("dev", "true");
         badEnv.env = List.of("NOEQUALS");
-        var badName = command(new ArrayList<>(), "dev", "true");
+        var badName = command("dev", "true");
         badName.env = List.of("A-B=1");
-        for (var refused : List.of(noCommand, badEnv, badName)) {
-            RecordingOutput.during(() -> assertEquals(ExecCommand.ISX_FAILED, assertDoesNotThrow(() ->
-                    refused.exec(daemon.client(), new StartStopCommandTest.Locks(), null,
-                            new ByteArrayOutputStream(), new ByteArrayOutputStream()).getResultValue())));
+        for (var refused : List.of(command("dev"), badEnv, badName)) {
+            assertEquals(ExecCommand.ISX_FAILED, run(refused, daemon, null, new ByteArrayOutputStream()));
         }
         assertTrue(daemon.execs().isEmpty(), "nothing ran");
     }

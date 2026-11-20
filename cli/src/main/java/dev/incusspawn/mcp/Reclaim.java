@@ -1,5 +1,6 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.incus.ExecScript;
 import java.util.regex.Pattern;
 
 /**

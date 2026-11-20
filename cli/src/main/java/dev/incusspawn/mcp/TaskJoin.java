@@ -1,5 +1,6 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.incus.ExecScript;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.OutputFormat;
 

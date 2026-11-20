@@ -544,15 +544,14 @@ Every code path that launches the VM verifies readiness within the lock scope: `
 
 ## Running one command: `isx exec`
 
-`isx exec <instance> -- <command> [args...]` (`ExecCommand`) runs one command and waits for it.
-It reuses existing pieces:
-- the start is `isx start`'s (`InstanceStart.start`, `Preparer.FOR_USE`), so the guest has its secret and credential proofs;
-- the command runs through `isx mcp`'s `ExecScript`, as `agentuser` in a login shell, in its own session;
-- its stdout and stderr are isx's own (`TerminalStreams`), and the start runs under `withStdoutOnStderr`.
+`isx exec <instance> -- <command> [args...]` (`ExecCommand`) runs one command in a running instance and waits for it.
+- One read checks that the instance exists and runs, and gives its workdir.
+- A running box whose boot lacks its secret is given it (`InstanceLifecycle.giveSecretIfMissing`), as a plain `ssh` does, so its credential proofs work.
+- The command runs through `ExecScript` (`common` `incus/`, shared with `isx mcp`'s `exec` and tasks), as `agentuser` in a login shell, in its own session.
+- Its stdout and stderr are isx's own (`TerminalStreams`); isx's own messages go to stderr.
 
-**It does not stop the instance.**
-Stopping is `isx stop`'s job.
-Stopping here would need to know whether this run started the instance, and could stop it under another user of it.
+**It neither starts nor stops the instance.**
+Those are `isx start`'s and `isx stop`'s, so `isx exec` never changes an instance's state, and a stopped or missing one exits 125.
 
 **The command is an argv.**
 Each word is shell-quoted (`Container.shellQuote`) before the guest's `bash -c`, so isx expands nothing.
