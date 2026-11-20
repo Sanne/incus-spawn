@@ -22,6 +22,7 @@ import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.lifecycle.AgentGitIdentity;
 import dev.incusspawn.lifecycle.BuildAccounts;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.RuntimeSetup;
@@ -2312,9 +2313,13 @@ public class BuildCommand extends BaseCommand {
                                                  Map<String, String> inherited) {
         var config = SpawnConfig.load();
         var setups = AccountSelection.namespaceSetups(config, toolDefLoader);
-        return BuildAccounts.settleIdentities(container, config, setups, ImageDef.resolveAccounts(imageDef, defs),
+        var stamps = BuildAccounts.settleIdentities(container, config, setups, ImageDef.resolveAccounts(imageDef, defs),
                 AccountSelection.rederivableNamespaces(imageDef, defs, toolDefLoader.allToolSetups(), setups),
                 inherited, BuildOutput.bound());
+        // In /etc/gitconfig, which the account's ~/.gitconfig overrides, so it changes nothing
+        // the stamps above decided (#2410)
+        AgentGitIdentity.applyAndReport(container, config.gitIdentity(), BuildOutput.bound());
+        return stamps;
     }
 
     /** Containers only: a VM's build has no step between its start and the mirror wait. */

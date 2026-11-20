@@ -187,6 +187,13 @@ public class GhSetup implements ToolSetup {
         BuildOutput.stepDone();
     }
 
+    @Override
+    public String unbakedIdentityWarning(SpawnConfig config, String accountName) {
+        // Commits then have the git-identity of config.yaml as their author, which the build names
+        // (AgentGitIdentity, #2410); a wrong section is warned about there, not twice
+        return config.gitIdentity(warning -> {}) != null ? null : unbakedIdentityWarning(accountName);
+    }
+
     /**
      * A template built before a GitHub token was configured used to get no {@code [user]},
      * silently, and every branch committed without an author. The build now says so, and stamps

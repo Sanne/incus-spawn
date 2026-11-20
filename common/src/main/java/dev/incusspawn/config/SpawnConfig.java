@@ -105,6 +105,11 @@ public class SpawnConfig extends UndeclaredKeys {
     @JqName("drivers")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object drivers;
+    // The name and email agents commit under when no GitHub account gives one (GitIdentity,
+    // #2410). Raw like drivers, so a mistyped section loads and is written back as it was.
+    @JqName("git-identity")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object gitIdentity;
     // Whether host CA anchors are propagated into instances (HostCaConfig). Raw like
     // artifact-cache, so a mistyped section loads and is written back as it was.
     @JqName("host-ca")
@@ -719,6 +724,15 @@ public class SpawnConfig extends UndeclaredKeys {
     /** The {@code drivers:} section; it grants nothing when there is none. */
     public Drivers drivers() { return Drivers.of(drivers); }
 
+    /** The {@code git-identity:} section, or null when there is none or it is wrong (said through {@code warn}). */
+    public GitIdentity gitIdentity(java.util.function.Consumer<String> warn) { return GitIdentity.of(gitIdentity, warn); }
+
+    /** {@link #gitIdentity(java.util.function.Consumer)}, a wrong section said through {@code Warnings}. */
+    public GitIdentity gitIdentity() { return gitIdentity(dev.incusspawn.Warnings::warn); }
+
+    /** Sets {@code git-identity:}; only after a person's explicit yes ({@link GitIdentity}). */
+    public void useGitIdentity(GitIdentity identity) { this.gitIdentity = identity == null ? null : identity.toYaml(); }
+
     /** The {@code host-ca:} section, or its defaults (disabled) when absent. */
     public HostCaConfig hostCa() { return HostCaConfig.of(hostCa); }
 
@@ -875,6 +889,7 @@ public class SpawnConfig extends UndeclaredKeys {
         this.mavenRepositories = other.mavenRepositories;
         this.mavenMirrors = other.mavenMirrors;
         this.drivers = other.drivers;
+        this.gitIdentity = other.gitIdentity;
         this.hostCa = other.hostCa;
         getExtras().clear();
         getExtras().putAll(other.getExtras());

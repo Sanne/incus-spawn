@@ -337,7 +337,7 @@ public final class BuildAccounts {
         });
         lacking.removeAll(rederived);
         for (var namespace : lacking) {
-            var warning = setups.get(namespace).unbakedIdentityWarning(accountFor.apply(namespace));
+            var warning = setups.get(namespace).unbakedIdentityWarning(config, accountFor.apply(namespace));
             if (warning != null) out.warn(warning);
         }
         var stamps = identityStamps(wanted, inherited, lacking);

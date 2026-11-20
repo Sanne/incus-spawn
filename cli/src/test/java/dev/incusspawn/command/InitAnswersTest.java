@@ -51,7 +51,7 @@ class InitAnswersTest {
             if (list != null) names.add(list.name());
         }
         assertEquals(new TreeSet<>(Set.of("plan", "format", "no-sudo", "search-path", "code-dir", "fork-templates",
-                "service", "no-service")), names);
+                "service", "no-service", "git-identity-from-host")), names);
     }
 
     /** Without a terminal no credential is chosen, none is read from anywhere, and the step is reported skipped. */
