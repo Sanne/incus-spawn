@@ -112,7 +112,7 @@ class InitGroupContinuationTest {
         assertEquals(0, init.exited);
     }
 
-    /** The continuation starts at User Namespace Mappings, numbered on from its parent's first step. */
+    /** The continuation starts at User Namespace Mappings, in the plumbing block that numbers nothing. */
     @Test
     void theContinuationStartsAfterIncusInstallation() {
         var init = new GroupInit();
@@ -121,9 +121,9 @@ class InitGroupContinuationTest {
         assertEquals(List.of("configureSubuidSubgid", "initializeIncus", "configureFirewall",
                 "configureMitmProxy", "setupSshKeyPair"), init.hostSteps);
         assertTrue(init.ran.isEmpty());
-        assertFalse(frames.contains("[1/12]"));
-        assertTrue(frames.contains("2  User Namespace Mappings"));
-        assertTrue(frames.contains("[12/12]"));
+        assertFalse(frames.contains("User Namespace Mappings"));
+        assertTrue(frames.contains("1  Credential Setup"));
+        assertTrue(frames.contains("[6/6]"));
     }
 
     @Test

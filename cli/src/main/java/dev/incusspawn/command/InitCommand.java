@@ -28,6 +28,7 @@ import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.vm.VmManager;
@@ -202,10 +203,61 @@ public class InitCommand extends BaseCommand {
         BuildOutput.frame(out.toArray(String[]::new));
     }
 
-    /** Shows {@code step}'s header, then runs it. */
+    /**
+     * The steps that ask the person nothing on the usual path, which a run shows as one block (#2406):
+     * the lines the step itself prints as it works and completes (each says what it did), with no
+     * header and no hint. Incus Installation, User Namespace Mappings and Storage & Network still ask
+     * for a confirmation when they find Incus missing, an unexpected subid entry or no CoW pool: the
+     * question then shows the step's header and hint first ({@link #prompts}). The two service steps
+     * are not here, since each always asks whether to install.
+     */
+    static final Set<String> PLUMBING = Set.of("incus", "subids", "storage-network", "firewall", "mitm-proxy",
+            "ca", "ssh-key", "dns");
+
+    static boolean isPlumbing(InitStep step) {
+        return PLUMBING.contains(step.id());
+    }
+
+    private static long numbered(List<InitStep> steps) {
+        return steps.stream().filter(s -> !isPlumbing(s)).count();
+    }
+
+    /** The open block of plumbing steps, if the last step run was one. */
+    private Output.Group plumbingBlock;
+
+    private void closePlumbingBlock() {
+        if (plumbingBlock == null) return;
+        plumbingBlock.close();
+        plumbingBlock = null;
+    }
+
+    /**
+     * Shows {@code step}'s header, then runs it.
+     * A plumbing step joins the block instead, and prints its hint only if it fails, with its error.
+     */
     void begin(InitStep step) throws Exception {
-        startStep(step.title(), step.hint());
-        step.run().run();
+        if (!isPlumbing(step)) {
+            closePlumbingBlock();
+            startStep(step.title(), step.hint());
+            step.run().run();
+            return;
+        }
+        if (plumbingBlock == null) plumbingBlock = BuildOutput.group("Setting up this host", "");
+        unannounced = step;
+        try {
+            step.run().run();
+        } catch (WaitingOnPerson waiting) {
+            closePlumbingBlock();
+            throw waiting;
+        } catch (Exception | Error e) {
+            closePlumbingBlock();
+            // Its hint, unless the step showed it with a question
+            if (unannounced == step) BuildOutput.warn(step.title() + " failed", step.hint());
+            else BuildOutput.warn(step.title() + " failed");
+            throw e;
+        } finally {
+            unannounced = null;
+        }
     }
 
     private static void printCompletionBox(String... lines) {
@@ -872,10 +924,19 @@ public class InitCommand extends BaseCommand {
 
     /** As {@link #runSteps(List, List)}, with the first {@code done} steps of {@code setup} run by the process that started this one. */
     void runSteps(List<InitStep> setup, List<InitStep> finish, int done) throws Exception {
-        currentStep = done;
-        totalSteps = setup.size() + 1 + finish.size();
+        currentStep = (int) numbered(setup.subList(0, done));
+        totalSteps = (int) (numbered(setup) + 1 + numbered(finish));
         totalKnown = false;
-        for (var step : setup.subList(done, setup.size())) begin(step);
+        try {
+            for (var step : setup.subList(done, setup.size())) begin(step);
+            closePlumbingBlock();
+            runRest(finish);
+        } finally {
+            closePlumbingBlock();
+        }
+    }
+
+    private void runRest(List<InitStep> finish) throws Exception {
         var credentialSteps = credentialSteps();
         totalSteps += credentialSteps.size();
         totalKnown = true;
@@ -1214,7 +1275,57 @@ public class InitCommand extends BaseCommand {
     Prompts prompts() {
         // A terminal, never a console whose stdin is piped: that would answer a credential or an
         // approval from whatever an agent pipes in (#2075; a JVM under -Djdk.console=jdk.internal.le)
-        return Prompts.terminal();
+        return announcing(Prompts.terminal());
+    }
+
+    /**
+     * {@code prompts}, which first shows the header and hint of the plumbing step running, if any,
+     * when that step asks something: a step that asks keeps its header and hint (#2406).
+     * Null stays null.
+     */
+    Prompts announcing(Prompts prompts) {
+        if (prompts == null) return null;
+        return new Prompts() {
+            @Override
+            public String readLine() {
+                return prompts.readLine();
+            }
+
+            @Override
+            public char[] readPassword() {
+                return prompts.readPassword();
+            }
+
+            @Override
+            public void show(String question) {
+                announce();
+                prompts.show(question);
+            }
+
+            @Override
+            public void say(String line) {
+                announce();
+                prompts.say(line);
+            }
+        };
+    }
+
+    /** The plumbing step running whose header is not shown yet; null outside one. */
+    private InitStep unannounced;
+
+    /** Shows {@link #unannounced}'s header and hint, unnumbered, outside the block, once. */
+    private void announce() {
+        var step = unannounced;
+        if (step == null) return;
+        unannounced = null;
+        closePlumbingBlock();
+        var out = new ArrayList<String>();
+        out.add("");
+        out.add(styled(BOLD, "  " + step.title()));
+        for (var line : step.hint()) out.add(styled(CYAN, "  ┃ ") + styled(DIM, line));
+        out.add("");
+        // A frame of init's own: laid out here, drawn as given
+        BuildOutput.frame(out.toArray(String[]::new));
     }
 
     boolean hostHasCommand(String command) {

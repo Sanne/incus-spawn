@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -34,7 +35,7 @@ class InitStepOutputTest {
     }
 
     /** Init with {@code chosen} credentials picked at Credential Setup, and host commands faked. */
-    static final class FakeInit extends InitCommand {
+    static class FakeInit extends InitCommand {
         int chosen;
         final List<String> commands = new ArrayList<>();
         String failing = "";
@@ -141,5 +142,62 @@ class InitStepOutputTest {
                 "echo 'trying'; echo 'sysctl: permission denied' >&2; exit 3")));
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.NOTE, "trying"),
                 new RecordingOutput.Event(RecordingOutput.Kind.NOTE, "sysctl: permission denied")), recorded.events());
+    }
+
+    private static InitCommand.InitStep plumbing(String id, InitCommand.Step run) {
+        return new InitCommand.InitStep(id, "Plumbing " + id, new String[]{"What " + id + " does."}, run, InitPlan.Assessment::done);
+    }
+
+    /** Plumbing shows a line each and no header, hint or counter; a step that asks keeps all three (#2406). */
+    @Test
+    void plumbingIsOneBlockAndAStepThatAsksKeepsItsHeader() throws Exception {
+        var init = new FakeInit();
+        var recorded = RecordingOutput.during(() -> init.runSteps(
+                List.of(plumbing("subids", () -> BuildOutput.step("Mappings set")), plumbing("firewall", () -> {})),
+                List.of(step(() -> {}))));
+        var frames = String.join("\n", recorded.frameLines());
+        assertFalse(frames.contains("Plumbing"), frames);
+        assertFalse(frames.contains("What subids does"), frames);
+        var lines = recorded.events().stream().filter(e -> e.msg() != null).map(RecordingOutput.Event::msg).toList();
+        assertTrue(lines.contains("Mappings set"), lines.toString());
+        // Credential Setup and the last step: the two that are numbered
+        assertTrue(frames.contains("[1/2+]") && frames.contains("[2/2]"), frames);
+    }
+
+    @Test
+    void aFailingPlumbingStepShowsItsHintWithItsError() {
+        var init = new FakeInit();
+        var failure = new IllegalStateException("boom");
+        var recorded = RecordingOutput.during(() -> {
+            var thrown = assertThrows(IllegalStateException.class, () -> init.begin(plumbing("firewall", () -> {
+                throw failure;
+            })));
+            assertSame(failure, thrown);
+        });
+        var text = recorded.events().stream().map(e -> e.msg() + " " + e.details()).toList().toString();
+        assertTrue(text.contains("Plumbing firewall failed") && text.contains("What firewall does."), text);
+    }
+
+    /** A plumbing step that asks a confirmation shows its header and hint above it, once (#2406). */
+    @Test
+    void aPlumbingStepThatAsksShowsItsHeaderAndHintFirst() throws Exception {
+        var init = new FakeInit() {
+            final Prompts scripted = ScriptedPrompts.lines("y", "y");
+
+            @Override
+            Prompts prompts() {
+                return announcing(scripted);
+            }
+        };
+        var recorded = RecordingOutput.during(() -> init.runSteps(
+                List.of(plumbing("subids", () -> {
+                    assertTrue(BaseCommand.askYesNo(init.prompts(), "Replace it?", false));
+                    assertTrue(BaseCommand.askYesNo(init.prompts(), "And again?", false));
+                }), plumbing("firewall", () -> {})),
+                List.of()));
+        var frames = String.join("\n", recorded.frameLines());
+        assertEquals(1, frames.split("Plumbing subids", -1).length - 1, frames);
+        assertTrue(frames.contains("What subids does."), frames);
+        assertFalse(frames.contains("Plumbing firewall"), frames);
     }
 }
