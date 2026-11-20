@@ -560,8 +560,17 @@ Each word is shell-quoted (`Container.shellQuote`) before the guest's `bash -c`,
 Opt-in stdin keeps a loop reading a file from having its input consumed by `isx exec`.
 
 **The exit code is the command's; isx's own failures exit 125** (`ExecCommand.ISX_FAILED`), so they cannot pass for the command's exit 1.
-An exec whose exit code Incus lost also exits 125.
+An exec that fails under the command also exits 125: Incus refuses it, its sockets do not open, or the instance stops before it starts.
+So does an exec whose exit code Incus lost or gave up on at `IncusApi`'s four-hour ceiling.
 
-**Interrupting it ends the command.**
-A shutdown hook, removed once the command returns, runs `ExecScript.kill` in the guest, which ends the command's session.
-Its run id is `cli-<pid>`, distinct from `isx mcp`'s `exec-<pid>-<n>`.
+**Whenever isx stops waiting, it ends the command.**
+`ExecScript.kill` in the guest ends the command's session, so nothing runs on with nobody waiting for it.
+A shutdown hook, removed once the command returns, runs it when isx is interrupted.
+isx runs it itself when the exec failed, when there is no exit code, and when what reads its output has gone.
+That last case is `ExecCommand.ClosedOutputGuard`: a `PrintStream` keeps a failed write to itself and the JVM ignores SIGPIPE, so without it `isx exec box -- yes | head -1` would run until the ceiling.
+After the first failed write the guard discards the output, so the exec's sockets keep draining while the kill runs, and isx exits 141, as a shell reports a command SIGPIPE ended.
+
+**Every run has its own id, and its pid file goes when it ends.**
+The run id is `cli-<pid>-<random>`, distinct from `isx mcp`'s `exec-<pid>-<n>`; a pid alone repeats, since the host reuses pids.
+`ExecScript.build`'s shell removes `~/.isx-mcp/run/<id>.pid` on exit, for `isx mcp`'s runs too.
+A stale one would name a session id the guest may since have given to another session, for a later kill to signal.

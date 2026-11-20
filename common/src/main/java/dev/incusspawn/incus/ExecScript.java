@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
  *
  * <p>The command runs in its own session ({@code setsid}), whose id is written to a pid file, so
  * the whole process tree can be killed from a second exec when the caller gives up: a command
- * nobody waits for must not keep running unowned. Every value the caller supplies is
+ * nobody waits for must not keep running unowned. The pid file is removed once the run ends. Every value the caller supplies is
  * single-quoted; nothing it sends is ever interpreted by a shell other than its own command's.
  * What it refuses is an {@link IllegalArgumentException}.
  */
@@ -31,9 +31,14 @@ public final class ExecScript {
         var sb = new StringBuilder();
         sb.append("mkdir -p ").append(RUN_DIR).append(" && cd -- ").append(quote(cwd)).append(" || exit 125; ");
         appendExports(sb, env, "; ");
+        // The pid file goes once the session ends, however it ends: a stale one would name a
+        // session id the guest may since have given to something else, for a later kill to signal.
+        sb.append("trap ").append(quote("rm -f " + pidFile(runId))).append(" EXIT; ");
         // $$ of the inner bash is the new session's id (setsid made it the leader); exec keeps
         // it for the command, so the pid file names the session every descendant belongs to.
-        sb.append("exec setsid --wait bash -c ")
+        // Not exec'd itself, so this shell outlives the session to run the trap; its exit code
+        // is setsid's, which is the command's.
+        sb.append("setsid --wait bash -c ")
                 // In a subshell: its variable must not replace one the command was given.
                 .append(quote("( " + writeAside(RUN_DIR, runId + ".pid", "echo $$") + " ); exec \"$@\""))
                 .append(" isx-exec ");
@@ -48,13 +53,18 @@ public final class ExecScript {
     /** Kill the process tree of a running {@link #build} script, TERM first, then KILL. */
     public static String kill(String runId) {
         requireId(runId);
-        var pidFile = RUN_DIR + "/" + runId + ".pid";
+        var pidFile = pidFile(runId);
         return "p=$(" + ifFile(pidFile, "cat") + ") || exit 0; "
                 + "kill -TERM -- -\"$p\" 2>/dev/null; "
                 + "command -v pkill >/dev/null && pkill -TERM -s \"$p\"; "
                 + "sleep 3; kill -KILL -- -\"$p\" 2>/dev/null; "
                 + "command -v pkill >/dev/null && pkill -KILL -s \"$p\"; "
                 + "rm -f " + pidFile;
+    }
+
+    /** Where a run's session id is kept while it runs (a path the shell expands, unquoted). */
+    private static String pidFile(String runId) {
+        return RUN_DIR + "/" + runId + ".pid";
     }
 
     /** Single-quote {@code value} for a POSIX shell. */

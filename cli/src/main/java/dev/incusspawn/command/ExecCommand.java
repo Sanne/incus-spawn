@@ -15,11 +15,15 @@ import org.aesh.command.option.Arguments;
 import org.aesh.command.option.Option;
 import org.aesh.command.option.OptionList;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -28,10 +32,13 @@ import java.util.stream.Collectors;
  * stopping are {@code isx start}'s and {@code isx stop}'s. A running box whose boot lacks its secret
  * is given it, as a plain {@code ssh} does. The command runs as agentuser in a login shell, in the
  * template's workdir, with no terminal; its stdout and stderr are isx's, and its exit code is isx's.
- * isx's own failures, before the command runs, exit {@link #ISX_FAILED}, as {@code docker run}'s do.
+ * isx's own failures exit {@link #ISX_FAILED}, as {@code docker run}'s do: before the command runs, an
+ * exec that fails under it, and one Incus gives no exit code for.
  *
  * <p>It runs through {@link ExecScript}, in a session of its own, so the whole process tree is
- * killed when isx is interrupted: a command nobody waits for must not keep running.
+ * killed whenever isx stops waiting for it: when isx is interrupted, when Incus gives no exit code
+ * (the wait's ceiling, a lost operation), when the exec fails under it, and when what reads isx's
+ * output has gone. A command nobody waits for must not keep running.
  */
 @CommandDefinition(
         name = "exec",
@@ -40,8 +47,11 @@ import java.util.stream.Collectors;
 )
 public class ExecCommand extends BaseCommand {
 
-    /** isx's exit code when it fails before the command runs; the command's own otherwise. */
+    /** isx's exit code when it fails instead of the command; the command's own otherwise. */
     static final int ISX_FAILED = 125;
+
+    /** The exit code once what reads isx's output has gone: a shell's for a command SIGPIPE killed. */
+    static final int OUTPUT_CLOSED = 128 + 13;
 
     @Arguments(completer = Completers.Instance.class,
             description = "The instance, then -- and the command with its arguments")
@@ -74,7 +84,7 @@ public class ExecCommand extends BaseCommand {
         var command = args.subList(1, args.size()).stream().map(Container::shellQuote).collect(Collectors.joining(" "));
         var shown = OutputFormat.oneLine(name);
         String script;
-        String runId = "cli-" + ProcessHandle.current().pid();
+        String runId = runId();
         try {
             var environment = environment(env);
             var instance = incus.instanceMetadataOrThrow(name);
@@ -97,24 +107,114 @@ public class ExecCommand extends BaseCommand {
             return CommandResult.valueOf(ISX_FAILED);
         }
 
+        Runnable killRun = () -> kill(incus, name, runId);
+        // Nobody reads the output any more (`isx exec box -- yes | head -1`): end the command now,
+        // rather than when it ends by itself or the exec's wait gives up.
+        var closed = new AtomicReference<Thread>();
+        Runnable onClosed = () -> {
+            // On a thread of its own: this is the exec's output reader, which must keep draining
+            var killing = Thread.ofVirtual().unstarted(killRun);
+            if (closed.compareAndSet(null, killing)) killing.start();
+        };
+        var guardedOut = new ClosedOutputGuard(out, onClosed);
+        var guardedErr = new ClosedOutputGuard(err, onClosed);
         // Interrupted (Ctrl+C, SIGTERM): end the command's process tree in the guest before isx exits.
-        var kill = new Thread(() -> incus.execScriptAsUser(name, "agentuser", ExecScript.kill(runId), null, null, null),
-                "isx-exec-kill");
-        Runtime.getRuntime().addShutdownHook(kill);
+        var hook = new Thread(killRun, "isx-exec-kill");
+        Runtime.getRuntime().addShutdownHook(hook);
         int exit;
         try {
-            exit = incus.execScriptAsUser(name, "agentuser", script, in, out, err);
+            exit = incus.execScriptAsUser(name, "agentuser", script, in, guardedOut, guardedErr);
+        } catch (RuntimeException e) {
+            // The exec failed (refused, its sockets did not open, the instance stopped under it):
+            // whether the command started is unknown, so it is ended in case it did.
+            killRun.run();
+            BuildOutput.abandonStep();
+            BuildOutput.error("could not run the command in " + shown + ": " + failure(e));
+            return CommandResult.valueOf(ISX_FAILED);
         } finally {
-            removeHook(kill);
-            out.flush();
-            err.flush();
+            removeHook(hook);
+            guardedOut.flush();
+            guardedErr.flush();
+        }
+        var killing = closed.get();
+        if (killing != null) {
+            killing.join(); // a virtual thread would not hold the JVM up for it
+            return CommandResult.valueOf(OUTPUT_CLOSED);
         }
         if (exit < 0) {
-            // Incus lost the operation, or the instance stopped under it: no exit code to pass on
+            // Incus lost the operation or gave up waiting for it, or the instance stopped under it:
+            // no exit code to pass on, and the command may still be running.
+            killRun.run();
             BuildOutput.error("the command in " + shown + " ended without an exit code.");
             return CommandResult.valueOf(ISX_FAILED);
         }
         return CommandResult.valueOf(exit);
+    }
+
+    /**
+     * A run id no other run in the guest has had: this process's pid, which the host reuses, and
+     * a random part, so a later run never takes an earlier one's pid file for its own.
+     */
+    static String runId() {
+        return "cli-" + ProcessHandle.current().pid() + "-" + Long.toHexString(ThreadLocalRandom.current().nextLong() >>> 1);
+    }
+
+    /** End the run's process tree in the guest; harmless once it has ended, and never throwing. */
+    private static void kill(IncusClient incus, String name, String runId) {
+        try {
+            incus.execScriptAsUser(name, "agentuser", ExecScript.kill(runId), null, null, null);
+        } catch (RuntimeException e) {
+            // The instance stopped or Incus is gone: there is nothing left running to end
+        }
+    }
+
+    /**
+     * The command's output, noticing when what reads it has gone. A {@link PrintStream} keeps a
+     * failed write to itself, and the JVM ignores SIGPIPE, so without this isx would write on into
+     * a closed pipe. Once a write fails it calls {@code onClosed} and discards the rest, still
+     * accepting it, so the exec's sockets keep draining and the guest never blocks on its output.
+     */
+    static final class ClosedOutputGuard extends OutputStream {
+        private final OutputStream target;
+        private final Runnable onClosed;
+        private volatile boolean closed;
+
+        ClosedOutputGuard(OutputStream target, Runnable onClosed) {
+            this.target = target;
+            this.onClosed = onClosed;
+        }
+
+        @Override
+        public void write(int b) {
+            write(new byte[] {(byte) b}, 0, 1);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) {
+            if (closed) return;
+            try {
+                target.write(b, off, len);
+                if (target instanceof PrintStream ps && ps.checkError()) failed();
+            } catch (IOException e) {
+                failed();
+            }
+        }
+
+        @Override
+        public void flush() {
+            if (closed) return;
+            try {
+                target.flush();
+                if (target instanceof PrintStream ps && ps.checkError()) failed();
+            } catch (IOException e) {
+                failed();
+            }
+        }
+
+        private void failed() {
+            closed = true;
+            onClosed.run();
+        }
     }
 
     /** {@code --env} as names and values, refusing an entry without {@code =}. */
