@@ -1762,6 +1762,229 @@ class TaskScriptsTest {
         assertEquals(first.sessionId(), Files.readString(d.resolve("session_id")));
     }
 
+    /**
+     * A stand-in for agy's print mode with stream-json in and out that keeps its conversation rule:
+     * without {@code --conversation} it opens a new one, named by itself; with one it continues it if
+     * its file exists, and otherwise only warns and opens a new one. It reads one message from stdin,
+     * then prints init. Conversations are files under {@code $HOME/.gemini/antigravity-cli/conversations}.
+     */
+    private void antigravityStub(String events) throws Exception {
+        assumeNode();
+        var script = home.resolve("agy-stub.cjs");
+        Files.writeString(script, """
+                const fs = require('node:fs');
+                const args = process.argv.slice(2);
+                fs.writeFileSync(process.env.HOME + '/agy-args', JSON.stringify(args));
+                const input = fs.readFileSync(0, 'utf8');
+                fs.writeFileSync(process.env.HOME + '/agy-stdin', input);
+                const prompt = JSON.parse(input.split('\\n')[0]).message.content;
+                const conversations = process.env.HOME + '/.gemini/antigravity-cli/conversations';
+                fs.mkdirSync(conversations, {recursive: true});
+                let id = args.includes('--conversation') ? args[args.indexOf('--conversation') + 1] : '';
+                if (id && !fs.existsSync(conversations + '/' + id + '.db')) {
+                    process.stderr.write('warning: conversation "' + id + '" not found\\n');
+                    id = '';
+                }
+                if (!id) {
+                    id = require('node:crypto').randomUUID();
+                    fs.writeFileSync(conversations + '/' + id + '.db', '');
+                }
+                const emit = e => console.log(JSON.stringify(e));
+                emit({event: 'init', conversation_id: id, init: {model: 'm', cwd: process.cwd(), tools: []}});
+                let index = 0;
+                const usage = {input_tokens: 10, output_tokens: 3, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 13};
+                const step = (type, fields) => emit({event: 'step_update', step_update: {conversation_id: id, step_index: index++,
+                    state: 'DONE', step_type: type, ...fields}});
+                const say = text => {
+                    const i = index++;
+                    emit({event: 'step_update', step_update: {conversation_id: id, step_index: i, state: 'ACTIVE', step_type: 'agent_response', text_delta: text.slice(0, 3)}});
+                    emit({event: 'step_update', step_update: {conversation_id: id, step_index: i, state: 'DONE', step_type: 'agent_response', text_delta: text.slice(3), usage}});
+                };
+                const tool = command => {
+                    const i = index++, tool_info = {name: 'run_command', parameters: {CommandLine: command}};
+                    emit({event: 'step_update', step_update: {conversation_id: id, step_index: i, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info}});
+                    emit({event: 'step_update', step_update: {conversation_id: id, step_index: i, state: 'DONE', step_type: 'tool', tool_name: 'run_command', tool_info: {...tool_info, output: 'ok'}}});
+                };
+                // What agy prints last; its usage and num_turns count the whole conversation.
+                const result = (response, status = 'SUCCESS', error) => emit({event: 'result', result: {conversation_id: id, status, response,
+                    error, num_turns: 9, usage: {input_tokens: 999, output_tokens: 999, cache_read_tokens: 999}}});
+                step('user_input', {});
+                """ + events);
+        stub("agy", "exec node " + ExecScript.quote(script.toString()) + " \"$@\"");
+    }
+
+    private void launchAntigravity(String id, int run, String prompt, Tasks.Profile profile) throws Exception {
+        sh(TaskScripts.launch(id, run, Tasks.AGENT,
+                TaskScripts.agentRun(id, run, work.toString(), profile, DelegateAgent.ANTIGRAVITY),
+                null, DelegateAgent.ANTIGRAVITY), prompt);
+    }
+
+    private static final String ANTIGRAVITY_SUCCESS = """
+            say('Working on it.');
+            tool('make test');
+            const report = 'The report: ' + prompt.split('\\n\\n').pop();
+            say(report);
+            result(report + '\\n');
+            """;
+
+    private static List<String> args(Path file) throws IOException {
+        return io.hyperfoil.tools.jjq.value.JqValues.parseStrict(Files.readString(file)).asList().stream().map(v -> v.asText()).toList();
+    }
+
+    @Test
+    void antigravityRunsAndResumesTheConversationItNamedWithPromptsOnStdin() throws Exception {
+        antigravityStub(ANTIGRAVITY_SUCCESS);
+        launchAntigravity("t1-agy", 1, "fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely", Tasks.Profile.NONE);
+        var first = awaitFinished("t1-agy");
+        assertEquals(0, first.exit(), first.stderr());
+        var d = home.resolve(".isx-mcp/tasks/t1-agy");
+        var conversation = first.sessionId();
+        assertTrue(conversation.matches("[0-9a-f-]{36}"), conversation);
+        assertEquals(List.of("-p=", "--input-format", "stream-json", "--output-format", "stream-json", "--dangerously-skip-permissions"),
+                args(home.resolve("agy-args")), "a new conversation, every permission answered, and nothing of the prompt on the command line");
+        var message = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(Files.readString(home.resolve("agy-stdin")).strip());
+        assertEquals("user", message.path("event").asText(), "one stream-json user message");
+        var prompt = message.path("message").path("content").asText();
+        assertTrue(prompt.startsWith("You are a delegate"), "the brief opens the first message: " + prompt);
+        assertTrue(prompt.endsWith("\n\nfix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely"), prompt);
+        assertFalse(Files.exists(work.resolve("SHOULD_NOT_EXIST")));
+        assertEquals("The report: fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely\n", Files.readString(d.resolve("result-1.txt")));
+        assertTrue(sh(TaskScripts.list(), "").contains("identity t1-agy 1 antigravity"));
+        var summary = AntigravityEvents.summarize(first.output(), 8);
+        assertFalse(summary.isError(), first.toString());
+        // This run's own model calls, never the result's count of the whole conversation.
+        assertEquals(2, summary.result().path("turns").asInt(0));
+        assertEquals(20, summary.result().path("usage").path("input_tokens").asInt(0));
+        assertEquals(6, summary.result().path("usage").path("output_tokens").asInt(0));
+        assertEquals(10, summary.result().path("usage").path("cached_input_tokens").asInt(0));
+        assertEquals(List.of("said: Working on it.", "ran run_command: make test",
+                "said: The report: fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely"), summary.recent());
+        assertEquals(2, summary.assistantMessages());
+
+        launchAntigravity("t1-agy", 2, "follow up with $HOME and `literal`", new Tasks.Profile("some-model"));
+        var resumed = awaitFinished("t1-agy");
+        assertEquals(0, resumed.exit(), resumed.stderr());
+        assertEquals(conversation, resumed.sessionId());
+        assertEquals(List.of("-p=", "--input-format", "stream-json", "--output-format", "stream-json", "--dangerously-skip-permissions",
+                "--conversation", conversation, "--model", "some-model"), args(home.resolve("agy-args")), "the same conversation, by its id");
+        var second = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(Files.readString(home.resolve("agy-stdin")).strip());
+        assertEquals("follow up with $HOME and `literal`", second.path("message").path("content").asText(),
+                "the brief only once, in the first message");
+        assertEquals("The report: follow up with $HOME and `literal`\n", Files.readString(d.resolve("result-2.txt")));
+    }
+
+    @Test
+    void anAntigravityConversationThatIsGoneFailsTheRunBeforeAgyStarts() throws Exception {
+        antigravityStub(ANTIGRAVITY_SUCCESS);
+        launchAntigravity("t5-agy", 1, "first", Tasks.Profile.NONE);
+        var first = awaitFinished("t5-agy");
+        assertEquals(0, first.exit(), first.stderr());
+        assertFalse(first.sessionGone());
+        var conversations = home.resolve(".gemini/antigravity-cli/conversations");
+        Files.delete(conversations.resolve(first.sessionId() + ".db"));
+        assertTrue(Tasks.parse(sh(TaskScripts.status("t5-agy", 1000), "")).sessionGone(), "task_status says it cannot be resumed");
+        Files.delete(home.resolve("agy-args"));
+
+        launchAntigravity("t5-agy", 2, "second", Tasks.Profile.NONE);
+        var lost = awaitFinished("t5-agy");
+        assertTrue(lost.exit() != 0, lost.toString());
+        assertTrue(lost.stderr().contains("start a new delegated task"), lost.stderr());
+        assertFalse(Files.exists(home.resolve("agy-args")), "agy never ran, so it opened no conversation in its place");
+        try (var left = Files.list(conversations)) {
+            assertEquals(0, left.count());
+        }
+    }
+
+    @Test
+    void anAgyThatOpensAnotherConversationIsStopped() throws Exception {
+        antigravityStub(ANTIGRAVITY_SUCCESS);
+        launchAntigravity("t11-agy", 1, "first", Tasks.Profile.NONE);
+        var first = awaitFinished("t11-agy");
+        assertEquals(0, first.exit(), first.stderr());
+        // One that ignores --conversation: a new conversation, whatever it was asked.
+        antigravityStub("say('wrong place'); result('wrong place');");
+        var script = Files.readString(home.resolve("agy-stub.cjs")).replace("let id = args.includes", "let id = '' && args.includes");
+        Files.writeString(home.resolve("agy-stub.cjs"), script);
+        launchAntigravity("t11-agy", 2, "second", Tasks.Profile.NONE);
+        var other = awaitFinished("t11-agy");
+        assertTrue(other.exit() != 0, other.toString());
+        var result = AntigravityEvents.summarize(other.output(), 0);
+        assertTrue(result.isError());
+        assertTrue(result.resultText().contains("did not open conversation " + first.sessionId()), result.resultText());
+        assertEquals("", Files.readString(home.resolve(".isx-mcp/tasks/t11-agy/result-2.txt")));
+        assertEquals(first.sessionId(), other.sessionId(), "the saved conversation stays the task's");
+    }
+
+    @Test
+    void antigravityRequiresAZeroExitAResultAndSuccess() throws Exception {
+        int trial = 0;
+        for (var ending : List.of(
+                "",
+                "say('partial'); result('', 'ERROR', 'Error 429, quota'); process.exitCode = 3;",
+                "say('partial'); result('', 'ERROR', 'Error 429, quota');",
+                "say('done'); result('done'); process.exitCode = 7;",
+                "say('done');",
+                "console.log('invalid-json'); say('done'); result('done');")) {
+            antigravityStub(ending);
+            var id = "t6-agy-" + trial++;
+            launchAntigravity(id, 1, "fail", Tasks.Profile.NONE);
+            var status = awaitFinished(id);
+            assertTrue(status.exit() != 0, ending + " " + status);
+            assertTrue(AntigravityEvents.summarize(status.output(), 0).isError(), ending);
+        }
+        antigravityStub("say('partial'); result('', 'ERROR', 'Error 429, quota'); process.exitCode = 3;");
+        launchAntigravity("t6-agy-err", 1, "fail", Tasks.Profile.NONE);
+        assertEquals("Error 429, quota", AntigravityEvents.summarize(awaitFinished("t6-agy-err").output(), 0).resultText());
+    }
+
+    @Test
+    void antigravityNeverReportsAResultTooLargeToKeep() throws Exception {
+        antigravityStub("say('big'); result('b'.repeat(9 * 1024 * 1024));");
+        launchAntigravity("t8-agy", 1, "huge report", Tasks.Profile.NONE);
+        var lost = awaitFinished("t8-agy");
+        assertTrue(lost.exit() != 0, lost.toString());
+        assertEquals("", Files.readString(home.resolve(".isx-mcp/tasks/t8-agy/result-1.txt")));
+        assertTrue(AntigravityEvents.summarize(lost.output(), 0).resultText().contains("too large"));
+    }
+
+    @Test
+    void anAntigravityConversationIdCutOffBeforeItWasSavedIsRecovered() throws Exception {
+        antigravityStub(ANTIGRAVITY_SUCCESS);
+        launchAntigravity("t7-agy", 1, "first", Tasks.Profile.NONE);
+        var first = awaitFinished("t7-agy");
+        var d = home.resolve(".isx-mcp/tasks/t7-agy");
+        Files.delete(d.resolve("session_id"));
+        assertEquals(first.sessionId(), sh("node -e " + ExecScript.quote(WorkerRunners.of(DelegateAgent.ANTIGRAVITY))
+                + " " + d + " recover ''", "").strip(), "from the init event, which names it");
+        assertEquals(first.sessionId(), Files.readString(d.resolve("session_id")));
+    }
+
+    @Test
+    void aPersonsAgyIsFoundByTheConversationItResumes() throws Exception {
+        for (var args : List.of(List.of("--conversation", sessionId()), List.of("-conversation", sessionId()),
+                List.of("--conversation=" + sessionId()), List.of("-conversation=" + sessionId()),
+                List.of("--model", "m", "--conversation", sessionId(), "-p", "go"))) {
+            var pb = new ProcessBuilder(java.util.stream.Stream.concat(java.util.stream.Stream.of("bash", "-c",
+                    "exec -a agy bash -c ': > \"$HOME/agy-ready\"; while read -r line; do :; done' \"$@\"", "agy"),
+                    args.stream()).toList()).directory(Path.of("/").toFile());
+            pb.environment().put("HOME", home.toString());
+            pb.environment().remove(TaskScripts.TASK_ENV);
+            Files.deleteIfExists(home.resolve("agy-ready"));
+            var person = pb.start();
+            try {
+                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (!Files.exists(home.resolve("agy-ready")) && System.nanoTime() < deadline) Thread.sleep(10);
+                var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
+                assertEquals(person.pid(), who.holderOf(DelegateAgent.ANTIGRAVITY, sessionId(), "/elsewhere"), args.toString());
+                assertNull(who.holderOf(DelegateAgent.ANTIGRAVITY, "another-session", "/elsewhere"), args.toString());
+                assertNull(who.holderOf(DelegateAgent.OPENCODE, sessionId(), "/elsewhere"), "another kind of agent holds nothing of it");
+            } finally {
+                person.destroy();
+                assertTrue(person.waitFor(5, TimeUnit.SECONDS));
+            }
+        }
+    }
+
     @Test
     void aPersonsOpencodeIsFoundByTheSessionItResumes() throws Exception {
         for (var args : List.of(List.of("--session", sessionId()), List.of("-s", sessionId()),
@@ -1867,12 +2090,13 @@ class TaskScriptsTest {
     @Timeout(60)
     void theJoinCommandIsWhatPresenceTakesForAPersonInTheConversation() throws Exception {
         var cwd = work.toRealPath().toString();
-        for (var agent : List.of(DelegateAgent.CLAUDE, DelegateAgent.CODEX, DelegateAgent.PI, DelegateAgent.OPENCODE)) {
+        for (var agent : List.of(DelegateAgent.CLAUDE, DelegateAgent.CODEX, DelegateAgent.PI, DelegateAgent.OPENCODE, DelegateAgent.ANTIGRAVITY)) {
             var id = "t9-" + agent.id;
             var d = finishedTaskFiles(id, Tasks.AGENT);
             if (agent != DelegateAgent.CLAUDE) Files.writeString(d.resolve("identity"), "1 " + agent.id + "\n");
             if (agent == DelegateAgent.PI) piSessionFile(d, cwd);
             if (agent == DelegateAgent.CLAUDE) claudeTranscript();
+            if (agent == DelegateAgent.ANTIGRAVITY) antigravityConversation(sessionId());
             Files.writeString(d.resolve("session_id"), sessionId() + "\n");
             Files.writeString(d.resolve("cwd"), cwd + "\n");
             Files.writeString(d.resolve("prompt-1.md"), "\n  Fix the flaky test\nand say why\n");
@@ -1887,7 +2111,8 @@ class TaskScriptsTest {
             // (bash -c's script is argv[2], and the first argument after it is still in argv: no $0 of its own.)
             var ready = home.resolve("join-ready");
             Files.deleteIfExists(ready);
-            stub(agent.id, "exec -a " + agent.id + " bash -c " + JOINED_AGENT + " \"$@\"");
+            var command = agent == DelegateAgent.ANTIGRAVITY ? "agy" : agent.id;
+            stub(command, "exec -a " + command + " bash -c " + JOINED_AGENT + " \"$@\"");
             var person = start(join.entry().guestCommand());
             try {
                 var agentPid = joinedAgent(ready, person);
@@ -1908,6 +2133,31 @@ class TaskScriptsTest {
             }
             Files.walk(d).sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
         }
+    }
+
+    /** What agy keeps of the conversation {@code id}: its file, where agy keeps them. */
+    private Path antigravityConversation(String id) throws IOException {
+        var conversations = Files.createDirectories(home.resolve(".gemini/antigravity-cli/conversations"));
+        return Files.writeString(conversations.resolve(id + ".db"), "");
+    }
+
+    @Test
+    @Timeout(60)
+    void joiningAnAntigravityTaskWhoseConversationIsGoneIsRefusedNotStartedEmpty() throws Exception {
+        var id = "t15-agy";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("identity"), "1 antigravity\n");
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        Files.writeString(d.resolve("cwd"), work.toRealPath() + "\n");
+        var conversation = antigravityConversation(sessionId());
+        var ready = home.resolve("join-ready");
+        stub("agy", "exec -a agy bash -c " + JOINED_AGENT + " \"$@\"");
+        var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
+        Files.delete(conversation);
+        var refused = joinAs(join.entry().guestCommand());
+        assertEquals(1, refused.exit(), refused.stderr());
+        assertTrue(refused.stderr().contains("its Antigravity CLI conversation is gone"), refused.stderr());
+        assertFalse(Files.exists(ready), "agy never started");
     }
 
     /** The folder Pi keeps {@code cwd}'s sessions in, as the guest derives it. */

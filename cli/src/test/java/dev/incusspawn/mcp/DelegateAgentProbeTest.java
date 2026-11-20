@@ -24,7 +24,7 @@ class DelegateAgentProbeTest {
     @TempDir Path bin;
 
     /** Every option any probe looks for, so one help text serves every subcommand it asks about. */
-    private static final String HELP = "Options:\\n  --output-last-message\\n  --json\\n  --session-id\\n  --auto\\n";
+    private static final String HELP = "Options:\\n  --output-last-message\\n  --json\\n  --session-id\\n  --auto\\n  --input-format\\n";
 
     private void stub(String name, String body) throws Exception {
         var f = bin.resolve(name);
@@ -34,7 +34,8 @@ class DelegateAgentProbeTest {
 
     /** The agent's CLI and Node, and a {@code timeout} that drops its duration (macOS has none). */
     private void agent(DelegateAgent agent, String printHelp) throws Exception {
-        stub(agent.id, printHelp);
+        // Antigravity CLI's command is agy.
+        stub(agent == DelegateAgent.ANTIGRAVITY ? "agy" : agent.id, printHelp);
         stub("node", "exit 0");
         stub("timeout", "shift; exec \"$@\"");
     }
@@ -70,14 +71,14 @@ class DelegateAgentProbeTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = DelegateAgent.class, names = {"CODEX", "PI", "OPENCODE"})
+    @EnumSource(value = DelegateAgent.class, names = {"CODEX", "PI", "OPENCODE", "ANTIGRAVITY"})
     void aCliWithoutTheOptionsFailsTheProbe(DelegateAgent agent) throws Exception {
         agent(agent, "echo 'Options:' >&2; echo '  --help'");
         assertNotEquals(0, probe(agent));
     }
 
     @ParameterizedTest
-    @EnumSource(value = DelegateAgent.class, names = {"CODEX", "PI", "OPENCODE"})
+    @EnumSource(value = DelegateAgent.class, names = {"CODEX", "PI", "OPENCODE", "ANTIGRAVITY"})
     void anAgentWithoutNodeFailsTheProbe(DelegateAgent agent) throws Exception {
         agent(agent, "printf '" + HELP + "'");
         Files.delete(bin.resolve("node"));
