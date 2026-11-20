@@ -74,6 +74,9 @@ When hiding a new command: add it to `HIDDEN_COMMANDS` (which `NOT_COMPLETED` is
 **`isx start`, `isx stop` and owners are for programs that drive isx (#1720).**
 `isx start` is `isx shell`'s preparation without the shell (`InstanceStart`, shared with `isx ssh-proxy --start`): `InstancePrep.prepare` under the `starting` lock, waiting up to two minutes for another holder, never a bare Incus start.
 `isx stop` stops under the lock and the `stopping` mark (`InstanceDestroyer.stopMarkedIf`, shared with `isx mcp`'s held stop), and a stopped instance is success.
+`isx exec <instance> -- <command> [args...]` (`ExecCommand`) is `isx start`'s preparation, then the command through `isx mcp`'s `ExecScript` as `agentuser` in a login shell, in the template's workdir, with no terminal and stdin only under `-i`.
+It never stops the instance, which is `isx stop`'s job, and exits with the command's code, or `ExecCommand.ISX_FAILED` (125) when isx fails before the command runs.
+Each word after `--` is shell-quoted, so the guest's `bash -c` gets it as one word; the start runs under `withStdoutOnStderr`, and a shutdown hook kills the command's session in the guest if isx is interrupted (design/instances.md "Running one command: `isx exec`").
 `isx ssh-proxy --start` uses a running container no isx process holds as it is only when its boot holds its secret (`InstanceLifecycle.readyForThisBoot`, one read per connection), and prepares any other.
 Without `--start` (a plain `ssh <name>`) it never starts anything, but a running box whose boot lacks its secret is given it from the same read (`InstanceLifecycle.giveSecretIfMissing`, reporting to stderr only), as `isx mcp` does (#1975).
 An instance without `Metadata.PARENT`, which `InstancePrep.prepare` refuses, is connected to but never given a secret.

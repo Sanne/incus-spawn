@@ -109,6 +109,10 @@ public final class FakeIncusDaemon implements IncusTransport {
     private boolean servesExecs;
     /** What a served exec prints, by a string its command line contains; the first match wins. */
     private final Map<String, String> execOutputs = new LinkedHashMap<>();
+    /** What a served exec exits with, by a string its command line contains; the first match wins, else 0. */
+    private final Map<String, Integer> execExits = new LinkedHashMap<>();
+    /** The exit code of each served exec's operation, by its id. */
+    private final Map<String, Integer> execReturns = new LinkedHashMap<>();
     /** What each served exec's stdout socket delivers, by its secret. */
     private final Map<String, byte[]> execStdout = new LinkedHashMap<>();
     /** The size of every frame sent to a served exec's stdin, in order. */
@@ -429,6 +433,13 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /** A served exec whose command line contains {@code needle} exits with {@code code}. */
+    public synchronized FakeIncusDaemon execExit(String needle, int code) {
+        servesExecs = true;
+        execExits.put(needle, code);
+        return this;
+    }
+
     /** A client wired to this daemon. */
     /**
      * A client whose readiness wait gives up after a few milliseconds, for tests outside this
@@ -563,6 +574,8 @@ public final class FakeIncusDaemon implements IncusTransport {
         var fds = JqObject.ofEntries("0", id + "-0", "1", id + "-1", "2", id + "-2", "control", id + "-control");
         execStdout.put(id + "-1", stdout.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         execStdinSecrets.add(id + "-0");
+        execExits.entrySet().stream().filter(e -> commandLine.contains(e.getKey())).findFirst()
+                .ifPresent(e -> execReturns.put(id, e.getValue()));
         return async(id, JqObject.ofEntries("id", id, "metadata", JqObject.of("fds", fds)));
     }
 
@@ -662,6 +675,12 @@ public final class FakeIncusDaemon implements IncusTransport {
         }
         if (path.startsWith("/1.0/operations/") && method.equals("GET")) {
             var status = operationStatuses.poll();
+            var id = path.substring("/1.0/operations/".length()).split("[/?]", 2)[0];
+            var exit = execReturns.get(id);
+            if (exit != null) {
+                return sync(JqObject.ofEntries("status", status != null ? status : "Success",
+                        "metadata", JqObject.ofEntries("return", exit)));
+            }
             return sync(JqObject.of("status", status != null ? status : "Success"));
         }
         if (path.startsWith("/1.0/instances?") && method.equals("GET")) {

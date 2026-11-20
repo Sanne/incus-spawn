@@ -417,6 +417,7 @@ A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](do
 | [`isx shell`](docs/CLI.md#isx-shell) | Open a shell in an instance |
 | [`isx start`](docs/CLI.md#isx-start) | Start an instance without opening a shell |
 | [`isx stop`](docs/CLI.md#isx-stop) | Stop a running instance |
+| [`isx exec`](docs/CLI.md#isx-exec) | Run a command in an instance and wait for it |
 | [`isx purpose`](docs/CLI.md#isx-purpose) | Show or change what an instance is for |
 | [`isx run`](docs/CLI.md#isx-run) | Run an action on an instance |
 | [`isx destroy`](docs/CLI.md#isx-destroy) | Destroy an instance |

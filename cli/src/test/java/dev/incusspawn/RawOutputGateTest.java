@@ -121,7 +121,8 @@ class RawOutputGateTest {
             "common/src/main/java/dev/incusspawn/util/TerminalProgress.java", "the live renderer, which draws on the terminal whole",
             "cli/src/main/java/dev/incusspawn/command/Prompts.java", "its terminal() asks only when stdin and stdout are a terminal",
             "cli/src/main/java/dev/incusspawn/command/GitRemoteHelperCommand.java", "a git remote helper: stdin and stdout are git's protocol, stderr what git shows",
-            "cli/src/main/java/dev/incusspawn/command/SshProxyCommand.java", "an ssh ProxyCommand: stdin and stdout are the connection, stderr what ssh shows");
+            "cli/src/main/java/dev/incusspawn/command/SshProxyCommand.java", "an ssh ProxyCommand: stdin and stdout are the connection, stderr what ssh shows",
+            "cli/src/main/java/dev/incusspawn/command/ExecCommand.java", "isx exec: the guest command's stdout, stderr and stdin are isx's own");
 
     @Test
     void onlyTheNamedPassthroughsTakeTheTerminalsStreams() throws IOException {

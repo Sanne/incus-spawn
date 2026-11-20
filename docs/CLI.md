@@ -274,6 +274,36 @@ Stopping an instance that is already stopped succeeds, so a script can repeat it
 A frozen instance cannot shut down, so `isx stop` refuses it with an error.
 If another isx process is starting or stopping it, `isx stop` waits for that first, for up to two minutes.
 
+## `isx exec`
+
+Run a command in an instance and wait for it to finish.
+
+```shell
+isx exec <instance> [options] -- <command> [args...]
+```
+
+| Option | What it does |
+|--------|--------------|
+| `--cwd <dir>` | Directory to run in, relative to the home of `agentuser` unless absolute. Default: the template's workdir |
+| `--env NAME=value` | Set a variable for the command; repeatable |
+| `-i`, `--stdin` | Pass standard input to the command |
+
+isx starts the instance if it is stopped, as `isx start` does.
+The command runs as `agentuser` in a login shell, with no terminal.
+Its stdout and stderr are those of `isx exec`, and isx reports its own progress on stderr.
+
+`isx exec` exits with the exit code of the command, or 125 when isx fails before the command runs.
+
+Each word after `--` reaches the command unchanged.
+For pipes or `&&`, run a shell:
+
+```shell
+isx exec my-box -- bash -c 'make test | tee test.log'
+```
+
+The instance keeps running afterwards; stop it with [`isx stop`](#isx-stop).
+Interrupting `isx exec` ends the command in the instance.
+
 ## `isx purpose`
 
 Show or change a note on what an instance is for.
@@ -1283,6 +1313,7 @@ A plain `ssh <name>` uses the instance's own Host block, which never starts a st
 | 0 | Success, including a listing with no results |
 | 1 | The command failed, with the reason on stderr |
 | 2 | The command line could not be parsed, with the usage on stderr |
+| 125 | `isx exec`: isx failed before the command ran |
 | 3 | `isx proxy status` only: the proxy runs on an old bridge address |
 | 4 | `isx vm stop --require-clean`: the VM is stopped, but with signals rather than a guest shutdown. `isx proxy status`: the proxy holding its ports is another user's |
 | 75 | `isx init --no-sudo`: steps that need root are waiting in the script it names, for you to run |
