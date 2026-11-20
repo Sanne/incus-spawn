@@ -194,6 +194,10 @@ A step that asks nothing joins one "Setting up this host" block instead (`InitCo
 `begin` shows only the lines the step prints itself, with no header, hint or number, and `runSteps` leaves it out of `[n/N]` (#2406).
 A plumbing step that throws prints its hint with its error, since the block no longer shows it on the way.
 `--plan` keeps every hint.
+The steps only an established user can answer (`InitCommand.DEFERRED`: `credentials`, `search-paths`, `code-directories`, `mcp`) each run alone as `isx init <step>` (`runOne`, #2407).
+A re-run at a terminal (`rerun`: init completed here before, by its marker of any version, `table` format, no answer flags) leaves them and Credential Setup out of the walk, and ends with a menu of them read from their planners (`offerMenu`).
+Without a terminal, in a machine format, or when `requireInit` starts init for another command (`automatic`), there is no menu, and the walk is as before except that an automatic re-run at a terminal skips them too.
+`isx doctor` notes each of them that is not set up (`DoctorCommand.notSetUp`), never as a problem.
 The two service steps ask whether to install, so they keep their header.
 *Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded.
 When a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.

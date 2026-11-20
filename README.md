@@ -411,7 +411,7 @@ A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](do
 | Command | Description |
 |---------|-------------|
 | [`isx`](docs/CLI.md#isx) | Launch the interactive TUI |
-| [`isx init`](docs/CLI.md#isx-init) | One-time host setup |
+| [`isx init`](docs/CLI.md#isx-init) | One-time host setup, or one of its steps by name |
 | [`isx build`](docs/CLI.md#isx-build) | Build or rebuild template images |
 | [`isx branch`](docs/CLI.md#isx-branch) | Create a CoW clone from a template or instance |
 | [`isx shell`](docs/CLI.md#isx-shell) | Open a shell in an instance |

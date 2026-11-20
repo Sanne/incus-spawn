@@ -251,7 +251,7 @@ final class InitPlan {
         };
     }
 
-    private static String stateLabel(Assessment a) {
+    static String stateLabel(Assessment a) {
         return switch (a.state()) {
             case DONE -> "done";
             case PENDING -> "to do, " + whoLabel(a.who());
