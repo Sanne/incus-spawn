@@ -569,6 +569,281 @@ class DownloadCacheTest {
         }
     }
 
+    /**
+     * Runs {@code runs} downloads of one URL, each by its own {@link DownloadCache} with no retries,
+     * as separate isx runs would, from a server giving {@code answer}; records each request's
+     * {@code Range} and {@code If-Range} ({@code -} for none), and what each run returned or threw.
+     */
+    private static List<Object> downloadAcrossRuns(Path cacheDir, String sha256, int runs, Answer answer,
+                                                   List<String> requests) throws IOException {
+        return downloadAcrossRuns(cacheDir, sha256, runs, answer, requests, url -> {});
+    }
+
+    /** What an earlier run left in the cache for {@code url}, set up before the runs. */
+    private interface Earlier {
+        void leave(String url) throws IOException;
+    }
+
+    /** As above, after {@code earlier} has left what an interrupted run would have. */
+    private static List<Object> downloadAcrossRuns(Path cacheDir, String sha256, int runs, Answer answer,
+                                                   List<String> requests, Earlier earlier) throws IOException {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var count = new AtomicInteger();
+        server.createContext("/asset", ex -> {
+            var range = ex.getRequestHeaders().getFirst("Range");
+            requests.add(range == null ? "-" : range + " " + ex.getRequestHeaders().getFirst("If-Range"));
+            answer.answer(count.incrementAndGet(), ex);
+        });
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/asset";
+            earlier.leave(url);
+            var outcomes = new ArrayList<Object>();
+            for (int run = 0; run < runs; run++) {
+                var cache = new DownloadCache(cacheDir, uri -> false, List.of(), d -> {});
+                try {
+                    outcomes.add(Files.readAllBytes(cache.downloadAllowingLocalFile(url, sha256, new RecordingListener())));
+                } catch (IOException e) {
+                    outcomes.add(e);
+                }
+            }
+            return outcomes;
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static String sha256Of(byte[] body) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(body));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** Leaves a partial download of {@code url} and its record, as a process killed part way would. */
+    private static void leavePartial(Path cacheDir, String url, byte[] partial, String record) throws IOException {
+        var dir = Files.createDirectories(cacheDir.resolve(DownloadCache.PARTIAL_DIR));
+        var name = DownloadCache.cacheFilename(url);
+        Files.write(dir.resolve(name), partial);
+        Files.writeString(dir.resolve(name + DownloadCache.META_SUFFIX), record);
+    }
+
+    /** What is left under the cache directory, other than lock files. */
+    private static List<String> leftovers(Path cacheDir) throws IOException {
+        try (var files = Files.walk(cacheDir)) {
+            return files.filter(Files::isRegularFile)
+                    .map(f -> cacheDir.relativize(f).toString())
+                    .filter(f -> !f.startsWith(DownloadCache.LOCK_DIR + "/"))
+                    .sorted().toList();
+        }
+    }
+
+    @Test
+    void aDownloadBrokenOffIsContinuedByTheNextRun(@TempDir Path cacheDir) throws IOException {
+        var requests = new ArrayList<String>();
+        var outcomes = downloadAcrossRuns(cacheDir, sha256Of(BODY), 2, (n, ex) -> {
+            if (n == 1) whole(ex, BODY, V1, 40);
+            else rest(ex, BODY, V1, 40, "bytes 40-99/100");
+        }, requests);
+        assertInstanceOf(IOException.class, outcomes.get(0), "the first run gives up without retries");
+        assertArrayEquals(BODY, (byte[]) outcomes.get(1));
+        assertEquals(List.of("-", "bytes=40- \"v1\""), requests, "the second run asks only for the rest");
+        var left = leftovers(cacheDir);
+        assertEquals(1, left.size(), left.toString());
+        assertFalse(left.getFirst().contains("/"), "only the finished file is left: " + left);
+    }
+
+    @Test
+    void aServerThatCannotResumeStartsTheNextRunFromByteZero(@TempDir Path cacheDir) throws IOException {
+        var requests = new ArrayList<String>();
+        var outcomes = downloadAcrossRuns(cacheDir, sha256Of(BODY), 2,
+                (n, ex) -> whole(ex, BODY, V1, n == 1 ? 40 : BODY.length), requests);
+        assertInstanceOf(IOException.class, outcomes.get(0));
+        assertArrayEquals(BODY, (byte[]) outcomes.get(1), "the 200 replaces the partial body");
+        assertEquals(List.of("-", "bytes=40- \"v1\""), requests);
+    }
+
+    @Test
+    void aPartialLeftByAKilledProcessIsContinued(@TempDir Path cacheDir) throws IOException {
+        // A killed process runs no finally block: what it leaves is the partial file and the record
+        // of the response it came from, as written before its body.
+        var requests = new ArrayList<String>();
+        var outcomes = downloadAcrossRuns(cacheDir, sha256Of(BODY), 1, (n, ex) -> {
+            if (n == 1) rest(ex, BODY, V1, 40, "bytes 40-99/100");
+            else whole(ex, BODY, V1, BODY.length);
+        }, requests, url -> leavePartial(cacheDir, url, java.util.Arrays.copyOf(BODY, 40), url + "\n\"v1\"\n100\n"));
+        assertArrayEquals(BODY, (byte[]) outcomes.get(0));
+        assertEquals(List.of("bytes=40- \"v1\""), requests);
+    }
+
+    @Test
+    void aPartialRecordedForAnotherUrlIsNotContinued(@TempDir Path cacheDir) throws IOException {
+        // The file name holds only a short hash of the URL, so the record names it in full.
+        var requests = new ArrayList<String>();
+        var outcomes = downloadAcrossRuns(cacheDir, sha256Of(BODY), 1, (n, ex) -> whole(ex, BODY, V1, BODY.length),
+                requests, url -> leavePartial(cacheDir, url, java.util.Arrays.copyOf(BODY, 40),
+                        url + "-other\n\"v1\"\n100\n"));
+        assertArrayEquals(BODY, (byte[]) outcomes.get(0));
+        assertEquals(List.of("-"), requests);
+    }
+
+    @Test
+    void withoutAChecksumAPartialFromAnEarlierRunIsNotContinued(@TempDir Path cacheDir) throws IOException {
+        // Only the checksum would catch bytes a crash left wrong on disk.
+        var requests = new ArrayList<String>();
+        var outcomes = downloadAcrossRuns(cacheDir, null, 1, (n, ex) -> whole(ex, BODY, V1, BODY.length),
+                requests, url -> leavePartial(cacheDir, url, java.util.Arrays.copyOf(BODY, 40),
+                        url + "\n\"v1\"\n100\n"));
+        assertArrayEquals(BODY, (byte[]) outcomes.get(0));
+        assertEquals(List.of("-"), requests);
+    }
+
+    @Test
+    void aResumedFileWithAWrongChecksumIsFetchedOnceMoreWhole(@TempDir Path cacheDir) throws IOException {
+        var requests = new ArrayList<String>();
+        // The rest comes from a changed file whose server still names the old ETag.
+        var outcomes = downloadAcrossRuns(cacheDir, sha256Of(BODY), 2, (n, ex) -> {
+            if (n == 1) whole(ex, BODY, V1, 40);
+            else if (n == 2) rest(ex, CHANGED, V1, 40, "bytes 40-99/100");
+            else whole(ex, BODY, V1, BODY.length);
+        }, requests);
+        assertArrayEquals(BODY, (byte[]) outcomes.get(1));
+        assertEquals(List.of("-", "bytes=40- \"v1\"", "-"), requests);
+    }
+
+    @Test
+    void aResumedFileThatFailsItsChecksumAgainIsNeverReturned(@TempDir Path cacheDir) throws IOException {
+        var requests = new ArrayList<String>();
+        var outcomes = downloadAcrossRuns(cacheDir, sha256Of(BODY), 2, (n, ex) -> {
+            if (n == 1) whole(ex, BODY, V1, 40);
+            else if (n == 2) rest(ex, CHANGED, V1, 40, "bytes 40-99/100");
+            else whole(ex, CHANGED, V1, CHANGED.length);
+        }, requests);
+        var e = assertInstanceOf(IOException.class, outcomes.get(1));
+        assertTrue(e.getMessage().startsWith("SHA-256 mismatch"), e.getMessage());
+        assertEquals(List.of("-", "bytes=40- \"v1\"", "-"), requests, "fetched once more, not again and again");
+        assertEquals(List.of(), leftovers(cacheDir), "neither the bad file nor its partial is kept");
+    }
+
+    @Test
+    void twoDownloadsOfOneUrlMakeOneRequest(@TempDir Path cacheDir) throws Exception {
+        var requests = new AtomicInteger();
+        var secondWaits = new java.util.concurrent.CountDownLatch(1);
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/asset", ex -> {
+            requests.incrementAndGet();
+            try {
+                // Answered once the other download waits for this one; a second request, which is
+                // the failure, is answered after a few seconds, so the test fails rather than hangs.
+                secondWaits.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            whole(ex, BODY, V1, BODY.length);
+        });
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/asset";
+            var sha = sha256Of(BODY);
+            var first = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try {
+                    return new DownloadCache(cacheDir, uri -> false).downloadAllowingLocalFile(url, sha, DownloadCache.Listener.NONE);
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+            while (requests.get() == 0) Thread.sleep(5);
+            var second = new DownloadCache(cacheDir, uri -> false).downloadAllowingLocalFile(url, sha,
+                    new DownloadCache.Listener() {
+                        @Override
+                        public void waitingForAnother() {
+                            secondWaits.countDown();
+                        }
+                    });
+            assertEquals(first.get(30, java.util.concurrent.TimeUnit.SECONDS), second);
+            assertArrayEquals(BODY, Files.readAllBytes(second));
+            assertEquals(1, requests.get(), "the second download took the first one's file");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void withoutAChecksumAWaitNeverTakesAnotherUrlsFile(@TempDir Path cacheDir) throws Exception {
+        // Two URLs whose cache names collide: "Aa" and "BB" have the same String.hashCode, and so
+        // does everything around them. One is a project-local definition's, served slowly so that
+        // it holds the lock; the trusted one waits for it and must not take its file.
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var base = "http://127.0.0.1:" + server.getAddress().getPort();
+        var trusted = base + "/Aa/asset";
+        var other = base + "/BB/asset";
+        assertEquals(DownloadCache.cacheFilename(trusted), DownloadCache.cacheFilename(other), "the names collide");
+        var trustedWaits = new java.util.concurrent.CountDownLatch(1);
+        var otherAsked = new java.util.concurrent.CountDownLatch(1);
+        server.createContext("/BB/asset", ex -> {
+            otherAsked.countDown();
+            try {
+                trustedWaits.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            whole(ex, CHANGED, V1, CHANGED.length);
+        });
+        server.createContext("/Aa/asset", ex -> whole(ex, BODY, V1, BODY.length));
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.start();
+        try {
+            var first = java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    new DownloadCache(cacheDir, uri -> false).download(other, null);
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+            assertTrue(otherAsked.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            var result = new DownloadCache(cacheDir, uri -> false).downloadAllowingLocalFile(trusted, null,
+                    new DownloadCache.Listener() {
+                        @Override
+                        public void waitingForAnother() {
+                            trustedWaits.countDown();
+                        }
+                    });
+            assertEquals(0, trustedWaits.getCount(), "the trusted download waited for the other");
+            assertArrayEquals(BODY, Files.readAllBytes(result), "the trusted URL's own bytes, fetched again");
+            first.get(30, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void orphanedTemporaryFilesAreGoneAfterTheNextUse(@TempDir Path cacheDir) throws IOException {
+        var hour = System.currentTimeMillis() - Duration.ofHours(2).toMillis();
+        var week = System.currentTimeMillis() - Duration.ofDays(8).toMillis();
+        Files.createDirectories(cacheDir.resolve(DownloadCache.PARTIAL_DIR));
+        var orphan = Files.writeString(cacheDir.resolve("download-123.tmp"), "half");
+        Files.setLastModifiedTime(orphan, java.nio.file.attribute.FileTime.fromMillis(hour));
+        // An older isx may still be writing this one
+        Files.writeString(cacheDir.resolve("download-456.tmp"), "being written");
+        var abandoned = Files.writeString(cacheDir.resolve(DownloadCache.PARTIAL_DIR).resolve("1-old.tar"), "half");
+        var abandonedRecord = Files.writeString(cacheDir.resolve(DownloadCache.PARTIAL_DIR)
+                .resolve("1-old.tar" + DownloadCache.META_SUFFIX), "record");
+        for (var f : List.of(abandoned, abandonedRecord)) {
+            Files.setLastModifiedTime(f, java.nio.file.attribute.FileTime.fromMillis(week));
+        }
+        var recent = Files.writeString(cacheDir.resolve(DownloadCache.PARTIAL_DIR).resolve("2-new.tar"), "half");
+
+        // A cache hit is a use too
+        var url = "https://example.com/tool.tar.gz";
+        var cached = Files.writeString(cacheDir.resolve(DownloadCache.cacheFilename(url)), "cached");
+        new DownloadCache(cacheDir, uri -> false).download(url, DownloadCache.computeSha256(cached));
+
+        assertEquals(List.of(cacheDir.relativize(cached).toString(), "download-456.tmp",
+                cacheDir.relativize(recent).toString()), leftovers(cacheDir));
+    }
+
     /** Records what a download reported, in order. */
     private static final class RecordingListener implements DownloadCache.Listener {
         final List<String> events = new ArrayList<>();

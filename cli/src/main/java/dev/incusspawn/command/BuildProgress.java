@@ -181,6 +181,11 @@ final class BuildProgress {
             phase = "verifying checksum";
         }
 
+        @Override
+        public void waitingForAnother() {
+            phase = "waiting for another isx process downloading it";
+        }
+
         /** Whether the body was fetched (or copied from a {@code file://} URL) rather than reused from the cache. */
         boolean fetched() {
             return fetched;

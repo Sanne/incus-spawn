@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.HttpValidator;
 import dev.incusspawn.util.SystemTrust;
 import java.io.IOException;
@@ -14,6 +15,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.channels.UnresolvedAddressException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -69,6 +71,30 @@ public class DownloadCache {
 
     static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
 
+    /**
+     * How long a download waits for another process downloading the same URL: long enough for a
+     * base image on a slow link. A holder that dies frees the lock at once, so this bounds only one
+     * that hangs, after which this process downloads into a file of its own.
+     */
+    static final Duration LOCK_TIMEOUT = Duration.ofHours(1);
+
+    /** Under the cache directory: downloads in progress, named for their URL, each with its record. */
+    static final String PARTIAL_DIR = "partial";
+    static final String META_SUFFIX = ".response";
+    static final String LOCK_DIR = "locks";
+    /** The longest file name Linux and macOS filesystems take, in bytes. */
+    static final int MAX_NAME_BYTES = 255;
+
+    /**
+     * A temporary file (an older isx's, or one written when the lock could not be had) nobody has
+     * written to for this long belongs to no live process: a download that is still running writes
+     * every few seconds, and its longest pause between retries is a minute.
+     */
+    static final Duration STALE_TEMPORARY = Duration.ofHours(1);
+
+    /** A partial download nobody has continued for this long is deleted, unless it is being continued. */
+    static final Duration STALE_PARTIAL = Duration.ofDays(7);
+
     /** Waits before a retry; a seam so tests neither sleep nor lose what was asked for. */
     interface Pause {
         void sleep(Duration duration) throws InterruptedException;
@@ -102,6 +128,9 @@ public class DownloadCache {
 
         /** The download finished and its checksum is being verified. */
         default void verifying() {}
+
+        /** Another isx process, or another thread of this one, is downloading the same URL, and this one waits for it. */
+        default void waitingForAnother() {}
     }
 
     private final Path cacheDir;
@@ -177,60 +206,265 @@ public class DownloadCache {
         }
 
         var filename = cacheFilename(url);
+        sweep(filename);
         var cached = cacheDir.resolve(filename);
 
         // Cache hit: file exists and sha256 matches
-        if (sha256 != null && Files.exists(cached)) {
-            listener.verifyingCached();
-            if (sha256.equalsIgnoreCase(computeSha256(cached))) {
+        if (sha256 != null && matches(cached, sha256, listener)) return cached;
+
+        HostLock lock;
+        try {
+            lock = HostLock.acquire(lockFile(filename), "downloading " + url, message -> listener.waitingForAnother(),
+                    LOCK_TIMEOUT);
+        } catch (HostLock.HostLockException e) {
+            // Interrupted while waiting: the caller is cancelling, so nothing is downloaded
+            if (Thread.currentThread().isInterrupted()) throw new IOException("Download interrupted: " + url, e);
+            // A holder that never finishes, or a cache on a filesystem without locks: download into a
+            // file of this process's own, as before there was a lock, so nothing else writes to it.
+            lock = null;
+        }
+        try {
+            // Another process may have downloaded it meanwhile, which only the checksum can prove: the
+            // cache name is a short hash of the URL, so the file may be another URL's. Without one, it
+            // is downloaded again.
+            if (lock != null && lock.waited() && sha256 != null && matches(cached, sha256, listener)) return cached;
+            var transfer = lock == null
+                    ? new Transfer(Files.createTempFile(cacheDir, "download-", ".tmp"), null, url)
+                    : held(filename, url, sha256);
+            return fetchInto(transfer, uri, url, sha256, localFile, cached, listener);
+        } finally {
+            if (lock != null) lock.close();
+        }
+    }
+
+    private static boolean matches(Path cached, String sha256, Listener listener) throws IOException {
+        if (!Files.exists(cached)) return false;
+        listener.verifyingCached();
+        return sha256.equalsIgnoreCase(computeSha256(cached));
+    }
+
+    /**
+     * The transfer for a download this process holds the lock of, in the partial file named for its
+     * URL. With a checksum it continues what an earlier run left there, when that run recorded which
+     * response the bytes came from; without one it starts from byte 0, since only the checksum would
+     * catch bytes a crash left wrong on disk.
+     */
+    private Transfer held(String filename, String url, String sha256) throws IOException {
+        Files.createDirectories(cacheDir.resolve(PARTIAL_DIR));
+        var file = cacheDir.resolve(PARTIAL_DIR).resolve(filename);
+        // A record whose name is longer than a file name may be (255 bytes on Linux and macOS) is not
+        // kept: that download only cannot be continued by a later run, rather than failing outright
+        var metaName = filename + META_SUFFIX;
+        var keep = sha256 != null && metaName.getBytes(StandardCharsets.UTF_8).length <= MAX_NAME_BYTES;
+        var transfer = new Transfer(file, keep ? file.resolveSibling(metaName) : null, url);
+        var left = keep ? transfer.leftover() : null;
+        if (left == null) {
+            transfer.discard();
+        } else {
+            transfer.partial = left;
+        }
+        return transfer;
+    }
+
+    private Path fetchInto(Transfer transfer, URI uri, String url, String sha256, boolean localFile, Path cached,
+                           Listener listener) throws IOException {
+        var done = false;
+        try {
+            for (var again = false; ; again = true) {
+                if (localFile) {
+                    var source = Path.of(uri);
+                    var size = Files.size(source);
+                    listener.received(0, size);
+                    Files.copy(source, transfer.file, StandardCopyOption.REPLACE_EXISTING);
+                    listener.received(size, size);
+                } else {
+                    fetch(uri, url, transfer, listener);
+                }
+
+                if (sha256 != null) {
+                    listener.verifying();
+                    var actual = computeSha256(transfer.file);
+                    if (!sha256.equalsIgnoreCase(actual)) {
+                        var spliced = transfer.spliced;
+                        transfer.discard();
+                        // Bytes from two responses, or left on disk by an earlier run, may be what is
+                        // wrong: fetched once more, whole. A file fetched whole that fails is wrong at
+                        // its source, and fetching it again would not help.
+                        if (spliced && !again) {
+                            listener.retrying("the resumed file failed its checksum", 2, 2);
+                            continue;
+                        }
+                        throw new IOException("SHA-256 mismatch for " + url
+                                + ": expected " + sha256 + " but got " + actual);
+                    }
+                }
+
+                Files.move(transfer.file, cached, StandardCopyOption.REPLACE_EXISTING);
+                done = true;
+                transfer.discardQuietly();
                 return cached;
             }
-        }
-
-        var tmp = Files.createTempFile(cacheDir, "download-", ".tmp");
-        try {
-            if (localFile) {
-                var source = Path.of(uri);
-                var size = Files.size(source);
-                listener.received(0, size);
-                Files.copy(source, tmp, StandardCopyOption.REPLACE_EXISTING);
-                listener.received(size, size);
-            } else {
-                fetch(uri, url, tmp, listener);
-            }
-
-            if (sha256 != null) {
-                listener.verifying();
-                var actual = computeSha256(tmp);
-                if (!sha256.equalsIgnoreCase(actual)) {
-                    throw new IOException("SHA-256 mismatch for " + url
-                            + ": expected " + sha256 + " but got " + actual);
-                }
-            }
-
-            Files.move(tmp, cached, StandardCopyOption.REPLACE_EXISTING);
-            return cached;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Download interrupted: " + url, e);
         } finally {
-            Files.deleteIfExists(tmp);
+            // A partial a later run can continue stays, the rest goes
+            if (!done && !transfer.resumable()) transfer.discardQuietly();
         }
     }
 
-    private void fetch(URI uri, String url, Path tmp, Listener listener) throws IOException, InterruptedException {
+    /**
+     * Deletes what interrupted downloads left that nobody will continue: temporary files, of an older
+     * isx or of a download that could not take its lock, which no process has written to for an
+     * hour, and partial files of other URLs nobody has asked for in a week, whose lock is free.
+     */
+    private void sweep(String current) {
+        var now = System.currentTimeMillis();
+        try (var old = Files.newDirectoryStream(cacheDir, "download-*.tmp")) {
+            for (var file : old) {
+                if (olderThan(file, STALE_TEMPORARY, now)) deleteQuietly(file);
+            }
+        } catch (IOException ignored) {
+            // Swept again on the next use
+        }
+        var partials = cacheDir.resolve(PARTIAL_DIR);
+        if (!Files.isDirectory(partials)) return;
+        var names = new LinkedHashSet<String>();
+        try (var files = Files.newDirectoryStream(partials)) {
+            for (var file : files) {
+                var name = file.getFileName().toString();
+                names.add(name.endsWith(META_SUFFIX) ? name.substring(0, name.length() - META_SUFFIX.length()) : name);
+            }
+        } catch (IOException ignored) {
+            return;
+        }
+        for (var name : names) {
+            if (name.equals(current)) continue;
+            var file = partials.resolve(name);
+            var meta = partials.resolve(name + META_SUFFIX);
+            if (!olderThan(file, STALE_PARTIAL, now) || !olderThan(meta, STALE_PARTIAL, now)) continue;
+            try (var ignored = HostLock.acquire(lockFile(name), "downloading " + name, message -> {}, Duration.ZERO)) {
+                // Checked again under the lock: a run may have continued it since the check above
+                if (!olderThan(file, STALE_PARTIAL, now) || !olderThan(meta, STALE_PARTIAL, now)) continue;
+                deleteQuietly(file);
+                deleteQuietly(meta);
+            } catch (HostLock.HostLockException busy) {
+                // Being downloaded right now
+            }
+        }
+    }
+
+    /** Whether {@code file} is missing or was last written more than {@code age} before {@code now}. */
+    private static boolean olderThan(Path file, Duration age, long now) {
+        try {
+            return Files.getLastModifiedTime(file).toMillis() < now - age.toMillis();
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
+    private static void deleteQuietly(Path file) {
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException ignored) {
+            // Another process's sweep, or a file that cannot go now and is tried again next time
+        }
+    }
+
+    private Path lockFile(String filename) {
+        return cacheDir.resolve(LOCK_DIR).resolve(filename + ".lock");
+    }
+
+    /**
+     * The file a download is written to, and what a later attempt or run needs to continue it: the
+     * response its bytes came from, recorded beside it in {@code meta} (null when they are not kept
+     * for a later run). Fields are written on the HTTP client's thread and read after {@code send}
+     * returns.
+     */
+    private static final class Transfer {
+        final Path file;
+        final Path meta;
+        final String url;
+        /** The response the bytes on disk came from, when a later request can continue it. */
+        volatile Partial partial;
+        /** Whether the bytes on disk continue earlier ones, from another response or another run. */
+        volatile boolean spliced;
+        /** A failure to prepare the file for a new body, raised once {@code send} returns. */
+        volatile IOException localFailure;
+
+        Transfer(Path file, Path meta, String url) {
+            this.file = file;
+            this.meta = meta;
+            this.url = url;
+        }
+
+        /**
+         * A {@code 200} is about to replace the file: emptied first, so the record written next
+         * never describes bytes of an earlier response, even if this process is killed in between.
+         */
+        void starting(Partial next) throws IOException {
+            partial = next;
+            spliced = false;
+            if (meta == null) return;
+            Files.deleteIfExists(meta);
+            Files.write(file, new byte[0]);
+            if (next != null) {
+                Files.writeString(meta, url + "\n" + next.validator() + "\n" + next.length() + "\n");
+            }
+        }
+
+        /** What an earlier run left for this URL, when it can be continued; otherwise null. */
+        Partial leftover() {
+            try {
+                if (!Files.exists(file) || !Files.exists(meta)) return null;
+                var lines = Files.readAllLines(meta);
+                // The URL is checked too: the file name holds only a short hash of it
+                if (lines.size() != 3 || !lines.get(0).equals(url)) return null;
+                var left = new Partial(lines.get(1), Long.parseLong(lines.get(2)));
+                var size = Files.size(file);
+                return size > 0 && size < left.length() ? left : null;
+            } catch (IOException | RuntimeException e) {
+                return null;
+            }
+        }
+
+        /** Whether what is on disk is worth keeping for a later run. */
+        boolean resumable() {
+            try {
+                return meta != null && partial != null && Files.exists(meta) && Files.size(file) > 0;
+            } catch (IOException e) {
+                return false;
+            }
+        }
+
+        void discard() throws IOException {
+            partial = null;
+            spliced = false;
+            if (meta != null) Files.deleteIfExists(meta);
+            Files.deleteIfExists(file);
+        }
+
+        /** As {@link #discard}, leaving what cannot be deleted now to a later sweep. */
+        void discardQuietly() {
+            try {
+                discard();
+            } catch (IOException ignored) {
+                // Swept on a later use
+            }
+        }
+    }
+
+    private void fetch(URI uri, String url, Transfer transfer, Listener listener) throws IOException, InterruptedException {
         try (var client = SystemTrust.httpClient()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build()) {
             var failures = new ArrayList<TransientDownloadException>();
-            // The file a broken body on disk belongs to, so a later attempt can ask for the rest.
-            var resume = new AtomicReference<Partial>();
             for (int attempt = 0; ; attempt++) {
                 try {
                     // Each attempt starts again from the original URL: a redirect target is often
                     // a short-lived signed URL, and the failing hop may be the redirector itself.
-                    fetchOnce(client, uri, url, tmp, listener, resume);
+                    fetchOnce(client, uri, url, transfer, listener);
                     return;
                 } catch (TransientDownloadException e) {
                     failures.add(e);
@@ -275,13 +509,14 @@ public class DownloadCache {
         }
     }
 
-    private void fetchOnce(HttpClient client, URI uri, String url, Path tmp, Listener listener,
-                           AtomicReference<Partial> resume) throws IOException, InterruptedException {
+    private void fetchOnce(HttpClient client, URI uri, String url, Transfer transfer, Listener listener)
+            throws IOException, InterruptedException {
         // Checked again on every attempt, just before connecting: a retry comes seconds after the
         // first check, by when the JDK's address cache may have let a rebinding domain move to
         // 127.0.0.1.
         requireRemote(uri, url);
-        var partial = resume.get();
+        var tmp = transfer.file;
+        var partial = transfer.partial;
         var offset = partial == null ? 0 : Files.size(tmp);
         if (partial != null && (offset == 0 || offset >= partial.length())) {
             partial = null;
@@ -308,11 +543,17 @@ public class DownloadCache {
                 response = client.send(request, info -> {
                     var headers = info.headers();
                     if (info.statusCode() == 200) {
-                        resume.set(Partial.of(headers));
+                        try {
+                            transfer.starting(Partial.of(headers));
+                        } catch (IOException e) {
+                            transfer.localFailure = e;
+                            return cancelling(tmp);
+                        }
                         body.set(new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
                                 StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
                                 0, headers.firstValueAsLong("Content-Length").orElse(-1), listener));
                     } else if (info.statusCode() == 206 && asked != null && asked.continuedBy(headers, from)) {
+                        transfer.spliced = true;
                         body.set(new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
                                 StandardOpenOption.WRITE, StandardOpenOption.APPEND),
                                 from, asked.length(), listener));
@@ -325,6 +566,7 @@ public class DownloadCache {
                     return body.get();
                 });
             } catch (IOException e) {
+                if (transfer.localFailure != null) throw writeFailure(transfer.localFailure, tmp, url);
                 var counting = body.get();
                 if (counting != null && counting.localFailure != null) {
                     // The listener threw: a bug here, not a network error, so neither retried nor
@@ -334,21 +576,19 @@ public class DownloadCache {
                 // Once the body has started, only a failure the connection delivered is worth
                 // retrying: anything else came from writing the file (a full disk, say), which
                 // is neither the host's fault nor one another attempt would fix.
-                if (counting != null && !counting.networkFailure) {
-                    throw new IOException("Download failed writing to " + tmp.getParent() + ": "
-                            + e.getMessage() + " (" + url + ")", e);
-                }
+                if (counting != null && !counting.networkFailure) throw writeFailure(e, tmp, url);
                 var reason = describe(e, current.getHost());
                 if (counting != null || !isPermanent(e)) throw new TransientDownloadException(reason, url, e, null);
                 throw new IOException("Download failed: " + reason + " for " + url, e);
             }
+            if (transfer.localFailure != null) throw writeFailure(transfer.localFailure, tmp, url);
             var status = response.statusCode();
             if (body.get() != null) return;
             if (asked != null && (status == 206 || status == 416)) {
                 // The server would not continue the broken body: start over from byte 0, in the same
                 // attempt, since finding that out must not use up a retry.
-                resume.set(null);
-                fetchOnce(client, uri, url, tmp, listener, resume);
+                transfer.partial = null;
+                fetchOnce(client, uri, url, transfer, listener);
                 return;
             }
             if (!isRedirect(status)) {
@@ -377,6 +617,12 @@ public class DownloadCache {
             requireRemote(next, url);
             current = next;
         }
+    }
+
+    /** A failure on this side of the connection, writing the download: neither retried nor blamed on the host. */
+    private static IOException writeFailure(IOException e, Path file, String url) {
+        return new IOException("Download failed writing to " + file.getParent() + ": " + e.getMessage()
+                + " (" + url + ")", e);
     }
 
     /**
