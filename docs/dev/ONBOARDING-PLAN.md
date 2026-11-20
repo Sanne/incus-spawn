@@ -46,6 +46,11 @@ It shows the deferred steps as a menu, described below.
 
 Init asks which coding agent the person prefers, from the agents isx supports, and sets up only that one.
 
+**Setting an agent up does not install it in any template.**
+A template installs an agent only by listing it in `tools:`, as today.
+The answer decides two things: which credential init sets up on the host, and which agent the built-in first template lists.
+A template that does not list an agent gets none, whatever the preference is.
+
 **The answer is stored.**
 It is one key in `config.yaml`, the person's default agent.
 The built-in agent template reads it, so the first agent needs no YAML written by hand.
@@ -55,14 +60,14 @@ It is also the first field of a personal profile; see "Templates: the person's p
 Init looks for each supported agent on `PATH` and for its configuration directory.
 An agent that is installed and signed in becomes the default choice.
 
-**The question never suggests that isx uses the host's own installation.**
-The agent in an instance is a separate installation in a separate machine.
-A question such as "Use it as your agent?" reads as if isx would drive the program on the host, which it does not.
-The wording names where the agent will run:
+**The question promises neither the host's installation nor an install everywhere.**
+"Use it as your agent?" reads as if isx would drive the program on the host, which it does not.
+"Install it in your isx machines?" reads as if every template would get it, which is also wrong.
+The wording says what init does, which is to prepare the host for templates that list the agent:
 
 ```
 Found Claude Code on this host, signed in with a subscription.
-Install Claude Code in your isx machines too? [Y/n/other]
+Set up isx for Claude Code, so templates that include it can run it? [Y/n/other]
 ```
 
 **Pi and opencode spend the Claude credential by default.**
@@ -147,9 +152,11 @@ To change their agent or model, a person edits the middle of a forked repository
 Three changes are proposed:
 
 - **A personal profile.**
-  The agent, its model, and the person's own tools and packages are declared once, per user, and apply to any template.
+  The agent, its model, and the person's own tools and packages are declared once, per user.
+  A template still opts in: it asks for "the person's agent" where today it names one, and the profile says which agent that is.
+  A template that does not ask gets nothing from the profile.
   Project templates then hold only what the project needs, and are shared unedited.
-  The open question is where the profile sits in the copy-on-write layers, so that project images still share a base.
+  The open questions are how a template asks, and where the profile sits in the copy-on-write layers so that project images still share a base.
 - **A catalog in place of a fork.**
   A person adds an upstream template by name and gets a read-only definition, with local files only for what they override.
   Forking stays for people who contribute templates.
