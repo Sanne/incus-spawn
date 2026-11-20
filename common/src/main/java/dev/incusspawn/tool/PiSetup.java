@@ -91,7 +91,7 @@ public class PiSetup implements ToolSetup {
         model.setDescription("Model ID (e.g. " + ModelIds.get("example-claude-sonnet") + ", " + ModelIds.get("example-openai")
                 + ", " + ModelIds.get("example-gemini-flash") + "); omitted, "
                 + DEFAULT_MODEL + " for " + DEFAULT_PROVIDER + " and Pi's own default otherwise");
-        model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
+        model.setPattern(MODEL_ID_PATTERN);
         model.setOptional(true);
         model.setReconfigurable(true);
         // No declared default: one would be resolved before the build, so configureSettings could

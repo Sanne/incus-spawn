@@ -72,7 +72,7 @@ public class OpencodeSetup implements ToolSetup {
         model.setDescription("Model ID (e.g. " + ModelIds.get("example-claude-sonnet") + ", " + ModelIds.get("example-openai")
                 + ", " + ModelIds.get("example-gemini-flash") + "); omitted, "
                 + DEFAULT_MODEL + " for " + DEFAULT_PROVIDER + " and opencode's own default otherwise");
-        model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
+        model.setPattern(MODEL_ID_PATTERN);
         model.setOptional(true);
         model.setReconfigurable(true);
         // No declared default, as with Pi: one would be resolved before the build, and every
@@ -83,7 +83,7 @@ public class OpencodeSetup implements ToolSetup {
         small.setType("string");
         small.setDescription("Model ID for opencode's small tasks such as session titles; omitted, opencode's own choice, "
                 + "which setting model does not change");
-        small.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
+        small.setPattern(MODEL_ID_PATTERN);
         small.setOptional(true);
         small.setReconfigurable(true);
         params.put("small-model", small);
