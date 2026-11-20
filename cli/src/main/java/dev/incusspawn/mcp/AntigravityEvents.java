@@ -16,7 +16,8 @@ import java.util.List;
  *
  * <p>agy reports each step of its conversation as {@code step_update} events under one
  * {@code step_index}: a tool as {@code ACTIVE} and then {@code DONE}, and the model's text in
- * {@code text_delta} pieces. So a step is one line here, at the place it was first seen.
+ * {@code text_delta} pieces, and a failed model call as an {@code error_message} with no text. So a
+ * step is one line here, at the place it was first seen.
  */
 final class AntigravityEvents {
 
@@ -65,6 +66,10 @@ final class AntigravityEvents {
                                 messages++;
                             }
                             said.append(text);
+                        }
+                        // agy's events give no text for it: a model call that failed, which agy may try again.
+                        case "error_message" -> {
+                            if (tools.add(key)) steps.put(key, new StringBuilder("a model call failed"));
                         }
                         default -> { }
                     }
