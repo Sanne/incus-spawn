@@ -110,8 +110,14 @@ public final class EventLogReader {
      */
     public record Log(Map<String, Effort> byIncarnation, Map<String, Effort> byName, Instant since,
                       long droppedLines, long unreadableLines, boolean files,
-                      Map<String, Described> describedByIncarnation, Map<String, Described> describedByName) {
-        public static final Log EMPTY = new Log(Map.of(), Map.of(), null, 0, 0, false, Map.of(), Map.of());
+                      Map<String, Described> describedByIncarnation, Map<String, Described> describedByName,
+                      TaskRuns taskRuns) {
+        public static final Log EMPTY = new Log(Map.of(), Map.of(), null, 0, 0, false, Map.of(), Map.of(), TaskRuns.EMPTY);
+
+        /** The runs of {@code isx mcp} tasks in the instance of this name and incarnation, with the calls booked to each (#2428). */
+        public TaskRuns.Booked runs(String name, String incarnation) {
+            return taskRuns.of(name, incarnation);
+        }
 
         /**
          * What the instance of this name and incarnation was, or null when the log has no line for
@@ -204,6 +210,7 @@ public final class EventLogReader {
         final Map<String, Tally> byName = new HashMap<>();
         final Map<String, Described> describedByIncarnation = new HashMap<>();
         final Map<String, Described> describedByName = new HashMap<>();
+        final TaskRuns.Reading runs = new TaskRuns.Reading();
         Instant since;
         long dropped, unreadable;
         boolean files;
@@ -247,6 +254,11 @@ public final class EventLogReader {
             }
             var name = line.pathText("instance", "");
             if (name.isEmpty()) return;
+            // A task run is no effort of its own: it books the calls it encloses (#2428)
+            if (kind.equals("task")) {
+                runs.task(line, at, name, line.pathText("incarnation", ""));
+                return;
+            }
             if (!kind.equals("model") && !kind.equals("model_sum") && !kind.equals("github") && !kind.equals("instance")) return; // a kind of a later isx
             var incarnation = line.pathText("incarnation", "");
             // An instance line describes; it gives no instance an effort it did not make
@@ -271,6 +283,8 @@ public final class EventLogReader {
                     tally.output += line.path("output_tokens").asLong(0);
                     tally.cacheRead += line.path("cache_read_input_tokens").asLong(0);
                     tally.cacheCreation += line.path("cache_creation_input_tokens").asLong(0);
+                    runs.call(name, incarnation, at, line.path("input_tokens").asLong(0), line.path("output_tokens").asLong(0),
+                            line.path("cache_read_input_tokens").asLong(0), line.path("cache_creation_input_tokens").asLong(0));
                 }
                 case "github" -> {
                     tally.seen(at);
@@ -296,12 +310,19 @@ public final class EventLogReader {
                 }
                 case "model_sum" -> {
                     // A day's sums of a folded file (#2429); first and last are when the calls were
+                    Instant first, last;
                     try {
-                        tally.seen(Instant.parse(line.pathText("first", "")));
-                        tally.seen(Instant.parse(line.pathText("last", "")));
+                        first = Instant.parse(line.pathText("first", ""));
+                        last = Instant.parse(line.pathText("last", ""));
                     } catch (RuntimeException noTimes) {
-                        tally.seen(at);
+                        first = at;
+                        last = at;
                     }
+                    tally.seen(first);
+                    tally.seen(last);
+                    runs.daySum(name, incarnation, first, last, line.path("calls").asLong(0), line.path("input_tokens").asLong(0),
+                            line.path("output_tokens").asLong(0), line.path("cache_read_input_tokens").asLong(0),
+                            line.path("cache_creation_input_tokens").asLong(0));
                     tally.calls += line.path("calls").asLong(0);
                     tally.input += line.path("input_tokens").asLong(0);
                     tally.output += line.path("output_tokens").asLong(0);
@@ -318,7 +339,7 @@ public final class EventLogReader {
             var names = new HashMap<String, Effort>();
             byName.forEach((k, t) -> names.put(k, t.effort()));
             return new Log(Map.copyOf(incarnations), Map.copyOf(names), since, dropped, unreadable, files,
-                    Map.copyOf(describedByIncarnation), Map.copyOf(describedByName));
+                    Map.copyOf(describedByIncarnation), Map.copyOf(describedByName), runs.done());
         }
     }
 

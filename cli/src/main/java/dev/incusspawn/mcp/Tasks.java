@@ -74,6 +74,15 @@ final class Tasks {
         boolean busy() { return running() || launching; }
     }
 
+    /**
+     * What the event log's start line of a run says besides the task (#2428): the caller's
+     * {@code activity} for this run alone, and the instance's incarnation ({@code created_at})
+     * from the read the tool already made; either null when not known.
+     */
+    record RunNote(String activity, String incarnation) {
+        static final RunNote NONE = new RunNote(null, null);
+    }
+
     /** A task, with its instance's config as read when checking that this session owns it. */
     record Owned(Task task, Map<String, String> metadata) {}
 
@@ -123,6 +132,8 @@ final class Tasks {
     private final Map<String, Long> quietUntil = new ConcurrentHashMap<>();
 
     private final TaskWatcher watcher = new TaskWatcher(this::watchRound);
+    /** The runs' start and end lines in the event log. */
+    private final TaskRunLog runLog = new TaskRunLog();
     /** Instances whose last watch exec failed: polled again only by the next slow round. */
     private final java.util.Set<String> unanswered = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
@@ -193,8 +204,13 @@ final class Tasks {
      * idempotency key {@code key} (null for none), which the caller looked for with {@link #keyed}.
      */
     Task startCommand(String instance, String cwd, Map<String, String> env, String command, String key) {
+        return startCommand(instance, cwd, env, command, key, RunNote.NONE);
+    }
+
+    /** {@link #startCommand}, with what the event log's start line says of the run. */
+    Task startCommand(String instance, String cwd, Map<String, String> env, String command, String key, RunNote note) {
         var task = reserve(null, null, new Task(nextId(), instance, COMMAND, cwd, Profile.NONE, 1, TaskWatcher.RUNNING, true, key), true);
-        return launch(task, null, null, t -> TaskScripts.commandRun(t.id(), cwd, env, command), "");
+        return launch(task, null, null, t -> TaskScripts.commandRun(t.id(), cwd, env, command), "", note);
     }
 
     /**
@@ -250,8 +266,14 @@ final class Tasks {
 
     Task delegate(String instance, String cwd, String instruction, Profile profile,
                   boolean refresh, Runnable check, String key, DelegateAgent agent) {
+        return delegate(instance, cwd, instruction, profile, refresh, check, key, agent, RunNote.NONE);
+    }
+
+    /** {@link #delegate}, with what the event log's start line says of the run. */
+    Task delegate(String instance, String cwd, String instruction, Profile profile,
+                  boolean refresh, Runnable check, String key, DelegateAgent agent, RunNote note) {
         var task = reserve(null, null, new Task(nextId(), instance, AGENT, cwd, profile, 1, TaskWatcher.RUNNING, true, key, agent), refresh);
-        return launch(task, null, check, Tasks::agentRun, instruction);
+        return launch(task, null, check, Tasks::agentRun, instruction, note);
     }
 
     /**
@@ -262,6 +284,11 @@ final class Tasks {
      * Checked when sent, so a person joining in the seconds after is not seen.
      */
     Task sendMessage(Task task, String message, Profile override, Runnable check) {
+        return sendMessage(task, message, override, check, RunNote.NONE);
+    }
+
+    /** {@link #sendMessage}, with what the event log's start line says of the run. */
+    Task sendMessage(Task task, String message, Profile override, Runnable check, RunNote note) {
         if (!AGENT.equals(task.kind())) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "task " + task.id() + " is a command, not a delegated agent.");
         task.agent().requireKnown();
         var current = status(task, 0);
@@ -317,7 +344,7 @@ final class Tasks {
                     + "no longer says attached, ask the user, or reclaim_task it.");
         }
         var reserved = reserve(task.id(), override, null, true);
-        return launch(reserved, task, check, Tasks::agentRun, message);
+        return launch(reserved, task, check, Tasks::agentRun, message, note);
     }
 
     /**
@@ -383,6 +410,8 @@ final class Tasks {
                 // Once reported released, a task this session takes back is reported again.
                 if (tasks.putIfAbsent(task.id(), task) == null) watcher.revive(task.id());
             }
+            // A run still going is this session's to see end, though another wrote its start
+            runLog.seen(task, runs, state, null);
             adopted.add(task.id());
         }
         // A run recorded as unfinished may have died with a restart: ask systemd.
@@ -431,8 +460,9 @@ final class Tasks {
         // "unknown" says nothing about the task: keep what we last knew rather than free its slot.
         if (!"unknown".equals(status.state())) markStates(Map.of(task.id(), status.state()));
         // A task whose directory is gone reads as run 0.
-        watcher.observe(task.id(), task.instance(), status.run() > 0 ? status.run() : task.runs(),
-                status.state(), status.exit());
+        var run = status.run() > 0 ? status.run() : task.runs();
+        runLog.seen(task, run, status.state(), status.exit());
+        watcher.observe(task.id(), task.instance(), run, status.state(), status.exit());
         return status;
     }
 
@@ -720,8 +750,17 @@ final class Tasks {
     }
 
     /** Forget the tasks of an instance that no longer exists. */
-    synchronized void forgetInstance(String instance) {
-        forgetLocked(instance, TaskWatcher.LOST);
+    void forgetInstance(String instance) {
+        List<Task> cut;
+        synchronized (this) {
+            cut = forgetLocked(instance, TaskWatcher.LOST);
+        }
+        logLost(cut);
+    }
+
+    /** Runs gone with their instance ended, unseen, by now: written outside the lock. */
+    private void logLost(List<Task> cut) {
+        cut.forEach(t -> runLog.seen(t, t.runs(), TaskWatcher.LOST, null));
     }
 
     /**
@@ -729,19 +768,27 @@ final class Tasks {
      * then. Decided under the lock {@link #adopt} takes, so an adoption completing meanwhile
      * keeps its tasks rather than having them forgotten and tombstoned behind it.
      */
-    private synchronized void forgetIfUnheld(String instance) {
-        var why = session.whyNotHeld(instance);
-        if (why == McpSession.Hold.HELD) return;
-        forgetLocked(instance, why == McpSession.Hold.GONE ? TaskWatcher.LOST : TaskWatcher.RELEASED);
+    private void forgetIfUnheld(String instance) {
+        List<Task> cut;
+        synchronized (this) {
+            var why = session.whyNotHeld(instance);
+            if (why == McpSession.Hold.HELD) return;
+            cut = forgetLocked(instance, why == McpSession.Hold.GONE ? TaskWatcher.LOST : TaskWatcher.RELEASED);
+        }
+        logLost(cut);
     }
 
     /** Holds the lock: the watcher hears of it before an adoption can bring the tasks back. */
-    private void forgetLocked(String instance, String reason) {
+    private List<Task> forgetLocked(String instance, String reason) {
+        var cut = new java.util.ArrayList<Task>();
         tasks.values().removeIf(t -> {
             if (!t.instance().equals(instance)) return false;
+            // Gone with its instance, its run ended by now; one another session took is still going
+            if (TaskWatcher.LOST.equals(reason) && t.busy()) cut.add(t);
             watcher.forget(t.id(), instance, reason);
             return true;
         });
+        return cut;
     }
 
     /**
@@ -830,17 +877,20 @@ final class Tasks {
         seen.forEach((id, task) -> {
             int runs;
             DelegateAgent agent;
+            Task current;
             synchronized (this) {
                 var now = tasks.get(id);
                 if (task.state == null || now == null || task.run > 0 && task.run < now.runs()) return;
                 runs = now.runs();
                 agent = now.agent();
+                current = now;
             }
             // No run at all (its directory is gone): reported under the run the session knows.
             if (task.run == 0) task.run = runs;
             var state = task.state.equals("finished") && task.session != null
                     && who.holderOf(agent, task.session, task.cwd) != null ? "attached" : task.state;
             if (!state.equals("unknown")) known.put(id, state);
+            runLog.seen(current, task.run, state, task.exit);
             watcher.observe(id, instance, task.run, state, task.exit);
         });
         markStates(known);
@@ -854,12 +904,16 @@ final class Tasks {
      * for good, as nothing ever re-probes a launching task.
      */
     private Task launch(Task reserved, Task previous, Runnable check,
-                        java.util.function.Function<Task, String> runScript, String stdin) {
+                        java.util.function.Function<Task, String> runScript, String stdin, RunNote note) {
         try {
             if (check != null) check.run();
-            run(reserved.instance(), TaskScripts.launch(reserved.id(), reserved.runs(), reserved.kind(),
-                    runScript.apply(reserved), reserved.key(), reserved.agent()), stdin);
+            var launch = TaskScripts.launch(reserved.id(), reserved.runs(), reserved.kind(),
+                    runScript.apply(reserved), reserved.key(), reserved.agent());
+            // The run's start is now, before the exec: a model call it makes meanwhile is inside it
+            runLog.launching(reserved);
+            run(reserved.instance(), launch, stdin);
         } catch (RuntimeException e) {
+            runLog.notLaunched(reserved);
             synchronized (this) {
                 if (previous == null) tasks.remove(reserved.id());
                 else tasks.put(previous.id(), previous);
@@ -871,6 +925,7 @@ final class Tasks {
             launched = reserved.launched();
             tasks.put(launched.id(), launched);
         }
+        runLog.started(launched, note.activity(), note.incarnation());
         watcher.observe(launched.id(), launched.instance(), launched.runs(), TaskWatcher.RUNNING, null);
         return launched;
     }
@@ -882,6 +937,15 @@ final class Tasks {
     private Map<String, String> probe(String instance, List<String> ids) {
         var result = new HashMap<String, String>();
         var known = new HashMap<String, String>();
+        var ended = new java.util.ArrayList<Map.Entry<Task, String>>();
+        // The probe names no run: what it reads is of the run each task was at before the exec
+        var runsBefore = new HashMap<String, Integer>();
+        synchronized (this) {
+            for (var id : ids) {
+                var t = tasks.get(id);
+                if (t != null && !t.launching()) runsBefore.put(id, t.runs());
+            }
+        }
         for (var line : run(instance, TaskScripts.states(ids), null).split("\n")) {
             var parts = line.strip().split(" ");
             if (parts.length != 2) continue;
@@ -894,8 +958,15 @@ final class Tasks {
             // The probe does not look for a person, so it did not see one leave: finished keeps an attached.
             known.entrySet().removeIf(e -> e.getValue().equals("finished") && tasks.containsKey(e.getKey())
                     && tasks.get(e.getKey()).state().equals("attached"));
+            // A launching run, or one launched while the exec was out, is not what it read
+            known.forEach((id, s) -> {
+                var t = tasks.get(id);
+                if (t != null && !t.launching() && Integer.valueOf(t.runs()).equals(runsBefore.get(id))) ended.add(Map.entry(t, s));
+            });
             markStates(known);
         }
+        // Outside the lock: a slow disk holds up no other task call
+        ended.forEach(e -> runLog.seen(e.getKey(), e.getKey().runs(), e.getValue(), null));
         return result;
     }
 

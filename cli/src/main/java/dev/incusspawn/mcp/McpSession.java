@@ -187,6 +187,18 @@ final class McpSession {
         return value != null && IDEMPOTENCY_KEY.matcher(value).matches() ? value : null;
     }
 
+    /**
+     * Refuse an {@code activity} (#2428) that is not of a name hint's shape; null for none. isx
+     * gives it no meaning: it is written to the event log beside the run, for the client's report.
+     */
+    static String checkActivity(String activity) {
+        if (activity != null && !NAME_HINT.matcher(activity).matches()) {
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "activity must be 1-16 characters of a-z, 0-9 and '-', "
+                    + "starting with a letter or digit");
+        }
+        return activity;
+    }
+
     /** Refuse a purpose that would not read as one line in a listing. */
     static String checkPurpose(String purpose) {
         if (purpose == null || purpose.isBlank()) return null;

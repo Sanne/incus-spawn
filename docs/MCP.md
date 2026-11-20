@@ -148,6 +148,10 @@ The model is the template's unless the call names one.
 For opencode the call names it as `provider/model`.
 A bare model ID also works when the template sets a model, and gets that model's provider.
 
+`delegate` and `send_message` take an optional `activity`, a short tag of the agent's own, such as `implement` or `review-fixes`.
+isx records it in its event log beside the run's start and end, so a report can say what each kind of work cost.
+Each tag belongs to the one run it was given with.
+
 For Antigravity CLI the call names an ID that `agy models` lists in the instance.
 With a free-tier Gemini key, the default model of Antigravity CLI fails every task with a quota error, so name a Flash model.
 

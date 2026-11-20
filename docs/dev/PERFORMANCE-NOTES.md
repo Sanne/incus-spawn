@@ -1443,3 +1443,17 @@ The backend held about 900 MiB beside its heap: metaspace, code cache, threads a
 Its heap may grow to `-Xmx` while a project is indexed, so the declared need is the heap's ceiling plus that, rounded up to 1 GiB.
 No Gateway client was attached and the Gradle import was not trusted, so a working session holds more beside the heap; the figure is a floor.
 A VM's own kernel and firmware were not measured: the box had no `/dev/kvm`, and the baseline counts the container's figure for both.
+
+## Reading the event log with task runs booked (issue #2428)
+
+Measured 2026-11-20 on a Linux x86_64 box, JVM, `EventLogReader.read` on a synthetic full log: 80 MiB in one file, 295,825 lines, 40 instances, one task start line per 500 model calls.
+Five reads in one JVM, the last three after warm-up:
+
+| Build | Warm read |
+| --- | --- |
+| `main` | 378-383 ms |
+| with `TaskRuns` | 439-447 ms |
+
+Booking calls to runs keeps every model call of the read in memory until the end, and costs about 65 ms, 17%, on the largest log the proxy keeps.
+It is paid only by the overview's on-demand read, never by `isx list`.
+Not done: adding a name's calls to its unbooked total before its first task line, which would depend on the files' order across a rollover.

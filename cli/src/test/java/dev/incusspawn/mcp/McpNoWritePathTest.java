@@ -39,6 +39,8 @@ class McpNoWritePathTest {
             Map.entry("Runtime.getRuntime().exec", Set.of()),
             Map.entry("filePush", Set.of()),
             Map.entry("Files.write", Set.of("McpAuditLog.java")),
+            // The event log's task lines (#2428): host-side values and a name-hint-shaped activity, JSON-escaped
+            Map.entry("EventLogAppender", Set.of("TaskRunLog.java")),
             Map.entry("Files.newOutputStream", Set.of()),
             Map.entry("Files.copy", Set.of()),
             Map.entry("Files.delete", Set.of()));
