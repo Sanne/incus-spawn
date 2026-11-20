@@ -266,6 +266,7 @@ A download in progress is `partial/<cache name>` with a `.response` record (URL,
 After the wait it reuses the file only when its `sha256` matches, never without one: the cache name is a 31-bit hash plus the basename, so the file may be another URL's.
 Only a download with a `sha256` continues another run's file; a resumed file that fails the checksum is fetched once more from byte 0, and never returned.
 Each use of the cache sweeps old `download-*.tmp` files and partial files abandoned for a week; see design/host-resources.md "A download survives the process that started it".
+A body that delivers no bytes for `bodyIdleTimeout` (about 60 s, re-armed on each chunk) is cancelled as a connection failure, so the retry and resume path takes over and the holder of the URL's lock ends or retries instead of stalling its waiters (#2417).
 Errors name the failing hop's host.
 `file://` goes only through `downloadAllowingLocalFile()`, which only base images use; see design/host-resources.md "Host-side downloads reach only remote hosts".
 A `DownloadCache.Listener` observes a download (cache verification, bytes against `Content-Length`, checksum).

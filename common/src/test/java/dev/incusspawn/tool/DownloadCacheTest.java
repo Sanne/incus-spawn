@@ -5,6 +5,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import org.junit.jupiter.api.Timeout;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -239,6 +242,45 @@ class DownloadCacheTest {
             assertEquals(List.of("retrying HTTP 500 from 127.0.0.1 2/3", "retrying HTTP 500 from 127.0.0.1 3/3",
                     "received"), listener.events);
         } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void aBodyThatStallsIsCancelledAndRetried(@TempDir Path cacheDir) throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newCachedThreadPool());
+        var requests = new AtomicInteger();
+        var release = new CountDownLatch(1);
+        // The first answer sends half the body and goes silent, with no reset (#2417).
+        server.createContext("/stall", ex -> {
+            var body = "0123456789".getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, body.length);
+            if (requests.incrementAndGet() == 1) {
+                ex.getResponseBody().write(body, 0, 5);
+                ex.getResponseBody().flush();
+                try {
+                    release.await();
+                } catch (InterruptedException ignored) {
+                }
+            } else {
+                ex.getResponseBody().write(body);
+            }
+            ex.close();
+        });
+        server.start();
+        try {
+            var paused = new ArrayList<Duration>();
+            var cache = retrying(cacheDir, paused);
+            cache.bodyIdleTimeout = Duration.ofMillis(300);
+            var file = cache.downloadAllowingLocalFile(
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/stall", null);
+            assertEquals("0123456789", Files.readString(file));
+            assertEquals(2, requests.get());
+            assertEquals(1, paused.size(), "the stall was one retry");
+        } finally {
+            release.countDown();
             server.stop(0);
         }
     }
@@ -729,7 +771,7 @@ class DownloadCacheTest {
     @Test
     void twoDownloadsOfOneUrlMakeOneRequest(@TempDir Path cacheDir) throws Exception {
         var requests = new AtomicInteger();
-        var secondWaits = new java.util.concurrent.CountDownLatch(1);
+        var secondWaits = new CountDownLatch(1);
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/asset", ex -> {
             requests.incrementAndGet();
@@ -742,7 +784,7 @@ class DownloadCacheTest {
             }
             whole(ex, BODY, V1, BODY.length);
         });
-        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.setExecutor(Executors.newCachedThreadPool());
         server.start();
         try {
             var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/asset";
@@ -780,8 +822,8 @@ class DownloadCacheTest {
         var trusted = base + "/Aa/asset";
         var other = base + "/BB/asset";
         assertEquals(DownloadCache.cacheFilename(trusted), DownloadCache.cacheFilename(other), "the names collide");
-        var trustedWaits = new java.util.concurrent.CountDownLatch(1);
-        var otherAsked = new java.util.concurrent.CountDownLatch(1);
+        var trustedWaits = new CountDownLatch(1);
+        var otherAsked = new CountDownLatch(1);
         server.createContext("/BB/asset", ex -> {
             otherAsked.countDown();
             try {
@@ -792,7 +834,7 @@ class DownloadCacheTest {
             whole(ex, CHANGED, V1, CHANGED.length);
         });
         server.createContext("/Aa/asset", ex -> whole(ex, BODY, V1, BODY.length));
-        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.setExecutor(Executors.newCachedThreadPool());
         server.start();
         try {
             var first = java.util.concurrent.CompletableFuture.runAsync(() -> {
