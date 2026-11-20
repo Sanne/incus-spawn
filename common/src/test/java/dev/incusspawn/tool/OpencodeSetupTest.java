@@ -84,8 +84,17 @@ class OpencodeSetupTest {
         assertFalse(config.keys().contains("model"));
         assertFalse(config.keys().contains("provider"));
         assertEquals(List.of("OPENAI_API_KEY=sk-placeholder"), env(Map.of("provider", "openai")));
-        assertEquals(List.of("GEMINI_API_KEY=" + GeminiSetup.PLACEHOLDER_API_KEY), env(Map.of("provider", "google")));
         assertEquals(Set.of("gemini"), new OpencodeSetup().credentialNamespaces(resolved(Map.of("provider", "google"))));
+    }
+
+    @Test
+    void geminiProviderExportsBothApiKeys() {
+        var entries = env(Map.of("provider", "google"));
+        assertEquals(List.of("GEMINI_API_KEY=" + GeminiSetup.PLACEHOLDER_API_KEY,
+                "GOOGLE_GENERATIVE_AI_API_KEY=$GEMINI_API_KEY"), entries);
+        var raw = new OpencodeSetup().envEntries(resolved(Map.of("provider", "google")));
+        assertFalse(raw.get(0).expandsAtLogin());
+        assertTrue(raw.get(1).expandsAtLogin());
     }
 
     @Test
@@ -118,10 +127,25 @@ class OpencodeSetupTest {
     }
 
     @Test
-    void declaresItsOwnClaudePlaceholder() {
-        assertEquals(List.of(new dev.incusspawn.proxy.ProofToken.Placeholder(
-                        "OPENCODE_ANTHROPIC_API_KEY", "sk-ant-", SpawnConfig.ClaudeConfig.NAMESPACE)),
+    void declaresItsOwnClaudeAndGeminiPlaceholders() {
+        assertEquals(List.of(
+                        new dev.incusspawn.proxy.ProofToken.Placeholder(
+                                "OPENCODE_ANTHROPIC_API_KEY", "sk-ant-", SpawnConfig.ClaudeConfig.NAMESPACE),
+                        new dev.incusspawn.proxy.ProofToken.Placeholder(
+                                "GEMINI_API_KEY", "gemini-", "gemini")),
                 new OpencodeSetup().placeholders());
+    }
+
+    @Test
+    void openaiCredentialProblemReflectsConfiguredState() {
+        var empty = new SpawnConfig();
+        assertEquals("OpenAI API key",
+                new OpencodeSetup().credentialProblem(empty, resolved(Map.of("provider", "openai")), Map.of()));
+
+        var configured = new SpawnConfig();
+        configured.getOpenai().setApiKey("sk-test-key");
+        assertEquals("",
+                new OpencodeSetup().credentialProblem(configured, resolved(Map.of("provider", "openai")), Map.of()));
     }
 
     @Test
