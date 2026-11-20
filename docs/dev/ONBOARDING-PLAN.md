@@ -21,6 +21,30 @@ Its closing box sends the person to a web page to copy YAML into a file, then to
 
 The first run should end with an agent running in a machine of its own, and ask only what that needs.
 
+## Nothing is taken from experienced users
+
+The first run gets shorter, and isx does not get smaller.
+People who use the advanced capabilities must still find and configure each of them.
+These rules hold for every change in this plan:
+
+- **No capability is removed.**
+  A step that leaves the first run keeps its work, its flags and its place in `isx init --plan`.
+  Only the moment it is asked changes.
+- **Every deferred step can be run by name**, and the menu of a second `isx init` lists them all with their state.
+- **One flag runs the whole walk-through.**
+  `isx init --all` asks every step in turn, the deferred ones included, on a first run or a later one.
+  A person who knows what they want sets everything up in one sitting, as today.
+- **The flags that answer init's questions stay**, for search paths, code directories, the templates fork and the services, so a scripted install loses nothing.
+- **The first run ends by naming what it left out.**
+  The completion message lists each deferred step in one line, with the command that runs it.
+- **`isx doctor` names a capability that is not set up** as a note, which is not a problem and does not change its exit code.
+- **The example template points further.**
+  Its comments name the fields a first template does not use.
+- **A host that is already set up is not walked through the first run.**
+  Its configuration is kept as it is, and `isx init` there shows the menu.
+- **A test holds the list.**
+  Every step that today's init runs is either in the first run or in the menu, so a step cannot be dropped from both.
+
 ## Minimal init
 
 A first run of `isx init` asks its questions first, then works with nobody watching, in this order:
@@ -302,7 +326,7 @@ The menu shows the same entries: what is set up, what is not, and one line on wh
 For accounts this is "Missing accounts are asked for when a build needs them" above.
 
 This gives up the tour: a first run no longer shows everything isx can do.
-The closing box and the TUI name the deferred steps, so they can still be found.
+"Nothing is taken from experienced users" says how each capability is still found.
 
 ## An example template written by init
 
