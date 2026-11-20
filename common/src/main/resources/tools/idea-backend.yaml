@@ -19,6 +19,12 @@ parameters:
     default: "false"
     description: "Install the IDE Index MCP Server plugin and register it in Claude Code"
 
+# The heap may grow to its -Xmx, and the JVM holds about 900 MiB beside it (metaspace, code cache,
+# threads, mapped index files): docs/dev/PERFORMANCE-NOTES.md "Memory a template's tools need".
+resources:
+  memory:
+    resident: { parameter: memory, plus: 1GiB }
+
 downloads:
   - url: https://download.jetbrains.com/idea/idea-2026.3.tar.gz
     sha256: 6a53ff71f4a06add4c97edc4efe86c83119ff82e5b5e9f1db62fc95995bd6b25

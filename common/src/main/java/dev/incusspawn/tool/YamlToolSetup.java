@@ -112,6 +112,11 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public ToolDef.Resources resources() {
+        return def.getResources();
+    }
+
+    @Override
     public java.util.List<ToolDef.ActionEntry> actions() {
         return def.getActions();
     }

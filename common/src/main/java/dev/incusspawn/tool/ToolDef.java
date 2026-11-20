@@ -58,6 +58,8 @@ public class ToolDef extends FingerprintCache {
     @io.hyperfoil.tools.jjq.mapper.JqConverter(dev.incusspawn.config.SkillsDefConverter.class)
     private ImageDef.SkillsDef skills = ImageDef.SkillsDef.EMPTY;
     private List<McpEntry> mcp = List.of();
+    @io.hyperfoil.tools.jjq.mapper.JqConverter(ResourcesConverter.class)
+    private Resources resources = Resources.NONE;
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -104,6 +106,8 @@ public class ToolDef extends FingerprintCache {
     public void setSkills(ImageDef.SkillsDef skills) { this.skills = skills != null ? skills : ImageDef.SkillsDef.EMPTY; }
     public List<McpEntry> getMcp() { return mcp; }
     public void setMcp(List<McpEntry> mcp) { this.mcp = items(mcp); }
+    public Resources getResources() { return resources; }
+    public void setResources(Resources resources) { this.resources = resources != null ? resources : Resources.NONE; }
 
     /**
      * A list as mapped from YAML, without its empty items: a bare '-' (or '~') arrives as null
@@ -124,7 +128,8 @@ public class ToolDef extends FingerprintCache {
                 .each("mcp", mcp)
                 .values("parameters", parameters)
                 .part("proxy", proxy)
-                .part("skills", skills);
+                .part("skills", skills)
+                .part("resources", resources);
         if (proxy != null) {
             walk.values("proxy.configuration", proxy.getConfiguration())
                     .each("proxy.auth", proxy.getAuth())
@@ -190,6 +195,66 @@ public class ToolDef extends FingerprintCache {
         public void setUrl(String url) { this.url = url; }
         public String getBearerTokenEnv() { return bearerTokenEnv; }
         public void setBearerTokenEnv(String bearerTokenEnv) { this.bearerTokenEnv = bearerTokenEnv; }
+    }
+
+    /**
+     * What a tool needs of the instance it runs in ({@code resources:}), memory alone so far
+     * (#2355): {@code memory.resident}, held for as long as the tool runs, and
+     * {@code memory.peak}, needed on top of it for a short while (an index, a warm-up). Each
+     * comes from a measurement recorded in docs/dev/PERFORMANCE-NOTES.md. Read by
+     * {@link MemoryNeed}, which the build stamps on the template.
+     */
+    public static final class Resources extends MappedDefinition {
+        public static final Resources NONE = new Resources(null, null);
+
+        private final MemoryAmount resident;
+        private final MemoryAmount peak;
+
+        public Resources(MemoryAmount resident, MemoryAmount peak) {
+            this.resident = resident;
+            this.peak = peak;
+        }
+
+        /** The memory the tool holds while it runs, or null. */
+        public MemoryAmount resident() { return resident; }
+
+        /** The memory the tool needs on top of {@link #resident()} for a short while, or null. */
+        public MemoryAmount peak() { return peak; }
+
+        public boolean declaresMemory() { return resident != null || peak != null; }
+
+        String fingerprint() {
+            return "resident:" + (resident == null ? "" : resident.fingerprint())
+                    + ",peak:" + (peak == null ? "" : peak.fingerprint());
+        }
+
+        @Override
+        protected java.util.Collection<String> knownKeys() {
+            return List.of("memory");
+        }
+
+        @Override
+        protected String hint(String key) {
+            return key.startsWith("memory.") ? "resources.memory takes 'resident' and 'peak'" : null;
+        }
+    }
+
+    /**
+     * An amount of memory a tool declares: {@code bytes} alone, or the size its {@code parameter}
+     * holds plus {@code bytes} ({@code {parameter: memory, plus: 768MiB}}), for a tool whose need
+     * is one of its settings, such as a JVM heap.
+     */
+    public record MemoryAmount(long bytes, String parameter) {
+        /** The bytes this comes to with {@code params}, or -1 when the parameter does not hold a size. */
+        public long resolve(Map<String, String> params) {
+            if (parameter == null) return bytes;
+            var size = dev.incusspawn.util.MemorySize.parse(params.get(parameter));
+            return size < 0 ? -1 : size + bytes;
+        }
+
+        String fingerprint() {
+            return parameter == null ? String.valueOf(bytes) : parameter + "+" + bytes;
+        }
     }
 
     @JqMapped
@@ -551,6 +616,9 @@ public class ToolDef extends FingerprintCache {
             new TreeMap<>(m.env).forEach((k, v) -> sb.append(k).append('=').append(v).append(';'));
             sb.append('\n');
         }
+        // Only when declared, so a tool without it keeps its fingerprint. Stamped on the template
+        // at build, so a changed figure asks for the rebuild that stamps it
+        if (resources.declaresMemory()) sb.append("memory=").append(resources.fingerprint()).append('\n');
         parameters.entrySet().stream()
                 .sorted(java.util.Map.Entry.comparingByKey())
                 .forEach(e -> {

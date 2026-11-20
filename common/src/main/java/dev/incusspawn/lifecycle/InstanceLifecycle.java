@@ -213,11 +213,16 @@ public final class InstanceLifecycle {
      * none of it. Branches copy the template's devices, so they boot the same way.
      */
     public static void prepareVmBuild(IncusClient incus, String name) {
+        prepareVmBuild(incus, name, ResourceLimits.defaultVmMemoryLimit());
+    }
+
+    /** {@link #prepareVmBuild(IncusClient, String)} with {@code memory} for its size, which the build's tools may raise (#2355). */
+    public static void prepareVmBuild(IncusClient incus, String name, String memory) {
         var read = incus.readInstance(name);
         var instance = read.metadata();
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
         var update = new InstanceUpdate();
-        update.config("limits.memory", ResourceLimits.defaultVmMemoryLimit());
+        update.config("limits.memory", memory);
         if (instance.path("config").path(RAW_QEMU_CONF).asText("").isBlank()) {
             update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
         }

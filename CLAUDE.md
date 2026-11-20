@@ -345,6 +345,11 @@ A tool's `mcp:` entries are a stdio `command` or an HTTPS `url`, with nothing sp
 A credential reaches a server only as `bearer-token-env`, a variable each agent reads when it connects, and the loader requires it to be one of the tool's own `proxy.placeholders`, sent to one of its `proxy.auth` domains.
 `${isx_repo_paths}` names the template's clones (design/mcp.md "Tools declare MCP servers for every agent", `.claude/rules/tools-env.md`).
 
+**Tools declare the memory they need (#2355).**
+A tool's `resources.memory` gives `resident` and `peak`, a size or a parameter's size plus one, from a measurement in `docs/dev/PERFORMANCE-NOTES.md`.
+The build stamps the chain's sum of `resident` plus the largest `peak` as `Metadata.MEMORY_NEED`; a branch reads it from the source it already read, so it adds no request.
+A trusted VM's default RAM is raised to it, up to 60% of the host, and a branch or VM build given less is warned with the `--memory` to pass (design/templates.md "Tools declare the memory they need").
+
 **Secrets are declared, not listed.**
 `SecretRegistry` (`common/config/`) answers "where do secrets live in `config.yaml`" by collecting every tool's `ToolDef.ConfigEntry` that sets `secret: true` with a `config-path`.
 So a new credential becomes known to every secret-aware consumer by being declared on the tool (`ToolSetup.proxy()` or tool YAML), never by editing a list.

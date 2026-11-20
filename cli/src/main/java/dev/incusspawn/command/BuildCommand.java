@@ -1493,7 +1493,7 @@ public class BuildCommand extends BaseCommand {
         } else {
             // A parent built by an older isx carries a stale memory size, no page reporting and
             // Secure Boot
-            InstanceLifecycle.prepareVmBuild(incus, buildName);
+            InstanceLifecycle.prepareVmBuild(incus, buildName, vmBuildMemory(imageDef, defs));
         }
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         var dnfCacheWarning = attachBootDevices(buildName, hostResources, machineType);
@@ -1672,7 +1672,7 @@ public class BuildCommand extends BaseCommand {
         var launched = launchBuildInstance(image, buildName, machineType, canonicalName, reimportable, () -> {
             if (machineType == MachineType.VM) {
                 incus.deviceConfigSet(buildName, "root", "size", ResourceLimits.defaultDiskLimit());
-                InstanceLifecycle.prepareVmBuild(incus, buildName);
+                InstanceLifecycle.prepareVmBuild(incus, buildName, vmBuildMemory(imageDef, defs));
             }
             var dnfWarning = attachBootDevices(buildName, hostResources, machineType);
             return new Launched(startBuild(buildName, imageDef, defs), dnfWarning);
@@ -2775,6 +2775,13 @@ public class BuildCommand extends BaseCommand {
         }
         incus.configSet(buildName, Metadata.CREATED, Metadata.today());
         stampBuildVersion(buildName, imageDef, identityStamps);
+        var memoryNeed = memoryNeed(imageDef, defs);
+        if (memoryNeed != null) {
+            incus.configSet(buildName, Metadata.MEMORY_NEED, memoryNeed.stamp());
+        } else if (parentCanonicalName != null) {
+            // A copy of the parent carries the parent's: a definition that dropped its need drops it here too
+            incus.configUnset(buildName, Metadata.MEMORY_NEED);
+        }
         if (!hostResources.isEmpty()) {
             incus.configSet(buildName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));
@@ -2986,6 +2993,37 @@ public class BuildCommand extends BaseCommand {
         var dnfCacheWarning = new GuestProvisioning(incus).attachDnfCache(buildName);
         HostResourceSetup.attachBuildDevices(incus, buildName, hostResources, machineType);
         return dnfCacheWarning;
+    }
+
+    /** What the tools of {@code imageDef}'s chain are expected to need, or null (#2355). */
+    dev.incusspawn.tool.MemoryNeed memoryNeed(ImageDef imageDef, Map<String, ImageDef> defs) {
+        // Once per definition: a VM build sizes itself by it and stamps it, and a parameter that
+        // holds no size is warned about once
+        return memoryNeeds.computeIfAbsent(imageDef,
+                def -> java.util.Optional.ofNullable(BuildTools.memoryNeed(def, defs, toolDefLoader, toolSetups)))
+                .orElse(null);
+    }
+
+    /** {@link #memoryNeed} by the definition object a build was given. */
+    private final Map<ImageDef, java.util.Optional<dev.incusspawn.tool.MemoryNeed>> memoryNeeds = new java.util.IdentityHashMap<>();
+
+    /**
+     * The RAM a VM build gets: the default, raised to what its tools are expected to need as far
+     * as the host allows, since a tool's build steps (an index, a warm-up) run under it. Not
+     * raised for a chain with a project-local definition, which still gets the warning.
+     */
+    String vmBuildMemory(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var need = memoryNeed(imageDef, defs);
+        if (need == null) return ResourceLimits.defaultVmMemoryLimit();
+        var trusted = !ImageDef.anyProjectLocal(imageDef, defs);
+        var memory = trusted ? ResourceLimits.defaultVmMemoryLimit(need.total()) : ResourceLimits.defaultVmMemoryLimit();
+        need.warnIfShort(BuildOutput.bound(), "The build of '" + imageDef.getName() + "'",
+                dev.incusspawn.util.MemorySize.parse(memory), memory, !trusted
+                        ? "A project-local template does not raise a VM's memory by itself."
+                        : ResourceLimits.totalMemoryBytes() <= 0
+                        ? "isx could not read this host's memory, so it gives a VM a fixed default."
+                        : "By default isx gives a VM at most 60% of this host's memory.", false);
+        return memory;
     }
 
     /** {@link BuildTools#collectEffectiveTools} with this command's tool loader and CDI tools. */

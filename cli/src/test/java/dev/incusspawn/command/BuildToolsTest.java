@@ -978,4 +978,72 @@ class BuildToolsTest {
         assertTrue(ex.getMessage().contains("different parameters"));
     }
 
+
+    // --- memoryNeed (#2355) ---
+
+    private static ToolSetup yamlTool(String yaml) throws Exception {
+        return new YamlToolSetup(ToolDef.loadFromStream(
+                new java.io.ByteArrayInputStream(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+    }
+
+    private static ToolDefLoader ideAndIndexer() throws Exception {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        var ide = yamlTool("""
+                name: ide
+                parameters:
+                  memory: { type: string, default: "2g" }
+                resources:
+                  memory:
+                    resident: { parameter: memory, plus: 1GiB }
+                """);
+        var indexer = yamlTool("""
+                name: indexer
+                resources:
+                  memory:
+                    peak: 3GiB
+                """);
+        when(toolDefLoader.find("ide")).thenReturn(ide);
+        when(toolDefLoader.find("indexer")).thenReturn(indexer);
+        return toolDefLoader;
+    }
+
+    private static final long GIB = 1024L * 1024 * 1024;
+
+    @Test
+    void aChildLayersToolAddsToTheParentsNeed() throws Exception {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setTools(List.of(new ToolDef.ToolRef("ide")));
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setTools(List.of(new ToolDef.ToolRef("indexer")));
+        var defs = Map.of("tpl-parent", parent, "tpl-child", child);
+
+        var need = BuildTools.memoryNeed(child, defs, ideAndIndexer(), List.of());
+
+        assertEquals(dev.incusspawn.tool.MemoryNeed.GUEST_BASELINE + 3 * GIB + 3 * GIB, need.total());
+        assertEquals(List.of("ide", "indexer"), need.parts().stream().map(p -> p.tool()).sorted().toList());
+    }
+
+    @Test
+    void theTemplatesParameterSizesTheTool() throws Exception {
+        var template = new ImageDef();
+        template.setName("tpl-ide");
+        template.setTools(List.of(new ToolDef.ToolRef("ide", Map.of("memory", "8g"))));
+
+        var need = BuildTools.memoryNeed(template, Map.of("tpl-ide", template), ideAndIndexer(), List.of());
+
+        assertEquals(dev.incusspawn.tool.MemoryNeed.GUEST_BASELINE + 9 * GIB, need.total());
+    }
+
+    @Test
+    void aTemplateWhoseToolsDeclareNothingHasNoNeed() throws Exception {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("plain")).thenReturn(yamlTool("name: plain\n"));
+        var template = new ImageDef();
+        template.setName("tpl-plain");
+        template.setTools(List.of(new ToolDef.ToolRef("plain")));
+        assertNull(BuildTools.memoryNeed(template, Map.of("tpl-plain", template), toolDefLoader, List.of()));
+    }
 }

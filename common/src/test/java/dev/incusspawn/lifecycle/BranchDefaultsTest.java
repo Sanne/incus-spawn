@@ -191,4 +191,77 @@ class BranchDefaultsTest {
         assertEquals(0, sourceReads, "preflight read it: the copy plan and the defaults come from that read\n"
                 + String.join("\n", daemon.requests()));
     }
+
+    // What the template's tools are expected to need, stamped by its build (#2355)
+
+    private static final long GIB = 1024L * 1024 * 1024;
+
+    private static String needOf(long bytes) {
+        return new dev.incusspawn.tool.MemoryNeed(0, List.of(
+                new dev.incusspawn.tool.MemoryNeed.Part("idea-backend", bytes, 0))).stamp();
+    }
+
+    @Test
+    void aVmIsGivenWhatItsToolsNeed() {
+        var stamp = needOf(40 * GIB);
+        var daemon = new FakeIncusDaemon().instance("tpl-dev", "virtual-machine", "Stopped",
+                Map.of(Metadata.MEMORY_NEED, stamp));
+        var defaults = BranchFlow.defaultsFor("tpl-dev", daemon.client().instanceMetadata("tpl-dev"),
+                template("vm", false));
+        assertNotNull(defaults.memoryNeed());
+        assertEquals(ResourceLimits.defaultVmMemoryLimit(40 * GIB), defaults.memory());
+        assertNotEquals(ResourceLimits.defaultVmMemoryLimit(), defaults.memory(),
+                "the default is a quarter of the host, the raise up to 60% of it");
+    }
+
+    @Test
+    void aProjectLocalTemplateDoesNotRaiseAVmsMemory() {
+        // A cloned repository's definition must not claim most of the host's RAM by itself
+        var daemon = new FakeIncusDaemon().instance("tpl-dev", "virtual-machine", "Stopped",
+                Map.of(Metadata.MEMORY_NEED, needOf(40 * GIB)));
+        var defs = template("vm", false);
+        defs.get("tpl-dev").setProjectRoot(java.nio.file.Path.of("/home/user/cloned"));
+        var defaults = BranchFlow.defaultsFor("tpl-dev", daemon.client().instanceMetadata("tpl-dev"), defs);
+        assertEquals(ResourceLimits.defaultVmMemoryLimit(), defaults.memory());
+        assertNotNull(defaults.memoryNeed(), "it is still warned about");
+    }
+
+    @Test
+    void aContainersLimitIsNotRaised() {
+        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of(Metadata.MEMORY_NEED, needOf(40 * GIB)));
+        var defaults = BranchFlow.defaultsFor("tpl-dev", daemon.client().instanceMetadata("tpl-dev"),
+                template("container", false));
+        assertEquals(ResourceLimits.adaptiveMemoryLimit(), defaults.memory());
+    }
+
+    @Test
+    void aBranchGivenLessMemoryThanItsToolsNeedIsToldWhatToPass() {
+        // The key and the stamp as literals, so this test also runs, and fails, without the change
+        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of("user.incus-spawn.memory-need",
+                "{\"baseline\":0,\"tools\":[{\"name\":\"idea-backend\",\"resident\":6442450944,\"peak\":0}]}"));
+        var request = new BranchFlow.Request("tpl-dev", "dev-1", false, null, NetworkMode.AIRGAP,
+                null, null, "2GiB", null, List.of(), false, Map.of());
+        var defs = template("container", false);
+        var out = dev.incusspawn.util.RecordingOutput.during(() ->
+                BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, defs)));
+
+        var warning = out.events().stream().filter(e -> e.msg() != null && e.msg().contains("of memory")).findFirst()
+                .orElseThrow(() -> new AssertionError(out.events().toString()));
+        assertTrue(warning.msg().startsWith("This branch of 'tpl-dev' gets 2GiB of memory"), warning.msg());
+        var details = String.join("\n", warning.details());
+        assertTrue(details.contains("idea-backend 6 GiB"), details);
+        assertTrue(details.contains("--memory 6GiB"), details);
+    }
+
+    @Test
+    void enoughMemorySaysNothingOfIt() {
+        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of(Metadata.MEMORY_NEED, needOf(GIB)));
+        var request = new BranchFlow.Request("tpl-dev", "dev-1", false, null, NetworkMode.AIRGAP,
+                null, null, "8GiB", null, List.of(), false, Map.of());
+        var defs = template("container", false);
+        var out = dev.incusspawn.util.RecordingOutput.during(() ->
+                BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, defs)));
+        assertTrue(out.events().stream().noneMatch(e -> e.msg() != null && e.msg().contains("of memory")),
+                out.events().toString());
+    }
 }
