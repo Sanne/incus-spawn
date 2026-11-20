@@ -166,6 +166,7 @@ A tool with commands to create and destroy a machine can use isx the same way as
 | Create | `isx branch <name> --from <template> --owner <tool> --owner-id <workspace-id> --format=json` |
 | Suspend | `isx stop <name>` |
 | Resume | `isx start <name>` |
+| Run a command | `isx exec <name> -- <command> [args...]` |
 | Destroy | `isx destroy <name> --owner <tool> --owner-id <workspace-id>` |
 
 `<tool>` is a stable name for the tool, such as `my-runner`: lowercase letters, digits and `-`, at most 32 characters.

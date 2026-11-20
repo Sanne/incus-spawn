@@ -407,6 +407,7 @@ The `mcp.yaml` keys that once narrowed them still load, have no effect and are n
 `isx branch --owner <name> [--owner-id <id>]` stamps who controls an instance; like `isx mcp`'s stamps these are ownership keys (`Metadata.isOwnershipKey`) that no copy inherits.
 `isx branch --format=json` adds the SSH target and `project_root`, while `plain` stays the new name alone for `name=$(...)`.
 `isx start` and `isx stop` reuse `isx shell`'s preparation and the marked stop, and `isx ssh-proxy --start` lets an orchestrator's reconnect start a stopped instance; the Host block a plain `ssh` reads never starts one.
+`isx exec <name> -- <command>` runs one command after that same preparation and passes on its output and exit code (125 when isx itself fails first); it never stops the instance, which stays `isx stop`'s job.
 `isx destroy --owner <tool>` deletes only for a tool `drivers:` in `config.yaml` lets destroy, and only while the instance still carries that owner; a plain destroy of an owned instance asks.
 A person's own note on an instance is `Metadata.PURPOSE` (`isx branch --purpose`, `isx purpose <name> [text]`, #2239): a key apart from `mcp-purpose`, an ownership key no copy inherits, never set by a template, untrusted text shown through `oneLine` (design/mcp.md).
 `isx list`'s `OWNER` column folds in `isx mcp`'s standing, and its formats append `owner` and `owner_id`.

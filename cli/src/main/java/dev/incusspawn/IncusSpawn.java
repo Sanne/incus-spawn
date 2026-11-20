@@ -147,7 +147,7 @@ public class IncusSpawn implements QuarkusApplication {
             description = "Manage isolated Incus development environments",
             groupCommands = {
                 InitCommand.class, BuildCommand.class, ProjectCommand.class,
-                BranchCommand.class, ShellCommand.class, StartCommand.class, StopCommand.class, PurposeCommand.class,
+                BranchCommand.class, ShellCommand.class, StartCommand.class, StopCommand.class, ExecCommand.class, PurposeCommand.class,
                 RunCommand.class, ListCommand.class, OverviewCommand.class,
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
@@ -170,7 +170,7 @@ public class IncusSpawn implements QuarkusApplication {
             description = "Manage isolated Incus development environments",
             groupCommands = {
                 InitCommand.class, BuildCommand.class, ProjectCommand.class,
-                BranchCommand.class, ShellCommand.class, StartCommand.class, StopCommand.class, PurposeCommand.class,
+                BranchCommand.class, ShellCommand.class, StartCommand.class, StopCommand.class, ExecCommand.class, PurposeCommand.class,
                 RunCommand.class, ListCommand.class, OverviewCommand.class,
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
