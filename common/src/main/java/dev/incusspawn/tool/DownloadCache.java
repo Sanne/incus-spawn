@@ -31,7 +31,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Flow;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -70,6 +74,13 @@ public class DownloadCache {
     private static final Duration MAX_RETRY_AFTER = Collections.max(RETRY_DELAYS);
 
     static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
+
+    /**
+     * How long a body may deliver no bytes before it is cancelled as a transient network failure,
+     * which the retry and resume path then handles (#2417). Re-armed on each chunk, so a slow but
+     * live link never trips it. Not final so a test need not wait a minute.
+     */
+    Duration bodyIdleTimeout = Duration.ofSeconds(60);
 
     /**
      * How long a download waits for another process downloading the same URL: long enough for a
@@ -455,6 +466,11 @@ public class DownloadCache {
     }
 
     private void fetch(URI uri, String url, Transfer transfer, Listener listener) throws IOException, InterruptedException {
+        var watchdog = Executors.newSingleThreadScheduledExecutor(r -> {
+            var t = new Thread(r, "download-idle-watchdog");
+            t.setDaemon(true);
+            return t;
+        });
         try (var client = SystemTrust.httpClient()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(CONNECT_TIMEOUT)
@@ -464,7 +480,7 @@ public class DownloadCache {
                 try {
                     // Each attempt starts again from the original URL: a redirect target is often
                     // a short-lived signed URL, and the failing hop may be the redirector itself.
-                    fetchOnce(client, uri, url, transfer, listener);
+                    fetchOnce(client, uri, url, transfer, listener, watchdog);
                     return;
                 } catch (TransientDownloadException e) {
                     failures.add(e);
@@ -475,6 +491,8 @@ public class DownloadCache {
                     pause.sleep(delay);
                 }
             }
+        } finally {
+            watchdog.shutdownNow();
         }
     }
 
@@ -509,7 +527,8 @@ public class DownloadCache {
         }
     }
 
-    private void fetchOnce(HttpClient client, URI uri, String url, Transfer transfer, Listener listener)
+    private void fetchOnce(HttpClient client, URI uri, String url, Transfer transfer, Listener listener,
+            ScheduledExecutorService watchdog)
             throws IOException, InterruptedException {
         // Checked again on every attempt, just before connecting: a retry comes seconds after the
         // first check, by when the JDK's address cache may have let a rebinding domain move to
@@ -551,12 +570,13 @@ public class DownloadCache {
                         }
                         body.set(new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
                                 StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
-                                0, headers.firstValueAsLong("Content-Length").orElse(-1), listener));
+                                0, headers.firstValueAsLong("Content-Length").orElse(-1), listener,
+                                watchdog, bodyIdleTimeout));
                     } else if (info.statusCode() == 206 && asked != null && asked.continuedBy(headers, from)) {
                         transfer.spliced = true;
                         body.set(new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
                                 StandardOpenOption.WRITE, StandardOpenOption.APPEND),
-                                from, asked.length(), listener));
+                                from, asked.length(), listener, watchdog, bodyIdleTimeout));
                     } else if (info.statusCode() == 206) {
                         // Not the rest of this file, and possibly most of another: not read at all.
                         return cancelling(tmp);
@@ -588,7 +608,7 @@ public class DownloadCache {
                 // The server would not continue the broken body: start over from byte 0, in the same
                 // attempt, since finding that out must not use up a retry.
                 transfer.partial = null;
-                fetchOnce(client, uri, url, transfer, listener);
+                fetchOnce(client, uri, url, transfer, listener, watchdog);
                 return;
             }
             if (!isRedirect(status)) {
@@ -723,9 +743,17 @@ public class DownloadCache {
         private long received;
         volatile boolean networkFailure;
         volatile RuntimeException localFailure;
+        private final ScheduledExecutorService watchdog;
+        private final Duration idle;
+        private volatile long lastActivity = System.nanoTime();
+        private volatile ScheduledFuture<?> check;
+        private boolean ended;
 
         /** @param from the bytes already on disk, which a resumed body continues */
-        CountingSubscriber(HttpResponse.BodySubscriber<T> delegate, long from, long total, Listener listener) {
+        CountingSubscriber(HttpResponse.BodySubscriber<T> delegate, long from, long total, Listener listener,
+                ScheduledExecutorService watchdog, Duration idle) {
+            this.watchdog = watchdog;
+            this.idle = idle;
             this.delegate = delegate;
             this.received = from;
             this.total = total;
@@ -740,15 +768,40 @@ public class DownloadCache {
         @Override
         public void onSubscribe(Flow.Subscription subscription) {
             this.subscription = subscription;
-            if (report(received)) delegate.onSubscribe(subscription);
+            if (report(received)) {
+                delegate.onSubscribe(subscription);
+                lastActivity = System.nanoTime();
+                var period = Math.max(10, idle.toMillis() / 4);
+                check = watchdog.scheduleWithFixedDelay(this::checkIdle, period, period, TimeUnit.MILLISECONDS);
+            }
+        }
+
+        /** Cancels a body that has been silent for the idle time, as a failure the connection delivered. */
+        private synchronized void checkIdle() {
+            // Under the lock the signals share, so the watchdog never overlaps a chunk being written
+            // (a blocked write holds it, and refreshes lastActivity when it ends) or a terminal signal.
+            if (ended || System.nanoTime() - lastActivity < idle.toNanos()) return;
+            ended = true;
+            stopWatching();
+            networkFailure = true;
+            subscription.cancel();
+            delegate.onError(new IOException("no data received for " + idle.toSeconds() + " s"));
+        }
+
+        private void stopWatching() {
+            var c = check;
+            if (c != null) c.cancel(false);
         }
 
         @Override
-        public void onNext(List<ByteBuffer> items) {
+        public synchronized void onNext(List<ByteBuffer> items) {
+            if (ended) return;
             // Counted before the delegate consumes the buffers and leaves them with nothing remaining.
             for (var item : items) received += item.remaining();
+            lastActivity = System.nanoTime();
             delegate.onNext(items);
             report(received);
+            lastActivity = System.nanoTime();
         }
 
         private boolean report(long bytes) {
@@ -764,7 +817,10 @@ public class DownloadCache {
         }
 
         @Override
-        public void onError(Throwable throwable) {
+        public synchronized void onError(Throwable throwable) {
+            if (ended) return;
+            ended = true;
+            stopWatching();
             // A file write that failed has already completed the body; an error signalled after
             // that is the connection being torn down in response, not a network failure.
             if (!delegate.getBody().toCompletableFuture().isDone()) networkFailure = true;
@@ -772,7 +828,10 @@ public class DownloadCache {
         }
 
         @Override
-        public void onComplete() {
+        public synchronized void onComplete() {
+            if (ended) return;
+            ended = true;
+            stopWatching();
             delegate.onComplete();
         }
     }

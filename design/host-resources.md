@@ -286,6 +286,9 @@ So it applies to all definitions, trusted or not:
   This holds only for a download with a `sha256`, since a host crash can leave a zero-filled tail that only the checksum would catch; a download without one starts from byte 0.
   A file that fails its checksum is deleted, and fetched once more from byte 0 when it held bytes from more than one response; a file fetched whole that fails is wrong at its source, so it fails at once.
   A failure leaves a resumable partial file for the next run, and deletes anything else.
+  A body that delivers no bytes for about 60 seconds is cancelled as a connection failure (#2417).
+  The timer restarts on each chunk, so a slow link that keeps delivering never trips it, and the retry and resume path above takes over.
+  Without it, a connection that went silent would hold the URL's lock for the whole hour, and every waiter with it.
   Every use of the cache deletes `download-*.tmp` files (an older isx's, or those of a download that could not take its lock) that nobody has written to for an hour, and partial files nobody has continued for a week whose lock is free.
 - **DNS rebinding cannot split check from connect.**
   A rebinding domain answers with a public address for the check and `127.0.0.1` for the connection.
