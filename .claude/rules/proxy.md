@@ -435,7 +435,7 @@ Key design:
   Only a miss the repository said nothing about goes to the mirror (no copy, or a `~/.m2` probe that was unreachable, throttled or failed), never the download after an eviction, which would bring a withdrawn or changed release straight back.
   Past the tiers, only an unreachable upstream (`SidecarAnswer.unreachable()`: connect failure, 5xx or 429) serves unconfirmed.
   A `404` with a positive `Retry-After` is a 429 everywhere a cache reads upstream's status (`Upstream.status`, #2422): Maven Central's edge sends one to a throttled host, while its 404 for a missing artifact has no `Retry-After`.
-  That includes a cache domain's requests it relays uncached, such as `maven-metadata.xml` and SNAPSHOTs (`Upstream.relayedStatus` in `send` and `relayBuffered`), a private repository's included, which keeps no backoff (`Upstream.cacheDomains`); another domain's 404 passes on as it came.
+  That includes a cache domain's requests it relays uncached, such as `maven-metadata.xml` and SNAPSHOTs (`Upstream.relayedStatus` in `send`, the relay path a cache domain takes), a private repository's included, which keeps no backoff (`Upstream.cacheDomains`); another domain's 404 passes on as it came.
   It starts the backoff, is waited out, never evicts as a withdrawal would, and reaches the client as a `429` (`Upstream.relayResponse`, `copyRelayedHead`), since Maven remembers a 404 as a missing artifact.
   A refused connect starts a 30s per-domain backoff, and a 429 one as long as its `Retry-After` up to 60s, else 30s (`Upstream.startBackoff`, #2301).
   It ends on time, or on an answer to a request sent after its latest start that is not a 429, or is a 429 with `Retry-After: 0`.
