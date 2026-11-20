@@ -319,42 +319,44 @@ Three changes are proposed:
 
 Each block below is a change of its own, with its own tests, and most are useful before the new first run exists.
 The new init is then mostly an arrangement of them.
+Each has an issue, which names the issues it depends on and those that wait for it.
+Only two orderings are required: #2404 before #2411, and every other block before #2412.
 
 **First, three that depend on nothing and help today's users:**
 
-1. **Downloads that survive an interruption.**
+1. **Downloads that survive an interruption.** (#2404)
    "Recovering an interrupted download": the named partial file, the lock, the resume across runs and the removal of orphaned temporary files.
    Every build gains from it.
-2. **Missing accounts asked for at build and branch.**
+2. **Missing accounts asked for at build and branch.** (#2405)
    "Missing accounts are asked for when a build needs them", for any credential a tool declares.
    No step of init can be deferred safely until this exists.
-3. **Init's steps in a compact form.**
+3. **Init's steps in a compact form.** (#2406)
    One line per step as it completes, and the step's hint only when it fails.
    It changes what a run shows and nothing it does.
 
 **Then four that the new first run is assembled from:**
 
-4. **One step of init run by name, and the menu.**
+4. **One step of init run by name, and the menu.** (#2407)
    Each deferred step becomes something a person can run alone, as `isx mcp setup` already is.
    A second `isx init` lists them with their state, from what `--plan` already reads.
-5. **A read-only probe of the host's agents.**
+5. **A read-only probe of the host's agents.** (#2408)
    For each supported agent: whether it is installed, whether it is signed in, the kind of account and the model.
    It changes nothing and holds no secret, so it is tested against made-up home directories.
    `isx init --plan` and `isx doctor` report it first, before init acts on it.
-6. **The user's preferred agent.**
+6. **The user's preferred agent.** (#2409)
    The key in `config.yaml`, the command that shows and sets it, and the way a template asks for it.
    The built-in agent template is the first to ask.
    This is the largest block: the loader, the editor schema, the out-of-date check and the docs lists all learn the new construct.
-7. **A Git identity that no GitHub account supplies.**
+7. **A Git identity that no GitHub account supplies.** (#2410)
    The key in `config.yaml`, its explicit question, and where it is reported.
    Today only the `gh` tool writes an identity, so a template without `gh` needs another place to write one.
 
 **Then two that only the new first run uses:**
 
-8. **Downloads started ahead of the build.**
+8. **Downloads started ahead of the build.** (#2411)
    Given a template, what its build will download, fetched in the background with progress a later step can show.
    It needs block 1.
-9. **The new first run.**
+9. **The new first run.** (#2412)
    The order of "Minimal init", the questions before the work, the services without a question, and the closing question.
 
 **After those:** the personal profile beyond the agent, the catalog and the chain view, each after a design of its own.
