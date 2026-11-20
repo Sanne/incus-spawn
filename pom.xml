@@ -109,6 +109,8 @@
                             <isx.test.localRepository>${settings.localRepository}</isx.test.localRepository>
                             <!-- Tests run inside an isx instance must not find its secret: InheritedProof -->
                             <isx.instance-secret-file>${project.build.directory}/no-instance-secret</isx.instance-secret-file>
+                            <!-- No test reads or writes the developer's own ~/.config/incus-spawn (#2426, #2433): IsolatedHome and TempHome still swap it per test -->
+                            <user.home>${project.build.directory}/test-home</user.home>
                         </systemPropertyVariables>
                         <environmentVariables>
                             <!-- A test JVM is not isx, so GroupContinuation must never re-run it under sg (#2201) -->
