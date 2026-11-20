@@ -65,6 +65,8 @@ class MavenMirrorProxyTest {
     static final Map<String, String> mirrorHolds = new ConcurrentHashMap<>();
     static volatile boolean centralThrottles;
     static volatile boolean mirrorFails;
+    /** The mirror answers as Maven Central's edge does a throttled host: 404 with a Retry-After (#2422). */
+    static volatile boolean mirrorThrottlesAsNotFound;
     /** The X-Checksum-SHA1 the proxy sent with its last answer. */
     static volatile String lastChecksumHeader;
 
@@ -101,6 +103,10 @@ class MavenMirrorProxyTest {
                     if (auth != null) mirrorAuthorization.add(auth);
                     if (mirrorFails) {
                         req.response().setStatusCode(503).end();
+                        return;
+                    }
+                    if (mirrorThrottlesAsNotFound) {
+                        req.response().setStatusCode(404).putHeader("Retry-After", "3600").end();
                         return;
                     }
                     // A storage bucket's mirror sends no checksum header: its .sha1 vouches for the transfer
@@ -157,6 +163,7 @@ class MavenMirrorProxyTest {
         mirrorHolds.clear();
         centralThrottles = false;
         mirrorFails = false;
+        mirrorThrottlesAsNotFound = false;
         proxy.upstream.clearBackoffs();
         proxy.artifactCache.mirrorBackoffs.clear();
         proxy.overrideUpstream(CENTRAL, "127.0.0.1", centralPort);
@@ -281,6 +288,26 @@ class MavenMirrorProxyTest {
         atCentral.clear();
         assertEquals(new Answer(200, CONTENT), get());
         assertEquals(List.of(), atMirror, "a mirror that just failed is not asked again");
+        assertEquals(List.of("GET " + JAR), atCentral);
+        awaitCopy(CONTENT);
+    }
+
+    @Test
+    void aMirrorAnsweringNotFoundWithRetryAfterRestsAsAThrottledOneDoes() throws Exception {
+        mirrorThrottlesAsNotFound = true;
+        centralHolds.put(JAR, CONTENT);
+
+        assertEquals(new Answer(200, CONTENT), get());
+        assertEquals(List.of("GET " + MIRRORED + ".sha1"), atMirror);
+        awaitCopy(CONTENT);
+
+        // A throttle, not a file the mirror lacks: the next miss does not ask it again
+        Files.delete(copy());
+        Files.delete(copy().resolveSibling(copy().getFileName() + ".sha1"));
+        atMirror.clear();
+        atCentral.clear();
+        assertEquals(new Answer(200, CONTENT), get());
+        assertEquals(List.of(), atMirror, "a mirror that just throttled is not asked again");
         assertEquals(List.of("GET " + JAR), atCentral);
         awaitCopy(CONTENT);
     }
