@@ -129,6 +129,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - GUI and Audio Passthrough
   - Metadata Tracking
   - Lifecycle locking
+  - Running one command: `isx exec`
 - [Terminal output and the TUI](design/terminal.md)
   - Terminal Output Visual Language
   - Output for scripts: `--format=table|plain|json`

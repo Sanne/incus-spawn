@@ -9,7 +9,8 @@ import java.io.PrintStream;
  * it whole (#1703): an interactive guest command's inherited output ({@code IncusClient}), an
  * interactive shell's raw bytes ({@code IncusApi}) and its status bar ({@code InteractiveShell}),
  * the live renderer ({@code TerminalProgress}); a process whose stdin and stdout are another
- * program's protocol ({@code GitRemoteHelperCommand}, git's; {@code SshProxyCommand}, ssh's); and
+ * program's protocol ({@code GitRemoteHelperCommand}, git's; {@code SshProxyCommand}, ssh's), or
+ * a guest command's own ({@code ExecCommand}); and
  * the one check of whether a person is at a terminal ({@code Prompts}, and {@code TerminalOutput}
  * before a window title). A gate of
  * {@code RawOutputGateTest}, which also lets only those files call it: anything else reports

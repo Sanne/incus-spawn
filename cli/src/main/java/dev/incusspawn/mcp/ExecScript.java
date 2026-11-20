@@ -12,8 +12,9 @@ import java.util.regex.Pattern;
  * the whole process tree can be killed from a second exec when the client cancels -- a command
  * the agent stopped waiting for must not keep running unowned. Every value the agent supplies
  * is single-quoted; nothing it sends is ever interpreted by a shell other than its own command's.
+ * {@code isx exec} runs its command through the same two scripts.
  */
-final class ExecScript {
+public final class ExecScript {
 
     static final String RUN_DIR = "$HOME/.isx-mcp/run";
     private static final Pattern ENV_KEY = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
@@ -25,7 +26,7 @@ final class ExecScript {
      * @param cwd            directory to run in; relative to agentuser's home if not absolute
      * @param timeoutSeconds null for no limit: how long a command may run is the agent's call
      */
-    static String build(String runId, String cwd, Map<String, String> env, String command,
+    public static String build(String runId, String cwd, Map<String, String> env, String command,
                         Integer timeoutSeconds) {
         requireId(runId);
         var sb = new StringBuilder();
@@ -46,7 +47,7 @@ final class ExecScript {
     }
 
     /** Kill the process tree of a running {@link #build} script, TERM first, then KILL. */
-    static String kill(String runId) {
+    public static String kill(String runId) {
         requireId(runId);
         var pidFile = RUN_DIR + "/" + runId + ".pid";
         return "p=$(" + TaskScripts.readFile(pidFile) + ") || exit 0; "

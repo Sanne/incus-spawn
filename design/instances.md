@@ -541,3 +541,28 @@ An unusable lock file (a home without working `fcntl` locks) degrades both sides
 `startLocked()` only spawns the hypervisor process — it cannot detect an immediate crash or a guest that never reaches Incus.
 Every code path that launches the VM verifies readiness within the lock scope: `start()` and `restart()` call `awaitReady()` (polling `waitUntilReady(60)` with `BuildOutput` step output); `ensureRunningLocked()` does its own inline wait with `System.err` output and recovery logic.
 `startLocked()` returns a `StartResult` enum (`LAUNCHED`/`ALREADY_RUNNING`/`FAILED`) so callers can distinguish a fresh launch (needs readiness wait) from a no-op (VM was already up).
+
+## Running one command: `isx exec`
+
+`isx exec <instance> -- <command> [args...]` (`ExecCommand`) runs one command and waits for it.
+It reuses existing pieces:
+- the start is `isx start`'s (`InstanceStart.start`, `Preparer.FOR_USE`), so the guest has its secret and credential proofs;
+- the command runs through `isx mcp`'s `ExecScript`, as `agentuser` in a login shell, in its own session;
+- its stdout and stderr are isx's own (`TerminalStreams`), and the start runs under `withStdoutOnStderr`.
+
+**It does not stop the instance.**
+Stopping is `isx stop`'s job.
+Stopping here would need to know whether this run started the instance, and could stop it under another user of it.
+
+**The command is an argv.**
+Each word is shell-quoted (`Container.shellQuote`) before the guest's `bash -c`, so isx expands nothing.
+
+**No terminal, and stdin only with `-i`.**
+Opt-in stdin keeps a loop reading a file from having its input consumed by `isx exec`.
+
+**The exit code is the command's; isx's own failures exit 125** (`ExecCommand.ISX_FAILED`), so they cannot pass for the command's exit 1.
+An exec whose exit code Incus lost also exits 125.
+
+**Interrupting it ends the command.**
+A shutdown hook, removed once the command returns, runs `ExecScript.kill` in the guest, which ends the command's session.
+Its run id is `cli-<pid>`, distinct from `isx mcp`'s `exec-<pid>-<n>`.
