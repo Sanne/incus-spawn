@@ -52,11 +52,26 @@ These rules hold for the background downloads:
 - A download that failed in the background is not reported while the person answers.
   The step that needs the file retries it in the foreground and reports the failure there.
 - `isx init --plan` downloads nothing, since it only reads.
-- A person who stops init early keeps what finished, and an unfinished file is discarded or resumed, never used.
+- A person who stops init early keeps what finished.
+  An unfinished file is never used, and the next run recovers from it without help; see "Recovering an interrupted download".
 - On a fresh Linux host init continues in a second process under `sg incus-admin`.
   Only one process downloads a file, and the other waits for it under a `HostLock`.
 
 This gives up one thing: a person who leaves at the first question has already downloaded several hundred megabytes into the cache.
+
+**Recovering an interrupted download.**
+Today `DownloadCache` writes to a temporary file with a random name, and moves it into place only after its checksum matches.
+So a partial file is never used, and the next run downloads the file again.
+Two things are missing today, and a first run that downloads in the background makes both more likely to be met:
+
+- A process that is killed leaves its temporary file behind, since only a `finally` block deletes it, and nothing found in the code removes it later.
+  Each interrupted run can leave several hundred megabytes in the cache.
+- The next run starts from byte 0, though the cache can already resume a transfer that broke off within one run.
+
+The change: a download in progress is kept under a name derived from its URL, held under a `HostLock`.
+A later run that finds one continues it from where it stopped, when the server can resume it, and from byte 0 otherwise.
+The checksum is checked over the whole file as today, and a file that fails it is deleted and fetched once more from byte 0.
+Temporary files of the old kind that no process holds are deleted when the cache is next used.
 
 **The first agent opens only when the person says so.**
 An agent takes the whole terminal, so opening one unasked would hide the completion message.
@@ -148,6 +163,33 @@ Copying them is a deferred step that the person asks for, with each entry shown.
 This gives up some convenience: the person's first isx agent does not have their host agent's MCP servers or skills.
 In return nothing reaches a guest that the person did not look at.
 
+## Git in the first run
+
+Git setup is two separate things today, and only one of them is plumbing.
+
+**The host's side is plumbing.**
+The Git Remote Helper step installs what lets the host fetch an agent's commits from an instance.
+It asks nothing, and stays in the plumbing block.
+
+**The agent's Git identity comes from the GitHub credential.**
+At build, the `gh` tool asks GitHub whose token the instance's account holds, and writes that name and email to the instance's `.gitconfig` (`GhSetup.configureGitIdentity`).
+Without a GitHub credential no identity is written, and the build warns.
+
+Minimal init defers the GitHub credential, so this needs a decision, or the first agent cannot commit.
+The plan:
+
+- A `gh` login found on the host is offered in the credential answer of step 4.
+  When the person accepts it, the first agent has GitHub access and that account's identity, as today.
+- Otherwise init offers the host's own `git config` name and email as the identity of the agent's commits, in the same answer.
+  The first agent can then commit, and the person fetches its commits to the host.
+  It has no GitHub access until the person adds a GitHub credential.
+- A dedicated GitHub account for the agent, which the README recommends, is a deferred step.
+  The closing message names it.
+
+The second case needs something isx does not have: an identity that no GitHub token supplies.
+It is one more key in `config.yaml`, used only when no GitHub account gives an identity.
+This is an open point, not yet agreed.
+
 ## Everything else is deferred
 
 These leave the first run:
@@ -159,6 +201,7 @@ These leave the first run:
 | Code directories | When a template first names a repository they have on the host |
 | Agent access over MCP | `isx mcp setup`, which exists |
 | Further credentials | `isx account add`, or when a build or branch first needs one |
+| GitHub access for the agent, with an account of its own | From the closing message, or when a template first needs it |
 | Copying an agent's MCP servers and skills | When they ask for it |
 
 **A second `isx init` is a menu of these.**
