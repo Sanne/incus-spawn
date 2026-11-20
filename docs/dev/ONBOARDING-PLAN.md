@@ -30,6 +30,7 @@ A first run of `isx init` asks its questions first, then works with nobody watch
 3. It asks for the user's preferred agent, with the one found on the host preselected.
 4. It sets up the one credential that agent spends, and verifies it.
    A credential found on the host is confirmed with one answer.
+   The person may skip this step; see "Skipping the agent's credential".
 5. It offers to set up a GitHub account for the agent, which the person may skip; see "Git in the first run".
 6. On Linux it asks for the sudo password, the last thing it asks.
 7. It does the host plumbing, shown as one progress block, and installs the services.
@@ -83,6 +84,18 @@ Open your first agent now? [Y/n]
 ```
 
 Without a terminal it does not ask and opens nothing.
+
+**Skipping the agent's credential.**
+A person may not have the credential at hand, or may want to see isx work before giving one.
+Init then does everything else: the plumbing, the downloads and the build of the agent template.
+The slow work is done, so the agent opens as soon as the credential is added.
+
+What changes is the end of the run:
+
+- The build inside init does not ask for the credential again, since the person has just declined it.
+- The completion message says the agent has no account yet, and gives the command that adds one.
+- Init does not ask whether to open a first agent, because it could not sign in.
+- The first `isx branch` at a terminal asks for the credential, as "Missing accounts are asked for when a build needs them" describes.
 
 **The services are installed without a question.**
 Today init asks whether to install them, and nearly everyone wants them; `--no-service` still declines.
