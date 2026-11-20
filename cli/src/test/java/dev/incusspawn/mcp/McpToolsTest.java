@@ -197,6 +197,18 @@ class McpToolsTest {
     }
 
     @Test
+    void anEnvironmentNameOrTimeLimitTheScriptRefusesIsTheClientsMistake() throws Exception {
+        var name = createJava();
+        var before = backend.scripts.size();
+        for (var args : List.of("\"env\":{\"A-B\":\"1\"}", "\"env\":{\"A-B\":\"1\"},\"background\":true", "\"timeout_seconds\":0")) {
+            var result = call("exec", "{\"instance\":\"" + name + "\",\"command\":\"true\"," + args + "}");
+            assertTrue(result.path("isError").asBoolean(false), args);
+            assertEquals("invalid_argument", result.path("_meta").path("dev.incusspawn/error").path("code").asText(), args);
+        }
+        assertEquals(before, backend.scripts.size(), "nothing ran");
+    }
+
+    @Test
     void execRefusesAnInstanceItDoesNotOwn() throws Exception {
         backend.instance("users-box", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
         var result = call("exec", "{\"instance\":\"users-box\",\"command\":\"rm -rf ~\"}");

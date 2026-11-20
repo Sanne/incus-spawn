@@ -1,4 +1,4 @@
-package dev.incusspawn.mcp;
+package dev.incusspawn.incus;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;

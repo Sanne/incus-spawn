@@ -1,5 +1,7 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.incus.ExecScript;
+
 /**
  * The {@code ask} option of tools that return bulky text: instead of the text, a one-shot
  * Claude Code on a small model reads it inside the instance and answers the coordinating
