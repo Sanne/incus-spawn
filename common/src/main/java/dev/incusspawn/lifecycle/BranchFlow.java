@@ -321,6 +321,30 @@ public final class BranchFlow {
      * {@link ImageDef#loadTrusted()} for a caller that must not see project-local ones.
      */
     public static Preflight preflight(IncusClient incus, Request req, Map<String, ImageDef> defs) {
+        return preflight(incus, req, defs, null);
+    }
+
+    /**
+     * Who is asked for the accounts a branch lacks before it is refused for them: a person at a
+     * terminal, through each account's own setup step. Only {@code isx branch} passes one, so the
+     * MCP server and the TUI refuse as before.
+     */
+    @FunctionalInterface
+    public interface MissingAccounts {
+        /**
+         * Asks for {@code missing}, which {@code template} needs.
+         *
+         * @return whether any account was set up, so the check is worth making again
+         */
+        boolean ask(String template, List<CredentialCheck.Missing> missing);
+    }
+
+    /**
+     * {@link #preflight(IncusClient, Request, Map)}, asking {@code missingAccounts}, when not
+     * null, for the accounts the branch lacks, and refusing only for what is still missing.
+     */
+    public static Preflight preflight(IncusClient incus, Request req, Map<String, ImageDef> defs,
+                                      MissingAccounts missingAccounts) {
         // Before any Incus request: the request alone says it asks for KVM
         var refusal = kvmUnsupportedOnMacOs(Boolean.TRUE.equals(req.kvm()));
         if (refusal != null) throw new BranchException(refusal);
@@ -343,6 +367,7 @@ public final class BranchFlow {
         var loader = new ToolDefLoader();
         var served = ToolProxyResolver.proxyToolSetups(config, loader);
         ResolvedAccounts accounts;
+        var credError = "";
         try {
             accounts = resolveAccountSelection(incus, req.source(), sourceInstance, req.accountOverrides(), defs, config,
                     AccountSelection.byNamespace(served));
@@ -359,9 +384,10 @@ public final class BranchFlow {
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
             checkCaMismatch(incus, req.source());
-            var credError = missingCredentials(config, accounts.inherited(), accounts.accounts(), defs,
+            credError = missingCredentials(config, accounts.inherited(), accounts.accounts(), defs,
                     loader.allToolSetups(), served);
-            if (!credError.isEmpty()) throw new BranchException(credError);
+            // Without anyone to ask, refused here as ever; else asked once nothing else refuses it
+            if (!credError.isEmpty() && missingAccounts == null) throw new BranchException(credError);
         }
 
         try {
@@ -394,6 +420,9 @@ public final class BranchFlow {
             } catch (RuntimeException e) {
                 throw new BranchException("the proxy-only restriction could not be set up on the host: " + e.getMessage());
             }
+        }
+        if (!credError.isEmpty()) {
+            requireAccountsAfterAsking(missingAccounts, config, served, accounts, defs, loader);
         }
         var defaults = defaultsFor(req.source(), sourceInstance, defs);
         return new Preflight(withMcpClient(req, defaults), defs, accounts.accounts(), accounts.origins(),
@@ -673,12 +702,48 @@ public final class BranchFlow {
     private static String missingCredentials(SpawnConfig config, Inherited inherited,
                                              Map<String, String> selection, Map<String, ImageDef> defs,
                                              Map<String, ToolSetup> allTools, Map<String, ToolSetup> served) {
-        // What the source was built from, where it recorded that: the template's YAML may have
-        // changed since, and the branch gets what was built, not what the YAML says now.
-        var definitions = inherited.builtFrom().containsKey(inherited.template()) ? inherited.builtFrom() : defs;
+        var definitions = builtFrom(inherited, defs);
         var template = definitions.get(inherited.template());
         if (template == null) return "";
         return CredentialCheck.check(config, template, definitions, selection, allTools, served);
+    }
+
+    /**
+     * Asks {@code missingAccounts} for what the branch lacks, last in {@link #preflight} so nothing
+     * else refuses the branch after a secret was typed for it, and refuses for what is still missing.
+     */
+    private static void requireAccountsAfterAsking(MissingAccounts missingAccounts, SpawnConfig config,
+                                                   Map<String, ToolSetup> served, ResolvedAccounts accounts,
+                                                   Map<String, ImageDef> defs, ToolDefLoader loader) {
+        if (askForMissing(missingAccounts, config, accounts, defs, loader.allToolSetups(), served)) {
+            // What was just set up is in config.yaml, and so in what the proxy serves
+            config = SpawnConfig.load();
+            served = ToolProxyResolver.proxyToolSetups(config, loader);
+        }
+        var credError = missingCredentials(config, accounts.inherited(), accounts.accounts(), defs,
+                loader.allToolSetups(), served);
+        if (!credError.isEmpty()) throw new BranchException(credError);
+    }
+
+    /** Asks {@code missingAccounts} for what the branch lacks: whether it set anything up. */
+    private static boolean askForMissing(MissingAccounts missingAccounts, SpawnConfig config,
+                                         ResolvedAccounts accounts, Map<String, ImageDef> defs,
+                                         Map<String, ToolSetup> allTools, Map<String, ToolSetup> served) {
+        var inherited = accounts.inherited();
+        var definitions = builtFrom(inherited, defs);
+        var template = definitions.get(inherited.template());
+        if (template == null) return false;
+        var missing = CredentialCheck.missing(config, template, definitions, accounts.accounts(), allTools, served);
+        return !missing.isEmpty() && missingAccounts.ask(inherited.template(), missing);
+    }
+
+    /**
+     * The definitions a branch of {@code inherited}'s source is checked against: what the source
+     * was built from, where it recorded that, since the template's YAML may have changed since and
+     * the branch gets what was built.
+     */
+    private static Map<String, ImageDef> builtFrom(Inherited inherited, Map<String, ImageDef> defs) {
+        return inherited.builtFrom().containsKey(inherited.template()) ? inherited.builtFrom() : defs;
     }
 
     /** The selection a branch is stamped with: what it inherits, with {@code overrides} on top. */

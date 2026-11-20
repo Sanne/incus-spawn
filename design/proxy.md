@@ -326,6 +326,11 @@ All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge 
 **Credential validation**: Branching (CLI and TUI alike, through `BranchFlow`) refuses up front when the new instance would lack a credential its tools need.
 Airgapped branches skip the check, and building a template needs none, since only the proxy spends them at runtime.
 A build still says what branching will refuse, before its time is spent (#1438): every build path warns once per credential that a template it may build lacks, naming those templates (`CredentialCheck.missingByCredential`, from each template's own `accounts:`), and goes ahead.
+At a terminal, the build and `isx branch` first ask for each missing credential, with the step `isx account add` runs for it, and check again; a skipped one keeps the warning or the refusal (#2405).
+The step is taken only from tools a project cannot define, since a cloned repository's tool would otherwise turn into a question for a secret, its wording the repository's.
+No question is asked without a terminal, by a build under `--yes`, by a branch with `--format` or `--owner` (a script or an orchestrator must fail fast), from `isx mcp` or from the TUI, whose branch dialog keeps its refusal; this gives up asking in the TUI, where the dialog owns the screen.
+A branch asks last in `preflight`, so no other refusal follows a secret typed for it, and a build asks only once its "Continue?" or "Rebuild?" is answered yes, so nobody types a secret for a rebuild they turn down.
+A branch asks for the selection it will be stamped with, so a step that adds another account leaves a pin to one without a key refused.
 `isx init`'s closing box makes the same check of every current (non-deprecated) template, naming for each missing credential only the topmost templates that need it and counting the rest, because a credential init skipped or failed to verify otherwise surfaces at the first branch.
 The refusal, the warning and the box name `isx account add <namespace>` for each missing credential (#1469).
 It runs the one step `isx init` runs for that credential, account menu included, and nothing else, so fixing one token costs no sudo and no other step.

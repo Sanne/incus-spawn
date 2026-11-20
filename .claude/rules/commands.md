@@ -57,6 +57,8 @@ It runs `compinit -D`, so no test writes the developer's `~/.zcompdump`.
 `isx account add [<ns>|<tool>]` is `InitCommand.addCredential`: init's step for that one credential, or with no argument its Credential Setup menu, under the same `[n/N]` headers (#1469).
 Init's credential and host steps read their answers from `InitCommand.prompts()`, which tests override.
 Every message naming a missing credential's remedy takes it from `CredentialCheck.Missing.command()`, so it names `isx account add <ns>` only when a step owns that namespace.
+`InitCommand.askForMissing` (#2405) runs the same step for each missing credential a build or branch reports, after a yes or no, resolved by `CredentialCheck.stepTool` from tools no project defines (`InitCommand.trustedToolLoader`, `ToolDefLoader.withoutProjectTools`; `MissingAccountsAskTest.aProjectsOwnToolIsNeverAskedFor` writes a real `.incus-spawn/tools/`), so a cloned repository's tool never becomes a question for a secret.
+It reads `Prompts.terminal()` through `prompts()`, never a piped stdin, and asks each step once, naming every template that needs it.
 A generic tool step's own "configure later" line uses `CredentialCheck.stepCommand`, the same rule seen from the tool.
 Claude's and GitHub's steps name their own namespace (`SpawnConfig.ClaudeConfig.NAMESPACE`, `GhSetup.NAMESPACE`) directly: those built-in tools always own it, so the rule would only load every tool definition to print the same command.
 

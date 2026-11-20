@@ -116,4 +116,77 @@ class BranchFlowCredentialsTest {
             BranchFlow.proxyHealthCheck = original;
         }
     }
+
+    /** {@code isx branch}'s preflight, at full network, asking {@code ask} for what is missing. */
+    private static BranchFlow.Preflight preflight(FakeIncusDaemon daemon, Map<String, ImageDef> defs,
+                                                  List<String> overrides, BranchFlow.MissingAccounts ask) {
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = incus -> true;
+        try {
+            var request = new BranchFlow.Request("tpl-dev", "dev-2", false, false,
+                    dev.incusspawn.config.NetworkMode.FULL, null, null, null, null, overrides, false, Map.of());
+            return BranchFlow.preflight(daemon.client(), request, defs, ask);
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
+    }
+
+    /**
+     * At a terminal the branch asks for what it lacks before refusing it (#2405), and goes ahead
+     * once it is configured: the check is made again on what config.yaml now holds.
+     */
+    @Test
+    void aMissingAccountGivenWhenAskedLetsTheBranchGoAhead() throws Exception {
+        var defs = defs("name: tpl-dev\ntools: [claude]\n");
+        var asked = new java.util.ArrayList<String>();
+        var preflight = preflight(template(), defs, List.of(), (template, missing) -> {
+            asked.add(template + ": " + missing.stream().map(m -> m.credential() + " (" + m.command() + ")").toList());
+            try {
+                Files.writeString(SpawnConfig.configDir().resolve("config.yaml"), "claude:\n  apiKey: \"sk-ant-x\"\n",
+                        java.nio.file.StandardOpenOption.APPEND);
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            return true;
+        });
+
+        assertEquals(List.of("tpl-dev: [Anthropic API key, OAuth token, or Vertex AI (isx account add claude)]"), asked);
+        assertEquals("tpl-dev", preflight.request().source());
+    }
+
+    /** A skipped account leaves today's refusal, naming the command. */
+    @Test
+    void aSkippedAccountIsRefusedAsBefore() throws Exception {
+        var defs = defs("name: tpl-dev\ntools: [claude]\n");
+        var e = assertThrows(BranchFlow.BranchException.class,
+                () -> preflight(template(), defs, List.of(), (template, missing) -> false));
+        assertTrue(e.getMessage().contains("Anthropic API key"), e.getMessage());
+        assertTrue(e.getMessage().contains("isx account add claude"), e.getMessage());
+    }
+
+    /**
+     * The question is asked of the account the branch will use: a step that adds another account
+     * does not satisfy an {@code --account} pin to one without a key, so the branch is still refused.
+     */
+    @Test
+    void anAccountSetUpThatIsNotTheOneSelectedStillRefuses() throws Exception {
+        var defs = defs("name: tpl-dev\ntools:\n  - pi: {provider: openai}\n");
+        var calls = new int[1];
+        var e = assertThrows(BranchFlow.BranchException.class, () -> preflight(template(), defs,
+                List.of("openai=spare"), (template, missing) -> {
+                    calls[0]++;
+                    return true; // as if a step ran, adding nothing to 'spare'
+                }));
+        assertEquals(1, calls[0], "asked once, then checked again");
+        assertTrue(e.getMessage().contains("OpenAI API key"), e.getMessage());
+    }
+
+    /** Nothing missing, nothing asked. */
+    @Test
+    void aBranchWithEveryAccountIsNotAsked() throws Exception {
+        var defs = defs("name: tpl-dev\ntools: [gh]\n");
+        preflight(template(), defs, List.of(), (template, missing) -> {
+            throw new AssertionError("asked for " + missing);
+        });
+    }
 }

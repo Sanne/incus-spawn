@@ -44,6 +44,8 @@ import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -134,7 +136,8 @@ public class InitCommand extends BaseCommand {
     /** Whether {@link #totalSteps} is final: until Credential Setup, the credentials chosen may still add to it. */
     private boolean totalKnown = true;
     private int currentStep;
-    private final CredentialSetup credentials = new CredentialSetup();
+    // Not final: a flow test hands in one whose network and host calls are its own
+    CredentialSetup credentials = new CredentialSetup();
 
     private static String pad(String s, int width) {
         int vlen = stripAnsi(s).length();
@@ -984,6 +987,62 @@ public class InitCommand extends BaseCommand {
             credentials.closeHttpClient();
         }
         return 0;
+    }
+
+    /**
+     * Asks, one after another, for each account in {@code missing} that a step configures, and
+     * runs that step as {@code isx account add} runs it when the person says yes (#2405). Without
+     * a terminal nothing is asked. Each step is asked for once, naming every template that needs
+     * it, and a credential only {@code isx init} configures is left to the caller's warning.
+     *
+     * <p>The steps come only from tools a project cannot define, so a cloned repository's tool
+     * never turns into a question for a secret: a gap only such a tool closes is not asked for.
+     *
+     * @param missing each missing credential, mapped to the templates that need it
+     * @return whether any step ran, so the caller's check is worth making again
+     */
+    boolean askForMissing(Map<CredentialCheck.Missing, List<String>> missing) throws Exception {
+        if (missing.isEmpty()) return false;
+        var prompts = prompts();
+        if (prompts == null) return false;
+        var tools = trustedToolLoader().allToolSetups();
+        var steps = new LinkedHashMap<String, LinkedHashSet<String>>();
+        missing.forEach((credential, templates) -> {
+            var step = CredentialCheck.stepTool(credential, tools);
+            if (step != null) steps.computeIfAbsent(step, s -> new LinkedHashSet<>()).addAll(templates);
+        });
+        if (steps.isEmpty()) return false;
+        currentStep = 0;
+        totalSteps = steps.size();
+        totalKnown = true;
+        var ran = false;
+        try {
+            for (var entry : steps.entrySet()) {
+                var tool = tools.get(entry.getKey());
+                var needing = entry.getValue().stream().map(t -> "'" + OutputFormat.oneLine(t) + "'").toList();
+                var question = (needing.size() == 1 ? "Template " : "Templates ") + OutputFormat.andList(needing)
+                        + (needing.size() == 1 ? " needs" : " need") + " a credential that is not configured: "
+                        + CredentialSetup.describeTool(entry.getKey(), tool) + ". Set it up now?";
+                if (!askYesNo(prompts, question, true)) {
+                    // Counted all the same, so each step's header says where it is among those asked for
+                    currentStep++;
+                    continue;
+                }
+                begin(credentialStep(entry.getKey(), tool));
+                ran = true;
+            }
+        } finally {
+            credentials.closeHttpClient();
+        }
+        return ran;
+    }
+
+    /**
+     * Where {@link #askForMissing} takes its steps from: every tool but a project's own
+     * ({@code .incus-spawn/tools/}), which a cloned repository defines.
+     */
+    ToolDefLoader trustedToolLoader() {
+        return ToolDefLoader.withoutProjectTools(SpawnConfig.load().getSearchPaths());
     }
 
     /**

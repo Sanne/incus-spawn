@@ -346,7 +346,8 @@ public class BuildCommand extends BaseCommand {
         var seen = new HashSet<String>();
         for (var target : targets) collectAllRecursive(target, defs, chains, seen);
         requireKnownTools(targets.stream().map(ImageDef::getName).toList(), defs);
-        preflight(chains, defs);
+        // Asked once a build goes ahead: a template that exists asks "Rebuild?" first
+        if (preflightBeforeConfirm(chains, defs)) pendingAccountAsk = () -> warnUnbranchable(chains, defs);
         build(parentsFirst(targets, defs), defs);
         return CommandResult.SUCCESS;
     }
@@ -446,10 +447,11 @@ public class BuildCommand extends BaseCommand {
         templatesToRebuild.removeAll(skipped);
         if (templatesToRebuild.isEmpty()) return;
         requireKnownTools(templatesToRebuild, defs);
-        preflight(templatesToRebuild, defs);
+        var askAfter = preflightBeforeConfirm(templatesToRebuild, defs);
 
         if (!confirmBatch(outdatedOnly ? "Templates to rebuild: " : "This will rebuild: ",
                 templatesToRebuild, defs, outdatedOnly ? "Rebuild?" : "Continue?")) return;
+        if (askAfter) warnUnbranchable(templatesToRebuild, defs);
 
         rebuildAll(templatesToRebuild, defs);
     }
@@ -627,7 +629,8 @@ public class BuildCommand extends BaseCommand {
         var targets = skipped.isEmpty() ? missingLeaves : withoutSkipped(missingLeaves, skipped, defs);
         toCheck.removeAll(skipped);
         requireKnownTools(targets.stream().map(ImageDef::getName).toList(), defs);
-        preflight(toCheck, defs);
+        // Asked once a build goes ahead: an outdated ancestor that exists asks "Rebuild?" first
+        if (preflightBeforeConfirm(toCheck, defs)) pendingAccountAsk = () -> warnUnbranchable(toCheck, defs);
         build(targets, defs);
     }
 
@@ -674,9 +677,10 @@ public class BuildCommand extends BaseCommand {
     void buildWithParents(List<ImageDef> targets, Map<String, ImageDef> defs) {
         var chain = withParentsChain(targets, defs);
         requireKnownTools(chain, defs);
-        preflight(chain, defs);
+        var askAfter = preflightBeforeConfirm(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
+        if (askAfter) warnUnbranchable(chain, defs);
 
         rebuildAll(chain, defs);
     }
@@ -689,9 +693,10 @@ public class BuildCommand extends BaseCommand {
     void buildWithDescendants(List<ImageDef> targets, Map<String, ImageDef> defs) {
         var chain = withDescendantsChain(targets, defs);
         requireKnownTools(chain, defs);
-        preflight(chain, defs);
+        var askAfter = preflightBeforeConfirm(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
+        if (askAfter) warnUnbranchable(chain, defs);
 
         rebuildAll(chain, defs);
     }
@@ -876,6 +881,7 @@ public class BuildCommand extends BaseCommand {
             warnDroppedTools(canonicalName, imageDef, defs);
             if (!confirm("Rebuild?")) return;
         }
+        askPendingAccounts();
 
         // Once the build is certain to go ahead: a refused or declined build built nothing on it
         warnDeprecated(imageDef, defs);
@@ -2342,13 +2348,38 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
+     * The missing accounts a run that confirms per template asks for once its first build goes
+     * ahead, so nobody types a secret for a rebuild they then turn down (#2405); null once asked.
+     */
+    private Runnable pendingAccountAsk;
+
+    /** Runs {@link #pendingAccountAsk}, once. */
+    void askPendingAccounts() {
+        var ask = pendingAccountAsk;
+        pendingAccountAsk = null;
+        if (ask != null) ask.run();
+    }
+
+    /**
      * What every build path checks before building anything, given exactly the templates it may
      * build: refusals first, then the credentials whose absence {@code isx branch} would refuse.
+     * For a run that asks to go ahead first: when missing accounts would be
+     * asked for, that waits until the batch is confirmed, so nobody types a secret for a rebuild
+     * they then turn down (#2405).
+     *
+     * @return whether the caller asks for them, with {@link #warnUnbranchable}, once confirmed
      */
-    private void preflight(Collection<String> templates, Map<String, ImageDef> defs) {
+    private boolean preflightBeforeConfirm(Collection<String> templates, Map<String, ImageDef> defs) {
         requireValidAccounts(templates, defs);
         requireConsistentRepos(templates, defs);
+        if (asksForAccounts()) return true;
         warnUnbranchable(templates, defs);
+        return false;
+    }
+
+    /** Whether a missing account would be asked for, rather than only warned of. */
+    private boolean asksForAccounts() {
+        return askForAccounts && !yes && accountSetup().prompts() != null;
     }
 
     /**
@@ -2455,20 +2486,55 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Warn, before the build's time is spent, about each credential a template needs that is not
-     * configured: the build goes ahead, but {@code isx branch} refuses its instances (#1438).
+     * Whether the build asks, at a terminal, for the accounts its templates lack (#2405). For a
+     * caller that has just asked for them itself, as the planned first run of {@code isx init}
+     * will (#2412), and must not ask again for a credential the person has just declined.
+     */
+    boolean askForAccounts = true;
+
+    /** Who asks for the accounts a build lacks: init's credential steps, at a terminal; overridden by tests. */
+    InitCommand accountSetup() {
+        return new InitCommand();
+    }
+
+    /**
+     * Ask, at a terminal and unless {@code --yes} was given, for each account a template needs
+     * that is not configured (#2405), then warn, before the build's time is spent, about each one
+     * still missing: the build goes ahead, but {@code isx branch} refuses its instances (#1438).
      */
     private void warnUnbranchable(Collection<String> templates, Map<String, ImageDef> defs) {
-        Map<CredentialCheck.Missing, List<String>> missing;
-        try {
-            missing = CredentialCheck.missingByCredential(SpawnConfig.load(), templates, defs, toolDefLoader);
-        } catch (RuntimeException e) {
-            // Only advice: whatever stops this check, the build and the branch report themselves
-            ClientLog.warn("Missing-credential check skipped: " + e);
-            return;
+        var missing = missingCredentials(templates, defs);
+        if (missing == null) return;
+        if (!missing.isEmpty() && asksForAccounts() && askedForMissing(missing)) {
+            missing = missingCredentials(templates, defs);
+            if (missing == null) return;
         }
         missing.forEach((credential, names) -> BuildOutput.warn(unbranchable(credential, OutputFormat.andList(names)),
                 credential.notes().toArray(String[]::new)));
+    }
+
+    /** Each credential {@code templates} lack, with the templates that need it; null when it cannot be told. */
+    private Map<CredentialCheck.Missing, List<String>> missingCredentials(Collection<String> templates,
+                                                                         Map<String, ImageDef> defs) {
+        try {
+            return CredentialCheck.missingByCredential(SpawnConfig.load(), templates, defs, toolDefLoader);
+        } catch (RuntimeException e) {
+            // Only advice: whatever stops this check, the build and the branch report themselves
+            ClientLog.warn("Missing-credential check skipped: " + e);
+            return null;
+        }
+    }
+
+    /** Asks for {@code missing}: whether any account was set up. A failed step does not stop the build. */
+    private boolean askedForMissing(Map<CredentialCheck.Missing, List<String>> missing) {
+        try {
+            return accountSetup().askForMissing(missing);
+        } catch (Exception e) {
+            BuildOutput.warn("Account setup failed: " + e.getMessage(),
+                    "The build goes on; 'isx account add' sets the account up later.");
+            // Something may have been written before it failed
+            return true;
+        }
     }
 
     /** What {@code isx branch} will refuse {@code refused} for while {@code credential} is not configured (#1438). */
