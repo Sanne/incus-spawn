@@ -97,6 +97,12 @@ A credential travels only as that proof, which each agent reads when it connects
 `${isx_repo_paths}` in an entry's `command` or `env` becomes the chain's repository paths, comma-separated, and an empty variable is not set; `jasolo`'s `git_roots` defaults to it, so it scans the template's clones unconfigured.
 The entries are part of `contentFingerprint()`.
 
+**Tools declare the memory they need** (#2355, design/templates.md "Tools declare the memory they need").
+`resources.memory` holds `resident` and `peak`, each a size or `{ parameter, plus }` (`ToolDef.Resources`, `ResourcesConverter`, `ToolSetup.resources()`); `ToolDefValidator.invalidResources` refuses a parameter the tool does not declare or whose default is missing or not a size.
+`BuildTools.memoryNeed` sums the chain's `resident`, adds the largest `peak` and `MemoryNeed.GUEST_BASELINE`, and `tagTemplateMetadata` stamps it as `Metadata.MEMORY_NEED`, which every copy keeps.
+`BranchFlow.defaultsFor` reads the stamp from the source it already read: a trusted VM's default RAM is raised to it, up to 60% of the host, and `warnIfMemoryShort` warns when the branch gets less; `BuildCommand.vmBuildMemory` does the same for a VM build.
+Every figure comes from a measurement in docs/dev/PERFORMANCE-NOTES.md.
+
 Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user YAML -> search paths -> project-local YAML.
 Java CDI tools are used as fallback when no YAML tool matches.
 The Java tool instances themselves live in `RuntimeConstants.CDI_TOOLS` (module `common`), not in `ToolDefLoader`: they hold a `DownloadCache`, so their holder must be on the native-image `--initialize-at-run-time` list or the builder's `$HOME` gets baked into the binary (see `.claude/rules/native-image.md`).

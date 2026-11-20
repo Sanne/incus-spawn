@@ -202,6 +202,27 @@
         }
       ]
     },
+    "resources": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "What the tool needs of the instance it runs in, from a measurement of the tool. isx warns when a branch gets less memory than the template's tools need.",
+      "properties": {
+        "memory": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "resident": {
+              "$ref": "#/$defs/memoryAmount",
+              "description": "The memory the tool holds for as long as it runs."
+            },
+            "peak": {
+              "$ref": "#/$defs/memoryAmount",
+              "description": "The memory the tool needs on top of resident for a short while, such as while it builds an index."
+            }
+          }
+        }
+      }
+    },
     "mcp": {
       "type": ["array", "null"],
       "description": "MCP servers the tool provides, registered with every coding agent in the image. Each is a stdio command or an HTTPS url.",
@@ -275,6 +296,23 @@
           }
         }
       }
+    }
+  },
+  "$defs": {
+    "memoryAmount": {
+      "oneOf": [
+        {"type": ["string", "integer"], "pattern": "^[0-9]+\\s*([bB]|[kKmMgGtT]([iI]?[bB])?)?$", "description": "A size such as 768MiB or 2GiB."},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["parameter"],
+          "properties": {
+            "parameter": {"type": "string", "description": "One of the tool's parameters that holds a size."},
+            "plus": {"type": ["string", "integer"], "pattern": "^[0-9]+\\s*([bB]|[kKmMgGtT]([iI]?[bB])?)?$", "description": "A size added to the parameter's."}
+          }
+        },
+        {"type": "null"}
+      ]
     }
   }
 }

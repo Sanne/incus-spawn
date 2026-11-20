@@ -93,6 +93,7 @@ Every field is optional except `name`.
 | `skills` | Skills to install alongside the tool, teaching an agent how to drive it |
 | `proxy` | Credential injection rules for the MITM proxy, see [Proxy Credentials](#proxy-credentials) |
 | `mcp` | MCP servers the tool provides, registered with every coding agent in the image, see [MCP Servers](#mcp-servers) |
+| `resources` | The memory the tool needs while it runs, see [Memory a Tool Needs](#memory-a-tool-needs) |
 
 isx resolves `requires` transitively, and detects and rejects a circular dependency.
 An entry without parameters only asks for the tool to be installed.
@@ -685,6 +686,32 @@ env:
 ```
 
 Pass parameter values using the map form in image definitions (the `idea-backend` memory example above shows this pattern).
+
+### Memory a Tool Needs
+
+A tool can say how much memory it needs, so isx can warn when an instance gets too little.
+`resident` is what the tool holds for as long as it runs.
+`peak` is what it needs on top of that for a short while, such as while it builds an index.
+
+```yaml
+# tools/idea-backend.yaml
+resources:
+  memory:
+    resident: { parameter: memory, plus: 1GiB }
+```
+
+Each amount is a size such as `768MiB` or `2GiB`.
+It can also be the size one of the tool's parameters holds, plus a size on top.
+That parameter needs a default size.
+Take every figure from a measurement of the tool, never from a guess.
+
+isx adds the needs of every tool in the template and its parents when it builds the template.
+It counts every `resident` amount, the largest single `peak`, and about 160 MiB for the system itself.
+The total is an estimate, since tools rarely all need their peak at once.
+
+When a branch gets less memory than that, isx warns, names the tools that ask for the most, and gives the `--memory` size to pass.
+A VM gets at least the total by default, up to 60% of the host's memory.
+A template from a cloned project gets the warning, but never more memory than the usual default.
 
 ### MCP Servers
 

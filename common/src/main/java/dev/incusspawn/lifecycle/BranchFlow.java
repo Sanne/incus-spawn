@@ -28,6 +28,7 @@ import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.tool.MemoryNeed;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
@@ -129,9 +130,19 @@ public final class BranchFlow {
      * @param mcpClientNote why {@code mcpClient} is off although the source asks for it, or null
      */
     public record Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote, String kvmNote,
-                           boolean mcpClient, String mcpClientNote) {
+                           boolean mcpClient, String mcpClientNote, MemoryNeed memoryNeed, boolean raisesVmMemory) {
+        public Defaults {
+            // Nothing to raise to without a need
+            raisesVmMemory = raisesVmMemory && memoryNeed != null;
+        }
+
         public Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote, String kvmNote) {
             this(machineType, gui, kvm, guiNote, kvmNote, false, null);
+        }
+
+        public Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote, String kvmNote,
+                        boolean mcpClient, String mcpClientNote) {
+            this(machineType, gui, kvm, guiNote, kvmNote, mcpClient, mcpClientNote, null, false);
         }
 
         /** The CPU limit, or null for a container, which gets none. */
@@ -139,9 +150,14 @@ public final class BranchFlow {
             return machineType == MachineType.VM ? ResourceLimits.defaultVmCpus() : null;
         }
 
+        /**
+         * The memory limit. A VM's is raised to what its tools are expected to need, as far as the
+         * host allows, unless {@link #raisesVmMemory} is false (#2355).
+         */
         public String memory() {
-            return machineType == MachineType.VM ? ResourceLimits.defaultVmMemoryLimit()
-                    : ResourceLimits.adaptiveMemoryLimit();
+            if (machineType != MachineType.VM) return ResourceLimits.adaptiveMemoryLimit();
+            return raisesVmMemory ? ResourceLimits.defaultVmMemoryLimit(memoryNeed.total())
+                    : ResourceLimits.defaultVmMemoryLimit();
         }
 
         public String disk() {
@@ -203,16 +219,22 @@ public final class BranchFlow {
         }
         // Only a template's own definition, never one that merely shares an instance's name, and
         // never a template whose lineage is untrusted (a failed or unfinished build under its name)
-        var wantsMcpClient = def != null && builtTemplate
-                && Metadata.untrustedReason(key -> config.path(key).asText("")).isEmpty()
-                && Metadata.untrustedByName(key -> config.path(key).asText("")).isEmpty()
+        var trustedLineage = Metadata.untrustedReason(key -> config.path(key).asText("")).isEmpty()
+                && Metadata.untrustedByName(key -> config.path(key).asText("")).isEmpty();
+        var wantsMcpClient = def != null && builtTemplate && trustedLineage
                 && ImageDef.resolveCoordinatorDefault(def, defs);
         String mcpClientNote = null;
-        if (wantsMcpClient && (projectLocal(def, config) || ImageDef.anyProjectLocal(def, defs))) {
+        if (wantsMcpClient && projectLocalChain(def, config, defs)) {
             mcpClientNote = "'" + source + "' makes coordinators by default, but a project-local definition is in its "
                     + "chain or its build, so MCP control is off unless chosen (--mcp-client, or the branch dialog's MCP control box).";
         }
-        return new Defaults(machineType, gui, kvm, guiNote, kvmNote, wantsMcpClient && mcpClientNote == null, mcpClientNote);
+        // The template's tools' need, stamped by its build. Only a trusted source raises a VM's
+        // RAM by it: a project-local definition could otherwise claim most of the host's memory.
+        var memoryNeed = MemoryNeed.fromStamp(config.path(Metadata.MEMORY_NEED).asText(""));
+        var raisesVmMemory = memoryNeed != null && machineType == MachineType.VM
+                && trustedLineage && !projectLocalChain(def, config, defs);
+        return new Defaults(machineType, gui, kvm, guiNote, kvmNote, wantsMcpClient && mcpClientNote == null, mcpClientNote,
+                memoryNeed, raisesVmMemory);
     }
 
     private static final String NOT_ON_MACOS = "not available on macOS, where isx runs containers only";
@@ -241,6 +263,39 @@ public final class BranchFlow {
     public static String kvmUnsupportedOnMacOs(boolean kvm) {
         if (!kvm || !macOS.getAsBoolean()) return null;
         return "KVM passthrough is " + NOT_ON_MACOS + ". Leave out --kvm, or untick KVM passthrough in the branch dialog.";
+    }
+
+    /**
+     * Warns when the branch gets less memory than its template's tools are expected to need
+     * (#2355): with an explicit {@code --memory}, or a default the host or the source's trust held
+     * below the need. From the stamp {@link #defaultsFor} read, so no request and no definition.
+     */
+    static void warnIfMemoryShort(String source, String requested, String memory, Defaults defaults) {
+        var need = defaults.memoryNeed();
+        if (need == null) return;
+        var given = dev.incusspawn.util.MemorySize.ofLimit(memory, memory.strip().endsWith("%") ? ResourceLimits.totalMemoryBytes() : -1);
+        // Nothing more is read unless the warning is given: on macOS the host's memory forks sysctl
+        if (given < 0 || given >= need.total()) return;
+        String why = null;
+        if (requested == null) {
+            var what = defaults.machineType() == MachineType.VM ? "a VM" : "a container";
+            if (defaults.machineType() == MachineType.VM && !defaults.raisesVmMemory()) {
+                why = "A project-local or untrusted template does not raise a VM's memory by itself.";
+            } else if (ResourceLimits.totalMemoryBytes() <= 0) {
+                why = "isx could not read this host's memory, so it gives " + what + " a fixed default.";
+            } else {
+                why = "By default isx gives " + what + " at most 60% of this host's memory.";
+            }
+        }
+        need.warnIfShort(BuildOutput.bound(), "This branch of '" + source + "'", given, memory, why);
+    }
+
+    /**
+     * Whether {@code def}, its chain, or any definition the source was built from is project-local.
+     * Asked only where it decides something, since it parses the source's {@code BUILD_SOURCE}.
+     */
+    private static boolean projectLocalChain(ImageDef def, JqValue config, Map<String, ImageDef> defs) {
+        return projectLocal(def, config) || (def != null && ImageDef.anyProjectLocal(def, defs));
     }
 
     /** Whether {@code def}, or any definition the source was built from, is project-local. */
@@ -609,6 +664,7 @@ public final class BranchFlow {
 
         BuildOutput.step("Resource limits: " +
                 (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
+        warnIfMemoryShort(source, req.memory(), memory, defaults);
         if (req.kvm() == null && defaults.kvmNote() != null) BuildOutput.warn(defaults.kvmNote());
         var enableKvm = req.kvm() != null ? req.kvm() : defaults.kvm();
         var machineType = defaults.machineType();

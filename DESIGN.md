@@ -95,6 +95,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Template Image Hierarchy
   - A schema for editors
   - Tool System
+  - Tools declare the memory they need
   - YAML tools vs a full plugin system (Packer, Ansible, etc.)
   - Hardcoded built-in tool list vs classpath scanning
   - Host Repo Refresh

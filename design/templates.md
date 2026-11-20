@@ -440,6 +440,36 @@ YAML and TOML (starship's config has the same shape), which need a writer that k
 A provider seam in `PiSetup`, like `McpServerRegistration`, which fits Pi alone.
 Why: a merge of JSON is the general mechanism the Pi case needs, it needs nothing in the guest, and an unknown value is refused, so a later format cannot silently fall back to replacing the file.
 
+## Tools declare the memory they need
+
+A tool's `resources.memory` says how much memory it needs (#2355): `resident`, held for as long as the tool runs, and `peak`, needed on top of that for a short while, such as an index.
+Each is a size, or `{ parameter: <name>, plus: <size> }` for a need that is one of the tool's settings, such as `idea-backend`'s heap.
+Every figure comes from a measurement recorded in docs/dev/PERFORMANCE-NOTES.md "Memory a template's tools need".
+The loader refuses a size it cannot read, and a parameter the tool does not declare or whose default is missing or not a size (`ResourcesConverter`, `ToolDefValidator.invalidResources`).
+
+The template's figure is the guest's own baseline, every tool's `resident` and the largest single `peak` (`MemoryNeed`).
+Each tool counts once over the whole chain, with the parameters of the nearest layer that sets it up (`BuildTools.memoryNeed`).
+Every build stamps it as `user.incus-spawn.memory-need`, JSON naming each tool's share, and a build from a parent removes a stamp its own chain no longer has.
+Every copy keeps the stamp, so a branch of a branch is told the same.
+The declaration enters `contentFingerprint()` only when set, so a changed figure asks for the rebuild that stamps it, and a tool without one keeps its fingerprint.
+
+A branch reads the stamp from the source `BranchFlow.preflight` already read (`defaultsFor`), so it loads no definition and makes no request for it.
+A VM's default RAM is the default, or the figure rounded up to a whole GiB when that is more, at most 60% of the host's RAM, the container default's share (`ResourceLimits.defaultVmMemoryLimit(long)`).
+A host whose RAM cannot be read gets no raise, since there is no share to cap it at.
+A VM build is sized the same way before its first start, since a tool's build steps run under it.
+A container's limit is a ceiling of 60% of the host, so it is not raised.
+When the memory given is below the figure, by an explicit `--memory` or a default the host held lower, one warning names the tools that ask for the most and the `--memory` to pass, and says the figure is an estimate.
+
+Chosen: a resident and a peak amount per tool, summed with the largest peak, computed at build and stamped.
+Alternatives: one number per tool, summed, which over-warns where short bursts do not coincide, so people learn to ignore it.
+Computing at branch from the definitions, which puts a definition load on the branch path.
+An expression in the value (`${param_memory}+1g`), a small language to parse and document for one tool.
+Why: the figure is a property of the build, so it is worked out once where the definitions are loaded, and read at no cost where latency matters.
+It gives up the case where two tools burst at once, which is why the warning says it is an estimate.
+
+A project-local definition, a source built with one, or an untrusted lineage gets the warning but never the raise: a cloned repository's template must not claim most of the host's RAM by itself.
+Not covered: the memory free on the host while several instances run, which the container's real shortage is, and which costs a round trip on macOS; and on macOS the container limit is computed from the Mac's RAM, not the appliance VM's.
+
 ## YAML tools vs a full plugin system (Packer, Ansible, etc.)
 We evaluated Packer (null builder + shell provisioner) and Ansible but rejected both.
 Packer's null builder is just indirection over what Java already does, and Ansible adds a Python dependency and playbook complexity for what amounts to "install some packages and run some scripts."

@@ -284,6 +284,11 @@ public interface ToolSetup {
         return java.util.Map.of();
     }
 
+    /** What this tool needs of the instance it runs in, memory alone so far (#2355, {@link MemoryNeed}). */
+    default ToolDef.Resources resources() {
+        return ToolDef.Resources.NONE;
+    }
+
     /** Runtime actions this tool contributes to the TUI actions menu. */
     default java.util.List<ToolDef.ActionEntry> actions() { return java.util.List.of(); }
 

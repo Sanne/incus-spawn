@@ -56,6 +56,12 @@ public final class Metadata {
     public static final String HOST_REPOSITORIES = PREFIX + "host-repositories";
     public static final String HOST_RESOURCES = PREFIX + "host-resources";
     public static final String DEFINITION_SHA = PREFIX + "definition-sha";
+    /**
+     * The memory the template's tools are expected to need ({@code MemoryNeed.stamp()}, #2355),
+     * written by every build and absent when no tool declares any. Every copy keeps it, so a
+     * branch of a branch is warned as the template's is.
+     */
+    public static final String MEMORY_NEED = PREFIX + "memory-need";
     public static final String BUILD_SOURCE = PREFIX + "build-source";
     public static final String GUI_ENABLED = PREFIX + "gui-enabled";
     public static final String INSTANCE_MODE = PREFIX + "instance-mode";

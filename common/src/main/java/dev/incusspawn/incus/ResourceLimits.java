@@ -1,6 +1,7 @@
 package dev.incusspawn.incus;
 
 import dev.incusspawn.util.CpuInfo;
+import dev.incusspawn.util.MemorySize;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -63,7 +64,7 @@ public final class ResourceLimits {
         return limitMB + "MB";
     }
 
-    private static final long GIB = 1024L * 1024 * 1024;
+    private static final long GIB = MemorySize.GIB;
     static final long VM_MEMORY_CEILING = 16 * GIB;
     static final long VM_MEMORY_FLOOR = 4 * GIB;
 
@@ -87,8 +88,36 @@ public final class ResourceLimits {
         // The floor never exceeds the container default, so a small host is no worse off than before
         long floor = Math.min(VM_MEMORY_FLOOR, (long) (totalBytes * 0.6));
         long bytes = Math.max(floor, Math.min(VM_MEMORY_CEILING, totalBytes / 4));
-        long mib = bytes / (1024 * 1024);
+        return mibLimit(bytes);
+    }
+
+    /** {@code bytes}, rounded down to a whole MiB, as a {@code limits.memory} value. */
+    private static String mibLimit(long bytes) {
+        long mib = bytes / MemorySize.MIB;
         return mib % 1024 == 0 ? mib / 1024 + "GiB" : mib + "MiB";
+    }
+
+    /** The share of the host's RAM a VM gets at most when its tools need more than the default. */
+    static final double VM_MEMORY_RAISE_CAP = 0.6;
+
+    /**
+     * Default guest RAM for a VM whose tools are expected to need {@code needBytes} (#2355): the
+     * {@linkplain #defaultVmMemoryLimit() default}, or the need rounded up to a whole GiB when that
+     * is more, at most 60% of host RAM (the container default's share). A need of 0 or less is no need,
+     * and a host whose RAM cannot be read gets no raise.
+     */
+    public static String defaultVmMemoryLimit(long needBytes) {
+        return vmMemoryLimitFor(totalMemoryBytes(), needBytes);
+    }
+
+    static String vmMemoryLimitFor(long totalBytes, long needBytes) {
+        var standard = vmMemoryLimitFor(totalBytes);
+        // On a host whose RAM cannot be read there is no 60% to cap the raise at: no raise
+        if (needBytes <= 0 || totalBytes <= 0) return standard;
+        var standardBytes = MemorySize.parse(standard);
+        long wanted = Math.min((needBytes + GIB - 1) / GIB * GIB, (long) (totalBytes * VM_MEMORY_RAISE_CAP));
+        if (wanted <= standardBytes) return standard;
+        return mibLimit(wanted);
     }
 
     /**

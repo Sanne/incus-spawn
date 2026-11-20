@@ -1392,3 +1392,17 @@ Past it, one `HEAD`, in the background within `max-stale` and before the serve a
 So the count does not grow with the number of instances: it is one burst of about 1,700 `HEAD`s for this build, once per `fresh` window.
 `max-stale` only moves those requests between the background and the foreground, and does not change their number.
 That is why Central's longer default lengthens `fresh`, from 2 hours to 12, which brings a working day's bursts from about five down to one or two.
+
+## Memory a template's tools need (issue #2355)
+
+Measured 2026-11-20 on a Linux box (Fedora 45, x86_64), to size the figures tools declare in `resources.memory` and the guest baseline `MemoryNeed.GUEST_BASELINE`.
+
+| What | Measured | Declared |
+|---|---|---|
+| An idle container of the base image, `memory.current` of its cgroup after 45 s | 133 MiB (anon 10, file 114, kernel 8) | 160 MiB baseline |
+| `idea-backend` 2026.3, `remote-dev-server run` on a Gradle project, `-Xmx2048m`, after 150 s, no client attached | RSS 1,387 MiB, heap committed 490 MiB, metaspace committed 151 MiB | `-Xmx` plus 1 GiB |
+
+The backend held about 900 MiB beside its heap: metaspace, code cache, threads and mapped index files.
+Its heap may grow to `-Xmx` while a project is indexed, so the declared need is the heap's ceiling plus that, rounded up to 1 GiB.
+No Gateway client was attached and the Gradle import was not trusted, so a working session holds more beside the heap; the figure is a floor.
+A VM's own kernel and firmware were not measured: the box had no `/dev/kvm`, and the baseline counts the container's figure for both.

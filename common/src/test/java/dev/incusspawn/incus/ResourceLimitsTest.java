@@ -72,4 +72,30 @@ class ResourceLimitsTest {
     void vmMemoryFallsBackToTheFloorWhenHostMemoryIsUnknown() {
         assertEquals("4GiB", ResourceLimits.vmMemoryLimitFor(-1));
     }
+
+    // vmMemoryLimitFor(host RAM, what the template's tools are expected to need), #2355
+
+    @Test
+    void aVmIsRaisedToItsToolsNeedRoundedUpToAWholeGib() {
+        // 32 GiB host: default 8 GiB, need 10.2 GiB
+        assertEquals("11GiB", ResourceLimits.vmMemoryLimitFor(32 * GIB, 10 * GIB + GIB / 5));
+    }
+
+    @Test
+    void aNeedBelowTheDefaultKeepsTheDefault() {
+        assertEquals("8GiB", ResourceLimits.vmMemoryLimitFor(32 * GIB, 3 * GIB));
+        assertEquals("8GiB", ResourceLimits.vmMemoryLimitFor(32 * GIB, 0));
+    }
+
+    @Test
+    void theRaiseStopsAt60PercentOfTheHost() {
+        // 16 GiB host: 60% is 9.6 GiB, below a 12 GiB need
+        assertEquals("9830MiB", ResourceLimits.vmMemoryLimitFor(16 * GIB, 12 * GIB));
+    }
+
+    @Test
+    void aHostOfUnknownSizeGetsNoRaise() {
+        // There is no 60% of it to cap the raise at, so a 64 GiB heap cannot ask for a 66 GiB VM
+        assertEquals("4GiB", ResourceLimits.vmMemoryLimitFor(-1, 66 * GIB));
+    }
 }

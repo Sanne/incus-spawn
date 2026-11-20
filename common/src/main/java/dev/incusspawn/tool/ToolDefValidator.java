@@ -263,7 +263,34 @@ public class ToolDefValidator {
         refusals.addAll(invalidPathScopes(def));
         refusals.addAll(invalidMcpServers(def));
         refusals.addAll(invalidFileMerges(def));
+        refusals.addAll(invalidResources(def));
         return refusals;
+    }
+
+    /**
+     * Every {@code resources.memory} amount that names a parameter the tool does not declare, or
+     * one without a default size, as an error (#2355). Such a tool is refused where
+     * definitions load, since its figure would otherwise count nothing for that amount.
+     */
+    public static List<String> invalidResources(ToolDef def) {
+        var errors = new ArrayList<String>();
+        var resources = def.getResources();
+        for (var amount : java.util.Arrays.asList(resources.resident(), resources.peak())) {
+            if (amount == null || amount.parameter() == null) continue;
+            var param = def.getParameters().get(amount.parameter());
+            if (!def.getParameters().containsKey(amount.parameter())) {
+                errors.add(OutputFormat.oneLine("resources.memory in '" + def.getName() + "' names the parameter '"
+                        + amount.parameter() + "', which the tool does not declare"));
+            } else if (param != null && param.getDefault() == null) {
+                // A template that leaves it unset would count nothing for this amount
+                errors.add(OutputFormat.oneLine("resources.memory in '" + def.getName() + "' reads the parameter '"
+                        + amount.parameter() + "', which has no default size"));
+            } else if (param != null && dev.incusspawn.util.MemorySize.parse(param.getDefault()) < 0) {
+                errors.add(OutputFormat.oneLine("resources.memory in '" + def.getName() + "' reads the parameter '"
+                        + amount.parameter() + "', whose default '" + param.getDefault() + "' is not a size"));
+            }
+        }
+        return errors;
     }
 
     /**

@@ -380,6 +380,40 @@ public final class BuildTools {
     }
 
     /**
+     * Walking a chain nearest first, whether {@code farther}'s entry for a tool replaces the
+     * {@code nearer} one kept so far: the nearest explicit entry wins, else the nearest requires
+     * entry with parameters, else the farthest implied one (#1909).
+     */
+    private static boolean fartherWins(ResolvedTool nearer, ResolvedTool farther) {
+        return nearer == null || nearer.implied() || (!nearer.explicit() && farther.explicit());
+    }
+
+    /**
+     * The memory the tools of {@code imageDef}'s whole chain are expected to need, or null when
+     * none declares any (#2355). Each tool counts once, with the parameters of the nearest layer
+     * that sets it up, by the rule {@link #collectEffectiveTools} applies to ancestors; resolved
+     * quietly, since the build's own resolution reports what is wrong.
+     */
+    static dev.incusspawn.tool.MemoryNeed memoryNeed(ImageDef imageDef, Map<String, ImageDef> defs,
+                                                    ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {
+        var chain = new ArrayList<ImageDef>();
+        chain.add(imageDef);
+        chain.addAll(ImageDef.ancestors(imageDef, defs));
+        var tools = new LinkedHashMap<String, ResolvedTool>();
+        for (var layer : chain) {
+            for (var resolved : resolveTools(layer, toolDefLoader, cdiTools, true)) {
+                var nearer = tools.get(resolved.name());
+                if (fartherWins(nearer, resolved)) {
+                    tools.put(resolved.name(), resolved);
+                }
+            }
+        }
+        return dev.incusspawn.tool.MemoryNeed.of(tools.values().stream()
+                .map(t -> new dev.incusspawn.tool.MemoryNeed.Declared(t.name(), t.setup().resources(), t.parameters()))
+                .toList(), Warnings::warn);
+    }
+
+    /**
      * Resolve tools for this image, removing any already installed by ancestor images.
      * If an ancestor declares the same tool with different parameters, only reconfigurable ones
      * may differ: the tool is then set up again to reconfigure it, and any other difference is an
@@ -403,7 +437,7 @@ public final class BuildTools {
         for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
             for (var resolved : resolveTools(ancestor, toolDefLoader, cdiTools, true)) {
                 var nearer = ancestorToolsMap.get(resolved.name());
-                if (nearer == null || nearer.implied() || (!nearer.explicit() && resolved.explicit())) {
+                if (fartherWins(nearer, resolved)) {
                     ancestorToolsMap.put(resolved.name(), resolved);
                     ancestorTemplateNames.put(resolved.name(), ancestor.getName());
                 }
