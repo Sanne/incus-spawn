@@ -1138,7 +1138,7 @@ public class InitCommand extends BaseCommand {
         var changes = missing.entrySet().stream().map(e -> InitPlan.Change.run(
                 e.getKey().credential() + ", which " + OutputFormat.andList(e.getValue()) + " need",
                 InitPlan.Who.SECRET, e.getKey().command())).toList();
-        return InitPlan.Assessment.of(changes).asking();
+        return InitPlan.Assessment.of(changes).asking().noting(HostAgentProbe.note(HostAgentProbe.probe()));
     }
 
     /**

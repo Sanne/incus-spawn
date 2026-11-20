@@ -72,6 +72,9 @@ A run that waits on the root script, exit 75, prints the summary too; a run that
 It does not ask a question, write a file or run sudo, and it asks Incus only to read.
 On macOS it does not start the VM, so what Incus holds stays unknown while the VM is stopped.
 
+Its credential step also names the coding agents already set up on this host, and `isx doctor` lists them.
+For each one it says whether it is signed in, with which kind of account, and the model chosen, but never a key or a token.
+
 On Linux, `isx init` itself starts with `sudo -v`, so running it needs sudo even when every step is done.
 
 Some of what init checks only root can read, such as the btrfs sudoers rule.
