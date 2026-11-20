@@ -161,4 +161,38 @@ class EventLogReaderTest {
         assertNull(new EventLogReader.PullRequest("o/r", 0).url(), "no number");
         assertNull(new EventLogReader.PullRequest("o/r", 1L << 40).url(), "beyond GitHub's numbers");
     }
+
+    /** The instance line (#2427): once per incarnation before its first model line, again for a new incarnation or a changed purpose. */
+    @Test
+    void anInstanceLineComesOnceBeforeItsFirstCallAndTheLastOneWins() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        var now = new java.util.concurrent.atomic.AtomicLong(day(1, 10).toEpochMilli());
+        var purpose = new java.util.concurrent.atomic.AtomicReference<>("#1 implement");
+        var incarnation = new java.util.concurrent.atomic.AtomicReference<>(FIRST);
+        var activity = new ApiActivity(now::get);
+        activity.describeWith(name -> new InstanceRegistry.Description(incarnation.get(), "tpl", purpose.get(), "42-7"));
+        try (var log = new EventLog(file)) {
+            activity.recordTo(log);
+            for (int i = 0; i < 3; i++) activity.begin("w", FIRST, 0).to("api.anthropic.com").end();
+            purpose.set("#1 review");
+            activity.begin("w", FIRST, 0).to("api.anthropic.com").end();
+            // The name branched again: its listing now describes another incarnation than the caller's
+            incarnation.set(AGAIN);
+            activity.begin("w", FIRST, 0).to("api.anthropic.com").end();
+            activity.begin("w", AGAIN, 0).to("api.anthropic.com").end();
+            log.flush();
+        }
+        var kinds = Files.readAllLines(file).stream().map(l -> l.contains("\"kind\":\"instance\"") ? "i" : "m")
+                .collect(java.util.stream.Collectors.joining());
+        assertEquals("immmimmim", kinds);
+        var read = EventLogReader.read(file);
+        var first = read.described("w", FIRST);
+        assertEquals("#1 review", first.purpose(), "the last line wins");
+        assertEquals("tpl", first.template());
+        assertEquals("42-7", first.session());
+        assertEquals(5, read.of("w", FIRST).modelCalls(), "an instance line is no model call");
+        assertNotNull(read.described("w", AGAIN));
+        assertNull(read.described("gone", "2020-01-01T00:00:00Z"));
+        assertEquals(day(1, 10), read.of("w", FIRST).first());
+    }
 }

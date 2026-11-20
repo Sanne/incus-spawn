@@ -49,6 +49,9 @@ final class EventLog implements AutoCloseable {
     record PullRequest(Instant at, String instance, String incarnation, String repo, long number, int status,
                        long durationMillis) {}
 
+    /** An incarnation first seen, or whose purpose changed: what it is, for a report that outlives it (#2427). */
+    record Instance(Instant at, String instance, String incarnation, String template, String purpose, String session) {}
+
     private final Path file;
     private final long maxFileBytes;
     private final BlockingQueue<String> queue = new ArrayBlockingQueue<>(QUEUE);
@@ -97,12 +100,28 @@ final class EventLog implements AutoCloseable {
         offer(line);
     }
 
-    private void offer(String line) {
+    /** Whether the line was queued; a full queue drops it and counts it. */
+    private boolean offer(String line) {
         pending.incrementAndGet();
         if (closed || !queue.offer(line)) {
             pending.decrementAndGet();
             dropped.incrementAndGet();
+            return false;
         }
+        return true;
+    }
+
+    /** Queues an instance line; never blocks, and never throws. A later line for the same incarnation replaces it. Whether it was queued. */
+    boolean instance(Instance i) {
+        return offer(JqObject.builder(8)
+                .put("t", i.at().toString())
+                .put("kind", "instance")
+                .put("instance", i.instance())
+                .put("incarnation", i.incarnation() == null ? "" : i.incarnation())
+                .put("template", i.template())
+                .put("purpose", i.purpose())
+                .put("session", i.session())
+                .build().toJsonString());
     }
 
     /** Queues a push; never blocks, and never throws. */

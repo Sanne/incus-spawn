@@ -794,4 +794,27 @@ class InstanceRegistryTest {
         var identified = registry.identifyWithLineage(address, secret, bySecretAlone);
         return identified != null && identified.mcpCaller() ? identified.instanceName() : null;
     }
+
+    @Test
+    void describesAnInstanceByItsStamps() {
+        var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
+            @Override
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                return io.hyperfoil.tools.jjq.value.JqValues.parse("""
+                        [{"name":"a","created_at":"2026-10-07T10:00:00Z",
+                          "config":{"user.incus-spawn.static-ip":"10.0.0.5","user.incus-spawn.profile":"tpl-x",
+                                    "user.incus-spawn.mcp-purpose":"#7 implement","user.incus-spawn.mcp-session":"42-9"}},
+                         {"name":"b","created_at":"2026-10-07T11:00:00Z",
+                          "config":{"user.incus-spawn.static-ip":"10.0.0.6","user.incus-spawn.purpose":"mine",
+                                    "user.incus-spawn.mcp-purpose":"theirs"}}]
+                        """);
+            }
+        });
+        registry.refresh();
+        assertEquals(new InstanceRegistry.Description("2026-10-07T10:00:00Z", "tpl-x", "#7 implement", "42-9"),
+                registry.description("a"));
+        assertEquals("mine", registry.description("b").purpose(), "a person's purpose outranks the session's");
+        assertEquals("", registry.description("b").session());
+        assertNull(registry.description("nobody"));
+    }
 }

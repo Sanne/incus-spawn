@@ -1155,6 +1155,12 @@ When the queue is full or the write fails a line is lost, and the next line writ
 The log gives up completeness under load for a request path that never waits on it.
 Retention is by size alone: the file rolls over at 16 MiB and four older files are kept (`events.jsonl.1` to `.4`), about 80 MiB at most, with no timer and no state beyond the file.
 Both the directory and the files are owner-only.
+The first call of each instance incarnation is preceded by one `kind: instance` line (#2427): the time, `instance`, `incarnation`, `template`, `purpose` (the person's, else `isx mcp`'s) and `session` (the `isx mcp` session holding it), each empty when the instance has none.
+The proxy writes it from the registry's listing, so an instance made by `isx branch` has one too, and only when the listing's view of the name is the incarnation that called, so a name branched again never takes the old one's description.
+A purpose changed later (`isx purpose`) writes another line for the same incarnation at the next call, and the reader keeps the last (`EventLogReader.Log.described`).
+The line gives the log, kept after the instance is destroyed, what each incarnation was for.
+It is not an event of the instance, so it moves neither its first nor its last time.
+Labels on `create_instance` and `delegate` (#2427's optional part) are not written yet.
 A push is `POST github.com/<owner>/<repo>[.git]/git-receive-pack`, and its branches are the commands at the head of the body, before the pack: the proxy keeps at most the first 8 KiB as the body streams past and never holds or pauses it.
 A pull request is `POST api.github.com/repos/<owner>/<repo>/pulls` or the `createPullRequest` mutation that `gh pr create` sends to `/graphql`, and its number is read from the first 32 KiB of the answer.
 Reading an answer needs it uncompressed, so those two requests go upstream with `Accept-Encoding: identity`, as a model call does.

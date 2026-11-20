@@ -131,15 +131,40 @@ public final class InstanceRegistry {
      * @param running         the names of the address owners that are running (#1586)
      * @param chatGptByAddress the ChatGPT session binding of each address's instance (#1332),
      *                        for those that have one; kept apart for the same reason as the secret
+     * @param descriptionByName what each instance owning an address is, for the event log's
+     *                        {@code instance} line (#2427)
      */
     record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
                   java.util.Set<String> mcpCallers, Map<String, String> incarnationByName,
                   Map<String, Lineage> lineageByName, Map<String, Map<String, String>> proofsByAddress,
                   Map<String, ProofState> proofStates, Map<String, Map<String, String>> addressByProof,
                   Map<String, String> addressBySecret, java.util.Set<String> running,
-                  Map<String, ChatGptBinding> chatGptByAddress) {
+                  Map<String, ChatGptBinding> chatGptByAddress, Map<String, Description> descriptionByName) {
         static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
-                Map.of(), java.util.Set.of(), Map.of());
+                Map.of(), java.util.Set.of(), Map.of(), Map.of());
+    }
+
+    /**
+     * What an instance is, as its stamps say, for the event log (#2427): never a credential.
+     * {@code incarnation} is the {@code created_at} of the listing it was read from, so a reader
+     * can tell it describes the instance a call came from and not a later one of the same name.
+     * {@code purpose} is the person's ({@link Metadata#PURPOSE}), else {@code isx mcp}'s
+     * ({@link Metadata#MCP_PURPOSE}); {@code session} is the {@code isx mcp} session holding it.
+     * Each is empty when the instance has none, and a stamp's text is cut to {@link Metadata#PURPOSE_MAX}.
+     */
+    public record Description(String incarnation, String template, String purpose, String session) {
+        static Description of(String incarnation, JqValue config) {
+            var purpose = config.pathText(Metadata.PURPOSE, "").strip();
+            if (purpose.isEmpty()) purpose = config.pathText(Metadata.MCP_PURPOSE, "").strip();
+            var template = Metadata.templateOf(config);
+            return new Description(incarnation == null ? "" : incarnation, template == null ? "" : cut(template), cut(purpose),
+                    cut(config.pathText(Metadata.MCP_SESSION, "").strip()));
+        }
+
+        private static String cut(String text) {
+            return text.codePointCount(0, text.length()) <= Metadata.PURPOSE_MAX ? text
+                    : text.substring(0, text.offsetByCodePoints(0, Metadata.PURPOSE_MAX));
+        }
     }
 
     /** Host-only acknowledgement of persisted proof state; contains no usable credential. */
@@ -433,6 +458,11 @@ public final class InstanceRegistry {
         return new Incarnations(current.parsed().incarnationByName(), current.view(), current.parsed().running());
     }
 
+    /** What the snapshot says {@code instanceName} is, or null when it lists no such instance. Non-blocking. */
+    public Description description(String instanceName) {
+        return snapshot.parsed().descriptionByName().get(instanceName);
+    }
+
     /** Whether the snapshot still has {@code instanceName} as an MCP caller. Non-blocking. */
     public boolean isMcpCaller(String instanceName) {
         return snapshot.parsed().mcpCallers().contains(instanceName);
@@ -516,7 +546,7 @@ public final class InstanceRegistry {
             var previous = snapshot.parsed();
             var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
                     previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of(), Map.of(), Map.of(),
-                    previous.running(), Map.of());
+                    previous.running(), Map.of(), previous.descriptionByName());
             // The reason before the failed snapshot, so listingProblem never reads one without it
             listingError = "The listing at " + java.time.LocalTime.ofInstant(java.time.Instant.ofEpochMilli(clock.getAsLong()),
                     java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
@@ -683,6 +713,7 @@ public final class InstanceRegistry {
         var mcpCallers = new java.util.HashSet<String>();
         var incarnationByName = new java.util.HashMap<String, String>();
         var lineageByName = new java.util.HashMap<String, Lineage>();
+        var descriptionByName = new java.util.HashMap<String, Description>();
         var running = new java.util.HashSet<String>();
         var configByName = configsByName(root);
         var proofStates = new LinkedHashMap<String, ProofState>();
@@ -710,6 +741,7 @@ public final class InstanceRegistry {
             incarnationByName.put(owner.accounts().instanceName(), owner.createdAt());
             // Only for owners: a build stamp is parsed for no address nobody serves
             lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config(), configByName));
+            descriptionByName.put(owner.accounts().instanceName(), Description.of(owner.createdAt(), owner.config()));
             var chatGpt = ChatGptBinding.of(owner.accounts().instanceName(), owner.config());
             if (chatGpt != null) chatGptByAddress.put(address, chatGpt);
         });
@@ -719,7 +751,7 @@ public final class InstanceRegistry {
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
                 Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(proofsByAddress), Map.copyOf(proofStates),
                 Map.copyOf(addressByProof), runningAddressByHash("An instance secret", givenSecret), java.util.Set.copyOf(running),
-                Map.copyOf(chatGptByAddress));
+                Map.copyOf(chatGptByAddress), Map.copyOf(descriptionByName));
     }
 
     /**
