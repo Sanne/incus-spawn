@@ -290,6 +290,8 @@ So it applies to all definitions, trusted or not:
   The timer restarts on each chunk, so a slow link that keeps delivering never trips it, and the retry and resume path above takes over.
   Without it, a connection that went silent would hold the URL's lock for the whole hour, and every waiter with it.
   Every use of the cache deletes `download-*.tmp` files (an older isx's, or those of a download that could not take its lock) that nobody has written to for an hour, and partial files nobody has continued for a week whose lock is free.
+  A download that waits for another reports how far that one has got (`Listener.anotherReceived`): about every 250 ms it reads the size of the partial file, and the length from its record, only when the record names its own URL.
+  So a build that waits for a file fetched ahead, by this process or another, shows that download's progress instead of a bare wait.
 - **A cache name belongs to one URL** (#2418).
   It is the SHA-256 of the whole URL in hex, then the URL's last path segment, which people read and extraction takes the archive type from.
   A long segment keeps its end, cut so that the name and its record's suffix fit in 255 bytes.
@@ -297,6 +299,15 @@ So it applies to all definitions, trusted or not:
   A project-local definition could then name a URL whose download replaced a trusted build's file between its download and its use, or that a trusted download without a `sha256` took after waiting for the lock.
   With the digest no URL can be crafted to share another's file, so the files, partial files and locks of two URLs never meet.
   Renaming cost every user one download of each cached file; the files under the old names are deleted once nobody has written them for an hour.
+- **A build's downloads can start ahead of it** (#2411).
+  `BuildDownloads.plan` lists what a build of a template will download: the base image, a VM's disk image when it builds a VM, and each layer's tools' pinned downloads (`ToolSetup.pinnedDownloads`), down to the first layer already built.
+  It lists only a file with a checksum at an `http(s)` URL, since a build downloads any other file again, and a `file://` base image is a local copy that gains nothing.
+  It resolves a tracked base image as the build does, without its notes (`BuildCommand.trackedBaseImageQuietly`), so the two fetch the same release.
+  `BackgroundDownloads` fetches that list into the cache on a daemon thread, one file at a time, and reports nothing, progress and failure alike, since a question may be on screen.
+  It fetches through `DownloadCache.download`, so the limits on a definition's URL hold here too: `http(s)` only, and no host-local address.
+  The build then finds a cache hit, or waits for a file still being fetched under its URL's lock, or fetches again a file that failed and reports why, continuing what was fetched when the server can resume it.
+  This gives up some bandwidth: a person who stops before the build has fetched files it never uses, and a project-local template's files are fetched before the build checks its base image may replace the alias.
+  On macOS the appliance's kernel and disk image are not in the plan: they are downloaded without a checksum, so a copy fetched ahead could not be reused.
 - **DNS rebinding cannot split check from connect.**
   A rebinding domain answers with a public address for the check and `127.0.0.1` for the connection.
   But both resolve through the JDK's in-process address cache, which keeps a successful lookup for 30 seconds whatever TTL the DNS answer carries, so the connection a few milliseconds after the check sees the same address.

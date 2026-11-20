@@ -260,6 +260,17 @@ public class AntigravitySetup implements ToolSetup {
         configure(container, GoogleAccounts.isGoogleAccount(SpawnConfig.load().tree(), accountName));
     }
 
+    @Override
+    public List<DownloadCache.Pinned> pinnedDownloads(String arch) {
+        return switch (arch) {
+            case "amd64", "x86_64", "aarch64", "arm64" -> {
+                var download = download(arch);
+                yield List.of(new DownloadCache.Pinned(download.url(), download.sha256()));
+            }
+            default -> List.of(); // the install itself says there is no build for it
+        };
+    }
+
     static Download download(String arch) {
         return switch (arch) {
             case "amd64", "x86_64" -> X86_64;
