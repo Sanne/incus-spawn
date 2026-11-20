@@ -20,6 +20,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -39,6 +41,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLPeerUnverifiedException;
 
@@ -95,6 +98,21 @@ public class DownloadCache {
     static final String LOCK_DIR = "locks";
     /** The longest file name Linux and macOS filesystems take, in bytes. */
     static final int MAX_NAME_BYTES = 255;
+
+    /**
+     * The name of a cached file an older isx wrote: a 31-bit {@code String.hashCode} of the URL, in
+     * at most 8 hex digits, then the basename. A name today starts with 64 hex digits, so it never
+     * matches.
+     */
+    private static final Pattern OLD_NAME = Pattern.compile("[0-9a-f]{1,8}-.*", Pattern.DOTALL);
+
+    /**
+     * A cached file under an older isx's name is deleted once nobody has written it for this long, since
+     * no download looks it up any more. The last write does not show that an older isx is done with
+     * it: one still running beside this one may have just found it as a cache hit, and its build then
+     * fails once, to be run again. This hour only spares a file an older isx has just downloaded.
+     */
+    static final Duration STALE_OLD_NAME = Duration.ofHours(1);
 
     /**
      * A temporary file (an older isx's, or one written when the lock could not be had) nobody has
@@ -174,7 +192,8 @@ public class DownloadCache {
     /**
      * Download a URL and return the path to the cached file.
      * If sha256 is provided and a cached file matches, the download is skipped.
-     * If sha256 is null, the file is always re-downloaded.
+     * If sha256 is null, the file is downloaded again, unless another download put a new copy of this
+     * URL in place while this call waited for the URL's lock.
      * <p>
      * Every download runs on the host on behalf of a definition, and the result lands in a
      * container. So only {@code http(s)} is accepted, never a host address: {@code file://}
@@ -223,6 +242,7 @@ public class DownloadCache {
         // Cache hit: file exists and sha256 matches
         if (sha256 != null && matches(cached, sha256, listener)) return cached;
 
+        var before = sha256 == null ? version(cached) : null;
         HostLock lock;
         try {
             lock = HostLock.acquire(lockFile(filename), "downloading " + url, message -> listener.waitingForAnother(),
@@ -235,10 +255,13 @@ public class DownloadCache {
             lock = null;
         }
         try {
-            // Another process may have downloaded it meanwhile, which only the checksum can prove: the
-            // cache name is a short hash of the URL, so the file may be another URL's. Without one, it
-            // is downloaded again.
-            if (lock != null && lock.waited() && sha256 != null && matches(cached, sha256, listener)) return cached;
+            // Another process may have downloaded it meanwhile. The name is a SHA-256 of the URL, so the
+            // file is this URL's; without a checksum, only a copy finished after this one asked is fresh:
+            // one put in place since, which a comparison of the file itself tells, never a clock's.
+            if (lock != null && lock.waited()
+                    && (sha256 != null ? matches(cached, sha256, listener) : replacedSince(cached, before))) {
+                return cached;
+            }
             var transfer = lock == null
                     ? new Transfer(Files.createTempFile(cacheDir, "download-", ".tmp"), null, url)
                     : held(filename, url, sha256);
@@ -246,6 +269,25 @@ public class DownloadCache {
         } finally {
             if (lock != null) lock.close();
         }
+    }
+
+    /** Which file is at a path: its file key (the inode on Linux and macOS), time of last write and size. */
+    private record Version(Object key, FileTime modified, long size) {}
+
+    /** Which file is at {@code cached} now, or null if none. */
+    private static Version version(Path cached) {
+        try {
+            var attributes = Files.readAttributes(cached, BasicFileAttributes.class);
+            return new Version(attributes.fileKey(), attributes.lastModifiedTime(), attributes.size());
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /** Whether a file is at {@code cached} now that was not there as {@code before}. */
+    private static boolean replacedSince(Path cached, Version before) {
+        var now = version(cached);
+        return now != null && !now.equals(before);
     }
 
     private static boolean matches(Path cached, String sha256, Listener listener) throws IOException {
@@ -263,11 +305,9 @@ public class DownloadCache {
     private Transfer held(String filename, String url, String sha256) throws IOException {
         Files.createDirectories(cacheDir.resolve(PARTIAL_DIR));
         var file = cacheDir.resolve(PARTIAL_DIR).resolve(filename);
-        // A record whose name is longer than a file name may be (255 bytes on Linux and macOS) is not
-        // kept: that download only cannot be continued by a later run, rather than failing outright
-        var metaName = filename + META_SUFFIX;
-        var keep = sha256 != null && metaName.getBytes(StandardCharsets.UTF_8).length <= MAX_NAME_BYTES;
-        var transfer = new Transfer(file, keep ? file.resolveSibling(metaName) : null, url);
+        // The name leaves room for the record's suffix (cacheFilename)
+        var keep = sha256 != null;
+        var transfer = new Transfer(file, keep ? file.resolveSibling(filename + META_SUFFIX) : null, url);
         var left = keep ? transfer.leftover() : null;
         if (left == null) {
             transfer.discard();
@@ -334,6 +374,14 @@ public class DownloadCache {
         try (var old = Files.newDirectoryStream(cacheDir, "download-*.tmp")) {
             for (var file : old) {
                 if (olderThan(file, STALE_TEMPORARY, now)) deleteQuietly(file);
+            }
+        } catch (IOException ignored) {
+            // Swept again on the next use
+        }
+        try (var files = Files.newDirectoryStream(cacheDir,
+                f -> OLD_NAME.matcher(f.getFileName().toString()).matches() && Files.isRegularFile(f))) {
+            for (var file : files) {
+                if (olderThan(file, STALE_OLD_NAME, now)) deleteQuietly(file);
             }
         } catch (IOException ignored) {
             // Swept again on the next use
@@ -903,16 +951,32 @@ public class DownloadCache {
     }
 
     /**
-     * Generate a stable cache filename from the URL.
-     * Uses the last path segment (e.g. "apache-maven-3.9.14-bin.tar.gz")
-     * prefixed with a short hash of the full URL for uniqueness.
+     * The cache name of a URL: the SHA-256 of the whole URL in hex, then its last path segment (e.g.
+     * {@code apache-maven-3.9.14-bin.tar.gz}) for people and for the extension extraction reads.
+     * The digest alone tells URLs apart, so no URL can be crafted to share another's file (#2418).
+     * A long segment keeps its end, so that the name and its record's suffix fit in a file name.
      */
     static String cacheFilename(String url) {
         var lastSlash = url.lastIndexOf('/');
         var basename = lastSlash >= 0 ? url.substring(lastSlash + 1) : url;
-        // Short hash prefix to avoid collisions between different URLs with same filename
-        var hash = Integer.toHexString(url.hashCode() & 0x7fffffff);
-        return hash + "-" + basename;
+        String digest;
+        try {
+            digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(url.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
+        var room = MAX_NAME_BYTES - digest.length() - 1 - META_SUFFIX.length();
+        var start = basename.length();
+        var bytes = 0;
+        while (start > 0) {
+            var cp = basename.codePointBefore(start);
+            var size = new String(Character.toChars(cp)).getBytes(StandardCharsets.UTF_8).length;
+            if (bytes + size > room) break;
+            bytes += size;
+            start -= Character.charCount(cp);
+        }
+        return digest + "-" + basename.substring(start);
     }
 
     static String computeSha256(Path file) throws IOException {
