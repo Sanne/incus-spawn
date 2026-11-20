@@ -16,7 +16,8 @@ This page says where they live, how a credential gets several accounts that temp
 ## Editor completion
 
 Each of these YAML files has a JSON Schema, which editors that run the YAML language server use to complete keys, show what each one does and underline a mistake.
-Add its line as the first line of the file.
+isx writes that line as the first line of every one of these files it creates or rewrites.
+Add it yourself to a file you wrote by hand.
 
 | File | First line |
 | --- | --- |
@@ -25,8 +26,9 @@ Add its line as the first line of the file.
 | `config.yaml` | `# yaml-language-server: $schema=https://isx.run/schema/config.json` |
 | `mcp.yaml` | `# yaml-language-server: $schema=https://isx.run/schema/mcp.json` |
 
-`isx templates new` writes the template line for you.
-isx rewrites `config.yaml` when you run `isx init`, which drops a comment, so map that schema to the file in your editor's settings instead.
+A template you give `isx templates new --from` gets the line unless it opens with a `yaml-language-server` line of its own.
+`isx init` writes it into `config.yaml` and `mcp.yaml`, and rewrites it each time, so it stays.
+Tool files are not created by isx, so a tool you write needs the line by hand.
 
 The `config.yaml` schema does not flag a key it does not know, since a tool you install may add a section of its own.
 The other three flag a misspelled key.

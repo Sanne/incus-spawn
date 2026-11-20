@@ -65,6 +65,15 @@ class TemplatesEditByNameTest {
     }
 
     @Test
+    void theCopyOfABuiltInMadeToEditItOpensWithTheSchemaLine() throws Exception {
+        var opened = new ArrayList<Path>();
+
+        edit("tpl-dev", opened);
+        assertEquals(1, opened.size(), "opened " + opened);
+        assertEquals(dev.incusspawn.config.SchemaModeline.TEMPLATE.line(), Files.readAllLines(opened.getFirst()).getFirst());
+    }
+
+    @Test
     void aBrokenOverrideIsStillOpenedToBeFixed() throws Exception {
         // An override that no longer parses names nothing: it is still the built-in's file to fix
         var images = Files.createDirectories(Environment.configDir().resolve("images"));

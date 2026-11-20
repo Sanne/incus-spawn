@@ -224,6 +224,8 @@ class McpConfigTest {
             var file = home.resolve(".config/incus-spawn/mcp.yaml");
             assertEquals(McpConfig.file(), file);
             assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
+            assertEquals(SchemaModeline.MCP.line(), Files.readAllLines(file).getFirst(), "the editor schema's first line");
+            assertEquals(List.of("tpl-dev"), McpConfig.load().templates(), "and the file still reads back");
             Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-rw-rw-"));
             mcp.save();
             assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)),

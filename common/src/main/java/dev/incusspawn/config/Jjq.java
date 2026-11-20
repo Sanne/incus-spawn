@@ -116,6 +116,11 @@ public final class Jjq {
         YAML.writeValue(file, config);
     }
 
+    /** As {@link #writeYaml(java.nio.file.Path, Object)}, opening with the schema modeline editors read. */
+    public static void writeYaml(java.nio.file.Path file, Object config, SchemaModeline modeline) throws IOException {
+        java.nio.file.Files.writeString(file, modeline.line() + "\n" + YAML.writeValueAsString(config));
+    }
+
     /**
      * A scalar as written in the file: {@code 0022}, {@code 3.10} and {@code yes} stay as typed
      * (jjq's {@code asText()} renders the resolved number or boolean, Hyperfoil/jjq#126). For the

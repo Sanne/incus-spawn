@@ -9,6 +9,7 @@ import dev.incusspawn.Warnings;
 import dev.incusspawn.config.BaseImagePin;
 import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SchemaModeline;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.config.TemplateFinding;
 import dev.incusspawn.config.TemplateReach;
@@ -242,7 +243,8 @@ public class TemplatesCommand extends BaseCommand {
                 if (is == null) {
                     throw new IOException("Built-in resource not found: images/" + filename);
                 }
-                Files.write(target, is.readAllBytes());
+                Files.writeString(target, SchemaModeline.TEMPLATE.applyTo(
+                        new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)));
             }
         }
     }
@@ -681,7 +683,9 @@ public class TemplatesCommand extends BaseCommand {
      * exclusively, so nothing is overwritten, or with {@code replace} swapped in whole through a
      * file the loader never reads, so no reader sees half a definition.
      */
-    static void store(Path target, String yaml, boolean replace) throws IOException {
+    static void store(Path target, String written, boolean replace) throws IOException {
+        // A template given by --from gets the schema modeline too, unless it opens with one
+        var yaml = SchemaModeline.TEMPLATE.applyTo(written);
         makeDirectory(target.getParent());
         if (!replace) {
             Files.writeString(target, yaml, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
