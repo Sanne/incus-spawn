@@ -81,7 +81,7 @@ class EventLogReaderTest {
     }
 
     @Test
-    void olderFilesAreReadTooAndTheLogSaysSinceWhenAndWhatItLost() throws Exception {
+    void olderFilesAndSumsAreReadTooAndTheLogSaysSinceWhenAndWhatItLost() throws Exception {
         var file = dir.resolve("events.jsonl");
         try (var log = new EventLog(file, 600)) {
             for (int i = 0; i < 12; i++) log.modelCall(call(day(1 + i, 1), "w", FIRST, 1, 0));
@@ -92,8 +92,8 @@ class EventLogReaderTest {
                 StandardOpenOption.APPEND);
         var read = EventLogReader.read(file);
         var effort = read.of("w", FIRST);
-        assertTrue(effort.modelCalls() < 12, "the oldest rolled out");
-        assertTrue(effort.modelCalls() > 2, "older files are read");
+        assertEquals(12, effort.modelCalls(), "what rolled out is read from the sums (#2429)");
+        assertEquals(day(1, 1), effort.first());
         assertEquals(effort.first(), read.since());
         assertEquals(3, read.droppedLines());
         assertEquals(1, read.unreadableLines(), "the torn line is skipped");

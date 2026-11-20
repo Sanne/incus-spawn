@@ -31,6 +31,9 @@ import java.util.SequencedSet;
  * incarnation, the listing's {@code created_at} (#1063), which survives a rename and differs for
  * a name branched again. A line the proxy wrote without one is matched by name alone.
  *
+ * <p>The oldest file's lines are folded into a {@code .sums} aggregate before it is deleted
+ * ({@code EventLogFold}, #2429), which is read first, so the totals outlive the per-call lines.
+ *
  * <p>The log is bounded by size, so what it says starts at its oldest line ({@link Log#since}),
  * and lines the proxy lost under load are counted ({@link Log#droppedLines}). A line that does not
  * parse, such as one a full disk tore, is skipped and counted.
@@ -141,6 +144,13 @@ public final class EventLogReader {
         // its lines, so one during the read neither skips a file nor reads one twice
         var opened = new java.util.ArrayList<InputStream>();
         try {
+            try {
+                opened.add(Files.newInputStream(EventLogFold.sumsOf(file)));
+            } catch (NoSuchFileException absent) {
+                // Nothing folded yet
+            } catch (IOException e) {
+                reading.unreadable++;
+            }
             for (int i = KEPT; i >= 0; i--) {
                 var path = i == 0 ? file : file.resolveSibling(file.getFileName() + "." + i);
                 try {
@@ -225,9 +235,13 @@ public final class EventLogReader {
                 dropped += line.path("lines").asLong(0);
                 return;
             }
+            if (kind.equals("dropped_sum")) {
+                dropped += line.path("lines").asLong(0);
+                return;
+            }
             var name = line.pathText("instance", "");
             if (name.isEmpty()) return;
-            if (!kind.equals("model") && !kind.equals("github") && !kind.equals("instance")) return; // a kind of a later isx
+            if (!kind.equals("model") && !kind.equals("model_sum") && !kind.equals("github") && !kind.equals("instance")) return; // a kind of a later isx
             var incarnation = line.pathText("incarnation", "");
             // An instance line describes; it gives no instance an effort it did not make
             if (kind.equals("instance")) {
@@ -273,6 +287,20 @@ public final class EventLogReader {
                         }
                         default -> { }
                     }
+                }
+                case "model_sum" -> {
+                    // A day's sums of a folded file (#2429); first and last are when the calls were
+                    try {
+                        tally.seen(Instant.parse(line.pathText("first", "")));
+                        tally.seen(Instant.parse(line.pathText("last", "")));
+                    } catch (RuntimeException noTimes) {
+                        tally.seen(at);
+                    }
+                    tally.calls += line.path("calls").asLong(0);
+                    tally.input += line.path("input_tokens").asLong(0);
+                    tally.output += line.path("output_tokens").asLong(0);
+                    tally.cacheRead += line.path("cache_read_input_tokens").asLong(0);
+                    tally.cacheCreation += line.path("cache_creation_input_tokens").asLong(0);
                 }
                 default -> { }
             }
