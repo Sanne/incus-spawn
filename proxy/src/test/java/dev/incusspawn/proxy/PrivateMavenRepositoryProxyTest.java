@@ -42,6 +42,8 @@ class PrivateMavenRepositoryProxyTest {
     private static final String MOVED = "/repository/releases/org/example/moved/1.0/moved-1.0.jar";
     /** In a repository confirmed by the SHA-1 it sends as its ETag, as Nexus 3 does (#2336). */
     private static final String HOSTED = "/repository/hosted/org/example/lib/1.0/lib-1.0.jar";
+    /** Relayed, not cached; answered as Maven Central's edge answers a throttled host (#2422). */
+    private static final String THROTTLED_METADATA = "/repository/releases/org/example/lib/maven-metadata.xml";
     static String sha1;
     static String md5;
     /** A public Nexus 3 proxy repository: its ETag is the MD5 its upstream sent, its .sha1 the SHA-1. */
@@ -130,6 +132,8 @@ class PrivateMavenRepositoryProxyTest {
                         }
                     } else if (!accepted.equals(auth)) {
                         req.response().setStatusCode(401).end();
+                    } else if (req.path().equals(THROTTLED_METADATA)) {
+                        req.response().setStatusCode(404).putHeader("Retry-After", "17").end("later");
                     } else if (req.path().equals(MOVED)) {
                         req.response().setStatusCode(302).putHeader("Location", JAR).end();
                     } else if (req.path().equals(HOSTED)) {
@@ -219,6 +223,12 @@ class PrivateMavenRepositoryProxyTest {
                 .compose(req -> req.putHeader("Authorization", authorization).send())
                 .compose(resp -> resp.body().map(b -> new Answer(resp.statusCode(), b.toString(StandardCharsets.UTF_8))))
                 .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void notFoundWithRetryAfterOnRelayedMetadataReachesTheClientAsA429() throws Exception {
+        // A private domain keeps no backoff, but Maven would still record the 404 as missing
+        assertEquals(new Answer(429, "later"), get(THROTTLED_METADATA, proof()));
     }
 
     private static Path proxiedCopy() {

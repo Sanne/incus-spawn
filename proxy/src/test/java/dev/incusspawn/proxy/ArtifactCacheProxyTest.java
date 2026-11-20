@@ -2566,6 +2566,26 @@ class ArtifactCacheProxyTest {
     }
 
     @Test
+    void notFoundWithRetryAfterOnRelayedMetadataReachesTheClientAsA429() throws Exception {
+        // Metadata is relayed, not cached: Maven records a 404 for it as missing for the day
+        var metadata = "/maven2/org/example/lib/maven-metadata.xml";
+        routes.put(CENTRAL + " " + metadata, throttledAsNotFound("later"));
+        var before = proxy.upstream.throttles.snapshot().get(CENTRAL);
+        var refusals = before == null ? 0 : before.refusals();
+
+        assertThrottledAsUpstreamSent(get(CENTRAL, metadata), "later");
+        assertTrue(proxy.upstream.throttles.snapshot().get(CENTRAL).refusals() > refusals,
+                "counted as the refusal the backoff also took it for");
+    }
+
+    @Test
+    void notFoundWithARetryAfterOfNoWaitIsAMissingArtifact() throws Exception {
+        routes.put(CENTRAL + " " + JAR, new Reply(404, "no".getBytes(), null, null, Map.of("Retry-After", "0")));
+        assertEquals(404, get(CENTRAL, JAR).status());
+        assertFalse(proxy.artifactCache.inBackoff(CENTRAL));
+    }
+
+    @Test
     void notFoundWithRetryAfterOnASidecarReachesTheClientAsA429() throws Exception {
         routes.put(CENTRAL + " " + JAR + ".sha1", throttledAsNotFound("{\"slow\":\"down\"}"));
         assertThrottledAsUpstreamSent(get(CENTRAL, JAR + ".sha1"), "{\"slow\":\"down\"}");

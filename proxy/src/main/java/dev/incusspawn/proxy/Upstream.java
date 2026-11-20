@@ -135,6 +135,13 @@ class Upstream {
      */
     volatile Set<String> backoffDomains = ArtifactCacheHandler.backoffDomains(CachedRepository.BUILT_IN);
 
+    /**
+     * The domains of every cached repository, private ones and those that serve only confirmed
+     * copies included, and the npm registry: where a relayed 404 with a {@code Retry-After} is the
+     * throttle {@link #status} reads (#2422), backoff or not. Set by {@link ArtifactCacheHandler#useRepositories}.
+     */
+    volatile Set<String> cacheDomains = ArtifactCacheHandler.cacheDomains(CachedRepository.BUILT_IN);
+
     void clearBackoffs() {
         backoffs.clear();
     }
@@ -547,12 +554,12 @@ class Upstream {
                       boolean streaming, RelayWatchdog watchdog, RelayHooks hooks, boolean resend) {
         upReq.response().onSuccess(upResp -> {
             if (watchdog.cut) return;
-            throttles.answered(domain, upResp.statusCode());
+            throttles.answered(domain, relayedStatus(domain, upResp));
             if (hooks.responseCallback() != null) {
                 hooks.responseCallback().accept(upResp);
             }
             var clientResp = clientReq.response();
-            copyResponseHead(upResp, clientResp);
+            copyRelayedHead(domain, upResp, clientResp);
             // Upstream answered before the upload ended: the rest of it is dropped (RelayWatchdog)
             if (watchdog.uploadUnread()) clientResp.putHeader("Connection", "close");
             pipeResponse(upResp, clientResp, watchdog, hooks.responseTap());
@@ -884,8 +891,8 @@ class Upstream {
             copyBufferedRequestHeaders(clientReq, upReq, domain);
             upReq.putHeader("Content-Length", String.valueOf(body.length()));
             upReq.send(body).onSuccess(upResp -> {
-                throttles.answered(domain, upResp.statusCode());
-                copyResponseHead(upResp, clientReq.response());
+                throttles.answered(domain, relayedStatus(domain, upResp));
+                copyRelayedHead(domain, upResp, clientReq.response());
                 pipeResponse(upResp, clientReq.response(), null);
             }).onFailure(e -> {
                 ProxyLog.warn("Upstream send error (" + domain + "): " + e.getMessage());
@@ -913,7 +920,30 @@ class Upstream {
      */
     static int status(HttpClientResponse resp) {
         var status = resp.statusCode();
-        return status == 404 && resp.getHeader("Retry-After") != null ? 429 : status;
+        // A wait of none, or one that cannot be read, asks for nothing: a missing artifact, as a plain 404
+        return status == 404 && ArtifactCacheHandler.retryAfterMillis(resp.getHeader("Retry-After")) > 0 ? 429 : status;
+    }
+
+    /**
+     * Upstream's status on a relayed request: as a cache reads it ({@link #status}) on a cache's domain,
+     * whose metadata and SNAPSHOT requests are relayed, not cached; as it came on any other domain.
+     * A private repository's domain is one too: it keeps no backoff, but Maven still records its 404.
+     */
+    int relayedStatus(String domain, HttpClientResponse resp) {
+        return cacheDomains.contains(domain) ? status(resp) : resp.statusCode();
+    }
+
+    /**
+     * {@link #copyResponseHead}, with a throttle a cache's domain sent as a 404 relayed as the 429 it
+     * is (#2422): Maven records a 404 for metadata as missing, until its update policy asks again.
+     */
+    private void copyRelayedHead(String domain, HttpClientResponse upResp, HttpServerResponse clientResp) {
+        copyResponseHead(upResp, clientResp);
+        if (relayedStatus(domain, upResp) != upResp.statusCode()) asThrottle(clientResp);
+    }
+
+    private static void asThrottle(HttpServerResponse clientResp) {
+        clientResp.setStatusCode(429).setStatusMessage("Too Many Requests");
     }
 
     /** Upstream's status and headers, for a response relayed as it is. */
@@ -958,9 +988,7 @@ class Upstream {
     void relayResponse(HttpServerRequest clientReq, String domain, HttpClientResponse upResp, long since) {
         copyResponseHead(upResp, clientReq.response());
         // A rate limit, never "not found": Maven would remember that the artifact does not exist
-        if (status(upResp) != upResp.statusCode()) {
-            clientReq.response().setStatusCode(429).setStatusMessage("Too Many Requests");
-        }
+        if (status(upResp) != upResp.statusCode()) asThrottle(clientReq.response());
         relayBody(clientReq, domain, new ResponseHold(upResp), since);
     }
 
