@@ -34,7 +34,8 @@ A first run of `isx init` asks its questions first, then works with nobody watch
 5. It offers to set up a GitHub account for the agent, which the person may skip; see "Git in the first run".
 6. On Linux it asks for the sudo password, the last thing it asks.
 7. It does the host plumbing, shown as one progress block, and installs the services.
-8. It builds the built-in agent template, or `tpl-minimal` when the person chose no agent, waiting first for any download still running.
+8. It writes an example template that installs the chosen agent, and builds it, waiting first for any download still running.
+   When the person chose no agent it writes none and builds `tpl-minimal`.
 9. It prints the completion message, then asks whether to open a first agent now.
 
 **Every question comes before the long work.**
@@ -88,7 +89,7 @@ Without a terminal it does not ask and opens nothing.
 
 **Skipping the agent's credential.**
 A person may not have the credential at hand, or may want to see isx work before giving one.
-Init then does everything else: the plumbing, the downloads and the build of the agent template.
+Init then does everything else: the plumbing, the downloads and the build of the example template.
 The slow work is done, so the agent opens as soon as the credential is added.
 
 What changes is the end of the run:
@@ -132,39 +133,40 @@ Init asks which coding agent the person prefers, from the agents isx supports, a
 
 **Setting an agent up does not install it in any template.**
 A template installs an agent only by listing it in `tools:`, as today.
-The answer decides two things: which credential init sets up on the host, and which agent the built-in first template lists.
+The answer decides two things: which credential init sets up on the host, and which agent the example template that init writes lists.
 A template that does not list an agent gets none, whatever the preference is.
 
 **What the preference means.**
-It answers one question for isx: which agent to use where nothing names one.
-Three things read it:
+It answers one question for isx: which agent to start a new user with.
+Two things read it:
 
 - Init, to know which credential to offer.
-- The built-in agent template, which lists that agent.
-- Later, a template that asks for the user's preferred agent in place of naming one.
+- Init again, to write the example template; see "An example template written by init".
 
 It does not limit anything.
-A template that names another agent installs that agent, and its account is asked for when the template is built.
-A person may use several agents, and the preference is only the one isx reaches for by default.
+A template installs the agent it names, whichever that is, and its account is asked for when the template is built.
+A person may use several agents.
+
+**There is no template syntax for it yet**, decided on 2026-11-20.
+A template names a concrete agent, as today, and no template can ask for "the user's preferred agent".
+The example template init writes names the chosen agent outright.
+This gives up shared templates that follow each user's preference: `tpl-quarkus` and its like keep naming one agent.
+In return a template stays a file that says what it installs, and nothing new has to be learned to read one.
+A syntax may come later, with the personal profile below.
 
 **Nobody has to choose one.**
 "None for now" is one of the choices.
-Init then skips the agent's credential, builds `tpl-minimal` in place of the agent template, and ends with a plain machine the person can open a shell in.
+Init then skips the agent's credential, writes no example template, builds `tpl-minimal`, and ends with a plain machine the person can open a shell in.
 An agent found on the host is chosen by Enter.
 When none is found, no choice is selected by Enter, so isx does not pick a vendor for the person.
 
-**With no preference, whatever needs one asks for it.**
-A build of the built-in agent template, or of a template that asks for the user's preferred agent, asks the question at a terminal.
-Without a terminal it refuses and names the command that sets the preference.
-
 **The preference can be changed later, with one command.**
-Templates that read it are then out of date and are rebuilt, as after any change to a definition.
-The agent a built template holds does not change until then.
+Changing it changes no template.
+The example template is the person's own file by then, and they edit it like any other.
 
 **The answer is stored.**
-It is one key in `config.yaml`, the user's preferred agent.
-The built-in agent template reads it, so the first agent needs no YAML written by hand.
-It is also the first field of a personal profile; see "Templates: the person's preferences are not a layer" below.
+It is one key in `config.yaml`, the user's preferred agent, holding the agent's name and nothing else.
+It may later become the first field of a personal profile; see "Templates: the person's preferences are not a layer" below.
 
 **The host's own setup preselects the answer.**
 Init looks for each supported agent on `PATH` and for its configuration directory.
@@ -302,14 +304,31 @@ For accounts this is "Missing accounts are asked for when a build needs them" ab
 This gives up the tour: a first run no longer shows everything isx can do.
 The closing box and the TUI name the deferred steps, so they can still be found.
 
-## Built-in agent templates
+## An example template written by init
 
 Today the built-in templates are `tpl-minimal`, `tpl-dev` and `tpl-java`, and none installs an agent.
-A first agent therefore needs a hand-written template.
+A first agent therefore needs a template the person writes by hand, from a web page.
 
-isx ships one built-in agent template, whose agent is the person's stored preference.
-Init builds it and offers to open it, and the Quick Start no longer asks anyone to write YAML before their first agent runs.
-Writing a template becomes the second thing a person learns, when they want a project's tools and repositories.
+Init writes that template for them, as `~/.config/incus-spawn/images/tpl-agent.yaml`.
+It is an ordinary template in the person's own directory, to start with and to copy from:
+
+- It names the chosen agent in `tools:` and as its `default-action`, with `tpl-minimal` as its parent.
+- Its first line is the schema modeline, so an editor completes and checks it.
+- It holds a few commented lines that show where packages and repositories go, each with the page that explains it.
+
+Init builds it and offers to open it, so the Quick Start no longer asks anyone to write YAML before their first agent runs.
+The person then has a working file to read and change, which is how the next template gets written.
+
+**Init never overwrites a template.**
+When `tpl-agent.yaml` is already there, init leaves it as it is and builds it.
+
+**The file is the person's from the moment it is written.**
+isx does not update it, and a later change of the preferred agent does not touch it.
+This gives up the fixes a built-in template would get with each release.
+In return nothing the person reads is hidden in the binary.
+
+**What init writes is tested.**
+For each supported agent, the generated file loads and validates as a template.
 
 ## Templates: the person's preferences are not a layer
 
@@ -323,8 +342,8 @@ Three changes are proposed:
 
 - **A personal profile.**
   The agent, its model, and the person's own tools and packages are declared once, per user.
-  A template still opts in: it asks for "the user's preferred agent" where today it names one, and the profile says which agent that is.
-  A template that does not ask gets nothing from the profile.
+  A template would still opt in, by asking for "the user's preferred agent" where today it names one.
+  No such syntax exists yet; see "The preferred agent".
   Project templates then hold only what the project needs, and are shared unedited.
   The open questions are how a template asks, and where the profile sits in the copy-on-write layers so that project images still share a base.
 - **A catalog in place of a fork.**
@@ -340,7 +359,7 @@ Each block below is a change of its own, with its own tests, and most are useful
 The new init is then mostly an arrangement of them.
 Each has an issue, which names the issues it depends on and those that wait for it.
 Only two orderings are required: #2404 before #2411, and every other block before #2412.
-Until #2409 lands, #2411 covers the base image and the VM's image alone, since the agent template's own downloads are not known before the preferred agent is.
+Until #2409 lands, #2411 covers the base image and the VM's image alone, since the example template's own downloads are not known before the preferred agent is.
 
 **First, three that depend on nothing and help today's users:**
 
@@ -364,9 +383,8 @@ Until #2409 lands, #2411 covers the base image and the VM's image alone, since t
    It changes nothing and holds no secret, so it is tested against made-up home directories.
    `isx init --plan` and `isx doctor` report it first, before init acts on it.
 6. **The user's preferred agent.** (#2409)
-   The key in `config.yaml`, the command that shows and sets it, and the way a template asks for it.
-   The built-in agent template is the first to ask.
-   This is the largest block: the loader, the editor schema, the out-of-date check and the docs lists all learn the new construct.
+   The key in `config.yaml`, the command that shows and sets it, and the example template init writes for it.
+   No template syntax, so the loader and the editor schema for templates do not change.
 7. **A Git identity that no GitHub account supplies.** (#2410)
    The key in `config.yaml`, its explicit question, and where it is reported.
    Today only the `gh` tool writes an identity, so a template without `gh` needs another place to write one.
@@ -381,5 +399,5 @@ Until #2409 lands, #2411 covers the base image and the VM's image alone, since t
 
 **After those:** the personal profile beyond the agent, the catalog and the chain view, each after a design of its own.
 
-**To check before block 9:** that the agent template builds without its credential.
+**To check before block 9:** that the example template builds without its credential.
 Today's build warns that such a template cannot be branched, which suggests it does, but this was not run.
