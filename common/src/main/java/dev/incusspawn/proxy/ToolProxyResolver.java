@@ -166,17 +166,26 @@ public final class ToolProxyResolver {
         var taken = new java.util.HashSet<>(dev.incusspawn.config.MavenRepositories.builtInTaken());
         taken.addAll(handlerDomains);
         taken.addAll(ChatGptAccounts.DOMAINS);
+        taken.addAll(GoogleAccounts.DOMAINS);
         return Set.copyOf(taken);
     }
 
     /**
      * The domains a built-in handler serves without a tool proxy, as {@code tree} configures them:
-     * ChatGPT's hosts while an {@code openai} account is {@code type: chatgpt} (#1332). The one
+     * ChatGPT's hosts while an {@code openai} account is {@code type: chatgpt} (#1332), and
+     * Google's while a {@code gemini} account is {@code type: google} (#2443). The one
      * place the proxy and {@link #resolvedDomains} take them from. A host route cannot clash with
      * them: its name must lie under {@code .internal}.
      */
     public static Set<String> handlerDomains(JqValue tree) {
-        return ChatGptAccounts.enabledBy(tree) ? ChatGptAccounts.DOMAINS : Set.of();
+        var chatGpt = ChatGptAccounts.enabledBy(tree);
+        var google = GoogleAccounts.enabledBy(tree);
+        if (chatGpt && google) {
+            var all = new java.util.HashSet<>(ChatGptAccounts.DOMAINS);
+            all.addAll(GoogleAccounts.DOMAINS);
+            return Set.copyOf(all);
+        }
+        return chatGpt ? ChatGptAccounts.DOMAINS : google ? GoogleAccounts.DOMAINS : Set.of();
     }
 
     /**
@@ -321,7 +330,8 @@ public final class ToolProxyResolver {
                 // default -- a namespace on the accounts layout is not reported as missing
                 // its credential just because the flat field is empty.
                 var value = resolveConfigValue(proxyDef, configDef, configTree, toolSetups, Map.of());
-                if (value == null || value.isBlank()) {
+                if ((value == null || value.isBlank())
+                        && !heldOutsideConfig(proxyDef, configKey, configTree, toolSetups, Map.of())) {
                     result.add(new UnresolvedToolProxy(toolName, configKey, proxyDef.namespaceOf(configDef)));
                 }
             }
@@ -376,7 +386,8 @@ public final class ToolProxyResolver {
                 if (auth.getType() == null || "anthropic".equals(auth.getType())) continue;
                 var missing = extractReferencedKeys(auth).stream()
                         .filter(key -> !resolved.containsKey(key) && suppliable(proxyDef, key)
-                                && !inherited(proxyDef, key, configTree, accountsByNamespace))
+                                && !inherited(proxyDef, key, configTree, accountsByNamespace)
+                                && !heldOutsideConfig(proxyDef, key, configTree, toolSetups, accountsByNamespace))
                         .toList();
                 if (missing.isEmpty()) {
                     anyServed = true;
@@ -392,6 +403,28 @@ public final class ToolProxyResolver {
             }
         }
         return List.copyOf(result.values());
+    }
+
+    /**
+     * Whether the account {@code key}'s namespace resolves to holds its credential outside
+     * {@code config.yaml} ({@link AccountShape#credentialOutsideConfig}): a Google sign-in the
+     * proxy keeps on the host (#2443), which no key here can be missing for.
+     */
+    private static boolean heldOutsideConfig(ToolDef.ProxyDef proxyDef, String key, JqValue configTree,
+                                             Map<String, ToolSetup> toolSetups,
+                                             Map<String, String> accountsByNamespace) {
+        var entry = proxyDef.getConfiguration().get(key);
+        var namespace = entry == null ? "" : proxyDef.namespaceOf(entry);
+        if (namespace.isBlank()) return false;
+        var shape = AccountResolver.shapeOf(toolSetups, namespace);
+        String account;
+        try {
+            account = AccountResolver.effectiveAccount(configTree, namespace, shape, accountsByNamespace.get(namespace));
+        } catch (AccountResolver.UnknownAccountException e) {
+            return false;
+        }
+        if (account.isBlank() || AccountResolver.INHERIT.equals(account)) return false;
+        return shape.credentialOutsideConfig(configTree.path(namespace).path(AccountResolver.ACCOUNTS_KEY).path(account));
     }
 
     private static boolean inherited(ToolDef.ProxyDef proxyDef, String key, JqValue configTree,

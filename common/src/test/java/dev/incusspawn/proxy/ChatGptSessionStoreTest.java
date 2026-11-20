@@ -45,14 +45,14 @@ class ChatGptSessionStoreTest {
 
         assertTrue(store.beginRefresh(session));
         assertNotNull(store.read("sso").refreshing(), "the attempt is on disk before it is sent");
-        assertEquals(ChatGptSessionStore.Commit.COMMITTED, store.commit(session, tokens("b")));
+        assertEquals(SessionStore.Commit.COMMITTED, store.commit(session, tokens("b")));
         var after = store.read("sso");
         assertEquals(session.generation() + 1, after.generation());
         assertEquals(tokens("b"), after.tokens());
         assertNull(after.refreshing());
 
         // The same starting point again: another refresh landed first
-        assertEquals(ChatGptSessionStore.Commit.SUPERSEDED, store.commit(session, tokens("c")));
+        assertEquals(SessionStore.Commit.SUPERSEDED, store.commit(session, tokens("c")));
         assertEquals(tokens("b"), store.read("sso").tokens());
     }
 
@@ -63,7 +63,7 @@ class ChatGptSessionStoreTest {
         var renewed = store.create("sso", tokens("new"));
 
         assertNotEquals(old.sessionId(), renewed.sessionId());
-        assertEquals(ChatGptSessionStore.Commit.SUPERSEDED, store.commit(old, tokens("late")));
+        assertEquals(SessionStore.Commit.SUPERSEDED, store.commit(old, tokens("late")));
         assertEquals(renewed, store.read("sso"));
     }
 
@@ -73,7 +73,7 @@ class ChatGptSessionStoreTest {
         var session = store.create("sso", tokens("a"));
         store.remove("sso");
 
-        assertEquals(ChatGptSessionStore.Commit.GONE, store.commit(session, tokens("late")));
+        assertEquals(SessionStore.Commit.GONE, store.commit(session, tokens("late")));
         assertNull(store.read("sso"));
         assertTrue(!store.beginRefresh(session));
     }

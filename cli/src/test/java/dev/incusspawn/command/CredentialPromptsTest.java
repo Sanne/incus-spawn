@@ -119,10 +119,11 @@ class CredentialPromptsTest {
     void geminiUsesTheHostCredentialMenuAndPreservesNamedAccounts() {
         var setup = new CredentialSetup();
         var tool = new ToolDefLoader().allToolSetups().get("gemini-cli");
-        var first = new ScriptedPrompts().secret("gemini-test-default");
+        // Gemini first asks which kind of account this is: Enter keeps the API key (#2443)
+        var first = new ScriptedPrompts().line("").secret("gemini-test-default");
         setup.setupGenericToolCredentials("gemini-cli", tool, new SpawnConfig(), first);
         first.assertFullyConsumed();
-        var second = new ScriptedPrompts().line("a", "work").secret("gemini-test-work");
+        var second = new ScriptedPrompts().line("a", "work", "1").secret("gemini-test-work");
         setup.setupGenericToolCredentials("gemini-cli", tool, SpawnConfig.load(), second);
         second.assertFullyConsumed();
 
@@ -139,6 +140,60 @@ class CredentialPromptsTest {
      * a {@code confirm} entry records a decision about the tool and is shared by every account
      * ({@code AccountShape.declaredBy}).
      */
+    /** A Google account holds no credential here: the choice alone saves it, typed, and says how it signs in (#2443). */
+    @Test
+    void geminiOffersAGoogleAccountThatHoldsNoKey() {
+        var setup = new CredentialSetup();
+        var tool = new ToolDefLoader().allToolSetups().get("gemini-cli");
+        var prompts = new ScriptedPrompts().line("2");
+        var printed = reported(() -> setup.setupGenericToolCredentials("gemini-cli", tool, new SpawnConfig(), prompts));
+        prompts.assertFullyConsumed();
+
+        assertEquals("google", saved("gemini.accounts.default.type"));
+        assertEquals("", saved("gemini.accounts.default.apiKey"));
+        assertEquals("default", saved("gemini.default"));
+        assertTrue(prompts.conversation().stream().anyMatch(l -> l.contains("Google account")), prompts.conversation().toString());
+        assertTrue(printed.contains("agy runs in an instance"), printed);
+        assertTrue(dev.incusspawn.config.AccountResolver.usableAccountNames(SpawnConfig.load(), "gemini").contains("default"));
+
+        // A second, keyed account beside it, and the Google one keeps its type
+        var second = new ScriptedPrompts().line("a", "work", "").secret("gemini-test-work");
+        setup.setupGenericToolCredentials("gemini-cli", tool, SpawnConfig.load(), second);
+        second.assertFullyConsumed();
+        assertEquals("gemini-test-work", saved("gemini.accounts.work.apiKey"));
+        assertEquals("google", saved("gemini.accounts.default.type"));
+
+        // Giving the Google account a key makes it a key account: the type that would ignore the key goes
+        var keyed = new ScriptedPrompts().line("e", "default", "1").secret("gemini-test-default");
+        setup.setupGenericToolCredentials("gemini-cli", tool, SpawnConfig.load(), keyed);
+        keyed.assertFullyConsumed();
+        assertEquals("gemini-test-default", saved("gemini.accounts.default.apiKey"));
+        assertEquals("", saved("gemini.accounts.default.type"));
+
+        // And back: a key account made a Google one keeps no key it no longer spends
+        var hosted = new ScriptedPrompts().line("e", "default", "2");
+        setup.setupGenericToolCredentials("gemini-cli", tool, SpawnConfig.load(), hosted);
+        hosted.assertFullyConsumed();
+        assertEquals("google", saved("gemini.accounts.default.type"));
+        assertEquals("", saved("gemini.accounts.default.apiKey"));
+    }
+
+    /** A flat, pre-accounts key moved to a Google account leaves no key behind, flat or in the account (#2443). */
+    @Test
+    void aFlatGeminiKeyMovedToAGoogleAccountLeavesNoKey() throws Exception {
+        var config = seed("gemini:\n  apiKey: gemini-flat-key\n");
+        var tool = new ToolDefLoader().allToolSetups().get("gemini-cli");
+        var prompts = new ScriptedPrompts().line("r", "2");
+        new CredentialSetup().setupGenericToolCredentials("gemini-cli", tool, config, prompts);
+        prompts.assertFullyConsumed();
+
+        var saved = SpawnConfig.load();
+        assertEquals("google", saved("gemini.accounts.default.type"));
+        assertEquals("", saved("gemini.accounts.default.apiKey"));
+        assertEquals("", saved("gemini.apiKey"));
+        assertFalse(saved.tree().toJsonString().contains("gemini-flat-key"), "no key anywhere: " + saved.tree().toJsonString());
+    }
+
     @Test
     void suppliedValuesArePerAccountAndConfirmationsShared() {
         configure(new SpawnConfig(), new ScriptedPrompts().secret("acme-secret").line("eu-west", "y"));

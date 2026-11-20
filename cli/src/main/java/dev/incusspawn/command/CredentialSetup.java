@@ -1850,6 +1850,25 @@ class CredentialSetup {
                 .accountNames(configTree, namespace, shape).contains(target.name());
         var accountValues = new LinkedHashMap<String, String>();
         var sharedValues = new LinkedHashMap<String, String>();
+        // A namespace whose accounts may hold no credential here (a Google sign-in the proxy keeps
+        // on the host, #2443) asks which kind this account is before asking for anything
+        var hosted = tool.hostedSignIn();
+        if (hosted != null && target != null && chooseHostedSignIn(desc, hosted, prompts)) {
+            accountValues.put("type", hosted.type());
+            for (var line : hosted.help()) BuildOutput.step(line);
+            if (saveAccount(config, namespace, shape, target, accountValues)) {
+                // A keyed account moved to the hosted kind keeps no secret it no longer spends
+                if (targetExists) {
+                    for (var configDef : proxyDef.getConfiguration().values()) {
+                        var path = configDef.isSecret() ? proxyDef.accountConfigPath(configDef, target.name()) : "";
+                        if (!path.isBlank()) config.removeConfigPath(path);
+                    }
+                }
+                config.save();
+                BuildOutput.step(desc + " account saved; it signs in from an instance.");
+            }
+            return;
+        }
         for (var entry : proxyDef.getConfiguration().entrySet()) {
             var configKey = entry.getKey();
             var configDef = entry.getValue();
@@ -1914,6 +1933,13 @@ class CredentialSetup {
         if (target != null && !accountValues.isEmpty()) {
             savedAny = saveAccount(config, namespace, shape, target, accountValues);
             if (!savedAny) BuildOutput.step("No credential entered, so no account was changed.");
+            // A hosted account given a credential is one no longer: its type would make the
+            // credential unread (a 'type: google' account spends no key, #2443)
+            var typePath = namespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY + "." + target.name() + ".type";
+            if (savedAny && hosted != null && targetExists
+                    && hosted.type().equals(ToolProxyResolver.navigateConfigPath(config.tree(), typePath))) {
+                config.removeConfigPath(typePath);
+            }
         }
         for (var shared : sharedValues.entrySet()) {
             config.setConfigByPath(shared.getKey(), shared.getValue());
@@ -1926,6 +1952,24 @@ class CredentialSetup {
         } else {
             BuildOutput.step("Skipped. Configure later with '"
                     + CredentialCheck.stepCommand(toolName, new dev.incusspawn.tool.ToolDefLoader().allToolSetups()) + "'.");
+        }
+    }
+
+    /**
+     * Whether the account being written is {@code hosted}'s kind rather than the credential the
+     * tool's proxy definition declares. Enter keeps the credential, the common case.
+     */
+    private boolean chooseHostedSignIn(String desc, ToolSetup.HostedSignIn hosted, Prompts prompts) {
+        BuildOutput.step(desc + " accounts are one of:");
+        prompts.say("1. A credential entered here (the default)");
+        prompts.say("2. " + hosted.label());
+        while (true) {
+            var choice = readInput(prompts.ask("Choice (Enter for 1): ")).strip();
+            switch (choice) {
+                case "", "1" -> { return false; }
+                case "2" -> { return true; }
+                default -> prompts.say("Please answer 1 or 2.");
+            }
         }
     }
 

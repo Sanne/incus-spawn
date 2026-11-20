@@ -272,7 +272,7 @@ public class GuestProvisioning {
             for (var added : resolution.autoAdded()) BuildOutput.note(added.note());
             for (var resolved : tools) {
                 if (resolved.reconfigureOnly()) {
-                    resolved.setup().reconfigure(container, resolved.parameters());
+                    resolved.setup().reconfigure(container, resolved.parameters(), accountSelection);
                 } else {
                     resolved.setup().install(container, resolved.parameters(), accountSelection);
                 }

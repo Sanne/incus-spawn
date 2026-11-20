@@ -151,6 +151,8 @@ public class MitmProxy {
 
     /** ChatGPT sessions held on the host for Codex in instances (#1332). */
     final ChatGptRoute chatGpt;
+    /** Google sign-ins held on the host for Antigravity CLI in instances (#2443). */
+    final GoogleAuthRoute googleAuth;
 
     /** {@code isx mcp} for coordinator instances, at {@link ProxyConfig#MCP_DOMAIN} (#915). */
     private volatile McpBridge mcpBridge;
@@ -367,6 +369,7 @@ public class MitmProxy {
         this.hostRouteRelay = new HostRouteRelay(vertx, () -> instanceRegistry, upstream);
         this.hostPortRelay = new HostPortRelay(bindAddress);
         this.chatGpt = new ChatGptRoute(this, vertx, new ChatGptSessionStore());
+        this.googleAuth = new GoogleAuthRoute(this, vertx, new GoogleSessionStore());
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -590,8 +593,11 @@ public class MitmProxy {
         // The default selection is resolved once, and seeds the across-accounts set.
         var credentials = ProxyCredentials.forAccounts(config, tree, Map.of(), setups);
         var acrossAccounts = ToolProxyResolver.resolveAcrossAccounts(tree, setups, credentials.toolProxies(), nested);
-        var openai = dev.incusspawn.config.AccountSelection.byNamespace(setups).get(ChatGptAccounts.NAMESPACE);
+        var byNamespace = dev.incusspawn.config.AccountSelection.byNamespace(setups);
+        var openai = byNamespace.get(ChatGptAccounts.NAMESPACE);
         chatGpt.useConfig(tree, openai == null ? null : openai.accountShape());
+        var gemini = byNamespace.get(GoogleAccounts.NAMESPACE);
+        googleAuth.useConfig(tree, gemini == null ? null : gemini.accountShape());
         configState = new ConfigState(config, tree, setups, credentials, acrossAccounts,
                 HostRouteRelay.served(ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn),
                         name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)), nested,
@@ -1385,6 +1391,10 @@ public class MitmProxy {
                 // ChatGPT's own route (#1332): it identifies its caller by address and proof itself
                 begin(flow, caller);
                 chatGpt.handle(clientReq, domain, address, started);
+            } else if (googleAuth.handles(domain)) {
+                // Google sign-ins (#2443): likewise, by address and the digest a placeholder carries
+                begin(flow, caller);
+                googleAuth.handle(clientReq, domain, address, byTokenAlone, started);
             } else if (mcp) {
                 // Answered here, never relayed: it names no host outside this machine.
                 mcpBridge.handle(clientReq, address, byTokenAlone, identified -> begin(flow, identified));

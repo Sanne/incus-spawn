@@ -117,6 +117,21 @@ public interface ToolSetup {
     }
 
     /**
+     * An account of this tool's namespace that holds no credential in {@code config.yaml}: a
+     * sign-in the proxy keeps on the host once a guest's tool has signed in through it (#2443).
+     * {@code isx init} offers it beside the credential the proxy definition declares and saves
+     * an account of {@code type}.
+     *
+     * @param type  the account's {@code type:} value
+     * @param label what the choice is called in {@code isx init}
+     * @param help  what to tell the user once the account is saved: how the sign-in happens
+     */
+    record HostedSignIn(String type, String label, java.util.List<String> help) {}
+
+    /** The hosted sign-in this tool's namespace accepts, or null when its accounts all hold a credential. */
+    default HostedSignIn hostedSignIn() { return null; }
+
+    /**
      * The credential namespaces this tool spends -- the ones whose account choice matters to an
      * instance that has it. Derived from {@link #proxy()}: each entry's namespace, including one
      * it borrows from another tool (Copilot's {@code github.token}). Override for a tool that
@@ -365,6 +380,17 @@ public interface ToolSetup {
      */
     default void reconfigure(Container container, java.util.Map<String, String> resolvedParams) {
         install(container, resolvedParams);
+    }
+
+    /**
+     * {@link #reconfigure(Container, java.util.Map)} against a build that selected particular
+     * credential accounts, as {@link #install(Container, java.util.Map, java.util.Map)} is: a
+     * child template's own {@code accounts:} decide what a tool derives from the account there
+     * too. Only tools that derive something from the account need this; the default ignores it.
+     */
+    default void reconfigure(Container container, java.util.Map<String, String> resolvedParams,
+                             java.util.Map<String, String> accountSelection) {
+        reconfigure(container, resolvedParams);
     }
 
     /**

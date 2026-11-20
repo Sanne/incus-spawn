@@ -83,6 +83,16 @@ public interface AccountShape {
     default String problem(JqValue account, JqValue namespace) { return ""; }
 
     /**
+     * Whether {@code account}'s credential lives outside {@code config.yaml}: a sign-in the proxy
+     * keeps on the host, such as a {@code gemini} account of {@code type: google} (#2443). None of
+     * the shape's credential keys is then expected to resolve for it, so a branch check or the
+     * proxy's startup report does not call the account incomplete for lacking a key.
+     *
+     * @param account the account's own node
+     */
+    default boolean credentialOutsideConfig(JqValue account) { return false; }
+
+    /**
      * A shape whose credential is {@code credentialKeys}, and whose accounts each hold
      * {@code accountKeys} -- the credential plus anything else that belongs to one identity
      * rather than to the whole namespace (GitHub's commit email). Keys are relative to the

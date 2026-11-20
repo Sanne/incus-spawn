@@ -131,8 +131,13 @@ final class ChatGptRoute {
      * might decode or normalise into another path is refused, never normalised here.
      */
     static boolean safeTarget(String target) {
+        return safeTarget(target, SAFE_TARGET);
+    }
+
+    /** As {@link #safeTarget(String)}, with {@code allowed} as the characters a target may hold. */
+    static boolean safeTarget(String target, Pattern allowed) {
         if (target == null || target.isEmpty() || target.charAt(0) != '/') return false;
-        if (!SAFE_TARGET.matcher(target).matches()) return false;
+        if (!allowed.matcher(target).matches()) return false;
         var q = target.indexOf('?');
         var path = q < 0 ? target : target.substring(0, q);
         for (var segment : path.substring(1).split("/", -1)) {
@@ -235,7 +240,7 @@ final class ChatGptRoute {
                 binding -> forwardBackend(req, binding, op, sourceAddress, started));
     }
 
-    private static long declaredLength(HttpServerRequest req) {
+    static long declaredLength(HttpServerRequest req) {
         try {
             var length = req.getHeader("Content-Length");
             return length == null ? -1 : Long.parseLong(length.strip());
@@ -250,7 +255,7 @@ final class ChatGptRoute {
      * A client that waits for {@code 100 Continue} is sent one first. The returned future
      * completes only with a whole body; every failure is answered here.
      */
-    private static Future<Buffer> readTokenRequest(HttpServerRequest req) {
+    static Future<Buffer> readTokenRequest(HttpServerRequest req) {
         var promise = Promise.<Buffer>promise();
         if ("100-continue".equalsIgnoreCase(req.getHeader("Expect"))) req.response().writeContinue();
         var body = Buffer.buffer();
@@ -267,7 +272,7 @@ final class ChatGptRoute {
         return promise.future();
     }
 
-    private static void tooLarge(HttpServerRequest req) {
+    static void tooLarge(HttpServerRequest req) {
         var resp = req.response();
         if (resp.ended() || resp.closed()) return;
         resp.setStatusCode(413).putHeader("Connection", "close").end();
@@ -280,7 +285,7 @@ final class ChatGptRoute {
      * reused; the client or the idle timeout ends it. Closing it at once instead could reset it
      * before the answer was read, while the client still sends.
      */
-    private static void stopReading(HttpServerRequest req) {
+    static void stopReading(HttpServerRequest req) {
         if (!req.isEnded()) req.pause();
     }
 
@@ -353,6 +358,11 @@ final class ChatGptRoute {
      * that is the TLS name, and a target that no server decodes into another path.
      */
     static String shapeProblem(MultiMap headers, String domain, String target, String sni) {
+        return shapeProblem(headers, domain, target, sni, SAFE_TARGET);
+    }
+
+    /** As above, with {@code safeTarget} as the characters a target may hold ({@link GoogleAuthRoute}'s paths hold ':'). */
+    static String shapeProblem(MultiMap headers, String domain, String target, String sni, Pattern safeTarget) {
         for (var name : SINGLE_HEADERS) {
             var values = headers.getAll(name);
             if (values.size() > 1 || values.stream().anyMatch(v -> v.contains(","))) {
@@ -366,11 +376,11 @@ final class ChatGptRoute {
         if (host == null || !(host.equals(domain) || host.equals(domain + ":443"))) return "a Host that is not " + domain;
         // Fails closed: a claimed request with no TLS name is one this check cannot judge
         if (sni == null || !sni.equals(domain)) return "a TLS name that is not " + domain;
-        if (!safeTarget(target)) return "a request target isx does not relay with a credential";
+        if (!safeTarget(target, safeTarget)) return "a request target isx does not relay with a credential";
         return null;
     }
 
-    private static String sni(HttpServerRequest req) {
+    static String sni(HttpServerRequest req) {
         var connection = req.connection();
         return connection == null ? null : connection.indicatedServerName();
     }
@@ -394,7 +404,7 @@ final class ChatGptRoute {
                                 String sourceAddress, long started) {
         // The session first, so a request it refuses opens no upstream connection, and is refused
         // with its body still paused; one that cannot be read is no session to serve
-        currentSession(binding).otherwise((ChatGptSessionStore.Session) null).onSuccess(session -> {
+        currentSession(binding).otherwise((SessionStore.Session<ChatGptSessionStore.Tokens>) null).onSuccess(session -> {
             if (session == null) {
                 refuseProof(req.response(), op, sourceAddress, SESSION_CHANGED);
                 return;
@@ -419,7 +429,7 @@ final class ChatGptRoute {
         static final String NOT_THIS_SESSION =
                 "the ChatGPT session is not the one this instance's proofs were made for, or the refresh was refused";
 
-        static Refreshed ok(ChatGptSessionStore.Session session) {
+        static Refreshed ok(SessionStore.Session<ChatGptSessionStore.Tokens> session) {
             return new Refreshed(session.tokens(), session.sessionId(), 200, null, null, List.of());
         }
 
@@ -539,7 +549,7 @@ final class ChatGptRoute {
     }
 
     /** One refresh of {@code session} upstream, with the guest's request as its template. */
-    private Future<Refreshed> upstreamRefresh(HttpServerRequest req, ChatGptSessionStore.Session session,
+    private Future<Refreshed> upstreamRefresh(HttpServerRequest req, SessionStore.Session<ChatGptSessionStore.Tokens> session,
                                               JqObject guestRequest) {
         var key = sessionKey(session);
         return vertx.executeBlocking(() -> store.beginRefresh(session), false).compose(begun -> {
@@ -584,7 +594,7 @@ final class ChatGptRoute {
     private record RefreshAnswer(int status, Buffer body, List<Map.Entry<String, String>> retryHeaders) {}
 
     /** Commits or discards what OpenAI answered a refresh of {@code session} with. Blocks. */
-    private Refreshed settle(ChatGptSessionStore.Session session, RefreshAnswer refreshAnswer) {
+    private Refreshed settle(SessionStore.Session<ChatGptSessionStore.Tokens> session, RefreshAnswer refreshAnswer) {
         var status = refreshAnswer.status();
         var answer = refreshAnswer.body();
         if (status != 200) {
@@ -625,9 +635,9 @@ final class ChatGptRoute {
             return Refreshed.refused(502, "server_error", NOT_NOW);
         }
         var commit = store.commit(session, refreshed);
-        if (commit != ChatGptSessionStore.Commit.COMMITTED) {
+        if (commit != SessionStore.Commit.COMMITTED) {
             ProxyLog.warn("Discarding a ChatGPT refresh for account '" + session.account() + "': the session "
-                    + (commit == ChatGptSessionStore.Commit.GONE ? "was removed" : "changed") + " while it ran");
+                    + (commit == SessionStore.Commit.GONE ? "was removed" : "changed") + " while it ran");
             revoke(refreshed.refreshToken());
             return current(session);
         }
@@ -716,7 +726,7 @@ final class ChatGptRoute {
             ws.reject(401);
             return false;
         }
-        var dialled = new java.util.concurrent.atomic.AtomicReference<ChatGptSessionStore.Session>();
+        var dialled = new java.util.concurrent.atomic.AtomicReference<SessionStore.Session<ChatGptSessionStore.Tokens>>();
         return proxy.relayWebSocketWith(ws, domain, flow, currentSession(binding).map(session -> {
             if (session == null) throw new IllegalStateException(SESSION_CHANGED);
             dialled.set(session);
@@ -748,7 +758,7 @@ final class ChatGptRoute {
     }
 
     /** The account's session, read now, if it is still the one {@code binding} was made for; else null. */
-    private Future<ChatGptSessionStore.Session> currentSession(InstanceRegistry.ChatGptBinding binding) {
+    private Future<SessionStore.Session<ChatGptSessionStore.Tokens>> currentSession(InstanceRegistry.ChatGptBinding binding) {
         return vertx.executeBlocking(() -> {
             var session = store.read(binding.account());
             return session != null && session.sessionId().equals(binding.sessionId()) ? session : null;
@@ -767,7 +777,7 @@ final class ChatGptRoute {
      * rounded up, so a client that waits as told is not throttled again; a 401 once the account's
      * session is another. Blocks; package-private for tests.
      */
-    Refreshed newerOrLater(ChatGptSessionStore.Session session, long waitMillis) {
+    Refreshed newerOrLater(SessionStore.Session<ChatGptSessionStore.Tokens> session, long waitMillis) {
         var now = store.read(session.account());
         if (now == null || !now.sessionId().equals(session.sessionId())) return forget(session);
         // A newer token the backend has refused, or that has expired, is no better than the caller's
@@ -785,26 +795,26 @@ final class ChatGptRoute {
      * current tokens if it is still the same session at a later generation, else a refusal. Never
      * another session's: a sign-in again does not upgrade old proofs. Blocks.
      */
-    private Refreshed current(ChatGptSessionStore.Session session) {
+    private Refreshed current(SessionStore.Session<ChatGptSessionStore.Tokens> session) {
         var now = store.read(session.account());
         if (now != null && now.sessionId().equals(session.sessionId())) return Refreshed.ok(now);
         return forget(session);
     }
 
     /** {@code session} is no longer the account's: drop what is kept about it, and refuse. */
-    private Refreshed forget(ChatGptSessionStore.Session session) {
+    private Refreshed forget(SessionStore.Session<ChatGptSessionStore.Tokens> session) {
         refused.remove(sessionKey(session));
         lastUpstream.remove(sessionKey(session));
         return Refreshed.refused(401, "invalid_grant");
     }
 
     /** Seconds until {@code session}'s access token expires; negative once it has. */
-    private static long secondsLeft(ChatGptSessionStore.Session session) {
+    private static long secondsLeft(SessionStore.Session<ChatGptSessionStore.Tokens> session) {
         return ChatGptPlaceholders.expiry(session.tokens().accessToken()) - System.currentTimeMillis() / 1000;
     }
 
     /** Whether {@code session}'s token can still be used: the backend has not refused it, and it has not expired. */
-    private boolean works(ChatGptSessionStore.Session session) {
+    private boolean works(SessionStore.Session<ChatGptSessionStore.Tokens> session) {
         return works(secondsLeft(session), isRefused(session));
     }
 
@@ -813,11 +823,11 @@ final class ChatGptRoute {
     }
 
     /** Whether the backend has refused {@code session}'s token at its generation. */
-    private boolean isRefused(ChatGptSessionStore.Session session) {
+    private boolean isRefused(SessionStore.Session<ChatGptSessionStore.Tokens> session) {
         return refused.getOrDefault(sessionKey(session), Set.of()).contains(session.generation());
     }
 
-    private static String sessionKey(ChatGptSessionStore.Session session) {
+    private static String sessionKey(SessionStore.Session<ChatGptSessionStore.Tokens> session) {
         return sessionKey(session.account(), session.sessionId());
     }
 
@@ -826,7 +836,7 @@ final class ChatGptRoute {
     }
 
     /** One token of a session: the session at one generation. */
-    private static String tokenKey(ChatGptSessionStore.Session session) {
+    private static String tokenKey(SessionStore.Session<ChatGptSessionStore.Tokens> session) {
         return sessionKey(session) + "@" + session.generation();
     }
 
@@ -839,7 +849,7 @@ final class ChatGptRoute {
      * The backend refused {@code session}'s token at its generation. One atomic update of an
      * immutable set: a concurrent clear can never leave the mark in a set the map no longer holds.
      */
-    private void markRefused(ChatGptSessionStore.Session session) {
+    private void markRefused(SessionStore.Session<ChatGptSessionStore.Tokens> session) {
         refused.compute(sessionKey(session), (k, generations) -> {
             var marked = new java.util.HashSet<>(generations == null ? Set.of() : generations);
             marked.add(session.generation());
@@ -879,7 +889,7 @@ final class ChatGptRoute {
         return proxy.describeCaller(sourceAddress);
     }
 
-    private static String bearer(String authorization) {
+    static String bearer(String authorization) {
         if (authorization == null) return null;
         return authorization.regionMatches(true, 0, "Bearer ", 0, 7) ? authorization.substring(7).strip() : null;
     }

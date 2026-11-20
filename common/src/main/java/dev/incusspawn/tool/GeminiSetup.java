@@ -1,21 +1,84 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.AccountResolver;
+import dev.incusspawn.config.AccountShape;
 import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.Jjq;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.proxy.GoogleAccounts;
+import dev.incusspawn.proxy.GoogleSessionStore;
 import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqString;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.util.List;
 import java.util.Map;
 
-/** Gemini CLI uses a guest placeholder; the proxy holds and injects its API key. */
+/**
+ * Gemini CLI uses a guest placeholder; the proxy holds and injects its API key.
+ *
+ * <p>The {@code gemini} namespace also holds accounts of {@code type: google} (#2443): a Google
+ * sign-in Antigravity CLI makes through the proxy, kept on the host ({@link GoogleSessionStore}),
+ * with no key in {@code config.yaml}. Gemini CLI itself runs on API keys only; such an account
+ * serves {@code agy}, and this tool declares the shape since it owns the namespace.
+ */
 public class GeminiSetup implements ToolSetup {
 
     static final String PLACEHOLDER_API_KEY = "gemini-placeholder";
+    public static final String NAMESPACE = GoogleAccounts.NAMESPACE;
+    static final String API_KEY = "apiKey";
+    static final String TYPE = "type";
+    static final String TYPE_API_KEY = "api-key";
+
+    /**
+     * An account is an API key ({@code apiKey}, {@code type} absent or {@code api-key}) or a Google
+     * sign-in ({@code type: google}, no key here: the session file says whether it has signed in).
+     * The flat, pre-accounts layout holds a key alone.
+     */
+    static final AccountShape ACCOUNT_SHAPE = new AccountShape() {
+        private final AccountShape keyed = AccountShape.declared(List.of(API_KEY), List.of(TYPE, API_KEY));
+
+        @Override
+        public boolean hasFlatCredential(JqValue namespace) { return keyed.hasFlatCredential(namespace); }
+
+        @Override
+        public JqValue flatAccount(JqValue namespace) { return keyed.flatAccount(namespace); }
+
+        @Override
+        public List<String> flatKeys() { return keyed.flatKeys(); }
+
+        @Override
+        public boolean hasCredential(Map<String, String> values) {
+            return GoogleAccounts.TYPE.equals(values.get(TYPE)) || keyed.hasCredential(values);
+        }
+
+        @Override
+        public String problem(JqValue account, JqValue namespace) {
+            var type = account == null ? "" : account.pathText(TYPE, "").strip();
+            if (GoogleAccounts.TYPE.equals(type)) return "";
+            if (!type.isEmpty() && !TYPE_API_KEY.equals(type)) {
+                return "its type '" + type + "' is not '" + TYPE_API_KEY + "' or '" + GoogleAccounts.TYPE + "'";
+            }
+            var key = account == null ? "" : account.pathText(API_KEY, "").strip();
+            if (key.isEmpty() && namespace != null) key = namespace.pathText(API_KEY, "").strip();
+            return key.isEmpty() ? "it holds no credential" : "";
+        }
+
+        @Override
+        public boolean credentialOutsideConfig(JqValue account) { return GoogleAccounts.isGoogle(account); }
+    };
+
+    /** How a {@code type: google} account signs in: in an instance, through the proxy. */
+    static final HostedSignIn GOOGLE_SIGN_IN = new HostedSignIn(GoogleAccounts.TYPE,
+            "Google account: an AI Pro or Ultra plan, for Antigravity CLI",
+            List.of("No credential is entered here. The first time agy runs in an instance on this account,",
+                    "it shows a Google sign-in link: open it on this machine, sign in, and paste the code it",
+                    "gives back into agy. The proxy keeps the session on this host, and the instance holds",
+                    "only a placeholder. Gemini CLI, Pi and opencode still need an API key account."));
     static final String CONFIG_PATH = "/home/agentuser/.gemini/settings.json";
     /**
      * Gemini CLI reads no system-wide context file, and {@code ~/.gemini/GEMINI.md} is the
@@ -55,7 +118,7 @@ public class GeminiSetup implements ToolSetup {
     @Override
     public ToolDef.ProxyDef proxy() {
         var apiKey = new ToolDef.ConfigEntry();
-        apiKey.setConfigPath("apiKey");
+        apiKey.setConfigPath(API_KEY);
         apiKey.setDescription("Gemini API key");
         apiKey.setSecret(true);
         apiKey.setHelp(List.of("Create a Gemini API key at https://aistudio.google.com/apikey.",
@@ -68,11 +131,49 @@ public class GeminiSetup implements ToolSetup {
         auth.setValue("${api-key}");
 
         var proxy = new ToolDef.ProxyDef();
-        proxy.setConfigNamespace("gemini");
+        proxy.setConfigNamespace(NAMESPACE);
         proxy.setConfiguration(Map.of("api-key", apiKey));
         proxy.setAuth(List.of(auth));
         proxy.setPlaceholders(List.of(new ToolDef.PlaceholderDef("GEMINI_API_KEY", "gemini-")));
         return proxy;
+    }
+
+    @Override
+    public AccountShape accountShape() { return ACCOUNT_SHAPE; }
+
+    @Override
+    public HostedSignIn hostedSignIn() { return GOOGLE_SIGN_IN; }
+
+    /** A Google account: whether it has signed in, and as whom; "" for an API key account. */
+    @Override
+    public String describeAccount(SpawnConfig config, String accountName) {
+        if (!GoogleAccounts.isGoogleAccount(config.tree(), accountName)) return "";
+        return describeGoogleAccount(new GoogleSessionStore(), accountName);
+    }
+
+    public static String describeGoogleAccount(GoogleSessionStore store, String accountName) {
+        GoogleSessionStore.Tokens tokens;
+        try {
+            var session = store.read(accountName);
+            tokens = session == null ? null : session.tokens();
+        } catch (RuntimeException e) {
+            return "Google account, session file unreadable";
+        }
+        if (tokens == null) return "Google account, not signed in yet: run agy in an instance";
+        return tokens.email().isEmpty() ? "Google account, signed in" : "Google account, signed in as " + tokens.email();
+    }
+
+    /**
+     * Whether the {@code gemini} account {@code selection} resolves to is a Google sign-in, for
+     * what a build derives from it. A selection that names no usable account is no Google one.
+     */
+    public static boolean selectsGoogleAccount(SpawnConfig config, Map<String, String> selection) {
+        try {
+            var account = AccountResolver.effectiveAccount(config, NAMESPACE, selection.get(NAMESPACE));
+            return GoogleAccounts.isGoogleAccount(config.tree(), account);
+        } catch (AccountResolver.UnknownAccountException e) {
+            return false;
+        }
     }
 
     @Override

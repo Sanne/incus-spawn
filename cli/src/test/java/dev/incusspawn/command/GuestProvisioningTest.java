@@ -956,6 +956,29 @@ class GuestProvisioningTest {
                 recorded.events());
     }
 
+    /**
+     * A tool a child template inherits and reconfigures derives from the same account selection a
+     * fresh install does (#2443): its baked identity is stamped from the child's own accounts.
+     */
+    @Test
+    void runToolSetupHandsAnInheritedToolTheBuildsAccountSelection() {
+        var container = new Container(mock(IncusClient.class), "test");
+        var seen = new java.util.ArrayList<Map<String, String>>();
+        var agy = new ToolSetup() {
+            @Override public String name() { return "agy"; }
+            @Override public void install(Container c, Map<String, String> params) { fail("reconfigure only"); }
+            @Override public void reconfigure(Container c, Map<String, String> params, Map<String, String> accounts) {
+                seen.add(accounts);
+            }
+        };
+        var resolution = new BuildTools.ToolResolution(
+                List.of(new BuildTools.ResolvedTool("agy", agy, Map.of(), true)), List.of(), List.of());
+
+        RecordingOutput.during(() -> GuestProvisioning.runToolSetup(container, resolution, Map.of("gemini", "home")));
+
+        assertEquals(List.of(Map.of("gemini", "home")), seen);
+    }
+
     // --- Shared DNF cache volume: VM mount, teardown, and the cleanup guard ---
 
     private static GuestProvisioning dnfCacheCommand(IncusClient incus) {

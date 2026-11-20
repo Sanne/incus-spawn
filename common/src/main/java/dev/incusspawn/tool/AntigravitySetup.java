@@ -2,7 +2,11 @@ package dev.incusspawn.tool;
 
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.Jjq;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.proxy.GoogleAccounts;
+import dev.incusspawn.proxy.GooglePlaceholders;
+import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqBoolean;
@@ -17,12 +21,19 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Antigravity CLI ({@code agy}), Google's terminal coding agent, in its Gemini API key mode (#2366):
- * the only one that keeps the credential on the host. It spends the {@code gemini} namespace through
- * Gemini CLI's proxy entry, as Pi and opencode do: {@code agy} sends {@code GEMINI_API_KEY} as
- * {@code X-Goog-Api-Key} to {@code generativelanguage.googleapis.com}, where the proxy swaps the
- * proof for the account's key. Its Google sign-in keeps a token in the guest's keyring, and its
- * ADC mode reads credentials from the guest, so neither is configured.
+ * Antigravity CLI ({@code agy}), Google's terminal coding agent, on the {@code gemini} namespace in
+ * one of two modes, decided by the account the build resolves (#2366, #2443):
+ * <ul>
+ *   <li><b>API key</b> ({@code modelProvider: gemini}): {@code agy} sends {@code GEMINI_API_KEY} as
+ *       {@code X-Goog-Api-Key} to {@code generativelanguage.googleapis.com}, where the proxy swaps
+ *       the proof for the account's key, through Gemini CLI's proxy entry as Pi and opencode do.</li>
+ *   <li><b>Google sign-in</b> (an account of {@code type: google}): {@code agy} signs in as it does
+ *       anywhere, and the proxy keeps what Google issued on the host ({@code GoogleAuthRoute}). The
+ *       guest's token file holds look-alikes carrying the instance's {@code gemini} proof, which the
+ *       login script {@link #LOGIN_SCRIPT_PATH} seeds and keeps current from {@code GEMINI_API_KEY}.
+ *       Without a keyring, which no instance has, {@code agy} keeps its token in that file.</li>
+ * </ul>
+ * Its ADC mode reads credentials from the guest and is not configured.
  *
  * <p>The binary is pinned: Google's installer reads the newest release from a manifest and checks
  * its sha512, and the sha256 below was taken from the tarballs that manifest named, after that
@@ -70,6 +81,44 @@ public class AntigravitySetup implements ToolSetup {
 
     /** What tells it not to update itself, read at every start. */
     static final String DISABLE_AUTO_UPDATE = "AGY_CLI_DISABLE_AUTO_UPDATE";
+
+    /** Where {@code agy} keeps its Google sign-in when it has no keyring, as no instance has. */
+    public static final String TOKEN_PATH = CLI_DIR + "/antigravity-oauth-token";
+    /**
+     * The login script of the Google sign-in mode (#2443, the #1108 pattern): {@code agy} reads its
+     * sign-in from a file, so each login derives that file from {@code GEMINI_API_KEY}'s proof. A
+     * missing file is seeded with the proof's look-alikes and an expiry in the past, so agy's first
+     * request is a refresh the proxy answers from the host's session, or refuses when the account
+     * has not signed in, which makes agy ask for the sign-in. Seeded only where agy is configured
+     * (its directory exists: the build makes agentuser's, and agy's {@code /logout} removes the
+     * file alone), so root's login shell leaves no stray file. A file holding isx look-alikes of
+     * another digest (an earlier start, a copy, a reset, or the digest the proxy minted for the run
+     * that signed in) is brought to this login's. A file holding a real token is left alone.
+     */
+    public static final String LOGIN_SCRIPT_PATH = "/etc/profile.d/isx-zz-antigravity.sh";
+    static final String LOGIN_SCRIPT = """
+            # isx: Antigravity CLI's Google sign-in stays on the host (#2443). Its token file holds
+            # look-alikes carrying this instance's gemini proof; keep them current with GEMINI_API_KEY.
+            case "$GEMINI_API_KEY" in
+              gemini-isx_*)
+                isx_agy_digest=${GEMINI_API_KEY#gemini-isx_}
+                isx_agy_token="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+                case "$isx_agy_digest" in
+                  *[!0-9a-f]*|'') ;;
+                  *)
+                    if [ ! -e "$isx_agy_token" ] && [ -d "${isx_agy_token%/*}" ]; then
+                      (umask 077 && printf '%s\n' "{\\"token\\":{\\"access_token\\":\\"ya29.isx_$isx_agy_digest\\",\\"token_type\\":\\"Bearer\\",\\"refresh_token\\":\\"1//isx_$isx_agy_digest\\",\\"expiry\\":\\"1970-01-01T00:00:00Z\\",\\"expires_in\\":0},\\"auth_method\\":\\"consumer\\",\\"id_token_email\\":\\"\\"}" > "$isx_agy_token") 2>/dev/null
+                    elif grep -q 'isx_' "$isx_agy_token" 2>/dev/null && ! grep -q "isx_$isx_agy_digest" "$isx_agy_token"; then
+                      # No sed -i: BSD sed reads the next word as its backup suffix, so the edit is a copy
+                      (umask 077 && sed -E "s/isx_[0-9a-f]{@DIGEST_HEX_CHARS@}/isx_$isx_agy_digest/g" "$isx_agy_token" > "$isx_agy_token.isx-new") 2>/dev/null \
+                        && mv -f "$isx_agy_token.isx-new" "$isx_agy_token" 2>/dev/null
+                    fi
+                    ;;
+                esac
+                unset isx_agy_digest isx_agy_token
+                ;;
+            esac
+            """.replace("@DIGEST_HEX_CHARS@", String.valueOf(GooglePlaceholders.DIGEST_HEX_CHARS));
 
     @Override
     public String name() { return "antigravity"; }
@@ -140,6 +189,11 @@ public class AntigravitySetup implements ToolSetup {
 
     @Override
     public void install(Container c, Map<String, String> resolvedParams) {
+        install(c, resolvedParams, Map.of());
+    }
+
+    @Override
+    public void install(Container c, Map<String, String> resolvedParams, Map<String, String> accountSelection) {
         BuildOutput.stepStart("Installing Antigravity CLI");
         var download = download(c.getArchitecture());
         try {
@@ -152,12 +206,54 @@ public class AntigravitySetup implements ToolSetup {
             throw new RuntimeException("Failed to install Antigravity CLI: " + e.getMessage(), e);
         }
         BuildOutput.stepDone();
-        configure(c);
+        configure(c, googleSignIn(accountSelection));
+    }
+
+    /** A child template's inherited copy, on the namespace's default account. */
+    @Override
+    public void reconfigure(Container c, Map<String, String> resolvedParams) {
+        reconfigure(c, resolvedParams, Map.of());
+    }
+
+    /**
+     * A child template's inherited copy, on the account the child's own {@code accounts:} select:
+     * the mode is what the build stamps as this tool's baked identity, so the guest has to be
+     * configured for the same account the stamp names.
+     */
+    @Override
+    public void reconfigure(Container c, Map<String, String> resolvedParams, Map<String, String> accountSelection) {
+        configure(c, googleSignIn(accountSelection));
+    }
+
+    /** Whether the build's {@code gemini} account is a Google sign-in, so agy runs in that mode. */
+    static boolean googleSignIn(Map<String, String> accountSelection) {
+        return GeminiSetup.selectsGoogleAccount(SpawnConfig.load(), accountSelection);
+    }
+
+    /**
+     * The mode, not the account: {@code google} or {@code api-key}. Two API key accounts leave the
+     * image the same, and so do two Google ones; a move across modes rewrites {@code settings.json}
+     * and the login script, which {@link #rebakeForAccount} does on a built instance, since agy
+     * reads both when it starts.
+     */
+    @Override
+    public String bakedAccountIdentity(SpawnConfig config, String accountName) {
+        if (accountName == null || accountName.isBlank()) return "";
+        try {
+            var names = dev.incusspawn.config.AccountResolver.accountNames(config, GeminiSetup.NAMESPACE);
+            if (!names.contains(accountName)) return "";
+        } catch (RuntimeException e) {
+            return "";
+        }
+        return GoogleAccounts.isGoogleAccount(config.tree(), accountName) ? GoogleAccounts.TYPE : GeminiSetup.TYPE_API_KEY;
     }
 
     @Override
-    public void reconfigure(Container c, Map<String, String> resolvedParams) {
-        configure(c);
+    public boolean canRebakeForAccount() { return true; }
+
+    @Override
+    public void rebakeForAccount(Container container, String accountName) {
+        configure(container, GoogleAccounts.isGoogleAccount(SpawnConfig.load().tree(), accountName));
     }
 
     static Download download(String arch) {
@@ -180,26 +276,43 @@ public class AntigravitySetup implements ToolSetup {
 
     /**
      * Its settings, merged into what is there, its onboarding marked done, and the directory of
-     * isx's rule made agentuser's, since the build writes the rule as root.
+     * isx's rule made agentuser's, since the build writes the rule as root. In the Google sign-in
+     * mode the login script goes in and an API-key token file is left alone; in the API key mode
+     * the script goes, and so does a token file holding isx look-alikes, which would show a stale
+     * sign-in in agy's header.
      */
-    private static void configure(Container c) {
-        BuildOutput.stepStart("Configuring Antigravity CLI");
+    private static void configure(Container c, boolean googleSignIn) {
+        BuildOutput.stepStart("Configuring Antigravity CLI" + (googleSignIn ? " for a Google account" : ""));
         var read = c.sh("if [ -f " + SETTINGS_PATH + " ]; then cat " + SETTINGS_PATH + "; fi")
                 .assertSuccess("Failed to read Antigravity CLI's settings");
         c.shAsUser("agentuser", "mkdir -p " + CLI_DIR + "/cache " + RULES_DIR)
                 .assertSuccess("Failed to create Antigravity CLI's directories");
-        c.writeFile(SETTINGS_PATH, settingsJson(read.stdout()));
+        c.writeFile(SETTINGS_PATH, settingsJson(read.stdout(), googleSignIn));
         c.chown(SETTINGS_PATH, "agentuser:agentuser");
+        if (googleSignIn) {
+            c.writeFile(LOGIN_SCRIPT_PATH, LOGIN_SCRIPT);
+        } else {
+            c.sh("rm -f " + LOGIN_SCRIPT_PATH + "; if grep -q '" + ProofToken.MARKER + "' " + TOKEN_PATH
+                            + " 2>/dev/null; then rm -f " + TOKEN_PATH + "; fi")
+                    .assertSuccess("Failed to remove Antigravity CLI's sign-in script");
+        }
         c.sh("[ -s " + ONBOARDING_PATH + " ] || { " + Container.heredoc("cat > " + ONBOARDING_PATH, ONBOARDING.strip())
                         + "\nchown agentuser:agentuser " + ONBOARDING_PATH + "; }")
                 .assertSuccess("Failed to write Antigravity CLI's onboarding state");
         BuildOutput.stepDone();
     }
 
+    /** {@link #settingsJson(String, boolean)} for the API key mode. */
+    static String settingsJson(String existing) {
+        return settingsJson(existing, false);
+    }
+
     /**
      * {@code existing} (empty for none) with isx's settings put in, the user's others kept:
      * <ul>
-     *   <li>{@code modelProvider: gemini}, the API key mode, which reads {@code GEMINI_API_KEY};
+     *   <li>{@code modelProvider: gemini}, the API key mode, which reads {@code GEMINI_API_KEY}; or
+     *       for a Google account no {@code modelProvider} at all, since agy exits when it names
+     *       {@code gemini} with no key, and signs in normally when it is absent;
      *   <li>every tool call and artifact proceeding without a question, and files outside the
      *       workspace reachable, since the instance is the boundary (#1857);
      *   <li>no terminal sandbox, which would want an OS container inside the container;
@@ -207,7 +320,7 @@ public class AntigravitySetup implements ToolSetup {
      *   <li>no tips and no surveys.
      * </ul>
      */
-    static String settingsJson(String existing) {
+    static String settingsJson(String existing, boolean googleSignIn) {
         JqObject root = JqObject.EMPTY;
         if (!existing.isBlank()) {
             if (!(Jjq.parseForeign(existing, SETTINGS_PATH) instanceof JqObject object)) {
@@ -225,8 +338,8 @@ public class AntigravitySetup implements ToolSetup {
         trusted.add(HOME);
         var trustedArray = JqArray.arrayBuilder();
         trusted.forEach(trustedArray::add);
-        root = root.with("modelProvider", JqString.of("gemini"))
-                .with("toolPermission", JqString.of("always-proceed"))
+        root = googleSignIn ? root.without("modelProvider") : root.with("modelProvider", JqString.of("gemini"));
+        root = root.with("toolPermission", JqString.of("always-proceed"))
                 .with("artifactReviewPolicy", JqString.of("always-proceed"))
                 .with("allowNonWorkspaceAccess", JqBoolean.TRUE)
                 .with("enableTerminalSandbox", JqBoolean.FALSE)
