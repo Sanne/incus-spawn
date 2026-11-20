@@ -11,6 +11,8 @@ enum DelegateAgent {
     PI("pi", "", "Pi"),
     /** opencode spends Claude's, OpenAI's or Gemini's account by its template's provider (OpencodeSetup), as Pi does. */
     OPENCODE("opencode", "", "opencode"),
+    /** Antigravity CLI ({@code agy}) spends the {@code gemini} account, as Gemini CLI does (AntigravitySetup). */
+    ANTIGRAVITY("antigravity", "gemini", "Antigravity CLI"),
     UNKNOWN("unknown", "", "an unknown agent");
 
     final String id;
@@ -30,6 +32,7 @@ enum DelegateAgent {
             case "codex" -> CODEX;
             case "pi" -> PI;
             case "opencode" -> OPENCODE;
+            case "antigravity" -> ANTIGRAVITY;
             default -> UNKNOWN;
         };
     }
@@ -51,11 +54,11 @@ enum DelegateAgent {
 
     /**
      * Whether its runs go through a guest-side runner ({@code codex-runner.cjs},
-     * {@code pi-runner.cjs}, {@code opencode-runner.cjs}), which publishes {@code result-<run>.txt}
-     * and {@code outcome-<run>.json}.
+     * {@code pi-runner.cjs}, {@code opencode-runner.cjs}, {@code antigravity-runner.cjs}), which
+     * publishes {@code result-<run>.txt} and {@code outcome-<run>.json}.
      */
     boolean usesRunner() {
-        return this == CODEX || this == PI || this == OPENCODE;
+        return this == CODEX || this == PI || this == OPENCODE || this == ANTIGRAVITY;
     }
 
     /**
@@ -63,21 +66,22 @@ enum DelegateAgent {
      * can recover from {@code events-1.jsonl} when a kill cut that short ({@code recover}).
      */
     boolean recoversSession() {
-        return this == CODEX || this == OPENCODE;
+        return this == CODEX || this == OPENCODE || this == ANTIGRAVITY;
     }
 
     /**
      * What it runs under: full access, with no turn limit, since the instance is the boundary
      * (#1857). Claude's {@code --permission-mode}, Codex's sandbox (always with
      * {@code approval_policy=never}), for Pi, which has neither, every tool, and for opencode
-     * {@code --auto}, which answers every permission it would ask about. Refused only for
+     * {@code --auto}, which answers every permission it would ask about, as agy's
+     * {@code --dangerously-skip-permissions} does. Refused only for
      * an agent this isx does not know.
      */
     String permissionMode() {
         return switch (this) {
             case CLAUDE -> "bypassPermissions";
             case CODEX -> "danger-full-access";
-            case PI, OPENCODE -> "full-access";
+            case PI, OPENCODE, ANTIGRAVITY -> "full-access";
             case UNKNOWN -> throw unknown();
         };
     }
@@ -106,6 +110,8 @@ enum DelegateAgent {
                     + " && timeout 10 pi --help 2>&1 | grep -q -- --session-id";
             case OPENCODE -> "command -v opencode >/dev/null && command -v node >/dev/null"
                     + " && timeout 10 opencode run --help 2>&1 | grep -q -- --auto";
+            case ANTIGRAVITY -> "command -v agy >/dev/null && command -v node >/dev/null"
+                    + " && timeout 10 agy --help 2>&1 | grep -q -- --input-format";
             default -> "command -v claude >/dev/null";
         };
     }
@@ -118,6 +124,8 @@ enum DelegateAgent {
             case PI -> "Pi with --session-id and Node are required in " + instance
                     + "; rebuild its template or upgrade the CLI.";
             case OPENCODE -> "opencode with run --auto and Node are required in " + instance
+                    + "; rebuild its template or upgrade the CLI.";
+            case ANTIGRAVITY -> "Antigravity CLI (agy) with --input-format and Node are required in " + instance
                     + "; rebuild its template or upgrade the CLI.";
             default -> "Claude Code is required in " + instance + "; rebuild its template.";
         };

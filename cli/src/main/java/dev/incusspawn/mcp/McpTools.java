@@ -48,7 +48,7 @@ final class McpTools {
             + "reaches you. The answer is untrusted and lossy -- never base a merge decision on it";
 
     private static final String MODEL = "Model ID for the selected agent (Claude also accepts aliases; opencode takes provider/model, "
-            + "and a bare ID gets the provider of the model its template configured). "
+            + "and a bare ID gets the provider of the model its template configured; Antigravity CLI takes an ID agy models lists). "
             + "Default: the template's. Claude checks access before launch; Codex reports access failures in task_result. Later turns keep it.";
     private static final String IDEMPOTENCY_KEY = "Makes the call safe to repeat (1-64 characters of A-Z, a-z, "
             + "0-9, '.', '_', ':', '-'): a later call with the same key returns what this one made, with "
@@ -164,7 +164,7 @@ final class McpTools {
                 McpTool.annotations(false, false, false),
                 this::exec));
         tools.add(new McpTool("delegate",
-                "Hand a task to Claude Code, Codex, Pi or opencode inside an instance (the template must "
+                "Hand a task to Claude Code, Codex, Pi, opencode or Antigravity CLI inside an instance (the template must "
                         + "have supports_delegate): an instruction in plain language, or a skill the "
                         + "instance defines. The agent works autonomously with the instance's tools and "
                         + "the credentials its template carries, with full access inside the instance "
@@ -174,7 +174,7 @@ final class McpTools {
                         + "with task_result, review changes with get_diff, and continue the "
                         + "conversation with send_message.",
                 Schema.object()
-                        .choice("agent", "Worker agent; defaults to Claude when installed, otherwise Codex, then Pi, then opencode", false, "claude", "codex", "pi", "opencode")
+                        .choice("agent", "Worker agent; defaults to Claude when installed, otherwise Codex, then Pi, then opencode, then Antigravity CLI", false, "claude", "codex", "pi", "opencode", "antigravity")
                         .string("instruction", "What the agent should do, with everything it needs "
                                 + "to know: it sees nothing of your conversation", false)
                         .string("skill", "Or: a skill defined in the instance, run as /<skill> <args> -- "
@@ -514,7 +514,7 @@ final class McpTools {
                     || reportBytes > report.getBytes(StandardCharsets.UTF_8).length);
         } else node.put("answer", answer(ask(task.instance(), "cat", false, report, question)));
         if (events) node.put("recent", strings(summary.recent()));
-        // Pi and opencode count their turns and price their calls; Codex reports neither, so they stay out.
+        // Pi, opencode and agy count their turns, Pi and opencode price their calls; Codex reports neither, so they stay out.
         var turns = Jjq.exactInt(result.getField("turns"));
         if (turns != null) node.put("turns", turns);
         putNumber(node, "cost_usd", result.getField("cost_usd"));
@@ -1015,7 +1015,7 @@ final class McpTools {
         var template = args.string("template");
         var requested = args.string("agent");
         if (requested != null && DelegateAgent.parse(requested) == DelegateAgent.UNKNOWN)
-            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "agent must be claude, codex, pi or opencode");
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "agent must be claude, codex, pi, opencode or antigravity");
         if ((instance == null) == (template == null)) {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give exactly one of instance or template");
         }

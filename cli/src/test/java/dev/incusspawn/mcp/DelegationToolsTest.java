@@ -1589,6 +1589,61 @@ class DelegationToolsTest {
     }
 
     @Test
+    void anAntigravityOnlyTemplateDelegatesToAgy() throws Exception {
+        backend.template("tpl-agy", true, "antigravity").template("tpl-opencode-agy", true, "opencode", "antigravity");
+        config.setTemplates(List.of("tpl-agent", "tpl-agy", "tpl-opencode-agy"));
+        var agy = templateNamed("tpl-agy");
+        assertTrue(agy.path("supports_delegate").asBoolean(false), agy.toString());
+        assertEquals("antigravity", agy.path("default_delegate_agent").asText());
+        assertEquals(1, agy.path("delegate_agents").size());
+        var descriptor = agy.path("delegate_agents").getElement(0);
+        assertEquals("antigravity", descriptor.path("agent").asText());
+        assertFalse(descriptor.path("supports_model_preflight").asBoolean(true));
+        assertEquals("full-access", descriptor.path("permission_mode").asText());
+        // Every agent that delegated before keeps its place before Antigravity CLI.
+        assertEquals("opencode", templateNamed("tpl-opencode-agy").path("default_delegate_agent").asText());
+
+        var task = structured(call("delegate", "{\"template\":\"tpl-agy\",\"instruction\":\"go\"}"));
+        assertEquals("antigravity", task.path("agent").asText());
+        assertEquals("full-access", task.path("permission_mode").asText());
+        assertTrue(backend.scripts.stream().anyMatch(s -> s.contains("command -v agy")), "the CLI is probed before launch");
+        assertEquals("antigravity", structured(call("delegate",
+                "{\"template\":\"tpl-opencode-agy\",\"agent\":\"antigravity\",\"instruction\":\"go\"}")).path("agent").asText());
+        assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-agy\",\"agent\":\"claude\",\"instruction\":\"go\"}")));
+
+        var id = task.path("task_id").asText();
+        taskState = "finished";
+        savedAgent = "antigravity";
+        savedSession = "2a8ffdb6-8686-4b09-b106-45c85bc0ad4c";
+        finishedEvents = "{\"event\":\"step_update\",\"step_update\":{\"step_index\":2,\"state\":\"ACTIVE\",\"step_type\":\"tool\","
+                + "\"tool_name\":\"run_command\",\"tool_info\":{\"parameters\":{\"CommandLine\":\"echo hi\"}}}}\n"
+                + "{\"type\":\"isx.antigravity.result\",\"success\":true,\"report_bytes\":24,\"turns\":2,"
+                + "\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"cached_input_tokens\":5}}\n";
+        var status = structured(call("task_status", "{\"task_id\":\"" + id + "\"}"));
+        assertTrue(status.path("resumable").asBoolean(false));
+        var report = structured(call("task_result", "{\"task_id\":\"" + id + "\",\"events\":true}"));
+        assertEquals("success", report.path("outcome").asText(), report.toString());
+        assertEquals(2, report.path("turns").asInt(0));
+        assertEquals(5, report.path("cached_input_tokens").asInt(0));
+        assertEquals("ran run_command: echo hi", report.path("recent").getElement(0).asText(), report.toString());
+        var continued = structured(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"continue\"}"));
+        assertEquals("antigravity", continued.path("agent").asText());
+        assertEquals(2, continued.path("run").asInt(0));
+        assertTrue(runScript(2).contains("node -e") && runScript(2).contains("Antigravity CLI task input"), runScript(2));
+
+        // No saved conversation, and none the runner can recover from the first run's events: nothing to continue.
+        savedSession = null;
+        claudeSession = null;
+        var launched = launches();
+        var none = call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"again\"}");
+        assertEquals("wrong_state", code(none));
+        assertTrue(text(none).contains("no recoverable Antigravity CLI conversation ID"), text(none));
+        assertEquals(launched, launches());
+        recoveredSession = "2a8ffdb6-8686-4b09-b106-45c85bc0ad4c";
+        assertEquals(3, structured(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"again\"}")).path("run").asInt(0));
+    }
+
+    @Test
     void piResultsAndContinuationUseItsSavedSession() throws Exception {
         addPiTemplates();
         var task = structured(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}"));
