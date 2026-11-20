@@ -303,13 +303,18 @@ class ChatGptRouteTest {
     record Reply(int status, String body, Map<String, String> headers) {}
 
     static Reply send(String host, String sni, String rawHead, String body) throws Exception {
+        return sendTo(mitmPort, host, sni, rawHead, body);
+    }
+
+    /** As {@link #send}, to the MITM listener on {@code port}: shared with {@link GoogleAuthRouteTest}. */
+    static Reply sendTo(int port, String host, String sni, String rawHead, String body) throws Exception {
         var tls = SSLContext.getInstance("TLS");
         tls.init(null, new TrustManager[]{new X509TrustManager() {
             public void checkClientTrusted(X509Certificate[] c, String a) {}
             public void checkServerTrusted(X509Certificate[] c, String a) {}
             public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
         }}, null);
-        try (var socket = (SSLSocket) tls.getSocketFactory().createSocket("127.0.0.1", mitmPort)) {
+        try (var socket = (SSLSocket) tls.getSocketFactory().createSocket("127.0.0.1", port)) {
             socket.setSoTimeout(15_000);
             var params = socket.getSSLParameters();
             // None for a null sni: connecting to an address, the client sends no TLS name
@@ -872,7 +877,7 @@ class ChatGptRouteTest {
         awaitRefreshes(1);
         // Another writer commits the same session's next generation first
         var current = store.read(ACCOUNT);
-        assertEquals(ChatGptSessionStore.Commit.COMMITTED, store.commit(current, mint(3600)));
+        assertEquals(SessionStore.Commit.COMMITTED, store.commit(current, mint(3600)));
         holdRefresh.complete(null);
 
         var reply = pending.get(20, TimeUnit.SECONDS);

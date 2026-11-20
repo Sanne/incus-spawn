@@ -60,6 +60,93 @@ class AntigravitySetupTest {
         assertThrows(IllegalStateException.class, () -> AntigravitySetup.settingsJson("[]"));
     }
 
+    /** A Google account leaves agy to sign in: no {@code modelProvider}, whatever the user's own said (#2443). */
+    @Test
+    void aGoogleAccountDropsTheApiKeyModeFromTheSettings() {
+        var google = (JqObject) JqValues.parseStrict(AntigravitySetup.settingsJson("", true));
+        assertFalse(google.keys().contains("modelProvider"), google.toJsonString());
+        assertEquals("always-proceed", google.getField("toolPermission").asText());
+        var mine = "{\"colorScheme\": \"dark\", \"modelProvider\": \"gemini\"}";
+        var merged = (JqObject) JqValues.parseStrict(AntigravitySetup.settingsJson(mine, true));
+        assertFalse(merged.keys().contains("modelProvider"), "agy exits on modelProvider gemini with no key");
+        assertEquals("dark", merged.getField("colorScheme").asText());
+        assertEquals("gemini", JqValues.parseStrict(AntigravitySetup.settingsJson(AntigravitySetup.settingsJson("", true), false))
+                .getField("modelProvider").asText(), "a move back to an API key account puts it back");
+    }
+
+    /** The build derives the mode from the account, and can re-derive it on a built instance. */
+    @Test
+    void theBakedIdentityIsTheModeNotTheAccount() throws Exception {
+        var config = new dev.incusspawn.config.SpawnConfig();
+        dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "home", "type", "google");
+        dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "work", "apiKey", "gemini-k1");
+        dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "other", "apiKey", "gemini-k2");
+        var tool = new AntigravitySetup();
+        assertEquals("google", tool.bakedAccountIdentity(config, "home"));
+        assertEquals("api-key", tool.bakedAccountIdentity(config, "work"));
+        assertEquals(tool.bakedAccountIdentity(config, "work"), tool.bakedAccountIdentity(config, "other"),
+                "two key accounts leave the image the same");
+        assertEquals("", tool.bakedAccountIdentity(config, "missing"));
+        assertEquals("", tool.bakedAccountIdentity(config, ""));
+        assertTrue(tool.canRebakeForAccount(), "settings and the login script are read when agy starts");
+    }
+
+    /**
+     * The login script seeds agy's token file from the proof in {@code GEMINI_API_KEY}, brings an
+     * isx look-alike of another digest to this login's, and leaves a real token alone.
+     */
+    @Test
+    void theLoginScriptDerivesTheTokenFileFromTheProof(@TempDir Path home) throws Exception {
+        var digest = "0123456789abcdef0123456789abcdef";
+        var token = home.resolve(".gemini/antigravity-cli/antigravity-oauth-token");
+
+        assertEquals(0, login(home, "gemini-isx_" + digest), "a home agy is not configured in gets no file");
+        assertFalse(Files.exists(token), "root's login shell leaves no stray file");
+        Files.createDirectories(token.getParent());
+        assertEquals(0, login(home, "gemini-isx_" + digest), "seeded");
+        var seeded = JqValues.parseStrict(Files.readString(token));
+        assertEquals("ya29.isx_" + digest, seeded.getField("token").pathText("access_token", ""));
+        assertEquals("1//isx_" + digest, seeded.getField("token").pathText("refresh_token", ""));
+        assertEquals("1970-01-01T00:00:00Z", seeded.getField("token").pathText("expiry", ""), "expired: agy refreshes first");
+        assertEquals("consumer", seeded.pathText("auth_method", ""));
+        assertEquals("rw-------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(token)));
+
+        var other = "fedcba9876543210fedcba9876543210";
+        Files.writeString(token, "{\"token\":{\"access_token\":\"ya29.isx_" + other + "\",\"refresh_token\":\"1//isx_" + other
+                + "\",\"expiry\":\"2030-01-01T00:00:00Z\"},\"id_token_email\":\"me@example.invalid\"}");
+        assertEquals(0, login(home, "gemini-isx_" + digest), "patched");
+        var patched = Files.readString(token);
+        assertFalse(patched.contains(other), patched);
+        assertTrue(patched.contains("ya29.isx_" + digest) && patched.contains("1//isx_" + digest), patched);
+        assertTrue(patched.contains("2030-01-01T00:00:00Z") && patched.contains("me@example.invalid"), "the rest is kept: " + patched);
+        assertEquals("rw-------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(token)),
+                "the copy the edit makes is owner-only too");
+        assertFalse(Files.exists(home.resolve(".gemini/antigravity-cli/antigravity-oauth-token.isx-new")), "no temp file left");
+
+        var real = "{\"token\":{\"access_token\":\"ya29.a-real-token\",\"refresh_token\":\"1//a-real-token\"}}";
+        Files.writeString(token, real);
+        assertEquals(0, login(home, "gemini-isx_" + digest), "left alone");
+        assertEquals(real, Files.readString(token));
+
+        Files.delete(token);
+        assertEquals(0, login(home, "gemini-placeholder"), "a static placeholder seeds nothing");
+        assertFalse(Files.exists(token));
+        assertEquals(0, login(home, "gemini-isx_$(touch " + home.resolve("pwned") + ")"), "an unhex digest runs nothing");
+        assertFalse(Files.exists(token));
+        assertFalse(Files.exists(home.resolve("pwned")));
+    }
+
+    private static int login(Path home, String geminiApiKey) throws Exception {
+        var process = new ProcessBuilder("sh", "-c", AntigravitySetup.LOGIN_SCRIPT).redirectErrorStream(true);
+        process.environment().put("HOME", home.toString());
+        process.environment().put("GEMINI_API_KEY", geminiApiKey);
+        var started = process.start();
+        var output = new String(started.getInputStream().readAllBytes());
+        assertTrue(started.waitFor(30, TimeUnit.SECONDS));
+        assertEquals("", output, output);
+        return started.exitValue();
+    }
+
     @Test
     void eachArchitectureHasItsPinnedTarball() {
         for (var arch : List.of("x86_64", "amd64", "aarch64", "arm64")) {

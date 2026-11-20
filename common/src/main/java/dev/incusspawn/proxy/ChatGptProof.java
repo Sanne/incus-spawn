@@ -43,8 +43,6 @@ public final class ChatGptProof {
     private static final String ACCESS_CONTEXT = "isx-chatgpt-access";
     private static final int DIGEST_HEX_CHARS = 64;
     private static final Pattern DIGEST = Pattern.compile("[0-9a-f]{" + DIGEST_HEX_CHARS + "}");
-    /** What an account name or a session id may hold: they are joined with ':' into the context. */
-    private static final Pattern NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}");
 
     private ChatGptProof() {}
 
@@ -112,7 +110,7 @@ public final class ChatGptProof {
 
     /** Whether {@code name} may be used as an account name or a session id here. */
     public static boolean isValidName(String name) {
-        return name != null && NAME.matcher(name).matches();
+        return SessionNames.isValid(name);
     }
 
     private static void requireName(String name, String what) {
