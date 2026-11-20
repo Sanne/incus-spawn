@@ -17,6 +17,7 @@ final class WorkerRunners {
             case CODEX -> load("codex-runner.cjs");
             case PI -> load("pi-runner.cjs");
             case OPENCODE -> load("opencode-runner.cjs");
+            case ANTIGRAVITY -> load("antigravity-runner.cjs");
             default -> throw new IllegalArgumentException(agent.id + " has no runner");
         };
     }

@@ -267,9 +267,13 @@ final class Tasks {
         var current = status(task, 0);
         var attached = current.attachedPid();
         if (task.agent().recoversSession() && !current.running() && current.sessionId() == null) {
-            // Codex's runner takes a sandbox before the model, opencode's only the model
+            // Codex's runner takes a sandbox before the model, opencode's and agy's only the model
             var empty = task.agent() == DelegateAgent.CODEX ? " '' ''" : " ''";
-            var what = task.agent() == DelegateAgent.CODEX ? "thread" : "session";
+            var what = switch (task.agent()) {
+                case CODEX -> "thread";
+                case ANTIGRAVITY -> "conversation";
+                default -> "session";
+            };
             try {
                 var recovered = run(task.instance(), "node -e " + ExecScript.quote(WorkerRunners.of(task.agent())) + " \""
                         + TaskScripts.dir(task.id()) + "\" recover" + empty, null).strip();
@@ -288,6 +292,11 @@ final class Tasks {
         }
         if (task.agent() == DelegateAgent.CLAUDE && !current.running() && current.sessionGone()) {
             throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id() + ": " + TaskScripts.CLAUDE_SESSION_GONE
+                    + "; start a new delegated task.");
+        }
+        if (task.agent() == DelegateAgent.ANTIGRAVITY && !current.running() && current.sessionGone()) {
+            // The runner would only refuse it: launching gains nothing.
+            throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id() + ": " + TaskScripts.ANTIGRAVITY_CONVERSATION_GONE
                     + "; start a new delegated task.");
         }
         if (task.agent() == DelegateAgent.PI && !current.running() && current.sessionId() == null) {

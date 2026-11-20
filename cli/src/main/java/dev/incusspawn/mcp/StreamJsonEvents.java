@@ -53,12 +53,13 @@ final class StreamJsonEvents {
 
     private StreamJsonEvents() {}
 
-    /** {@link #summarize(String, int)}, or Codex's, Pi's or opencode's for their tasks' events. */
+    /** {@link #summarize(String, int)}, or Codex's, Pi's, opencode's or Antigravity CLI's for their tasks' events. */
     static Summary summarize(DelegateAgent agent, String tail, int keep) {
         return switch (agent) {
             case CODEX -> CodexEvents.summarize(tail, keep);
             case PI -> PiEvents.summarize(tail, keep);
             case OPENCODE -> OpencodeEvents.summarize(tail, keep);
+            case ANTIGRAVITY -> AntigravityEvents.summarize(tail, keep);
             default -> summarize(tail, keep);
         };
     }

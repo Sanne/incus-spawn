@@ -56,7 +56,8 @@ final class PiEvents {
     }
 
     /**
-     * The result a runner's outcome record ({@code isx.pi.result}, {@code isx.opencode.result})
+     * The result a runner's outcome record ({@code isx.pi.result}, {@code isx.opencode.result},
+     * {@code isx.antigravity.result})
      * stands for, in the shape {@link StreamJsonEvents.Summary#result} holds.
      */
     static JqValue outcome(JqObject event) {

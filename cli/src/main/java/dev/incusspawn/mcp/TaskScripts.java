@@ -226,7 +226,7 @@ final class TaskScripts {
             sb.append(requireFlock("echo '" + NO_FLOCK + "' >&4; " + recordExit(String.valueOf(run), "127") + "; exit 0")).append('\n');
             sb.append(CONVERSATION_LOCK).append("node -e ").append(ExecScript.quote(WorkerRunners.of(agent)))
                     .append(" \"$D\" ").append(run);
-            // Pi and opencode have no permission modes: their runs differ only by model.
+            // Pi, opencode and agy have no permission modes: their runs differ only by model.
             if (agent == DelegateAgent.CODEX) sb.append(' ').append(ExecScript.quote(permissionMode));
             sb.append(' ').append(model);
             sb.append(" 2>&4\n");
@@ -368,9 +368,12 @@ final class TaskScripts {
                 + "echo cwd=$(" + readFile("$D/cwd") + "); echo session_id=$(" + readFile("$D/session_id") + "); "
                 + "ident=$(" + ifFile("$D/identity", "head -c 200") + "); "
                 + "if [ -e \"$D/identity\" ] || [ -L \"$D/identity\" ]; then echo identity=$ident; fi; "
-                // A Claude session Claude Code has since deleted: task_status says it cannot be resumed.
+                // A Claude session Claude Code has since deleted, or an agy conversation whose file is
+                // gone: task_status says it cannot be resumed.
                 + "case $ident in ''|'1 claude') " + SAVED_SESSION + "case $sid in "
-                + NOT_A_SESSION_ID + ") ;; *) " + claudeTranscriptExists("\"$sid\"") + " || echo session_gone=1;; esac;; esac; "
+                + NOT_A_SESSION_ID + ") ;; *) " + claudeTranscriptExists("\"$sid\"") + " || echo session_gone=1;; esac;; "
+                + "'1 antigravity') " + SAVED_SESSION + "case $sid in "
+                + NOT_A_SESSION_ID + ") ;; *) " + antigravityConversationExists("\"$sid\"") + " || echo session_gone=1;; esac;; esac; "
                 + Presence.script("presence=") + "; "
                 // Size and last write of the events in one stat: this runs on every status read.
                 + "set -- $(stat -c '%s %Y' \"$D/events-$n.jsonl\" 2>/dev/null); echo events_bytes=${1:-0}; echo activity=$2; echo ---; "
@@ -529,7 +532,21 @@ final class TaskScripts {
                 + "[ -z \"$h\" ] || isx_refuse \"a person is already in its conversation (agent pid $h)\"; "
                 + (agent == DelegateAgent.PI ? piSessionCheck(ExecScript.quote(sessionId)) : "")
                 + (agent == DelegateAgent.CLAUDE ? claudeTranscriptExists(ExecScript.quote(sessionId))
-                        + " || isx_refuse '" + CLAUDE_SESSION_GONE + "'; " : "");
+                        + " || isx_refuse '" + CLAUDE_SESSION_GONE + "'; " : "")
+                + (agent == DelegateAgent.ANTIGRAVITY ? antigravityConversationExists(ExecScript.quote(sessionId))
+                        + " || isx_refuse '" + ANTIGRAVITY_CONVERSATION_GONE + "'; " : "");
+    }
+
+    /** Why a join or a resume of an Antigravity CLI task is refused when its conversation's file is gone. */
+    static final String ANTIGRAVITY_CONVERSATION_GONE = "its Antigravity CLI conversation is gone, and agy would open an empty one in its place";
+
+    /**
+     * Whether agy still has the conversation {@code sessionId} (a shell word): {@code agy --conversation}
+     * with an ID it cannot find only warns, and opens a new conversation with the message in it.
+     * {@code antigravity-runner.cjs} checks the same file before a resume.
+     */
+    static String antigravityConversationExists(String sessionId) {
+        return "[ -f \"$HOME/.gemini/antigravity-cli/conversations/\"" + sessionId + "\".db\" ]";
     }
 
     /**

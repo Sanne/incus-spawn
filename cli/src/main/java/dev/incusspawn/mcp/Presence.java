@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
  */
 final class Presence {
     private static final Pattern EPOCH_SECONDS = Pattern.compile("[0-9]{1,12}");
-    /** A Claude session or a Codex thread: what either resumes by ID. */
+    /** A Claude session, a Codex thread or an Antigravity CLI conversation: what each resumes by ID. */
     private static final Pattern UUID = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     /** An opencode session, which opencode names itself. */
     private static final Pattern OPENCODE_SESSION = Pattern.compile("ses_[A-Za-z0-9]+");
@@ -33,7 +33,7 @@ final class Presence {
 
     /**
      * Prints {@code tty <pid>} for each process on a pseudo-terminal, {@code claude <pid> <cwd>},
-     * {@code codex <pid> <cwd>}, {@code pi <pid> <cwd>} or {@code opencode <pid> <cwd>} for each coding agent,
+     * {@code codex <pid> <cwd>}, {@code pi <pid> <cwd>}, {@code opencode <pid> <cwd>} or {@code antigravity <pid> <cwd>} (agy) for each coding agent,
      * {@code input <pid> <epoch seconds>} for one on a pseudo-terminal, the access time of its
      * controlling pty, which the kernel moves on input and not on output (at about 8 s granularity),
      * and {@code resume <pid> <session>} for each session one resumes. Pi replaces its command line
@@ -59,6 +59,7 @@ final class Presence {
                 codex) agent=codex; i=1;;
                 pi) agent=pi; i=1;;
                 opencode) agent=opencode; i=1;;
+                agy|antigravity) agent=antigravity; i=1;;
                 node|bun) case "${argv[1]}" in *claude*) agent=claude; i=2;; *codex*) agent=codex; i=2;; */pi-coding-agent/*) agent=pi; i=2;; *) continue;; esac;;
                 *) continue;;
               esac
@@ -75,6 +76,19 @@ final class Presence {
                   case "${argv[$i]}" in
                     --session|-s) i=$((i + 1)); [ -n "${argv[$i]}" ] && echo "resume $pid ${argv[$i]}";;
                     --session=?*) echo "resume $pid ${argv[$i]#--session=}";;
+                    --) break;;
+                  esac
+                  i=$((i + 1))
+                done
+                continue
+              fi
+              if [ "$agent" = antigravity ]; then
+                # agy resumes with --conversation; Go's flags take one dash or two, the value apart or after =.
+                while [ "$i" -lt ${#argv[@]} ]; do
+                  case "${argv[$i]}" in
+                    --conversation|-conversation) i=$((i + 1)); [ -n "${argv[$i]}" ] && echo "resume $pid ${argv[$i]}";;
+                    --conversation=?*) echo "resume $pid ${argv[$i]#--conversation=}";;
+                    -conversation=?*) echo "resume $pid ${argv[$i]#-conversation=}";;
                     --) break;;
                   esac
                   i=$((i + 1))
@@ -181,7 +195,7 @@ final class Presence {
             }
             switch (parts[0]) {
                 case "tty" -> terminals.add(pid);
-                case "claude", "codex", "pi", "opencode" -> agents.put(pid, new AgentProcess(pid, DelegateAgent.parse(parts[0]), parts.length > 2 ? parts[2] : "", new HashSet<>()));
+                case "claude", "codex", "pi", "opencode", "antigravity" -> agents.put(pid, new AgentProcess(pid, DelegateAgent.parse(parts[0]), parts.length > 2 ? parts[2] : "", new HashSet<>()));
                 case "resume" -> {
                     var c = agents.get(pid);
                     if (c != null && parts.length > 2) c.resumes().add(parts[2]);
@@ -242,7 +256,7 @@ final class Presence {
      */
     static boolean sessionShaped(DelegateAgent agent, String value) {
         return switch (agent) {
-            case CLAUDE, CODEX -> UUID.matcher(value).matches();
+            case CLAUDE, CODEX, ANTIGRAVITY -> UUID.matcher(value).matches();
             case OPENCODE -> OPENCODE_SESSION.matcher(value).matches();
             case PI, UNKNOWN -> false;
         };
@@ -251,7 +265,7 @@ final class Presence {
     /** {@link #sessionShaped} in the guest, on {@code $rest}: runs {@code then} when it holds. POSIX. */
     private static String shapedSession(DelegateAgent agent, String then) {
         return switch (agent) {
-            case CLAUDE, CODEX -> "case $rest in " + UUID_GLOB + ") " + then + ";; esac; ";
+            case CLAUDE, CODEX, ANTIGRAVITY -> "case $rest in " + UUID_GLOB + ") " + then + ";; esac; ";
             case OPENCODE -> "case $rest in ses_?*) case ${rest#ses_} in *[!A-Za-z0-9]*) ;; *) " + then + ";; esac;; esac; ";
             case PI, UNKNOWN -> "";
         };

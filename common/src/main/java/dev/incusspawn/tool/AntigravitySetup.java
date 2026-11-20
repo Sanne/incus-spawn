@@ -104,8 +104,9 @@ public class AntigravitySetup implements ToolSetup {
                 EnvEntry.set(DISABLE_AUTO_UPDATE, "true"));
     }
 
+    /** Node is for {@code isx mcp}'s delegation, whose guest runner ({@code antigravity-runner.cjs}) is a Node script; agy needs none. */
     @Override
-    public List<String> packages() { return List.of("tar", "gzip"); }
+    public List<String> packages() { return List.of("tar", "gzip", "nodejs"); }
 
     @Override
     public List<ToolDef.ActionEntry> actions() {
