@@ -55,6 +55,10 @@ public class SpawnConfig extends UndeclaredKeys {
     private Map<String, String> repoPaths = Map.of();
     @JqName("incus-bridge-gateway")
     private String incusBridgeGateway = "";
+    // The coding agent the person prefers (#2409): its tool's name, or null when unset, which is never written
+    @JqName("preferred-agent")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private String preferredAgent;
     // Escape hatch for the TUI's live refresh (Incus event subscription plus its polling
     // fallback). Null means the default, on, and is never written back, so saving a config
     // doesn't pin today's default into every user's file.
@@ -683,6 +687,9 @@ public class SpawnConfig extends UndeclaredKeys {
     public void setHostPaths(java.util.List<String> hostPaths) { this.hostPaths = hostPaths == null ? java.util.List.of() : hostPaths; }
     public Map<String, String> getRepoPaths() { return repoPaths; }
     public void setRepoPaths(Map<String, String> repoPaths) { this.repoPaths = repoPaths == null ? Map.of() : repoPaths; }
+    /** The coding agent the person prefers, by its tool's name, or null when unset. */
+    public String getPreferredAgent() { return preferredAgent; }
+    public void setPreferredAgent(String preferredAgent) { this.preferredAgent = preferredAgent == null || preferredAgent.isBlank() ? null : preferredAgent; }
     public String getIncusBridgeGateway() { return incusBridgeGateway; }
     public void setIncusBridgeGateway(String incusBridgeGateway) { this.incusBridgeGateway = incusBridgeGateway == null ? "" : incusBridgeGateway; }
 
@@ -857,6 +864,7 @@ public class SpawnConfig extends UndeclaredKeys {
         this.hostPaths = other.hostPaths;
         this.repoPaths = other.repoPaths;
         this.incusBridgeGateway = other.incusBridgeGateway;
+        this.preferredAgent = other.preferredAgent;
         this.tuiLiveRefresh = other.tuiLiveRefresh;
         this.artifactCache = other.artifactCache;
         this.gitCache = other.gitCache;

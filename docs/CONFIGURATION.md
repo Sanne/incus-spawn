@@ -339,6 +339,18 @@ host-ca:
 
 See [Host CAs](FEDORA.md#host-cas-opt-in) for what isx installs and where.
 
+## Preferred agent
+
+isx keeps the coding agent you prefer as one key in `config.yaml`.
+`isx agent` shows it and sets it:
+
+```yaml
+preferred-agent: claude
+```
+
+It limits nothing: a template installs the agent its `tools:` list names, whatever you prefer.
+Changing it changes no template.
+
 ## TUI live refresh
 
 The TUI updates live as instances are started, stopped, created or deleted elsewhere.

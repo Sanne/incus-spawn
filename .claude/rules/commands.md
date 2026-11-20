@@ -198,6 +198,9 @@ The steps only an established user can answer (`InitCommand.DEFERRED`: `credenti
 A re-run at a terminal (`rerun`: init completed here before, by its marker of any version, `table` format, no answer flags) leaves them and Credential Setup out of the walk, and ends with a menu of them read from their planners (`offerMenu`).
 Without a terminal, in a machine format, or when `requireInit` starts init for another command (`automatic`), there is no menu, and the walk is as before except that an automatic re-run at a terminal skips them too.
 `isx doctor` notes each of them that is not set up (`DoctorCommand.notSetUp`), never as a problem.
+`isx agent [<agent>|none]` (`AgentCommand`, #2409) shows or sets `preferred-agent` in `config.yaml`, one of the tools with `codingAgent()`, and lists each with what `HostAgentProbe` found of it.
+`ExampleTemplate` gives the text of `tpl-agent.yaml` for an agent (the schema modeline, `parent: tpl-minimal`, the agent in `tools:` and, when it has an action, as `default-action`) and writes it to the user's images directory only when no file is there.
+Nothing calls it from init yet (#2412); `ExampleTemplateTest` validates it for every agent, so a new agent is covered or fails it.
 The two service steps ask whether to install, so they keep their header.
 *Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded.
 When a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.
