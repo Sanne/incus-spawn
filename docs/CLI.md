@@ -276,7 +276,7 @@ If another isx process is starting or stopping it, `isx stop` waits for that fir
 
 ## `isx exec`
 
-Run a command in an instance and wait for it to finish.
+Run a command in a running instance and wait for it to finish.
 
 ```shell
 isx exec <instance> [options] -- <command> [args...]
@@ -288,11 +288,11 @@ isx exec <instance> [options] -- <command> [args...]
 | `--env NAME=value` | Set a variable for the command; repeatable |
 | `-i`, `--stdin` | Pass standard input to the command |
 
-isx starts the instance if it is stopped, as `isx start` does.
+The instance must be running: `isx exec` does not start it, and exits if it is stopped or does not exist.
 The command runs as `agentuser` in a login shell, with no terminal.
 Its stdout and stderr are those of `isx exec`, and isx reports its own progress on stderr.
 
-`isx exec` exits with the exit code of the command, or 125 when isx fails before the command runs.
+`isx exec` exits with the exit code of the command, or 125 when isx fails before the command runs, such as for a stopped instance.
 
 Each word after `--` reaches the command unchanged.
 For pipes or `&&`, run a shell:
@@ -301,7 +301,7 @@ For pipes or `&&`, run a shell:
 isx exec my-box -- bash -c 'make test | tee test.log'
 ```
 
-The instance keeps running afterwards; stop it with [`isx stop`](#isx-stop).
+Start the instance with [`isx start`](#isx-start) and stop it with [`isx stop`](#isx-stop).
 Interrupting `isx exec` ends the command in the instance.
 
 ## `isx purpose`

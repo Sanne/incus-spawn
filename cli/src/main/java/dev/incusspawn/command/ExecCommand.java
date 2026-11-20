@@ -4,8 +4,8 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.mcp.ExecScript;
-import dev.incusspawn.tui.InstanceLockManager;
+import dev.incusspawn.incus.ExecScript;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalStreams;
@@ -23,19 +23,19 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * {@code isx exec <instance> -- <command> [args...]}: run one command in an instance and wait for
- * it, for a script. The instance is started and prepared as {@code isx start} does it
- * ({@link InstanceStart}), so the command finds its credential proofs, and then left running:
- * stopping it is {@code isx stop}'s job. The command runs as agentuser in a login shell, in the
+ * {@code isx exec <instance> -- <command> [args...]}: run one command in a running instance and wait
+ * for it, for a script. A missing or stopped instance is refused, never started: starting and
+ * stopping are {@code isx start}'s and {@code isx stop}'s. A running box whose boot lacks its secret
+ * is given it, as a plain {@code ssh} does. The command runs as agentuser in a login shell, in the
  * template's workdir, with no terminal; its stdout and stderr are isx's, and its exit code is isx's.
  * isx's own failures, before the command runs, exit {@link #ISX_FAILED}, as {@code docker run}'s do.
  *
- * <p>It runs through {@code isx mcp}'s {@link ExecScript}, in a session of its own, so the whole
- * process tree is killed when isx is interrupted: a command nobody waits for must not keep running.
+ * <p>It runs through {@link ExecScript}, in a session of its own, so the whole process tree is
+ * killed when isx is interrupted: a command nobody waits for must not keep running.
  */
 @CommandDefinition(
         name = "exec",
-        description = "Run a command in an instance, starting it if it is stopped, and wait for it",
+        description = "Run a command in a running instance and wait for it",
         generateHelp = true
 )
 public class ExecCommand extends BaseCommand {
@@ -58,17 +58,12 @@ public class ExecCommand extends BaseCommand {
             description = "Pass isx's standard input to the command (otherwise it reads none)")
     boolean stdin;
 
-    /** The preparation; {@link InstanceStart.Preparer#FOR_USE} but in tests. */
-    InstanceStart.Preparer preparer = InstanceStart.Preparer.FOR_USE;
-
     @Override
     protected CommandResult doExecute() throws Exception {
-        return exec(RuntimeServices.incus(), RuntimeServices.lockManager(),
-                stdin ? TerminalStreams.in() : null, TerminalStreams.out(), TerminalStreams.err());
+        return exec(RuntimeServices.incus(), stdin ? TerminalStreams.in() : null, TerminalStreams.out(), TerminalStreams.err());
     }
 
-    CommandResult exec(IncusClient incus, InstanceLockManager locks, InputStream in, OutputStream out,
-                       OutputStream err) throws Exception {
+    CommandResult exec(IncusClient incus, InputStream in, OutputStream out, OutputStream err) throws Exception {
         if (args == null || args.size() < 2) {
             BuildOutput.error("name an instance and the command to run in it.",
                     "Usage: isx exec <instance> [options] -- <command> [args...]",
@@ -82,16 +77,20 @@ public class ExecCommand extends BaseCommand {
         String runId = "cli-" + ProcessHandle.current().pid();
         try {
             var environment = environment(env);
-            // stdout holds only the command's output: what the start says goes to stderr
-            var workdir = withStdoutOnStderr(() -> {
-                InstanceStart.start(incus, locks, name, BuildOutput.bound(), preparer, InstanceStart.WAIT);
-                return incus.configGet(name, Metadata.WORKDIR);
-            });
+            var instance = incus.instanceMetadataOrThrow(name);
+            if (instance == null) {
+                BuildOutput.error("no instance named '" + shown + "' found.", "Run 'isx list' to see available instances.");
+                return CommandResult.valueOf(ISX_FAILED);
+            }
+            if (!"Running".equals(instance.path("status").asText(""))) {
+                BuildOutput.error(shown + " is not running.", "Start it with 'isx start " + shown + "'.");
+                return CommandResult.valueOf(ISX_FAILED);
+            }
+            // A box Incus restarted by itself lacks its secret, without which the proxy refuses its proofs
+            withStdoutOnStderr(() -> InstanceLifecycle.giveSecretIfMissing(incus, name, instance, BuildOutput.bound()));
+            var workdir = instance.path("config").path(Metadata.WORKDIR).asText("");
             script = ExecScript.build(runId, cwd != null ? cwd : workdir.isEmpty() ? "." : workdir,
                     environment, command, null);
-        } catch (InstancePrep.Refused e) {
-            if (!e.reported()) InstancePrep.reportRefusal(e.getMessage());
-            return CommandResult.valueOf(ISX_FAILED);
         } catch (RuntimeException e) {
             BuildOutput.abandonStep();
             BuildOutput.error("could not run the command in " + shown + ": " + failure(e));

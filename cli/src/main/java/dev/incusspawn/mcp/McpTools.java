@@ -1,5 +1,6 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.incus.ExecScript;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.McpScope;
 import dev.incusspawn.command.GuestProvisioning;
@@ -842,6 +843,11 @@ final class McpTools {
         return cwd == null || cwd.isBlank() ? fallback : GuestProvisioning.expandHome(cwd.strip());
     }
 
+    /** What {@link ExecScript} refuses (an environment name, a time limit), as the client's mistake. */
+    private static ToolError invalidArgument(IllegalArgumentException e) {
+        return new ToolError(ToolError.Code.INVALID_ARGUMENT, e.getMessage());
+    }
+
     private ToolResult exec(McpTool.Args args, ToolContext ctx) throws InterruptedException {
         var name = args.requireString("instance");
         var metadata = session.requireRunning(name);
@@ -866,7 +872,12 @@ final class McpTools {
                 return ToolResult.text("Task " + replayed.id() + " in " + name + " was started by an earlier call with this "
                         + "idempotency_key; nothing new was started. Check it with task_status or wait_any.", node.build());
             }
-            var task = tasks.startCommand(name, cwd, env, command, key);
+            Tasks.Task task;
+            try {
+                task = tasks.startCommand(name, cwd, env, command, key);
+            } catch (IllegalArgumentException e) {
+                throw invalidArgument(e);
+            }
             McpAuditLog.record(session.id, "exec(background)", name, command, 0, "task=" + task.id());
             var node = taskNode(task)
                     .put("background", true);
@@ -883,7 +894,12 @@ final class McpTools {
 
         // This process's pid, not the session's: an instance session has none, and spans processes.
         var runId = "exec-" + ProcessHandle.current().pid() + "-" + runs.incrementAndGet();
-        var script = ExecScript.build(runId, cwd, env, command, timeout);
+        String script;
+        try {
+            script = ExecScript.build(runId, cwd, env, command, timeout);
+        } catch (IllegalArgumentException e) {
+            throw invalidArgument(e);
+        }
         if (ask != null) {
             script = AskScript.build(script, true, ask, summaryModel());
             limit = Math.max(limit, AskScript.ANSWER_LIMIT + 4096);
