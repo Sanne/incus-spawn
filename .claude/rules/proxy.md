@@ -548,6 +548,7 @@ Key design:
   Design: design/proxy.md "The event log".
   `EventLogReader` (`common`) is the one reader, for `isx overview` and the TUI's overview: by incarnation, torn lines skipped and counted; `EventLog.KEPT` is its `KEPT`, and `EventLogReaderTest` (proxy) reads what `EventLog` wrote.
   `EventLogTest` pins it.
+  `isx mcp` appends `kind: task` lines to the same file itself (`EventLogAppender`, #2428), so the proxy's cached size undercounts by those few lines; the reader books calls to runs in `TaskRuns`.
 - **`/activity` (#898)** serves `ApiActivity`: per instance, Messages API creates only (`ApiActivity.isModelCall`), counted in `streamApiRequest` and `retainVertexRequest` (`beginModelCall`) and ended once on the client response's end or close, with tokens read from 2xx responses' `usage` by `UsageTap` as `pipeResponse` relays them (cumulative stream counts: keep the max per field).
   Counted calls go upstream with `Accept-Encoding: identity`; nothing else's headers change.
   Each instance's counters carry their own creation time (`counting_since`), never the proxy's start, and a read creates them for every instance the registry knows, so a known instance always has one.

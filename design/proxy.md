@@ -1230,6 +1230,9 @@ A purpose changed later (`isx purpose`) writes another line for the same incarna
 The line gives the log, kept after the instance is destroyed, what each incarnation was for.
 It is not an event of the instance, so it moves neither its first nor its last time.
 Labels on `create_instance` and `delegate` (#2427's optional part) are not written yet.
+`isx mcp` appends a `kind: task` line to the same file when a task's run starts and when it sees one end (`op: start` or `end`, #2428): `instance`, `incarnation`, `task_id`, `run`, `task_kind`, the client's `activity`, and on an end the `state` and, when known, `exit_code`.
+It appends in one write to the file opened for append, so its line and the proxy's are never interleaved, and it never asks the proxy, whose health server only reads.
+`EventLogReader` books each model call to the run that encloses it (`Log.runs`); design/mcp.md "Task runs in the event log, with an activity" has the rules.
 A push is `POST github.com/<owner>/<repo>[.git]/git-receive-pack`, and its branches are the commands at the head of the body, before the pack: the proxy keeps at most the first 8 KiB as the body streams past and never holds or pauses it.
 A pull request is `POST api.github.com/repos/<owner>/<repo>/pulls` or the `createPullRequest` mutation that `gh pr create` sends to `/graphql`, and its number is read from the first 32 KiB of the answer.
 Reading an answer needs it uncompressed, so those two requests go upstream with `Accept-Encoding: identity`, as a model call does.

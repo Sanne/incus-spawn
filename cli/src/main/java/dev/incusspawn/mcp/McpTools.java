@@ -50,6 +50,9 @@ final class McpTools {
     private static final String MODEL = "Model ID for the selected agent (Claude also accepts aliases; opencode takes provider/model, "
             + "and a bare ID gets the provider of the model its template configured; Antigravity CLI takes an ID agy models lists). "
             + "Default: the template's. Claude checks access before launch; Codex reports access failures in task_result. Later turns keep it.";
+    private static final String ACTIVITY = "A tag of your own for the kind of work this run is (1-16 chars of a-z, 0-9, '-'), "
+            + "e.g. 'implement', 'pr-review', 'review-fixes': isx gives it no meaning and records it in the host's event log "
+            + "beside the run's start and end, so a report can say what each kind of work cost.";
     private static final String IDEMPOTENCY_KEY = "Makes the call safe to repeat (1-64 characters of A-Z, a-z, "
             + "0-9, '.', '_', ':', '-'): a later call with the same key returns what this one made, with "
             + "replayed: true, instead of making another, for as long as that exists. A repeat must ask for "
@@ -187,6 +190,7 @@ final class McpTools {
                         .string("purpose", "For a fresh instance: what it is for (see create_instance)", false)
                         .string("cwd", "Directory to work in (default: the template's workdir; a leading ~ is the agent user's home)", false)
                         .string("model", MODEL, false)
+                        .string("activity", ACTIVITY, false)
                         .string("idempotency_key", IDEMPOTENCY_KEY + " (the same instance, or the same "
                                 + "template: then the fresh instance carries the key too, as create_instance's "
                                 + "does, and a repeat finds the task in it, or starts it there if the first "
@@ -242,6 +246,7 @@ final class McpTools {
                         .string("task_id", "Task id of a delegated agent", true)
                         .string("message", "Your message to the agent", true)
                         .string("model", "Run this turn and later ones on this model instead (see delegate)", false)
+                        .string("activity", ACTIVITY + " Not carried over from earlier runs.", false)
                         .build(),
                 OutputSchemas.runStarted(),
                 McpTool.annotations(false, false, false),
@@ -866,7 +871,8 @@ final class McpTools {
                 return ToolResult.text("Task " + replayed.id() + " in " + name + " was started by an earlier call with this "
                         + "idempotency_key; nothing new was started. Check it with task_status or wait_any.", node.build());
             }
-            var task = tasks.startCommand(name, cwd, env, command, key);
+            var task = tasks.startCommand(name, cwd, env, command, key,
+                    new Tasks.RunNote(null, metadata.get(InstanceBackend.CREATED_AT)));
             McpAuditLog.record(session.id, "exec(background)", name, command, 0, "task=" + task.id());
             var node = taskNode(task)
                     .put("background", true);
@@ -1020,6 +1026,7 @@ final class McpTools {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give exactly one of instance or template");
         }
         var key = McpSession.checkKey(args.string("idempotency_key"));
+        var activity = McpSession.checkActivity(args.string("activity"));
         var cwd = args.string("cwd");
         if (template != null) {
             return underKey(key, made -> {
@@ -1030,7 +1037,7 @@ final class McpTools {
                 if (requested != null && intended != null && !requested.equals(intended))
                     throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "idempotency_key already selected agent " + intended);
                 if (adopt) adoptForReplay(made.getKey(), made.getValue(), key);
-                return delegateIn(made.getKey(), cwd, prompt, profile, key, requested == null ? intended : requested);
+                return delegateIn(made.getKey(), cwd, prompt, profile, key, requested == null ? intended : requested, activity);
             }, listing -> {
                 if (key != null) tasks.keyed(null, Tasks.AGENT, key);
                 policy.requireListed(template);
@@ -1046,17 +1053,19 @@ final class McpTools {
                                 return backend.create(info, name, withAgent);
                             });
                     return new Made(created, () -> startDelegate(created.name(), info.name(),
-                            created.accounts().get(agent.namespace), cwd, created.workdir(), prompt, profile, true, key, agent));
+                            created.accounts().get(agent.namespace), cwd, created.workdir(), prompt, profile, true, key, agent,
+                            new Tasks.RunNote(activity, null)));
                 }
             });
         }
-        return delegateIn(instance, cwd, prompt, profile, key, requested);
+        return delegateIn(instance, cwd, prompt, profile, key, requested, activity);
     }
 
     /** What {@code delegate} was asked: {@code text} as Claude reads it, and a skill's name and arguments. */
     private record Brief(String text, String skill, String args) {}
 
-    private ToolResult delegateIn(String name, String cwd, Brief prompt, Tasks.Profile profile, String key, String requested) {
+    private ToolResult delegateIn(String name, String cwd, Brief prompt, Tasks.Profile profile, String key, String requested,
+                                  String activity) {
         var metadata = session.requireRunning(name);
         var template = McpSession.templateOf(metadata);
         var replayed = key == null ? null : tasks.keyed(name, Tasks.AGENT, key);
@@ -1069,7 +1078,8 @@ final class McpTools {
         var info = policy.requireLineage(template);
         var agent = DelegateAgent.select(info, requested);
         return startDelegate(name, template, metadata.get(Metadata.accountKey(agent.namespace)), cwd,
-                IncusInstanceBackend.workdir(metadata), prompt, profile, false, key, agent);
+                IncusInstanceBackend.workdir(metadata), prompt, profile, false, key, agent,
+                new Tasks.RunNote(activity, metadata.get(InstanceBackend.CREATED_AT)));
     }
 
     /**
@@ -1113,7 +1123,8 @@ final class McpTools {
      * once the task's slot is reserved, so a call refused anyway spends no request on it.
      */
     private ToolResult startDelegate(String instance, String template, String account, String cwd, String workdir,
-                                     Brief prompt, Tasks.Profile profile, boolean fresh, String key, DelegateAgent agent) {
+                                     Brief prompt, Tasks.Profile profile, boolean fresh, String key, DelegateAgent agent,
+                                     Tasks.RunNote note) {
         Tasks.Task task;
         try {
             // A fresh instance's caller just ran checkCapacityForNewAgent: its own tasks need not
@@ -1128,7 +1139,7 @@ final class McpTools {
                                 throw new ToolError(ToolError.Code.REFUSED, agent.label + " skill '" + prompt.skill()
                                         + "' is not installed at " + skillPath + "; rebuild the template with that skill.");
                         }
-                    }, key, agent);
+                    }, key, agent, note);
         } catch (RuntimeException e) {
             // An instance made for this task alone is no use to the agent, which never learns its name
             // -- unless a call repeating this one under its key found it, and started the task there.
@@ -1431,6 +1442,7 @@ final class McpTools {
         var task = owned.task();
         var message = args.requireString("message");
         var override = profile(args);
+        var activity = McpSession.checkActivity(args.string("activity"));
         var template = session.instances().stream().filter(o -> o.name().equals(task.instance()))
                 .map(McpSession.Owned::template).findFirst()
                 .orElse(McpSession.templateOf(owned.metadata()));
@@ -1443,7 +1455,8 @@ final class McpTools {
         DelegateAgent.select(policy.requireLineage(template), agent.id);
         var account = owned.metadata().get(Metadata.accountKey(agent.namespace));
         var updated = tasks.sendMessage(task, message, override,
-                () -> checkAgent(task.instance(), template, account, override.model(), agent));
+                () -> checkAgent(task.instance(), template, account, override.model(), agent),
+                new Tasks.RunNote(activity, owned.metadata().get(InstanceBackend.CREATED_AT)));
         McpAuditLog.record(session.id, "send_message", task.instance(), message, 0,
                 "task=" + task.id() + " turn=" + updated.runs() + describe(override));
         return ToolResult.text("Sent. Task " + task.id() + " is running turn " + updated.runs()

@@ -79,7 +79,7 @@ Every tool naming an instance calls `McpSession.requireOwned()` (registry *and* 
 `wait_any` takes its ids with `Tasks.requireHeld()`, since waiting copes with an instance it cannot ask.
 `metadata()` and `mcpInstances()` carry the Incus status as `InstanceBackend.STATUS` from the same read (and `LAST_USED_AT` and `TYPE`, for the secret check); every task goes through `Tasks.require()`.
 The only ways into the registry besides creating are `McpSession.resume()` (an instance session taking back what its own stamp names, below) and `McpSession.adopt()`: same `mcp-owner`, not kept, not busy, template still approved, holder dead (or released it, `Orphans.releasedByHolder`) unless `force`, and the stamp read back after writing it.
-`McpNoWritePathTest` forbids config/definition writes, builds, account changes, host processes and host file writes (except the audit log) in the package -- a change that needs one of those changes the trust model and should have to edit that test.
+`McpNoWritePathTest` forbids config/definition writes, builds, account changes, host processes and host file writes (except the audit log, and the event log's task lines through `EventLogAppender` from `TaskRunLog` alone) in the package -- a change that needs one of those changes the trust model and should have to edit that test.
 The one deliberate exception is `HostToolRunner.java`, which may use `ProcessBuilder` to run user-defined commands from `host-tools:` in `mcp.yaml`.
 The agent has no influence on the command string: it can only trigger a tool, never pass arguments to it.
 When `min-interval` is positive (default 10s), concurrent invocations and calls that come too soon are refused.
@@ -175,6 +175,13 @@ A replay is not refused by `max-concurrent-tasks`: it starts nothing.
 The health address is resolved once and kept until a read fails; an unreachable or older proxy is a `ToolError` naming `isx proxy status`, never `requireProxy`.
 The result's field names are the contract: `counting_since` (per instance, when the proxy created its counters; absent only for an instance the proxy does not know; a client subtracts two reads only when both carry the same one), `requests`, `requests_in_flight`, `last_request_at`, `last_response_at`, `idle_seconds` (only with nothing in flight), and the API's own `input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, then all its traffic (#935): `traffic_requests`, `traffic_in_flight`, `last_traffic_at`, `traffic_request_bytes`, `traffic_response_bytes`.
 Grow it additively.
+
+**Task runs in the event log (#2428).**
+`delegate` and `send_message` take an optional `activity` (`McpSession.checkActivity`, a name hint's shape), which belongs to that run alone and is never carried to a later turn.
+`Tasks.launch` writes a `kind: task` start line (`TaskRunLog.started`, stamped by `launching()` just before the launch exec) with it and the incarnation from the read the tool made (`Tasks.RunNote`), never an extra Incus request.
+Every path that learns a run's state (`status`, `observeWatch`, `probe`, `adopt`, `forgetLocked` for a gone instance) calls `TaskRunLog.seen`, which writes one end line per run this session saw running, whatever the watcher's opt-in.
+The line is appended to the proxy's event log by `EventLogAppender` (`common`), in one write; the proxy is never asked, since its health server only reads.
+`TaskRuns` (`common`) is the reader's side, through `EventLogReader.Log.runs`.
 
 **Task notifications (#1014).**
 `notifications/isx/task_changed` goes only to a client that listed `isx/task_changed` under `capabilities.experimental`; `McpServer`'s `experimental` map starts it after the `initialize` response, and without it nothing polls.

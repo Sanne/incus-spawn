@@ -278,6 +278,36 @@ Bytes and the last activity move when a request starts and ends, not per chunk: 
 The fields are added, never renamed: `isx mcp`'s `instance_activity` gains `traffic_*` fields beside the model-call ones, and `isx proxy activity` prints both, one record per instance and the unattributed one last (`--by-domain` for one per instance and domain).
 The health server answers only `GET` and `HEAD` (405 for anything else) and `/activity` only to the host, whatever the method: it is the one listener every container reaches, so it never gets a write endpoint (next section).
 
+**Task runs in the event log, with an activity (#2428).**
+A warm instance does several kinds of work in its life: an implementation, then a round of review fixes by `send_message`, then perhaps a failing check.
+A label on the instance books all of it as one thing, so what each kind of work cost is a property of a task's run, not of the box.
+`delegate` and `send_message` therefore take an optional `activity`, a tag of the client's own (`implement`, `pr-review`, `review-fixes`), of a name hint's shape (`McpSession.checkActivity`).
+isx gives it no meaning, and it belongs to the one run it was given with: unlike `model`, a later turn does not carry it over, or a review-fixes turn would be booked as the implementation.
+`isx mcp` writes a `kind: task` line to the proxy's event log when a run starts and when it sees one end (`TaskRunLog`), for commands as well as agents.
+The start line is written once the launch returned, with the activity and the incarnation from the read the tool already made, so it costs no Incus request.
+Its time is taken just before the launch exec is sent, so a model call the run makes before the exec returns lies inside the run.
+The end line is written once per run, by whichever read first sees the run no longer running: a status, a watch, a state probe, the probe of an adoption, or the instance found gone.
+It carries the time `isx mcp` saw it, so a call between the run's real end and that moment is booked to the run.
+It gives up that precision for no guest timestamp in the log: no other run of the task starts before that moment, and no other agent of the session in that instance.
+A session that adopts an instance writes the end of a run it found running; the start line, which another session wrote, is what names its activity.
+A run that ends unseen, because the session died or nobody asked, has no end line.
+The reader books each model call to the run whose start and end enclose it, by instance name and time and by incarnation when both lines carry one (`TaskRuns`, read with the rest of the log by `EventLogReader`).
+A start line from a fresh instance carries no incarnation, since its create returned none, so the run takes the one its first call names.
+A run without an end is closed at the next start of a run of its kind in its instance, or of another incarnation of the name, else at the last call its incarnation made.
+A background command started beside an agent therefore never cuts the agent's run short.
+An end seen before the launch returned waits for the start line, so a run's end is never written before its start.
+An agent's run takes a call before a command's, since a background build beside an agent rarely calls a model itself.
+A call two runs of the same rank enclose, such as two sessions' agents in one box, is booked as `shared`, never split or guessed; one no run encloses is the instance's alone.
+A day's sum of calls that the fold left (`model_sum`, #2429) is booked to a run only when its first and last call both lie in that run.
+One whose span crosses a run's start or end is booked as `folded`: the fold kept when the day's calls began and ended, not which run made each.
+The agent's rank decides first here too: a sum inside an agent's run is the agent's though it crosses a background command's run.
+A person working in the box during a run is booked to that run; `attached` transitions could bound that later.
+Booking keeps every model call of a read in memory until its end: about 65 ms more on the largest log the proxy keeps (docs/dev/PERFORMANCE-NOTES.md "Reading the event log with task runs booked").
+Why `isx mcp` writes the line itself, not the proxy: the proxy cannot see a task's transitions, and the health server is the one listener every container reaches, so it never gets a write endpoint to be told of them.
+The line goes into the proxy's own file, appended in one write (`EventLogAppender`), so it rolls with the calls it covers and no join across two retentions is needed.
+The proxy's rollover then counts a few hundred bytes too few per run, which moves a rollover by as much.
+Rejected: tagging each model call with its task from inside the instance, which needs the cooperation of the agent the proxy exists not to trust (#322), and leaving each client to log its own task table and join it with the event log.
+
 **Structured results for programs (#1010).**
 A daemon driving `isx mcp` is a client that is not a model, and it should not have to parse a sentence to find a task id or a state: the wording of those sentences changes in nearly every follow-up.
 So every tool declares an `outputSchema` in `tools/list` and returns a matching `structuredContent` object (MCP 2025-06-18), while the text the model reads stays as it was.

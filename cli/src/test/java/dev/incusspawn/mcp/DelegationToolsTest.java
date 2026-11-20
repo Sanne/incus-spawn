@@ -67,6 +67,8 @@ class DelegationToolsTest {
     private volatile int busyElsewhere;
     /** When set, reading a task's status fails, as an exec Incus cannot run would. */
     private volatile boolean failStatus;
+    /** The latest run launched of each task, which its status reports. */
+    private final Map<String, String> launchedRun = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final String EVENTS = """
             {"type":"system","subtype":"init","session_id":"s1"}
@@ -104,6 +106,8 @@ class DelegationToolsTest {
                 return String.join("\n", ids) + "\n";
             }
             if (script.contains("systemd-run")) {
+                var unit = java.util.regex.Pattern.compile("--unit=isx-task-(t[0-9a-z-]+)-([0-9]+)").matcher(script);
+                if (unit.find()) launchedRun.put(unit.group(1), unit.group(2));
                 if (launchEntered != null) {
                     launchEntered.countDown();
                     try {
@@ -138,13 +142,16 @@ class DelegationToolsTest {
             if (failStatus && script.contains("echo run=")) throw new IllegalStateException("exec failed");
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
             if (taskState.equals("unknown")) return "run=1\nkind=agent\nstate=unknown\n---\n\n---stderr\n";
+            // The guest reports its task's latest run
+            var asked = java.util.regex.Pattern.compile("(t[0-9]+-[0-9a-z]+)").matcher(script);
+            var run = asked.find() ? launchedRun.getOrDefault(asked.group(1), "1") : "1";
             var who = attached ? "cwd=/home/agentuser\nsession_id=s1\npresence=claude 77 /elsewhere\n"
                     + "presence=resume 77 s1\npresence=tty 77\npresence=input 77 1700000000\n" : savedSession == null ? (claudeSession == null || taskState.equals("running") ? "" : "session_id=" + claudeSession + "\n" + (claudeSessionGone ? "session_gone=1\n" : "")) : "identity=1 " + savedAgent + "\nsession_id=" + savedSession + "\n";
             return taskState.equals("running")
-                    ? "run=1\nkind=agent\nstate=running\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
+                    ? "run=" + run + "\nkind=agent\nstate=running\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
-                    : taskState.equals("lost") ? "run=1\nkind=agent\nstate=lost\n" + who + "events_bytes=400\n---\n" + EVENTS + "\n---stderr\n"
-                    : "run=1\nkind=agent\nstate=finished\nexit=0\n" + who + "events_bytes=400\n---\n"
+                    : taskState.equals("lost") ? "run=" + run + "\nkind=agent\nstate=lost\n" + who + "events_bytes=400\n---\n" + EVENTS + "\n---stderr\n"
+                    : "run=" + run + "\nkind=agent\nstate=finished\nexit=0\n" + who + "events_bytes=400\n---\n"
                             + (finishedEvents != null ? finishedEvents : EVENTS) + "\n---stderr\n";
         };
     }
@@ -1719,5 +1726,62 @@ class DelegationToolsTest {
         var sent = call("send_message", "{\"task_id\":\"t10-new\",\"message\":\"go on\"}");
         assertEquals("refused", code(sent), text(sent));
         assertTrue(text(sent).contains("upgrade isx"), text(sent));
+    }
+
+    // --- task runs in the event log (#2428) ---
+
+    private List<JqValue> taskLines() throws Exception {
+        var file = home.resolve(".local/state/incus-spawn/events/events.jsonl");
+        if (!java.nio.file.Files.exists(file)) return List.of();
+        return java.nio.file.Files.readAllLines(file).stream().map(JqValues::parseStrict)
+                .filter(l -> l.pathText("kind", "").equals("task")).toList();
+    }
+
+    private static String describe(JqValue line) {
+        return line.pathText("op", "") + " " + line.pathText("task_id", "") + "#" + line.path("run").asLong(0)
+                + " " + line.pathText("task_kind", "") + " " + line.pathText("activity", "")
+                + (line.pathText("op", "").equals("end") ? " " + line.pathText("state", "") + " " + line.path("exit_code").asLong(-1) : "");
+    }
+
+    @Test
+    void eachRunOfATaskHasAStartAndAnEndLineWithItsOwnActivity() throws Exception {
+        var r = call("delegate", "{\"instruction\":\"fix it\",\"template\":\"tpl-agent\",\"activity\":\"implement\"}");
+        var task = structured(r).path("task_id").asText();
+        var instance = structured(r).path("instance").asText();
+        assertEquals(List.of("start " + task + "#1 agent implement"), taskLines().stream().map(DelegationToolsTest::describe).toList());
+        assertEquals(instance, taskLines().getFirst().pathText("instance", ""));
+
+        taskState = "finished";
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"address the review\","
+                + "\"activity\":\"review-fixes\"}").path("isError").asBoolean(false));
+        call("task_status", "{\"task_id\":\"" + task + "\"}");
+        call("task_status", "{\"task_id\":\"" + task + "\"}");
+        // A turn's activity is its own: one without names none
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push\"}").path("isError").asBoolean(false));
+        assertEquals(List.of(
+                "start " + task + "#1 agent implement",
+                "end " + task + "#1 agent implement finished 0",
+                "start " + task + "#2 agent review-fixes",
+                "end " + task + "#2 agent review-fixes finished 0",
+                "start " + task + "#3 agent "), taskLines().stream().map(DelegationToolsTest::describe).toList(),
+                "one end per run, however often it is seen ended");
+    }
+
+    @Test
+    void anActivityOfAnotherShapeIsRefusedBeforeAnythingIsMade() throws Exception {
+        var r = call("delegate", "{\"instruction\":\"fix it\",\"template\":\"tpl-agent\",\"activity\":\"Implement it\"}");
+        assertEquals("invalid_argument", code(r), text(r));
+        assertEquals(0, launches());
+        assertTrue(taskLines().isEmpty());
+    }
+
+    @Test
+    void aBackgroundCommandsRunIsLoggedWithItsInstancesIncarnation() throws Exception {
+        var instance = structured(call("create_instance", "{\"template\":\"tpl-agent\"}")).path("instance").asText();
+        var task = structured(call("exec", "{\"instance\":\"" + instance + "\",\"command\":\"make\",\"background\":true}"))
+                .path("task_id").asText();
+        var start = taskLines().getFirst();
+        assertEquals("start " + task + "#1 command ", describe(start));
+        assertEquals(backend.metadata(instance).get(InstanceBackend.CREATED_AT), start.pathText("incarnation", null));
     }
 }
