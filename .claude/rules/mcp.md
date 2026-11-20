@@ -14,8 +14,8 @@ paths:
 
 `isx mcp` serves the Model Context Protocol over stdio so an agent on the host can use isx instances -- or, through the proxy, an agent in an instance branched with `--mcp-client`.
 design/mcp.md "MCP server: delegating work to isx instances" has the rationale; these are the invariants.
-Managed delegation supports Claude Code, Codex, Pi and opencode through the closed `DelegateAgent` registry.
-`list_templates.delegate_agents` exposes installed agents, capabilities and permissions; explicit `delegate.agent` selects one, otherwise Claude wins when installed, then Codex, then Pi, then opencode.
+Managed delegation supports Claude Code, Codex, Pi, opencode and Antigravity CLI (`antigravity`, the command `agy`) through the closed `DelegateAgent` registry.
+`list_templates.delegate_agents` exposes installed agents, capabilities and permissions; explicit `delegate.agent` selects one, otherwise Claude wins when installed, then Codex, then Pi, then opencode, then Antigravity CLI.
 `send_message` keeps the task's recorded agent, including after adoption and idempotent replay.
 `send_message` and `delegate(instance=...)` re-check the instance's template with `TemplatePolicy.requireLineage` to select the agent, so follow-ups are refused once that template is unapproved, project-local or has no definition.
 The [Codex worker design](../../docs/dev/MCP-CODEX-DELEGATION.md) describes the lifecycle and capability differences.
@@ -46,6 +46,12 @@ opencode runs through `mcp/opencode-runner.cjs`: `opencode run --format json --a
 opencode names its session; the runner saves the `sessionID` of the first event, and `recover`s it from `events-1.jsonl` like Codex's thread ID (`DelegateAgent.recoversSession`).
 opencode refuses a missing `--session` (exit 1, no session made), so it needs no session check; a resume whose events name another session is stopped.
 A bare `model` gets the provider of `opencode.json`'s `model`, since opencode takes `provider/model`; without one there it fails, asking for that form.
+The [Antigravity CLI worker design](../../docs/dev/MCP-ANTIGRAVITY-DELEGATION.md) records how agy differs.
+agy runs through `mcp/antigravity-runner.cjs`: `agy -p= --input-format stream-json --output-format stream-json --dangerously-skip-permissions`, the prompt on stdin as one `{"event":"user","message":{...}}` line (an argument is capped at 128 KiB), the brief opening run 1's prompt, `--conversation <id>` on a resume.
+agy names its conversation in its `init` event, which the runner saves and `recover`s like opencode's session.
+`agy --conversation` with an ID it cannot find only warns and opens a new conversation, and prints `init` only after reading the prompt, so the runner and the join guard (`TaskScripts.antigravityConversationExists`) first check `~/.gemini/antigravity-cli/conversations/<id>.db`, and a resume whose `init` names another conversation is stopped.
+The `result` event's `usage` and `num_turns` count the whole conversation, so the runner sums the run's own `agent_response` steps; the report is the result's `response`.
+The `antigravity` tool installs `nodejs` for the runner alone; a coordinator's agy is not registered with `mcp.isx` (agy expands nothing in `mcp_config.json`).
 `instance_activity.model_usage_providers` declares the proxy's Anthropic-only model counters; OpenAI traffic remains in the domain counters.
 
 **No Quarkus extensions for it.**
@@ -112,17 +118,17 @@ A stopped orphan with a `mcp-dormant` naming its holder (`Orphans.dormantSince`)
 `adopt_instance` then calls `McpSession.wakeIfDormant()` on every adoption, a repeat included, which starts a held instance found stopped with any `mcp-dormant` (progress and audit line) and clears the stamp only after, so the retry `unavailable`/`busy` promise is the same call.
 `start_instance` and `stop_instance` clear a leftover `mcp-dormant` (`McpTools.notDormant`), so an instance its holder started or stopped on purpose is never woken by a later adoption.
 Task ids carry a random per-session tag (they outlive the session); `Tasks.adopt()` rebuilds them from `TaskScripts.list()`.
-A task is `attached` when `Presence` finds an agent of its own kind resuming its `session_id`, or working in its recorded physical `cwd` without resuming another session by its ID (`Presence.sessionShaped`: a UUID for Claude and Codex, `ses_...` for opencode; a picker search term is not one); `send_message` refuses then.
+A task is `attached` when `Presence` finds an agent of its own kind resuming its `session_id`, or working in its recorded physical `cwd` without resuming another session by its ID (`Presence.sessionShaped`: a UUID for Claude, Codex and agy, `ses_...` for opencode; a picker search term is not one); `send_message` refuses then.
 It leaves `attached` only on an event, never after an idle time (#1995): the holder exits, or `reclaim_task` / `isx shell --task --take` ends it.
 `Reclaim` is one guest exec: it refuses while a run is going, records who in the task's `reclaimed`, sends SIGHUP and nothing harder, and waits for the holder and then the lock.
 `task_status` reports `attached_tty` and `attached_last_input_at` (the holder's pty atime, the probe's `input` lines) as facts that never change the state.
-`isx shell <instance> --task [<id>]`, the TUI's Shift+F2 and `task_status.join_command` go through `TaskJoin`, whose guest command (`TaskScripts.joinGuard`, `cd <cwd>`, then `flock -n -o -E 213 "$D" claude --resume <id>`, `codex resume <id>`, `pi --session-id <id>` or `opencode --session <id>`, with no `exec`, so the shell can report a lock it did not get) starts the agent `Presence` matches; `TaskScriptsTest` runs it against the probe, so change both together.
+`isx shell <instance> --task [<id>]`, the TUI's Shift+F2 and `task_status.join_command` go through `TaskJoin`, whose guest command (`TaskScripts.joinGuard`, `cd <cwd>`, then `flock -n -o -E 213 "$D" claude --resume <id>`, `codex resume <id>`, `pi --session-id <id>`, `opencode --session <id>` or `agy --conversation <id>`, with no `exec`, so the shell can report a lock it did not get) starts the agent `Presence` matches; `TaskScriptsTest` runs it against the probe, so change both together.
 `TaskJoin` reads the task directories in one exec (`TaskScripts.joinable()`) without a session, never guesses among several, and refuses a task whose run is not over or that a person is already in (the same exec runs the `Presence` probe).
 The guest command checks both again just before it starts the agent (`TaskScripts.joinGuard`), and exits on a refusal, leaving the reason for the host under a nonce (`joinRefusal`), so `isx shell --task` exits 1.
 Every run and every joined agent starts under `TaskScripts.CONVERSATION_LOCK` (`flock -n -o` on the task directory), so a run and a person who joined through `isx shell --task` (or Shift+F2) never both hold one conversation; one who resumes by hand takes no lock and has only the `attached` check; a run that finds it taken exits 213 (`CONVERSATION_TAKEN`), and one without flock in the guest exits 127 saying so.
 Codex resume parsing skips options and their values before reading the positional session ID, even when the person launches from another directory.
 Pi overwrites its command line with its title, so `Presence` finds a person's Pi by name and working directory only; that is enough, as Pi's sessions belong to their directory.
-A person's opencode is found by its directory and its `--session`/`-s` argument.
+A person's opencode is found by its directory and its `--session`/`-s` argument, and a person's agy by its directory and its `--conversation` (one dash or two, the value apart or after `=`).
 A delegate's `model` (`Tasks.Profile`) lives on the task and in its directory, so later runs and adopting sessions keep it; a `max-turns` file an older isx left there is no longer read.
 A chosen model passes `ModelCheck` in the instance once the run's slot is reserved, before it launches (`Tasks.launch`'s `check`; under `timeout`; cached per template, the account `InstanceBackend.effectiveAccount` resolves the pin to now, and model; refusals not cached; only a `result`/`success` event with exit 0 passes, and a turn naming a model is checked even if it is the task's).
 The permission mode is never a tool argument.
@@ -220,7 +226,7 @@ Every start path's bit is pinned both ways, `1` for a coordinator and `0` otherw
 
 **Set up by `isx init` or `isx mcp setup`.**
 The "Agent Access over MCP" step (`InitCommand.setupMcp`, default off, skipped without a console) registers the server with `claude mcp add --scope user isx -- <launch>` when the host has `claude`, and asks, per template whose chain installs a coding agent (`ToolSetup.codingAgent()`), whether to approve it (#2178).
-A template with no agent `delegate` runs (`claude`, `codex`, `pi` or `opencode`) is marked create and exec only in its question.
+A template with no agent `delegate` runs (`claude`, `codex`, `pi`, `opencode` or `antigravity`) is marked create and exec only in its question.
 Without a host `claude` the approvals are the whole step, so approved templates alone count as set up, and the menu's `n` says to choose `t` and approve none (#2078).
 Either way, enabling it names `isx mcp config` for any other client.
 Templates approved by hand that it does not ask about are kept.
