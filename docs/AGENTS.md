@@ -331,6 +331,7 @@ It writes these settings into `~/.gemini/antigravity-cli/settings.json`, keeping
 - no tips and no feedback surveys.
 
 It also marks the first-run questions as answered.
+It installs Node.js as well, which `isx mcp` needs to hand a task to `agy` ([MCP](MCP.md)).
 Every build writes the [environment primer](#agent-environment-context) to `~/.gemini/config/rules/isx.md`, a rule `agy` always loads.
 Your own `~/.gemini/GEMINI.md` and `AGENTS.md` stay yours.
 

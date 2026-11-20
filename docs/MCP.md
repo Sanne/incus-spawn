@@ -1,6 +1,7 @@
 # Delegating from an agent on your host (MCP)
 
-An agent on your host, such as Claude Code, can use isx itself: create instances from templates you approved, run builds and tests in them, and hand whole tasks to Claude Code, Codex, Pi or opencode inside an instance.
+An agent on your host, such as Claude Code, can use isx itself: create instances from templates you approved, run builds and tests in them, and hand whole tasks to a coding agent inside an instance.
+The agent inside can be Claude Code, Codex, Pi, opencode or Antigravity CLI.
 `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio.
 
 This page covers setup, what the agent gets, and running the coordinating agent in an instance of its own.
@@ -14,7 +15,7 @@ A program that drives `isx mcp` from code has [a page of its own](MCP-PROTOCOL.m
 `isx init` asks, for each template that installs a coding agent, whether agents may use it.
 
 An agent can create instances from any template you approve and run commands in them.
-It can hand a task only to Claude Code, Codex, Pi or opencode, so `isx init` marks a template with Gemini CLI, Antigravity CLI, Bob Shell or GitHub Copilot CLI as create and exec only.
+It can hand a task only to Claude Code, Codex, Pi, opencode or Antigravity CLI, so `isx init` marks a template with Gemini CLI, Bob Shell or GitHub Copilot CLI as create and exec only.
 
 When Claude Code is installed on the host, `isx init` also registers `isx mcp` in Claude Code for all projects.
 
@@ -122,7 +123,7 @@ An agent gets these tools, and no others.
 | `stop_instance` / `start_instance` | Stop an instance, to fork it, and start it again. Stop is refused while a task runs, unless forced. |
 | `list_instances` / `adopt_instance` | The agent's instances and their tasks, including the instances an ended session left behind. `adopt_instance` gives one of those to the current session. |
 | `exec` | Run a command as `agentuser`, in the foreground or as a background task. |
-| `delegate` | Give an instruction or an installed skill to Claude Code, Codex, Pi or opencode in an instance, or in a fresh one from a template. |
+| `delegate` | Give an instruction or an installed skill to Claude Code, Codex, Pi, opencode or Antigravity CLI in an instance, or in a fresh one from a template. |
 | `task_status` / `wait_any` / `task_result` | Follow a task, wait for whichever of several finishes first, read its outcome or the agent's report. |
 | `send_message` | Continue a delegated agent's conversation, for example "push and open a PR". |
 | `get_diff` | What a delegated task changed, committed or not: a patch, or only the files and line counts. |
@@ -131,24 +132,28 @@ An agent gets these tools, and no others.
 | `cancel_task` / `destroy_instance` | Stop a task, or delete an instance. |
 | `keep_instance` | Give an instance to you permanently. |
 
-### Delegating to Claude Code, Codex, Pi or opencode
+### Delegating to Claude Code, Codex, Pi, opencode or Antigravity CLI
 
-`delegate` runs Claude Code, Codex, Pi or opencode inside the instance.
-The agent picks one with `agent: "claude"`, `"codex"`, `"pi"` or `"opencode"`.
-Without a choice, `delegate` runs Claude Code when the template installs it, then Codex, then Pi, then opencode.
+`delegate` runs Claude Code, Codex, Pi, opencode or Antigravity CLI inside the instance.
+The agent picks one with `agent: "claude"`, `"codex"`, `"pi"`, `"opencode"` or `"antigravity"`.
+Without a choice, `delegate` runs Claude Code when the template installs it, then Codex, then Pi, then opencode, then Antigravity CLI.
 
 `send_message` keeps the task's agent and resumes its saved conversation.
 The agent that delegates may be Claude Code whichever agent it delegates to.
 
 Every delegated agent runs with full access inside its instance and no turn limit, since the instance is the boundary.
-Claude runs in `bypassPermissions` mode, Codex in `danger-full-access` without approval prompts, Pi with every tool, and opencode with `--auto`.
+Claude runs in `bypassPermissions` mode, Codex in `danger-full-access` without approval prompts, Pi with every tool, opencode with `--auto`, and Antigravity CLI with `--dangerously-skip-permissions`.
 
 The model is the template's unless the call names one.
 For opencode the call names it as `provider/model`.
 A bare model ID also works when the template sets a model, and gets that model's provider.
 
+For Antigravity CLI the call names an ID that `agy models` lists in the instance.
+With a free-tier Gemini key, the default model of Antigravity CLI fails every task with a quota error, so name a Flash model.
+
 Codex uses the template's `openai` credential account.
 Pi and opencode use the account of their template's `provider`: the Claude account, the `openai` one or the `gemini` one.
+Antigravity CLI uses the `gemini` account, as Gemini CLI does.
 
 ### Asking a question instead of reading the output
 
@@ -156,7 +161,7 @@ Pi and opencode use the account of their template's `provider`: the Claude accou
 The tool then does not return the text: a single run of Claude Code on `summary-model` reads the text inside the instance and answers the question, such as "which tests fail?".
 A long log or patch then never fills the host agent's context.
 
-This needs Claude Code in the instance; an instance with only Codex, Pi or opencode refuses `ask`.
+This needs Claude Code in the instance; an instance with only Codex, Pi, opencode or Antigravity CLI refuses `ask`.
 
 The answer is a model's reading of the text, so it can be wrong and it leaves details out.
 Whatever decides a merge stays deterministic: `get_diff` with `stat`, CI, a reviewer.

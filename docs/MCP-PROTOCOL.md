@@ -40,10 +40,10 @@ Neither changes the state: a task leaves `attached` only when that agent exits, 
 
 | Field | What it holds |
 |-------|---------------|
-| `agent` | `claude`, `codex`, `pi` or `opencode`. |
+| `agent` | `claude`, `codex`, `pi`, `opencode` or `antigravity`. |
 | `model` | The template's configured model. |
-| `supports_model_preflight` | Whether a chosen `model` is checked against the account before launch. Claude only; Codex, Pi and opencode report model-access errors in the task result. |
-| `permission_mode`, `approval_policy` | Always full access inside the instance: `bypassPermissions` for Claude, `danger-full-access` with approval policy `never` for Codex, `full-access` for Pi and for opencode, which runs with `--auto`. |
+| `supports_model_preflight` | Whether a chosen `model` is checked against the account before launch. Claude only; Codex, Pi, opencode and Antigravity CLI report model-access errors in the task result. |
+| `permission_mode`, `approval_policy` | Always full access inside the instance: `bypassPermissions` for Claude, `danger-full-access` with approval policy `never` for Codex, `full-access` for Pi, for opencode, which runs with `--auto`, and for Antigravity CLI, which runs with `--dangerously-skip-permissions`. |
 
 A task's `model` override persists across `send_message` and adoption.
 A Pi task has a `session_id` only once Pi has saved its session; before that, or once that session is gone, `send_message` is refused with `wrong_state`.
@@ -105,4 +105,4 @@ For what a task spent, read the counts before and after the task and subtract, b
 A different or missing `counting_since` means the proxy restarted between the two reads and the counts started again from zero.
 `isx proxy activity` shows the same counts for every instance on the host.
 
-Codex reports its own token usage in the task result when available, and Pi and opencode their turns, tokens and `cost_usd`.
+Codex reports its own token usage in the task result when available, Pi and opencode their turns, tokens and `cost_usd`, and Antigravity CLI its turns and tokens.

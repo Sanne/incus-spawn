@@ -4,7 +4,7 @@ How agents and orchestrators drive isx: the MCP server, and the ordinary command
 
 ## MCP server: delegating work to isx instances
 
-`isx mcp` lets an agent on the host -- the user's own Claude Code -- use isx the way the user does: create disposable instances from approved templates, run commands in them, and hand whole tasks to Claude Code, Codex, Pi or opencode inside one.
+`isx mcp` lets an agent on the host -- the user's own Claude Code -- use isx the way the user does: create disposable instances from approved templates, run commands in them, and hand whole tasks to Claude Code, Codex, Pi, opencode or Antigravity CLI inside one.
 The host agent plans and reviews; instances do the work, with the same isolation and credential injection as any branch.
 
 Managed delegation selects the installed worker agent independently of the MCP client.
@@ -13,11 +13,17 @@ Existing Claude-only calls retain their defaults; mixed templates default to Cla
 The [Pi worker design](../docs/dev/MCP-PI-DELEGATION.md) records what differs for Pi.
 Pi resumes by an exact session ID isx chooses before launch, so nothing has to be captured; but `--session-id` silently creates a missing session, so a resume checks that the session header's creation time is run 1's.
 Pi has no sandbox or permission modes, so it always runs with every tool.
-The [opencode worker design](../docs/dev/MCP-OPENCODE-DELEGATION.md) records what differs for opencode, which comes last in the default order so that no template that delegated before changes its default.
+The [opencode worker design](../docs/dev/MCP-OPENCODE-DELEGATION.md) records what differs for opencode, which comes after Pi in the default order so that no template that delegated before changes its default.
 opencode names its own session, which the runner saves from the first event as Codex's does; it refuses a `--session` it cannot find instead of creating one, so a resume needs none of Pi's checks.
+The [Antigravity CLI worker design](../docs/dev/MCP-ANTIGRAVITY-DELEGATION.md) records what differs for `agy` (#2366), which comes last of all.
+agy names its conversation in its `init` event, saved and recovered as opencode's session is; but `--conversation` with an ID it cannot find only warns and opens a new conversation, and agy prints `init` only after it read the prompt.
+So a resume, and a person's join, first check that the conversation's file is still there, and a resume whose `init` names another conversation is stopped.
+The prompt goes on stdin as one stream-json message, since `-p` takes the prompt as an argument, capped at 128 KiB.
+agy is a Go binary, so the tool installs Node for the runner alone; the alternative, a runner in shell with no JSON parser in a minimal image, would have to parse agy's events by hand.
+A coordinator's agy does not get the isx server: agy expands nothing in `mcp_config.json`, so the rotating instance secret would have to be written into the file on every start.
 
 **Workers run with full access, bounded by the instance (#1857).**
-Claude runs in `bypassPermissions`, Codex in `danger-full-access` with `approval_policy=never`, Pi with every tool, opencode with `--auto`, and none has a turn limit (`DelegateAgent.permissionMode`).
+Claude runs in `bypassPermissions`, Codex in `danger-full-access` with `approval_policy=never`, Pi with every tool, opencode with `--auto`, Antigravity CLI with `--dangerously-skip-permissions`, and none has a turn limit (`DelegateAgent.permissionMode`).
 `mcp.yaml` once had `delegate-permission-mode(s)`, `delegate-max-turns` and `codex.sandbox-mode(s)`, and a delegate's `max_turns`.
 They added policy surface and refusals that coupled the agents: Codex and Pi were refused while a Claude mode was restrictive or a turn ceiling set, since neither could honour it.
 The isolation boundary is the instance itself, its proxy account bounding what credentials reach, so a narrower mode inside it protected nothing the instance does not.
