@@ -26,7 +26,12 @@ import java.util.Set;
  *
  * <p>The binary is pinned: Google's installer reads the newest release from a manifest and checks
  * its sha512, and the sha256 below was taken from the tarballs that manifest named, after that
- * check. Its self-updater is turned off, so the pin is what runs.
+ * check. Its self-updater is turned off, so the pin is what runs. The upstream watch's
+ * {@code antigravity} item moves the pin and reads these lines as they are written. A change to
+ * their shape takes three PRs: {@code upstream/engine/source-antigravity.sh} first, reading both
+ * shapes, since {@code upstream-verify} reads a PR with main's engine and {@code UpstreamManifestTest}
+ * validates the engine PR's own tree; then this file; then the engine drops the old shape
+ * (design/upstream.md).
  */
 public class AntigravitySetup implements ToolSetup {
 

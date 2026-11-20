@@ -65,6 +65,7 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `starship` | `common/src/main/resources/tools/starship.yaml` (`description`, both URLs and sums) | `starship/starship` releases, the `.sha256` asset beside each tarball | `publisher-sums` | mechanical | `series` (the major) | 48h | a new major (`go:build`) |
 | `idea-index-plugin` | `common/src/main/resources/tools/idea-backend.yaml` (the plugin's `downloads:` entry) | `hechtcarmel/jetbrains-index-mcp-plugin` releases, GitHub's digest of the signed zip | `asset-digest` | review | `series` (the major) | 48h | a new major (`go:build`) |
 | `jasolo` | `common/src/main/resources/tools/jasolo.yaml` (`description`, the jar's URL and sum) | `mkouba/jasolo` releases, GitHub's digest of the runner jar | `asset-digest` | review | `series` (the major) | 48h | a new major (`go:build`) |
+| `antigravity` | `common/src/main/java/dev/incusspawn/tool/AntigravitySetup.java` (`VERSION`, `BUILD`, both sha256) | Google's stable Linux manifests (the installer's), and the `manifest.json` beside each build in the bucket, a sha512 per tarball | `publisher-sums` | review | `series` (the major) | 24h | a new major (`go:build`) |
 | `maven-3` | `common/src/main/resources/tools/maven-3.yaml` (description, URL, sum, link, `MAVEN_HOME`) and `.mvn/wrapper/maven-wrapper.properties` (the zip's URL and `distributionSha256Sum`) | Apache's `maven-3/` listing, the `.asc` of each file, signed by the release manager | `signed-file`, `upstream/keys/apache-maven.asc` | mechanical | `series` (3.9) | 24h | a new series (`go:build`) |
 | `mvnd` | `common/src/main/resources/tools/mvnd.yaml` (both URLs, sums and links) | Apache's `mvnd/` listing, the `.asc` of each zip | `signed-file`, `upstream/keys/apache-mvnd.asc` | mechanical | `series` (1.x) | 24h | a new major (`go:build`) |
 | `incus` | `appliance/build.sh` (`INCUS_VERSION`, `INCUS_SHA512`) | linuxcontainers.org's `downloads/incus/` listing of LTS releases (`X.0.Y`), the `.asc` of the tarball | `signed-file`, `upstream/keys/incus-stgraber.asc` | mechanical | `series` (7.0) | 24h | a new LTS (`go:design`); gate `kernel-mac-verified` |
@@ -107,6 +108,43 @@ What this gives up: the plugin's pin lags until Sanne merges, and the download n
 Two items may name one file, as `idea-index-plugin` and `idea-backend` do.
 A bump then changes the file of both, so `upstream-verify` counts an item as changed only when a field it declares differs between the merge base and the head, and an app PR that changes the fields of two items fails.
 The regeneration check still compares the whole tree, so a change to anything else in the file fails as before.
+
+## The antigravity source type
+
+Antigravity CLI (`agy`) is pinned in `AntigravitySetup.java`, not a tool YAML, and moves through an `antigravity` item (#2366).
+Google publishes no signature and no sha256, and lists no releases with dates.
+What it does publish, read by its installer and by `agy`'s self-updater, is one manifest per platform on its updater service (`manifests/linux_amd64.json`, `linux_arm64.json`).
+Each names the one stable version, the tarball's URL in Google's `antigravity-public` bucket, and its sha512.
+The same JSON also sits beside each build's tarball as `manifest.json`, and stays there when the stable version moves on.
+That it stays was observed, not promised: on 2026-11-20 both Linux `manifest.json` files were there for each of the last 25 builds, back to 1.4.2, and the bucket refuses anonymous listing.
+If Google removed the pinned build's `manifest.json`, `check` would return 2, as for any publisher that cannot be read (#2261).
+The plan step then fails before its issue and hand-off steps, so that run opens no PR and no issue for any item of this repository, and `track` opens `[upstream] watch failing`.
+The watch does not recover by itself: every run fails the same way until a person moves the pin, with `upstream.sh apply antigravity <stable version>`, or the file returns.
+
+**Chosen:** the candidate is the stable version alone, and only while both Linux manifests name the same build under the bucket.
+While they name two builds, as when a rollout reached one platform first, the item proposes nothing and the rest of the watch goes on.
+Each build's `manifest.json` must name that version and URL and give the stable manifest's sha512.
+The engine downloads both tarballs, checks them against the sha512 and pins their sha256, which is what `DownloadCache` checks.
+A version the stable manifests no longer name is read only at the build the tree itself pins, from its `manifest.json`, so the six-hourly check of the pin keeps passing after Google moves on.
+That check runs with `UPSTREAM_REHASH=0`, so it does not download the tarballs and does not notice one replaced under its name; only a check with a re-hash, as `upstream-verify` runs for a person's PR, fails on it.
+When both stable manifests name a version older than the pin, Google rolled a release back, and the check opens a pin-mismatch issue (`src_confirms`, which reads each manifest on its own, so a split rollout hides no rollback), since the pulled build's `manifest.json` still reads as valid.
+The release date is the bucket's `timeCreated` of the later tarball.
+
+**Alternatives:** the updater also answers `/releases`, every version with its build number, undocumented and without sums or dates.
+Taking candidates from it could propose a build Google never made stable, or one it pulled.
+Pinning the sha512 beside the sha256 would let the check skip the download, but `DownloadCache` takes a sha256, so the second sum would be read by nothing in isx.
+
+**Why:** the stable manifests are what every `agy` install trusts, so the pin follows exactly what Google gives its own users.
+The sum comes from Google over HTTPS, as JetBrains' does, so it proves consistency and transfer, not provenance.
+The item is `class: review` anyway: isx's delegation parses what `agy` prints and the conversations it writes (`antigravity-runner.cjs`, `AgentSessions`), and no CI job runs `agy` against a model.
+
+What this gives up: Google releases about once a day, and the 24h floor counts from the tarball's upload, not from the moment the manifests named it stable.
+A build uploaded a day or more before Google made it stable is proposed at once, with no time left for a yank.
+One made stable at its upload is proposed only once it has stood a day, which about half of November 2026's releases did.
+An app PR passes `upstream-verify` only while its version is still the stable one; when Google moves on, the next run proposes the new version.
+Every new sum costs a download of both tarballs, about 200 MB.
+With `UPSTREAM_REHASH=0`, as in `plan`'s check of the pin, the pin keeps its own sum and nothing is downloaded.
+That spares the pin alone: while the item's PR is open, each six-hourly run prepares its commit again and downloads both tarballs of the new version, since their sha256 is written nowhere the engine reads.
 
 ## The signed-file source type
 
@@ -342,7 +380,7 @@ The merge script requires `class: mechanical` by name, so it refuses a review it
 
 | Threat | How it is closed |
 |---|---|
-| Compromised upstream or release feed | Where the publisher signs (kernel.org, Apache, Incus, Alpine, Arch, Ubuntu), the signature against a committed key is required and the feed only tells the engine *which* version to verify. Where it does not (JetBrains, the images releases), the URL allowlist and `within` bound what a feed can point at, `cooling` leaves time for an upstream yank, and the pin remains a public PR and a reviewed record. A publisher whose own signing key is compromised is beyond any watcher. |
+| Compromised upstream or release feed | Where the publisher signs (kernel.org, Apache, Incus, Alpine, Arch, Ubuntu), the signature against a committed key is required and the feed only tells the engine *which* version to verify. Where it does not (JetBrains, Google's agy manifests, the images releases), the URL allowlist and `within` bound what a feed can point at, `cooling` leaves time for an upstream yank, and the pin remains a public PR and a reviewed record. A publisher whose own signing key is compromised is beyond any watcher. |
 | Poisoned checksum source | Signed sums, or a signature of the file itself: closed by the signature, from a key whose primary fingerprint the manifest pins. Same-origin sums: `upstream-verify` re-downloads artifact and sums from the publisher, never from the PR, so a sum not derived from the publisher fails; and a pinned version whose values the publisher no longer confirms becomes an issue, not a re-pin. |
 | Credential exfiltration | The app key is an environment secret only `main`'s `upstream-watch.yml` can reference; it is read in one step of a job that does not download anything, on another runner than the one that fetched publisher data, and the minted token is per run, per repository, one hour. The app has no ruleset bypass, so the worst a thief can do is open branches and PRs, and the bot merges only a PR that byte-matches the engine's regeneration. Sanne's own account's token (`BOT_TOKEN`) leaves Actions. |
 | A malicious PR or issue reaching the job | The watch has no PR, issue or comment trigger, reads no PR, issue or comment, and takes input only from the manifest on `main` and the publisher endpoints it names; `workflow_dispatch` input is checked against the manifest's keys; no `${{ }}` reaches a `run:` line. `upstream-verify` runs `main`'s engine, has no secret and never executes PR content. |

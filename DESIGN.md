@@ -197,6 +197,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The model: a manifest, an engine, two workflows and a merge gate
   - The items
   - The github-asset source type
+  - The antigravity source type
   - The signed-file source type
   - The github-action source type
   - The maven-central source type
