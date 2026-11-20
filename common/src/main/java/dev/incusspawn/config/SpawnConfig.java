@@ -1004,7 +1004,7 @@ public class SpawnConfig extends UndeclaredKeys {
             migrateHostPath();
             var configFile = file();
             OwnDirectory.create(configFile.getParent());
-            Jjq.writeYaml(configFile, this);
+            Jjq.writeYaml(configFile, this, SchemaModeline.CONFIG);
             // Restrict permissions - config contains tokens
             configFile.toFile().setReadable(false, false);
             configFile.toFile().setReadable(true, true);

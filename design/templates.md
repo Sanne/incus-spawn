@@ -267,9 +267,11 @@ The retired `mcp.yaml` keys stay in its schema, so an editor does not flag a fil
 The schemas are looser where the loaders are: a list or mapping may be empty (`packages:` alone), and a checksum or tag of digits may be a number, since YAML reads `0000` as an integer and the loader reads it back as text.
 What a schema cannot say stays in the validators: that a parent exists, a project-local template's confinement, and which keys a trusted template alone may use.
 
-isx writes `config.yaml` from its model, which drops comments, so no modeline lasts in that file, and the package never writes `mcp.yaml`.
-Only the template and tool files carry a modeline for that reason, bar one example: the skeleton, the built-in templates and tools (`EditorSchemasTest`), and so the template overrides `isx templates edit` copies from them.
-The one exception is the `mcp.yaml` example in docs/MCP.md, which carries its line because people copy it.
+Every writer of these files goes through `SchemaModeline`, so the line is there whichever command made the file.
+`SpawnConfig.save` and `McpConfig.save` write the whole file from the model each time, so their line is part of what they write and is never lost.
+`TemplatesCommand.store`, which `isx templates new` (skeleton or `--from`) and the TUI use, and the copy of a built-in template for `isx templates edit` apply it to the text, unless the file already opens with a `yaml-language-server` line, which is the person's choice.
+isx creates no tool file, so a tool takes the line by hand.
+`BaseImagePin` files are isx's own bookkeeping, with no schema, and carry none.
 
 The schemas are a public contract, since files in the wild name their address: a key is added, never renamed or removed.
 SchemaStore.org registration, which would apply them with no modeline, is not done yet.

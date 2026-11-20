@@ -39,10 +39,21 @@ class TemplatesNewFromTest {
             default-action: claude
             """;
 
+    /** What is stored for it: as given, under the first line the editor's schema is named on. */
+    static final String STORED = dev.incusspawn.config.SchemaModeline.TEMPLATE.line() + "\n" + QUICK_START;
+
     @TempDir Path dir;
 
     private static Path stored(String name) {
         return Environment.configDir().resolve("images").resolve(name + ".yaml");
+    }
+
+    @Test
+    void aDefinitionThatOpensWithItsOwnSchemaLineKeepsIt() throws Exception {
+        var own = "# yaml-language-server: $schema=./my-template.json\n" + QUICK_START;
+        var run = newFrom("tpl-agent", own);
+        assertEquals(0, run.exit(), run.out().lines().toString());
+        assertEquals(own, Files.readString(stored("tpl-agent")));
     }
 
     /** What a run printed and how it ended. */
@@ -87,7 +98,7 @@ class TemplatesNewFromTest {
     void theQuickStartTemplateIsStoredAsGivenWithNoEditor() throws Exception {
         var run = newFrom("tpl-agent", QUICK_START);
         assertEquals(0, run.exit(), run.out().lines().toString());
-        assertEquals(QUICK_START, Files.readString(stored("tpl-agent")));
+        assertEquals(STORED, Files.readString(stored("tpl-agent")));
         assertTrue(run.out().lines().contains("Created " + stored("tpl-agent")), run.out().lines().toString());
     }
 
@@ -241,11 +252,11 @@ class TemplatesNewFromTest {
         var changed = QUICK_START.replace("Claude Code on the base OS", "Mine");
         var refused = newFrom("tpl-agent", changed);
         assertEquals(1, refused.exit());
-        assertEquals(QUICK_START, Files.readString(stored("tpl-agent")));
+        assertEquals(STORED, Files.readString(stored("tpl-agent")));
         assertTrue(refused.out().events(RecordingOutput.Kind.ERROR).getFirst().msg().contains("already exists"));
 
         assertEquals(0, newFrom("tpl-agent", changed, "--replace").exit());
-        assertEquals(changed, Files.readString(stored("tpl-agent")));
+        assertEquals(dev.incusspawn.config.SchemaModeline.TEMPLATE.line() + "\n" + changed, Files.readString(stored("tpl-agent")));
         try (var left = Files.list(stored("tpl-agent").getParent())) {
             assertEquals(List.of(stored("tpl-agent")), left.toList(), "no partial file is left beside it");
         }

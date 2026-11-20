@@ -370,7 +370,7 @@ public class McpConfig extends McpUndeclaredKeys {
             var temp = Files.createTempFile(target.getParent(), ".mcp-", ".yaml",
                     PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
             try {
-                Jjq.writeYaml(temp, this);
+                Jjq.writeYaml(temp, this, SchemaModeline.MCP);
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } finally {
                 Files.deleteIfExists(temp);

@@ -73,7 +73,7 @@ class TemplateSkeletonTest {
 
     @Test
     void theSkeletonStartsWithTheSchemaModelineEditorsRead() {
-        assertEquals("# yaml-language-server: $schema=https://isx.run/schema/template.json",
+        assertEquals(dev.incusspawn.config.SchemaModeline.TEMPLATE.line(),
                 TemplatesCommand.SKELETON.lines().findFirst().orElseThrow());
     }
 
