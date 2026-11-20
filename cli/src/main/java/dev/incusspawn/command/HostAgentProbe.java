@@ -89,17 +89,7 @@ public final class HostAgentProbe {
 
         /** The agent's name as a person knows it. */
         public String title() {
-            return switch (agent) {
-                case "claude" -> "Claude Code";
-                case "codex" -> "Codex CLI";
-                case "gemini-cli" -> "Gemini CLI";
-                case "antigravity" -> "Antigravity CLI";
-                case "pi" -> "Pi";
-                case "opencode" -> "opencode";
-                case "copilot" -> "GitHub Copilot CLI";
-                case "bob" -> "Bob Shell";
-                default -> agent;
-            };
+            return HostAgentProbe.title(agent);
         }
 
         /** What was found, in a few words: {@code signed in with a subscription, model opus (~/.claude.json)}. */
@@ -122,6 +112,21 @@ public final class HostAgentProbe {
             // A path under CLAUDE_CONFIG_DIR or CODEX_HOME is the environment's, shown as plain shows a value
             return OutputFormat.oneLine(String.join(", ", parts) + (foundIn == null ? "" : " (" + foundIn + ")"));
         }
+    }
+
+    /** An agent's name as a person knows it, by its tool's name: {@code Claude Code}; the name itself for one isx does not know. */
+    public static String title(String agent) {
+        return switch (agent) {
+            case "claude" -> "Claude Code";
+            case "codex" -> "Codex CLI";
+            case "gemini-cli" -> "Gemini CLI";
+            case "antigravity" -> "Antigravity CLI";
+            case "pi" -> "Pi";
+            case "opencode" -> "opencode";
+            case "copilot" -> "GitHub Copilot CLI";
+            case "bob" -> "Bob Shell";
+            default -> agent;
+        };
     }
 
     /**

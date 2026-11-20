@@ -58,6 +58,10 @@
       "type": "string",
       "description": "The address of Incus's bridge, when isx cannot find it itself."
     },
+    "preferred-agent": {
+      "type": "string",
+      "description": "The coding agent you prefer, by its tool's name, such as claude. It limits nothing: a template installs the agent its tools list names."
+    },
     "tui-live-refresh": {
       "type": "boolean",
       "default": true,

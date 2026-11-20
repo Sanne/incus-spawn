@@ -427,6 +427,7 @@ A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](do
 | [`isx templates`](docs/CLI.md#isx-templates) | Manage template definitions |
 | [`isx tools`](docs/CLI.md#isx-tools) | List and inspect available tool definitions |
 | [`isx account`](docs/CLI.md#isx-account) | Add credentials, and show or change the accounts an instance uses |
+| [`isx agent`](docs/CLI.md#isx-agent) | Show or set your preferred coding agent |
 | [`isx project`](docs/CLI.md#isx-project) | Manage project templates |
 | [`isx proxy`](docs/CLI.md#isx-proxy) | Manage the MITM authentication proxy |
 | [`isx doctor`](docs/CLI.md#isx-doctor) | Run health checks and offer to fix problems |

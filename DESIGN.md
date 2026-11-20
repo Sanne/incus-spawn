@@ -59,6 +59,8 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
   A run shows the steps that ask nothing as one block, with no header or hint, and a failing one prints its hint with its error (#2406); `--plan` keeps every hint.
   The steps only an established user can answer (accounts, search paths, code directories, MCP approvals) run alone as `isx init <step>`, and a re-run at a terminal offers them as a menu read from their planners rather than asking each again (#2407).
   This gives up the tour a re-run used to give: a person who wants a step again picks it from the menu.
+  The person's preferred agent is one key, `preferred-agent`, set with `isx agent` (#2409); there is no template syntax for it, so a template still names a concrete agent.
+  The example template isx writes for it (`ExampleTemplate`) names that agent outright, and is the person's file from then on: isx never writes over it.
   Credential Setup's plan also notes the coding agents already set up on the host (`HostAgentProbe`, #2408), and `isx doctor` lists them as notes: for each agent isx supports, whether it is installed and signed in, the kind of account, its cloud project and region, and the model chosen.
   The probe only reads the agents' files and the environment; it runs no agent, `gh` or `gcloud`, which could refresh a session, and never opens the macOS Keychain.
   It returns no secret: a sign-in is reported by where it was seen, a file or a variable's name, and a model, project or region is kept only when it cannot be a token.
