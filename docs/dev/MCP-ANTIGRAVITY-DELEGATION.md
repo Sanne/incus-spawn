@@ -60,6 +60,9 @@ The result's own `usage` and `num_turns` count the whole conversation, not the r
 agy reports no cost and no cache writes.
 A record above 8 MiB is dropped unparsed, as for Pi and opencode; when the dropped one was the `result`, the report counts as lost and the run fails.
 A run succeeds only with exit zero, a `result` whose status is `SUCCESS`, and no malformed record.
+agy itself decides that status: after a model call timed out and a retry answered, it still reports `ERROR`, the retry's answer as its `response` and exit 1 (seen on a real instance).
+The task then fails with the report kept and the timeout as its stderr, so a coordinator reads both.
+A failed model call shows in `recent` as "a model call failed", since its `error_message` step carries no text; agy may retry it, or give up, as it does on a 429.
 
 ## Policy and capability differences
 
@@ -91,3 +94,9 @@ A coordinator whose only agent is agy therefore cannot reach `mcp.isx.internal`.
 It covers initial and resumed runs, prompt quoting, brief delivery, a lost conversation, another conversation opened in its place, failure cases, an oversized result, recovery of a conversation ID, presence and the join guard.
 `DelegationToolsTest` covers discovery, selection, results and continuation, and `DelegateAgentProbeTest` the probe.
 The runner was also run by hand against the real agy 1.5.12 with a free-tier key: two runs continued one conversation, a missing conversation was refused before agy started, and the default model's 429 became the task's error.
+
+On 2026-11-20 it ran end to end on a real Incus in a VM, through `isx mcp` over stdio, with `gemini=inherit` and a Flash model:
+- `list_templates` offered `antigravity` for an agy-only template, and `delegate` ran agy, which wrote a file that `get_diff` showed;
+- `send_message` resumed the same conversation, and agy answered from it without a tool, with that run's own usage;
+- a task on the default model failed with Google's 429 as its error;
+- `isx shell --task` started `agy --conversation <id>` in the task's directory, `task_status` said `attached` and `send_message` was refused, and `reclaim_task` ended it with SIGHUP.
