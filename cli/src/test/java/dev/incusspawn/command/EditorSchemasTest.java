@@ -11,6 +11,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.MavenMirrors;
 import dev.incusspawn.config.MavenRepositories;
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.config.SchemaModeline;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -33,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -343,6 +345,20 @@ class EditorSchemasTest {
                 assertValid(file, new String(in.readAllBytes()));
             }
         }
+    }
+
+    @Test
+    void everyBuiltInDefinitionOpensWithItsSchemaLine() throws IOException {
+        var resources = Path.of("..", "common", "src", "main", "resources");
+        var missing = new ArrayList<String>();
+        for (var kind : Map.of("images", SchemaModeline.TEMPLATE, "tools", SchemaModeline.TOOL).entrySet()) {
+            try (var files = Files.list(resources.resolve(kind.getKey()))) {
+                for (var file : files.filter(f -> f.toString().endsWith(".yaml")).toList()) {
+                    if (!Files.readAllLines(file).getFirst().equals(kind.getValue().line())) missing.add(file.toString());
+                }
+            }
+        }
+        assertEquals(List.of(), missing, "built-in definitions that do not open with the schema line an editor reads");
     }
 
     @Test
