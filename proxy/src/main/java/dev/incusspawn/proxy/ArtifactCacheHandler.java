@@ -785,8 +785,9 @@ class ArtifactCacheHandler {
                 } else if (statusCode >= 300 && statusCode < 400) {
                     followRedirect(clientReq, domain, redResp, cacheFile, ref, verification, depth + 1, started);
                 } else {
-                    ProxyLog.warn("Redirect target " + redirectHost + " returned " +
-                            statusCode + " for " + ref + " (Location: " + location + ")");
+                    ProxyLog.warn("Redirect target " + redirectHost + " returned " + redResp.statusCode()
+                            + (statusCode != redResp.statusCode() ? " with Retry-After, read as " + statusCode : "")
+                            + " for " + ref + " (Location: " + location + ")");
                     upstream.relayResponse(clientReq, domain, redResp, started);
                 }
             }).onFailure(err -> {
@@ -1148,7 +1149,8 @@ class ArtifactCacheHandler {
                 resp.request().reset();
                 if (status >= 500 || status == 429) {
                     // An overloaded upstream, as a stall often is: tried again like a failed connect
-                    broken(new IOException("upstream answered " + resp.statusCode()), true);
+                    broken(new IOException("upstream answered " + resp.statusCode()
+                            + (status != resp.statusCode() ? " with Retry-After, read as " + status : "")), true);
                     return;
                 }
                 ProxyLog.warn("Could not resume " + ref + ": upstream answered " + resp.statusCode()
@@ -2394,7 +2396,8 @@ class ArtifactCacheHandler {
                             mirroredArtifact(revalidation, target.checksum(), hex)).start();
                 } else {
                     if (status == 429 || status >= 500) restMirror(mirror.host());
-                    ProxyLog.trace("Mirror " + mirror.host() + " answered " + status + " for " + ref
+                    ProxyLog.trace("Mirror " + mirror.host() + " answered " + resp.statusCode()
+                            + (status != resp.statusCode() ? " with Retry-After, read as " + status : "") + " for " + ref
                             + ", asking " + domain);
                     // Over h2 the reset reaches this response as an error; it is the one we asked for
                     resp.exceptionHandler(ignored -> {});
