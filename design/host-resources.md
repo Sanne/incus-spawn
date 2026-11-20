@@ -277,6 +277,16 @@ So it applies to all definitions, trusted or not:
   A download is resumable only when its `200` had a validator a `206` can be checked against (a strong `ETag`, or a `Last-Modified` at least a second older than its `Date` when there is no `ETag`, the same rule as the proxy's `CachingDownload`), a length, and no `Content-Encoding`; otherwise it restarts from byte 0.
   That matters most for downloads without a `sha256` (appliance artifacts, some tools), which have only this check.
   Every large download (base images, the macOS appliance VM artifacts, tool tarballs, the Claude binary) goes through `DownloadCache`, and one that moves off it should keep its retries and resume rather than grow its own.
+- **A download survives the process that started it** (#2404).
+  It is written to `partial/<cache name>`, under a `HostLock` named for its URL, so a second isx process asking for the same URL waits for the first (`Listener.waitingForAnother`).
+  It then takes the first one's file only when that file matches its `sha256`, since the cache name is a short hash of the URL and the file may be another URL's; without a `sha256` it downloads again.
+  The wait is bounded at an hour; past that, or when the cache cannot be locked, a process downloads into a temporary file of its own.
+  When a resumable `200` starts, the partial file is emptied and then its response is recorded beside it (`<name>.response`: the URL, the validator and the length), so the record never describes bytes from another response, even if the process is killed in between.
+  A later run that finds a partial file whose record names the same URL continues it as a retry would, with the same checks on the `206`.
+  This holds only for a download with a `sha256`, since a host crash can leave a zero-filled tail that only the checksum would catch; a download without one starts from byte 0.
+  A file that fails its checksum is deleted, and fetched once more from byte 0 when it held bytes from more than one response; a file fetched whole that fails is wrong at its source, so it fails at once.
+  A failure leaves a resumable partial file for the next run, and deletes anything else.
+  Every use of the cache deletes `download-*.tmp` files (an older isx's, or those of a download that could not take its lock) that nobody has written to for an hour, and partial files nobody has continued for a week whose lock is free.
 - **DNS rebinding cannot split check from connect.**
   A rebinding domain answers with a public address for the check and `127.0.0.1` for the connection.
   But both resolve through the JDK's in-process address cache, which keeps a successful lookup for 30 seconds whatever TTL the DNS answer carries, so the connection a few milliseconds after the check sees the same address.
