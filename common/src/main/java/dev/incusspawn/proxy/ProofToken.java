@@ -222,6 +222,12 @@ public final class ProofToken {
         return CompletableFuture.supplyAsync(() -> {
             var config = SpawnConfig.load();
             return new Declared(config, placeholdersOrNone(config));
+        }).exceptionally(e -> {
+            // A config that cannot even be loaded must not fail the start it rides on: it gets
+            // no placeholders and no ChatGPT session, which is how an empty config.yaml reads
+            Warnings.warn("could not read the host's config, so this start gives no credential"
+                    + " placeholder a proof token and serves no ChatGPT session: " + e.getMessage());
+            return new Declared(new SpawnConfig(), List.of());
         });
     }
 
