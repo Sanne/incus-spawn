@@ -46,7 +46,7 @@ class OverviewCommandTest {
             + UnreadSessions.ALL.stream().map(u -> u.header() + "\nend\n").reduce("", String::concat)
             + ClaudeSessions.HEADER + "\ntotal 1\nsession 1793700000 cC9zLmpzb25s\n"
             + "close eyJ0eXBlIjoiYXNzaXN0YW50IiwiaXNTaWRlY2hhaW4iOmZhbHNlLCJtZXNzYWdlIjp7ImNvbnRlbnQiOlt7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IkZpeGVkIHRoZSBwYXJzZXIuXG5QUiAjMTIgaXMgb3Blbi4ifV19fQ==\nend\n"
-            + CodexSessions.HEADER + "\ntotal 0\nend\n" + PiSessions.HEADER + "\ntotal 0\nend\n"
+            + CodexSessions.HEADER + "\ntotal 0\nend\n" + PiSessions.HEADER + "\ntotal 0\nend\n" + AntigravitySessions.HEADER + "\ntotal 0\nend\n"
             + OpencodeSessions.HEADER + "\ntotal 0\nend\n";
 
     /** The tokens GitHub was asked with, and what it was asked about. */

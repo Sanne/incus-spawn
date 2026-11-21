@@ -651,10 +651,14 @@ At 80 columns ACTIVE gives way to WORK; it is drawn from 100 columns, DONE from 
 So a session read that fails or overflows leaves WORK as it was read: the output bound is 64 KiB for the work section plus 1 MiB per reader of sessions, and only the section it cut is not read.
 A reader that failed names its agent as not read, and the other agents' sessions still show (`AgentSessions.merge`); only when no reader answered are the sessions `unknown`.
 The newest eight sessions of all the agents together are kept, and every session is counted, so what a merge is given stays bounded.
-Claude Code, Codex and Pi keep a JSON Lines transcript per session, and one reader serves all three (`JsonlSessions`), each agent saying where its files are and which lines may be what.
+Claude Code, Codex, Pi and Antigravity CLI keep a JSON Lines transcript per session, and one reader serves all four (`JsonlSessions`), each agent saying where its files are and which lines may be what.
 Claude Code's (`ClaudeSessions`) lists `~/.claude/projects/*/*.jsonl`, regular files only and not a subagent's `agent-*.jsonl`.
 Codex's (`CodexSessions`, verified with Codex 0.169.0) lists `~/.codex/sessions/<year>/<month>/<day>/rollout-*.jsonl`, and not `archived_sessions`.
 Pi's (`PiSessions`, verified with Pi 1.5.2) lists `~/.pi/agent/sessions/*/*.jsonl`, and also sends each file's first line, its header, which names where the session ran.
+Antigravity CLI's (`AntigravitySessions`, verified with agy 1.5.13, #2478) lists `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl`, and not the `transcript_full.jsonl` and chunks beside it.
+Its ask is the first `USER_INPUT` step the person wrote (`USER_EXPLICIT`), cut to what agy wraps in `<USER_REQUEST>`, without the time and settings agy adds after it.
+Its closing message is the last `PLANNER_RESPONSE` step with text in its `content`, as the swarm sidecar agy ships reads it.
+The first line was read from a run of agy 1.5.13 whose model call was refused, and the model's steps from that sidecar, since no model answered.
 When Codex's or Pi's directory holds files but no session where its reader looks, that agent is not read, since a setting or another version may keep them elsewhere.
 Claude Code's projects directory also holds memory files, so the same does not apply there.
 Each reads the newest eight.
@@ -670,11 +674,12 @@ A database is read by its fields, so the query selects: sessions with no `parent
 Neither is a compaction's summary, nor a part opencode made up (`synthetic`) or set aside (`ignored`).
 Each value is cut in the query to one code point past what is kept and sent in hex.
 A database `sqlite3` cannot read (none installed, a schema the query does not know, a damaged file), or the JSON `storage` of an opencode from before its database, makes opencode not read.
-Gemini CLI, Antigravity CLI, GitHub Copilot CLI and Bob have no reader yet, since a reader is written from session files the agent itself wrote, and none were at hand (#2290).
+Gemini CLI, GitHub Copilot CLI and Bob have no reader yet, since a reader is written from session files the agent itself wrote, and none were at hand (#2290).
 Their sessions are only found (`UnreadSessions`), and an agent whose sessions are there is named as not read, so an instance only it worked in is never `untouched`.
 Each check looks for session files alone, never the agent's directory, which a build fills with settings, extensions and policies.
 Gemini CLI's are `~/.gemini/tmp/<project>/chats/session-*.jsonl` (`.json` in older versions), a subagent's one directory deeper, read from `@google/gemini-cli-core` 0.68.0.
-Antigravity CLI's are `~/.gemini/antigravity-cli/conversations/<id>.db`, one per conversation, read from the files agy 1.5.12 wrote; Gemini CLI's check never counts them, nor theirs Gemini CLI's (#2366).
+Antigravity CLI's conversations are `~/.gemini/antigravity-cli/conversations/<id>.db`, one each, beside their transcripts in `brain/<id>`; Gemini CLI's check never counts them, nor theirs Gemini CLI's (#2366).
+Only a conversation with no transcript is found this way, and names Antigravity CLI as not read (#2478).
 Copilot's are the entries of `~/.copilot/session-state`, read from Copilot CLI 1.0.114, which moves an XDG state directory's back there.
 Bob's are the rows of `tasks` in `~/.bob/db/bob.db`, counted with `sqlite3 -readonly` (read from Bob 2.1.0); a database it cannot count names Bob as not read too.
 Their sections come before the readers', each a few lines with a 256-byte share of the bound, so the bound never cuts them.
