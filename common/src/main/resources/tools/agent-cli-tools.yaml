@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
+name: agent-cli-tools
+description: Search, query and diff CLIs coding agents use (rg, fd, jq, yq, tree, ast-grep, difft)
+
+# ripgrep, fd, jq, yq (mikefarah's), tree and difftastic are Fedora packages.
+# ast-grep is not, so npm installs it, pinned to the version tested here (npm checks its integrity hash); its postinstall puts the binary in place, and
+# without it every call warns about a per-invocation fallback.
+packages:
+  - ripgrep
+  - fd-find
+  - jq
+  - yq
+  - tree
+  - difftastic
+  - nodejs
+  - npm
+
+run:
+  - npm install -g --loglevel=error @ast-grep/cli@0.51.3
+
+verify: rg --version && fd --version && jq --version && yq --version && tree --version && ast-grep --version && difft --version

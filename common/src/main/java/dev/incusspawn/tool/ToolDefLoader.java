@@ -40,6 +40,7 @@ public class ToolDefLoader {
 
     private static final String RESOURCE_DIR = "tools/";
     public static final List<String> BUILTIN_TOOLS = List.of(
+            "agent-cli-tools.yaml",
             "atlassian-mcp.yaml",
             "headroom.yaml",
             "herdr.yaml",

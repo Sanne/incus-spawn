@@ -36,6 +36,17 @@ class AntigravitySetupTest {
         assertEquals("bash -lc agy", tool.actions().getFirst().getCommand());
     }
 
+    /** agy installs the CLIs it recommends itself, as a transitive tool (#2451). */
+    @Test
+    void itRequiresTheAgentCliToolsWhichInstallEveryCommandItNames() {
+        var loader = new ToolDefLoader();
+        assertEquals(List.of("agent-cli-tools"), loader.allToolSetups().get("antigravity").requires());
+        var cli = loader.allToolSetups().get("agent-cli-tools");
+        assertNotNull(cli);
+        assertTrue(cli.packages().containsAll(List.of("ripgrep", "fd-find", "jq", "yq", "tree", "difftastic")));
+        assertTrue(cli.verifyCommand(Map.of()).contains("ast-grep"));
+    }
+
     @Test
     void settingsSelectTheApiKeyModeAndKeepTheUsersOwn() {
         var fresh = JqValues.parseStrict(AntigravitySetup.settingsJson(""));

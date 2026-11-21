@@ -24,6 +24,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `maven-3` | Apache Maven |
 | `mvnd` | Apache Maven Daemon |
 | `podman` | Podman container runtime configured for Testcontainers |
+| `agent-cli-tools` | `rg`, `fd`, `jq`, `yq`, `tree`, `ast-grep` and `difft`, which `antigravity` installs with it |
 | `perf` | Linux perf tools and tracing utilities for performance analysis |
 | `sshd` | OpenSSH server for remote access |
 | `idea-backend` | JetBrains IntelliJ IDEA Remote Development backend |

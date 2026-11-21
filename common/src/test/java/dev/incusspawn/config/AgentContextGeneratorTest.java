@@ -62,6 +62,17 @@ class AgentContextGeneratorTest {
         assertFalse(out.contains("## Notes"));
     }
 
+    /** The hint names commands, so it appears only where {@code agent-cli-tools} installed them (#2451). */
+    @Test
+    void theCliToolsHintComesOnlyWithTheToolThatInstallsThem() {
+        assertFalse(AgentContextGenerator.generate("tpl-dev", List.of("claude"), List.of(), List.of())
+                .contains("ast-grep"));
+        var out = AgentContextGenerator.generate("tpl-dev", List.of("agent-cli-tools", "antigravity"),
+                List.of(), List.of());
+        assertTrue(out.contains("`ast-grep`") && out.contains("`difft`"), out);
+        assertTrue(out.contains("Already installed, don't reinstall: agent-cli-tools, antigravity\n"));
+    }
+
     @Test
     void toolsRenderAsASingleImperativeLineWithNamesOnly() {
         var out = AgentContextGenerator.generate("tpl-dev", List.of("claude", "gh", "tmux"),

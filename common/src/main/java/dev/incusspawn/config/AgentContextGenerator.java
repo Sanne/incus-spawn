@@ -68,6 +68,19 @@ public final class AgentContextGenerator {
               external services unless asked. Local commits are fine.
             """;
 
+    /** The tool whose presence adds {@link #CLI_TOOLS_HINT}. */
+    public static final String AGENT_CLI_TOOLS = "agent-cli-tools";
+
+    /**
+     * Only with {@code agent-cli-tools}, so the line never names a command the image lacks.
+     * It says what is installed and when to prefer it, which an agent would not otherwise assume.
+     */
+    private static final String CLI_TOOLS_HINT = """
+
+            `rg`, `fd`, `jq`, `yq`, `tree`, `ast-grep` and `difft` (difftastic) are on the PATH.
+            For reconnaissance and code review, prefer `ast-grep` for structural searches and `difft` for syntax-aware diffs.
+            """;
+
     /** A repository the build already cloned into the image. */
     public record Repo(String path, String url) {}
 
@@ -86,6 +99,7 @@ public final class AgentContextGenerator {
         var sb = new StringBuilder(PREAMBLE.formatted(templateName));
 
         var tools = distinct(toolNames);
+        if (tools.contains(AGENT_CLI_TOOLS)) sb.append(CLI_TOOLS_HINT);
         if (!tools.isEmpty()) {
             sb.append("\nAlready installed, don't reinstall: ").append(String.join(", ", tools)).append('\n');
         }
