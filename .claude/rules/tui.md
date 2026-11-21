@@ -25,6 +25,11 @@ Only the row under the cursor, a dialog with its inputs and the brand chip are f
 The theme is written in RGB and `TuiTheme.of` fits each colour to the terminal's `ColorDepth` (truecolor on proof or `ISX_COLORS`, else the 256-colour palette, else the sixteen ANSI colours).
 `ColorFit` is the last step of every frame the runner draws and fits what a blend left, so `Tui.drawUntilQuit` is the one place a runner is made.
 `TuiThemeTest` fails on an RGB colour below truecolor and on two surfaces that fit to the same palette entry.
+**A table's column widths come from `ColumnFit`**, never from `Constraint.min` or `fill`: each column is as wide as its widest cell (`Tui.instanceNatural`, over every instance, not the search's), gives width up in its `give` order down to its `floor`, and a cut cell ends in `…` (`ColumnFit.clipped`).
+A new column says its floor, its turn to be cut and whether it is the free text that takes spare room (`ColumnFitTest`).
+**Every dialog has one shape**: content from the first row inside the frame, one blank row, the keys on the last row (`ModalRenderer.confirmModalHeight` adds four to the text's lines).
+A dialog's label is `textDim` and never the accent, a list's current line is marked with `Glyphs.CURSOR`, a title names its subject in quotes, and text is wrapped, never cut at the frame.
+A spinner in a dialog is `ModalRenderer.spinner()` in `statusWarning`, never a clock of its own.
 **Motion is drawn by `Motion`, over a finished frame** (a spinner, a shimmer on the name being worked on, a tint on a row that changed).
 The shimmer's band blends towards `statusWarning` and is undimmed on a dimmed row: grey to white did not show at 256 colours.
 Nothing moves in answer to a key: a dialog's fade-in was tried and read as a slower TUI (Sanne), so what a key opens is whole in its first frame.
