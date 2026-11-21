@@ -24,7 +24,7 @@ public class HelpContext {
     static final List<String> HELP_RESOURCES = List.of("help/README.md",
             "help/docs/AGENT-INSTALL.md", "help/docs/AGENTS.md", "help/docs/CLI.md", "help/docs/CONFIGURATION.md",
             "help/docs/CREDENTIAL-PROOFS.md", "help/docs/FAQ.md", "help/docs/FEDORA.md", "help/docs/INTEGRATIONS.md", "help/docs/MCP-PROTOCOL.md", "help/docs/MCP.md", "help/docs/SANDBOXES.md",
-            "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md", "help/DESIGN.md",
+            "help/docs/TEMPLATE-EXAMPLE.md", "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md", "help/DESIGN.md",
             "help/design/accounts.md", "help/design/doctor.md", "help/design/git.md",
             "help/design/host-resources.md", "help/design/instances.md", "help/design/macos-and-vms.md",
             "help/design/mcp.md", "help/design/native-image.md", "help/design/network.md", "help/design/proxy.md",
