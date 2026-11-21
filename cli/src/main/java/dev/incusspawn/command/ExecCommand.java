@@ -107,7 +107,8 @@ public class ExecCommand extends BaseCommand {
                 }
             }
             var workdir = instance.path("config").path(Metadata.WORKDIR).asText("");
-            script = ExecScript.build(runId, cwd != null ? cwd : workdir.isEmpty() ? "." : workdir,
+            script = ExecScript.build(runId, cwd != null ? GuestProvisioning.expandHome(cwd)
+                            : workdir.isEmpty() ? "." : workdir,
                     environment, command, null);
         } catch (RuntimeException e) {
             BuildOutput.abandonStep();
