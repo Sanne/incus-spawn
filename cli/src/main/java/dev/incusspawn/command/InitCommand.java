@@ -1167,7 +1167,7 @@ public class InitCommand extends BaseCommand {
             case "codex" -> new InitStep(toolName, "OpenAI Authentication", new String[]{
                     "Configures how containers authenticate with OpenAI: a",
                     "ChatGPT session, Enterprise plans included, that stays on",
-                    "your host — isx signs it in with a one-time code and the",
+                    "your host — isx signs it in through your browser and the",
                     "proxy serves Codex from it — or an OpenAI API key.",
                     "Containers never see the real credential."}, this::setupCodexAuth, null);
             default -> {
