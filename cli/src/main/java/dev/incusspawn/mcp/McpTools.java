@@ -850,7 +850,7 @@ final class McpTools {
     }
 
     /** What {@link ExecScript} refuses (an environment name, a time limit), as the client's mistake. */
-    private static ToolError invalidArgument(IllegalArgumentException e) {
+    private static ToolError invalidArgument(ExecScript.Refused e) {
         return new ToolError(ToolError.Code.INVALID_ARGUMENT, e.getMessage());
     }
 
@@ -882,7 +882,7 @@ final class McpTools {
             try {
                 task = tasks.startCommand(name, cwd, env, command, key,
                         new Tasks.RunNote(null, metadata.get(InstanceBackend.CREATED_AT)));
-            } catch (IllegalArgumentException e) {
+            } catch (ExecScript.Refused e) {
                 throw invalidArgument(e);
             }
             McpAuditLog.record(session.id, "exec(background)", name, command, 0, "task=" + task.id());
@@ -904,7 +904,7 @@ final class McpTools {
         String script;
         try {
             script = ExecScript.build(runId, cwd, env, command, timeout);
-        } catch (IllegalArgumentException e) {
+        } catch (ExecScript.Refused e) {
             throw invalidArgument(e);
         }
         if (ask != null) {
