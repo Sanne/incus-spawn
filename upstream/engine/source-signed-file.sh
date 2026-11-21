@@ -87,12 +87,15 @@ src_fields() {
 
 # ---- the listings ----------------------------------------------------------------------------------
 
-# _entries <index|successors>: "<version>\t<date>" lines of the page.
+# _entries <index|successors>: "<version>\t<date>" lines of the page. The download is read into a
+# variable first: a die inside an argument's $(...) is lost, and the run would go on to fail on an
+# empty path rather than on the download.
 _entries() {
-    local url regex
+    local url regex f
     url="$(_src ".$1.url")"; regex="$(_src ".$1.regex")"
     [[ -n "$url" && -n "$regex" ]] || return 0
-    REGEX="$regex" perl "$ENGINE_DIR/index.pl" "$(_get "$url")"
+    f="$(_get "$url")" || exit 1
+    REGEX="$regex" perl "$ENGINE_DIR/index.pl" "$f"
 }
 
 src_releases() {
@@ -105,9 +108,10 @@ src_releases() {
 }
 
 src_released_at() {
-    local d
+    local d entries
     _numeric "$1" || die "not a release version: '$1'"
-    d="$(awk -F'\t' -v v="$1" '$1 == v { print $2; exit }' <<<"$(_entries index)")"
+    entries="$(_entries index)" || exit 1
+    d="$(awk -F'\t' -v v="$1" '$1 == v { print $2; exit }' <<<"$entries")"
     [[ -n "$d" ]] || die "the listing of $ITEM gives no date for $1"
     date -u -d "$d UTC" +%s
 }
@@ -122,13 +126,13 @@ _publisher_sum() {
     mapfile -t fprs < <(_fprs)
     case "$(_f "$label" proof)" in
         artifact)
-            f="$(_get "$url")"
-            sig="$(_get "$url$(_f "$label" sig-suffix .asc)")"
+            f="$(_get "$url")" || exit 1
+            sig="$(_get "$url$(_f "$label" sig-suffix .asc)")" || exit 1
             verify_signed "$(_key)" "$sig" "$f" "${fprs[@]}"
             hash="$("${algo}sum" "$f" | cut -d' ' -f1)" ;;
         sums)
-            sums="$(_get "$(_expand "$(_f "$label" sums-url)" "$version")")"
-            sig="$(_get "$(_expand "$(_f "$label" sig-url)" "$version")")"
+            sums="$(_get "$(_expand "$(_f "$label" sums-url)" "$version")")" || exit 1
+            sig="$(_get "$(_expand "$(_f "$label" sig-url)" "$version")")" || exit 1
             verify_signed "$(_key)" "$sig" "$sums" "${fprs[@]}"
             name="${url##*/}"
             hash="$(awk -v n="$name" '{ f = $2; sub(/^\*/, "", f); if (f == n) print $1 }' "$sums")"
@@ -140,14 +144,15 @@ _publisher_sum() {
 }
 
 src_apply() {
-    local version="$1" l i n listed
+    local version="$1" l i n listed entries
     local -A sums=()
     local -a envs=()
     _numeric "$version" || die "not a release version: '$version'"
-    listed="$(_entries index | cut -f1)"
+    entries="$(_entries index)" || exit 1
+    listed="$(cut -f1 <<<"$entries")"
     grep -qxF -- "$version" <<<"$listed" || die "the listing of $ITEM does not give $version"
     for l in $(_labels); do
-        sums[$l]="$(_publisher_sum "$l" "$version")"
+        sums[$l]="$(_publisher_sum "$l" "$version")" || exit 1
         envs+=("SUM_$l=${sums[$l]}")
     done
     n="$(_npins)"
