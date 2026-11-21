@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -53,6 +54,30 @@ class ExecScriptTest {
         assertEquals(7, r.exit());
         assertEquals("out\n", r.stdout());
         assertEquals("err\n", r.stderr());
+    }
+
+    @Test
+    void aCommandASignalEndedExitsAsAShellReportsIt() throws Exception {
+        // As an OOM kill would. When setsid runs as a process group leader it forks, and then
+        // passes on the bare signal number, 9, which a script cannot tell from the command's own
+        // exit 9. A wrapper on PATH makes it one, as job control would; a shell reports 128+9.
+        var setsid = Stream.of("/usr/bin/setsid", "/bin/setsid").filter(f -> Files.isExecutable(Path.of(f))).findFirst().orElseThrow();
+        var bin = Files.createDirectories(home.resolve("bin"));
+        var wrapper = bin.resolve("setsid");
+        Files.writeString(wrapper, "#!/bin/bash\nexec perl -MPOSIX -e 'POSIX::setpgid(0, 0) or die \"setpgid: $!\";"
+                + " exec { $ARGV[0] } @ARGV or die \"exec: $!\"' " + setsid + " \"$@\"\n");
+        assertTrue(wrapper.toFile().setExecutable(true));
+        var pb = new ProcessBuilder("bash", "-c", build(home.toString(), Map.of(), "kill -KILL $$", null));
+        pb.environment().put("HOME", home.toString());
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        pb.redirectErrorStream(true);
+        var p = pb.start();
+        p.getOutputStream().close();
+        assertTrue(p.waitFor(30, TimeUnit.SECONDS), "script did not finish");
+        var output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(128 + 9, p.exitValue(), output);
+        assertFalse(output.contains("did not exit normally"), output);
+        assertFalse(Files.exists(home.resolve(".isx-mcp/run/exec-1-1.pid")));
     }
 
     @Test
