@@ -34,13 +34,16 @@ public final class ExecScript {
         // The pid file goes once the session ends, however it ends: a stale one would name a
         // session id the guest may since have given to something else, for a later kill to signal.
         sb.append("trap ").append(quote("rm -f " + pidFile(runId))).append(" EXIT; ");
-        // $$ of the inner bash is the new session's id (setsid made it the leader); exec keeps
-        // it for the command, so the pid file names the session every descendant belongs to.
-        // Not exec'd itself, so this shell outlives the session to run the trap; its exit code
-        // is setsid's, which is the command's.
+        // $$ of the inner bash is the new session's id (setsid made it the leader), so the pid
+        // file names the session every descendant belongs to. Not exec'd itself, so this shell
+        // outlives the session to run the trap; its exit code is setsid's, which is the command's.
+        // The inner bash waits for the command rather than exec'ing it, and exits with its status:
+        // a command a signal ended is then 128+n, as a shell reports it. Exec'd, a setsid that
+        // forked (it does when it starts as a process group leader) would pass on the bare
+        // signal number instead, so an OOM kill would exit 9, like the command's own exit 9.
         sb.append("setsid --wait bash -c ")
                 // In a subshell: its variable must not replace one the command was given.
-                .append(quote("( " + writeAside(RUN_DIR, runId + ".pid", "echo $$") + " ); exec \"$@\""))
+                .append(quote("( " + writeAside(RUN_DIR, runId + ".pid", "echo $$") + " ); \"$@\"; exit $?"))
                 .append(" isx-exec ");
         if (timeoutSeconds != null) {
             if (timeoutSeconds <= 0) throw new IllegalArgumentException("timeout_seconds must be positive");

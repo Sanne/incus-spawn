@@ -324,6 +324,7 @@ The command runs as `agentuser` in a login shell, with no terminal.
 Its stdout and stderr are those of `isx exec`, and isx reports its own progress on stderr.
 
 `isx exec` exits with the exit code of the command, or 125 when isx fails instead of the command, such as for a stopped instance.
+A command a signal ended exits 128 plus the signal's number, as in a shell.
 
 Each word after `--` reaches the command unchanged.
 For pipes or `&&`, run a shell:

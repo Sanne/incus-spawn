@@ -562,6 +562,8 @@ Opt-in stdin keeps a loop reading a file from having its input consumed by `isx 
 **The exit code is the command's; isx's own failures exit 125** (`ExecCommand.ISX_FAILED`), so they cannot pass for the command's exit 1.
 An exec that fails under the command also exits 125: Incus refuses it, its sockets do not open, or the instance stops before it starts.
 So does an exec whose exit code Incus lost or gave up on at `IncusApi`'s four-hour ceiling.
+A command a signal ended exits 128 plus the signal's number, as a shell reports it, so an OOM kill is 137.
+The session's inner shell waits for the command rather than exec'ing it, since a `setsid --wait` that forked would pass on the bare signal number, which looks like the command's own exit 9.
 
 **Whenever isx stops waiting, it ends the command.**
 `ExecScript.kill` in the guest ends the command's session, so nothing runs on with nobody waiting for it.
