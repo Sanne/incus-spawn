@@ -54,7 +54,10 @@ public final class ExecScript {
         // signal number instead, so an OOM kill would exit 9, like the command's own exit 9.
         sb.append("setsid --wait bash -c ")
                 // In a subshell: its variable must not replace one the command was given.
-                .append(quote("( " + writeAside(RUN_DIR, runId + ".pid", "echo $$") + " ); \"$@\"; exit $?"))
+                // A kill that found no pid file left the marker: stop before the command starts.
+                .append(quote("( " + writeAside(RUN_DIR, runId + ".pid", "echo $$") + " ); "
+                        + "if [ -e " + marker(runId) + " ]; then rm -rf " + marker(runId) + " " + pidFile(runId)
+                        + "; exit 143; fi; \"$@\"; exit $?"))
                 .append(" isx-exec ");
         if (timeoutSeconds != null) {
             if (timeoutSeconds <= 0) throw new Refused("timeout_seconds must be positive");
@@ -62,6 +65,16 @@ public final class ExecScript {
         }
         sb.append("bash -c ").append(quote(command));
         return sb.toString();
+    }
+
+    /**
+     * The marker a kill leaves for a run that has not written its pid file yet: the guest writes
+     * that file only after the login profile has run. A directory, since a FIFO at a predictable
+     * path would hold a file's creation open. The script checks for it after writing its pid file,
+     * and the kill re-reads the pid file after leaving it, so whichever comes second sees the other.
+     */
+    private static String marker(String runId) {
+        return RUN_DIR + "/" + runId + ".killed";
     }
 
     /**
@@ -76,13 +89,14 @@ public final class ExecScript {
         requireId(runId);
         var pidFile = pidFile(runId);
         // A stat line is "pid (comm) state ppid pgrp session ...", and comm may hold ") "
-        return "p=$(" + ifFile(pidFile, "cat") + ") || exit 0; "
+        return "mkdir -p " + RUN_DIR + " && mkdir -p " + marker(runId) + "; "
+                + "p=$(" + ifFile(pidFile, "cat") + ") || exit 0; "
                 + "k() { kill -\"$1\" -- -\"$p\" 2>/dev/null; "
                 + "for f in /proc/[0-9]*/stat; do { read -r s < \"$f\"; } 2>/dev/null || continue; "
                 + "s=${s##*) }; set -- \"$1\" $s; "
                 + "[ \"$5\" = \"$p\" ] && { q=${f#/proc/}; kill -\"$1\" \"${q%/stat}\" 2>/dev/null; }; done; }; "
                 + "k TERM; sleep 3; k KILL; "
-                + "rm -f " + pidFile;
+                + "rm -rf " + pidFile + " " + marker(runId);
     }
 
     /** Where a run's session id is kept while it runs (a path the shell expands, unquoted). */

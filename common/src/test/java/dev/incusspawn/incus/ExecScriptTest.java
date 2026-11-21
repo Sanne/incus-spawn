@@ -237,6 +237,16 @@ class ExecScriptTest {
     }
 
     @Test
+    void aKillBeforeThePidFileExistsStopsTheRunBeforeItsCommand() throws Exception {
+        assertEquals(0, run(ExecScript.kill("exec-1-1")).exit());
+        var r = run(build(home.toString(), Map.of(), "touch ran", null));
+        assertEquals(143, r.exit());
+        assertFalse(Files.exists(home.resolve("ran")), "the command ran after its kill");
+        assertFalse(Files.exists(home.resolve(".isx-mcp/run/exec-1-1.pid")));
+        assertFalse(Files.exists(home.resolve(".isx-mcp/run/exec-1-1.killed")), "the marker is consumed");
+    }
+
+    @Test
     void killingARunThatAlreadyEndedIsHarmless() throws Exception {
         assertEquals(0, run(ExecScript.kill("exec-9-9")).exit());
     }
