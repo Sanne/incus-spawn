@@ -395,7 +395,7 @@ class TuiInstanceMarksTest {
         assertEquals(before.length, after.length);
         // The line above the key bar
         int contextLine = java.util.Arrays.asList(after).indexOf(
-                java.util.Arrays.stream(after).filter(l -> l.startsWith("│F1")).findFirst().orElseThrow()) - 1;
+                java.util.Arrays.stream(after).filter(l -> l.startsWith(" F1")).findFirst().orElseThrow()) - 1;
         for (int y = 0; y < after.length; y++) {
             if (y == contextLine) {
                 // Only the count after the Space hint, at the end of the line, changes

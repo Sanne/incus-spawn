@@ -64,7 +64,7 @@ class MarkedStopConfirmTest {
 
     /** The words on a rendered screen, without the frame and the list's punctuation. */
     static java.util.Set<String> tokens(String screen) {
-        return new java.util.HashSet<>(List.of(screen.split("[\\s,.║╔╗╚╝═]+")));
+        return new java.util.HashSet<>(List.of(screen.split("[\\s,.│╭╮╰╯─]+")));
     }
 
     @Test

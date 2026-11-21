@@ -169,7 +169,7 @@ final class AboutModal {
 
         var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(modal.styledTitle(" About incus-spawn ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))

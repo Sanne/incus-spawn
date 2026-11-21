@@ -171,7 +171,7 @@ final class CleanModal {
         int modalHeight = constraints.size() + 3;
         var modalArea = ModalRenderer.centerRect(screen, 54, modalHeight);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(modal.styledTitle(" Pool cleanup ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))
@@ -306,7 +306,7 @@ final class CleanModal {
         int modalHeight = lines.size() + 5;
         var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(modal.styledTitle(" Pool cleanup ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))

@@ -173,7 +173,7 @@ class HelpChatModalTest {
     private static String questionRows(String text, int first, int last) {
         var rows = text.split("\n");
         var sb = new StringBuilder();
-        for (int i = first; i <= last; i++) sb.append(rows[i].replaceAll("[║ ]", ""));
+        for (int i = first; i <= last; i++) sb.append(rows[i].replaceAll("[│ ]", ""));
         return sb.toString();
     }
 
@@ -334,7 +334,7 @@ class HelpChatModalTest {
             var text = TuiSnapshot.toText(TuiSnapshot.render(width, 30, f -> modal.render(f, f.area())));
             // Rejoin the wrapped lines (strip the border and padding) and look for the full sentence.
             var joined = String.join(" ", text.lines()
-                    .map(l -> l.replaceAll("^[\\s║]+|[\\s║]+$", ""))
+                    .map(l -> l.replaceAll("^[\\s│]+|[\\s│]+$", ""))
                     .toList());
             assertTrue(joined.contains("sent to the AI account below, which is billed for it."),
                     "disclaimer truncated at width " + width + ":\n" + text);

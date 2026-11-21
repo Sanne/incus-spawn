@@ -288,7 +288,7 @@ final class BuildMenu {
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = dev.tamboui.widgets.block.Block.builder()
                 .borders(dev.tamboui.widgets.block.Borders.ALL)
-                .borderType(dev.tamboui.widgets.block.BorderType.DOUBLE)
+                .borderType(dev.tamboui.widgets.block.BorderType.ROUNDED)
                 .title(modal.styledTitle(" Build Templates ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))

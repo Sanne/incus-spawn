@@ -1,40 +1,40 @@
  isx   1.2.3
- [Overview]  Templates 2   Instances 0   Work                                                           ←/→ Switch view
-╭ Templates ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  NAME                                        BUILT                DISK     DESCRIPTION                               │
-│▸ tpl-minimal                                 3 days ago           -        Minimal Fedora                            │
-│  tpl-dev                                     not built            -        Development tools                         │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ Instances ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│  No instances. Select a template and press Enter to create one.                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ Overview   Templates 2   Instances 0   Work                                                            ←/→ Switch view
+ Templates ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   NAME                                        BUILT                DISK     DESCRIPTION
+ ▸ tpl-minimal                                 3 days ago           -        Minimal Fedora
+   tpl-dev                                     not built            -        Development tools
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Instances ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+                                                       ╻ ┏━┓ ╻ ╻
+                                                       ┃ ┗━┓ ╺╋╸
+                                                       ╹ ┗━┛ ╹ ╹
+
+                                                    No instances yet
+                                    Select a template and press Enter to branch one
+
+
+
+
+
+
  tpl-minimal  Minimal Fedora  Space Mark
-│F1Info     │F2Shell    │F3Details  │F4Branch…  │F5Build…   │F6Rename…  │F7Stop     │F8Destroy… │F9Actions  │F10Quit
+ F1 Info   F2 Shell   F3 Details   F4 Branch…   F5 Build…   F6 Rename…   F7 Stop   F8 Destroy…   F9 Actions   F10 Quit
