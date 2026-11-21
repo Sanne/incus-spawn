@@ -180,6 +180,27 @@ class ChatGptAuthFlowTest {
     }
 
     @Test
+    void signingAnApiKeyAccountInWithChatGptDropsItsKey() throws Exception {
+        var config = seed("""
+                openai:
+                  accounts:
+                    keyed:
+                      apiKey: "sk-old"
+                    other:
+                      apiKey: "sk-other"
+                  default: keyed
+                """);
+
+        run(new FakeInit(), config, new ScriptedPrompts().line("e", "keyed", "1"));
+
+        assertEquals("chatgpt", saved("openai.accounts.keyed.type"));
+        assertEquals("", saved("openai.accounts.keyed.apiKey"),
+                "the session replaces the key: it must not stay in config.yaml, nor be injected for the account");
+        assertNotNull(new ChatGptSessionStore().read("keyed"));
+        assertEquals("sk-other", saved("openai.accounts.other.apiKey"), "the other account keeps its key");
+    }
+
+    @Test
     void replacingOneAccountsCredentialEndsThatSessionsToo() throws Exception {
         var config = seed("""
                 openai:
