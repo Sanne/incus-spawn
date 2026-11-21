@@ -354,9 +354,24 @@ The Antigravity desktop app and IDE are not supported.
 A Gemini API key on Google's free tier has no quota for that model, so Google answers 429 `RESOURCE_EXHAUSTED` ("free tier ... limit: 0") to the first prompt.
 The key is accepted: only the model is out of reach.
 
-Pick a Flash model for the call with `--model`, for example `agy -p "Reply with ok" --model gemini-3.6-flash-low`.
-A paid key or a Google account for an AI Pro or AI Ultra plan has the quota.
-isx does not set a model for `agy`, since `agy` keeps its saved model by label, not by the ID that `--model` takes.
+Give the template a Flash model with the tool's `model` parameter, and `agy` starts on it.
+`agy models` lists the IDs it takes.
+
+```yaml
+tools:
+  - antigravity:
+      model: gemini-4-argon
+      effort: medium
+```
+
+`effort` is `low`, `medium`, `high`, `xhigh` or `max`.
+Both are optional and can be changed in a child template.
+
+The `Antigravity CLI` action and tasks that `isx mcp` delegates to `agy` use them, and a task's own `model` wins.
+A plain `agy` typed at the prompt does not, so pass `--model` there.
+
+isx does not write the model into `agy`'s `settings.json`, since `agy` keeps its saved model by label, not by the ID that `--model` takes.
+A paid key or a Google account for an AI Pro or AI Ultra plan has the Pro quota, so it needs no model.
 
 ### What the build sets up
 

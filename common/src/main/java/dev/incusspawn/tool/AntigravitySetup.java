@@ -2,6 +2,7 @@ package dev.incusspawn.tool;
 
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.Jjq;
+import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.proxy.GoogleAccounts;
@@ -159,8 +160,43 @@ public class AntigravitySetup implements ToolSetup {
 
     @Override
     public List<EnvEntry> envEntries(Map<String, String> resolvedParams) {
-        return List.of(EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY),
-                EnvEntry.set(DISABLE_AUTO_UPDATE, "true"));
+        var entries = new java.util.ArrayList<EnvEntry>();
+        entries.add(EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY));
+        entries.add(EnvEntry.set(DISABLE_AUTO_UPDATE, "true"));
+        // agy has no setting for the model ID (settings.json holds a display label), so the
+        // defaults travel as variables that the action and the delegation runner turn into flags.
+        var model = resolvedParams.get("model");
+        if (model != null && !model.isBlank()) entries.add(EnvEntry.set(MODEL_ENV, model));
+        var effort = resolvedParams.get("effort");
+        if (effort != null && !effort.isBlank()) entries.add(EnvEntry.set(EFFORT_ENV, effort));
+        return entries;
+    }
+
+    /** The template's {@code model} and {@code effort}, read by {@link #actions()} and the delegation runner. */
+    public static final String MODEL_ENV = "ISX_AGY_MODEL";
+    public static final String EFFORT_ENV = "ISX_AGY_EFFORT";
+
+    @Override
+    public Map<String, ToolDef.ParameterDef> parameters() {
+        var params = new java.util.LinkedHashMap<String, ToolDef.ParameterDef>();
+        // Neither declares a default: a free-tier Gemini key has no quota for agy's own default
+        // model, and `agy models` lists the IDs a key can use.
+        var model = new ToolDef.ParameterDef();
+        model.setType("string");
+        model.setDescription("Gemini model ID for agy (e.g. " + ModelIds.get("example-gemini")
+                + "; `agy models` lists them); omitted to use agy's default, which a free-tier key may not be allowed");
+        model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
+        model.setOptional(true);
+        model.setReconfigurable(true);
+        params.put("model", model);
+        var effort = new ToolDef.ParameterDef();
+        effort.setType("string");
+        effort.setDescription("Reasoning effort (low, medium, high, xhigh, max)");
+        effort.setPattern("^(low|medium|high|xhigh|max)$");
+        effort.setOptional(true);
+        effort.setReconfigurable(true);
+        params.put("effort", effort);
+        return params;
     }
 
     /** Node is for {@code isx mcp}'s delegation, whose guest runner ({@code antigravity-runner.cjs}) is a Node script; agy needs none. */
@@ -172,7 +208,8 @@ public class AntigravitySetup implements ToolSetup {
         var action = new ToolDef.ActionEntry();
         action.setLabel("Antigravity CLI");
         action.setType("shell");
-        action.setCommand("bash -lc agy");
+        action.setCommand("bash -lc 'agy ${" + MODEL_ENV + ":+--model \"$" + MODEL_ENV + "\"} ${" + EFFORT_ENV
+                + ":+--effort \"$" + EFFORT_ENV + "\"}'");
         action.setAutoReturn(true);
         return List.of(action);
     }

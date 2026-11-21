@@ -45,7 +45,10 @@ try {
   // permission agy would ask about, as nobody is there to.
   const argv = ['-p=', '--input-format', 'stream-json', '--output-format', 'stream-json', '--dangerously-skip-permissions'];
   if (run !== '1') argv.push('--conversation', session);
-  if (model) argv.push('--model', model);
+  // A task's own model wins; else the template's (tool parameters, as login variables).
+  const useModel = model || process.env.ISX_AGY_MODEL;
+  if (useModel) argv.push('--model', useModel);
+  if (process.env.ISX_AGY_EFFORT) argv.push('--effort', process.env.ISX_AGY_EFFORT);
   const events = output('events-' + run + '.jsonl');
   const stderr = output('stderr-' + run + '.log');
   const child = spawn('agy', argv, {stdio: ['pipe', 'pipe', stderr]});

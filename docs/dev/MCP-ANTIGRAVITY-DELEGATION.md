@@ -74,8 +74,10 @@ A failed model call shows in `recent` as "a model call failed", since its `error
 | `ask` | Needs Claude in the template |
 | Credentials | The proxy injects the `gemini` account's key, as for Gemini CLI |
 
-A free-tier Gemini key has no quota for agy's default model, so a task given no `model` fails with Google's 429 in its result.
-`agy models` lists the IDs `model` takes; issue #2402 tracks a template default.
+A free-tier Gemini key has no quota for agy's default model, so a task given no `model` and no template `model` fails with Google's 429 in its result.
+`agy models` lists the IDs `model` takes.
+The tool's `model` and `effort` parameters reach the runner as `ISX_AGY_MODEL` and `ISX_AGY_EFFORT` in the login environment (#2474).
+A task's own `model` wins, and the task's recorded model stays what the task chose.
 
 ## Human takeover
 
