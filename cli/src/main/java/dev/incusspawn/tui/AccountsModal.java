@@ -188,7 +188,7 @@ final class AccountsModal {
         int cell = 0;
         frame.renderWidget(Paragraph.from(Line.styled(rows.isEmpty()
                 ? "No credential accounts are configured. Run 'isx account add' to add one."
-                : "Takes effect on the next request; nothing inside restarts.", dim)), cells.get(cell++));
+                : "Takes effect on the next request; isx names anything to restart.", dim)), cells.get(cell++));
         cell++;
 
         int labelWidth = rows.stream().mapToInt(r -> r.namespace().length()).max().orElse(0);

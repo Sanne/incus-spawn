@@ -567,9 +567,10 @@ public class AccountCommand extends BaseCommand {
 
             var config = SpawnConfig.load();
             Map<String, String> requested;
+            List<String> restarts;
             try {
                 requested = AccountSelection.parse(args.subList(1, args.size()));
-                change(incus, instance, config, requested);
+                restarts = change(incus, instance, config, requested);
             } catch (AccountSelection.InvalidSelectionException
                      | AccountResolver.UnknownAccountException e) {
                 BuildOutput.error(failure(e));
@@ -586,8 +587,7 @@ public class AccountCommand extends BaseCommand {
                             + " ('isx account unset " + instance + " " + namespace + "' follows the default instead).");
                 }
             });
-            BuildOutput.step("Takes effect on the instance's next request;"
-                    + " nothing inside it needs restarting.");
+            whenItTakesEffect(restarts);
             return CommandResult.SUCCESS;
         }
     }
@@ -644,8 +644,9 @@ public class AccountCommand extends BaseCommand {
             if (changes.isEmpty()) return CommandResult.SUCCESS;
 
             var config = SpawnConfig.load();
+            List<String> restarts;
             try {
-                change(incus, instance, config, changes);
+                restarts = change(incus, instance, config, changes);
             } catch (AccountSelection.InvalidSelectionException
                      | AccountResolver.UnknownAccountException e) {
                 BuildOutput.error(failure(e));
@@ -657,15 +658,30 @@ public class AccountCommand extends BaseCommand {
                 BuildOutput.step(instance + " now follows the " + ns + " default"
                         + (account.isEmpty() ? " (none is configured)." : " (currently '" + account + "')."));
             }
-            BuildOutput.step("Takes effect on the instance's next request;"
-                    + " nothing inside it needs restarting.");
+            whenItTakesEffect(restarts);
             return CommandResult.SUCCESS;
         }
     }
 
-    private static void change(IncusClient incus, String instance, SpawnConfig config,
-                               Map<String, String> changes) {
-        InstanceLifecycle.changeAccounts(incus, instance, config,
-                AccountSelection.namespaceSetups(config), changes, dev.incusspawn.util.BuildOutput.bound());
+    /** @return what a person has to restart inside the instance, as the tools that re-derived said it */
+    private static List<String> change(IncusClient incus, String instance, SpawnConfig config,
+                                       Map<String, String> changes) {
+        return InstanceLifecycle.changeAccounts(incus, instance, config,
+                AccountSelection.namespaceSetups(config), changes, dev.incusspawn.util.BuildOutput.bound()).restarts();
+    }
+
+    /**
+     * The proxy swaps the credentials on the next request, but a program already running in the
+     * instance keeps what a re-derived tool rewrote (Antigravity CLI's mode), so that is said
+     * rather than promising nothing needs restarting.
+     */
+    private static void whenItTakesEffect(List<String> restarts) {
+        if (restarts.isEmpty()) {
+            BuildOutput.step("Takes effect on the instance's next request;"
+                    + " nothing inside it needs restarting.");
+            return;
+        }
+        BuildOutput.step("The credentials take effect on the instance's next request.");
+        restarts.forEach(BuildOutput::warn);
     }
 }

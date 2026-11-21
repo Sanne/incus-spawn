@@ -498,6 +498,9 @@ Two tools *can* tell them apart, and each does so differently.
 The build stamps it as `user.incus-spawn.account-identity.<namespace>`.
 When a re-point makes it stale, the tool is asked to bring the instance in line.
 `GhSetup.canRebakeForAccount()` is true, and `rebakeForAccount` clears the git identity and asks the API again — which resolves *through the proxy*, so it answers for the new account without this code knowing which one that is.
+`rebakeForAccount` returns what a person has to restart inside the instance, or `null`, and `changeAccounts` hands it back (`AccountChange.restarts`).
+Git reads its config for every commit, so GitHub returns `null`; Antigravity CLI keeps the mode it started in, so `GeminiSetup` names it.
+`isx account set` and `unset` warn with what came back, and say that nothing needs restarting only when nothing did; the TUI warns the same.
 `InstanceLifecycle.reconcileAccountIdentities` does this, and only stamps back on success.
 
 GitHub's stamp is the account name plus a fingerprint of its token, configured email and, when set, configured name (`<account>#<12 hex of SHA-256>`), not the name alone.

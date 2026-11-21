@@ -151,10 +151,10 @@ public class GhSetup implements ToolSetup {
      * proxy, which already knows which account this instance uses.
      */
     @Override
-    public void rebakeForAccount(Container container, String accountName) {
+    public String rebakeForAccount(Container container, String accountName) {
         // Every build stamps an identity for every namespace, so instances without gh carry
         // one too; there, no git identity was derived and there is nothing to bring in line.
-        if (!container.sh("command -v gh").success()) return;
+        if (!container.sh("command -v gh").success()) return null;
         var config = SpawnConfig.load();
         // Resolve before overwriting. Clearing first and then failing -- no network, a revoked
         // token, gh missing -- would leave the instance with no author at all, which is worse
@@ -163,6 +163,8 @@ public class GhSetup implements ToolSetup {
         var identity = resolveIdentity(container, config, accountName, true);
         gitConfig(container, "user.name", identity.name());
         gitConfig(container, "user.email", identity.email());
+        // Git reads its config for every commit, so nothing running needs restarting
+        return null;
     }
 
     @Override

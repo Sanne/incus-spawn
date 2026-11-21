@@ -5,7 +5,7 @@
 
 
   ╭ Credential accounts: review-1 ───────────────────────────────────────────╮
-  │ Takes effect on the next request; nothing inside restarts.               │
+  │ Takes effect on the next request; isx names anything to restart.         │
   │                                                                          │
   │  ▸ claude < global default (personal) >                                  │
   │           Claude Pro/Max OAuth token                                     │

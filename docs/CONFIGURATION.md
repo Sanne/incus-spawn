@@ -143,6 +143,9 @@ Changes take effect on the instance's next request, with no restart.
 An instance switched to another GitHub account takes that account's git identity on its next start or shell.
 The exception is switching between Claude auth modes (Pro/Max, API key, Vertex), which needs a template built for that mode ([#866](https://github.com/Sanne/incus-spawn/issues/866)).
 
+Moving `agy` between an API key account and a Google account rewrites its settings in place.
+A running `agy` keeps its old mode, so `isx account set` tells you to start it again from a new `isx shell`.
+
 The `name` and `email` fields on a GitHub account override the git identity that would otherwise come from the GitHub profile.
 When unset, they are derived from the GitHub API.
 `isx init` does not prompt for `name`; write it by hand.

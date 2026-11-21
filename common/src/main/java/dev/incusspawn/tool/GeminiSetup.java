@@ -157,10 +157,18 @@ public class GeminiSetup implements ToolSetup {
     @Override
     public boolean canRebakeForAccount() { return true; }
 
-    /** Antigravity CLI's mode, where the instance has agy; nothing in an image without it. */
+    /**
+     * Antigravity CLI's mode, where the instance has agy; nothing in an image without it. An agy
+     * already running keeps the mode it started in, and the Google mode's login script runs only
+     * in a new login shell, so the person is told to start it again from one.
+     */
     @Override
-    public void rebakeForAccount(dev.incusspawn.incus.Container container, String accountName) {
-        AntigravitySetup.rebakeIfInstalled(container, accountName);
+    public String rebakeForAccount(dev.incusspawn.incus.Container container, String accountName) {
+        var google = GoogleAccounts.isGoogleAccount(SpawnConfig.load().tree(), accountName);
+        if (!AntigravitySetup.rebakeIfInstalled(container, google)) return null;
+        return "Antigravity CLI is now set up for " + (google ? "a Google account" : "an API key")
+                + ", but an agy already running in " + container.name() + " keeps its old mode:"
+                + " quit it and start it again from a new isx shell " + container.name() + ".";
     }
 
     @Override

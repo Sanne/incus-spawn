@@ -2426,8 +2426,10 @@ public class Tui {
         backgroundTasks.submit("Switching accounts of " + instance, "Switched accounts of " + instance,
                 instance, () -> {
                     try {
-                        InstanceLifecycle.changeAccounts(incus, instance, config, setups, changes,
+                        var change = InstanceLifecycle.changeAccounts(incus, instance, config, setups, changes,
                                 drawing);
+                        // A program already running inside keeps what a re-derive rewrote (agy's mode)
+                        change.restarts().forEach(restart -> drawing.warn(restart));
                         setStatusMessage(instance + ": " + described);
                     } catch (RuntimeException e) {
                         setStatusMessage("Couldn't change accounts of " + instance + ": " + e.getMessage());

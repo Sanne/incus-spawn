@@ -246,8 +246,12 @@ public interface ToolSetup {
      * <p>GitHub clears the git identity and asks the API again, which resolves through the
      * proxy and therefore answers for the new account by itself. Claude declines: its auth mode
      * lives in the environment a running agent has already read.
+     *
+     * @return what a person has to restart inside the instance for the change to reach a program
+     *         already running there, said to them as it is; {@code null} when nothing does, as for
+     *         a git identity, which every commit reads again
      */
-    default void rebakeForAccount(Container container, String accountName) {
+    default String rebakeForAccount(Container container, String accountName) {
         throw new UnsupportedOperationException(name() + " cannot re-derive its baked identity");
     }
 

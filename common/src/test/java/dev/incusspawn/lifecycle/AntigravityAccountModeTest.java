@@ -4,14 +4,21 @@ import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.GeminiSetup;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 /**
  * Antigravity CLI's mode follows the instance's {@code gemini} account after it is built: a move
@@ -25,16 +32,18 @@ class AntigravityAccountModeTest {
 
     private static final String NAME = "agy-1";
 
+    private static final String CONFIG = """
+            gemini:
+              accounts:
+                key:
+                  apiKey: "gemini-k1"
+                home:
+                  type: google
+              default: key
+            """;
+
     private static SpawnConfig config() throws Exception {
-        return Jjq.spawnConfig("""
-                gemini:
-                  accounts:
-                    key:
-                      apiKey: "gemini-k1"
-                    home:
-                      type: google
-                  default: key
-                """);
+        return Jjq.spawnConfig(CONFIG);
     }
 
     /**
@@ -90,5 +99,37 @@ class AntigravityAccountModeTest {
                 Metadata.accountIdentityKey("gemini"), "api-key",
                 Metadata.accountKey("gemini"), "other"));
         assertEquals(Map.of(), AccountSelection.staleIdentities(config, daemon.client(), NAME));
+    }
+
+    /**
+     * {@code isx account set} promised nothing inside needed restarting, but an agy already
+     * running keeps the mode it started in: the re-derive says so, and only where agy is.
+     */
+    @Test
+    void aRunningAgyIsToldToRestartAndAnImageWithoutItIsNot() throws Exception {
+        var configDir = Path.of(System.getProperty("user.home"), ".config/incus-spawn");
+        Files.createDirectories(configDir);
+        Files.writeString(configDir.resolve("config.yaml"), CONFIG);
+
+        var withAgy = stubIncus(true);
+        var restart = new GeminiSetup().rebakeForAccount(new Container(withAgy, NAME), "home");
+        assertNotNull(restart, "an instance with agy is told what to restart");
+        assertTrue(restart.contains("a Google account") && restart.contains("isx shell " + NAME), restart);
+        verify(withAgy).shellExec(eq(NAME), eq("sh"), eq("-c"), contains("isx-zz-antigravity.sh"));
+
+        var withoutAgy = stubIncus(false);
+        assertNull(new GeminiSetup().rebakeForAccount(new Container(withoutAgy, NAME), "home"),
+                "Gemini CLI alone reads its key at launch: nothing to restart");
+        verify(withoutAgy, never()).shellExec(eq(NAME), eq("sh"), eq("-c"), contains("isx-zz-antigravity.sh"));
+    }
+
+    private static IncusClient stubIncus(boolean agyInstalled) {
+        var incus = mock(IncusClient.class);
+        var ok = new IncusClient.ExecResult(0, "", "");
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(ok);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(ok);
+        when(incus.shellExec(eq(NAME), eq("sh"), eq("-c"), startsWith("[ -e ")))
+                .thenReturn(agyInstalled ? ok : new IncusClient.ExecResult(1, "", ""));
+        return incus;
     }
 }
