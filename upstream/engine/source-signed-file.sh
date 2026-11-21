@@ -101,9 +101,13 @@ _entries() {
 src_releases() {
     # A successors version of the pinned series is no release yet (the index does not list it), so only
     # those of another series count: they are there to open the new-series issue.
-    local cur series
+    # Both listings are read into variables first, so a lost successors page fails the run rather than
+    # reading as no new series (the loop's || true would swallow it).
+    local cur series index succ v d
     cur="$(src_current)"; series="$(src_series "$cur")"
-    { _entries index; _entries successors | while IFS=$'\t' read -r v d; do [[ "$(src_series "$v")" != "$series" ]] && printf '%s\t%s\n' "$v" "$d"; done || true; } \
+    index="$(_entries index)" || exit 1
+    succ="$(_entries successors)" || exit 1
+    { printf '%s\n' "$index"; while IFS=$'\t' read -r v d; do [[ -n "$v" && "$(src_series "$v")" != "$series" ]] && printf '%s\t%s\n' "$v" "$d"; done <<<"$succ" || true; } \
         | cut -f1 | grep -E '^[0-9]+(\.[0-9]+)*$' | sort -uV
 }
 
