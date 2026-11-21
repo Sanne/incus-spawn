@@ -210,6 +210,13 @@ good_pom="$FIX/http/$(http "$C/twin-b/3.0.0/twin-b-3.0.0.pom")"; cp "$good_pom" 
 echo tampered >> "$good_pom"
 UPSTREAM_REHASH=1 "$E" check plugins > "$WORK/check.log" 2>&1 && fail "check passed a pom that does not hash to Central's sha1"
 cp "$WORK/pom.bak" "$good_pom"
+# A listing Central does not serve (a 429 that outlasted fetch's retries) fails with why, never with a
+# path the lost download left empty.
+mv "$FIX/http/$(http "$C/lib/")" "$WORK/listing.bak"
+"$E" check lib > "$WORK/check.log" 2>&1 && fail "check passed with no listing of lib"
+grep -qF "failed to download $C/lib/" "$WORK/check.log" || fail "the missing listing was not what failed: $(cat "$WORK/check.log")"
+! grep -qE "cannot read|lists no release" "$WORK/check.log" || fail "a failed listing read as an empty one: $(cat "$WORK/check.log")"
+mv "$WORK/listing.bak" "$FIX/http/$(http "$C/lib/")"
 echo "current, check: ok"
 
 # ---- plan --------------------------------------------------------------------------------------------
