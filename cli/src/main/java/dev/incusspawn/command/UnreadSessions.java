@@ -4,10 +4,11 @@ import java.util.List;
 
 /**
  * The sessions of a coding agent that the overview does not read, only finds (#2290): Gemini CLI,
- * Antigravity CLI, GitHub Copilot CLI and Bob. When an agent's session files are there, it is named
- * among {@link AgentSessions#otherAgents} as not read, so an instance it worked in never reads as
- * {@code untouched}. Its closing messages are not shown: a reader is written from session files
- * the agent itself wrote, as the others were, and none were at hand.
+ * GitHub Copilot CLI and Bob, and Antigravity CLI's conversations that have no transcript. When
+ * an agent's session files are there, it is named among {@link AgentSessions#otherAgents} as not
+ * read, so an instance it worked in never reads as {@code untouched}. Its closing messages are not
+ * shown: a reader is written from session files the agent itself wrote, as the others were, and
+ * none were at hand for Gemini CLI, Copilot and Bob.
  *
  * <p>Each check looks for session files alone, never for the agent's directory, which isx fills at
  * build time with settings, extensions and policies. Where each agent keeps them was read from the
@@ -28,11 +29,17 @@ public final class UnreadSessions implements AgentSessions.GuestReader {
     /**
      * Antigravity CLI's conversations, {@code ~/.gemini/antigravity-cli/conversations/<id>.db}, one
      * per conversation, beside the build's settings in that directory but never Gemini CLI's (#2366).
-     * Where it keeps them was read from the files {@code agy} 1.5.12 wrote.
+     * {@link AntigravitySessions} reads the transcript of each in {@code brain/<id>}, so only a
+     * conversation with none is found here (#2478). Where it keeps them was read from the files
+     * {@code agy} 1.5.13 wrote.
      */
     static final UnreadSessions ANTIGRAVITY = new UnreadSessions("antigravity", """
-            a=$HOME/.gemini/antigravity-cli/conversations
-            [ -n "$(find "$a" -mindepth 1 -maxdepth 1 -name '*.db' -type f -print -quit 2>/dev/null)" ] && echo unread
+            a=$HOME/.gemini/antigravity-cli
+            for f in "$a"/conversations/*.db; do
+              [ -f "$f" ] || continue
+              i=${f##*/}
+              [ -f "$a/brain/${i%.db}/.system_generated/logs/transcript.jsonl" ] || { echo unread; break; }
+            done
             """);
 
     /** Copilot's {@code ~/.copilot/session-state}, one entry per session; an XDG location is migrated back there. */

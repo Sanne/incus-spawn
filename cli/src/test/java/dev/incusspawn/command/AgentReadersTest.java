@@ -208,6 +208,40 @@ class AgentReadersTest {
         assertEquals(List.of("gemini-cli"), AgentSessionsTest.run(home).sessions().otherAgents());
     }
 
+    /**
+     * Antigravity CLI's transcripts give its ask and closing message (#2478). The first line is
+     * what {@code agy} 1.5.13 wrote, its words changed; the model's steps are shaped as the swarm
+     * sidecar {@code agy} ships reads them, since no model answered that run. A conversation with
+     * no transcript still names it as not read, and the files beside a transcript are no session.
+     */
+    @Test
+    void antigravitysTranscriptGivesItsAskAndClosing(@TempDir Path home) throws Exception {
+        var agy = home.resolve(".gemini/antigravity-cli");
+        var id = "008d3923-28cb-433f-8fc2-01740cf4071e";
+        var logs = Files.createDirectories(agy.resolve("brain/" + id + "/.system_generated/logs"));
+        Files.writeString(logs.resolve("transcript.jsonl"), fixture("antigravity-transcript.jsonl")
+                // A tool call with no text after the report is not the closing message
+                + "{\"step_index\":4,\"source\":\"MODEL\",\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"tool_calls\":[{\"name\":\"swarm_wait\"}]}\n");
+        Files.writeString(logs.resolve("transcript_full.jsonl"), fixture("antigravity-transcript.jsonl"));
+        Files.writeString(Files.createDirectories(logs.resolve("chunks/transcript")).resolve("00000000.jsonl"), fixture("antigravity-transcript.jsonl"));
+        Files.writeString(Files.createDirectories(agy.resolve("conversations")).resolve(id + ".db"), "not a database");
+
+        var sessions = AgentSessionsTest.run(home).sessions();
+
+        assertEquals(AgentSessions.State.READ, sessions.state(), sessions.why());
+        assertEquals(1, sessions.total(), "the full transcript and its chunks are the same conversation");
+        var session = sessions.sessions().getFirst();
+        assertEquals("antigravity", session.agent());
+        assertEquals("Fix the flaky <b>test</b> & open a \"PR\"", session.ask(), "the person's words, not what agy adds after them");
+        assertEquals(DONE, session.closing());
+        assertTrue(sessions.otherAgents().isEmpty(), "its one conversation was read");
+
+        Files.writeString(agy.resolve("conversations/94739f6c-d0df-4ecd-9113-4ec4a007e331.db"), "not a database");
+        var some = AgentSessionsTest.run(home).sessions();
+        assertEquals(1, some.total());
+        assertEquals(List.of("antigravity"), some.otherAgents(), "a conversation with no transcript is not read");
+    }
+
     /** Bob's database read by its own tasks: none is no session, and only then. */
     @Test
     void bobsDatabaseWithoutTasksIsNoSession(@TempDir Path home) throws Exception {
@@ -227,20 +261,21 @@ class AgentReadersTest {
         var claude = ClaudeSessions.HEADER + "\ntotal 0\nend\n";
         var codex = CodexSessions.HEADER + "\ntotal x\nend\n";
         var pi = PiSessions.HEADER + "\ntotal 0\nend\n";
+        var agy = AntigravitySessions.HEADER + "\ntotal 0\nend\n";
         var opencode = OpencodeSessions.HEADER + "\ntotal 0\nend\n";
 
-        var oneFailed = GuestRead.parse(0, work + unread + claude + codex + pi + opencode, false).sessions();
+        var oneFailed = GuestRead.parse(0, work + unread + claude + codex + pi + agy + opencode, false).sessions();
         assertEquals(AgentSessions.State.READ, oneFailed.state());
         assertEquals(List.of("codex"), oneFailed.otherAgents());
         assertNull(Summary.of(oneFailed, WorkState.parse(0, work, false), false).from(), "never untouched");
 
-        var cut = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + OpencodeSessions.HEADER + "\ntotal 1\n", true);
+        var cut = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + agy + OpencodeSessions.HEADER + "\ntotal 1\n", true);
         assertEquals(List.of("opencode"), cut.sessions().otherAgents(), "the bound cut opencode's section alone");
 
         var all = GuestRead.parse(0, work + unread + claude.replace("total 0", "total x"), false).sessions();
         assertEquals(AgentSessions.State.UNKNOWN, all.state(), "no reader answered: the agents found but not read are no reader");
 
-        var untouched = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + opencode, false);
+        var untouched = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + agy + opencode, false);
         assertEquals("untouched", Summary.of(untouched.sessions(), untouched.work(), false).from());
     }
 

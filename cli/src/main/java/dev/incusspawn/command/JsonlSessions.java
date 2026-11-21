@@ -13,7 +13,8 @@ import java.util.regex.Pattern;
 
 /**
  * An agent that keeps each session as a JSON Lines transcript (#2241): Claude Code
- * ({@link ClaudeSessions}), Codex ({@link CodexSessions}) and Pi ({@link PiSessions}). The script
+ * ({@link ClaudeSessions}), Codex ({@link CodexSessions}), Pi ({@link PiSessions}) and Antigravity CLI
+ * ({@link AntigravitySessions}). The script
  * reads only the newest {@link #MAX_SESSIONS}, and from each only a few lines: the first lines of
  * the person's among its first {@link #HEAD_LINES}, and the last lines of the agent's that hold
  * text among its last {@link #TAIL_LINES}, read from the end with {@code tac}, so a long

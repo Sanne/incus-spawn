@@ -59,6 +59,7 @@ class TuiOverviewTest {
                                 + dev.incusspawn.command.ClaudeSessions.HEADER + "\ntotal 1\nsession 1762164000 YQ==\nclose eyJ0eXBlIjoiYXNzaXN0YW50IiwibWVzc2FnZSI6eyJjb250ZW50IjpbeyJ0eXBlIjoidGV4dCIsInRleHQiOiJQb3J0ZWQgdGhlIHBhcnNlciJ9XX19\nend\n"
                                 + dev.incusspawn.command.CodexSessions.HEADER + "\ntotal 0\nend\n"
                                 + dev.incusspawn.command.PiSessions.HEADER + "\ntotal 0\nend\n"
+                                + dev.incusspawn.command.AntigravitySessions.HEADER + "\ntotal 0\nend\n"
                                 + dev.incusspawn.command.OpencodeSessions.HEADER + "\ntotal 0\nend\n");
         var file = dir.resolve("events.jsonl");
         Files.writeString(file, String.join("\n",
