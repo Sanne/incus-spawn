@@ -309,11 +309,19 @@ final class MainScreen {
             scrollArea = null;
         }
 
+        // The description is cut first and the name last; a name is as wide as the longest of every
+        // template, so the columns hold still while a search narrows the list
+        var templateWidths = ColumnFit.widths(List.of(
+                new ColumnFit.Column("NAME", 12, tui.templateNameWidth(), 3, false),
+                new ColumnFit.Column("BUILT", 9, ColumnFit.natural(tui.templateRows, 1), 2, false),
+                ColumnFit.Column.fixed("DISK", Math.max(4, ColumnFit.natural(tui.templateRows, 2))),
+                new ColumnFit.Column("DESCRIPTION", 10, ColumnFit.natural(tui.templateRows, 3), 1, true)),
+                actualTableArea.width() - HIGHLIGHT_WIDTH);
         var tableBuilder = Table.builder()
                 .header(Row.from("NAME", "BUILT", "DISK", "DESCRIPTION")
                         .style(headerStyle()))
-                .rows(tui.templateRows)
-                .widths(Constraint.min(14), Constraint.length(20), Constraint.length(8), Constraint.fill())
+                .rows(ColumnFit.clipped(tui.templateRows, templateWidths))
+                .widths(ColumnFit.constraints(templateWidths))
                 .highlightSymbol(focused ? "\u25b8 " : "  ")
                 // Always reserved, so renderMarks can draw into it
                 .highlightSpacing(Table.HighlightSpacing.ALWAYS);
@@ -494,25 +502,36 @@ final class MainScreen {
             headers = columns.headers();
             shownRows = columns.rows();
         } else {
-            widths = new java.util.ArrayList<>(List.of(Constraint.min(10), Constraint.min(7),
-                    Constraint.min(11), Constraint.min(10),
-                    Constraint.length(10), Constraint.min(8), Constraint.length(6)));
-            headers = new java.util.ArrayList<>(List.of("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK"));
+            var natural = tui.instanceNatural;
+            // The order in which the columns give width up where the table does not fit: the free
+            // text first, the name and the status last, and DISK never
+            var columns = new ArrayList<>(List.of(
+                    new ColumnFit.Column("NAME", 10, natural[0], 7, false),
+                    new ColumnFit.Column("STATUS", 9, natural[1], 8, false),
+                    // Room for an address is kept once the columns stand apart, so they
+                    // hold still when an instance starts and gets one
+                    new ColumnFit.Column("IP", 7, natural[2], 6, false).reserving(IP_WIDTH),
+                    new ColumnFit.Column("PARENT", 8, natural[3], 3, false),
+                    new ColumnFit.Column("RUNTIME", 9, natural[4], 2, false),
+                    new ColumnFit.Column("AGE", 6, natural[5], 5, false),
+                    ColumnFit.Column.fixed("DISK", Math.max(4, natural[6]))));
             // The cells of the columns drawn, from each row's: OWNER is the eighth, PURPOSE the ninth
-            var cells = new java.util.ArrayList<>(IntStream.range(0, headers.size()).boxed().toList());
+            var cells = new java.util.ArrayList<>(IntStream.range(0, columns.size()).boxed().toList());
             boolean showOwner = tui.anyOwner && actualArea.width() >= OWNER_COLUMN_MIN_WIDTH;
             if (showOwner) {
-                widths.add(Constraint.min(9));
-                headers.add("OWNER");
+                columns.add(new ColumnFit.Column("OWNER", 9, natural[7], 4, false));
                 cells.add(7);
             }
             if (tui.anyPurpose && actualArea.width() >= (showOwner ? PURPOSE_COLUMN_MIN_WIDTH : PURPOSE_ALONE_MIN_WIDTH)) {
-                widths.add(Constraint.min(30));
-                headers.add("PURPOSE");
+                columns.add(new ColumnFit.Column("PURPOSE", 12, natural[8], 1, true));
                 cells.add(8);
             }
-            shownRows = cells.size() == tui.tableRows.get(0).cells().size() ? tui.tableRows
+            var fitted = ColumnFit.widths(columns, actualArea.width() - HIGHLIGHT_WIDTH);
+            widths = ColumnFit.constraints(fitted);
+            headers = columns.stream().map(ColumnFit.Column::header).toList();
+            var kept = cells.size() == tui.tableRows.get(0).cells().size() ? tui.tableRows
                     : tui.tableRows.stream().map(row -> Row.from(cells.stream().map(row.cells()::get).toList()).style(row.style())).toList();
+            shownRows = ColumnFit.clipped(kept, fitted);
         }
         var tableBuilder = Table.builder()
                 .header(Row.from(headers.toArray(String[]::new))
@@ -567,6 +586,12 @@ final class MainScreen {
 
     private record Columns(List<Constraint> widths, List<String> headers, List<Row> rows) {}
 
+    /** The width of most IPv4 addresses on the bridge, {@code 10.166.11.123}. */
+    static final int IP_WIDTH = 13;
+
+    /** The cells a table keeps at its left for the cursor and a row's mark. */
+    static final int HIGHLIGHT_WIDTH = 2;
+
     /**
      * The overview's columns (#2241, {@code o} and the Work tab): NAME and STATUS from the table's
      * rows, then what each guest's clones hold (WORK), what the proxy's event log says each
@@ -576,35 +601,28 @@ final class MainScreen {
      */
     private Columns overviewColumns(int width) {
         boolean active = width >= OVERVIEW_ACTIVE_MIN_WIDTH;
-        var widths = new ArrayList<>(List.of(Constraint.min(10), Constraint.min(7), Constraint.length(12),
-                Constraint.min(12), Constraint.length(7)));
-        var headers = new ArrayList<>(List.of("NAME", "STATUS", "LAST USED", "WORK", "TOKENS"));
-        if (active) {
-            widths.add(Constraint.length(13));
-            headers.add("ACTIVE");
-        }
-        int githubColumn = widths.size();
-        headers.add("GITHUB");
+        var natural = tui.instanceNatural;
+        // WORK, DONE and PURPOSE get their content's width once the rows are made, below
+        var columns = new ArrayList<>(List.of(
+                new ColumnFit.Column("NAME", 10, natural[0], 5, false),
+                // Down to 7 as before, so a pull request stays whole at 80 columns (#2292)
+                new ColumnFit.Column("STATUS", 7, natural[1], 6, false),
+                ColumnFit.Column.fixed("LAST USED", 12),
+                new ColumnFit.Column("WORK", 12, 12, 4, false),
+                ColumnFit.Column.fixed("TOKENS", 7)));
+        if (active) columns.add(ColumnFit.Column.fixed("ACTIVE", 13));
+        int githubColumn = columns.size();
         boolean done = width >= OVERVIEW_DONE_MIN_WIDTH;
-        if (done) {
-            widths.add(Constraint.min(20));
-            headers.add("DONE");
-        }
+        if (done) columns.add(new ColumnFit.Column("DONE", 20, 20, 1, true));
         boolean purpose = tui.anyPurpose && width >= OVERVIEW_PURPOSE_MIN_WIDTH;
-        if (purpose) {
-            widths.add(Constraint.min(24));
-            headers.add("PURPOSE");
-        }
+        if (purpose) columns.add(new ColumnFit.Column("PURPOSE", 24, 24, 2, true));
         var log = tui.overviewLog;
         var reading = tui.overviewReading;
         var zone = tui.overviewZone;
         // GITHUB is as wide as its widest row needs, to show each reference whole (#2292), within
         // what the other columns leave at their least: the highlight mark, one cell between columns
-        int room = width - 2 - widths.size();
-        for (var constraint : widths) {
-            room -= constraint instanceof Constraint.Min min ? min.value()
-                    : constraint instanceof Constraint.Length length ? length.value() : 0;
-        }
+        int room = width - HIGHLIGHT_WIDTH - columns.size();
+        for (var column : columns) room -= column.floor();
         int githubMost = Math.max(GITHUB_MIN_WIDTH, Math.min(GITHUB_MAX_WIDTH, room));
         var efforts = new ArrayList<dev.incusspawn.proxy.EventLogReader.Effort>();
         var github = new ArrayList<List<OverviewCommand.GitHubPart>>();
@@ -624,7 +642,7 @@ final class MainScreen {
             githubWidth = Math.max(githubWidth, OverviewCommand.fitGithub(parts, githubMost).stream()
                     .mapToInt(piece -> OverviewCommand.width(piece.text())).sum());
         }
-        widths.add(githubColumn, Constraint.length(githubWidth));
+        columns.add(githubColumn, ColumnFit.Column.fixed("GITHUB", githubWidth));
         var rows = new ArrayList<Row>();
         for (int i = 0; i < tui.tableRows.size(); i++) {
             var row = tui.tableRows.get(i);
@@ -649,7 +667,15 @@ final class MainScreen {
             if (purpose) cells.add(row.cells().get(8));
             rows.add(Row.from(cells).style(row.style()));
         }
-        return new Columns(widths, headers, rows);
+        for (int c = 0; c < columns.size(); c++) {
+            var column = columns.get(c);
+            if (column.give() == 0 || c < 2) continue;
+            columns.set(c, new ColumnFit.Column(column.header(), column.floor(),
+                    Math.max(column.floor(), ColumnFit.natural(rows, c)), column.give(), column.fill()));
+        }
+        var fitted = ColumnFit.widths(columns, width - HIGHLIGHT_WIDTH);
+        return new Columns(ColumnFit.constraints(fitted), columns.stream().map(ColumnFit.Column::header).toList(),
+                ColumnFit.clipped(rows, fitted));
     }
 
     /** The GITHUB column's least width, and the most it takes for the references of one row. */

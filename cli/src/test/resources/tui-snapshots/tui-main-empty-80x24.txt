@@ -1,9 +1,9 @@
  isx   1.2.3
  Overview   Templates 2   Instances 0   Work                    ←/→ Switch view
  Templates ─────────────────────────────────────────────────────────────────────
-   NAME                    BUILT                DISK     DESCRIPTION
- ▸ tpl-minimal             3 days ago           -        Minimal Fedora
-   tpl-dev                 not built            -        Development tools
+   NAME           BUILT         DISK    DESCRIPTION
+ ▸ tpl-minimal    3 days ago    -       Minimal Fedora
+   tpl-dev        not built     -       Development tools
 
 
 
