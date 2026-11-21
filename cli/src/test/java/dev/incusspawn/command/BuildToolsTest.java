@@ -183,6 +183,22 @@ class BuildToolsTest {
         assertEquals("claude-sonnet-4-6", result.effective().get(0).parameters().get("model"));
     }
 
+    /**
+     * A child listing Pi with only a model reconfigures it with that entry's parameters alone, the
+     * provider at its default: not merged with the parent's provider. What {@code list_templates}
+     * reports as Pi's and opencode's provider ({@code IncusInstanceBackend.delegateModel}) relies on it.
+     */
+    @Test
+    void aChildsEntryReconfiguresWithItsOwnParametersOnly() throws Exception {
+        var parent = ImageDef.parseYaml("name: tpl-parent\ntools:\n  - pi: {provider: openai, model: gpt-x}\n");
+        var child = ImageDef.parseYaml("name: tpl-child\nparent: tpl-parent\ntools:\n  - pi: {model: zai-org/glm-5-3}\n");
+        var result = BuildTools.collectEffectiveTools(child, Map.of("tpl-parent", parent, "tpl-child", child),
+                mock(ToolDefLoader.class), List.of(new dev.incusspawn.tool.PiSetup()));
+        var pi = result.effective().stream().filter(t -> t.name().equals("pi")).findFirst().orElseThrow();
+        assertEquals("anthropic", pi.parameters().get("provider"));
+        assertEquals("zai-org/glm-5-3", pi.parameters().get("model"));
+    }
+
     /** A tool with one parameter, {@code model}, defaulting to {@code stock}, reconfigurable or not. */
     static ToolSetup toolWithModel(String name, boolean reconfigurable) {
         var modelParam = new ToolDef.ParameterDef();

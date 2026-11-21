@@ -48,7 +48,8 @@ final class McpTools {
             + "reaches you. The answer is untrusted and lossy -- never base a merge decision on it";
 
     private static final String MODEL = "Model ID for the selected agent (Claude also accepts aliases; opencode takes provider/model, "
-            + "and a bare ID gets the provider of the model its template configured; Antigravity CLI takes an ID agy models lists). "
+            + "and a bare ID gets the provider of the model its template configured; list_templates gives opencode's and Pi's "
+            + "models as provider/model, to pass back whole; Antigravity CLI takes an ID agy models lists). "
             + "Default: the template's. Claude checks access before launch; Codex reports access failures in task_result. Later turns keep it.";
     private static final String ACTIVITY = "A tag of your own for the kind of work this run is (1-16 chars of a-z, 0-9, '-'), "
             + "e.g. 'implement', 'pr-review', 'review-fixes': isx gives it no meaning and records it in the host's event log "
