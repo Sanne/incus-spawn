@@ -54,4 +54,32 @@ class PoolQgroupLockTest {
             held.release();
         }
     }
+
+    @Test
+    void aDeleteThatReadsThresholdZeroWaitsForTheHolderAndDecidesUnderTheLock() throws Exception {
+        var atZero = new BtrfsUsage.QgroupStatus(true, true, false, "qgroup", 0);
+        var oldStatus = BtrfsUsage.statusSource;
+        var oldFsid = BtrfsUsage.fsidSource;
+        BtrfsUsage.statusSource = pool -> atZero;
+        BtrfsUsage.fsidSource = pool -> java.util.Optional.of("00000000-0000-0000-0000-000000000000");
+        var holder = PoolQgroupLock.acquire("p5", Duration.ofSeconds(5), false).orElseThrow();
+        try {
+            var second = new java.util.concurrent.CompletableFuture<BtrfsUsage.DropAccounting>();
+            var t = new Thread(() -> second.complete(BtrfsUsage.skipDropAccounting("p5")));
+            t.setDaemon(true);
+            t.start();
+
+            assertThrows(java.util.concurrent.TimeoutException.class,
+                    () -> second.get(300, java.util.concurrent.TimeUnit.MILLISECONDS));
+            holder.release();
+            var got = second.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertNotNull(got.lock(), "it took the lock, which its settle releases");
+            assertTrue(got.status().skipsDropAccounting());
+            got.lock().release();
+        } finally {
+            BtrfsUsage.statusSource = oldStatus;
+            BtrfsUsage.fsidSource = oldFsid;
+            holder.release();
+        }
+    }
 }
