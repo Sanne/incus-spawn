@@ -861,6 +861,13 @@ jobs:
               'agent': {'token': 'ghp-acct-agent'},
           }
           cfg['github']['default'] = 'ci'
+          # Central blocks a runner's address for hours: a cold download comes from Google's mirror,
+          # and the proxy confirms the one jar with Central (#2447)
+          mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+          cfg['maven-mirrors'] = [
+              {'repository': 'https://repo.maven.apache.org/maven2/', 'mirror': mirror},
+              {'repository': 'https://repo1.maven.org/maven2/', 'mirror': mirror},
+          ]
           cfg.setdefault('testProxyTool', {})['token'] = 'test-bearer-token-for-ci'
           cfg['testProxyTool']['password'] = 'test-password-for-ci'
           cfg['testProxyTool']['apiKey'] = 'test-api-key-for-ci'
@@ -1024,7 +1031,19 @@ jobs:
             done'"
           sg incus-admin -c "incus file push .github/scripts/proof-curl.sh test-container/tmp/"
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-container/tmp/"
-          sg incus-admin -c "incus exec test-container --env EXPECT_INSTANCE_NAME=test-container -- bash /tmp/test-instance.sh"
+          source .github/scripts/maven-ci.sh
+          PROXY_LOG="$HOME/.local/state/incus-spawn/proxy.log"
+          LOG_OFFSET=$(wc -c < "$PROXY_LOG" 2>/dev/null | tr -d " " || echo 0)
+          rc=0
+          sg incus-admin -c "incus exec test-container --env EXPECT_INSTANCE_NAME=test-container -- bash /tmp/test-instance.sh" || rc=$?
+          if [ "$rc" -eq "$THROTTLED_EXIT" ]; then
+            maven_throttle_tiebreak
+          elif [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          else
+            # The jar's first fetch is the mirror's, its second Central's: only this run sees both
+            GRADE_WAIT=30 grade_maven_proxy_log "$PROXY_LOG" "$LOG_OFFSET"
+          fi
           # /tmp is on disk (#1561): a file there survives a restart.
           sg incus-admin -c "incus exec test-container -- touch /tmp/isx-survives-restart"
           sg incus-admin -c "incus restart test-container"
@@ -1309,7 +1328,7 @@ jobs:
       # Packages first, then a reboot: an upgraded Arch kernel has no modules for the one running
       - name: Prepare the host
         run: |
-          scripts/distro-vm.sh push "$VM" .github/scripts/test-host-distro.sh .github/scripts/net-retry.sh .github/scripts/test-instance.sh \
+          scripts/distro-vm.sh push "$VM" .github/scripts/test-host-distro.sh .github/scripts/net-retry.sh .github/scripts/test-instance.sh .github/scripts/maven-ci.sh \
             .github/scripts/test-proxy-only.sh .github/scripts/guest-exec.sh .github/scripts/dump-incus-logs.sh bench/isxbench.py isx-test
           scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh prepare "$SHAPE" </dev/null
           scripts/distro-vm.sh reboot "$VM"

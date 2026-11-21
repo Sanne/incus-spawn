@@ -90,6 +90,13 @@ When every failed check was such a 429, the script exits 75 instead of 1.
 The host-distro jobs then ask Maven Central from the host, without the proxy and from the same address (`instance_checks_pass` in `test-host-distro.sh`).
 A 429 there too passes the check with a `::warning::`, so the leg did not check the Maven downloads.
 Any other answer, or no answer, fails it, and the other jobs that run the script still fail on 75.
+Since #2447 CI no longer asks Central for a cold download.
+Its `config.yaml` names Google's mirror in `maven-mirrors:`, the first end-to-end use of that feature, and the host's proxy log proves the mirror served the test jar.
+The jar's second fetch is then the one request Central gets, through the proxy's confirmation of the mirrored copy, and a throttle there passes with a warning.
+The jar's `.sha1` is fetched after that, from the proxy's store, since one asked before would go to Central as well.
+A `Retry-After` longer than the wait left ends `fetch_matching` at once.
+A 404 with a `Retry-After` is read as a throttle (#2422).
+A daily job on `main` (`maven-central-watch.yml`) downloads one artifact from Central itself and opens an issue after three refusals in a row, so the lost coverage is noticed.
 `TestInstanceScriptTest` and `TestHostDistroScriptTest` drive both scripts against a stand-in server.
 
 **An exec Incus could not attach is tried again.**

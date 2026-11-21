@@ -1,0 +1,55 @@
+name: Maven Central Watch
+
+# The integration jobs download a cold artifact from Google's mirror of Maven Central, and ask
+# Central itself once per run (#2447), so a throttled Central costs that one check a warning. This
+# watches the lost coverage: one cold download from Central, without the mirror, each day on main.
+# It opens an issue only after three runs in a row were refused, as Central blocks a runner's
+# address for hours, so a single refusal is not news.
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+jobs:
+  central:
+    if: github.repository == 'Sanne/incus-spawn'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: "[ci] Maven Central has refused the daily download for three days"
+    steps:
+      - name: Download one artifact from Maven Central
+        id: download
+        run: |
+          url=https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar.sha1
+          for attempt in 1 2 3; do
+            status=$(curl -sS -m 60 -o sha1 -w '%{http_code}' "$url") || status=none
+            if [ "$status" = 200 ] && grep -qE '^[0-9a-f]{40}$' sha1; then
+              echo "Maven Central answered on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt: HTTP $status"
+            sleep 60
+          done
+          echo "::warning title=Maven Central refused this runner::HTTP $status for $url"
+          exit 1
+
+      - name: Open an issue after three refusals in a row
+        if: failure() && steps.download.outcome == 'failure'
+        run: |
+          # This run is in progress, so the list holds the two before it first
+          earlier=$(gh run list --workflow maven-central-watch.yml --branch main --event schedule --status completed \
+            --limit 2 --json conclusion --jq '[.[].conclusion] | join(" ")')
+          echo "Earlier runs: $earlier"
+          [ "$earlier" = "failure failure" ] || exit 0
+          open=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq length)
+          [ "$open" = 0 ] || exit 0
+          gh issue create --title "$TITLE" --label follow-up --body "The daily Maven Central download (${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) has been refused three days in a row, so the one check of the integration jobs that asks Central itself (#2447) has probably been skipped with a warning since.
+          Central blocks a runner's shared address for 9 to 20 hours, so a run of refusals is the pattern to read, not one of them."
