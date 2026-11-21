@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,6 +36,18 @@ class TestHostDistroScriptTest {
             controlRequests.incrementAndGet();
             exchange.getResponseHeaders().add("Server", "cloudflare");
             exchange.sendResponseHeaders(429, -1);
+            exchange.close();
+        });
+        // Central's edge answers a throttled host with a 404 and a Retry-After (#2422)
+        server.createContext("/limited-404", exchange -> {
+            controlRequests.incrementAndGet();
+            exchange.getResponseHeaders().add("Retry-After", "33665");
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+        server.createContext("/missing", exchange -> {
+            controlRequests.incrementAndGet();
+            exchange.sendResponseHeaders(404, -1);
             exchange.close();
         });
         server.createContext("/pom", exchange -> {
@@ -76,10 +89,62 @@ class TestHostDistroScriptTest {
     }
 
     @Test
-    void passingInstanceChecksPassWithoutAskingMavenCentral() throws Exception {
-        var result = instanceChecks(0, "/throttled");
+    void aThrottledInstanceOnAHostWhoseMavenCentralAnswers404WithARetryAfterPassesWithAWarning() throws Exception {
+        var result = instanceChecks(75, "/limited-404");
+        assertEquals(0, result.exitCode, result.output);
+        assertTrue(result.output.contains("::warning title=Maven Central throttled this runner::HTTP 404"), result.output);
+    }
+
+    @Test
+    void aThrottledInstanceOnAHostWhoseMavenCentralAnswersAPlain404Fails() throws Exception {
+        var result = instanceChecks(75, "/missing");
+        assertEquals(1, result.exitCode, result.output);
+        assertFalse(result.output.contains("::warning"), result.output);
+    }
+
+    private static final String MIRROR_LINE = "Fetching junit/junit/4.13.2/junit-4.13.2.jar from its mirror"
+            + " maven-central.storage-download.googleapis.com; repo1.maven.org confirms the copy at its next use\n";
+
+    @Test
+    void passingInstanceChecksPassWhenTheProxyLogShowsTheMirrorAndCentralConfirming() throws Exception {
+        var result = instanceChecksLogging(MIRROR_LINE + "Maven/Gradle cache: 1 hit, 380 KB (1 confirmed first)\n");
         assertEquals(0, result.exitCode, result.output);
         assertEquals(0, controlRequests.get(), result.output);
+        assertFalse(result.output.contains("::warning"), result.output);
+    }
+
+    @Test
+    void passingInstanceChecksWarnWhenCentralThrottledItsConfirmation() throws Exception {
+        var result = instanceChecksLogging(MIRROR_LINE
+                + "Maven/Gradle cache: 1 hit, 380 KB (1 unconfirmed, upstream unreachable)\n");
+        assertEquals(0, result.exitCode, result.output);
+        assertTrue(result.output.contains("::warning title=Maven Central throttled this runner::"), result.output);
+    }
+
+    @Test
+    void passingInstanceChecksFailWhenTheMirrorDidNotServeTheJar() throws Exception {
+        var result = instanceChecksLogging("Maven/Gradle cache: 1 hit, 380 KB (1 confirmed first)\n");
+        assertEquals(1, result.exitCode, result.output);
+        assertTrue(result.output.contains("not in effect"), result.output);
+    }
+
+    @Test
+    void passingInstanceChecksFailWhenNeitherSummaryNorConfirmationIsLogged() throws Exception {
+        var result = instanceChecksLogging(MIRROR_LINE);
+        assertEquals(1, result.exitCode, result.output);
+        assertTrue(result.output.contains("no cache summary"), result.output);
+    }
+
+    @Test
+    void whatTheProxyLoggedBeforeTheChecksIsNotGraded() throws Exception {
+        var log = Files.createTempFile("proxy", ".log");
+        Files.writeString(log, MIRROR_LINE + "Maven/Gradle cache: 1 hit, 380 KB (1 confirmed first)\n");
+        var result = instanceChecksAt(0, "http://127.0.0.1:1/x", log, "");
+        assertEquals(1, result.exitCode, result.output);
+    }
+
+    private Result instanceChecksLogging(String logged) throws Exception {
+        return instanceChecksAt(0, "http://127.0.0.1:1/x", Files.createTempFile("proxy", ".log"), logged);
     }
 
     @Test
@@ -115,12 +180,21 @@ class TestHostDistroScriptTest {
 
     /** Runs instance_checks_pass with the guest's test-instance.sh exiting {@code guestExit}. */
     private Result instanceChecksAt(int guestExit, String controlUrl) throws Exception {
+        return instanceChecksAt(guestExit, controlUrl, Files.createTempFile("proxy", ".log"), "");
+    }
+
+    /** As above, the guest's run appending {@code logged} to the proxy log, which the grading reads. */
+    private Result instanceChecksAt(int guestExit, String controlUrl, Path log, String logged) throws Exception {
         var builder = new ProcessBuilder("bash", "--norc", "--noprofile", "-c",
-                "source \"$1\" && guest_exec() { return " + guestExit + "; } && instance_checks_pass",
+                "source \"$1\" && guest_exec() { printf '%b' \"$LOGGED\" >> \"$MAVEN_PROXY_LOG\"; return "
+                        + guestExit + "; } && instance_checks_pass",
                 "test", SCRIPT.toString())
                 .redirectErrorStream(true);
         builder.environment().keySet().removeIf(name -> name.toLowerCase().endsWith("_proxy"));
         builder.environment().put("MAVEN_CONTROL_URL", controlUrl);
+        builder.environment().put("MAVEN_PROXY_LOG", log.toString());
+        builder.environment().put("LOGGED", logged);
+        builder.environment().put("GRADE_WAIT", "1");
         var process = builder.start();
         var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertTrue(process.waitFor(30, TimeUnit.SECONDS), "the script hung:\n" + output);

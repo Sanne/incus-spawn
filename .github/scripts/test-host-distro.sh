@@ -33,6 +33,8 @@ source "$HERE/net-retry.sh"
 # Every exec goes through guest_exec: Incus can fail to attach to a guest that just started (#2084)
 # shellcheck source=SCRIPTDIR/guest-exec.sh
 source "$HERE/guest-exec.sh"
+# shellcheck source=SCRIPTDIR/maven-ci.sh
+source "$HERE/maven-ci.sh"
 
 TESTS=0
 FAIL=0
@@ -196,6 +198,12 @@ proxy() {
     # a user's next login gives it the group, which a restart does here. isx proxy install
     # enables lingering, which keeps it beyond this ssh session.
     sudo systemctl restart "user@$(id -u).service"
+    # Maven Central blocks a runner's address for hours: a cold download comes from a mirror (#2447)
+    local cfg=~/.config/incus-spawn/config.yaml
+    if ! grep -q '^maven-mirrors:' "$cfg"; then
+        [ -z "$(tail -c 1 "$cfg")" ] || echo >> "$cfg"
+        maven_ci_mirrors_yaml >> "$cfg"
+    fi
     isx proxy install
     check "the proxy service is active" systemctl --user is-active --quiet incus-spawn-proxy
     check "the proxy answers on the bridge" proxy_healthy
@@ -229,30 +237,17 @@ clones_from_github() {
         git -C /tmp/clone log --oneline -1 | grep -q . && rm -rf /tmp/clone'
 }
 
-# The exit code of test-instance.sh when its only failures were 429s from Maven Central
-THROTTLED_EXIT=75
-
 # Maven Central rate-limits a whole runner at times, past every retry in the instance (#2278).
-# When the instance's only failures are such 429s, this host asks Maven Central itself, without
-# the proxy and from the same address: a 429 here too is the runner being throttled, so the check
-# passes with a warning in the run's summary; any other answer means only the proxied requests
-# were refused, which is the proxy's fault.
+# The leg's config names a mirror for Central (#2447), so only the one confirmation of the test jar
+# asks Central, and maven_throttle_tiebreak tells its throttle from a proxy fault. Otherwise the
+# proxy log, from where it was before the checks, must show the mirror and that confirmation.
 instance_checks_pass() {
-    local rc=0
+    local rc=0 log=${MAVEN_PROXY_LOG:-$HOME/.local/state/incus-spawn/proxy.log} offset=0
+    [ -f "$log" ] && offset=$(wc -c < "$log" | tr -d " ")
     guest_exec "$INSTANCE" -- bash /tmp/test-instance.sh --core || rc=$?
-    [ "$rc" -eq "$THROTTLED_EXIT" ] || return "$rc"
-    local url=${MAVEN_CONTROL_URL:-https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom} status
-    status=$(curl -sS -m 30 -o /dev/null -w '%{http_code}' "$url") || status=none
-    if [ "$status" = 429 ]; then
-        echo "::warning title=Maven Central throttled this runner::HTTP 429 through the proxy and directly from the host: the Maven downloads were not checked on this leg"
-        return 0
-    fi
-    if [ "$status" = none ]; then
-        echo "The host could not reach Maven Central directly either, so the proxied 429s cannot be told apart from a proxy fault"
-        return 1
-    fi
-    echo "Maven Central answered the host directly with HTTP $status while every proxied request got 429: the proxy's fault"
-    return 1
+    [ "$rc" -eq 0 ] || [ "$rc" -eq "$THROTTLED_EXIT" ] || return "$rc"
+    [ "$rc" -eq 0 ] || { maven_throttle_tiebreak; return; }
+    grade_maven_proxy_log "$log" "$offset"
 }
 
 instance() {

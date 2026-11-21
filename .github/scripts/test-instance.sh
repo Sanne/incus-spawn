@@ -13,7 +13,7 @@ FAIL=0
 # Failed checks whose only cause was Maven Central's rate limit (#2278)
 THROTTLED=0
 ERRORS=""
-# The exit code of fetch_matching when every attempt got a 429, and of report when every failed
+# The exit code of fetch_matching when every attempt got a 429 (or a 404 with a Retry-After), and of report when every failed
 # check was such a fetch: the host may then ask Maven Central without the proxy (#2278).
 THROTTLED_EXIT=75
 
@@ -62,10 +62,12 @@ assert_eq() {
 # without a Retry-After (#2063, #2268). Each wait is the answer's Retry-After in seconds, else
 # 5 s doubling each time, capped at FETCH_MAX_DELAY: about two minutes in all by default when no
 # answer names a Retry-After. A failed connection is not retried, since that one is the proxy's.
-# A 429 on the last attempt returns THROTTLED_EXIT, any other failure 1.
+# A Retry-After longer than the wait left of FETCH_WAIT_BUDGET seconds (150 by default) ends the
+# fetching at once: Maven Central names 9 to 20 hours for a blocked runner (#2447), which no wait
+# here outlasts. A 429 on the last attempt returns THROTTLED_EXIT, any other failure 1.
 fetch_matching() {
     local url="$1" pattern="$2" dir status server retry_after delay attempt=1 waited=0
-    local attempts="${FETCH_ATTEMPTS:-6}" max_delay="${FETCH_MAX_DELAY:-60}"
+    local attempts="${FETCH_ATTEMPTS:-6}" max_delay="${FETCH_MAX_DELAY:-60}" budget="${FETCH_WAIT_BUDGET:-150}"
     dir=$(mktemp -d)
     while :; do
         if ! status=$(curl -sS -D "$dir/headers" -o "$dir/body" -w '%{http_code}' "$url"); then
@@ -75,11 +77,19 @@ fetch_matching() {
         [ "$status" = 200 ] && break
         # Retry-After in seconds; an HTTP-date, or any other form, takes the default wait.
         retry_after=$(grep -i '^retry-after:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//; s/ *$//')
-        if [ "$attempt" -ge "$attempts" ]; then
+        local too_long=0
+        case "$retry_after" in
+            ''|*[!0-9]*) ;;
+            ?????????*) too_long=1 ;;
+            *) [ "$((10#$retry_after))" -gt "$((budget - waited))" ] && too_long=1 ;;
+        esac
+        if [ "$attempt" -ge "$attempts" ] || [ "$too_long" = 1 ]; then
             server=$(grep -i '^server:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')
             echo "HTTP $status (Server: ${server:-none}, Retry-After: ${retry_after:-none}) for $url after $attempt attempts and ${waited}s of waiting: the TLS handshake with the proxy succeeded, an answer without the upstream Server header is the proxy's own"
             rm -rf "$dir"
-            [ "$status" = 429 ] && return "$THROTTLED_EXIT"
+            # Maven Central's edge sends a throttled host a 404 with a Retry-After (#2422)
+            [ "$status" = 429 ] || { [ "$status" = 404 ] && [[ "$retry_after" =~ ^[1-9][0-9]*$ ]]; } \
+                && return "$THROTTLED_EXIT"
             return 1
         fi
         delay="$retry_after"
@@ -100,7 +110,7 @@ fetch_matching() {
     return $found
 }
 
-# assert for fetch_matching, which also counts a check that failed only on a 429 as THROTTLED.
+# assert for fetch_matching, which also counts a check that failed only on a 429, or a 404 with a Retry-After, as THROTTLED.
 assert_fetch() {
     local desc="$1"
     shift
@@ -125,7 +135,7 @@ report() {
         echo "Failed tests:"
         printf "$ERRORS"
         if [ "$FAIL" -eq "$THROTTLED" ]; then
-            echo "Every failure was Maven Central's rate limit (HTTP 429): exiting $THROTTLED_EXIT"
+            echo "Every failure was Maven Central's rate limit (HTTP 429, or 404 with a Retry-After): exiting $THROTTLED_EXIT"
             exit "$THROTTLED_EXIT"
         fi
         exit 1
@@ -152,10 +162,15 @@ echo ""
 # to the bridge gateway, iptables redirects :443 to the proxy on :18443,
 # proxy terminates TLS with its CA, re-encrypts to upstream Maven Central.
 echo "[1] Maven Artifact Download (Proxy Interception)"
-assert_fetch "download Maven POM through proxy" \
-    https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom '<artifactId>junit</artifactId>'
-assert_fetch "download Maven JAR checksum through proxy" \
-    https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar.sha1 '^[0-9a-f]{40}$'
+# The jar first, cold: CI's config names a mirror for Maven Central, which the proxy asks before
+# Central, and the host's grading reads in its log that it did (#2447). The jar again is the one
+# request Central gets: the proxy confirms the mirrored copy with it, graded by the host too.
+# The .sha1 comes last, once the copy is confirmed, so the proxy serves it from its store: a .sha1
+# fetched before would go to Central, as the mirrored copy is committed unconfirmed.
+JUNIT_JAR=https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar
+assert_fetch "download Maven JAR through proxy" "$JUNIT_JAR" 'META-INF/MANIFEST.MF'
+assert_fetch "download the confirmed Maven JAR through proxy" "$JUNIT_JAR" 'META-INF/MANIFEST.MF'
+assert_fetch "download Maven JAR checksum through proxy" "$JUNIT_JAR.sha1" '^[0-9a-f]{40}$'
 echo ""
 
 # --- 2. Git clone over HTTPS (proxy + git) ---
@@ -305,7 +320,7 @@ ctx = ssl.create_default_context()
 ctx.verify_flags |= ssl.VERIFY_X509_STRICT
 try:
     urllib.request.urlopen(
-        'https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom',
+        '$JUNIT_JAR',
         context=ctx, timeout=30)
 except urllib.error.HTTPError as e:
     print(f'TLS accepted; upstream answered HTTP {e.code} (Server: {e.headers.get(\"Server\")})')
@@ -361,7 +376,7 @@ assert "isx-trust binds a JDK's cacerts to the extracted Java store" \
         && [ "$(readlink -f "$d/jdk/lib/security/cacerts")" = /etc/pki/ca-trust/extracted/java/cacerts ]'
 # Without -f: any HTTP answer proves the handshake, so an upstream refusal is section 1's to report.
 assert "curl in a login shell trusts the proxy" \
-    su - agentuser -c "curl -sS -o /dev/null https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom"
+    su - agentuser -c "curl -sS -o /dev/null $JUNIT_JAR"
 echo ""
 
 # --- 9. Tool-contributed proxy credential injection ---
