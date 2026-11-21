@@ -83,6 +83,7 @@ import static dev.incusspawn.command.GuestProvisioning.maskServices;
 import static dev.incusspawn.command.GuestProvisioning.refreshInheritedTools;
 import static dev.incusspawn.command.GuestProvisioning.removePackages;
 import static dev.incusspawn.command.GuestProvisioning.runToolSetup;
+import static dev.incusspawn.command.GuestProvisioning.updateAntigravityTrust;
 import static dev.incusspawn.command.GuestProvisioning.updateClaudeJsonTrust;
 import static dev.incusspawn.command.GuestProvisioning.updateCodexTrust;
 import static dev.incusspawn.command.GuestProvisioning.verifyTools;
@@ -1566,6 +1567,7 @@ public class BuildCommand extends BaseCommand {
         bindTrustStores(container);
         updateClaudeJsonTrust(container, imageDef, defs);
         updateCodexTrust(container, imageDef, defs);
+        updateAntigravityTrust(container, imageDef, defs);
         // After every tool's setup, which may have rewritten an agent's config, and after the
         // repos a server may name: the whole chain's servers, with every agent in the image.
         McpServerRegistration.register(container, imageDef, defs, allTools);
@@ -1829,6 +1831,7 @@ public class BuildCommand extends BaseCommand {
         }
         updateClaudeJsonTrust(container, imageDef, defs);
         updateCodexTrust(container, imageDef, defs);
+        updateAntigravityTrust(container, imageDef, defs);
         var identityStamps = settleIdentities(container, imageDef, defs, started.inheritedIdentities());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         verifyTools(container, allTools);

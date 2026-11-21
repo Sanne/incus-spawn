@@ -14,6 +14,7 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
+import dev.incusspawn.tool.AntigravitySetup;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.ToolVerifier;
@@ -620,8 +621,9 @@ public class GuestProvisioning {
 
     /**
      * Repos declared across the template chain, one per destination ({@link ImageDef#chainRepos}).
-     * Tool setup in a child layer can rewrite Claude's or Codex's config, so trust is restored for
-     * all of them after it, not just for the current layer's.
+     * Tool setup in a child layer can rewrite Claude's or Codex's config, or install an agent after
+     * a parent cloned its repos, so trust is restored for all of them after it, Antigravity CLI's
+     * included, not just for the current layer's.
      */
     static List<ImageDef.RepoEntry> chainRepos(ImageDef imageDef, Map<String, ImageDef> defs) {
         return ImageDef.chainRepos(imageDef, defs).stream().map(ImageDef.ChainRepo::repo).toList();
@@ -653,6 +655,33 @@ public class GuestProvisioning {
 
         container.writeFile(CODEX_CONFIG_PATH, existing + sb);
         container.chown(CODEX_CONFIG_PATH, "agentuser:agentuser");
+    }
+
+    /**
+     * Trust the chain's clones in Antigravity CLI's settings, which it otherwise asks about the
+     * first time it starts in each one (#2465). Only where agy is configured; a file that is not
+     * a JSON object is left alone with a warning, as Claude's is.
+     */
+    static void updateAntigravityTrust(Container container, ImageDef imageDef, Map<String, ImageDef> defs) {
+        var repos = chainRepos(imageDef, defs);
+        if (repos.isEmpty()) return;
+
+        var path = AntigravitySetup.SETTINGS_PATH;
+        var read = container.sh("[ ! -f " + path + " ] || cat " + path);
+        if (!read.success()) {
+            BuildOutput.warn("Could not read " + path);
+            return;
+        }
+        if (read.stdout().isBlank()) return;
+        try {
+            var folders = repos.stream().map(repo -> expandHome(repo.getPath())).toList();
+            var updated = AntigravitySetup.withTrustedWorkspaces(read.stdout(), folders);
+            if (updated == null) return;
+            container.writeFile(path, updated);
+            container.chown(path, "agentuser:agentuser");
+        } catch (Exception e) {
+            BuildOutput.warn("Could not update " + path + ": " + BaseCommand.failure(e));
+        }
     }
 
     /**

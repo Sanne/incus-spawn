@@ -6,6 +6,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
+import dev.incusspawn.tool.AntigravitySetup;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.ToolSetup;
@@ -672,6 +673,115 @@ class GuestProvisioningTest {
         assertFalse(written.contains("``"), "a blank path must not render an empty bullet");
         assertEquals(1, written.lines().filter(l -> l.contains("is checked out at")).count(),
                 "~/quarkus and /home/agentuser/quarkus are one clone, not two");
+    }
+
+    // --- updateAntigravityTrust ---
+
+    private static final String AGY_SETTINGS = AntigravitySetup.SETTINGS_PATH;
+
+    private static IncusClient agyGuest(String settings) {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.shellExec("test", "sh", "-c", "[ ! -f " + AGY_SETTINGS + " ] || cat " + AGY_SETTINGS))
+                .thenReturn(new IncusClient.ExecResult(0, settings, ""));
+        return incus;
+    }
+
+    /** The issue: agy asked whether to trust a clone, since the build trusted only the home. */
+    @Test
+    void updateAntigravityTrustTrustsTheChainsClonesOnce() {
+        var incus = agyGuest("{\"toolPermission\": \"always-proceed\", \"trustedWorkspaces\": [\"/home/agentuser\"]}");
+        var container = new Container(incus, "test");
+        var parentRepo = new ImageDef.RepoEntry();
+        parentRepo.setUrl("https://github.com/owner/parent-repo.git");
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(List.of(parentRepo));
+        var childRepo = new ImageDef.RepoEntry();
+        childRepo.setPath("~/child-repo");
+        var sameClone = new ImageDef.RepoEntry();
+        sameClone.setPath("/home/agentuser/child-repo");
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent(parent.getName());
+        child.setRepos(List.of(childRepo, sameClone));
+
+        GuestProvisioning.updateAntigravityTrust(container, child, Map.of(parent.getName(), parent));
+
+        var written = capturedWrite(incus, AGY_SETTINGS);
+        assertNotNull(written, "Expected agy's settings to be written");
+        var settings = (io.hyperfoil.tools.jjq.value.JqObject) io.hyperfoil.tools.jjq.value.JqValues.parseStrict(written);
+        assertEquals("[\"/home/agentuser\",\"/home/agentuser/parent-repo\",\"/home/agentuser/child-repo\"]",
+                settings.getField("trustedWorkspaces").toJsonString());
+        assertEquals("always-proceed", settings.getField("toolPermission").asText(), "the other settings are kept");
+        verify(incus).shellExec("test", "chown", "-R", "agentuser:agentuser", AGY_SETTINGS);
+    }
+
+    @Test
+    void updateAntigravityTrustSkipsTheWriteWhenTheClonesAreTrusted() {
+        var repo = new ImageDef.RepoEntry();
+        repo.setPath("~/app");
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo));
+        var incus = agyGuest("{\"trustedWorkspaces\": [\"/home/agentuser\", \"/home/agentuser/app\"]}");
+
+        GuestProvisioning.updateAntigravityTrust(new Container(incus, "test"), imageDef, Map.of());
+
+        assertNull(capturedWrite(incus, AGY_SETTINGS));
+        verify(incus, never()).shellExec(eq("test"), eq("chown"), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void updateAntigravityTrustDoesNothingWithoutAgyOrRepos() {
+        var repo = new ImageDef.RepoEntry();
+        repo.setPath("~/app");
+        var withRepo = new ImageDef();
+        withRepo.setName("tpl-app");
+        withRepo.setRepos(List.of(repo));
+        var noAgy = agyGuest("");
+        GuestProvisioning.updateAntigravityTrust(new Container(noAgy, "test"), withRepo, Map.of());
+        assertNull(capturedWrite(noAgy, AGY_SETTINGS));
+
+        var noRepos = mock(IncusClient.class);
+        var empty = new ImageDef();
+        empty.setName("tpl-empty");
+        GuestProvisioning.updateAntigravityTrust(new Container(noRepos, "test"), empty, Map.of());
+        verifyNoInteractions(noRepos);
+    }
+
+    @Test
+    void updateAntigravityTrustLeavesSettingsThatAreNotAnObjectAlone() {
+        var repo = new ImageDef.RepoEntry();
+        repo.setPath("~/app");
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo));
+        var incus = agyGuest("[]");
+
+        var said = RecordingOutput.during(() ->
+                GuestProvisioning.updateAntigravityTrust(new Container(incus, "test"), imageDef, Map.of()));
+
+        assertNull(capturedWrite(incus, AGY_SETTINGS));
+        assertEquals(1, said.warnings().size());
+        assertTrue(said.warnings().get(0).startsWith("Could not update " + AGY_SETTINGS), said.warnings().toString());
+    }
+
+    @Test
+    void bothBuildPathsTrustTheClonesForEveryAgentAfterCloningThem() throws Exception {
+        // The build has no fake guest to run (BuildCommandAccountsWiringTest), so the calls are
+        // pinned in the source: a missing one would leave every test of the steps green.
+        var src = Files.readString(Path.of("src/main/java/dev/incusspawn/command/BuildCommand.java"));
+        for (var method : List.of("void buildFromParent(", "void buildFromScratch(")) {
+            int start = src.indexOf(method);
+            assertTrue(start >= 0, method);
+            var body = src.substring(start, src.indexOf("\n    }\n", start));
+            int clone = body.lastIndexOf("cloneRepos(container");
+            for (var step : List.of("updateClaudeJsonTrust", "updateCodexTrust", "updateAntigravityTrust")) {
+                int call = body.indexOf(step + "(container, imageDef, defs)");
+                assertTrue(clone >= 0 && call > clone, method + ": " + step + " must follow cloneRepos");
+            }
+        }
     }
 
     // --- updateCodexTrust ---

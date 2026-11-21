@@ -66,6 +66,7 @@ The mode is its baked identity (`google` or `api-key`), re-derived by `rebakeFor
 `GeminiSetup.ACCOUNT_SHAPE` holds the namespace's typed accounts (`type` and `apiKey`), `hostedSignIn()` offers the Google account in `isx init`, and `describeAccount` names the session's email.
 Its ADC mode would keep a credential in the guest and stays unconfigured.
 It merges its settings into `~/.gemini/antigravity-cli/settings.json` (every tool call proceeds, no terminal sandbox, the home trusted), writes `cache/onboarding.json` when missing, and takes the instructions as an always-on rule, `~/.gemini/config/rules/isx.md`, with front matter before the heading.
+After tool setup the build adds each of the chain's clones to that file's `trustedWorkspaces` (`GuestProvisioning.updateAntigravityTrust`, #2465).
 Its MCP client merges `~/.gemini/config/mcp_config.json` and leaves out a server with `bearer-token-env`, since agy expands no variable there.
 Pi's `google` provider is the Gemini API too: `PiSetup` exports the same `GEMINI_API_KEY` placeholder and spends the `gemini` namespace (#1114).
 Its `google-vertex` provider (isx's `vertex` is written as Pi's `google-vertex`) spends the Claude Vertex AI account through `GOOGLE_CLOUD_API_KEY`, whose prefix is `AIza` and namespace `claude`; see `proxy.md`.

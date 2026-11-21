@@ -15,6 +15,7 @@ import io.hyperfoil.tools.jjq.value.JqString;
 import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -62,7 +63,7 @@ public class AntigravitySetup implements ToolSetup {
 
     static final String HOME = "/home/agentuser";
     static final String CLI_DIR = HOME + "/.gemini/antigravity-cli";
-    static final String SETTINGS_PATH = CLI_DIR + "/settings.json";
+    public static final String SETTINGS_PATH = CLI_DIR + "/settings.json";
     /** What makes the first interactive start skip the color scheme and sign-in questions. */
     static final String ONBOARDING_PATH = CLI_DIR + "/cache/onboarding.json";
     static final String ONBOARDING = """
@@ -343,6 +344,35 @@ public class AntigravitySetup implements ToolSetup {
             }
             root = object;
         }
+        root = withTrusted(root, List.of(HOME));
+        root = googleSignIn ? root.without("modelProvider") : root.with("modelProvider", JqString.of("gemini"));
+        root = root.with("toolPermission", JqString.of("always-proceed"))
+                .with("artifactReviewPolicy", JqString.of("always-proceed"))
+                .with("allowNonWorkspaceAccess", JqBoolean.TRUE)
+                .with("enableTerminalSandbox", JqBoolean.FALSE)
+                .with("showTips", JqBoolean.FALSE)
+                .with("showFeedbackSurvey", JqBoolean.FALSE);
+        return JqValues.toPrettyJsonString(root) + "\n";
+    }
+
+    /**
+     * {@code existing}, the settings agy or an earlier build wrote, with {@code folders} added to
+     * the folders it trusts, the ones already there kept in their order; null when every folder
+     * is already trusted, so a build writes nothing. agy trusts a folder by its exact path and asks
+     * about any other, so the build lists each of the template's clones (#2465).
+     *
+     * @throws IllegalStateException when {@code existing} is not a JSON object
+     */
+    public static String withTrustedWorkspaces(String existing, Collection<String> folders) {
+        if (!(Jjq.parseForeign(existing, SETTINGS_PATH) instanceof JqObject root)) {
+            throw new IllegalStateException(SETTINGS_PATH + " must be a JSON object");
+        }
+        var updated = withTrusted(root, folders);
+        return updated == root ? null : JqValues.toPrettyJsonString(updated) + "\n";
+    }
+
+    /** {@code root} with {@code folders} in its {@code trustedWorkspaces}; {@code root} itself when they all are. */
+    private static JqObject withTrusted(JqObject root, Collection<String> folders) {
         var trusted = new LinkedHashSet<String>();
         if (root.get("trustedWorkspaces") instanceof JqArray array) {
             for (int i = 0; i < array.size(); i++) {
@@ -350,17 +380,10 @@ public class AntigravitySetup implements ToolSetup {
                 if (v.isString()) trusted.add(v.asText());
             }
         }
-        trusted.add(HOME);
+        if (trusted.containsAll(folders) && root.get("trustedWorkspaces") instanceof JqArray) return root;
+        trusted.addAll(folders);
         var trustedArray = JqArray.arrayBuilder();
         trusted.forEach(trustedArray::add);
-        root = googleSignIn ? root.without("modelProvider") : root.with("modelProvider", JqString.of("gemini"));
-        root = root.with("toolPermission", JqString.of("always-proceed"))
-                .with("artifactReviewPolicy", JqString.of("always-proceed"))
-                .with("allowNonWorkspaceAccess", JqBoolean.TRUE)
-                .with("enableTerminalSandbox", JqBoolean.FALSE)
-                .with("trustedWorkspaces", trustedArray.build())
-                .with("showTips", JqBoolean.FALSE)
-                .with("showFeedbackSurvey", JqBoolean.FALSE);
-        return JqValues.toPrettyJsonString(root) + "\n";
+        return root.with("trustedWorkspaces", trustedArray.build());
     }
 }
