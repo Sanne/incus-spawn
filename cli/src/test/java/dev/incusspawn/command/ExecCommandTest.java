@@ -2,20 +2,29 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.RecordingOutput;
 import org.aesh.AeshRuntimeRunner;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
 
 /**
  * {@code isx exec}: a script runs one command in a running instance and gets its output and exit
@@ -242,6 +251,36 @@ class ExecCommandTest {
         assertEquals("built\n", out.toString(StandardCharsets.UTF_8));
         var scripts = scripts(daemon);
         assertEquals(1, scripts.size(), "nothing ended the command: " + scripts);
+    }
+
+    /**
+     * A box Incus restarted by itself is given its secret back before the command runs, as a
+     * plain {@code ssh} does; an instance isx did not make (no parent stamp) never is.
+     */
+    @Test
+    @ExtendWith(IsolatedHome.class)
+    void onlyAnInstanceIsxMadeIsGivenItsSecretBack() {
+        var boot = Map.of(Metadata.INSTANCE_SECRET_BOOT, "2026-11-02T19:04:00Z proofs-v4:");
+        var made = new java.util.HashMap<>(boot);
+        made.put(Metadata.PARENT, "tpl-dev");
+        var daemon = new FakeIncusDaemon().servesExecs()
+                .instance("box", "container", "Running", made).lastUsedAt("box", "2026-11-03T16:33:00Z")
+                .instance("other", "container", "Running", boot).lastUsedAt("other", "2026-11-03T16:33:00Z");
+        var incus = spy(daemon.client());
+        var delivered = new ArrayList<String>();
+        doAnswer(call -> {
+            Map<String, String> env = call.getArgument(1);
+            if (env.containsKey(InstanceSecret.DELIVERY_ENV)) delivered.add(call.getArgument(0));
+            return new IncusClient.ExecResult(0, "", "");
+        }).when(incus).shellExec(any(String.class), anyMap(), any(String[].class));
+
+        for (var name : List.of("box", "other")) {
+            var exit = new int[1];
+            RecordingOutput.during(() -> exit[0] = assertDoesNotThrow(() -> command(name, "true")
+                    .exec(incus, null, new ByteArrayOutputStream(), new ByteArrayOutputStream()).getResultValue()));
+            assertEquals(0, exit[0], name);
+        }
+        assertEquals(List.of("box"), delivered, daemon.requests()::toString);
     }
 
     @Test
