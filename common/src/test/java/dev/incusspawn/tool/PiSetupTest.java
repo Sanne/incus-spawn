@@ -117,6 +117,22 @@ class PiSetupTest {
                         && arg.contains("\"extensions\": [\"/etc/isx/pi/isx-status.ts\"]")));
     }
 
+    /** A gateway's model ID, which holds slashes, reaches Pi's settings as the template wrote it. */
+    @Test
+    void modelIdWithSlashesIsWrittenAsGiven() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        var params = ParameterResolver.resolve(new PiSetup().parameters(),
+                Map.of("provider", "gateway", "model", "gateway/zai-org/glm-5-3"));
+        assertTrue(params.errors().isEmpty(), () -> String.join("; ", params.errors()));
+
+        new PiSetup().reconfigure(new Container(incus, CONTAINER), params.resolvedValues());
+
+        verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
+                arg.contains("\"defaultProvider\": \"gateway\"")
+                        && arg.contains("\"defaultModel\": \"gateway/zai-org/glm-5-3\"")));
+    }
+
     @Test
     void installLeavesModelToPiForAnotherProviderWithoutModel() {
         // Pi picks a model the provider serves; claude-sonnet-4-6 sent to Vertex's Gemini path is a 404 (#1918).

@@ -152,6 +152,7 @@ Your own extensions in `~/.pi/agent/extensions/` load as usual.
 
 The `openai` provider uses your OpenAI key, as shown below.
 A provider isx does not manage needs no credential from isx: Pi signs in to it itself.
+A model ID may hold a `/`, as a gateway names its models, such as `zai-org/glm-5-3`.
 
 The `google` provider is the Gemini API, and uses your Gemini key, as [Gemini CLI](#gemini-cli) does.
 The `google-vertex` provider runs Gemini models on Vertex AI, and needs a Vertex AI Claude account.
@@ -217,6 +218,7 @@ opencode shows no isx footer: it has no place for one.
 The `openai` provider uses your OpenAI key, as [Codex CLI](#codex-cli) does.
 The `google` provider is the Gemini API, and uses your Gemini key, as [Gemini CLI](#gemini-cli) does.
 A provider isx does not manage needs no credential from isx: opencode signs in to it itself.
+A model ID may hold a `/`, as a gateway names its models, such as `zai-org/glm-5-3`.
 
 ```yaml
 tools:

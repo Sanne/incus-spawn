@@ -13,6 +13,16 @@ import java.util.List;
  */
 public interface ToolSetup {
 
+    /**
+     * The pattern of the {@code model} parameter of an agent that can reach an OpenAI-compatible
+     * gateway (Pi, opencode, Codex): a model ID as that provider names it. A {@code /} is allowed
+     * after the first character, since gateways name their models {@code <org>/<model>}. A quote,
+     * backslash, space or control character is not, so the value cannot end the JSON or TOML
+     * string the setup writes it into. Gemini CLI and Copilot reach only their vendor's API and
+     * keep their native IDs, without {@code /}.
+     */
+    String MODEL_ID_PATTERN = "^[a-zA-Z0-9][-a-zA-Z0-9._@:/]*$";
+
     /** Short name for display during build (e.g. "podman", "gh", "claude"). */
     String name();
 
