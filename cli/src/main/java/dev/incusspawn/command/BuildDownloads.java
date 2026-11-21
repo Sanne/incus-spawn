@@ -83,7 +83,8 @@ final class BuildDownloads {
     private static void add(Map<String, DownloadCache.Pinned> planned, String imageUrl, String tag,
                             Map<String, String> sha256, String arch) {
         if (imageUrl == null || imageUrl.isBlank() || sha256 == null || sha256.get(arch) == null) return;
-        var url = ImageDef.resolveImageUrl(imageUrl, tag);
+        // Resolved for the plan's arch, the arch its checksum is for, never the host's
+        var url = ImageDef.resolveImageUrl(imageUrl, tag, arch);
         if (fetchable(url)) planned.putIfAbsent(url, new DownloadCache.Pinned(url, sha256.get(arch)));
     }
 

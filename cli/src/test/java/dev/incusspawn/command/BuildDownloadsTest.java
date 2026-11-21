@@ -90,8 +90,10 @@ class BuildDownloadsTest {
         root.setTools(List.of(new ToolDef.ToolRef("antigravity")));
         var planned = plan(root, Map.of("tpl-minimal", root), MachineType.CONTAINER, "aarch64", name -> false,
                 loader(Map.of("antigravity", agy)));
-        assertEquals(2, planned.size(), planned.toString());
-        assertEquals(agy.pinnedDownloads("aarch64").getFirst(), planned.get(1));
+        assertEquals(List.of(
+                        new DownloadCache.Pinned("https://example.com/fedora-44-aarch64.tar.xz", SHA_ARM),
+                        agy.pinnedDownloads("aarch64").getFirst()),
+                planned, "the base image for the plan's arch, whatever the host's");
         assertNotEquals(agy.pinnedDownloads("x86_64"), agy.pinnedDownloads("aarch64"));
     }
 
