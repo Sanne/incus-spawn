@@ -12,7 +12,7 @@ import java.util.List;
 
 public class PiSetup implements ToolSetup {
 
-    static final String DEFAULT_PROVIDER = "anthropic";
+    public static final String DEFAULT_PROVIDER = "anthropic";
     static final String DEFAULT_MODEL = ModelIds.get("pi-default");
 
     /**

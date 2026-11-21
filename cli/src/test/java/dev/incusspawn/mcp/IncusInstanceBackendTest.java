@@ -233,6 +233,18 @@ class IncusInstanceBackendTest {
     }
 
     @Test
+    void pisDelegateModelNamesItsProvider() throws Exception {
+        // Pi's --model without --provider looks under every provider: anthropic/... would leave the gateway.
+        var gateway = dev.incusspawn.config.ImageDef.parseYaml(
+                "name: tpl-gateway\ntools:\n  - pi: {provider: openrouter, model: anthropic/claude-sonnet-5-5}\n");
+        var bare = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-bare\ntools:\n  - pi: {model: claude-opus-5-5}\n");
+        var defs = java.util.Map.of("tpl-gateway", gateway, "tpl-bare", bare);
+        org.junit.jupiter.api.Assertions.assertEquals("openrouter/anthropic/claude-sonnet-5-5",
+                IncusInstanceBackend.delegateModel(gateway, defs, "pi"));
+        org.junit.jupiter.api.Assertions.assertEquals("anthropic/claude-opus-5-5", IncusInstanceBackend.delegateModel(bare, defs, "pi"));
+    }
+
+    @Test
     void aProbeRunsAsAgentuserWithoutItsLoginShell() {
         var out = new java.io.ByteArrayOutputStream();
         var limit = java.time.Duration.ofSeconds(10);

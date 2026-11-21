@@ -40,6 +40,7 @@ Pi writes its session file only when the first user or assistant message is appe
 It runs before a join, before a Pi resume in the run script, and in `send_message` (`piSessionStatus`, one exec), which refuses with `wrong_state` and writes nothing.
 Pi has no sandbox: it always runs with every tool (`permission_mode: full-access`).
 Pi does no model preflight; its namespace is left empty, since only Claude's preflight reads one.
+`list_templates` reports Pi's model as `<provider>/<model>` too: `pi-runner.cjs` passes no `--provider`, and Pi then looks for a bare or slashed ID under every provider.
 Every `DelegateAgent.probe` reads a CLI's `--help` through `2>&1`: opencode prints it on stderr, and a probe reading stdout alone refused every delegate (`DelegateAgentProbeTest` runs each probe against stand-ins printing on either stream).
 The [opencode worker design](../../docs/dev/MCP-OPENCODE-DELEGATION.md) records how opencode differs.
 opencode runs through `mcp/opencode-runner.cjs`: `opencode run --format json --auto`, the prompt on stdin, the brief opening run 1's prompt as for Codex, `--session <id>` on a resume.
