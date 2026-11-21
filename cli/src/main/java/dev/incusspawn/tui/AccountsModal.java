@@ -167,7 +167,7 @@ final class AccountsModal {
         var area = ModalRenderer.centerRect(screen, width, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(modal.styledTitle(" Credential accounts: " + instance + " ", modal.border()))
+                .title(modal.styledTitle(" Credential accounts of '" + instance + "' ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))

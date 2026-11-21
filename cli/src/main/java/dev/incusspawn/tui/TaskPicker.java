@@ -80,7 +80,9 @@ final class TaskPicker {
             var style = i == selected
                     ? Style.EMPTY.bold().fg(theme.focusedLabel()).bg(modal.bg())
                     : Style.EMPTY.fg(modal.fg()).bg(modal.bg());
-            lines.add(Line.from(Span.styled((i == selected ? " > " : "   ") + TaskJoin.describe(entries.get(i), now), style)));
+            lines.add(Line.from(
+                    Span.styled(i == selected ? " " + Glyphs.CURSOR + " " : "   ", Style.EMPTY.fg(modal.accent()).bg(modal.bg())),
+                    Span.styled(TaskJoin.describe(entries.get(i), now), style)));
         }
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "Enter", "Join");
@@ -94,7 +96,7 @@ final class TaskPicker {
         var block = dev.tamboui.widgets.block.Block.builder()
                 .borders(dev.tamboui.widgets.block.Borders.ALL)
                 .borderType(dev.tamboui.widgets.block.BorderType.ROUNDED)
-                .title(modal.styledTitle(" Join a task — " + target.instanceName() + " ", modal.border()))
+                .title(modal.styledTitle(" Join a task in '" + target.instanceName() + "' ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))

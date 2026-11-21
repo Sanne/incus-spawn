@@ -313,13 +313,17 @@ public final class InstanceDetailView {
                                              int wrapWidth) {
         var lines = new ArrayList<Line>();
         var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
-        var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
+        // A label is quieter than its value: the accent is for a key and for where the person is
+        var labelStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
         var dimStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
 
         var statusColor = isRunning(info) ? theme.statusRunning() : theme.statusStopped();
+        boolean stopped = "STOPPED".equalsIgnoreCase(info.status());
         lines.add(Line.from(List.of(
                 Span.styled("Status:         ", labelStyle),
-                Span.styled(info.status(), Style.EMPTY.fg(statusColor).bg(modal.bg())))));
+                // The glyph the STATUS column shows, so the state reads without colour here too
+                Span.styled((isRunning(info) ? Glyphs.RUNNING : stopped ? Glyphs.STOPPED : Glyphs.BETWEEN) + " " + info.status(),
+                        Style.EMPTY.fg(statusColor).bg(modal.bg())))));
 
         lines.add(Line.from(List.of(
                 Span.styled("Type:           ", labelStyle),
@@ -424,8 +428,11 @@ public final class InstanceDetailView {
                 if (!use.description().isEmpty()) spans.add(Span.styled(" -- " + use.description(), dimStyle));
                 lines.add(Line.from(spans));
                 var template = InstanceActions.resolveTemplateName(info);
-                lines.add(Line.from(List.of(Span.styled("    " + dev.incusspawn.config.AccountUsage.explainSource(
-                        use, template == null ? "-" : template, info.name().equals(template)), dimStyle))));
+                // Wrapped, never cut at the dialog's edge
+                for (var text : ModalRenderer.wrapText("    " + dev.incusspawn.config.AccountUsage.explainSource(
+                        use, template == null ? "-" : template, info.name().equals(template)), wrapWidth)) {
+                    lines.add(Line.from(List.of(Span.styled(text, dimStyle))));
+                }
                 if (!use.problem().isEmpty()) {
                     lines.add(Line.from(List.of(Span.styled("    not configured: requests fail until it is,"
                             + " or it is changed", Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())))));

@@ -136,7 +136,7 @@ final class NewTemplateModal {
         var modalArea = ModalRenderer.centerRect(screen, 54, 9);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(modal.styledTitle(" New Template ", modal.border()))
+                .title(modal.styledTitle(" New template ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
@@ -151,7 +151,8 @@ final class NewTemplateModal {
                         Constraint.length(1), // Parent label
                         Constraint.length(1), // Parent input
                         Constraint.length(1), // Location select
-                        Constraint.fill())     // hint bar
+                        Constraint.length(1), // blank
+                        Constraint.length(1)) // the keys, on the last row
                 .split(inner);
 
         renderLabeledTextField(frame, rows.get(0), rows.get(1), "Name:", "my-app",
@@ -166,6 +167,6 @@ final class NewTemplateModal {
         modal.addKey(hintSpans, "Enter", "Confirm");
         modal.addKey(hintSpans, "Esc", "Cancel");
         modal.addKey(hintSpans, "↑↓/Tab", "Navigate");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(5));
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(6));
     }
 }

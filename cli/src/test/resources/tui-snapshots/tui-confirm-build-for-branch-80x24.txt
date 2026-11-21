@@ -6,13 +6,13 @@
  ▸ tpl-dev        not built     -       Development tools
 
 
+
              ╭ Branch from 'tpl-dev' ─────────────────────────────╮
-             │                                                    │
              │ Template is not built yet. Build it first?         │
              │                                                    │
  Instances ──│  y/Enter Build   any key Cancel                    │─────────────
-   NAME     S│                                                    │        DISK
-   work-1   ●╰────────────────────────────────────────────────────╯o       -
+   NAME     S╰────────────────────────────────────────────────────╯        DISK
+   work-1   ● Running         tpl-minimal   container         3h ago       -
    vm-1     ○ Stopped         tpl-minimal   virtual-machine   2 days ago   -
 
 

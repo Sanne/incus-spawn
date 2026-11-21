@@ -160,7 +160,8 @@ final class TemplateDetailView {
     // --- Styles ---
 
     private Style lineStyle() { return Style.EMPTY.fg(modal.fg()).bg(modal.bg()); }
-    private Style labelStyle() { return Style.EMPTY.fg(modal.accent()).bg(modal.bg()); }
+    /** A label is quieter than its value: the accent is for a key and for where the person is. */
+    private Style labelStyle() { return Style.EMPTY.fg(theme.textDim()).bg(modal.bg()); }
     private Style dimStyle() { return Style.EMPTY.fg(theme.textDim()).bg(modal.bg()); }
     private Style warnStyle() { return Style.EMPTY.fg(theme.statusWarning()).bg(modal.bg()); }
 
@@ -477,7 +478,7 @@ final class TemplateDetailView {
         var lines = new ArrayList<Line>();
         var lineStyle = lineStyle();
         var labelStyle = labelStyle();
-        var nameStyle = Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg());
+        var nameStyle = Style.EMPTY.bold().fg(modal.fg()).bg(modal.bg());
         var dimStyle = dimStyle();
 
         for (int i = 0; i < chain.size(); i++) {

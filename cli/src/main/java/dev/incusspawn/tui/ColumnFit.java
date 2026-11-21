@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 /**
- * A table's column widths, from what its cells hold (design/visual-language.md "Tables"). A column
+ * A table's column widths, from what its cells hold (design/visual-language.md "Layout"). A column
  * is as wide as its widest cell. Where the table does not fit, the columns give width up in a set
  * order, each down to its floor, so what a person reads first is cut last. Where it has room to
  * spare, the columns stand a little apart and the rest goes to the column of free text.

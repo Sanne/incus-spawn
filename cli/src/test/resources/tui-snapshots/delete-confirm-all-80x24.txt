@@ -6,13 +6,13 @@
 
 
 
+
              ╭ Destroy all templates ─────────────────────────────╮
-             │                                                    │
              │ This will destroy all built templates.             │
              │                                                    │
              │  y Confirm   any key Cancel                        │
-             │                                                    │
              ╰────────────────────────────────────────────────────╯
+
 
 
 
