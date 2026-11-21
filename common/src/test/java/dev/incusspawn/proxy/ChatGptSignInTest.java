@@ -306,6 +306,88 @@ class ChatGptSignInTest {
     }
 
     @Test
+    void aCallbackWithHeadersPastTheCapStillEndsIt() throws Exception {
+        var thread = new Thread(() -> {
+            // A browser with many cookies for 127.0.0.1: its headers alone pass the cap
+            var state = paramOf(lastAuthorizeUrl, "state");
+            try (var socket = new java.net.Socket("127.0.0.1", callbackPort())) {
+                socket.getOutputStream().write(("GET " + CALLBACK + "?code=browser-code-1&state=" + state
+                        + " HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: c=" + "x".repeat(ChatGptSignIn.MAX_REQUEST_BYTES)
+                        + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                socket.getOutputStream().flush();
+                socket.getInputStream().read();
+            } catch (Exception ignored) {
+                // the answer may be cut by the unread headers; the sign-in's result is the point
+            }
+        });
+
+        var tokens = signIn.signInWithBrowser(url -> {
+            lastAuthorizeUrl = url;
+            thread.start();
+        });
+
+        thread.join(10_000);
+        assertEquals("at-real", tokens.accessToken(), "the callback's code was exchanged despite its headers");
+    }
+
+    @Test
+    void aClientTricklingItsRequestDoesNotHoldTheListener() throws Exception {
+        ChatGptSignIn.testReadTimeout = java.time.Duration.ofMillis(400);
+        var trickling = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var trickleConnected = new java.util.concurrent.CountDownLatch(1);
+        try {
+            var finished = new java.util.concurrent.CompletableFuture<Long>();
+            var trickle = new Thread(() -> {
+                // One byte every 100 ms: each read is well within the read timeout, the whole
+                // request never is
+                try (var socket = new java.net.Socket("127.0.0.1", callbackPort())) {
+                    // Connected first, so its connection is the first the listener accepts
+                    trickleConnected.countDown();
+                    var out = socket.getOutputStream();
+                    for (var b : "GET /auth/callback?state=x HTTP/1.1\r\n".getBytes(StandardCharsets.US_ASCII)) {
+                        if (!trickling.get()) break;
+                        out.write(b);
+                        out.flush();
+                        Thread.sleep(100);
+                    }
+                } catch (Exception ignored) {
+                    // the listener dropping it is the point
+                }
+            });
+            var browser = new Thread(() -> {
+                try {
+                    trickle.start();
+                    if (!trickleConnected.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("the trickling client never connected");
+                    }
+                    Thread.sleep(200);
+                    var started = System.nanoTime();
+                    var state = paramOf(lastAuthorizeUrl, "state");
+                    if (browseTo(CALLBACK + "?code=browser-code-1&state=" + state) != 200) {
+                        finished.completeExceptionally(new IllegalStateException("the real callback was refused"));
+                    }
+                    finished.complete(java.time.Duration.ofNanos(System.nanoTime() - started).toMillis());
+                } catch (Exception e) {
+                    finished.completeExceptionally(e);
+                }
+            });
+
+            var tokens = signIn.signInWithBrowser(url -> {
+                lastAuthorizeUrl = url;
+                browser.start();
+            });
+
+            browser.join(10_000);
+            var waited = finished.get(1, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals("at-real", tokens.accessToken());
+            assertTrue(waited < 2_000, "the trickle held the listener for " + waited + " ms; its request alone takes 3.8 s");
+        } finally {
+            trickling.set(false);
+            ChatGptSignIn.testReadTimeout = null;
+        }
+    }
+
+    @Test
     void aRefusedSignInTheBrowserReports() {
         var thread = new Thread(() -> {
             try {

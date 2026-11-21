@@ -241,9 +241,10 @@ public class ChatGptSignIn {
                 break;
             }
             try (socket) {
-                socket.setSoTimeout((int) (testReadTimeout == null ? Duration.ofSeconds(10) : testReadTimeout)
-                        .toMillis());
-                var request = readRequest(socket);
+                var readLimit = testReadTimeout == null ? Duration.ofSeconds(10) : testReadTimeout;
+                var untilDeadline = Duration.ofNanos(Math.max(1, deadline - System.nanoTime()));
+                // Never past the sign-in's own deadline
+                var request = readRequest(socket, readLimit.compareTo(untilDeadline) < 0 ? readLimit : untilDeadline);
                 if (request == null) continue;
                 if (!CALLBACK_PATH.equals(request.get("path"))) {
                     answer(socket, 404, "Not isx's to answer");
@@ -283,28 +284,66 @@ public class ChatGptSignIn {
         throw new IOException("the sign-in did not finish in " + wait.toMinutes() + " minutes");
     }
 
+    /** The most of a request that is read, its line first: a browser's callback line is a fraction of it. */
+    static final int MAX_REQUEST_BYTES = 16 * 1024;
+
     /**
      * A request's method, path, query and headers, read as text lines, or null when the
-     * connection went idle or closed without sending one: a browser preconnect does both.
+     * connection went idle or closed without sending one: a browser preconnect does both. The
+     * whole request must arrive within {@code limit}, and its request line within
+     * {@link #MAX_REQUEST_BYTES}, else it is null too: the listener serves one connection at a
+     * time, so a client sending a byte now and then must not hold it until the sign-in's own
+     * deadline. Headers past the cap are not read, since nothing here reads them.
      */
-    private static Map<String, String> readRequest(Socket socket) throws IOException {
-        var out = new HashMap<String, String>();
-        var reader = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
-        String line;
+    private static Map<String, String> readRequest(Socket socket, Duration limit) throws IOException {
+        var deadline = System.nanoTime() + limit.toNanos();
+        var in = new java.io.BufferedInputStream(socket.getInputStream());
+        var lines = new java.util.ArrayList<String>();
+        var line = new java.io.ByteArrayOutputStream();
+        var total = 0;
         try {
-            line = reader.readLine();
-            for (var header = reader.readLine(); header != null && !header.isEmpty(); header = reader.readLine()) {
-                var colon = header.indexOf(':');
-                if (colon > 0) out.putIfAbsent("header:" + header.substring(0, colon).trim().toLowerCase(java.util.Locale.ROOT),
-                        header.substring(colon + 1).trim());
+            while (true) {
+                var left = Duration.ofNanos(deadline - System.nanoTime()).toMillis();
+                if (left <= 0) return null;
+                socket.setSoTimeout((int) Math.max(1, left));
+                var b = in.read();
+                if (b < 0) {
+                    // Closed after its last line, as readLine took it: what it sent still counts
+                    if (line.size() > 0) {
+                        var text = line.toString(StandardCharsets.ISO_8859_1);
+                        lines.add(text.endsWith("\r") ? text.substring(0, text.length() - 1) : text);
+                    }
+                    break;
+                }
+                if (++total > MAX_REQUEST_BYTES) {
+                    // Only the request line is read from it: headers past the cap, such as a
+                    // large Cookie for 127.0.0.1, are dropped rather than the callback
+                    if (lines.isEmpty()) return null;
+                    break;
+                }
+                if (b == '\n') {
+                    var text = line.toString(StandardCharsets.ISO_8859_1);
+                    if (text.endsWith("\r")) text = text.substring(0, text.length() - 1);
+                    line.reset();
+                    if (text.isEmpty()) break;
+                    lines.add(text);
+                } else {
+                    line.write(b);
+                }
             }
         } catch (java.net.SocketTimeoutException idleConnection) {
             return null;
         } catch (IOException closedWithoutARequest) {
             return null;
         }
-        if (line == null) return null;
-        var parts = line.split(" ");
+        if (lines.isEmpty()) return null;
+        var out = new HashMap<String, String>();
+        for (var header : lines.subList(1, lines.size())) {
+            var colon = header.indexOf(':');
+            if (colon > 0) out.putIfAbsent("header:" + header.substring(0, colon).trim().toLowerCase(java.util.Locale.ROOT),
+                    header.substring(colon + 1).trim());
+        }
+        var parts = lines.get(0).split(" ");
         if (parts.length >= 2) {
             var target = parts[1];
             var q = target.indexOf('?');
