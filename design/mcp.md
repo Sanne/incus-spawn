@@ -82,6 +82,8 @@ Checking the path before opening it is not enough, as a FIFO can be swapped in b
 The file is opened read-write, which never waits on a FIFO, and the type of what was opened is checked (`[ -f /dev/fd/3 ]`).
 The path is still checked first, since a read-write open creates a missing file.
 Writes never open the file they write: `launch`, `cancel`, every exit record and `exec`'s pid file write into a file `mktemp` creates in the same directory and rename it into place, which replaces a FIFO without opening it (#1074).
+A kill that finds no pid file yet leaves a `<id>.killed` directory, which the run checks for after writing its pid file, so an interrupt during the login profile still stops the command (#2467).
+Run ids carry a random part per `isx mcp` process, so a later process with a reused pid never meets that marker.
 Bounding these execs instead was the alternative, and it would turn a stalled read into a slow one rather than none.
 `task_diff` (and `ask` on a diff) is the exception that gets a bound as well (#1105).
 Its own reads go through the same helper, `base.txt` and the copy of the index included, but git then opens the repository's files, and anyone in the instance can replace one of those with a FIFO.
