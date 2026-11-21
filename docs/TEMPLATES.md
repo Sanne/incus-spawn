@@ -81,10 +81,11 @@ isx templates list
 isx templates list -v          # and where each definition comes from
 isx templates list --format=json  # for scripts: adds whether each is built and out of sync
 
-# Create a new template (opens in $EDITOR with a skeleton listing every field, commented out)
+# Create a new template (opens in $EDITOR with a short file; --full lists every field, commented out)
 isx templates new my-app       # creates ~/.config/incus-spawn/images/my-app.yaml
 isx templates new my-app --project  # creates .incus-spawn/images/my-app.yaml
 isx templates new              # creates new-template.yaml, to be named in the editor
+isx templates new my-app --full  # every field, each with a note; the same example is at isx.run/docs/template-example
 
 # Store a definition written elsewhere, with no editor: checked first, and nothing written if it is wrong
 isx templates new tpl-agent --from tpl-agent.yaml

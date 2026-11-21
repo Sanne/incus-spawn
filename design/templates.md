@@ -60,6 +60,8 @@ The check refuses a repo the loader would skip the whole file for (`ImageDef.rep
 The check also lists what the definition's own fields reach beyond its instance (`TemplateReach`: a `file://` base image, a child's too since a change of machine type builds it from scratch, host resources, `host-source` repos, `gui`, account pins, coordinator control; for a project-local definition `gui` and `coordinator` are told as what they do there, no branch default and ignored), which is what a person reviews once something else writes the templates.
 `--from` refuses a `name:` that disagrees with the name given rather than choosing one, does not write a file for a definition with an error, and creates its file exclusively; `--replace` swaps in a whole new file, and only the template's own (`TemplatesCommand.placeProblem`), never a built-in or the other layer's.
 The skeleton the editor starts from is written by the same `TemplatesCommand.store`.
+It is short by default, since every commented-out field was a line to delete, and `--full` writes the old reference text.
+The schema's completion and hover now do what those comments did, and the short file links to the docs page that holds the full example.
 An earlier design added `--tool` and `--repo` flags that wrote the YAML; it was dropped, since a flag per field is a second way to write a template, and every later field would either be refused arbitrarily or make the flags a shadow of the YAML schema.
 Changing part of an existing template stays out: rewriting a hand-written file loses its comments and layout.
 
@@ -248,7 +250,7 @@ A tool definition is refused the same way with a bare key under `parameters:` or
 
 `site/schema/{template,tool,config,mcp}.json` are JSON Schemas (draft 7, the dialect every YAML language server reads) for the YAML files people edit.
 `site/build.sh` publishes them at `https://isx.run/schema/`, with `application/schema+json` set in `site/_headers`.
-The skeleton that `isx templates new` writes starts with the modeline `# yaml-language-server: $schema=...`, so the editor finds the template schema with no setup.
+The skeletons that `isx templates new` writes start with the modeline `# yaml-language-server: $schema=...`, so the editor finds the template schema with no setup.
 `docs/CONFIGURATION.md` "Editor completion" gives the modeline of each file.
 
 The schemas are written by hand and held true by `EditorSchemasTest` (`cli`, tagged `docs`), because the loaders' keys, defaults and converters are Java and a generator would have to model each converter anyway.
@@ -258,7 +260,7 @@ The value sets of `env[].strategy`, `host-resources[].mode`, an auth rule's `typ
 The set of a template's `type` is written in the test, since the code does not check `type` against a set: it compares it with `vm` and `kvm`, and reads anything else as a container.
 Some sections of `config.yaml` and `mcp.yaml` have loaders that refuse an unknown key: `maven-repositories`, `maven-mirrors`, `host-routes`, `drivers` and `host-tools`.
 Their schemas refuse one too, and the test compares their keys with the loaders' own key sets.
-The built-in templates and tools, the skeleton's examples uncommented and the documented examples of `config.yaml` and `mcp.yaml` must validate.
+The built-in templates and tools, the full skeleton's examples uncommented and the documented examples of `config.yaml` and `mcp.yaml` must validate.
 
 The template and tool schemas are stricter than the loader in one way, on purpose: the loader warns about an unknown key and goes on (`MappedDefinition`), where the editor underlines it.
 `mcp.yaml` is stricter in the loader too, which refuses the whole file for an unknown key, so its schema forbids one.

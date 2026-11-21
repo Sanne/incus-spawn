@@ -363,7 +363,7 @@ class EditorSchemasTest {
 
     @Test
     void theSkeletonsExamplesUncommentedValidate() {
-        assertValid("skeleton", TemplateSkeletonTest.uncommented(TemplatesCommand.SKELETON));
+        assertValid("skeleton", TemplateSkeletonTest.uncommented(TemplatesCommand.FULL_SKELETON));
     }
 
     @Test
