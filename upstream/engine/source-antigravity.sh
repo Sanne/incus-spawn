@@ -125,10 +125,11 @@ _build_of() {
 }
 
 src_released_at() {
-    local b a t s latest=0
+    local b a t s j latest=0
     b="$(_build_of "$1")" || exit 1
     for a in $_ARCHES; do
-        t="$(jq -r '.timeCreated // empty' "$(_json "$_OBJECTS$b%2F$(_path "$a" | sed 's|/|%2F|g')")")"
+        j="$(_json "$_OBJECTS$b%2F$(_path "$a" | sed 's|/|%2F|g')")" || exit 1
+        t="$(jq -r '.timeCreated // empty' "$j")"
         [[ "$t" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]] || die "no creation time for agy $b's $a tarball"
         s="$(date -u -d "$t" +%s)"
         (( s > latest )) && latest="$s"
@@ -141,7 +142,7 @@ src_released_at() {
 _sha512() {
     local v="$1" b="$2" a="$3" f url sum stable s m
     url="$_BUCKET$b/$(_path "$a")"
-    f="$(_json "$_BUCKET$b/$(dirname "$(_path "$a")")/manifest.json")"
+    f="$(_json "$_BUCKET$b/$(dirname "$(_path "$a")")/manifest.json")" || exit 1
     [[ "$(jq -r '.version // empty' "$f")" == "$v" && "$(jq -r '.url // empty' "$f")" == "$url" ]] \
         || die "agy $b's $a manifest.json does not name $v at $url"
     sum="$(jq -r '.sha512 // empty' "$f")"
