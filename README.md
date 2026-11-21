@@ -402,8 +402,6 @@ To uninstall, run `uninstall.sh`:
 - On macOS it keeps the VM's data disk, with every instance and template, unless you pass `--delete-instances`.
 - `--binaries-only` removes only the binaries, to switch install channel, for example from a source build to Homebrew.
 
-Shell completions are available for bash, zsh, fish and PowerShell via `isx completion <shell>`.
-
 A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](docs/FAQ.md#how-do-i-upgrade-a-mac-whose-vm-ran-with-vfkit).
 
 ## CLI
@@ -437,7 +435,7 @@ A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](do
 | [`isx vm`](docs/CLI.md#isx-vm) | Manage the VM appliance (macOS only) |
 | [`isx ask`](docs/CLI.md#isx-ask) | AI-powered help |
 | [`isx mcp`](docs/CLI.md#isx-mcp) | Serve isx to a local agent over MCP |
-| [`isx completion`](docs/CLI.md#isx-completion) | Print shell completion script |
+| [`isx completion`](docs/CLI.md#isx-completion) | Print the shell completion script for bash, zsh, fish or PowerShell |
 
 Use `isx <command> --help` for detailed options on any command.
 Scripts read `--format=plain` or `--format=json`, which stay stable: see [Scripting isx](docs/CLI.md#scripting-isx).
