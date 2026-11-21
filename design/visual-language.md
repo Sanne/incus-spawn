@@ -135,11 +135,11 @@ The screen is read top to bottom: where am I, what is there, what is selected, w
  Templates ─────────────────────────────────────────────────────────────────────────────
    NAME            BUILT          DISK    DESCRIPTION
  ▸ tpl-minimal     1 week ago     -       Minimal Fedora
+
  Instances ─────────────────────────────────────────────────────────────────────────────
    NAME            STATUS         IP      PARENT        RUNTIME     AGE
    quarkus-42871   ● Running              tpl-quarkus   container   1h ago
    docs-site       ○ Stopped              tpl-minimal   container   2 days ago
-
  tpl-minimal  Minimal Fedora  Space Mark
  F1 Info   F2 Shell   F3 Details   F4 Branch…   F5 Build…   F6 Rename…   F7 Stop   …
 ```
@@ -149,6 +149,9 @@ A box around each table spent two columns and a row on lines that say nothing, a
 A panel has one rule across its top that carries its title, and the next panel's rule ends it.
 The table inside keeps the width it had in a box, through one cell of padding at each side, so the widths at which the OWNER and PURPOSE columns appear are unchanged.
 The focused panel's title is bold and in the accent, and only the focused panel shows the cursor, so focus reads without colour.
+
+**Two stacked panels split the height in its middle.**
+A panel grows past its half only into rows the other panel's list leaves empty, less one, so the rule between them stays where it is while lists change ([Terminal output and the TUI](terminal.md) "The main screen's tabs").
 
 **A dialog is a raised surface with a thin rounded frame.**
 The screen behind it is dimmed, which already says the dialog is on top, so it has no shadow and no double line.

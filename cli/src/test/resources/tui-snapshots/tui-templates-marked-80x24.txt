@@ -5,10 +5,12 @@
    tpl-minimal             3 days ago           -        Minimal Fedora
   ●tpl-a                   3 days ago           -        Leaf A
  ▸●tpl-b                   not built            -        Leaf B
+
+
+
+
+
  Instances ─────────────────────────────────────────────────────────────────────
-
-
-
 
                                    ╻ ┏━┓ ╻ ╻
                                    ┃ ┗━┓ ╺╋╸
@@ -16,8 +18,6 @@
 
                                 No instances yet
                 Select a template and press Enter to branch one
-
-
 
 
  tpl-b  Leaf B  Space Mark  ● 2 marked, Esc clears
