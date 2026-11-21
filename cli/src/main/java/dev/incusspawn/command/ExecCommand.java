@@ -112,7 +112,7 @@ public class ExecCommand extends BaseCommand {
                     environment, command, null);
         } catch (RuntimeException e) {
             BuildOutput.abandonStep();
-            BuildOutput.error("could not run the command in " + shown + ": " + failure(e));
+            BuildOutput.error("could not run the command in " + shown + ": " + OutputFormat.oneLine(failure(e)));
             return CommandResult.valueOf(ISX_FAILED);
         }
 
@@ -140,7 +140,7 @@ public class ExecCommand extends BaseCommand {
             // whether the command started is unknown, so it is ended in case it did.
             killRun.run();
             BuildOutput.abandonStep();
-            BuildOutput.error("could not run the command in " + shown + ": " + failure(e));
+            BuildOutput.error("could not run the command in " + shown + ": " + OutputFormat.oneLine(failure(e)));
             return CommandResult.valueOf(ISX_FAILED);
         } finally {
             removeHook(hook);
