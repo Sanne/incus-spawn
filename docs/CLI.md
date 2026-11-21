@@ -1368,12 +1368,12 @@ A plain `ssh <name>` uses the instance's own Host block, which never starts a st
 | 0 | Success, including a listing with no results |
 | 1 | The command failed, with the reason on stderr |
 | 2 | The command line could not be parsed, with the usage on stderr |
-| 125 | `isx exec`: isx failed, not the command |
 | 3 | `isx proxy status` only: the proxy runs on an old bridge address |
 | 4 | `isx vm stop --require-clean`: the VM is stopped, but with signals rather than a guest shutdown. `isx proxy status`: the proxy holding its ports is another user's |
 | 75 | `isx init --no-sudo`: steps that need root are waiting in the script it names, for you to run |
 | 76 | `isx init --format=json` or `plain`: it finished, but left steps only you can do, which its summary names |
 | 78 | `isx proxy start` cannot run the proxy at all, such as when `isx-proxy` is not installed |
+| 125 | `isx exec`: isx failed, not the command |
 
 Exit 1 covers a value the command rejects (`--format=yaml`, `--status=frozen`), Incus unreachable, and the like.
 `isx doctor` also exits 1 when a check fails, `isx vm status` when Incus is unreachable, and `isx proxy status` when the proxy is not running; that report is on stdout.
