@@ -96,8 +96,16 @@ public class ExecCommand extends BaseCommand {
                 BuildOutput.error(shown + " is not running.", "Start it with 'isx start " + shown + "'.");
                 return CommandResult.valueOf(ISX_FAILED);
             }
-            // A box Incus restarted by itself lacks its secret, without which the proxy refuses its proofs
-            withStdoutOnStderr(() -> InstanceLifecycle.giveSecretIfMissing(incus, name, instance, BuildOutput.bound()));
+            // A box Incus restarted by itself lacks its secret, without which the proxy refuses its proofs.
+            // One isx did not make (no parent stamp, which isx shell refuses) is never written isx's
+            // secret, and a delivery that fails is warned, never refusing the command, as a plain ssh does.
+            if (!instance.path("config").pathText(Metadata.PARENT, "").isEmpty()) {
+                try {
+                    withStdoutOnStderr(() -> InstanceLifecycle.giveSecretIfMissing(incus, name, instance, BuildOutput.bound()));
+                } catch (RuntimeException e) {
+                    BuildOutput.warn("could not give " + shown + " a new instance secret: " + OutputFormat.oneLine(failure(e)));
+                }
+            }
             var workdir = instance.path("config").path(Metadata.WORKDIR).asText("");
             script = ExecScript.build(runId, cwd != null ? cwd : workdir.isEmpty() ? "." : workdir,
                     environment, command, null);

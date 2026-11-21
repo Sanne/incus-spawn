@@ -547,6 +547,7 @@ Every code path that launches the VM verifies readiness within the lock scope: `
 `isx exec <instance> -- <command> [args...]` (`ExecCommand`) runs one command in a running instance and waits for it.
 - One read checks that the instance exists and runs, and gives its workdir.
 - A running box whose boot lacks its secret is given it (`InstanceLifecycle.giveSecretIfMissing`), as a plain `ssh` does, so its credential proofs work.
+  As with `ssh`, only an instance isx made (a `parent` stamp) is given one, and a delivery that fails is warned and never refuses the command.
 - The command runs through `ExecScript` (`common` `incus/`, shared with `isx mcp`'s `exec` and tasks), as `agentuser` in a login shell, in its own session.
 - Its stdout and stderr are isx's own (`TerminalStreams`); isx's own messages go to stderr.
 
