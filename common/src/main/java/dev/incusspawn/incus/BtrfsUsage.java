@@ -133,6 +133,14 @@ public final class BtrfsUsage {
         }
 
         /**
+         * Whether the pool has a threshold isx may set or has set: full accounting that reports one.
+         * It reads 0 while another delete's drops are, or were left, untraced.
+         */
+        public boolean canSkipDrops() {
+            return available && enabled && !"squota".equals(mode) && dropSubtreeThreshold >= 0;
+        }
+
+        /**
          * Whether a delete traces every shared extent, under full qgroups at a threshold other than
          * 0 (#2061). A kernel that reports no threshold (-1) predates the attribute and traces them all.
          */
@@ -154,6 +162,14 @@ public final class BtrfsUsage {
      * Read the pool's qgroup accounting status. Never throws; unreadable → {@link QgroupStatus#UNAVAILABLE}.
      */
     public static QgroupStatus status(String poolName) {
+        return statusSource.apply(poolName);
+    }
+
+    /** What {@link #status} and {@link #fsid} read from, swappable by a test, which has no pool. */
+    static volatile java.util.function.Function<String, QgroupStatus> statusSource = BtrfsUsage::readStatus;
+    static volatile java.util.function.Function<String, java.util.Optional<String>> fsidSource = BtrfsUsage::readFsid;
+
+    private static QgroupStatus readStatus(String poolName) {
         if (poolName == null || !isSafePoolName(poolName)) return QgroupStatus.UNAVAILABLE;
         try {
             if (Platform.isMacOS()) {
@@ -250,11 +266,14 @@ public final class BtrfsUsage {
      * remediation). Returns true if the kernel accepted it <em>or</em> one is already running —
      * either way a rescan is in progress. Never throws.
      */
+    static final java.time.Duration RESCAN_LOCK_WAIT = java.time.Duration.ofSeconds(3);
+
     public static boolean rescan(String poolName) {
         if (poolName == null || !isSafePoolName(poolName)) return false;
         // A delete is between its threshold and its settle: its drops would cancel this rescan, and
         // its settle starts one, so none is scheduled here (#2435)
-        var lock = PoolQgroupLock.acquire(poolName, java.time.Duration.ZERO, false);
+        // Waits a few seconds first, so doctor is told a rescan started when the holder is brief
+        var lock = PoolQgroupLock.acquire(poolName, RESCAN_LOCK_WAIT, false);
         if (lock.isEmpty()) return true;
         try {
             return rescanNow(poolName);
@@ -313,6 +332,10 @@ public final class BtrfsUsage {
      * privilege from mountinfo and sysfs, or empty when it cannot be found. Never throws.
      */
     public static java.util.Optional<String> fsid(String poolName) {
+        return fsidSource.apply(poolName);
+    }
+
+    private static java.util.Optional<String> readFsid(String poolName) {
         if (!Platform.isLinux() || !isSafePoolName(poolName)) return java.util.Optional.empty();
         try {
             return BtrfsSysfs.fsidDir(BtrfsSysfs.MOUNTINFO, BtrfsSysfs.SYSFS_BTRFS, POOL_MOUNT_PREFIX + poolName)
@@ -358,8 +381,10 @@ public final class BtrfsUsage {
      */
     public static DropAccounting skipDropAccounting(String poolName) {
         var status = status(poolName);
-        // No attribute to set on a kernel that reports none
-        if (!status.tracesDrops() || status.dropSubtreeThreshold() < 0) return new DropAccounting(status, -1);
+        // No attribute to set on a kernel that reports none. A pool that reads 0 is not turned away:
+        // another delete's batch may hold it there, and its drops would cancel this delete's rescan,
+        // so it waits for the lock and decides under it (#2435)
+        if (!status.canSkipDrops()) return new DropAccounting(status, -1);
         // Nor on a Linux pool whose filesystem is not found: the write below would fail, so the
         // rescan wait would only delay the delete. Read once, for that and the write.
         var fsid = Platform.isLinux() ? fsid(poolName).orElse(null) : null;
@@ -383,7 +408,7 @@ public final class BtrfsUsage {
         // Read again under the lock, every time: another process may have started a rescan, or put
         // the threshold back, since the read before it, and this delete must not cancel that rescan
         status = status(poolName);
-        if (!status.tracesDrops() || status.dropSubtreeThreshold() < 0) return new DropAccounting(status, -1);
+        if (!status.canSkipDrops()) return new DropAccounting(status, -1);
         boolean set;
         try {
             // The flag stays set while a rescan runs, so a consistent pool has none to wait for.
@@ -392,6 +417,9 @@ public final class BtrfsUsage {
                 var waited = runBtrfsResult(SETTLE_TIMEOUT_SECONDS, "quota", "rescan", "-W", POOL_MOUNT_PREFIX + poolName);
                 if (waited == null || waited.exit() != 0) return new DropAccounting(status, -1);
             }
+            // Already 0 with nobody holding the lock: a killed isx left it. Nothing to write or restore,
+            // and the settle rescans.
+            if (status.skipsDropAccounting()) return new DropAccounting(status, -1);
             set = Platform.isMacOS()
                     ? VmAgentClient.btrfsSkipDropAccounting(poolName).map("ok"::equals).orElse(false)
                     : writeThresholdOf(fsid, SKIP_DROP_ACCOUNTING);
@@ -470,8 +498,9 @@ public final class BtrfsUsage {
      * cleaner can take minutes. Never throws.
      */
     public static void settleDeletes(String poolName, DropAccounting before) {
-        if (!before.status().skipsDropAccounting() || !isSafePoolName(poolName)) return;
+        if (!before.status().skipsDropAccounting()) return;
         try {
+            if (!isSafePoolName(poolName)) return;
             if (Platform.isMacOS()) {
                 VmAgentClient.btrfsSettle(poolName, before.restoreTo());
                 return;

@@ -211,10 +211,14 @@ It is registered before the first threshold write, and marks isx as exiting befo
 A delete whose write was still in flight when the hook read puts its threshold back itself, unless the JVM halts first.
 A delete made once isx is exiting writes no threshold and is traced as before.
 Prepare and settle are one critical section per pool, across processes (#2435).
-A host lock on `btrfs-pool/<pool>.lock`, in a directory of its own because the TUI's per-instance locks share the lock directory as `<instance>.lock`, (`PoolQgroupLock`) is taken before the pool's state is read for the write, and read again under it every time, and released once the settle has started its rescan, or when the threshold is put back at exit.
+A host lock on `btrfs-pool/<pool>.lock` (`PoolQgroupLock`) is taken before a delete sets the threshold.
+It is in a directory of its own, because the TUI's per-instance locks share the lock directory as `<instance>.lock`.
+The pool's state is read again under it every time, a pool that reads 0 included, and the lock is released once the settle has started its rescan, or when the threshold is put back at exit.
+The lock is per user, since it lives under `~/.cache`.
 Without it, one process's drop at threshold 0 could cancel the rescan another had just started, and a series of such cancellations is what left a pool unable to rescan until a remount.
 A delete that finds the lock held waits for it, then reads the pool's state again, since the other process changed it.
-A rescan trigger from a TUI refresh, a build or `isx doctor` takes the lock only if it is free, and schedules none otherwise: the holder's settle starts one.
+A rescan trigger from a TUI refresh or a build takes the lock only if it is free, and schedules none otherwise: the holder's settle starts one.
+`isx doctor`'s rescan waits three seconds for it first, and is told a rescan is under way only if the holder is still settling.
 A delete that cannot get the lock within five minutes sets no threshold, so btrfs traces its drops as it did before isx set any, and it is not settled.
 The lock is held by a small thread of its own, since a batch is prepared on one thread and settled on another, and the kernel drops it if isx is killed.
 On macOS it holds off host processes until the appliance agent has the settle, which then runs detached (#2436).
