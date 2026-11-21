@@ -63,13 +63,15 @@ public final class PoolQgroupLock {
             return Optional.empty();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            // The holder may still get the file: let it go at once
+            released.countDown();
             return Optional.empty();
         }
     }
 
     private static void hold(String pool, Duration timeout, boolean say, CompletableFuture<Boolean> taken,
                              CountDownLatch released) {
-        try (var lock = HostLock.acquireOrDegrade(Environment.lockDir().resolve("btrfs-pool-" + pool + ".lock"),
+        try (var lock = HostLock.acquireOrDegrade(Environment.lockDir().resolve("btrfs-pool").resolve(pool + ".lock"),
                 "deleting from the btrfs pool", say ? ClientLog::warn : s -> {}, ClientLog::warn, timeout)) {
             taken.complete(lock.waited());
             released.await();
@@ -96,6 +98,7 @@ public final class PoolQgroupLock {
 
     /** Release it, and wait for the holder to let go of the file, so a waiter finds it free. Idempotent. */
     public void release() {
+        HELD.remove(pool, this);
         released.countDown();
         try {
             holder.join(5_000);
