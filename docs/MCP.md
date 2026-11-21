@@ -147,6 +147,7 @@ Claude runs in `bypassPermissions` mode, Codex in `danger-full-access` without a
 The model is the template's unless the call names one.
 For opencode the call names it as `provider/model`.
 A bare model ID also works when the template sets a model, and gets that model's provider.
+The template's model is listed for opencode with its provider in front, so passing it back keeps that provider.
 
 `delegate` and `send_message` take an optional `activity`, a short tag of the agent's own, such as `implement` or `review-fixes`.
 isx records it in its event log beside the run's start and end, so a report can say what each kind of work cost.

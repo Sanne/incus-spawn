@@ -20,7 +20,7 @@ import java.util.Set;
  */
 public class OpencodeSetup implements ToolSetup {
 
-    static final String DEFAULT_PROVIDER = "anthropic";
+    public static final String DEFAULT_PROVIDER = "anthropic";
     static final String DEFAULT_MODEL = ModelIds.get("opencode-default");
 
     static final String NPM_PACKAGE = "opencode-ai";

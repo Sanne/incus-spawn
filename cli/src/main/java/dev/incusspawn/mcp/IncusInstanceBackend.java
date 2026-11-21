@@ -21,6 +21,7 @@ import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.tool.OpencodeSetup;
 import dev.incusspawn.tui.InstanceLockManager;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
@@ -109,11 +110,23 @@ final class IncusInstanceBackend implements InstanceBackend {
         return delegateModel(def, defs, "claude");
     }
 
+    /**
+     * The {@code model} of {@code agent}'s tool, as {@link #delegateModel(ImageDef, Map)} reads
+     * Claude's. opencode's is given with the provider of the same layer in front,
+     * {@code <provider>/<model>}, as the build writes it into {@code opencode.json}: a coordinator
+     * passes it back to {@code delegate}, whose runner reads an ID holding a {@code /} as
+     * {@code provider/model}, so a gateway's {@code zai-org/glm-5-3} would otherwise reach opencode
+     * as provider {@code zai-org}.
+     */
     static String delegateModel(ImageDef def, Map<String, ImageDef> defs, String agent) {
         return ImageDef.chain(def, defs).reversed().stream()
                 .flatMap(d -> d.getTools().stream())
                 .filter(ref -> agent.equals(ref.getName()))
-                .findFirst().map(ref -> ref.getParams().get("model")).orElse(null);
+                .findFirst().map(ref -> {
+                    var model = ref.getParams().get("model");
+                    if (model == null || !DelegateAgent.OPENCODE.id.equals(agent)) return model;
+                    return ref.getParams().getOrDefault("provider", OpencodeSetup.DEFAULT_PROVIDER) + "/" + model;
+                }).orElse(null);
     }
 
     @Override
