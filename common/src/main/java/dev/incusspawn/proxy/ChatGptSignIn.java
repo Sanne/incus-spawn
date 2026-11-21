@@ -353,15 +353,24 @@ public class ChatGptSignIn {
         return out;
     }
 
-    private static void answer(Socket socket, int status, String body) throws IOException {
+    /**
+     * Answers the request, or does nothing when its client has gone: what a client that hung up
+     * is told changes nothing here, so a stray one cannot end the wait by leaving, and the real
+     * callback's code is still exchanged when its tab closed first.
+     */
+    private static void answer(Socket socket, int status, String body) {
         var bytes = body.getBytes(StandardCharsets.UTF_8);
         var head = "HTTP/1.1 " + status + (status == 200 ? " OK" : status == 404 ? " Not Found" : " Bad Request") + "\r\n"
                 + "Content-Type: text/html; charset=utf-8\r\n"
                 + "Content-Length: " + bytes.length + "\r\n"
                 + "Connection: close\r\n\r\n";
-        socket.getOutputStream().write(head.getBytes(StandardCharsets.ISO_8859_1));
-        socket.getOutputStream().write(bytes);
-        socket.getOutputStream().flush();
+        try {
+            socket.getOutputStream().write(head.getBytes(StandardCharsets.ISO_8859_1));
+            socket.getOutputStream().write(bytes);
+            socket.getOutputStream().flush();
+        } catch (IOException clientGone) {
+            // Nobody is left to read it
+        }
     }
 
     /** {@code text} for an HTML body: no character of it can open a tag, an attribute or an entity. */
