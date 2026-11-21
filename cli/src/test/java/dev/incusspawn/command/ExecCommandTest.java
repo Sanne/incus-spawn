@@ -225,6 +225,26 @@ class ExecCommandTest {
     }
 
     @Test
+    void aClosedStderrDropsOnlyStderrAndTheCommandRunsOn() {
+        // `isx exec box -- make 2>&- > build.log`: a warning on the closed stderr must not end make
+        var gone = new java.io.PrintStream(new java.io.OutputStream() {
+            @Override
+            public void write(int b) throws java.io.IOException {
+                throw new java.io.IOException("Bad file descriptor");
+            }
+        });
+        var daemon = running(Map.of()).execOutput("make", "built\n").execStderr("make", "warning\n").execExit("make", 3);
+        var out = new ByteArrayOutputStream();
+        var exit = new int[1];
+        RecordingOutput.during(() -> exit[0] = assertDoesNotThrow(() ->
+                command("dev", "make").exec(daemon.client(), null, out, gone).getResultValue()));
+        assertEquals(3, exit[0], "the command's own exit code");
+        assertEquals("built\n", out.toString(StandardCharsets.UTF_8));
+        var scripts = scripts(daemon);
+        assertEquals(1, scripts.size(), "nothing ended the command: " + scripts);
+    }
+
+    @Test
     void eachRunHasItsOwnId() {
         var first = ExecCommand.runId();
         var second = ExecCommand.runId();

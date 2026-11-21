@@ -568,9 +568,10 @@ The session's inner shell waits for the command rather than exec'ing it, since a
 **Whenever isx stops waiting, it ends the command.**
 `ExecScript.kill` in the guest ends the command's session, so nothing runs on with nobody waiting for it.
 A shutdown hook, removed once the command returns, runs it when isx is interrupted.
-isx runs it itself when the exec failed, when there is no exit code, and when what reads its output has gone.
+isx runs it itself when the exec failed, when there is no exit code, and when what reads its stdout has gone.
 That last case is `ExecCommand.ClosedOutputGuard`: a `PrintStream` keeps a failed write to itself and the JVM ignores SIGPIPE, so without it `isx exec box -- yes | head -1` would run until the ceiling.
 After the first failed write the guard discards the output, so the exec's sockets keep draining while the kill runs, and isx exits 141, as a shell reports a command SIGPIPE ended.
+A closed stderr is only discarded and ends nothing, since a shell's SIGPIPE ends only the process writing to the closed stream: `isx exec box -- make 2>&- > build.log` still builds.
 
 **Every run has its own id, and its pid file goes when it ends.**
 The run id is `cli-<pid>-<random>`, distinct from `isx mcp`'s `exec-<pid>-<n>`; a pid alone repeats, since the host reuses pids.
