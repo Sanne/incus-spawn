@@ -367,7 +367,7 @@ It writes these settings into `~/.gemini/antigravity-cli/settings.json`, keeping
 - `modelProvider: gemini`, the Gemini API key mode, when the account is an API key; with a Google account the key is left out, so `agy` signs in;
 - every tool call and artifact proceeding without a question, with files outside the workspace reachable;
 - no terminal sandbox, which would need a container inside the instance;
-- your home folder trusted, so `agy` asks once for each other folder you start it in;
+- your home folder and each repository the template clones trusted, so `agy` asks once for each other folder you start it in;
 - no tips and no feedback surveys.
 
 It also marks the first-run questions as answered.

@@ -397,7 +397,8 @@ The desktop app and IDE need a GUI that isx cannot show on macOS, and the app's 
 **The pin:** Google's installer reads the newest release from a manifest and checks its sha512; isx pins the sha256 of the tarballs that manifest named, after that check.
 `AGY_CLI_DISABLE_AUTO_UPDATE=true` keeps the self-updater from replacing the pin.
 **Settings** are merged into `~/.gemini/antigravity-cli/settings.json`, keeping the user's keys: every tool call and artifact proceeds (`toolPermission`, `artifactReviewPolicy`), files outside the workspace are reachable, the terminal sandbox is off, and the home is trusted.
-It trusts a folder by its exact path, so another folder asks once.
+It trusts a folder by its exact path, so the build also lists each of the template's clones, from the whole chain, as Claude Code and Codex trust them (#2465).
+A folder outside them asks once.
 The first-run questions are skipped by `cache/onboarding.json`, which the build writes only when it is missing.
 **Instructions** go to `~/.gemini/config/rules/isx.md`, which agy loads only after front matter saying when the rule applies (`trigger: always_on`).
 `AgentInstructions` therefore reads a rendered file's heading after a front matter block, so it still tells its own file from a template's.
