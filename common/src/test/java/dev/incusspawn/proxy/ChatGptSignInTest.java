@@ -277,6 +277,35 @@ class ChatGptSignInTest {
     }
 
     @Test
+    void aQueryWithABadEscapeIsRefusedWithoutEndingIt() throws Exception {
+        var finished = new java.util.concurrent.CompletableFuture<Void>();
+        var thread = new Thread(() -> {
+            try {
+                // A local request whose query does not decode: it carries no state of this sign-in
+                if (browseTo(CALLBACK + "?state=%zz") != 400) {
+                    finished.completeExceptionally(new IllegalStateException("a query that does not decode was not refused"));
+                }
+                var state = paramOf(lastAuthorizeUrl, "state");
+                if (browseTo(CALLBACK + "?code=browser-code-1&state=" + state) != 200) {
+                    finished.completeExceptionally(new IllegalStateException("the real callback was refused"));
+                }
+                finished.complete(null);
+            } catch (Exception e) {
+                finished.completeExceptionally(e);
+            }
+        });
+
+        var tokens = signIn.signInWithBrowser(url -> {
+            lastAuthorizeUrl = url;
+            thread.start();
+        });
+
+        thread.join(10_000);
+        finished.get(1, java.util.concurrent.TimeUnit.SECONDS);
+        assertEquals("at-real", tokens.accessToken(), "only this sign-in's own callback ends the wait");
+    }
+
+    @Test
     void aRefusedSignInTheBrowserReports() {
         var thread = new Thread(() -> {
             try {

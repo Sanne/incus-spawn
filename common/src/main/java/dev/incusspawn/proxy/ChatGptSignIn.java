@@ -245,9 +245,17 @@ public class ChatGptSignIn {
                         .toMillis());
                 var request = readRequest(socket);
                 if (request == null) continue;
-                var params = parseQuery(request.getOrDefault("query", ""));
                 if (!CALLBACK_PATH.equals(request.get("path"))) {
                     answer(socket, 404, "Not isx's to answer");
+                    continue;
+                }
+                Map<String, String> params;
+                try {
+                    params = parseQuery(request.getOrDefault("query", ""));
+                } catch (IllegalArgumentException badEscape) {
+                    // A query that does not decode carries no state of this sign-in, so like a
+                    // mismatched one it is refused without ending the wait
+                    answer(socket, 400, "The callback's query does not decode");
                     continue;
                 }
                 // This sign-in's state first: only its own callback may end it, with a code or
