@@ -197,7 +197,7 @@ class ExecCommandTest {
                 recorded.events().toString());
         var scripts = scripts(daemon);
         assertEquals(2, scripts.size(), "the command, then its kill in case it started: " + scripts);
-        assertTrue(scripts.get(1).contains("kill -TERM"), scripts.get(1));
+        assertTrue(scripts.get(1).contains("k TERM; sleep 3; k KILL"), scripts.get(1));
     }
 
     @Test
@@ -210,7 +210,7 @@ class ExecCommandTest {
         var first = scripts.getFirst();
         var from = first.indexOf("/run/cli-") + "/run/".length();
         var runId = first.substring(from, first.indexOf(".pid", from));
-        assertTrue(scripts.get(1).contains("kill -TERM") && scripts.get(1).contains("/" + runId + ".pid"),
+        assertTrue(scripts.get(1).contains("k TERM; sleep 3; k KILL") && scripts.get(1).contains("/" + runId + ".pid"),
                 "the kill names the same run: " + scripts.get(1));
     }
 
@@ -230,7 +230,7 @@ class ExecCommandTest {
         assertEquals(ExecCommand.OUTPUT_CLOSED, exit[0], "a shell's code for a command SIGPIPE ended");
         var scripts = scripts(daemon);
         assertEquals(2, scripts.size(), scripts.toString());
-        assertTrue(scripts.get(1).contains("kill -TERM"), scripts.get(1));
+        assertTrue(scripts.get(1).contains("k TERM; sleep 3; k KILL"), scripts.get(1));
     }
 
     @Test
