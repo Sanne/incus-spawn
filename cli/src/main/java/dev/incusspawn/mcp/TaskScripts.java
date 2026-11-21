@@ -1,5 +1,7 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.incus.ExecScript;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Collection;
@@ -90,22 +92,9 @@ final class TaskScripts {
         return TASKS_DIR + "/" + taskId;
     }
 
-    /**
-     * {@code command} reading {@code file} (a path the shell expands, quoted here) on its stdin if
-     * it is a regular file, else nothing (and a false status). In the current shell, so a
-     * {@code read} sets its variable. Every task file is read this way: a FIFO in its place
-     * (anyone in the instance can make one) would hold an open for reading, and the tool call
-     * waiting on it, until something writes to it. Checking the path first is not enough, as a
-     * FIFO can be swapped in between the check and the open (#1080); so the file is opened
-     * read-write, which never waits on a FIFO, and what was opened is checked. The path is still
-     * checked first, as opening read-write creates a file that is not there. So a regular file
-     * agentuser may read but not write (read-only mode, another owner, a read-only mount) reads
-     * as missing too; isx writes every task file as agentuser, so only something else in the
-     * instance makes one.
-     */
+    /** {@link ExecScript#ifFile}: how every task file is read. */
     static String ifFile(String file, String command) {
-        var quoted = "\"" + file + "\"";
-        return "{ [ -f " + quoted + " ] && { [ -f /dev/fd/3 ] && " + command + " <&3; } 3<> " + quoted + "; } 2>/dev/null";
+        return ExecScript.ifFile(file, command);
     }
 
     /**
@@ -128,19 +117,9 @@ final class TaskScripts {
         return writeAside("$D", name, command);
     }
 
-    /**
-     * Write what {@code command} prints to {@code name} in {@code dir} (which the shell expands)
-     * without opening it: a FIFO there would hold an open for writing until something reads it
-     * (#1074). Written into a file {@code mktemp} makes, then renamed into place, which replaces
-     * whatever was there; a directory there fails it ({@code -T}), rather than receiving the file.
-     * If any step fails (a full disk, say), nothing is put in place, nothing is left aside, and the
-     * status is false: an exit record must never appear empty. A script under {@code set -e}
-     * follows it with {@code || exit}, as {@code set -e} ignores a failure inside an
-     * {@code &&} list. Sets {@code w}.
-     */
+    /** {@link ExecScript#writeAside}: how every task file is written. */
     static String writeAside(String dir, String name, String command) {
-        return "{ w=$(mktemp \"" + dir + "/.tmp.XXXXXX\") && { " + command + " > \"$w\" && mv -fT \"$w\" \"" + dir + "/" + name
-                + "\" || { rm -f \"$w\"; false; }; }; }";
+        return ExecScript.writeAside(dir, name, command);
     }
 
     /**

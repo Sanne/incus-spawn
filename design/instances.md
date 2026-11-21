@@ -541,3 +541,36 @@ An unusable lock file (a home without working `fcntl` locks) degrades both sides
 `startLocked()` only spawns the hypervisor process — it cannot detect an immediate crash or a guest that never reaches Incus.
 Every code path that launches the VM verifies readiness within the lock scope: `start()` and `restart()` call `awaitReady()` (polling `waitUntilReady(60)` with `BuildOutput` step output); `ensureRunningLocked()` does its own inline wait with `System.err` output and recovery logic.
 `startLocked()` returns a `StartResult` enum (`LAUNCHED`/`ALREADY_RUNNING`/`FAILED`) so callers can distinguish a fresh launch (needs readiness wait) from a no-op (VM was already up).
+
+## Running one command: `isx exec`
+
+`isx exec <instance> -- <command> [args...]` (`ExecCommand`) runs one command in a running instance and waits for it.
+- One read checks that the instance exists and runs, and gives its workdir.
+- A running box whose boot lacks its secret is given it (`InstanceLifecycle.giveSecretIfMissing`), as a plain `ssh` does, so its credential proofs work.
+- The command runs through `ExecScript` (`common` `incus/`, shared with `isx mcp`'s `exec` and tasks), as `agentuser` in a login shell, in its own session.
+- Its stdout and stderr are isx's own (`TerminalStreams`); isx's own messages go to stderr.
+
+**It neither starts nor stops the instance.**
+Those are `isx start`'s and `isx stop`'s, so `isx exec` never changes an instance's state, and a stopped or missing one exits 125.
+
+**The command is an argv.**
+Each word is shell-quoted (`Container.shellQuote`) before the guest's `bash -c`, so isx expands nothing.
+
+**No terminal, and stdin only with `-i`.**
+Opt-in stdin keeps a loop reading a file from having its input consumed by `isx exec`.
+
+**The exit code is the command's; isx's own failures exit 125** (`ExecCommand.ISX_FAILED`), so they cannot pass for the command's exit 1.
+An exec that fails under the command also exits 125: Incus refuses it, its sockets do not open, or the instance stops before it starts.
+So does an exec whose exit code Incus lost or gave up on at `IncusApi`'s four-hour ceiling.
+
+**Whenever isx stops waiting, it ends the command.**
+`ExecScript.kill` in the guest ends the command's session, so nothing runs on with nobody waiting for it.
+A shutdown hook, removed once the command returns, runs it when isx is interrupted.
+isx runs it itself when the exec failed, when there is no exit code, and when what reads its output has gone.
+That last case is `ExecCommand.ClosedOutputGuard`: a `PrintStream` keeps a failed write to itself and the JVM ignores SIGPIPE, so without it `isx exec box -- yes | head -1` would run until the ceiling.
+After the first failed write the guard discards the output, so the exec's sockets keep draining while the kill runs, and isx exits 141, as a shell reports a command SIGPIPE ended.
+
+**Every run has its own id, and its pid file goes when it ends.**
+The run id is `cli-<pid>-<random>`, distinct from `isx mcp`'s `exec-<pid>-<n>`; a pid alone repeats, since the host reuses pids.
+`ExecScript.build`'s shell removes `~/.isx-mcp/run/<id>.pid` on exit, for `isx mcp`'s runs too.
+A stale one would name a session id the guest may since have given to another session, for a later kill to signal.
