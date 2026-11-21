@@ -30,7 +30,7 @@ class PoolQgroupLockTest {
     }
 
     @Test
-    void aSecondDeleteWaitsForTheFirstSettleAndReadsAgain() throws Exception {
+    void aSecondDeleteWaitsForTheFirstSettle() throws Exception {
         var first = PoolQgroupLock.acquire("p3", Duration.ofSeconds(5), false).orElseThrow();
         var second = new java.util.concurrent.CompletableFuture<PoolQgroupLock>();
         var waiter = new Thread(() -> second.complete(PoolQgroupLock.acquire("p3", Duration.ofSeconds(20), false).orElseThrow()));
@@ -40,7 +40,6 @@ class PoolQgroupLockTest {
         assertThrows(java.util.concurrent.TimeoutException.class, () -> second.get(300, java.util.concurrent.TimeUnit.MILLISECONDS));
         first.release();
         var got = second.get(10, java.util.concurrent.TimeUnit.SECONDS);
-        assertTrue(got.waited(), "what it read before the wait is stale");
         got.release();
     }
 
@@ -80,6 +79,40 @@ class PoolQgroupLockTest {
             BtrfsUsage.statusSource = oldStatus;
             BtrfsUsage.fsidSource = oldFsid;
             holder.release();
+        }
+    }
+
+    @Test
+    void aDeleteWithoutTheLockIsNeverSettledWhileThePoolReadsZero() throws Exception {
+        var atZero = new BtrfsUsage.QgroupStatus(true, true, false, "qgroup", 0);
+        var oldStatus = BtrfsUsage.statusSource;
+        var oldFsid = BtrfsUsage.fsidSource;
+        var oldWait = PoolQgroupLock.wait;
+        BtrfsUsage.statusSource = pool -> atZero;
+        try {
+            // No filesystem found: no lock is taken
+            BtrfsUsage.fsidSource = pool -> java.util.Optional.empty();
+            if (dev.incusspawn.Platform.isLinux()) {
+                assertFalse(BtrfsUsage.skipDropAccounting("p6").status().skipsDropAccounting());
+            }
+            // The lock is held elsewhere past the wait
+            BtrfsUsage.fsidSource = pool -> java.util.Optional.of("00000000-0000-0000-0000-000000000000");
+            PoolQgroupLock.wait = Duration.ofMillis(100);
+            var other = new java.util.concurrent.CompletableFuture<PoolQgroupLock>();
+            var t = new Thread(() -> other.complete(PoolQgroupLock.acquire("p6", Duration.ofSeconds(5), false).orElseThrow()));
+            t.start();
+            var held = other.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            try {
+                var got = BtrfsUsage.skipDropAccounting("p6");
+                assertNull(got.lock());
+                assertFalse(got.status().skipsDropAccounting(), "an unlocked settle would race the holder's drops");
+            } finally {
+                held.release();
+            }
+        } finally {
+            BtrfsUsage.statusSource = oldStatus;
+            BtrfsUsage.fsidSource = oldFsid;
+            PoolQgroupLock.wait = oldWait;
         }
     }
 }

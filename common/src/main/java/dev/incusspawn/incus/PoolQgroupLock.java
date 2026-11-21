@@ -26,25 +26,30 @@ import java.util.concurrent.ExecutionException;
 public final class PoolQgroupLock {
 
     /** Longer than any batch of deletes, which holds it throughout, and shorter than a hung one. */
-    static final Duration WAIT = Duration.ofMinutes(5);
+    static volatile Duration wait = Duration.ofMinutes(5);
+
+    /**
+     * How long a delete waits while this process already holds a pool's lock: briefly. The holder may
+     * be a delete whose settle joins a batch this delete belongs to, released only at its close, or
+     * another process may hold this pool while waiting for the one this process holds.
+     */
+    static final Duration WAIT_WHILE_HOLDING = Duration.ofSeconds(5);
+
+    /** The wait for a delete's prepare. */
+    static Duration waitFor() {
+        return HELD.isEmpty() ? wait : WAIT_WHILE_HOLDING;
+    }
 
     private static final Map<String, PoolQgroupLock> HELD = new ConcurrentHashMap<>();
 
     private final String pool;
     private final CountDownLatch released;
     private final Thread holder;
-    private final boolean waited;
 
-    private PoolQgroupLock(String pool, CountDownLatch released, Thread holder, boolean waited) {
+    private PoolQgroupLock(String pool, CountDownLatch released, Thread holder) {
         this.pool = pool;
         this.released = released;
         this.holder = holder;
-        this.waited = waited;
-    }
-
-    /** Whether another holder had it when this one asked, so what was read before is stale. */
-    boolean waited() {
-        return waited;
     }
 
     /**
@@ -52,13 +57,14 @@ public final class PoolQgroupLock {
      * it only when it is free. Empty when it could not be taken.
      */
     static Optional<PoolQgroupLock> acquire(String pool, Duration timeout, boolean say) {
-        var taken = new CompletableFuture<Boolean>();
+        var taken = new CompletableFuture<Void>();
         var released = new CountDownLatch(1);
         var holder = new Thread(() -> hold(pool, timeout, say, taken, released), "isx-pool-lock-" + pool);
         holder.setDaemon(true);
         holder.start();
         try {
-            return Optional.of(new PoolQgroupLock(pool, released, holder, taken.get()));
+            taken.get();
+            return Optional.of(new PoolQgroupLock(pool, released, holder));
         } catch (ExecutionException e) {
             return Optional.empty();
         } catch (InterruptedException e) {
@@ -69,11 +75,11 @@ public final class PoolQgroupLock {
         }
     }
 
-    private static void hold(String pool, Duration timeout, boolean say, CompletableFuture<Boolean> taken,
+    private static void hold(String pool, Duration timeout, boolean say, CompletableFuture<Void> taken,
                              CountDownLatch released) {
         try (var lock = HostLock.acquireOrDegrade(Environment.lockDir().resolve("btrfs-pool").resolve(pool + ".lock"),
                 "deleting from the btrfs pool", say ? ClientLog::warn : s -> {}, ClientLog::warn, timeout)) {
-            taken.complete(lock.waited());
+            taken.complete(null);
             released.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

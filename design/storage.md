@@ -220,6 +220,8 @@ A delete that finds the lock held waits for it, then reads the pool's state agai
 A rescan trigger from a TUI refresh or a build takes the lock only if it is free, and schedules none otherwise: the holder's settle starts one.
 `isx doctor`'s rescan waits three seconds for it first, and is told a rescan is under way only if the holder is still settling.
 A delete that cannot get the lock within five minutes sets no threshold, so btrfs traces its drops as it did before isx set any, and it is not settled.
+That holds even when the pool reads 0, another delete's, since a settle without the lock would start a rescan that the holder's next drop cancels; it gets the throttled repair, which leaves the rescan to the holder.
+A process that already holds a pool's lock waits only five seconds for another: the holder may be its own delete, released only when a batch closes, or another process may wait for the pool this one holds.
 The lock is held by a small thread of its own, since a batch is prepared on one thread and settled on another, and the kernel drops it if isx is killed.
 On macOS it holds off host processes until the appliance agent has the settle, which then runs detached (#2436).
 The settle runs once per batch of deletes (`IncusClient.deleteBatch`: `isx destroy --all-*`, the TUI's batch delete, `isx clean`), so a destroy of one instance pays it once, under 0.1 s of its 0.7 s here, and a batch of 70 about 2 s.
