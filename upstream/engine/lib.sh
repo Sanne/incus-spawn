@@ -128,9 +128,40 @@ closed_issue_exists() {
 }
 
 # fetch <url> <file>: one download, failing loudly. Tests put a curl on PATH that serves fixtures.
+# A failure is tried six more times, waiting a second doubling each time (63 s in all) or the
+# Retry-After the server names, while the waits stay within FETCH_WAIT_BUDGET seconds: Maven Central
+# answered a run's listing with four 429s inside the seven seconds that curl's three retries wait
+# (#2461). The budget counts the waits alone, never a transfer, so a large download that drops after
+# minutes is still tried again; curl's --retry-max-time counts the transfers too and would not. A
+# Retry-After past what is left of the budget fails at once (curl's own retry sleeps it out, an hour
+# or more), and a download that still fails fails the run as before. A 4xx answer fails at once,
+# since asking again cannot change it, unless it names a Retry-After or is a 403, 408 or 429: Central
+# has refused runners with a 403 that cleared and throttled with a 404 that names a Retry-After
+# (#1810, #2422). UPSTREAM_FETCH_PAUSE sets the first wait (tests use 0).
+FETCH_ATTEMPTS=7
+FETCH_WAIT_BUDGET=120
 fetch() {
-    curl -fsSL --connect-timeout 10 --retry 3 --retry-all-errors "$1" -o "$2" \
-        || die "failed to download $1"
+    local attempt=1 pause="${UPSTREAM_FETCH_PAUSE:-1}" waited=0 wait out code after at
+    while true; do
+        out="$(curl -fsSL --connect-timeout 10 -w '%{http_code} %header{retry-after}' "$1" -o "$2")" && return 0
+        rm -f "$2"
+        code="${out%% *}"; after=""
+        [[ "$out" != *" "* ]] || after="${out#* }"
+        (( attempt < FETCH_ATTEMPTS )) || break
+        [[ ! "$code" =~ ^4[0-9][0-9]$ || "$code" =~ ^(403|408|429)$ || -n "$after" ]] || break
+        wait="$pause"
+        if [[ "$after" =~ ^[0-9]+$ ]]; then
+            # Ten digits or more is past any budget, and too long for bash's arithmetic to be trusted.
+            if (( ${#after} > 9 )); then wait=$((FETCH_WAIT_BUDGET + 1)); else wait="$((10#$after))"; fi
+        elif [[ -n "$after" ]] && at="$(date -u -d "$after" +%s 2> /dev/null)"; then
+            wait="$((at - $(date -u +%s)))"
+            (( wait > 0 )) || wait=0
+        fi
+        (( waited + wait <= FETCH_WAIT_BUDGET )) || break
+        sleep "$wait"
+        waited=$((waited + wait)); pause=$((pause * 2)); attempt=$((attempt + 1))
+    done
+    die "failed to download $1"
 }
 
 # verify_signed <key file> <signature> <signed file> <fingerprint...> (#2210): the detached OpenPGP
