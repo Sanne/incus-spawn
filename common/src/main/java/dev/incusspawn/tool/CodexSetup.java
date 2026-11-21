@@ -1,11 +1,14 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.AccountShape;
 import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.proxy.ChatGptAccounts;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.util.BuildOutput;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,12 +38,27 @@ public class CodexSetup implements ToolSetup {
     /**
      * An {@code openai} account's {@code type} says how it authenticates -- a ChatGPT session
      * (#1332) or an API key -- which belongs to the identity like Claude's auth type does:
-     * unread-key warnings and the account menus must accept it beside the key itself.
+     * unread-key warnings and the account menus must accept it beside the key itself. A
+     * {@code type: chatgpt} account's credential is the session the host keeps, never a key here.
      */
+    static final AccountShape ACCOUNT_SHAPE = new AccountShape() {
+        private final AccountShape keyed = AccountShape.declared(List.of("apiKey"), List.of("type"));
+
+        @Override
+        public boolean hasFlatCredential(JqValue namespace) { return keyed.hasFlatCredential(namespace); }
+
+        @Override
+        public JqValue flatAccount(JqValue namespace) { return keyed.flatAccount(namespace); }
+
+        @Override
+        public List<String> flatKeys() { return keyed.flatKeys(); }
+
+        @Override
+        public boolean credentialOutsideConfig(JqValue account) { return ChatGptAccounts.isChatGpt(account); }
+    };
+
     @Override
-    public dev.incusspawn.config.AccountShape accountShape() {
-        return dev.incusspawn.config.AccountShape.declared(List.of("apiKey"), List.of("type"));
-    }
+    public AccountShape accountShape() { return ACCOUNT_SHAPE; }
 
     @Override
     public ToolDef.ProxyDef proxy() {

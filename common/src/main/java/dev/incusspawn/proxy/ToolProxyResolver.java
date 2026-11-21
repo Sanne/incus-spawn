@@ -332,10 +332,6 @@ public final class ToolProxyResolver {
                 var value = resolveConfigValue(proxyDef, configDef, configTree, toolSetups, Map.of());
                 if ((value == null || value.isBlank())
                         && !heldOutsideConfig(proxyDef, configKey, configTree, toolSetups, Map.of())) {
-                    // A ChatGPT session's account holds its credential as a host-side session
-                    // (#1332), not as any key this entry names: the entry is not a gap, and a
-                    // session gone fails closed where it is served
-                    if (servedByChatGptSession(proxyDef, configKey, configTree, toolSetups, Map.of())) continue;
                     result.add(new UnresolvedToolProxy(toolName, configKey, proxyDef.namespaceOf(configDef)));
                 }
             }
@@ -349,24 +345,6 @@ public final class ToolProxyResolver {
      * {@code tool} the tool whose proxy declares it.
      */
     public record MissingSecret(String path, String description, String namespace, String tool) {}
-
-    /**
-     * Whether {@code configKey}, of {@code proxyDef}, belongs to a namespace whose account this
-     * config resolves to -- for {@code accountsByNamespace}, the branch's selection -- is a
-     * ChatGPT session: the one credential that is not a config key.
-     */
-    private static boolean servedByChatGptSession(ToolDef.ProxyDef proxyDef, String configKey,
-                                                   JqValue configTree, Map<String, ToolSetup> toolSetups,
-                                                   Map<String, String> accountsByNamespace) {
-        var entry = proxyDef.getConfiguration().get(configKey);
-        if (entry == null) return false;
-        var namespace = proxyDef.namespaceOf(entry);
-        if (!ChatGptAccounts.NAMESPACE.equals(namespace)) return false;
-        var account = accountFor(proxyDef, entry, configTree, toolSetups, accountsByNamespace);
-        return !account.isBlank() && !AccountResolver.INHERIT.equals(account)
-                && ChatGptAccounts.isChatGpt(configTree.path(namespace)
-                        .path(AccountResolver.ACCOUNTS_KEY).path(account));
-    }
 
     /**
      * Whether the generic resolution applies: {@code type: anthropic} is served by MitmProxy's own
@@ -409,11 +387,7 @@ public final class ToolProxyResolver {
                 var missing = extractReferencedKeys(auth).stream()
                         .filter(key -> !resolved.containsKey(key) && suppliable(proxyDef, key)
                                 && !inherited(proxyDef, key, configTree, accountsByNamespace)
-                                && !heldOutsideConfig(proxyDef, key, configTree, toolSetups, accountsByNamespace)
-                                // The branch-time face of the same rule findUnresolved applies: a
-                                // ChatGPT session's account holds no key, and its session is the
-                                // credential (#1332)
-                                && !servedByChatGptSession(proxyDef, key, configTree, toolSetups, accountsByNamespace))
+                                && !heldOutsideConfig(proxyDef, key, configTree, toolSetups, accountsByNamespace))
                         .toList();
                 if (missing.isEmpty()) {
                     anyServed = true;
@@ -433,8 +407,9 @@ public final class ToolProxyResolver {
 
     /**
      * Whether the account {@code key}'s namespace resolves to holds its credential outside
-     * {@code config.yaml} ({@link AccountShape#credentialOutsideConfig}): a Google sign-in the
-     * proxy keeps on the host (#2443), which no key here can be missing for.
+     * {@code config.yaml} ({@link AccountShape#credentialOutsideConfig}): a Google sign-in (#2443)
+     * or a ChatGPT session (#1332) the proxy keeps on the host, which no key here can be missing
+     * for; a session gone fails closed where it is served.
      */
     private static boolean heldOutsideConfig(ToolDef.ProxyDef proxyDef, String key, JqValue configTree,
                                              Map<String, ToolSetup> toolSetups,
