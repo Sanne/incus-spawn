@@ -4,8 +4,8 @@
 
 
 
+
              ╭ Stop 3 instances ──────────────────────────────────╮
-             │                                                    │
              │ This will stop:                                    │
              │   alpha                                            │
              │   beta                                             │
@@ -14,8 +14,8 @@
              │ Not running, left as is: gamma, delta.             │
              │                                                    │
              │  y Stop   any key Cancel                           │
-             │                                                    │
              ╰────────────────────────────────────────────────────╯
+
 
 
 

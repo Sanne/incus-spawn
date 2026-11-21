@@ -111,7 +111,7 @@ final class AboutModal {
                 Line.styled("Licensed under the Apache License 2.0",
                         Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
                 Line.styled("github.com/Sanne/incus-spawn",
-                        Style.EMPTY.fg(modal.accent()).bg(modal.bg()))
+                        Style.EMPTY.underlined().fg(modal.accent()).bg(modal.bg()))
                         .hyperlink("https://github.com/Sanne/incus-spawn"),
                 Line.styled("", Style.EMPTY),
                 Line.styled("Manage isolated Incus development environments.",

@@ -4,7 +4,7 @@
 
 
 
-  ╭ Credential accounts: review-1 ───────────────────────────────────────────╮
+  ╭ Credential accounts of 'review-1' ───────────────────────────────────────╮
   │ Takes effect on the next request; isx names anything to restart.         │
   │                                                                          │
   │  ▸ claude < global default (personal) >                                  │

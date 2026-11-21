@@ -152,7 +152,6 @@ final class CleanModal {
         boolean showResizeHint = Platform.isMacOS() && usage != null && usage.isLow();
 
         var constraints = new ArrayList<Constraint>();
-        constraints.add(Constraint.length(1)); // top spacing
         if (hasUsage) {
             constraints.add(Constraint.length(1));
             constraints.add(Constraint.length(1));
@@ -166,9 +165,10 @@ final class CleanModal {
             constraints.add(Constraint.length(1));
             constraints.add(Constraint.length(1));
         }
-        constraints.add(Constraint.fill());
+        constraints.add(Constraint.length(1)); // blank
+        constraints.add(Constraint.length(1)); // the keys, on the last row
 
-        int modalHeight = constraints.size() + 3;
+        int modalHeight = constraints.size() + 2;
         var modalArea = ModalRenderer.centerRect(screen, 54, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
@@ -181,7 +181,7 @@ final class CleanModal {
         var inner = block.inner(modalArea);
 
         var rows = Layout.vertical().constraints(constraints).split(inner);
-        int row = 1;
+        int row = 0;
 
         if (hasUsage) {
             frame.renderWidget(Paragraph.from(Line.styled(
@@ -223,13 +223,13 @@ final class CleanModal {
 
         if (nothingActionable) {
             row++;
-            frame.renderWidget(Paragraph.from(Line.styled("  Pool is clean.",
+            frame.renderWidget(Paragraph.from(Line.styled("Pool is clean.",
                     Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg()))), rows.get(row++));
         }
         if (showResizeHint) {
             row++;
             frame.renderWidget(Paragraph.from(Line.styled(
-                    "  Tip: isx vm resize can grow the storage pool",
+                    "Tip: isx vm resize can grow the storage pool",
                     Style.EMPTY.fg(theme.textDim()).bg(modal.bg()))), rows.get(row++));
         }
 
@@ -241,12 +241,12 @@ final class CleanModal {
             modal.addKey(hintSpans, "Enter", "Clean");
             modal.addKey(hintSpans, "Esc", "Cancel");
         }
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(rows.size() - 1));
     }
 
     private Line cleanCheckLine(String text) {
         return Line.from(List.of(
-                Span.styled("✓ ", Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg())),
+                Span.styled(Glyphs.DONE + " ", Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg())),
                 Span.styled(text, Style.EMPTY.fg(modal.fg()).bg(modal.bg()))));
     }
 
@@ -261,7 +261,8 @@ final class CleanModal {
         }
 
         if (cleanResult.found()) {
-            lines.add(Line.styled("", Style.EMPTY));
+            // A blank row only between the usage and what was deleted, never as the dialog's first
+            if (!lines.isEmpty()) lines.add(Line.styled("", Style.EMPTY));
             if (cleanResult.failedBuildsDeleted() > 0) {
                 lines.add(cleanCheckLine("Deleted " + cleanResult.failedBuildsDeleted()
                         + " failed build" + (cleanResult.failedBuildsDeleted() > 1 ? "s" : "")));
@@ -298,12 +299,12 @@ final class CleanModal {
         }
 
         for (var warn : cleanResult.warnings()) {
-            lines.add(Line.styled("  ⚠ " + warn,
+            lines.add(Line.styled(Glyphs.WARNING + " " + warn,
                     Style.EMPTY.fg(modal.warn()).bg(modal.bg())));
         }
 
         int width = 54;
-        int modalHeight = lines.size() + 5;
+        int modalHeight = lines.size() + 4;
         var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
@@ -316,10 +317,10 @@ final class CleanModal {
         var inner = block.inner(modalArea);
 
         var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.fill(), Constraint.length(1))
+                .constraints(Constraint.fill(), Constraint.length(1), Constraint.length(1))
                 .split(inner);
 
-        frame.renderWidget(Paragraph.from(Text.from(lines)), rows.get(1));
+        frame.renderWidget(Paragraph.from(Text.from(lines)), rows.get(0));
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "any key", "Close");

@@ -4,8 +4,8 @@
 
 
 
+
              ╭ Destroy 2 instances ───────────────────────────────╮
-             │                                                    │
              │ This will destroy:                                 │
              │   alpha                                            │
              │   gamma                                            │
@@ -13,8 +13,8 @@
              │ This action cannot be undone.                      │
              │                                                    │
              │  y Confirm   any key Cancel                        │
-             │                                                    │
              ╰────────────────────────────────────────────────────╯
+
 
 
 

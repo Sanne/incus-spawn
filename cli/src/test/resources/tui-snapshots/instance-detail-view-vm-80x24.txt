@@ -1,7 +1,7 @@
 
 
                ╭ vm-1 ─────────────────────────────────────────╮
-               │ Status:         Stopped                       │
+               │ Status:         ○ Stopped                     │
                │ Type:           virtual-machine               │
                │ Architecture:   x86_64                        │
                │ Parent:         tpl-dev                       │

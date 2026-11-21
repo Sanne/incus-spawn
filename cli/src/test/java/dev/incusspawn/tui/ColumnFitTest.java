@@ -12,7 +12,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** A table's widths follow its content (design/visual-language.md "Tables"). */
+/** A table's widths follow its content (design/visual-language.md "Layout"). */
 class ColumnFitTest {
 
     private static final List<ColumnFit.Column> COLUMNS = List.of(

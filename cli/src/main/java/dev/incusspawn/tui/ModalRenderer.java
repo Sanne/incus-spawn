@@ -59,6 +59,9 @@ final class ModalRenderer {
                 .build();
     }
 
+    /** The spinner's glyph for this frame ({@link Motion#spinner}), still while motion is off. */
+    String spinner() { return motion.spinner(); }
+
     Checkbox checkbox() { return checkbox; }
     Select select() { return select; }
 
@@ -202,7 +205,7 @@ final class ModalRenderer {
     void renderInputModal(Frame frame, Rect screen,
                                   String title, String label, String placeholder,
                                   TextInputState inputState) {
-        var modalArea = centerRect(screen, 54, 7);
+        var modalArea = centerRect(screen, 54, 6);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(styledTitle(" " + title + " ", theme.modalBorder()))
@@ -256,7 +259,6 @@ final class ModalRenderer {
         var inner = block.inner(modalArea);
 
         var constraints = new ArrayList<Constraint>();
-        constraints.add(Constraint.length(1)); // top spacing
         for (int i = 0; i < wrappedLines.size(); i++) {
             constraints.add(Constraint.length(1)); // one line per message line
         }
@@ -268,7 +270,7 @@ final class ModalRenderer {
         // Render message lines
         for (int i = 0; i < wrappedLines.size(); i++) {
             frame.renderWidget(Paragraph.from(Line.styled(
-                    wrappedLines.get(i), Style.EMPTY.fg(borderColor).bg(theme.modalBg()))), rows.get(1 + i));
+                    wrappedLines.get(i), Style.EMPTY.fg(borderColor).bg(theme.modalBg()))), rows.get(i));
         }
 
         var btnSpans = new ArrayList<Span>();
@@ -280,9 +282,12 @@ final class ModalRenderer {
     /** The width of a confirm dialog's text: the dialog is six cells wider, for its frame and padding. */
     static final int CONFIRM_TEXT_WIDTH = 48;
 
-    /** A confirm dialog's height for {@code textLines} of wrapped text: frame, spacing and buttons add six. */
+    /**
+     * A confirm dialog's height for {@code textLines} of wrapped text: the frame, a blank row and
+     * the keys on the last row add four (design/visual-language.md "Layout").
+     */
     static int confirmModalHeight(int textLines) {
-        return 2 + 1 + textLines + 1 + 2;
+        return 2 + textLines + 1 + 1;
     }
 
     /**
@@ -382,7 +387,7 @@ final class ModalRenderer {
 
     void renderErrorModal(Frame frame, Rect screen, String message) {
         var lines = message.lines().toList();
-        int height = lines.size() + 5;
+        int height = lines.size() + 4;
         int width = Math.min(lines.stream().mapToInt(CharWidth::of).max().orElse(30) + 6, screen.width() - 4);
         var modalArea = centerRect(screen, Math.max(width, 40), height);
         var block = Block.builder()
@@ -401,7 +406,7 @@ final class ModalRenderer {
         var rows = Layout.vertical().constraints(constraints).split(inner);
         for (int i = 0; i < lines.size(); i++) {
             frame.renderWidget(Paragraph.from(Line.styled(
-                    " " + lines.get(i), Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg()))), rows.get(i));
+                    lines.get(i), Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg()))), rows.get(i));
         }
         var hintSpans = new ArrayList<Span>();
         addKey(hintSpans, "any key", "Dismiss");
@@ -413,14 +418,15 @@ final class ModalRenderer {
         var modalArea = centerRect(screen, width, 3);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .borderStyle(Style.EMPTY.fg(theme.modalAccent()))
+                .borderStyle(Style.EMPTY.fg(theme.modalBorder()))
                 .style(Style.EMPTY.bg(theme.modalBg()))
                 .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
+        // The caution colour, as the STATUS column's spinner: an operation is under way
         frame.renderWidget(Paragraph.from(Line.from(
-                Span.styled(motion.spinner() + " ", Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())),
+                Span.styled(motion.spinner() + " ", Style.EMPTY.fg(theme.statusWarning()).bg(theme.modalBg())),
                 Span.styled(message, Style.EMPTY.fg(theme.textDim()).bg(theme.modalBg())))), inner);
         motion.shimmer(new Rect(inner.x() + 2, inner.y(), Math.max(0, inner.width() - 2), 1));
     }

@@ -244,17 +244,22 @@ final class BuildMenu {
         return Outcome.IGNORED;
     }
 
+    /** Under an option's label: the cursor's three cells, the key and the two after it. */
+    private static final String DESC_INDENT = "      ";
+
     void renderBuildMenu(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         if (buildMenuOptions == null || buildMenuOptions.isEmpty()) return;
 
+        int modalWidth = Math.min(60, screen.width() - 4);
+        // A description wraps inside the frame, its padding and a scrollbar, and is never cut
+        int descWidth = Math.max(10, modalWidth - 4 - 1 - DESC_INDENT.length());
         var lines = new ArrayList<Line>();
         // The last line of the selected option, to scroll it into view when the menu is taller than the screen
         int selectedLastLine = 0;
         for (int i = 0; i < buildMenuOptions.size(); i++) {
             var opt = buildMenuOptions.get(i);
             var selected = (i == buildMenuSelectedIndex);
-            var prefix = selected ? " ▶ " : "   ";
-            var numPrefix = "[" + (i + 1) + "] ";
+            var prefix = selected ? " " + Glyphs.CURSOR + " " : "   ";
 
             var labelStyle = !opt.enabled()
                     ? Style.EMPTY.fg(theme.textDim()).bg(modal.bg())
@@ -262,7 +267,12 @@ final class BuildMenu {
                         ? Style.EMPTY.bold().fg(theme.focusedLabel()).bg(modal.bg())
                         : Style.EMPTY.fg(modal.fg()).bg(modal.bg());
             var spans = new ArrayList<Span>();
-            spans.add(Span.styled(prefix + numPrefix + opt.label(), labelStyle));
+            spans.add(Span.styled(prefix, Style.EMPTY.fg(modal.accent()).bg(modal.bg())));
+            // The key that picks it, written as a key is everywhere: bold and in the accent
+            spans.add(Span.styled(String.valueOf(i + 1), opt.enabled()
+                    ? Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())
+                    : Style.EMPTY.fg(theme.textFaint()).bg(modal.bg())));
+            spans.add(Span.styled("  " + opt.label(), labelStyle));
             if (opt.badge() != null) {
                 var badgeStyle = Style.EMPTY.fg(opt.enabled() ? modal.accent() : theme.textDim()).bg(modal.bg());
                 spans.add(Span.styled("  " + opt.badge(), badgeStyle));
@@ -271,8 +281,8 @@ final class BuildMenu {
 
             // Description lines (may be multi-line via \n)
             var descStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
-            for (var descLine : opt.description().split("\n")) {
-                lines.add(Line.styled("       " + descLine, descStyle));
+            for (var descLine : ModalRenderer.wrapText(opt.description(), descWidth)) {
+                lines.add(Line.styled(DESC_INDENT + descLine, descStyle));
             }
             if (selected) selectedLastLine = lines.size() - 1;
 
@@ -282,14 +292,13 @@ final class BuildMenu {
             }
         }
 
-        int modalWidth = Math.min(60, screen.width() - 4);
         int modalHeight = Math.min(lines.size() + 4, screen.height() - 2);
 
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = dev.tamboui.widgets.block.Block.builder()
                 .borders(dev.tamboui.widgets.block.Borders.ALL)
                 .borderType(dev.tamboui.widgets.block.BorderType.ROUNDED)
-                .title(modal.styledTitle(" Build Templates ", modal.border()))
+                .title(modal.styledTitle(" Build templates ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
@@ -298,17 +307,13 @@ final class BuildMenu {
         var inner = block.inner(modalArea);
 
         var rows = dev.tamboui.layout.Layout.vertical()
-                .constraints(dev.tamboui.layout.Constraint.length(1),
-                        dev.tamboui.layout.Constraint.fill(),
+                .constraints(dev.tamboui.layout.Constraint.fill(),
+                        dev.tamboui.layout.Constraint.length(1),
                         dev.tamboui.layout.Constraint.length(1))
                 .split(inner);
 
-        // Top spacing
-        frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(
-                Line.styled("", Style.EMPTY.bg(modal.bg()))), rows.get(0));
-
-        modal.renderScrollableContent(frame, rows.get(1), lines,
-                Math.max(0, selectedLastLine - rows.get(1).height() + 1));
+        modal.renderScrollableContent(frame, rows.get(0), lines,
+                Math.max(0, selectedLastLine - rows.get(0).height() + 1));
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "1-" + buildMenuOptions.size(), "Select");

@@ -11,7 +11,6 @@ import dev.incusspawn.ai.AiHelpClient.Target;
 import dev.incusspawn.ai.AiHelpClient.Usage;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalLink;
-import dev.incusspawn.util.TerminalProgress;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Margin;
@@ -352,11 +351,10 @@ final class HelpChatModal {
         var rows = Layout.vertical()
                 .constraints(Constraint.length(1), Constraint.fill(), Constraint.length(1))
                 .split(inner);
-        var spinnerFrames = TerminalProgress.SPINNER;
-        var spin = spinnerFrames[(int) ((System.currentTimeMillis() / 100) % spinnerFrames.length)];
-        frame.renderWidget(Paragraph.from(Line.styled(
-                spin + " Asking " + target().label() + "…",
-                Style.EMPTY.fg(modal.accent()).bg(modal.bg()))), rows.get(0));
+        frame.renderWidget(Paragraph.from(Line.from(
+                Span.styled(modal.spinner() + " ", Style.EMPTY.fg(theme.statusWarning()).bg(modal.bg())),
+                Span.styled("Asking " + target().label() + "…", Style.EMPTY.fg(theme.textDim()).bg(modal.bg())))),
+                rows.get(0));
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "Esc", "Cancel");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(2));

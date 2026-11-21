@@ -1,5 +1,4 @@
           ╭ Stop 60 instances ──────────────────────────────────────╮
-          │                                                         │
           │ This will stop mcp-tpl-isx-agent-vm-1482-implement-1,   │
           │ mcp-tpl-isx-agent-vm-1482-implement-2,                  │
           │ mcp-tpl-isx-agent-vm-1482-implement-3,                  │
@@ -17,8 +16,9 @@
           │ mcp-tpl-isx-agent-vm-1482-implement-15,                 │
           │ mcp-tpl-isx-agent-vm-1482-implement-16,                 │
           │ mcp-tpl-isx-agent-vm-1482-implement-17,                 │
-          │ … 43 more lines; enlarge the terminal                   │
+          │ mcp-tpl-isx-agent-vm-1482-implement-18,                 │
+          │ mcp-tpl-isx-agent-vm-1482-implement-19,                 │
+          │ … 41 more lines; enlarge the terminal                   │
           │                                                         │
           │  y Stop   any key Cancel                                │
-          │                                                         │
           ╰─────────────────────────────────────────────────────────╯

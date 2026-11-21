@@ -91,7 +91,7 @@ final class ActionsMenu {
         for (int i = 0; i < actionsList.size(); i++) {
             var action = actionsList.get(i);
             var selected = (i == actionsSelectedIndex);
-            var prefix = selected ? " > " : "   ";
+            var prefix = selected ? " " + Glyphs.CURSOR + " " : "   ";
             var style = selected
                     ? Style.EMPTY.bold().fg(theme.focusedLabel()).bg(modal.bg())
                     : Style.EMPTY.fg(modal.fg()).bg(modal.bg());
@@ -103,7 +103,8 @@ final class ActionsMenu {
             }
             var toolStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
             lines.add(Line.from(List.of(
-                    Span.styled(prefix + action.label(), style),
+                    Span.styled(prefix, Style.EMPTY.fg(modal.accent()).bg(modal.bg())),
+                    Span.styled(action.label(), style),
                     Span.styled("  (" + action.toolName() + ")", toolStyle))));
         }
 
@@ -115,7 +116,7 @@ final class ActionsMenu {
         var block = dev.tamboui.widgets.block.Block.builder()
                 .borders(dev.tamboui.widgets.block.Borders.ALL)
                 .borderType(dev.tamboui.widgets.block.BorderType.ROUNDED)
-                .title(modal.styledTitle(" Actions — " + instanceName + " ", modal.border()))
+                .title(modal.styledTitle(" Actions for '" + instanceName + "' ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
