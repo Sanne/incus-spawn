@@ -132,6 +132,10 @@ public class AntigravitySetup implements ToolSetup {
     @Override
     public McpClient mcpClient() { return McpClients.ANTIGRAVITY; }
 
+    /** The search, query and diff CLIs agy's own recommendations name (#2451). */
+    @Override
+    public List<String> requires() { return List.of("agent-cli-tools"); }
+
     @Override
     public String environmentContextPath() { return CONTEXT_PATH; }
 
