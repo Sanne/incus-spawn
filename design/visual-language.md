@@ -156,13 +156,45 @@ A panel grows past its half only into rows the other panel's list leaves empty, 
 **A dialog is a raised surface with a thin rounded frame.**
 The screen behind it is dimmed, which already says the dialog is on top, so it has no shadow and no double line.
 A destructive dialog's frame and message are in the bad colour.
-A dialog's last row lists its keys.
+
+**Every dialog has the same shape.**
+Its content starts on the first row inside the frame, one blank row follows it, and its keys are on the last row.
+Before, some dialogs opened with a blank row and some closed with one, so two dialogs of the same kind sat differently on the screen.
+A dialog that scrolls has no blank row, since its content fills what the screen gives it.
+
+```
+╭ Rename 'dev-1' ────────────────────────────────────╮
+│ New name:                                          │
+│ dev-1                                              │
+│                                                    │
+│  Enter Confirm   Esc Cancel                        │
+╰────────────────────────────────────────────────────╯
+```
+
+- **The title** is in sentence case and names what the dialog acts on in quotes: `Rename 'dev-1'`, `Actions for 'dev-1'`, `Credential accounts of 'review-1'`.
+- **A label** (`Status:`, `Parent:`) is in quiet text and its value in the dialog's text colour, so the value is what is read.
+  The accent is not used for a label: it means a key to press or where the person is.
+- **A state** in a dialog has the glyph it has in the table (`● Running`).
+- **A list to choose from** marks the current line with `▸` in the accent, and a line picked by a key shows that key as a key (`▸ 1  Rebuild tpl-dev`).
+- **Text that does not fit is wrapped**, never cut at the frame.
+- **Work under way** has the spinner in the caution colour, in a dialog as in the STATUS column.
 
 **The key bar fits the terminal in one of three forms.**
 From 100 columns each key stands apart from its label (`F1 Info`) and the bar is spread over the row.
 From 89 columns the two are together (`F1Info`), told apart by colour and weight.
 Narrower, each key gets an equal share and a label is cut, as it was before this page.
 What a narrow terminal gives up is whole labels, since ten of them do not fit in 80 columns.
+
+**A table's columns are as wide as what they hold.**
+A column is as wide as its widest cell (`ColumnFit`), measured over every row and not only the rows a search leaves, so the columns hold still while a person types.
+Before, spare width was shared evenly whatever the cells held, so a name was cut (`bench-nativ`) beside a column of blanks.
+
+- **With room to spare,** each column stands up to three cells apart from the next, and the rest goes to the column of free text (DESCRIPTION, PURPOSE, DONE), or stays blank at the end.
+- **Without room,** the columns give width up in a set order, each down to its floor: the free text first, then RUNTIME, PARENT, OWNER, AGE and IP, and NAME and STATUS last.
+- **A cut cell ends in `…`,** so a cut name is never taken for a whole one.
+- **IP keeps room for an address** once the columns stand apart, so the table does not shift when an instance starts.
+
+What this gives up is columns that line up between the two panels of the Overview, which they did not do before either.
 
 **An empty panel says what to do next.**
 With no instance, the panel shows the logo, "No instances yet" and the key that makes one, in its middle.
@@ -235,4 +267,6 @@ A new screen, dialog or column follows from the sections above, and these are th
 - Does it fill anything beyond the selected row, a tab, a dialog and its inputs?
 - Is the loudest thing on it the thing the person came for?
 - Does anything move while nothing is happening, or in answer to a key?
+- Does a dialog start on its first row and end in a blank row and its keys, with quiet labels and nothing cut at its frame?
+- Does a table size its columns through `ColumnFit`, with the column a person reads first cut last?
 - Is it snapshotted at 80 by 24, and looked at in `scripts/tui-demo.sh` in both themes and at `ISX_COLORS=256`?
