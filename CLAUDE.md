@@ -27,6 +27,11 @@ incus-spawn (`isx`) is a CLI tool for managing isolated Incus-based development 
 It creates full Linux system containers (not application containers) with copy-on-write branching, a MITM TLS proxy for credential isolation, and an interactive TUI.
 See README.md and the pages in `docs/` (published on isx.run beside it; maintainer notes are in `docs/dev/`) for user-facing docs, DESIGN.md and the `design/` pages it indexes for architecture rationale, and [docs/dev/CHARACTER.md](docs/dev/CHARACTER.md) for the project's mission and design philosophy.
 
+**`AGENTS.md` is the short entry for agents that do not read `CLAUDE.md`** (#2477): Antigravity CLI finds `AGENTS.md`, `.agents/rules/` and `.agents/skills/`, not `.claude/`.
+It summarizes the build and the rules every change follows, and points at `CLAUDE.md` and each `.claude/rules/` file as on-demand references, since those hold far more than Antigravity's 24 KB per-file cap.
+`.agents/skills/validate-on-real-incus` is a symlink to the skill under `.claude/skills/`, which stays canonical; a new skill is linked the same way.
+Keep it a summary: a rule that changes here changes in `AGENTS.md` too when it lists it.
+
 **Keep notes in the repository**: the machines this is developed on are wiped regularly, so anything worth remembering between sessions goes in a committed file (this one, `.claude/rules/`, a `design/` page), never only in local agent memory.
 Changes an existing host needs by hand, such as moving the CoW pool off a loop file, go in [docs/dev/MIGRATIONS.md](docs/dev/MIGRATIONS.md).
 
