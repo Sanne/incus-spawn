@@ -346,6 +346,16 @@ Sign in from a `--proxy-only` instance when that matters.
 Gemini CLI, Pi and opencode use API keys only, so an instance on a Google account gives them no Gemini credential.
 The Antigravity desktop app and IDE are not supported.
 
+### A free-tier key has no Pro quota
+
+`agy` starts on Gemini 3.1 Pro unless you choose another model.
+A Gemini API key on Google's free tier has no quota for that model, so Google answers 429 `RESOURCE_EXHAUSTED` ("free tier ... limit: 0") to the first prompt.
+The key is accepted: only the model is out of reach.
+
+Pick a Flash model for the call with `--model`, for example `agy -p "Reply with ok" --model gemini-3.6-flash-low`.
+A paid key or a Google account for an AI Pro or AI Ultra plan has the quota.
+isx does not set a model for `agy`, since `agy` keeps its saved model by label, not by the ID that `--model` takes.
+
 ### What the build sets up
 
 The tool installs a pinned `agy` release from Google's download bucket, checked against its SHA-256, and links it as `/usr/local/bin/agy`.
