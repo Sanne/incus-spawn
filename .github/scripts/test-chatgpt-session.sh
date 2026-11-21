@@ -329,6 +329,12 @@ gu "curl -sS -m 20 -o /tmp/bootstrap.json -w '%{http_code}' -H 'Content-Type: ap
     -d '{\"client_id\":\"$CODEX_CLIENT_ID\",\"grant_type\":\"refresh_token\",\"refresh_token\":\"$REFRESH_TOKEN\"}' \
     https://auth.openai.com/oauth/token" > "$WORK/bootstrap.status"
 check "the proxy answers a refresh with the current proof (HTTP $(cat "$WORK/bootstrap.status"))" grep -qx 200 "$WORK/bootstrap.status"
+# A real start's delivery leaves the session's profile script beside its placeholders, and
+# Codex's API-key login script (isx-zz-codex-auth.sh) reads that script's absence as an account
+# that left ChatGPT: it would turn the auth.json below into an API-key one at the next login.
+# The fixture writes the file itself, so it leaves a stand-in for the profile script too: its
+# presence is all that login script checks, and the stand-in rewrites nothing.
+gx sh -c "printf '%s\\n' '# Written by the ChatGPT session fixture: a delivered session (#1332)' > /etc/profile.d/isx-zz-codex-chatgpt.sh"
 gu "python3 - <<'PY'
 import datetime, json, os
 t = json.load(open('/tmp/bootstrap.json'))
