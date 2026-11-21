@@ -53,15 +53,24 @@ public final class ExecScript {
         return sb.toString();
     }
 
-    /** Kill the process tree of a running {@link #build} script, TERM first, then KILL. */
+    /**
+     * Kill the process tree of a running {@link #build} script, TERM first, then KILL: every
+     * process in its session, found in {@code /proc}. The session's process group alone is not
+     * enough, since a process can leave it ({@code timeout} moves itself and the command into a
+     * group of their own); and {@code pkill -s} would make the kill depend on procps-ng, which a
+     * template may remove. Only bash builtins walk {@code /proc}; besides them the kill needs
+     * only {@code cat}, {@code sleep} and {@code rm}.
+     */
     public static String kill(String runId) {
         requireId(runId);
         var pidFile = pidFile(runId);
+        // A stat line is "pid (comm) state ppid pgrp session ...", and comm may hold ") "
         return "p=$(" + ifFile(pidFile, "cat") + ") || exit 0; "
-                + "kill -TERM -- -\"$p\" 2>/dev/null; "
-                + "command -v pkill >/dev/null && pkill -TERM -s \"$p\"; "
-                + "sleep 3; kill -KILL -- -\"$p\" 2>/dev/null; "
-                + "command -v pkill >/dev/null && pkill -KILL -s \"$p\"; "
+                + "k() { kill -\"$1\" -- -\"$p\" 2>/dev/null; "
+                + "for f in /proc/[0-9]*/stat; do { read -r s < \"$f\"; } 2>/dev/null || continue; "
+                + "s=${s##*) }; set -- \"$1\" $s; "
+                + "[ \"$5\" = \"$p\" ] && { q=${f#/proc/}; kill -\"$1\" \"${q%/stat}\" 2>/dev/null; }; done; }; "
+                + "k TERM; sleep 3; k KILL; "
                 + "rm -f " + pidFile;
     }
 

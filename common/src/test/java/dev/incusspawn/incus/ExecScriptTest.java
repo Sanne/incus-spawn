@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -145,6 +146,45 @@ class ExecScriptTest {
         assertTrue(p.waitFor(15, TimeUnit.SECONDS), "the run did not end");
         waitFor(() -> countInSession(session) == 0);
         assertFalse(Files.exists(pidFile), "the pid file is removed");
+    }
+
+    @Test
+    void killingARunWithATimeLimitStopsItWithoutPkill() throws Exception {
+        // timeout, a child of the session's shell, moves itself and the command into a process
+        // group of their own, so a kill of the session's group alone misses them; and a template
+        // may have removed procps-ng, so pkill cannot be what reaches them.
+        var bin = Files.createDirectories(home.resolve("bin"));
+        for (var tool : List.of("cat", "sleep", "rm")) {
+            var path = Stream.of("/usr/bin/", "/bin/").map(d -> Path.of(d + tool)).filter(Files::isExecutable)
+                    .findFirst().orElseThrow();
+            Files.createSymbolicLink(bin.resolve(tool), path);
+        }
+        var pb = new ProcessBuilder("bash", "-c", build(home.toString(), Map.of(), "sleep 300 & sleep 300", 600));
+        pb.environment().put("HOME", home.toString());
+        pb.redirectErrorStream(true);
+        var p = pb.start();
+        var pidFile = home.resolve(".isx-mcp/run/exec-1-1.pid");
+        waitFor(() -> Files.exists(pidFile) && !readQuietly(pidFile).isBlank());
+        var session = Long.parseLong(readQuietly(pidFile).strip());
+        try {
+            // the shell, timeout and two sleeps, and bash -c unless it exec'd the last one
+            waitFor(() -> countInSession(session) >= 4);
+
+            var kill = new ProcessBuilder("bash", "-c", ExecScript.kill("exec-1-1"));
+            kill.environment().put("HOME", home.toString());
+            kill.environment().put("PATH", bin.toString());
+            kill.redirectErrorStream(true);
+            var k = kill.start();
+            assertTrue(k.waitFor(30, TimeUnit.SECONDS), "the kill did not finish");
+
+            assertTrue(p.waitFor(15, TimeUnit.SECONDS), "the run did not end");
+            waitFor(() -> countInSession(session) == 0);
+        } finally {
+            // What the kill missed is no descendant once the session's shell has gone
+            ProcessHandle.allProcesses().filter(h -> sessionOf(Path.of("/proc/" + h.pid())) == session)
+                    .forEach(ProcessHandle::destroyForcibly);
+            p.destroyForcibly();
+        }
     }
 
     @Test

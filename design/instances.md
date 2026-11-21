@@ -568,6 +568,8 @@ The session's inner shell waits for the command rather than exec'ing it, since a
 
 **Whenever isx stops waiting, it ends the command.**
 `ExecScript.kill` in the guest ends the command's session, so nothing runs on with nobody waiting for it.
+It signals every process `/proc` names in that session, not only the session's process group, since `timeout` moves itself and the command into a group of their own.
+It walks `/proc` with bash builtins rather than `pkill -s`, because a template may remove procps-ng.
 A shutdown hook, removed once the command returns, runs it when isx is interrupted.
 isx runs it itself when the exec failed, when there is no exit code, and when what reads its stdout has gone.
 That last case is `ExecCommand.ClosedOutputGuard`: a `PrintStream` keeps a failed write to itself and the JVM ignores SIGPIPE, so without it `isx exec box -- yes | head -1` would run until the ceiling.
