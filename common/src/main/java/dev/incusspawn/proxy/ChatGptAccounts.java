@@ -13,6 +13,11 @@ public final class ChatGptAccounts {
 
     /** The credential namespace whose accounts may be {@code type: chatgpt}. */
     public static final String NAMESPACE = "openai";
+    /**
+     * Codex's OAuth client id (codex-rs {@code CLIENT_ID}): a refresh naming another is not
+     * Codex's, and a sign-in through another would make a session the proxy cannot refresh.
+     */
+    public static final String CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
     /** Codex's backend. */
     public static final String CHATGPT = "chatgpt.com";
     /** OpenAI's token endpoint. */

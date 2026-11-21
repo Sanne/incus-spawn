@@ -4,6 +4,7 @@ import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.util.BuildOutput;
 
 import java.util.ArrayList;
@@ -29,6 +30,16 @@ public class CodexSetup implements ToolSetup {
     @Override
     public String description() {
         return "Codex CLI — OpenAI coding assistant";
+    }
+
+    /**
+     * An {@code openai} account's {@code type} says how it authenticates -- a ChatGPT session
+     * (#1332) or an API key -- which belongs to the identity like Claude's auth type does:
+     * unread-key warnings and the account menus must accept it beside the key itself.
+     */
+    @Override
+    public dev.incusspawn.config.AccountShape accountShape() {
+        return dev.incusspawn.config.AccountShape.declared(List.of("apiKey"), List.of("type"));
     }
 
     @Override
@@ -251,8 +262,13 @@ public class CodexSetup implements ToolSetup {
      * changes on every start (#1108). Codex sends the key in {@code auth.json} and never reads
      * the variable, and the built-in {@code openai} provider cannot be pointed at one. Only a
      * file still holding a key isx put there is rewritten -- the build's placeholder or a
-     * start's -- so a {@code codex login} of the user's own is left alone. Sourced by every
-     * login shell: POSIX sh, silent, a grep when nothing changed, no variables left behind.
+     * start's -- so a {@code codex login} of the user's own is left alone, and so is a file
+     * holding a ChatGPT session isx delivered while the account still has one: the profile
+     * script that owns that file rewrites it instead, and while it is there this script never
+     * touches the file. A session whose account has left ChatGPT for this key is the
+     * exception: its profile script went with the session and its proofs died with it, so this
+     * rewrite replaces them. Sourced by every login shell: POSIX sh, silent, a grep when
+     * nothing changed, no variables left behind.
      */
     static final String LOGIN_AUTH_SCRIPT = """
             # Written by isx: Codex reads its key from auth.json, and the key changes on every start (#1108)
@@ -271,13 +287,30 @@ public class CodexSetup implements ToolSetup {
                           rm -f "$HOME/.codex/auth.json.isx-$$"
                         fi
                         ;;
+                      *)
+                        # A ChatGPT session isx delivered: its tokens carry isx's marker, and
+                        # the account may have left ChatGPT for this key -- the profile script
+                        # that wrote them went with the session, so the dead proofs are isx's
+                        # to replace, never a codex login of the user's own. Only while no
+                        # session is delivered, which is that profile script's absence: while
+                        # one is, the file is the profile's to write after this script, and
+                        # flipping it to an API key on the way would hand a Codex in another
+                        # shell a file that is neither credential, and lose the session
+                        # outright if the profile's write then failed
+                        if [ ! -e '%s' ] && grep -q isx_ "$HOME/.codex/auth.json" 2>/dev/null; then
+                          (umask 077 && printf '{\\n  "auth_mode": "apikey",\\n  "OPENAI_API_KEY": "%%s"\\n}\\n' \\
+                              "$OPENAI_API_KEY" > "$HOME/.codex/auth.json.isx-$$") 2>/dev/null \\
+                            && mv -f "$HOME/.codex/auth.json.isx-$$" "$HOME/.codex/auth.json" 2>/dev/null
+                          rm -f "$HOME/.codex/auth.json.isx-$$"
+                        fi
+                        ;;
                     esac
                     unset isx_key
                   fi
                   ;;
               esac
             fi
-            """.formatted(PLACEHOLDER_API_KEY);
+            """.formatted(PLACEHOLDER_API_KEY, InstanceSecret.CHATGPT_PROFILE_PATH);
 
     /**
      * The instructions as Codex's requirements file. The heading leads as a TOML comment, so a

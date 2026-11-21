@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.config.SpawnConfig;
@@ -16,6 +17,56 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ToolProxyResolverTest {
+
+    @Test
+    void aChatGptSessionsApiKeyEntryIsNotAGap() throws Exception {
+        // #1332: the account's credential is a host-side session, not the key the codex tool's
+        // entry names -- isx doctor and the proxy's startup warning read this
+        var chatgpt = Jjq.spawnConfig("""
+                openai:
+                  accounts:
+                    default: { type: chatgpt }
+                    work: {}
+                  default: default
+                """).tree();
+        assertTrue(ToolProxyResolver.findUnresolved(chatgpt,
+                Map.of("codex", new dev.incusspawn.tool.CodexSetup())).isEmpty(),
+                "a ChatGPT account is a configured credential");
+
+        var keyed = Jjq.spawnConfig("""
+                openai:
+                  accounts:
+                    default: { apiKey: "sk-x" }
+                  default: default
+                """).tree();
+        assertTrue(ToolProxyResolver.findUnresolved(keyed,
+                Map.of("codex", new dev.incusspawn.tool.CodexSetup())).isEmpty());
+
+        var none = Jjq.spawnConfig("""
+                openai:
+                  accounts:
+                    default: { type: chatgpt }
+                  default: default
+                bob:
+                  apiKey: ""
+                """).tree();
+        // The codex entry is not a gap; bob's missing key is, and stays named
+        var gaps = ToolProxyResolver.findUnresolved(none, Map.of(
+                "codex", new dev.incusspawn.tool.CodexSetup(),
+                "bob", new dev.incusspawn.tool.BobSetup()));
+        assertTrue(gaps.stream().noneMatch(g -> g.namespace().equals("openai")), gaps.toString());
+
+        // The branch-time check asks the same, against the selection a branch would pin
+        // (CredentialCheck.missingSecrets): no gap for the session's account, one for a pin to
+        // an account that is neither
+        var tools = Map.<String, dev.incusspawn.tool.ToolSetup>of("codex", new dev.incusspawn.tool.CodexSetup());
+        assertTrue(ToolProxyResolver.missingSecrets(chatgpt, tools, java.util.List.of("codex"),
+                Map.of()).isEmpty(), "the session is the credential");
+        var pinnedAway = ToolProxyResolver.missingSecrets(chatgpt, tools, java.util.List.of("codex"),
+                Map.of("openai", "work"));
+        assertEquals(1, pinnedAway.size(), pinnedAway.toString());
+        assertEquals("OpenAI API key", pinnedAway.getFirst().description());
+    }
 
     @Test
     @ExtendWith(TempHome.class)

@@ -288,6 +288,8 @@ class ChatGptRouteTest {
                         resp.setStatusCode(backendRefuses ? 401 : 200).end("{\"models\":[]}");
                     }
                 }
+                // An empty bundle, as a workspace without managed policies is served
+                case "/backend-api/wham/config/bundle" -> resp.end("{\"config_toml\":null,\"requirements_toml\":null}");
                 default -> {
                     lastBackend = new Received(body.length(), io.vertx.core.MultiMap.caseInsensitiveMultiMap().addAll(req.headers()));
                     var status = backendRefuses ? 401 : 200;
@@ -440,6 +442,20 @@ class ChatGptRouteTest {
 
         assertEquals(403, reply.status(), reply.body());
         assertTrue(seen.isEmpty(), "never relayed: " + seen);
+    }
+
+    @Test
+    void theWorkspacesPoliciesAreServedToTheAccountTheyBelongTo() throws Exception {
+        // An Enterprise plan's Codex refuses to start without them (codex-rs cloud-config)
+        var reply = backend("GET", "/backend-api/wham/config/bundle", accessPlaceholder(proofs().access()));
+
+        assertEquals(200, reply.status(), reply.body());
+        var upstream = seenOn("/backend-api/wham/config/bundle");
+        assertEquals(1, upstream.size(), seen.toString());
+        assertTrue(upstream.getFirst().contains("Bearer " + store.read(ACCOUNT).tokens().accessToken()), upstream.toString());
+        assertTrue(upstream.getFirst().endsWith("| " + ACCOUNT_ID), upstream.toString());
+        assertEquals("{\"config_toml\":null,\"requirements_toml\":null}", reply.body(),
+                "the answer is relayed as it came");
     }
 
     @ParameterizedTest

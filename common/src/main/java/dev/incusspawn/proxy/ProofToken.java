@@ -187,6 +187,9 @@ public final class ProofToken {
         return "{ " + first + "; } && { " + second + "; }";
     }
 
+    /** The placeholders of the tools the proxy serves, and the config they were read from. */
+    public record Declared(SpawnConfig settings, List<Placeholder> placeholders) {}
+
     /**
      * The placeholders of the tools the proxy serves ({@link ToolProxyResolver#proxyToolSetups}):
      * feature-gated tools only when enabled, and never a project's own tool definitions -- the
@@ -194,23 +197,48 @@ public final class ProofToken {
      * them. Reads tool definitions from disk.
      */
     public static List<Placeholder> declared() {
-        var config = SpawnConfig.load();
-        return declaredBy(ToolProxyResolver.proxyToolSetups(config,
-                ToolDefLoader.withoutProjectTools(config.getSearchPaths())).values());
+        return declaredWithConfig().placeholders();
     }
 
     /**
-     * {@link #declared()}, read asynchronously while the caller prepares the instance.
-     * The caller joins before writing verifier metadata, which must precede the start or
-     * copy, so any unfinished file reads add to preparation time. A failed read gives no
-     * placeholders -- static ones, which prove nothing -- and a warning.
+     * {@link #declared()} with the config it was read from, so a caller that needs both -- a
+     * start, which the config tells which ChatGPT session to serve -- reads it once.
      */
-    public static CompletableFuture<List<Placeholder>> declaredInBackground() {
-        return CompletableFuture.supplyAsync(ProofToken::declared).exceptionally(e -> {
+    public static Declared declaredWithConfig() {
+        var config = SpawnConfig.load();
+        return new Declared(config, declaredBy(ToolProxyResolver.proxyToolSetups(config,
+                ToolDefLoader.withoutProjectTools(config.getSearchPaths())).values()));
+    }
+
+    /**
+     * {@link #declaredWithConfig()}, read asynchronously while the caller prepares the instance.
+     * The caller joins before writing verifier metadata, which must precede the start or
+     * copy, so any unfinished file reads add to preparation time. A failed placeholder read
+     * gives no placeholders -- static ones, which prove nothing -- and a warning, but keeps
+     * the config: it decides the ChatGPT session a start serves, which one broken tool
+     * definition must not end.
+     */
+    public static CompletableFuture<Declared> declaredInBackground() {
+        return CompletableFuture.supplyAsync(() -> {
+            var config = SpawnConfig.load();
+            return new Declared(config, placeholdersOrNone(config));
+        });
+    }
+
+    /**
+     * The declared placeholders, or none of them with a warning when they cannot be read:
+     * static ones, which prove nothing. The config stays the caller's, apart from this
+     * failure.
+     */
+    private static List<Placeholder> placeholdersOrNone(SpawnConfig config) {
+        try {
+            return declaredBy(ToolProxyResolver.proxyToolSetups(config,
+                    ToolDefLoader.withoutProjectTools(config.getSearchPaths())).values());
+        } catch (RuntimeException e) {
             Warnings.warn("could not read the tools' credential placeholders, so this start"
                     + " gives none of them a proof token: " + e.getMessage());
             return List.of();
-        });
+        }
     }
 
     /**

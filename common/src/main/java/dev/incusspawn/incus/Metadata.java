@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
@@ -118,6 +119,12 @@ public final class Metadata {
      * inherits its source's ChatGPT access with them.
      */
     public static final String CHATGPT_PROOF_SECRET_SHA256 = PREFIX + "chatgpt-proof-secret-sha256";
+    /**
+     * Every ChatGPT session stamp, for what clears them: a copy, which gets a secret of its own,
+     * and a start that serves no ChatGPT session. An empty value unsets.
+     */
+    public static final List<String> CHATGPT_KEYS = List.of(CHATGPT_SESSION, CHATGPT_ACCESS_PROOF_SHA256,
+            CHATGPT_REFRESH_PROOF_SHA256, CHATGPT_PROOF_SECRET_SHA256);
     /**
      * The {@link IncusClient#pid} of the boot isx last restarted a VM into because its agent did
      * not answer. Unresponsive again on that same boot, the VM is reported rather than restarted
