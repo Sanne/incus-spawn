@@ -135,10 +135,13 @@ src_first_party() { return 1; }
 
 # ---- Central ---------------------------------------------------------------------------------------
 
-# _listing <groupId:artifactId>: "<version>\t<epoch>" of every release Central's listing dates.
+# _listing <groupId:artifactId>: "<version>\t<epoch>" of every release Central's listing dates. The
+# download is read into a variable first: a die inside an argument's $(...) is lost, and the run
+# would go on to fail on an empty path rather than on the download.
 _listing() {
-    local v d
-    REGEX='([0-9]+(?:\.[0-9]+)*)/' perl "$ENGINE_DIR/index.pl" "$(_get "$(_dir "$1")/")" \
+    local v d f
+    f="$(_get "$(_dir "$1")/")" || exit 1
+    REGEX='([0-9]+(?:\.[0-9]+)*)/' perl "$ENGINE_DIR/index.pl" "$f" \
         | while IFS=$'\t' read -r v d; do
             _release "$v" && [[ -n "$d" ]] || continue
             printf '%s\t%s\n' "$v" "$(date -u -d "$d UTC" +%s)"
@@ -151,7 +154,7 @@ _listing() {
 _member_releases() {
     local a l all="" n=0
     for a in $(_artifacts "$1"); do
-        l="$(_listing "$a")"
+        l="$(_listing "$a")" || exit 1
         all+="$l"$'\n'
         n=$((n + 1))
     done
@@ -162,7 +165,7 @@ _member_releases() {
 _member_cooled() {
     local secs rel
     secs="$(duration_seconds "$(item "$ITEM" cooling)")"
-    rel="$(_member_releases "$1")"
+    rel="$(_member_releases "$1")" || exit 1
     awk -F'\t' -v lim="$(( $(date -u +%s) - secs ))" '$2 <= lim { print $1 }' <<<"$rel"
 }
 
@@ -207,13 +210,15 @@ src_released_at() {
 # _exists <groupId:artifactId> <version>: Central's listing names the version, and (unless
 # UPSTREAM_REHASH=0) the pom there hashes to the .sha1 Central lists beside it.
 _exists() {
-    local a="$1" v="$2" url pom sha
-    awk -F'\t' -v v="$v" '$1 == v { found = 1 } END { exit !found }' <<<"$(_listing "$a")" \
+    local a="$1" v="$2" url pom sha rel f
+    rel="$(_listing "$a")" || exit 1
+    awk -F'\t' -v v="$v" '$1 == v { found = 1 } END { exit !found }' <<<"$rel" \
         || die "$ITEM: Central lists no release $v of $a"
     [[ "${UPSTREAM_REHASH:-1}" != 0 ]] || return 0
     url="$(_dir "$a")/$v/${a#*:}-$v.pom"
-    pom="$(_get "$url")"
-    sha="$(head -c 40 "$(_get "$url.sha1")")"
+    pom="$(_get "$url")" || exit 1
+    f="$(_get "$url.sha1")" || exit 1
+    sha="$(head -c 40 "$f")"
     [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || die "$ITEM: $url.sha1 is not a sha1"
     [[ "$(sha1sum "$pom" | cut -d' ' -f1)" == "$sha" ]] || die "$ITEM: $url does not hash to the sha1 Central lists for it"
 }
