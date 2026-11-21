@@ -300,6 +300,13 @@ printf 'tampered\n' >> "$WORK/art/SHA256SUMS-20261101"; serve "$IMG/v20261101/SH
 "$E" plan "$WORK/plan-sums" > "$WORK/sums.log" 2>&1 && fail "a tampered sums file was accepted"
 mk_img 20261101
 "$E" plan "$WORK/plan-ok" > /dev/null 2>&1 || fail "the restored publishers are not accepted again"
+# An index the publisher does not serve (a 429 that outlasted fetch's retries) fails with why, never
+# with a path the lost download left empty.
+mv "$FIX/http/$(http "$IMG/")" "$WORK/index.bak"
+"$E" plan "$WORK/plan-noindex" > "$WORK/noindex.log" 2>&1 && fail "plan passed with no index of img"
+grep -qF "failed to download $IMG/" "$WORK/noindex.log" || fail "the missing index was not what failed: $(cat "$WORK/noindex.log")"
+! grep -qE "cannot read|gives no date" "$WORK/noindex.log" || fail "a failed index read as an empty one: $(cat "$WORK/noindex.log")"
+mv "$WORK/index.bak" "$FIX/http/$(http "$IMG/")"
 echo "plan fail-closed: ok"
 
 # ---- verify-trees ------------------------------------------------------------------------------------
