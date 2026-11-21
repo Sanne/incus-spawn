@@ -2,17 +2,17 @@
  Overview   Templates 0   Instances 1   Work                    ←/→ Switch view
  Templates ─────────────────────────────────────────────────────────────────────
    No template definitions found.
+
+
+
+
+
+
+
+
  Instances ─────────────────────────────────────────────────────────────────────
    NAME        STATUS      IP          PARENT      RUNTIME    AGE        DISK
    work-1      ● Running               tpl-minimal container  3h ago     -
-
-
-
-
-
-
-
-
 
 
 

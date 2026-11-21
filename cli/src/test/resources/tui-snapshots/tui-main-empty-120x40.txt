@@ -4,14 +4,21 @@
    NAME                                        BUILT                DISK     DESCRIPTION
  ▸ tpl-minimal                                 3 days ago           -        Minimal Fedora
    tpl-dev                                     not built            -        Development tools
+
+
+
+
+
+
+
+
+
+
+
+
+
+
  Instances ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-
-
-
-
-
-
 
 
 
@@ -23,13 +30,6 @@
 
                                                     No instances yet
                                     Select a template and press Enter to branch one
-
-
-
-
-
-
-
 
 
 

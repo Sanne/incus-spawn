@@ -495,9 +495,17 @@ Templates and Instances each give one list the whole height, and Work is the ins
 
 **Why tabs.**
 The stacked screen was designed for short lists.
-With many templates and many instances the two panels share the height in proportion to their lengths, so both scroll and neither shows much.
+With many templates and many instances the two panels each get half the height, so both scroll and neither shows much.
 A split that follows the focus was considered and rejected: rows would move on every Tab, and it has no place for a third list.
 The overview of what was done in each instance (#2241) became the fourth, Work, without a new layout.
+
+**The Overview is split in its middle.**
+Each panel gets half of the height, and an odd row goes to the instances (`Tui.templatePanelHeight`, `PanelSplitTest`).
+A list that does not fit in its half takes rows from the other panel, but only rows that the other list leaves empty.
+It leaves one of them, so the lighter panel ends in an empty row that says its list is complete.
+Before, the template panel was exactly as tall as its list and the instances got the rest, and with two long lists the height was shared in proportion to their lengths.
+So a short list got a short panel, the border between the two moved whenever a list changed, and the screen looked lopsided.
+What the middle split gives up is density: with two short lists, the empty rows are divided between the panels instead of collected at the bottom.
 
 **Overview stays, and the TUI opens on it.**
 People know the stacked screen, and with short lists it is still the best view, since it shows what is running beside what can be branched.

@@ -1729,6 +1729,23 @@ public class Tui {
         };
     }
 
+    /**
+     * The template panel's height where both panels show: half of what there is, so the screen is
+     * split in its middle whatever the lists hold. Only a list that does not fit in its half
+     * takes rows from the other, and only rows the other leaves empty but for one, so neither panel
+     * is ever squeezed below what it needs or below its half (design/terminal.md "The main screen's tabs").
+     */
+    static int templatePanelHeight(int templateIdeal, int instanceIdeal, int available) {
+        int half = available / 2;
+        int otherHalf = available - half;
+        boolean templatesFit = templateIdeal <= half;
+        boolean instancesFit = instanceIdeal <= otherHalf;
+        if (templatesFit == instancesFit) return half;
+        // The lighter panel keeps one empty row under its list, which says the list ends there
+        if (instancesFit) return Math.max(half, Math.min(templateIdeal, available - instanceIdeal - 1));
+        return Math.min(half, Math.max(templateIdeal + 1, available - instanceIdeal));
+    }
+
     /** Enter in the cleanup dialog with something checked: clean it, with the progress overlay, and show what it did. */
     private boolean cleanPool(TuiRunner tui, TableState tableState) {
         progressMessage = "Cleaning pool...";
@@ -1851,13 +1868,8 @@ public class Tui {
             templatePanelHeight = available;
         } else if (!view.shows(Panel.TEMPLATES)) {
             templatePanelHeight = 0;
-        } else if (templateIdeal + instanceIdeal <= available) {
-            templatePanelHeight = templateIdeal;
         } else {
-            int minPanel = 4;
-            int templateShare = Math.max(minPanel, available * templateIdeal / (templateIdeal + instanceIdeal));
-            templatePanelHeight = Math.min(templateIdeal, templateShare);
-            templatePanelHeight = Math.max(templatePanelHeight, minPanel);
+            templatePanelHeight = templatePanelHeight(templateIdeal, instanceIdeal, available);
         }
         var chunks = Layout.vertical()
                 .constraints(

@@ -60,6 +60,7 @@ Of these, only `Tui.run` (for `IncusSpawn`) and `InstanceDetailView.mcpDetailRow
 `isx list` is `ListCommand`, which prints the listing and never opens the TUI; both parse the Incus listing through `InstanceListing`.
 Two panels (Templates + Instances) with modal dialogs for branching, renaming, and building.
 **The main screen has tabs** (`Tui.View`, design/terminal.md "The main screen's tabs"): Overview stacks both panels as before tabs existed and is where the TUI opens, Templates and Instances each draw one panel at full height, and Work draws the instance panel with the overview's columns.
+The Overview is split in its middle (`Tui.templatePanelHeight`): a list that does not fit its half takes only rows the other list leaves empty, less one that stays under the lighter list, since a panel sized to its list looked lopsided (Sanne).
 Left and Right (`h`, `l`) move between tabs and stop at either end; Tab and Shift+Tab move the focus to the other panel, which in a one-panel tab shows the other such tab.
 Set the focus with `Tui.focus(Panel)` and the tab with `Tui.show(View)`, never the fields: the two keep the focused panel on screen.
 The tab bar (`MainScreen.renderTabs`) is one row under the header, each tab a filled cell (the showing one bold on the selection's fill, the others on the raised surface, since unfilled labels did not show where one ends: Sanne), each one-panel tab with its row count.
