@@ -341,6 +341,9 @@ class CredentialSetup {
             NamespaceAccounts.replaceAll(config, "openai", target.name(), java.util.Map.of("type", "chatgpt"));
         } else {
             NamespaceAccounts.put(config, "openai", target.name(), "type", "chatgpt");
+            // The session replaces the account's credential: an API key it held before must not
+            // stay in config.yaml, nor keep being injected at api.openai.com for it
+            NamespaceAccounts.put(config, "openai", target.name(), "apiKey", "");
         }
         config.save();
         endChatGptSessions(replaced);
