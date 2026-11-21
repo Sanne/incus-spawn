@@ -30,6 +30,7 @@ class TestInstanceScriptTest {
     private final AtomicInteger limitedRequests = new AtomicInteger();
     private final AtomicInteger refused = new AtomicInteger();
     private final AtomicInteger throttledRequests = new AtomicInteger();
+    private final AtomicInteger blockedRequests = new AtomicInteger();
     private final AtomicInteger octalRequests = new AtomicInteger();
 
     @BeforeEach
@@ -77,6 +78,13 @@ class TestInstanceScriptTest {
             }
             exchange.close();
         });
+        // Central's edge blocks a runner's address for hours (#2447), in the form #2422 found: a 404
+        server.createContext("/blocked", exchange -> {
+            blockedRequests.incrementAndGet();
+            exchange.getResponseHeaders().add("Retry-After", "33665");
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
         server.createContext("/always-throttled", exchange -> {
             exchange.getResponseHeaders().add("Server", "cloudflare");
             exchange.sendResponseHeaders(429, -1);
@@ -116,6 +124,15 @@ class TestInstanceScriptTest {
                 "<artifactId>junit</artifactId>");
         assertEquals(75, result.exitCode, result.output);
         assertTrue(result.output.contains("HTTP 429"), result.output);
+    }
+
+    /** A Retry-After of hours is not waited for, and is not retried: the runner stays blocked (#2447). */
+    @Test
+    void aRetryAfterLongerThanTheWaitLeftEndsTheFetchingAtOnceAsThrottled() throws Exception {
+        var result = run("http://127.0.0.1:" + server.getAddress().getPort() + "/blocked", "x");
+        assertEquals(75, result.exitCode, result.output);
+        assertEquals(1, blockedRequests.get(), result.output);
+        assertTrue(result.output.contains("Retry-After: 33665"), result.output);
     }
 
     @Test

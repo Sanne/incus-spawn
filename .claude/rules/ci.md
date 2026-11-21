@@ -323,7 +323,16 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
   When every failed check was such a 429, the script exits 75 instead of 1, and `assert_fetch` counts those checks.
   The host-distro jobs then ask Maven Central from the host without the proxy (`instance_checks_pass` in `test-host-distro.sh`).
   A 429 there too passes the check with a `::warning::` in the run's summary; any other answer fails it as the proxy's fault, and no answer fails it too.
-  The other jobs that run the script still fail on 75.
+  The other jobs that run the script still fail on 75, except the native job's container run, which asks Maven Central from the host as well (`maven_throttle_tiebreak` in `maven-ci.sh`).
+  A 404 with a positive `Retry-After` counts as throttling there and in `fetch_matching` (#2422).
+  A `Retry-After` longer than the wait left of `FETCH_WAIT_BUDGET` ends the fetching at once, since Central names hours for a blocked runner (#2447).
+  CI's `config.yaml` names Google's mirror of Maven Central in `maven-mirrors:` (the native job and the host-distro legs; `maven_ci_mirrors_yaml`), so a cold download never asks Central.
+  Section 1 fetches the junit jar, the jar again and its `.sha1`, and the other checks use the cached jar.
+  The jar's second fetch is the one request Central gets, because the proxy confirms a mirrored copy at its next use.
+  The `.sha1` comes last, since the mirrored copy is committed unconfirmed and a `.sha1` asked before the confirmation goes to Central too.
+  The host grades the proxy log from where it was before the checks (`grade_maven_proxy_log`): `from its mirror` and a cache summary with `confirmed first` pass, `unconfirmed` (Central throttled) passes with a `::warning::`, anything else fails.
+  Only the first run in a proxy sees both, so the native job grades its container run alone.
+  `maven-central-watch.yml` downloads one artifact from Central daily without the mirror, and opens an issue only after three days in a row of refusals.
   Sourcing the script defines its helpers without running checks, which `TestInstanceScriptTest` uses.
   After it, the "Test container" step writes a file to `/tmp`, runs `incus restart` and checks the file is still there, waiting at most 60 s for `local-fs.target`.
 - **`test-airgap.sh`**: runs on the host.
