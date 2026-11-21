@@ -44,6 +44,8 @@ The isx primer needs no delivery: the build's `opencode.json` names `/AGENTS.md`
 opencode takes a model as `provider/model`.
 A bare model ID, the form the tool's `model` parameter and the other agents use, gets the provider of the `model` in `opencode.json`, which the template's `provider` decided at build.
 A template with `provider: openai` or `google` and no `model` writes none there, so a bare ID fails the run, asking for `provider/model`.
+An ID that holds a `/` is taken as `provider/model` and passed as it is, so a gateway's `zai-org/glm-5-3` alone would reach opencode as provider `zai-org`.
+So `list_templates` reports opencode's model as `opencode.json` holds it, `<provider>/<model>`, and a coordinator that passes it back gets the configured provider.
 
 | Event | Interpretation |
 | --- | --- |

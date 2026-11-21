@@ -46,6 +46,9 @@ pi -p --mode json --session-id "$session" --append-system-prompt "$brief" [--mod
 The prompt goes on stdin, which Pi treats as the first message, so nothing the coordinator wrote is parsed as an option or an `@file`.
 The delegation brief goes to `--append-system-prompt` on every run, as Claude's does, since Pi rebuilds its system prompt each time.
 The isx primer needs no delivery: Pi loads `/AGENTS.md`, the build's hardlink to `/etc/isx/agent-instructions.md`, from every working directory.
+The runner passes no `--provider`, so Pi looks for the model under every provider it knows.
+So `list_templates` reports Pi's model as `<provider>/<model>`, with the template's `provider`, which Pi's `--model` reads as that provider's model.
+A gateway's `anthropic/claude-sonnet-5-5` passed back alone would reach Pi's own `anthropic` provider instead of the gateway.
 Without a terminal, Pi skips project-local resources nobody trusted (its `defaultProjectTrust`), so isx passes neither `--approve` nor `--no-approve` and a person's saved trust decisions still apply.
 
 The event stream is large: the system `message_start` carries the whole system prompt and `agent_end` repeats the whole conversation.

@@ -40,12 +40,14 @@ Pi writes its session file only when the first user or assistant message is appe
 It runs before a join, before a Pi resume in the run script, and in `send_message` (`piSessionStatus`, one exec), which refuses with `wrong_state` and writes nothing.
 Pi has no sandbox: it always runs with every tool (`permission_mode: full-access`).
 Pi does no model preflight; its namespace is left empty, since only Claude's preflight reads one.
+`list_templates` reports Pi's model as `<provider>/<model>` too: `pi-runner.cjs` passes no `--provider`, and Pi then looks for a bare or slashed ID under every provider.
 Every `DelegateAgent.probe` reads a CLI's `--help` through `2>&1`: opencode prints it on stderr, and a probe reading stdout alone refused every delegate (`DelegateAgentProbeTest` runs each probe against stand-ins printing on either stream).
 The [opencode worker design](../../docs/dev/MCP-OPENCODE-DELEGATION.md) records how opencode differs.
 opencode runs through `mcp/opencode-runner.cjs`: `opencode run --format json --auto`, the prompt on stdin, the brief opening run 1's prompt as for Codex, `--session <id>` on a resume.
 opencode names its session; the runner saves the `sessionID` of the first event, and `recover`s it from `events-1.jsonl` like Codex's thread ID (`DelegateAgent.recoversSession`).
 opencode refuses a missing `--session` (exit 1, no session made), so it needs no session check; a resume whose events name another session is stopped.
 A bare `model` gets the provider of `opencode.json`'s `model`, since opencode takes `provider/model`; without one there it fails, asking for that form.
+`list_templates` reports opencode's model as `<provider>/<model>` (`IncusInstanceBackend.delegateModel`), since an ID holding a `/` reaches the runner as `provider/model` and a gateway's `zai-org/glm-5-3` would otherwise lose its provider.
 The [Antigravity CLI worker design](../../docs/dev/MCP-ANTIGRAVITY-DELEGATION.md) records how agy differs.
 agy runs through `mcp/antigravity-runner.cjs`: `agy -p= --input-format stream-json --output-format stream-json --dangerously-skip-permissions`, the prompt on stdin as one `{"event":"user","message":{...}}` line (an argument is capped at 128 KiB), the brief opening run 1's prompt, `--conversation <id>` on a resume.
 agy names its conversation in its `init` event, which the runner saves and `recover`s like opencode's session.

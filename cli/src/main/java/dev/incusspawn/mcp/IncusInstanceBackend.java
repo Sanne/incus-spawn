@@ -21,6 +21,8 @@ import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.tool.OpencodeSetup;
+import dev.incusspawn.tool.PiSetup;
 import dev.incusspawn.tui.InstanceLockManager;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
@@ -109,11 +111,27 @@ final class IncusInstanceBackend implements InstanceBackend {
         return delegateModel(def, defs, "claude");
     }
 
+    /**
+     * The {@code model} of {@code agent}'s tool, as {@link #delegateModel(ImageDef, Map)} reads
+     * Claude's. opencode's and Pi's are given with the provider of the same layer in front,
+     * {@code <provider>/<model>}, the form both CLIs' {@code --model} reads: a coordinator passes
+     * it back to {@code delegate}, whose runners pass no provider of their own. A gateway's
+     * {@code zai-org/glm-5-3} alone would reach opencode as provider {@code zai-org}, and Pi would
+     * look for it, or {@code anthropic/...}, under every provider rather than the template's.
+     */
     static String delegateModel(ImageDef def, Map<String, ImageDef> defs, String agent) {
         return ImageDef.chain(def, defs).reversed().stream()
                 .flatMap(d -> d.getTools().stream())
                 .filter(ref -> agent.equals(ref.getName()))
-                .findFirst().map(ref -> ref.getParams().get("model")).orElse(null);
+                .findFirst().map(ref -> {
+                    var model = ref.getParams().get("model");
+                    if (model == null) return model;
+                    if (DelegateAgent.OPENCODE.id.equals(agent))
+                        return ref.getParams().getOrDefault("provider", OpencodeSetup.DEFAULT_PROVIDER) + "/" + model;
+                    if (DelegateAgent.PI.id.equals(agent))
+                        return ref.getParams().getOrDefault("provider", PiSetup.DEFAULT_PROVIDER) + "/" + model;
+                    return model;
+                }).orElse(null);
     }
 
     @Override
