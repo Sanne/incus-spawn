@@ -17,6 +17,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -241,6 +242,7 @@ class ExecScriptTest {
         assertEquals(0, run(ExecScript.kill("exec-1-1")).exit());
         var r = run(build(home.toString(), Map.of(), "touch ran", null));
         assertEquals(143, r.exit());
+        assertTrue(r.stderr().contains("cancelled before its command started"), r.stderr());
         assertFalse(Files.exists(home.resolve("ran")), "the command ran after its kill");
         assertFalse(Files.exists(home.resolve(".isx-mcp/run/exec-1-1.pid")));
         assertFalse(Files.exists(home.resolve(".isx-mcp/run/exec-1-1.killed")), "the marker is consumed");
@@ -249,6 +251,19 @@ class ExecScriptTest {
     @Test
     void killingARunThatAlreadyEndedIsHarmless() throws Exception {
         assertEquals(0, run(ExecScript.kill("exec-9-9")).exit());
+    }
+
+    @Test
+    void aLeftoverKillMarkerNeverStopsALaterProcessesRun() throws Exception {
+        var earlier = ExecScript.runPrefix() + "1";
+        assertEquals(0, run(ExecScript.kill(earlier)).exit());
+        // Its marker stays, as no run consumed it. A later isx mcp with the same pid (after a
+        // reboot, say) must not meet it: its run ids differ by their random part.
+        var later = ExecScript.runPrefix() + "1";
+        assertNotEquals(earlier, later);
+        var r = run(ExecScript.build(later, home.toString(), Map.of(), "echo ran", null));
+        assertEquals(0, r.exit(), r.stderr());
+        assertEquals("ran\n", r.stdout());
     }
 
     private static long countInSession(long sid) {

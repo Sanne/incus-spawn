@@ -67,6 +67,7 @@ final class McpTools {
     private final ModelCheck modelCheck;
     private final HostToolRunner hostToolRunner;
     private final AtomicLong runs = new AtomicLong();
+    private final String runPrefix = ExecScript.runPrefix();
 
     McpTools(McpSession session, InstanceBackend backend, TemplatePolicy policy, Tasks tasks) {
         this.session = session;
@@ -900,7 +901,7 @@ final class McpTools {
         int limit = maxOutput == null ? DEFAULT_OUTPUT_BYTES : Math.clamp(maxOutput, 256, MAX_OUTPUT_BYTES);
 
         // This process's pid, not the session's: an instance session has none, and spans processes.
-        var runId = "exec-" + ProcessHandle.current().pid() + "-" + runs.incrementAndGet();
+        var runId = runPrefix + runs.incrementAndGet();
         String script;
         try {
             script = ExecScript.build(runId, cwd, env, command, timeout);

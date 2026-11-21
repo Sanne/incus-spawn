@@ -1,6 +1,7 @@
 package dev.incusspawn.incus;
 
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
 
 /**
@@ -57,7 +58,7 @@ public final class ExecScript {
                 // A kill that found no pid file left the marker: stop before the command starts.
                 .append(quote("( " + writeAside(RUN_DIR, runId + ".pid", "echo $$") + " ); "
                         + "if [ -e " + marker(runId) + " ]; then rm -rf " + marker(runId) + " " + pidFile(runId)
-                        + "; exit 143; fi; \"$@\"; exit $?"))
+                        + "; echo 'isx: this run was cancelled before its command started' >&2; exit 143; fi; \"$@\"; exit $?"))
                 .append(" isx-exec ");
         if (timeoutSeconds != null) {
             if (timeoutSeconds <= 0) throw new Refused("timeout_seconds must be positive");
@@ -75,6 +76,17 @@ public final class ExecScript {
      */
     private static String marker(String runId) {
         return RUN_DIR + "/" + runId + ".killed";
+    }
+
+    /**
+     * The start of this process's run ids, a counter follows. The pid is reused after a reboot or a
+     * wrap, so a random part keeps a later process from meeting an earlier one's leftover files, a
+     * kill's marker included, which would stop its run before the command. Called at run time,
+     * never from a static initializer: the native image would fix the value at build time.
+     */
+    public static String runPrefix() {
+        return "exec-" + ProcessHandle.current().pid() + "-"
+                + Long.toUnsignedString(ThreadLocalRandom.current().nextLong(), 36) + "-";
     }
 
     /**
