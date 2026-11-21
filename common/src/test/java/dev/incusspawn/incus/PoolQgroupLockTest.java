@@ -43,4 +43,15 @@ class PoolQgroupLockTest {
         assertTrue(got.waited(), "what it read before the wait is stale");
         got.release();
     }
+
+    @Test
+    void aRescanWhileTheLockIsHeldRunsNothing() {
+        var held = PoolQgroupLock.acquire("p4", Duration.ofSeconds(5), false).orElseThrow();
+        try {
+            // Reports a rescan in progress, which the holder's settle starts, and runs no btrfs
+            assertTrue(BtrfsUsage.rescan("p4"));
+        } finally {
+            held.release();
+        }
+    }
 }

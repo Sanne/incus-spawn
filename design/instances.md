@@ -504,7 +504,7 @@ The in-process half is what makes it safe for a multi-threaded TUI: a second `tr
 Each lock used to be open-coded, and only the newest had that half.
 `HostLock` is `AutoCloseable` and not reentrant, so public methods (`start`, `stop`, `restart`, `ensureRunning`, `install`, etc.) acquire it then delegate to private `*Locked()` variants.
 A method that calls another mutating method (e.g. `restart` → `stopLocked` + `startLocked`) uses the locked variant.
-Lock files live at `~/.local/state/incus-spawn/vm.lock` (VM), `~/.config/incus-spawn/proxy.lock` (proxy) and `~/.cache/incus-spawn/locks/.static-ip.lock`.
+Lock files live at `~/.local/state/incus-spawn/vm.lock` (VM), `~/.config/incus-spawn/proxy.lock` (proxy) `~/.cache/incus-spawn/locks/.static-ip.lock` and `~/.cache/incus-spawn/locks/btrfs-pool/<pool>.lock` (a btrfs pool's delete accounting, `PoolQgroupLock`).
 A waiter prints one wait message and polls with backoff from 10 ms to 50 ms, and times out after 30 seconds.
 The cap is low for fairness, not only speed.
 `fcntl` keeps no queue, so whoever polls first after a release wins, and a waiter backed off to half a second kept losing to newcomers polling every 10 ms until it timed out while the lock changed hands all along.

@@ -371,7 +371,7 @@ public final class BtrfsUsage {
         lock.get().keep();
         DropAccounting prepared = new DropAccounting(status, -1);
         try {
-            prepared = setThresholdUnderLock(poolName, status, fsid, lock.get().waited()).under(lock.get());
+            prepared = setThresholdUnderLock(poolName, status, fsid).under(lock.get());
             return prepared;
         } finally {
             // A pool that traces drops, or whose write failed, has no settle to release the lock
@@ -379,14 +379,11 @@ public final class BtrfsUsage {
         }
     }
 
-    private static DropAccounting setThresholdUnderLock(String poolName, QgroupStatus status, String fsid,
-                                                        boolean waitedForLock) {
-        // What was read before the wait is stale when another process held the lock: it may have put
-        // the threshold back, or left the pool inconsistent for the wait below
-        if (waitedForLock) {
-            status = status(poolName);
-            if (!status.tracesDrops() || status.dropSubtreeThreshold() < 0) return new DropAccounting(status, -1);
-        }
+    private static DropAccounting setThresholdUnderLock(String poolName, QgroupStatus status, String fsid) {
+        // Read again under the lock, every time: another process may have started a rescan, or put
+        // the threshold back, since the read before it, and this delete must not cancel that rescan
+        status = status(poolName);
+        if (!status.tracesDrops() || status.dropSubtreeThreshold() < 0) return new DropAccounting(status, -1);
         boolean set;
         try {
             // The flag stays set while a rescan runs, so a consistent pool has none to wait for.
@@ -499,7 +496,18 @@ public final class BtrfsUsage {
         }
     }
 
+    private static boolean throttleOpen() {
+        synchronized (RESCAN_LOCK) {
+            long now = System.nanoTime();
+            if (rescanTriggers >= MAX_RESCAN_TRIGGERS) return false;
+            return lastRescanTriggerNanos == Long.MIN_VALUE
+                    || now - lastRescanTriggerNanos >= RESCAN_RETRY_INTERVAL.toNanos();
+        }
+    }
+
     private static void triggerRescanThrottled(String poolName) {
+        // The throttle first: a refresh it turns away takes no lock and starts no thread
+        if (!throttleOpen()) return;
         // A delete is settling the pool, and its settle starts the rescan: nothing is triggered, so
         // nothing is counted or claimed (#2435)
         var lock = PoolQgroupLock.acquire(poolName, java.time.Duration.ZERO, false);
