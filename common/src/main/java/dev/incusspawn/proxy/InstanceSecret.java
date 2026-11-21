@@ -205,7 +205,10 @@ public final class InstanceSecret {
             + "  if [ -f \"$HOME/.codex/config.toml\" ] && [ -w \"$HOME/.codex/config.toml\" ] \\\n"
             + "      && grep -q 'forced_login_method = \"api\"' \"$HOME/.codex/config.toml\" 2>/dev/null \\\n"
             + "      && grep -q 'Running unconstrained in isx' \"$HOME/.codex/config.toml\" 2>/dev/null; then\n"
-            + "    sed -i '/^forced_login_method = \"api\"$/d' \"$HOME/.codex/config.toml\" 2>/dev/null\n"
+            // -i with its suffix attached is the one form GNU and BSD sed both read, and the test
+            // runs this script on a macOS host too
+            + "    sed -i.isx-$$ '/^forced_login_method = \"api\"$/d' \"$HOME/.codex/config.toml\" 2>/dev/null\n"
+            + "    rm -f \"$HOME/.codex/config.toml.isx-$$\" 2>/dev/null\n"
             + "  fi\n"
             + "  unset isx_auth\n"
             + "fi\n"
