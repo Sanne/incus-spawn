@@ -20,13 +20,13 @@ class ExecScriptValidationTest {
     @Test
     void anInvalidEnvironmentNameIsRefused() {
         for (var key : new String[] {"A-B", "1X", "X;Y", "", "A B"}) {
-            assertThrows(IllegalArgumentException.class, () -> build("x", Map.of(key, "v"), "true", null), key);
+            assertThrows(ExecScript.Refused.class, () -> build("x", Map.of(key, "v"), "true", null), key);
         }
     }
 
     @Test
     void thereIsNoTimeoutUnlessOneIsAsked() {
         assertFalse(build("x", Map.of(), "true", null).contains("timeout"));
-        assertThrows(IllegalArgumentException.class, () -> build("x", Map.of(), "true", 0));
+        assertThrows(ExecScript.Refused.class, () -> build("x", Map.of(), "true", 0));
     }
 }

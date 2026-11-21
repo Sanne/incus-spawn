@@ -11,7 +11,7 @@ import java.util.regex.Pattern;
  * the whole process tree can be killed from a second exec when the caller gives up: a command
  * nobody waits for must not keep running unowned. The pid file is removed once the run ends. Every value the caller supplies is
  * single-quoted; nothing it sends is ever interpreted by a shell other than its own command's.
- * What it refuses is an {@link IllegalArgumentException}.
+ * What it refuses is a {@link Refused}, the caller's mistake.
  */
 public final class ExecScript {
 
@@ -20,6 +20,17 @@ public final class ExecScript {
     private static final Pattern ID = Pattern.compile("[a-z0-9-]+");
 
     private ExecScript() {}
+
+    /**
+     * A value the caller gave that the script cannot carry (an environment name, a time limit).
+     * Its own type, so a caller such as {@code isx mcp} tells its client's mistake apart
+     * from any other {@link IllegalArgumentException}, which would be isx's own bug.
+     */
+    public static final class Refused extends IllegalArgumentException {
+        Refused(String message) {
+            super(message);
+        }
+    }
 
     /**
      * @param cwd            directory to run in; relative to agentuser's home if not absolute
@@ -46,7 +57,7 @@ public final class ExecScript {
                 .append(quote("( " + writeAside(RUN_DIR, runId + ".pid", "echo $$") + " ); \"$@\"; exit $?"))
                 .append(" isx-exec ");
         if (timeoutSeconds != null) {
-            if (timeoutSeconds <= 0) throw new IllegalArgumentException("timeout_seconds must be positive");
+            if (timeoutSeconds <= 0) throw new Refused("timeout_seconds must be positive");
             sb.append("timeout --kill-after=10s ").append(timeoutSeconds).append("s ");
         }
         sb.append("bash -c ").append(quote(command));
@@ -91,13 +102,17 @@ public final class ExecScript {
     public static void appendExports(StringBuilder sb, Map<String, String> env, String separator) {
         for (var e : env.entrySet()) {
             if (!ENV_KEY.matcher(e.getKey()).matches()) {
-                throw new IllegalArgumentException("invalid environment variable name: " + e.getKey());
+                throw new Refused("invalid environment variable name: " + e.getKey());
             }
             sb.append("export ").append(e.getKey()).append('=').append(quote(e.getValue())).append(separator);
         }
     }
 
-    /** Ids of runs and tasks are embedded in paths and unit names: lowercase, digits, dashes. */
+    /**
+     * Ids of runs and tasks are embedded in paths and unit names: lowercase, digits, dashes.
+     * isx makes them, never a caller, so a bad one is isx's bug: a plain
+     * {@link IllegalArgumentException}, not a {@link Refused}.
+     */
     public static void requireId(String id) {
         if (!ID.matcher(id).matches()) throw new IllegalArgumentException("bad id: " + id);
     }

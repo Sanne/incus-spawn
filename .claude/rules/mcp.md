@@ -96,7 +96,7 @@ A schema change must update the golden `cli/src/test/resources/mcp/output-schema
 
 **Nothing an agent sends reaches a shell unquoted.**
 `ExecScript.quote()` for values, environment names validated, task run scripts sent as base64, instructions and prompts on stdin.
-`ExecScript` (`common` `incus/`, shared with `isx exec`) refuses with `IllegalArgumentException`, which `McpTools.exec` turns into `invalid_argument`.
+`ExecScript` (`common` `incus/`, shared with `isx exec`) refuses with its own `ExecScript.Refused`, which `McpTools.exec` turns into `invalid_argument`; any other `IllegalArgumentException` is isx's bug, not the client's mistake.
 Test hostile input in a real bash (`ExecScriptTest`, `TaskScriptsTest` run the generated scripts locally, the latter with stubs for `sudo`/`systemd-run`/`systemctl`/`su`/`claude`).
 
 **Lifecycles.**
