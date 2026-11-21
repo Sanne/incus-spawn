@@ -479,10 +479,14 @@ public final class BtrfsUsage {
      * say yes for a rule that wants a password, such as an administrator's {@code %wheel} one.
      * False when the rule predates the entry ({@code isx init} rewrites it), or the threshold or the
      * filesystem cannot be read. A threshold of 0, which isx sets during its deletes, counts as
-     * settable and is not written. Never throws.
+     * settable and is not written, and so does a pool a delete holds the lock of. Never throws.
      */
     public static boolean canSkipDropAccounting(String poolName) {
         if (!Platform.isLinux()) return false;
+        // Under the pool's lock, or not at all: a delete holding it may have just set 0, and writing
+        // back the value read before would undo it. A held lock means isx is using the rule now.
+        var lock = PoolQgroupLock.acquire(poolName, java.time.Duration.ZERO, false);
+        if (lock.isEmpty()) return true;
         try {
             int threshold = status(poolName).dropSubtreeThreshold();
             // 0 is what isx sets during its deletes, so the rule lets it; writing 0 back could
@@ -491,6 +495,8 @@ public final class BtrfsUsage {
             return writeThreshold(poolName, threshold);
         } catch (RuntimeException e) {
             return false;
+        } finally {
+            lock.get().release();
         }
     }
 
