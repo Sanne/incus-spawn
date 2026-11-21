@@ -594,5 +594,6 @@ Key design:
   The boundary at the backend is the host and the `/v1internal` prefix, not a method list, since the session's token reaches only those hosts and every method there is the user's own Antigravity data; userinfo is `GET /oauth2/v*/userinfo` alone.
   A refresh is agy's own form with the real refresh token swapped in, sent only when the token is due; isx holds no Google client id or secret of its own, and `AGY_CLIENT_ID` pins whose requests it relays.
   `GoogleSessionStore` and `ChatGptSessionStore` share `SessionStore`'s mechanics; the route never creates a session by refreshing, only by a sign-in.
+  A proven request to a credential's own domain from an instance whose account is a hosted sign-in, such as agy's key request on a Google account, is answered with a 403 in the model APIs' error shape and never sent (`AccountSelection.refuseSignInAccount`, text from `ToolSetup.hostedSignInRefusal`).
   See design/proxy.md "Antigravity CLI's Google sign-in stays on the host".
 - `ISX_BENCH_UPSTREAM` reaches WebSockets too: a `WebSocketClient` reads `setServer()` only when no host is set (Vert.x 5, V-W5 in `docs/dev/QUARKUS-4.md`), so an overridden WebSocket is dialled to the override's address with `Host` set to the real name and no SNI.

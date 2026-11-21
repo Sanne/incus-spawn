@@ -104,7 +104,8 @@ class AntigravitySetupTest {
         dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "home", "type", "google");
         dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "work", "apiKey", "gemini-k1");
         dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "other", "apiKey", "gemini-k2");
-        var tool = new AntigravitySetup();
+        // Asked of the namespace's owner: account selection never asks agy, which declares no proxy entry
+        var tool = new GeminiSetup();
         assertEquals("google", tool.bakedAccountIdentity(config, "home"));
         assertEquals("api-key", tool.bakedAccountIdentity(config, "work"));
         assertEquals(tool.bakedAccountIdentity(config, "work"), tool.bakedAccountIdentity(config, "other"),

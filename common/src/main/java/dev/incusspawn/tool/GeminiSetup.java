@@ -75,10 +75,11 @@ public class GeminiSetup implements ToolSetup {
     /** How a {@code type: google} account signs in: in an instance, through the proxy. */
     static final HostedSignIn GOOGLE_SIGN_IN = new HostedSignIn(GoogleAccounts.TYPE,
             "Google account: an AI Pro or Ultra plan, for Antigravity CLI",
-            List.of("No credential is entered here. The first time agy runs in an instance on this account,",
-                    "it shows a Google sign-in link: open it on this machine, sign in, and paste the code it",
-                    "gives back into agy. The proxy keeps the session on this host, and the instance holds",
-                    "only a placeholder. Gemini CLI, Pi and opencode still need an API key account."));
+            List.of("No credential is entered here. The first time you start agy in an instance on this",
+                    "account (from isx shell), it prints a Google sign-in link in that terminal: open it on",
+                    "this machine, sign in, and paste the code it gives back into agy. The proxy keeps the",
+                    "session on this host, and the instance holds only a placeholder. Gemini CLI, Pi and",
+                    "opencode still need an API key account."));
     static final String CONFIG_PATH = "/home/agentuser/.gemini/settings.json";
     /**
      * Gemini CLI reads no system-wide context file, and {@code ~/.gemini/GEMINI.md} is the
@@ -141,8 +142,43 @@ public class GeminiSetup implements ToolSetup {
     @Override
     public AccountShape accountShape() { return ACCOUNT_SHAPE; }
 
+    /**
+     * What an image bakes from its {@code gemini} account: Antigravity CLI's mode ({@link
+     * AntigravitySetup#accountMode}). Gemini CLI itself reads its key at launch and bakes
+     * nothing, but it owns the namespace, and account selection asks the owner; agy, which
+     * borrows the credential, would never be asked. So the build stamps the mode, and a move
+     * across modes re-derives it in place rather than leaving agy configured for the old one.
+     */
+    @Override
+    public String bakedAccountIdentity(SpawnConfig config, String accountName) {
+        return AntigravitySetup.accountMode(config, accountName);
+    }
+
+    @Override
+    public boolean canRebakeForAccount() { return true; }
+
+    /** Antigravity CLI's mode, where the instance has agy; nothing in an image without it. */
+    @Override
+    public void rebakeForAccount(dev.incusspawn.incus.Container container, String accountName) {
+        AntigravitySetup.rebakeIfInstalled(container, accountName);
+    }
+
     @Override
     public HostedSignIn hostedSignIn() { return GOOGLE_SIGN_IN; }
+
+    /**
+     * An API key request from an instance on a Google account: Gemini CLI, Pi and opencode need
+     * a key account, and agy sends one only while its instance is still set up for a key.
+     */
+    @Override
+    public String hostedSignInRefusal(String instance, String account) {
+        return "isx sent nothing to Google: instance '" + instance + "' uses gemini account '" + account
+                + "', a Google account, which holds no API key for this request."
+                + " Gemini CLI, Pi and opencode need an API key account: isx account set " + instance
+                + " gemini=<an API key account>."
+                + " If Antigravity CLI sent it, agy is still set up for an API key:"
+                + " restart agy from a new isx shell " + instance + ", and rebuild the template if this repeats.";
+    }
 
     /** A Google account: whether it has signed in, and as whom; "" for an API key account. */
     @Override

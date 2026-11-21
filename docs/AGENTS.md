@@ -319,11 +319,38 @@ Select a named account as for Gemini CLI, with `accounts: { gemini: work }` or `
 
 Choose "Google account" for Gemini in `isx init` to let an AI Pro or AI Ultra plan pay for `agy`.
 The account holds no key, and `isx init` saves it as `type: google`.
-The sign-in happens the first time `agy` runs in an instance built on it.
+The sign-in happens the first time `agy` runs in an instance on that account.
 
-`agy` shows a Google sign-in link.
+Start `agy` in the instance, from `isx shell`, and it prints a Google sign-in link in that terminal.
 Open it on this machine, sign in, and paste the code the page shows back into `agy`.
 The proxy keeps the session on the host, and the instance holds only placeholders.
+
+#### What the instance holds
+
+Your Google password never reaches the instance, because you sign in through a browser on the host.
+Google's tokens stay on the host, in `~/.config/incus-spawn/gemini/<account>/session.json`, which only the proxy reads.
+The instance holds look-alikes starting with `ya29.isx_` and `1//isx_`, which Google refuses.
+The proxy puts the real token in each request to Google.
+
+To check, run `cat ~/.gemini/antigravity-cli/antigravity-oauth-token` in the instance.
+A token without `isx_` in it is a real one, so report it.
+
+The code you paste is the one secret that passes through the instance, and the proxy spends it within seconds.
+In full network mode, a hostile program in the instance could catch your paste and spend it first, for real tokens.
+A `--proxy-only` instance reaches Google only through the proxy, so sign in from one when that matters.
+
+Sign in only from an instance on the Google account.
+On Linux, the proxy does not keep a sign-in made on an API key account, so Google's real tokens would stay in that instance.
+
+#### Changing an instance's account
+
+`isx account set <instance> gemini=<account>` moves `agy` between an API key account and a Google account in place.
+Then quit `agy` and start it again from a new `isx shell`, since it reads its settings and its sign-in when it starts.
+
+If `agy` still sends API key requests on a Google account, the proxy refuses them, says why, and sends nothing to Google.
+If that refusal repeats after a restart, rebuild the template.
+
+#### Sharing and signing out
 
 Every instance on that account shares the session, and a sign-in again from any of them replaces it.
 `isx account list` shows which Google account is signed in.
@@ -340,10 +367,6 @@ Sign in from one instance at a time.
 
 After `/logout` in `agy`, open a new login shell before you sign in again.
 While a Google account is configured, an instance on a Gemini API key cannot sign `agy` in to Google on macOS.
-
-The sign-in code passes through the instance once.
-In full network mode a hostile program in the instance could exchange that code elsewhere during those seconds.
-Sign in from a `--proxy-only` instance when that matters.
 
 Gemini CLI, Pi and opencode use API keys only, so an instance on a Google account gives them no Gemini credential.
 The Antigravity desktop app and IDE are not supported.
