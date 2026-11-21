@@ -790,6 +790,8 @@ Skills from the tool's release archive would share the binary's checksum, but rg
 A `sha256` over GitHub's generated source archive breaks whenever GitHub regenerates it, which it does not promise against.
 Running the tool's own installer writes into the home where the build does not see it, and an agent added in a later layer gets nothing.
 A registration pass per agent, as `McpServerRegistration` does for MCP servers, is not needed: Codex, Pi, opencode, Gemini CLI and Copilot read `~/.agents/skills` themselves, and Claude Code reads it through its `~/.claude/skills` link.
+Antigravity CLI reads global skills only from `~/.gemini/config/skills`, so `AntigravitySetup` makes that a link too, and `SkillInstaller` repairs it, for an agy an older build installed, whenever a layer installs skills (#2472).
+A folder already there holds agy's or the user's skills, so each is copied into the shared directory first unless isx installed one of its name, and a failed copy removes nothing.
 Slash commands stay out of scope, since every agent lays them out differently.
 
 A local skill source of a project-local template or tool is read by the host, so it is confined to its project on real paths, symlinks included, as host-resources are (`HostResourceSetup.confinedSkillSource`).

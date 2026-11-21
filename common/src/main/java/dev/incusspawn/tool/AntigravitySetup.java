@@ -80,6 +80,35 @@ public class AntigravitySetup implements ToolSetup {
     static final String RULES_DIR = HOME + "/.gemini/config/rules";
     public static final String CONTEXT_PATH = RULES_DIR + "/isx.md";
     static final String RULE_FRONT_MATTER = "---\ntrigger: always_on\n---\n";
+    /**
+     * Where agy finds global skills: it reads no {@code ~/.agents/skills}, so this links to the
+     * directory isx installs skills into, as Claude Code's {@code ~/.claude/skills} does.
+     */
+    public static final String SKILLS_LINK = HOME + "/.gemini/config/skills";
+    /** The directory every agent's skills are installed into ({@code SkillInstaller}). */
+    static final String SHARED_SKILLS = HOME + "/.agents/skills";
+
+    /**
+     * Makes {@link #SKILLS_LINK} the link to {@link #SHARED_SKILLS}, creating that directory.
+     * A directory already there is agy's or the user's, so its skills are copied into the
+     * shared one first, where a skill isx installed under the same name wins; a link elsewhere
+     * is replaced. Run it as agentuser, so agentuser owns what it makes.
+     */
+    public static String linkSkillsScript() {
+        return linkSkillsScript(SHARED_SKILLS, SKILLS_LINK);
+    }
+
+    static String linkSkillsScript(String shared, String link) {
+        // A skill is copied only when the shared directory has none of its name, so isx's stays
+        // whole; a failed copy ends the script before the directory is removed.
+        return "mkdir -p " + shared + " && { [ \"$(readlink " + link + ")\" = " + shared + " ] || {"
+                + " { [ ! -d " + link + " ] || [ -L " + link + " ] || for d in " + link + "/* " + link + "/.[!.]*; do"
+                + " [ ! -e \"$d\" ] || [ -e \"" + shared + "/${d##*/}\" ] || cp -a -- \"$d\" " + shared + "/ || exit 1;"
+                + " done; } && rm -rf -- " + link + " && ln -s " + shared + " " + link + "; }; }";
+    }
+
+    /** Whether agy is installed in the guest, for a script: what {@link #configure} creates. */
+    public static final String INSTALLED_TEST = "[ -d " + CLI_DIR + " ]";
 
     /** What tells it not to update itself, read at every start. */
     static final String DISABLE_AUTO_UPDATE = "AGY_CLI_DISABLE_AUTO_UPDATE";
@@ -328,8 +357,9 @@ public class AntigravitySetup implements ToolSetup {
     }
 
     /**
-     * Its settings, merged into what is there, its onboarding marked done, and the directory of
-     * isx's rule made agentuser's, since the build writes the rule as root. In the Google sign-in
+     * Its settings, merged into what is there, its onboarding marked done, the directory of
+     * isx's rule made agentuser's, since the build writes the rule as root, and its skills
+     * directory linked to the shared one. In the Google sign-in
      * mode the login script goes in and an API-key token file is left alone; in the API key mode
      * the script goes, and so does a token file holding isx look-alikes, which would show a stale
      * sign-in in agy's header.
@@ -338,7 +368,7 @@ public class AntigravitySetup implements ToolSetup {
         BuildOutput.stepStart("Configuring Antigravity CLI" + (googleSignIn ? " for a Google account" : ""));
         var read = c.sh("if [ -f " + SETTINGS_PATH + " ]; then cat " + SETTINGS_PATH + "; fi")
                 .assertSuccess("Failed to read Antigravity CLI's settings");
-        c.shAsUser("agentuser", "mkdir -p " + CLI_DIR + "/cache " + RULES_DIR)
+        c.shAsUser("agentuser", "mkdir -p " + CLI_DIR + "/cache " + RULES_DIR + " && " + linkSkillsScript())
                 .assertSuccess("Failed to create Antigravity CLI's directories");
         c.writeFile(SETTINGS_PATH, settingsJson(read.stdout(), googleSignIn));
         c.chown(SETTINGS_PATH, "agentuser:agentuser");

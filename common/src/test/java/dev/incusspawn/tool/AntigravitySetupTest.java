@@ -203,6 +203,59 @@ class AntigravitySetupTest {
         assertFalse(Files.exists(tarball), "the tarball is removed");
     }
 
+    /**
+     * agy reads global skills only from {@code ~/.gemini/config/skills}, never {@code ~/.agents/skills},
+     * so the skills isx installs reach it through a link (#2472).
+     */
+    @Test
+    void itsSkillsDirectoryIsALinkToTheSharedOne(@TempDir Path home) throws Exception {
+        var shared = home.resolve(".agents/skills");
+        var link = home.resolve(".gemini/config/skills");
+        Files.createDirectories(link.getParent());
+
+        runLinkScript(shared, link);
+        assertEquals(shared, Files.readSymbolicLink(link), "a fresh home gets the link");
+        assertTrue(Files.isDirectory(shared), "and the directory it names, so agy can write a skill through it");
+
+        Files.createDirectories(shared.resolve("demo"));
+        Files.writeString(shared.resolve("demo/SKILL.md"), "isx's");
+        runLinkScript(shared, link);
+        assertEquals(shared, Files.readSymbolicLink(link), "a second run leaves the link as it is");
+        assertEquals("isx's", Files.readString(link.resolve("demo/SKILL.md")));
+
+        Files.delete(link);
+        Files.createDirectories(link.resolve("mine"));
+        Files.writeString(link.resolve("mine/SKILL.md"), "the user's");
+        Files.createDirectories(link.resolve("demo"));
+        Files.writeString(link.resolve("demo/SKILL.md"), "agy's");
+        Files.writeString(link.resolve("demo/helper.sh"), "agy's");
+        runLinkScript(shared, link);
+        assertEquals(shared, Files.readSymbolicLink(link), "a real directory is replaced by the link");
+        assertEquals("the user's", Files.readString(shared.resolve("mine/SKILL.md")), "and its skills are kept");
+        assertEquals("isx's", Files.readString(shared.resolve("demo/SKILL.md")), "isx's skill of the same name wins");
+        assertFalse(Files.exists(shared.resolve("demo/helper.sh")), "and keeps no file of the other");
+
+        Files.delete(link);
+        Files.createSymbolicLink(link, home.resolve("elsewhere"));
+        runLinkScript(shared, link);
+        assertEquals(shared, Files.readSymbolicLink(link), "a link elsewhere is replaced");
+    }
+
+    private static void runLinkScript(Path shared, Path link) throws Exception {
+        var process = new ProcessBuilder("sh", "-c", AntigravitySetup.linkSkillsScript(shared.toString(), link.toString()))
+                .redirectErrorStream(true).start();
+        var output = new String(process.getInputStream().readAllBytes());
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS));
+        assertEquals(0, process.exitValue(), output);
+    }
+
+    /** The build runs it as agentuser, in the exec that already creates agy's directories. */
+    @Test
+    void theDefaultLinkIsAgysGlobalSkillsDirectory() {
+        assertEquals(AntigravitySetup.linkSkillsScript("/home/agentuser/.agents/skills", "/home/agentuser/.gemini/config/skills"),
+                AntigravitySetup.linkSkillsScript());
+    }
+
     /** Its rule directory loads a file only with front matter, before the heading isx recognises. */
     @Test
     void theInstructionsAreAnAlwaysOnRule() {

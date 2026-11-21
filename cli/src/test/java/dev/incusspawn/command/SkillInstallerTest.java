@@ -207,6 +207,26 @@ class SkillInstallerTest {
         return incus;
     }
 
+    /** An image whose agy was built before AntigravitySetup linked its skills still gets the link (#2472). */
+    @Test
+    void installingSkillsLinksThemForClaudeCodeAndAntigravityCliInOneExec(@org.junit.jupiter.api.io.TempDir java.nio.file.Path cache)
+            throws Exception {
+        try (var github = new dev.incusspawn.tool.FakeGitHub("o/r").file("skills/rgctl/SKILL.md", "rgctl")) {
+            var incus = execSucceeding();
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-x");
+
+            SkillInstaller.installSkills(new Container(incus, "b"), imageDef, Map.of(),
+                    List.of(new BuildTools.ResolvedTool("rgctl", toolWithSkills("rgctl", pinned("rgctl")), Map.of())),
+                    SkillInstaller.ProjectTools.NONE, github.skills(cache));
+
+            verify(incus).shellExec(eq("b"), eq("sh"), eq("-c"), argThat(script ->
+                    script.contains("ln -sfn /home/agentuser/.agents/skills /home/agentuser/.claude/skills")
+                            && script.contains("! [ -d /home/agentuser/.gemini/antigravity-cli ] || { "
+                                    + dev.incusspawn.tool.AntigravitySetup.linkSkillsScript())));
+        }
+    }
+
     @Test
     void aPinnedToolSkillReplacesItsDirectoryWhole(@org.junit.jupiter.api.io.TempDir java.nio.file.Path cache)
             throws Exception {
