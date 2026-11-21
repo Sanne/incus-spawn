@@ -225,11 +225,39 @@ class IncusInstanceBackendTest {
         var bare = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-bare\ntools:\n  - opencode: {model: claude-opus-5-5}\n");
         var unset = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-unset\ntools:\n  - opencode\n");
         var defs = java.util.Map.of("tpl-gateway", gateway, "tpl-bare", bare, "tpl-unset", unset);
-        org.junit.jupiter.api.Assertions.assertEquals("gateway/zai-org/glm-5-3",
+        assertEquals("gateway/zai-org/glm-5-3",
                 IncusInstanceBackend.delegateModel(gateway, defs, "opencode"));
-        org.junit.jupiter.api.Assertions.assertEquals("anthropic/claude-opus-5-5",
+        assertEquals("anthropic/claude-opus-5-5",
                 IncusInstanceBackend.delegateModel(bare, defs, "opencode"), "the default provider, as the build writes it");
         assertNull(IncusInstanceBackend.delegateModel(unset, defs, "opencode"), "unset: the template's own model applies");
+    }
+
+    @Test
+    void pisDelegateModelNamesItsProvider() throws Exception {
+        // Pi's --model without --provider looks under every provider: anthropic/... would leave the gateway.
+        var gateway = dev.incusspawn.config.ImageDef.parseYaml(
+                "name: tpl-gateway\ntools:\n  - pi: {provider: openrouter, model: anthropic/claude-sonnet-5-5}\n");
+        var bare = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-bare\ntools:\n  - pi: {model: claude-opus-5-5}\n");
+        // Pi names isx's vertex google-vertex, and would not know vertex/...
+        var vertex = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-vertex\ntools:\n  - pi: {provider: vertex, model: gemini-x}\n");
+        var defs = java.util.Map.of("tpl-gateway", gateway, "tpl-bare", bare, "tpl-vertex", vertex);
+        assertEquals("openrouter/anthropic/claude-sonnet-5-5",
+                IncusInstanceBackend.delegateModel(gateway, defs, "pi"));
+        assertEquals("anthropic/claude-opus-5-5", IncusInstanceBackend.delegateModel(bare, defs, "pi"));
+        assertEquals("google-vertex/gemini-x", IncusInstanceBackend.delegateModel(vertex, defs, "pi"));
+    }
+
+    @Test
+    void aChildListingTheAgentNamesItsOwnProvider() throws Exception {
+        // The build reconfigures the child with its own entry alone, the provider at its default
+        // (BuildToolsTest#aChildsEntryReconfiguresWithItsOwnParametersOnly), so that is what its settings name.
+        var parent = dev.incusspawn.config.ImageDef.parseYaml(
+                "name: tpl-parent\ntools:\n  - pi: {provider: gateway, model: a}\n  - opencode: {provider: gateway, model: a}\n");
+        var child = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-child\nparent: tpl-parent\ntools:\n"
+                + "  - pi: {model: zai-org/glm-5-3}\n  - opencode: {model: zai-org/glm-5-3}\n");
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        assertEquals("anthropic/zai-org/glm-5-3", IncusInstanceBackend.delegateModel(child, defs, "pi"));
+        assertEquals("anthropic/zai-org/glm-5-3", IncusInstanceBackend.delegateModel(child, defs, "opencode"));
     }
 
     @Test

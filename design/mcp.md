@@ -482,6 +482,7 @@ One agent per instance, because two would clash in one working tree; `delegate(t
 **Per-task profiles (#1012).**
 A coordinator spends tokens per kind of work -- a small model for a rebase, a large one for a design -- so `delegate` and `send_message` take `model`, passed as `--model`.
 Without it nothing changes: no `--model`, so the template's `settings.json` model applies (`list_templates` shows it as `delegate_model`: the `model` parameter of the nearest layer listing the `claude` tool, which the build reconfigures with that layer's parameters alone).
+For opencode and Pi it shows that layer's `provider` in front, `<provider>/<model>` (Pi's own name, `google-vertex` for `vertex`), since their runners pass no provider and a gateway's `zai-org/glm-5-3` passed back alone would leave the template's provider (`IncusInstanceBackend.delegateModel`).
 The alternative, a template per model, made every profile a build.
 A turn budget (`max_turns`, capped by `delegate-max-turns`) was part of it until #1857 removed it with the other delegate policies.
 Two bounds:

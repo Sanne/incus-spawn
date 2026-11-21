@@ -12,7 +12,7 @@ import java.util.List;
 
 public class PiSetup implements ToolSetup {
 
-    static final String DEFAULT_PROVIDER = "anthropic";
+    public static final String DEFAULT_PROVIDER = "anthropic";
     static final String DEFAULT_MODEL = ModelIds.get("pi-default");
 
     /**
@@ -224,7 +224,7 @@ public class PiSetup implements ToolSetup {
     static final String GOOGLE_VERTEX = "google-vertex";
 
     /** The provider Pi's settings name for {@code provider}: its own name for isx's {@code vertex}. */
-    static String piProvider(String provider) {
+    public static String piProvider(String provider) {
         return "vertex".equals(provider) ? GOOGLE_VERTEX : provider;
     }
 
