@@ -69,7 +69,7 @@ final class ChatGptRoute {
     static final String CHATGPT = ChatGptAccounts.CHATGPT;
     static final String AUTH = ChatGptAccounts.AUTH;
     /** Codex's OAuth client id (codex-rs {@code CLIENT_ID}): a refresh naming another is not Codex's. */
-    static final String CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+    static final String CODEX_CLIENT_ID = ChatGptAccounts.CODEX_CLIENT_ID;
     /** Codex refreshes 5 minutes before expiry; the real token is refreshed in the same window. */
     static final long REFRESH_WINDOW_SECONDS = 300;
     /**
@@ -92,6 +92,13 @@ final class ChatGptRoute {
         MODELS(CHATGPT, HttpMethod.GET, "/backend-api/codex/models", MODELS_QUERY),
         /** Workspace discovery, which Codex needs before a turn: allowed on #1332, no query. */
         ACCOUNTS_CHECK(CHATGPT, HttpMethod.GET, "/backend-api/wham/accounts/check", null),
+        /**
+         * The workspace's managed policies, which an Enterprise plan's Codex must load before it
+         * starts (codex-rs cloud-config {@code plan_requires_managed_config}: the failure is
+         * fatal, unlike its other refused calls). The answer is relayed as it came -- the
+         * workspace's own policies, delivered to the account it belongs to.
+         */
+        CONFIG_BUNDLE(CHATGPT, HttpMethod.GET, "/backend-api/wham/config/bundle", null),
         REFRESH(AUTH, HttpMethod.POST, "/oauth/token", null),
         REVOKE(AUTH, HttpMethod.POST, "/oauth/revoke", null);
 

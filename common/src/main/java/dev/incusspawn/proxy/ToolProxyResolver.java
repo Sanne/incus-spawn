@@ -407,8 +407,9 @@ public final class ToolProxyResolver {
 
     /**
      * Whether the account {@code key}'s namespace resolves to holds its credential outside
-     * {@code config.yaml} ({@link AccountShape#credentialOutsideConfig}): a Google sign-in the
-     * proxy keeps on the host (#2443), which no key here can be missing for.
+     * {@code config.yaml} ({@link AccountShape#credentialOutsideConfig}): a Google sign-in (#2443)
+     * or a ChatGPT session (#1332) the proxy keeps on the host, which no key here can be missing
+     * for; a session gone fails closed where it is served.
      */
     private static boolean heldOutsideConfig(ToolDef.ProxyDef proxyDef, String key, JqValue configTree,
                                              Map<String, ToolSetup> toolSetups,

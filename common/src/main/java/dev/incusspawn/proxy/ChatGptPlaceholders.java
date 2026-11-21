@@ -70,6 +70,28 @@ public final class ChatGptPlaceholders {
                 .build().toJsonString();
     }
 
+    /**
+     * What a start's delivery writes the guest's Codex as its session ({@code ~/.codex/auth.json},
+     * #1332): the file Codex's own login writes, with this instance's placeholders where its
+     * tokens go ({@code auth_mode: chatgpt}; codex-rs {@code AuthDotJson}). The account id is
+     * metadata, not a credential, and the tokens are the same shapes a refresh answers with, so
+     * Codex refreshes this session exactly as it would one it signed in itself.
+     */
+    public static String codexAuth(ChatGptSessionStore.Tokens real, ChatGptProof.Proofs proofs) {
+        var tokens = JqObject.builder(3)
+                .put("id_token", JqString.of(idToken(real.idToken())))
+                .put("access_token", JqString.of(accessToken(real.accessToken(), proofs.access())))
+                .put("refresh_token", JqString.of(proofs.refreshToken()));
+        if (!real.accountId().isEmpty()) tokens.put("account_id", JqString.of(real.accountId()));
+        return JqObject.builder(4)
+                .put("auth_mode", JqString.of("chatgpt"))
+                // What Codex's own login writes for a ChatGPT session: the key field, null
+                .put("OPENAI_API_KEY", io.hyperfoil.tools.jjq.value.JqNull.NULL)
+                .put("tokens", tokens.build())
+                .put("last_refresh", JqString.of(java.time.Instant.now().toString()))
+                .build().toJsonString();
+    }
+
     /** The {@code exp} of a JWT, in epoch seconds, or 0 when it has none or is no JWT. */
     public static long expiry(String jwt) {
         try {

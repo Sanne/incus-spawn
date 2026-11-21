@@ -87,7 +87,7 @@ public final class VmAgentRecovery {
         }
 
         out.header("Restarting " + name, "VM agent not responding");
-        var placeholders = ProofToken.declaredInBackground();
+        var declared = ProofToken.declaredInBackground();
         try {
             incus.stop(name, GRACEFUL_STOP_SECONDS);
         } catch (RuntimeException guestIgnoredShutdown) {
@@ -104,10 +104,10 @@ public final class VmAgentRecovery {
         var stamps = new HashMap<String, String>();
         long restarted = incus.pid(name);
         if (restarted > 0) stamps.put(Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
-        var secret = InstanceLifecycle.rotateInstanceSecret(incus, name, instance, stamps, placeholders.join());
+        var secret = InstanceLifecycle.rotateInstanceSecret(incus, name, instance, stamps, declared.join());
         InstanceLifecycle.withCurrentProofs(incus, name, secret, current -> {
             incus.waitForReady(name, MachineType.VM, GuestHostname.afterSecret(name, instance),
-                    InstanceSecret.guestEnv(current, Metadata.isMcpCaller(instance), placeholders.join()));
+                    InstanceSecret.guestEnv(current, Metadata.isMcpCaller(instance), declared.join().placeholders()));
             return null;
         });
     }

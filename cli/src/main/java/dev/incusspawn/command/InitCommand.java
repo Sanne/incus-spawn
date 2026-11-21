@@ -1164,6 +1164,12 @@ public class InitCommand extends BaseCommand {
                     "yourname-ai-bot) and mint a fine-grained PAT for it, scoped to",
                     "just the repos and permissions the agent needs. That keeps the",
                     "agent's actions attributable to it and its blast radius small."}, this::setupGitHubAuth, null);
+            case "codex" -> new InitStep(toolName, "OpenAI Authentication", new String[]{
+                    "Configures how containers authenticate with OpenAI: a",
+                    "ChatGPT session, Enterprise plans included, that stays on",
+                    "your host — isx signs it in through your browser and the",
+                    "proxy serves Codex from it — or an OpenAI API key.",
+                    "Containers never see the real credential."}, this::setupCodexAuth, null);
             default -> {
                 var desc = CredentialSetup.describeTool(toolName, tool);
                 yield new InitStep(toolName, desc, new String[]{
@@ -1670,6 +1676,11 @@ public class InitCommand extends BaseCommand {
     private void setupGitHubAuth() {
         var prompts = consoleOrExplain();
         if (prompts != null) credentials.setupGitHubAuth(SpawnConfig.load(), prompts);
+    }
+
+    private void setupCodexAuth() {
+        var prompts = consoleOrExplain();
+        if (prompts != null) credentials.setupCodexAuth(SpawnConfig.load(), prompts);
     }
 
     private void setupGenericToolCredentials(String toolName, ToolSetup tool) {
