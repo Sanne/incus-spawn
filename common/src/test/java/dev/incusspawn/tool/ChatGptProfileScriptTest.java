@@ -51,7 +51,7 @@ class ChatGptProfileScriptTest {
 
     private void login(Path source, String then) throws Exception {
         var env = source == null ? Map.<String, String>of()
-                : Map.of("ISX_CHATGPT_AUTH", source.toString());
+                : Map.of("ISX_CHATGPT_AUTH_FILE", source.toString());
         assertEquals("", GuestShell.login(home, InstanceSecret.CHATGPT_PROFILE_SCRIPT, env, then),
                 "a login script says nothing");
     }
@@ -102,8 +102,28 @@ class ChatGptProfileScriptTest {
     }
 
     @Test
+    void aSessionCodexRefreshedSinceTheDeliveryIsLeftAlone() throws Exception {
+        var dir = codex();
+        // Codex refreshed through the proxy: a new access token, the same refresh placeholder
+        var refreshed = """
+                {
+                  "auth_mode": "chatgpt",
+                  "OPENAI_API_KEY": null,
+                  "tokens": {"id_token": "i.isx_x", "access_token": "a.isx_new", "refresh_token": "rt.isx_z"},
+                  "last_refresh": "2026-11-19T00:00:00Z"
+                }
+                """;
+        Files.writeString(dir.resolve("auth.json"), refreshed);
+
+        login(sessionFile(), "true");
+
+        assertEquals(refreshed, Files.readString(dir.resolve("auth.json")),
+                "a later login does not hand Codex back the start's access token");
+    }
+
+    @Test
     void theProfileLeavesNoVariablesBehind() throws Exception {
         codex();
-        login(sessionFile(), "[ -z \"${isx_auth:-}\" ] && [ -z \"${isx_src:-}\" ]");
+        login(sessionFile(), "[ -z \"${isx_auth:-}\" ] && [ -z \"${isx_src:-}\" ] && [ -z \"${isx_rt:-}\" ]");
     }
 }

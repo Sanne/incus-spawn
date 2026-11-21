@@ -156,6 +156,45 @@ public final class InstanceSecret {
     }
 
     /**
+     * The login profile that writes Codex's {@code auth.json} from this start's ChatGPT
+     * placeholders ({@link #CHATGPT_GUEST_PATH}). POSIX sh, silent, no variables left behind;
+     * sorted after {@code isx-zz-codex-auth.sh}, so a ChatGPT session's file replaces the
+     * API-key one isx may also have written, and never the user's own {@code codex login}:
+     * only a file that is absent, holds a placeholder, or holds an earlier delivery's proofs, and
+     * never one already holding this delivery's refresh token, which Codex may have refreshed.
+     */
+    public static final String CHATGPT_PROFILE_SCRIPT = "# Written by isx: a ChatGPT session's placeholders, renewed on every start (#1332)\n"
+            + "isx_src=${ISX_CHATGPT_AUTH_FILE:-" + CHATGPT_GUEST_PATH + "}\n"
+            + "if [ -r \"$isx_src\" ]; then\n"
+            + "  isx_auth=$HOME/.codex/auth.json\n"
+            + "  mkdir -p \"$HOME/.codex\" 2>/dev/null\n"
+            // A file that already holds this delivery's refresh token is this start's session,
+            // perhaps refreshed by Codex since: writing the delivery again would hand Codex back
+            // the start's access token and its expiry, and swap the file under a running Codex
+            + "  isx_rt=$(sed -n 's/.*\"refresh_token\": *\"\\([^\"]*\\)\".*/\\1/p' \"$isx_src\" 2>/dev/null)\n"
+            + "  if [ -n \"$isx_rt\" ] && grep -qF \"\\\"$isx_rt\\\"\" \"$isx_auth\" 2>/dev/null; then\n"
+            + "    :\n"
+            + "  elif [ ! -f \"$isx_auth\" ] || grep -q 'isx_' \"$isx_auth\" 2>/dev/null || grep -qF '\"OPENAI_API_KEY\": \"sk-placeholder\"' \"$isx_auth\" 2>/dev/null; then\n"
+            + "    (umask 077 && cat \"$isx_src\" > \"$isx_auth.isx-$$\" 2>/dev/null) \\\n"
+            + "      && mv -f \"$isx_auth.isx-$$\" \"$isx_auth\" 2>/dev/null\n"
+            + "    rm -f \"$isx_auth.isx-$$\" 2>/dev/null\n"
+            + "  fi\n"
+            + "  # The build's config forces API-key login; a ChatGPT session here would be logged out\n"
+            + "  # and its auth.json deleted. Only isx's own config is patched, only the forcing line\n"
+            + "  # removed: with nothing forced, Codex takes the auth.json it is given\n"
+            + "  if [ -f \"$HOME/.codex/config.toml\" ] && [ -w \"$HOME/.codex/config.toml\" ] \\\n"
+            + "      && grep -q 'forced_login_method = \"api\"' \"$HOME/.codex/config.toml\" 2>/dev/null \\\n"
+            + "      && grep -q 'Running unconstrained in isx' \"$HOME/.codex/config.toml\" 2>/dev/null; then\n"
+            // -i with its suffix attached is the one form GNU and BSD sed both read, and the test
+            // runs this script on a macOS host too
+            + "    sed -i.isx-$$ '/^forced_login_method = \"api\"$/d' \"$HOME/.codex/config.toml\" 2>/dev/null\n"
+            + "    rm -f \"$HOME/.codex/config.toml.isx-$$\" 2>/dev/null\n"
+            + "  fi\n"
+            + "  unset isx_auth isx_rt\n"
+            + "fi\n"
+            + "unset isx_src\n";
+
+    /**
      * Shell that puts the secret in {@link #guestEnv} in place in a running guest, with this
      * start's proof tokens ({@link ProofToken}) beside it, and the profile lines that name the
      * one and export the other. Idempotent, since it rides in scripts that are retried until
@@ -182,38 +221,6 @@ public final class InstanceSecret {
      * placeholders and their profile script here too, and one that serves none clears both, so
      * the guest's Codex never keeps a session the host ended (#1332).
      */
-    /**
-     * The login profile that writes Codex's {@code auth.json} from this start's ChatGPT
-     * placeholders ({@link #CHATGPT_GUEST_PATH}). POSIX sh, silent, no variables left behind;
-     * sorted after {@code isx-zz-codex-auth.sh}, so a ChatGPT session's file replaces the
-     * API-key one isx may also have written, and never the user's own {@code codex login}:
-     * only a file that is absent, holds a placeholder, or holds an earlier delivery's proofs.
-     */
-    public static final String CHATGPT_PROFILE_SCRIPT = "# Written by isx: a ChatGPT session's placeholders, renewed on every start (#1332)\n"
-            + "isx_src=${ISX_CHATGPT_AUTH:-" + CHATGPT_GUEST_PATH + "}\n"
-            + "if [ -r \"$isx_src\" ]; then\n"
-            + "  isx_auth=$HOME/.codex/auth.json\n"
-            + "  mkdir -p \"$HOME/.codex\" 2>/dev/null\n"
-            + "  if [ ! -f \"$isx_auth\" ] || grep -q 'isx_' \"$isx_auth\" 2>/dev/null || grep -qF '\"OPENAI_API_KEY\": \"sk-placeholder\"' \"$isx_auth\" 2>/dev/null; then\n"
-            + "    (umask 077 && cat \"$isx_src\" > \"$isx_auth.isx-$$\" 2>/dev/null) \\\n"
-            + "      && mv -f \"$isx_auth.isx-$$\" \"$isx_auth\" 2>/dev/null\n"
-            + "    rm -f \"$isx_auth.isx-$$\" 2>/dev/null\n"
-            + "  fi\n"
-            + "  # The build's config forces API-key login; a ChatGPT session here would be logged out\n"
-            + "  # and its auth.json deleted. Only isx's own config is patched, only the forcing line\n"
-            + "  # removed: with nothing forced, Codex takes the auth.json it is given\n"
-            + "  if [ -f \"$HOME/.codex/config.toml\" ] && [ -w \"$HOME/.codex/config.toml\" ] \\\n"
-            + "      && grep -q 'forced_login_method = \"api\"' \"$HOME/.codex/config.toml\" 2>/dev/null \\\n"
-            + "      && grep -q 'Running unconstrained in isx' \"$HOME/.codex/config.toml\" 2>/dev/null; then\n"
-            // -i with its suffix attached is the one form GNU and BSD sed both read, and the test
-            // runs this script on a macOS host too
-            + "    sed -i.isx-$$ '/^forced_login_method = \"api\"$/d' \"$HOME/.codex/config.toml\" 2>/dev/null\n"
-            + "    rm -f \"$HOME/.codex/config.toml.isx-$$\" 2>/dev/null\n"
-            + "  fi\n"
-            + "  unset isx_auth\n"
-            + "fi\n"
-            + "unset isx_src\n";
-
     public static final String GUEST_SCRIPT = "isx_secret=$" + DELIVERY_ENV + "; isx_proofs=$" + PROOFS_DELIVERY_ENV
             + "; isx_credential_secret=$" + CredentialProof.DELIVERY_ENV + "; isx_chatgpt=$" + CHATGPT_DELIVERY_ENV
             + "; unset " + DELIVERY_ENV + " " + PROOFS_DELIVERY_ENV + " " + CredentialProof.DELIVERY_ENV + " " + CHATGPT_DELIVERY_ENV + "; "
