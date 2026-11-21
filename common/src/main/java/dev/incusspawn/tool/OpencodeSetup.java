@@ -42,6 +42,13 @@ public class OpencodeSetup implements ToolSetup {
     static final ProofToken.Placeholder ANTHROPIC_KEY = new ProofToken.Placeholder(
             "OPENCODE_ANTHROPIC_API_KEY", "sk-ant-", SpawnConfig.ClaudeConfig.NAMESPACE);
 
+    /**
+     * opencode's {@code google} provider reads {@code GEMINI_API_KEY}, which Gemini CLI declares.
+     * This placeholder lets {@code provider: google} work without {@code gemini-cli} co-installed.
+     */
+    static final ProofToken.Placeholder GEMINI_KEY = new ProofToken.Placeholder(
+            "GEMINI_API_KEY", "gemini-", PiSetup.GEMINI_NAMESPACE);
+
     @Override
     public boolean codingAgent() { return true; }
 
@@ -115,10 +122,10 @@ public class OpencodeSetup implements ToolSetup {
         return new LinkedHashSet<>(List.of(SpawnConfig.ClaudeConfig.NAMESPACE, "openai", PiSetup.GEMINI_NAMESPACE));
     }
 
-    /** {@code OPENAI_API_KEY} and {@code GEMINI_API_KEY} are Codex's and Gemini CLI's; this one is opencode's own. */
+    /** {@code OPENAI_API_KEY} is Codex's; this tool's own are the Anthropic and Gemini ones. */
     @Override
     public List<ProofToken.Placeholder> placeholders() {
-        return List.of(ANTHROPIC_KEY);
+        return List.of(ANTHROPIC_KEY, GEMINI_KEY);
     }
 
     @Override
@@ -134,13 +141,22 @@ public class OpencodeSetup implements ToolSetup {
     @Override
     public String credentialProblem(SpawnConfig config, Map<String, String> resolvedParams,
                                     Map<String, String> selection) {
-        return credentialFor(resolvedParams) == Credential.ANTHROPIC ? ClaudeSetup.missingAccount(config, selection) : "";
+        return switch (credentialFor(resolvedParams)) {
+            case ANTHROPIC -> ClaudeSetup.missingAccount(config, selection);
+            case OPENAI -> config.getOpenai().hasAuth() ? "" : "OpenAI API key";
+            case GEMINI, NONE -> "";
+        };
     }
 
     @Override
     public List<String> credentialNote(Map<String, String> resolvedParams) {
-        if (credentialFor(resolvedParams) != Credential.ANTHROPIC) return List.of();
-        return List.of("opencode needs a Claude account for its provider '" + provider(resolvedParams) + "'.",
+        var account = switch (credentialFor(resolvedParams)) {
+            case ANTHROPIC -> "a Claude account";
+            case OPENAI -> "an OpenAI API key";
+            case GEMINI, NONE -> "";
+        };
+        if (account.isEmpty()) return List.of();
+        return List.of("opencode needs " + account + " for its provider '" + provider(resolvedParams) + "'.",
                 "To use another provider, set it in the template's tools, run 'isx build' on the template"
                         + " and branch from it:"
                         + " '- opencode: {provider: openai}' spends an OpenAI API key,"
@@ -169,7 +185,9 @@ public class OpencodeSetup implements ToolSetup {
         return switch (credentialFor(resolvedParams)) {
             case ANTHROPIC -> List.of(EnvEntry.set(ANTHROPIC_KEY.env(), ANTHROPIC_KEY.staticValuePrefix()));
             case OPENAI -> List.of(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
-            case GEMINI -> List.of(EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY));
+            case GEMINI -> List.of(
+                    EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY),
+                    EnvEntry.set("GOOGLE_GENERATIVE_AI_API_KEY", "$GEMINI_API_KEY").expandingAtLogin());
             case NONE -> List.of();
         };
     }
