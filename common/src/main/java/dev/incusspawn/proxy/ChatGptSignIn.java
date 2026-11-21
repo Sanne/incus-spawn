@@ -178,21 +178,21 @@ public class ChatGptSignIn {
         var state = Base64.getUrlEncoder().withoutPadding().encodeToString(stateBytes);
 
         var listener = callbackListener();
-        var port = listener.getLocalPort();
-        var redirectUri = "http://127.0.0.1:" + port + CALLBACK_PATH;
-        openUrl.accept(issuer + "/oauth/authorize"
-                + "?response_type=code"
-                + "&client_id=" + url(ChatGptAccounts.CODEX_CLIENT_ID)
-                + "&redirect_uri=" + url(redirectUri)
-                + "&code_challenge=" + url(challenge)
-                + "&code_challenge_method=S256"
-                + "&state=" + url(state)
-                + "&scope=" + url("openid profile email offline_access api.connectors.read api.connectors.invoke")
-                // What Codex's own authorize URL carries (codex-rs build_authorize_url)
-                + "&id_token_add_organizations=true"
-                + "&codex_cli_simplified_flow=true"
-                + "&originator=codex_cli_rs");
-        try (listener) {
+        try (listener) { // closed on every path, the URL handler throwing included
+            var port = listener.getLocalPort();
+            var redirectUri = "http://127.0.0.1:" + port + CALLBACK_PATH;
+            openUrl.accept(issuer + "/oauth/authorize"
+                    + "?response_type=code"
+                    + "&client_id=" + url(ChatGptAccounts.CODEX_CLIENT_ID)
+                    + "&redirect_uri=" + url(redirectUri)
+                    + "&code_challenge=" + url(challenge)
+                    + "&code_challenge_method=S256"
+                    + "&state=" + url(state)
+                    + "&scope=" + url("openid profile email offline_access api.connectors.read api.connectors.invoke")
+                    // What Codex's own authorize URL carries (codex-rs build_authorize_url)
+                    + "&id_token_add_organizations=true"
+                    + "&codex_cli_simplified_flow=true"
+                    + "&originator=codex_cli_rs");
             var code = awaitCallback(listener, state);
             return exchange(code, codeVerifier, redirectUri);
         }
@@ -308,7 +308,7 @@ public class ChatGptSignIn {
 
     private static void answer(Socket socket, int status, String body) throws IOException {
         var bytes = body.getBytes(StandardCharsets.UTF_8);
-        var head = "HTTP/1.1 " + status + (status == 200 ? " OK" : " Bad Request") + "\r\n"
+        var head = "HTTP/1.1 " + status + (status == 200 ? " OK" : status == 404 ? " Not Found" : " Bad Request") + "\r\n"
                 + "Content-Type: text/html; charset=utf-8\r\n"
                 + "Content-Length: " + bytes.length + "\r\n"
                 + "Connection: close\r\n\r\n";
