@@ -54,7 +54,7 @@ tools:
 The build gives Claude Code bypass-permissions mode with every tool allowed, and turns off auto-update, error reporting, the feedback survey and its own sandbox.
 It leaves Claude Code's telemetry on, because turning it off also turns off the advisor.
 
-It accepts the onboarding and the trust prompt for the home directory, so the first session starts without questions.
+It accepts the onboarding and the trust prompt for the home directory and for each repository the template clones, so the first session starts without questions.
 
 The footer shows `Running unconstrained in isx [version] [container name]`.
 The default action (`default-action: claude` above) resumes your most recent session, in that session's directory.
@@ -99,7 +99,7 @@ tools:
 
 ### What the build sets up
 
-The build configures Codex for unattended use, turns off its update check and marks the home directory as trusted.
+The build configures Codex for unattended use, turns off its update check and marks the home directory and each repository the template clones as trusted.
 The build also gives Codex the [environment primer](#agent-environment-context), a short text that tells an agent about its instance, and does not write `~/.codex/AGENTS.md`.
 The default action resumes your most recent session.
 
