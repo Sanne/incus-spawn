@@ -68,6 +68,7 @@ Its ADC mode would keep a credential in the guest and stays unconfigured.
 It merges its settings into `~/.gemini/antigravity-cli/settings.json` (every tool call proceeds, no terminal sandbox, the home trusted), writes `cache/onboarding.json` when missing, and takes the instructions as an always-on rule, `~/.gemini/config/rules/isx.md`, with front matter before the heading.
 After tool setup the build adds each of the chain's clones to that file's `trustedWorkspaces` (`GuestProvisioning.updateAntigravityTrust`, #2465).
 Its MCP client merges `~/.gemini/config/mcp_config.json` and leaves out a server with `bearer-token-env`, since agy expands no variable there.
+Its skills directory, `~/.gemini/config/skills`, is a link to `~/.agents/skills`, made in the same exec as its directories (`AntigravitySetup.linkSkillsScript`), since agy reads no `~/.agents/skills`; `SkillInstaller` repairs it beside `~/.claude/skills` when a layer installs skills (#2472).
 Pi's `google` provider is the Gemini API too: `PiSetup` exports the same `GEMINI_API_KEY` placeholder and spends the `gemini` namespace (#1114).
 Its `google-vertex` provider (isx's `vertex` is written as Pi's `google-vertex`) spends the Claude Vertex AI account through `GOOGLE_CLOUD_API_KEY`, whose prefix is `AIza` and namespace `claude`; see `proxy.md`.
 

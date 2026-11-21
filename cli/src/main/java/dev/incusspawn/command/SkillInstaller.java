@@ -8,6 +8,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.tool.AntigravitySetup;
 import dev.incusspawn.tool.PinnedSkills;
 import dev.incusspawn.util.SystemTrust;
 
@@ -135,11 +136,14 @@ final class SkillInstaller {
         }
         // Fix ownership so agentuser owns the agents / skills directories
         container.exec("chown", "-R", "agentuser:agentuser", AGENTS_DIR);
-        // Ensure .claude/skills points to the shared location if Claude Code is installed
-        // (handles inherited-claude case where ClaudeSetup.linkSkillsDir didn't run)
-        container.sh("[ ! -d /home/agentuser/.claude ] || [ -L /home/agentuser/.claude/skills ]"
+        // Ensure .claude/skills and agy's ~/.gemini/config/skills point to the shared location
+        // when Claude Code or Antigravity CLI is installed (handles an agent inherited from an
+        // image built before its setup linked the directory), in one exec.
+        container.sh("{ [ ! -d /home/agentuser/.claude ] || [ -L /home/agentuser/.claude/skills ]"
                 + " || { rm -rf /home/agentuser/.claude/skills"
-                + " && ln -sfn " + SKILLS_DIR + " /home/agentuser/.claude/skills; }");
+                + " && ln -sfn " + SKILLS_DIR + " /home/agentuser/.claude/skills; }; }; "
+                + "! " + AntigravitySetup.INSTALLED_TEST + " || { " + AntigravitySetup.linkSkillsScript()
+                + " && chown -h agentuser:agentuser " + AntigravitySetup.SKILLS_LINK + "; }");
     }
 
     /** The name a pinned pack's empty {@code list} stands for: every skill under its path. */

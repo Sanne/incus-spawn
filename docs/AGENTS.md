@@ -378,6 +378,9 @@ No sign-in token is ever stored in the instance.
 Every build writes the [environment primer](#agent-environment-context) to `~/.gemini/config/rules/isx.md`, a rule `agy` always loads.
 Your own `~/.gemini/GEMINI.md` and `AGENTS.md` stay yours.
 
+[Skills](#agent-skills) reach `agy` through `~/.gemini/config/skills`, a link to `~/.agents/skills`.
+Skills already in a folder there are copied into `~/.agents/skills` first, unless isx installs a skill of the same name.
+
 MCP servers that tools declare go to `~/.gemini/config/mcp_config.json`.
 `agy` reads no variable in that file, so a server that takes its token from `bearer-token-env` is left out, with a warning.
 `agy` also reports usage to Google's logging service at `play.googleapis.com`, which isx does not turn off.
@@ -466,7 +469,8 @@ The same file always holds `defaultPermissionMode: allow-all`, so interactive se
 
 A template can declare [agent skills](https://skills.sh) for the build to install.
 Skills are installed once into the template, at `~/.agents/skills`, and inherited by every instance branched from it.
-Codex, Pi, opencode, Gemini CLI and Copilot read that directory themselves, and Claude Code finds it through `~/.claude/skills`.
+Codex, Pi, opencode, Gemini CLI and Copilot read that directory themselves.
+Claude Code finds it through `~/.claude/skills`, and `agy` through `~/.gemini/config/skills`.
 
 ```yaml
 name: tpl-skills
