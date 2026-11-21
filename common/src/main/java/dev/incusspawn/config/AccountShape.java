@@ -84,9 +84,9 @@ public interface AccountShape {
 
     /**
      * Whether {@code account}'s credential lives outside {@code config.yaml}: a sign-in the proxy
-     * keeps on the host, such as a {@code gemini} account of {@code type: google} (#2443). None of
-     * the shape's credential keys is then expected to resolve for it, so a branch check or the
-     * proxy's startup report does not call the account incomplete for lacking a key.
+     * keeps on the host, such as a {@code gemini} account of {@code type: google} (#2443) or an
+     * {@code openai} one of {@code type: chatgpt} (#1332). None of the shape's credential keys is
+     * then expected to resolve for it, so a branch check or the proxy's startup report does not call the account incomplete for lacking a key.
      *
      * @param account the account's own node
      */
