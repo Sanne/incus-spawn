@@ -311,6 +311,8 @@ tools:
 default-action: antigravity
 ```
 
+The default action resumes your most recent conversation, in a directory where you used it.
+
 With an API key account, the instance gets the same `GEMINI_API_KEY` proof placeholder as Gemini CLI.
 `agy` sends it to `generativelanguage.googleapis.com`, where the proxy checks it and adds the selected key.
 Select a named account as for Gemini CLI, with `accounts: { gemini: work }` or `--account gemini=work`.
