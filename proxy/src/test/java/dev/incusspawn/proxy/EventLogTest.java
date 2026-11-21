@@ -163,4 +163,26 @@ class EventLogTest {
         assertThrows(java.io.IOException.class, () -> EventLogFold.fold(file, old, Instant.now()));
         assertTrue(Files.exists(old));
     }
+
+    @Test
+    void aFoldThatFailsEveryTimeNeitherStopsTheLogRollingNorRefoldsPerLine() throws Exception {
+        var file = dir.resolve("events.jsonl");
+        // The sums path is a directory, so every fold fails
+        Files.createDirectory(dir.resolve("events.jsonl.sums"));
+        int lines = 16 * (EventLog.KEPT + 2 + 3 * EventLog.MAX_FOLD_FAILURES);
+        try (var log = new EventLog(file, 4096)) {
+            for (int i = 0; i < lines; i++) {
+                log.modelCall(new EventLog.ModelCall(Instant.now(), "w", "", "d", "m", 200, 1, 1, 1, 1, 1));
+                if (i % 20 == 0) log.flush();
+            }
+            log.flush();
+        }
+        assertFalse(Files.exists(dir.resolve("events.jsonl." + (EventLog.KEPT + 1))));
+        assertTrue(Files.size(file) <= 4096, "the current file still rolls");
+        long total = 0;
+        try (var s = Files.list(dir)) {
+            for (var f : (Iterable<Path>) s.filter(Files::isRegularFile)::iterator) total += Files.size(f);
+        }
+        assertTrue(total < 4096L * (EventLog.KEPT + 1 + 2 * EventLog.MAX_FOLD_FAILURES), "bounded: " + total);
+    }
 }

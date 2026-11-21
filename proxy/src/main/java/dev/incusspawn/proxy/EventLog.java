@@ -37,6 +37,8 @@ final class EventLog implements AutoCloseable {
     static final long MAX_FILE_BYTES = 16L * 1024 * 1024;
     static final int KEPT = EventLogReader.KEPT;
     static final int QUEUE = 4096;
+    /** Folds that fail in a row before the oldest file is dropped unfolded. */
+    static final int MAX_FOLD_FAILURES = 3;
 
     /** What a model call from an instance did. */
     record ModelCall(Instant at, String instance, String incarnation, String domain, String model,
@@ -64,6 +66,8 @@ final class EventLog implements AutoCloseable {
     /** The file's size, or -1 until read (again): only the writer thread. */
     private long size = -1;
     private boolean torn;
+    /** Rollovers in a row whose fold failed: only the writer thread. */
+    private int foldFailures;
 
     EventLog(Path file) {
         this(file, MAX_FILE_BYTES);
@@ -204,7 +208,7 @@ final class EventLog implements AutoCloseable {
             if (size > 0 && size + bytes.length > maxFileBytes) {
                 try {
                     roll();
-                } catch (IOException e) {
+                } catch (IOException | RuntimeException e) {
                     // The file just grows until a rollover works: not retried on every line
                 }
             }
@@ -232,15 +236,32 @@ final class EventLog implements AutoCloseable {
         // A rollover that fails is not retried on every line: the file just grows until the next one
         size = 0;
         // The oldest file is folded into the aggregate before it goes (#2429); one that cannot be folded
-        // stays, and the file just grows until the next rollover
+        // stays and the file grows until the next rollover, but only MAX_FOLD_FAILURES times in a row:
+        // then it is deleted as before and its lines are counted as dropped, so the log stays bounded
         if (Files.exists(older(KEPT))) {
-            EventLogFold.fold(file, older(KEPT), Instant.now());
+            try {
+                EventLogFold.fold(file, older(KEPT), Instant.now());
+                foldFailures = 0;
+            } catch (IOException | RuntimeException e) {
+                if (++foldFailures < MAX_FOLD_FAILURES) throw e instanceof IOException io ? io : new IOException(e);
+                foldFailures = 0;
+                dropped.addAndGet(lines(older(KEPT)));
+            }
             Files.delete(older(KEPT));
         }
         for (int i = KEPT - 1; i >= 1; i--) {
             if (Files.exists(older(i))) Files.move(older(i), older(i + 1), StandardCopyOption.REPLACE_EXISTING);
         }
         Files.move(file, older(1), StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    /** The lines of a file, best effort: the count of what a failed fold lost. */
+    private static long lines(Path f) {
+        try (var in = Files.lines(f, StandardCharsets.ISO_8859_1)) {
+            return in.count();
+        } catch (IOException | RuntimeException e) {
+            return 1;
+        }
     }
 
     private Path older(int n) {

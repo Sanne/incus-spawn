@@ -143,14 +143,8 @@ public final class EventLogReader {
         // Every file is opened before any is read: a rollover renames them, and an open file keeps
         // its lines, so one during the read neither skips a file nor reads one twice
         var opened = new java.util.ArrayList<InputStream>();
+        InputStream sums = null;
         try {
-            try {
-                opened.add(Files.newInputStream(EventLogFold.sumsOf(file)));
-            } catch (NoSuchFileException absent) {
-                // Nothing folded yet
-            } catch (IOException e) {
-                reading.unreadable++;
-            }
             for (int i = KEPT; i >= 0; i--) {
                 var path = i == 0 ? file : file.resolveSibling(file.getFileName() + "." + i);
                 try {
@@ -161,8 +155,19 @@ public final class EventLogReader {
                     reading.unreadable++;
                 }
             }
+            try {
+                sums = Files.newInputStream(EventLogFold.sumsOf(file));
+            } catch (NoSuchFileException absent) {
+                // Nothing folded yet
+            } catch (IOException e) {
+                reading.unreadable++;
+            }
+            // The sums are opened after the log files: a fold between the opens then lists a file twice
+            // (the documented window), never neither
+            if (sums != null) reading.file(sums); // oldest history first
             for (var in : opened) reading.file(in);
         } finally {
+            if (sums != null) opened.add(sums);
             for (var in : opened) {
                 try {
                     in.close();
@@ -229,8 +234,9 @@ public final class EventLogReader {
                 unreadable++;
                 return;
             }
-            if (since == null || at.isBefore(since)) since = at;
             var kind = line.pathText("kind", "");
+            // A day's dropped count is stamped at the day's midnight, before any real event
+            if (!kind.equals("dropped_sum") && (since == null || at.isBefore(since))) since = at;
             if (kind.equals("dropped")) {
                 dropped += line.path("lines").asLong(0);
                 return;
