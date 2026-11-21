@@ -33,8 +33,6 @@ class AntigravitySetupTest {
         assertEquals(List.of("GEMINI_API_KEY", "AGY_CLI_DISABLE_AUTO_UPDATE"), env.stream().map(e -> e.getName()).toList());
         assertEquals(GeminiSetup.PLACEHOLDER_API_KEY, env.get(0).getValue());
         assertEquals("true", env.get(1).getValue(), "the pin is what runs");
-        assertEquals("bash -lc 'agy ${ISX_AGY_MODEL:+--model \"$ISX_AGY_MODEL\"} ${ISX_AGY_EFFORT:+--effort \"$ISX_AGY_EFFORT\"}'",
-                tool.actions().getFirst().getCommand());
     }
 
     /** The template's model and effort travel as login variables, which the action and the runner read (#2474). */

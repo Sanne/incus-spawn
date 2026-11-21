@@ -237,11 +237,33 @@ public class AntigravitySetup implements ToolSetup {
         var action = new ToolDef.ActionEntry();
         action.setLabel("Antigravity CLI");
         action.setType("shell");
-        action.setCommand("bash -lc 'agy ${" + MODEL_ENV + ":+--model \"$" + MODEL_ENV + "\"} ${" + EFFORT_ENV
-                + ":+--effort \"$" + EFFORT_ENV + "\"}'");
+        action.setCommand(ACTION_COMMAND);
         action.setAutoReturn(true);
         return List.of(action);
     }
+
+    /** The template's model and effort, each passed only when the login exports it. */
+    private static final String AGY_FLAGS = " ${" + MODEL_ENV + ":+--model \"$" + MODEL_ENV
+            + "\"} ${" + EFFORT_ENV + ":+--effort \"$" + EFFORT_ENV + "\"}";
+
+    /**
+     * The action resumes agy's newest conversation, from a directory it ran in when one is still
+     * there, and starts a new one when there is none. {@code agy --continue} would not do: it
+     * resumes the last conversation of the current directory only, through
+     * {@code cache/last_conversations.json} (directory to conversation ID), and from any other
+     * directory it opens a new one without a word (verified with 1.5.13 and 1.5.14). So the action takes
+     * the newest {@code conversations/<id>.db}, changes to a directory that map gives it, and
+     * names it with {@code --conversation}, since a resume elsewhere maps the same ID under that
+     * directory too. Either start passes the template's model and effort, which the login
+     * exports (#2474). The action runs in a login shell already, so it needs no {@code bash -l}.
+     */
+    static final String ACTION_COMMAND = "c=~/.gemini/antigravity-cli; "
+            + "i=$(find \"$c/conversations\" -maxdepth 1 -name '*.db' -printf '%T@ %f\\n' 2>/dev/null | sort -rn"
+            + " | sed -n 's/^[0-9.]* \\([0-9a-f-]\\{1,\\}\\)\\.db$/\\1/p' | head -1); "
+            + "if [ -n \"$i\" ]; then "
+            + "d=$(sed -n 's/^ *\"\\(.*\\)\": *\"'\"$i\"'\",\\{0,1\\}$/\\1/p' \"$c/cache/last_conversations.json\" 2>/dev/null"
+            + " | while IFS= read -r p; do [ -d \"$p\" ] && { printf '%s\\n' \"$p\"; break; }; done); "
+            + "[ -n \"$d\" ] && cd \"$d\"; agy --conversation \"$i\"" + AGY_FLAGS + "; else agy" + AGY_FLAGS + "; fi";
 
     @Override
     public String verifyCommand(Map<String, String> resolvedParams) {
