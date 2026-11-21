@@ -111,6 +111,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, String> execOutputs = new LinkedHashMap<>();
     /** What a served exec exits with, by a string its command line contains; the first match wins, else 0. */
     private final Map<String, Integer> execExits = new LinkedHashMap<>();
+    private final Map<String, String> execStderrs = new LinkedHashMap<>();
     /** The exit code of each served exec's operation, by its id. */
     private final Map<String, Integer> execReturns = new LinkedHashMap<>();
     /** What each served exec's stdout socket delivers, by its secret. */
@@ -433,6 +434,13 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /** A served exec whose command line contains {@code needle} prints {@code stderr} on its stderr. */
+    public synchronized FakeIncusDaemon execStderr(String needle, String stderr) {
+        servesExecs = true;
+        execStderrs.put(needle, stderr);
+        return this;
+    }
+
     /** A served exec whose command line contains {@code needle} exits with {@code code}. */
     public synchronized FakeIncusDaemon execExit(String needle, int code) {
         servesExecs = true;
@@ -599,6 +607,8 @@ public final class FakeIncusDaemon implements IncusTransport {
                 .map(Map.Entry::getValue).findFirst().orElse("");
         var fds = JqObject.ofEntries("0", id + "-0", "1", id + "-1", "2", id + "-2", "control", id + "-control");
         execStdout.put(id + "-1", stdout.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        execStderrs.entrySet().stream().filter(e -> commandLine.contains(e.getKey())).findFirst()
+                .ifPresent(e -> execStdout.put(id + "-2", e.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         execStdinSecrets.add(id + "-0");
         execExits.entrySet().stream().filter(e -> commandLine.contains(e.getKey())).findFirst()
                 .ifPresent(e -> execReturns.put(id, e.getValue()));

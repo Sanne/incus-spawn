@@ -336,7 +336,7 @@ isx exec my-box -- bash -c 'make test | tee test.log'
 Start the instance with [`isx start`](#isx-start) and stop it with [`isx stop`](#isx-stop).
 
 Interrupting `isx exec` ends the command in the instance.
-So does closing what reads its output, as in `isx exec my-box -- yes | head -1`, and then `isx exec` exits 141.
+So does closing what reads its stdout, as in `isx exec my-box -- yes | head -1`, and then `isx exec` exits 141.
 It waits for a command for up to four hours, then ends it and exits 125.
 
 ## `isx purpose`

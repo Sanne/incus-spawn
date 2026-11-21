@@ -38,7 +38,7 @@ import java.util.stream.Collectors;
  * <p>It runs through {@link ExecScript}, in a session of its own, so the whole process tree is
  * killed whenever isx stops waiting for it: when isx is interrupted, when Incus gives no exit code
  * (the wait's ceiling, a lost operation), when the exec fails under it, and when what reads isx's
- * output has gone. A command nobody waits for must not keep running.
+ * stdout has gone. A command nobody waits for must not keep running.
  */
 @CommandDefinition(
         name = "exec",
@@ -50,7 +50,7 @@ public class ExecCommand extends BaseCommand {
     /** isx's exit code when it fails instead of the command; the command's own otherwise. */
     static final int ISX_FAILED = 125;
 
-    /** The exit code once what reads isx's output has gone: a shell's for a command SIGPIPE killed. */
+    /** The exit code once what reads isx's stdout has gone: a shell's for a command SIGPIPE killed. */
     static final int OUTPUT_CLOSED = 128 + 13;
 
     @Arguments(completer = Completers.Instance.class,
@@ -117,7 +117,9 @@ public class ExecCommand extends BaseCommand {
             if (closed.compareAndSet(null, killing)) killing.start();
         };
         var guardedOut = new ClosedOutputGuard(out, onClosed);
-        var guardedErr = new ClosedOutputGuard(err, onClosed);
+        // A closed stderr drops stderr alone (`make 2>&- > build.log`): stdout is still read, and
+        // a shell's SIGPIPE would end only a process writing to the closed stream, never make.
+        var guardedErr = new ClosedOutputGuard(err, () -> {});
         // Interrupted (Ctrl+C, SIGTERM): end the command's process tree in the guest before isx exits.
         var hook = new Thread(killRun, "isx-exec-kill");
         Runtime.getRuntime().addShutdownHook(hook);
