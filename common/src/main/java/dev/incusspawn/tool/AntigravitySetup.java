@@ -235,13 +235,17 @@ public class AntigravitySetup implements ToolSetup {
     }
 
     /**
-     * The mode, not the account: {@code google} or {@code api-key}. Two API key accounts leave the
-     * image the same, and so do two Google ones; a move across modes rewrites {@code settings.json}
-     * and the login script, which {@link #rebakeForAccount} does on a built instance, since agy
-     * reads both when it starts.
+     * The mode an account gives agy, not the account: {@code google} or {@code api-key}, or
+     * {@code ""} for no account of the namespace. Two API key accounts leave the image the same,
+     * and so do two Google ones; a move across modes rewrites {@code settings.json} and the login
+     * script ({@link #rebakeIfInstalled}), since agy reads both when it starts.
+     *
+     * <p>Account selection asks the namespace's owner, which agy is not: it borrows Gemini CLI's
+     * credential and declares no proxy entry, so {@link GeminiSetup} answers with this and
+     * re-derives through {@link #rebakeIfInstalled}. Overridden here, it was never asked, and
+     * {@code isx account set} left agy in the old mode.
      */
-    @Override
-    public String bakedAccountIdentity(SpawnConfig config, String accountName) {
+    static String accountMode(SpawnConfig config, String accountName) {
         if (accountName == null || accountName.isBlank()) return "";
         try {
             var names = dev.incusspawn.config.AccountResolver.accountNames(config, GeminiSetup.NAMESPACE);
@@ -252,11 +256,12 @@ public class AntigravitySetup implements ToolSetup {
         return GoogleAccounts.isGoogleAccount(config.tree(), accountName) ? GoogleAccounts.TYPE : GeminiSetup.TYPE_API_KEY;
     }
 
-    @Override
-    public boolean canRebakeForAccount() { return true; }
-
-    @Override
-    public void rebakeForAccount(Container container, String accountName) {
+    /**
+     * Puts agy in the mode {@code accountName} gives, on a built instance that has it; an instance
+     * without agy is left alone, since the {@code gemini} stamp covers Gemini CLI's images too.
+     */
+    static void rebakeIfInstalled(Container container, String accountName) {
+        if (!container.sh("[ -e " + COMMAND + " ]").success()) return;
         configure(container, GoogleAccounts.isGoogleAccount(SpawnConfig.load().tree(), accountName));
     }
 

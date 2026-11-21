@@ -54,6 +54,54 @@ public final class AccountSelection {
     }
 
     /**
+     * A proven request that spends a credential the instance's account does not hold, because
+     * the account is a sign-in the proxy keeps on the host ({@link AccountShape#credentialOutsideConfig}).
+     * Its message is meant for the user of the tool that sent it, which shows a refusal's text.
+     */
+    public static class SignInAccountException extends UnservableAccountException {
+        public SignInAccountException(String namespace, String message) {
+            super(namespace, message);
+        }
+    }
+
+    /**
+     * Refuses a proven request to a credential's own domain from an instance whose account in
+     * that namespace is a hosted sign-in: the account holds no credential to inject, so the
+     * request would otherwise leave with the guest's proof in place of one. Only {@code proven}
+     * namespaces count, so a request carrying the guest's own key is never refused here. The
+     * hosted sign-in's own hosts never reach this: their route answers them first.
+     *
+     * @param setups     tool setups keyed by namespace ({@link #byNamespace})
+     * @param pins       the instance's pins
+     * @param namespaces the namespaces the request's domain spends
+     * @param proven     the namespaces the request proved; only those count
+     * @throws SignInAccountException for the first such namespace
+     */
+    public static void refuseSignInAccount(io.hyperfoil.tools.jjq.value.JqValue configTree,
+                                           Map<String, ToolSetup> setups, String instance,
+                                           Map<String, String> pins, java.util.Collection<String> namespaces,
+                                           java.util.Set<String> proven) {
+        for (var namespace : namespaces) {
+            if (!proven.contains(namespace)) continue;
+            var setup = setups.get(namespace);
+            if (setup == null || setup.hostedSignIn() == null) continue;
+            String account;
+            try {
+                account = AccountResolver.effectiveAccount(configTree, namespace, setup.accountShape(), pins.get(namespace));
+            } catch (AccountResolver.UnknownAccountException e) {
+                continue; // refused on its own terms
+            }
+            if (account.isBlank() || AccountResolver.INHERIT.equals(account)) continue;
+            var node = configTree.path(namespace).path(AccountResolver.ACCOUNTS_KEY).path(account);
+            if (!setup.accountShape().credentialOutsideConfig(node)) continue;
+            var message = setup.hostedSignInRefusal(instance, account);
+            throw new SignInAccountException(namespace, message != null ? message
+                    : "isx sent nothing: instance '" + instance + "' uses " + namespace + " account '" + account
+                            + "', a sign-in that holds no credential for this request.");
+        }
+    }
+
+    /**
      * Parse {@code ns=name} specifications into a namespace → account map.
      * Accepts repeated flags and comma-separated values alike.
      */

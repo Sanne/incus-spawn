@@ -142,6 +142,17 @@ public interface ToolSetup {
     default HostedSignIn hostedSignIn() { return null; }
 
     /**
+     * What the proxy answers a proven request with when it spends this namespace's credential
+     * and the instance's account is a {@link #hostedSignIn} one, which holds no credential to
+     * put in it. Nothing is sent upstream either way; this says why, in the terms of the tools
+     * that send such a request. Null keeps a generic reason.
+     *
+     * @param instance the instance that sent it
+     * @param account  its account, a hosted sign-in
+     */
+    default String hostedSignInRefusal(String instance, String account) { return null; }
+
+    /**
      * The credential namespaces this tool spends -- the ones whose account choice matters to an
      * instance that has it. Derived from {@link #proxy()}: each entry's namespace, including one
      * it borrows from another tool (Copilot's {@code github.token}). Override for a tool that

@@ -414,3 +414,31 @@ sudo cat /etc/sudoers.d/incus-spawn-btrfs   # ends with: /usr/bin/tee /sys/fs/bt
 
 The entry names the pool's filesystem by its UUID, so a pool re-created later needs `isx init` again.
 On macOS the appliance's agent does the same, and an appliance from before then answers neither verb, so deletes behave as before until the appliance is updated.
+
+## Antigravity CLI templates built before the gemini mode stamp
+
+### Why it matters
+
+Antigravity CLI runs in an API key mode or a Google account mode, set from the instance's `gemini` account.
+Builds before the fix stamped no `gemini` identity, so nothing records which mode a template or instance has.
+On such an instance `isx account set <instance> gemini=<account>` moves the credential but leaves `agy` in its old mode.
+A Google account then gets API key requests, which the proxy now refuses with a 403 that names the account.
+
+### How to tell
+
+```shell
+incus config get <template-or-instance> user.incus-spawn.account-identity.gemini   # empty means built before the stamp
+```
+
+Only templates whose tools include `antigravity` matter; for the rest the missing stamp changes nothing.
+
+### What to change
+
+Rebuild each such template with `isx build <template>`, and branch new instances from it.
+For one instance that has to keep its state, delete the `"modelProvider"` line from `~/.gemini/antigravity-cli/settings.json` as agentuser to put `agy` in the Google account mode by hand.
+That instance still lacks `/etc/profile.d/isx-zz-antigravity.sh`, so after a proxy restart, a copy or `isx account reset-proofs`, `agy` asks to sign in again.
+
+### How to verify
+
+`incus config get <template> user.incus-spawn.account-identity.gemini` prints `google` or `api-key`.
+In a new instance on a Google account, `~/.gemini/antigravity-cli/settings.json` has no `modelProvider`, and `/etc/profile.d/isx-zz-antigravity.sh` exists.

@@ -101,6 +101,8 @@ class CredentialProofProxyTest {
     volatile String account;
     volatile String geminiAccount;
     String bakedIdentity;
+    /** The {@code gemini} section {@link #serve} writes. */
+    String geminiConfig = GEMINI_CONFIG;
     final AtomicInteger tokenFetches = new AtomicInteger();
     final AtomicInteger listings = new AtomicInteger();
 
@@ -219,7 +221,7 @@ class CredentialProofProxyTest {
     }
 
     void serve(String claude) throws Exception {
-        Files.writeString(home.resolve(".config/incus-spawn/config.yaml"), GITHUB_CONFIG + GEMINI_CONFIG + claude);
+        Files.writeString(home.resolve(".config/incus-spawn/config.yaml"), GITHUB_CONFIG + geminiConfig + claude);
         stamp = ProofVerifier.stamp(SECRET, ProofToken.declared());
         registry = new InstanceRegistry(new IncusClient() {
             @Override public JqValue listJsonConfig() {
@@ -357,6 +359,37 @@ class CredentialProofProxyTest {
         assertEquals("Bearer google-inner-account", independent.authorization());
         assertNull(independent.googleKey());
         assertEquals(0, tokenFetches.get());
+    }
+
+    /**
+     * An instance on a Google account (#2443) sending an API key request, as agy does while it is
+     * still set up for a key: the account has no key to inject, so the request is answered here,
+     * with why in the error shape agy shows, and the guest's proof never reaches Google.
+     */
+    @Test void aGoogleAccountsKeyRequestIsAnsweredWithWhyAndNeverSent() throws Exception {
+        geminiConfig = GEMINI_CONFIG.replace("  default: outer", "    home:\n      type: google\n  default: outer");
+        geminiAccount = "home";
+        serve("");
+        var proof = ProofTestSupport.token("gemini", "gemini-");
+        received = new CompletableFuture<>();
+        var options = new RequestOptions().setMethod(HttpMethod.POST)
+                .setServer(SocketAddress.inetSocketAddress(proxy.mitmPort(), "127.0.0.1"))
+                .setHost(GEMINI).setPort(443).setURI("/v1beta/models/m:generateContent");
+        var answer = client.request(options).compose(req -> req.putHeader("x-goog-api-key", proof)
+                        .putHeader("Content-Type", "application/json").send(GEMINI_BODY))
+                .compose(resp -> resp.body().map(b -> resp.statusCode() + " " + b))
+                .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        assertTrue(answer.startsWith("403 "), answer);
+        var error = JqValues.parseStrict(answer.substring(4)).path("error");
+        assertEquals("PERMISSION_DENIED", error.path("status").asText());
+        var message = error.path("message").asText();
+        assertTrue(message.contains("gemini account 'home', a Google account"), message);
+        assertTrue(message.contains("isx account set outer-instance gemini="), message);
+        assertTrue(message.contains("isx shell outer-instance"), message);
+        assertFalse(received.isDone(), "nothing may be sent to Google, the proof least of all");
+
+        // A key of the guest's own is not isx's to refuse
+        assertEquals("gemini-inner-key", request(false, GEMINI, "x-goog-api-key", "gemini-inner-key").googleKey());
     }
 
     @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})

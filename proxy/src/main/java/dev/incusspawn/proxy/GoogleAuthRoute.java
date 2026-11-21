@@ -149,6 +149,11 @@ final class GoogleAuthRoute {
         enabled = GoogleAccounts.enabledBy(tree);
     }
 
+    /** Whether some {@code gemini} account is a Google one, as of the last config. */
+    boolean enabled() {
+        return enabled;
+    }
+
     boolean handles(String domain) {
         return enabled && GoogleAccounts.DOMAINS.contains(domain);
     }

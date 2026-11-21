@@ -449,6 +449,14 @@ public class MitmProxy {
         if (instance != null && !instance.bakedIdentities().isEmpty()) {
             refuseIfUnservable(state, instance, domain);
         }
+        if (instance != null && !proven.isEmpty() && googleAuth.enabled()) {
+            // A sign-in account holds no credential to put in place of the proof (#2443); only
+            // while one is configured, so every other proven request pays one field read
+            dev.incusspawn.config.AccountSelection.refuseSignInAccount(state.configTree(), state.setupsByNamespace(),
+                    instance.instanceName(), instance.accountsByNamespace(),
+                    dev.incusspawn.config.AccountSelection.namespacesForDomain(state.namespacesByDomain(), domain),
+                    proven);
+        }
         if (instance == null || instance.usesDefaults()) {
             return new RequestContext(domain, caller, state.credentials(), state.routing(), true, flow,
                     inheritedProofs(state, state.credentials(), domain, proven), proven);
@@ -1444,6 +1452,9 @@ public class MitmProxy {
                 return;
             }
             handleApiRequest(clientReq, ctx, started);
+        } catch (dev.incusspawn.config.AccountSelection.SignInAccountException e) {
+            ProxyLog.warn("Refusing " + domain + " for " + describe(proof.caller()) + refusal(e));
+            refuseAsApi(clientReq, 403, "PERMISSION_DENIED", e.getMessage());
         } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
                  | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
             ProxyLog.warn("Refusing " + domain + " for " + describe(proof.caller()) + refusal(e));
@@ -1451,6 +1462,26 @@ public class MitmProxy {
         } catch (RuntimeException e) {
             ProxyLog.error("Refusing " + domain + " for " + describe(proof.caller()) + refusal(e));
             CallerCheck.refuse(clientReq, 502, "Internal proxy error");
+        }
+    }
+
+    /**
+     * Refuses a request in the error shape the model APIs share ({@code error.message}, with
+     * Google's {@code code} and {@code status}), so the tool that sent it shows the reason rather
+     * than a bare status. Nothing was sent upstream.
+     */
+    private static void refuseAsApi(HttpServerRequest req, int status, String reason, String message) {
+        req.resume();
+        var resp = req.response();
+        if (resp.ended() || resp.closed()) return;
+        var body = io.hyperfoil.tools.jjq.value.JqObject.builder(1).put("error",
+                io.hyperfoil.tools.jjq.value.JqObject.builder(3)
+                        .put("code", status).put("message", message).put("status", reason).build()).build();
+        try {
+            resp.setStatusCode(status).putHeader("Content-Type", "application/json; charset=utf-8")
+                    .end(io.hyperfoil.tools.jjq.value.JqValues.toPrettyJsonString(body) + "\n");
+        } catch (IllegalStateException ignored) {
+            // the client went away meanwhile
         }
     }
 

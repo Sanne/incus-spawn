@@ -73,7 +73,7 @@ Namespaces with no Java class at all were already safe: they land in `SpawnConfi
 A `gemini` account of `type: google` holds no key: its credential is the Google sign-in Antigravity CLI makes through the proxy, kept in `~/.config/incus-spawn/gemini/<account>/session.json` (`GoogleSessionStore`), as a ChatGPT session is for `openai`.
 `GeminiSetup.ACCOUNT_SHAPE` judges such an account usable with no key and answers `credentialOutsideConfig` for it, which is the one hook `ToolProxyResolver.missingSecrets` and `findUnresolved` need: neither a branch check nor the proxy's startup report calls it incomplete for lacking `apiKey`.
 `isx init` offers it beside the key through `ToolSetup.hostedSignIn`, a declaration, so no step branches on the namespace; `describeAccount` names the signed-in email, never a token.
-Which mode the build baked is the tool's baked identity, so a pin across modes is reconciled like a GitHub re-point (design/proxy.md "Antigravity CLI's Google sign-in stays on the host").
+Which mode the build baked is the namespace's baked identity, declared by `GeminiSetup` for agy, so a pin across modes is reconciled like a GitHub re-point (design/proxy.md "Antigravity CLI's Google sign-in stays on the host").
 
 **How the proxy tells callers apart.**
 One shared proxy on `DEFAULT_MITM_PORT` still serves every instance, but it now identifies the caller by source address.

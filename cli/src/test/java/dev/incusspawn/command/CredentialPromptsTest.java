@@ -153,7 +153,7 @@ class CredentialPromptsTest {
         assertEquals("", saved("gemini.accounts.default.apiKey"));
         assertEquals("default", saved("gemini.default"));
         assertTrue(prompts.conversation().stream().anyMatch(l -> l.contains("Google account")), prompts.conversation().toString());
-        assertTrue(printed.contains("agy runs in an instance"), printed);
+        assertTrue(printed.contains("prints a Google sign-in link in that terminal"), printed);
         assertTrue(dev.incusspawn.config.AccountResolver.usableAccountNames(SpawnConfig.load(), "gemini").contains("default"));
 
         // A second, keyed account beside it, and the Google one keeps its type

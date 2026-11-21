@@ -1100,13 +1100,24 @@ Everything else to the four hosts is relayed untouched; interception is per host
 
 **The build derives the mode from the account.**
 For a Google account the build leaves `modelProvider` out of agy's settings, since agy exits on `modelProvider: gemini` with no key, and installs the login script; for an API key account it writes `modelProvider: gemini` and removes both.
-That is a baked identity (`AntigravitySetup.bakedAccountIdentity`: `google` or `api-key`), re-derived on a built instance when its account moves across modes, since agy reads both files when it starts.
+That is a baked identity (`google` or `api-key`, `AntigravitySetup.accountMode`), re-derived on a built instance when its account moves across modes, since agy reads both files when it starts.
+`GeminiSetup` declares it (`bakedAccountIdentity`, `rebakeForAccount`), because account selection asks a namespace's owner and agy, which declares no proxy entry, is never asked.
+Its re-derivation does nothing in an image without agy, so a Gemini CLI image stamped with the mode costs one check on a move and nothing else.
+Declared on `AntigravitySetup` itself at first, it was never asked: a build stamped nothing and `isx account set` left agy in its old mode (`AntigravityAccountModeTest`, whose first test fails for any tool that can re-derive but is not what its namespace finds).
+**What this gives up:** templates and instances built before that have no `gemini` stamp, so they keep the mode they were built with until they are rebuilt (docs/dev/MIGRATIONS.md).
 A `type: google` account holds no key, so `GeminiSetup.ACCOUNT_SHAPE` judges it usable without one and `AccountShape.credentialOutsideConfig` keeps `CredentialCheck` and the proxy's startup report from calling it incomplete.
 `isx init` offers it beside the key (`ToolSetup.hostedSignIn`), and `isx account list` describes it by its session's email, never its tokens.
 Gemini CLI, Pi and opencode read the API key alone, so an instance on a Google account gives them nothing to spend.
 
+**A key request on a Google account is answered, never sent.**
+A proven request to `generativelanguage.googleapis.com` from an instance whose account is a Google one has no key to carry, so without this it would leave with the guest's proof and come back from Google as an invalid key.
+The proxy answers it with a 403 in the model APIs' error shape (`error.message`, Google's `code` and `status`), whose text says which account the instance uses and what fixes it (`AccountSelection.refuseSignInAccount`, worded by `ToolSetup.hostedSignInRefusal`).
+It is decided by the account, never by the tool that sent it, so it holds for Gemini CLI, Pi and opencode as for agy still set up for a key.
+A quota refusal on a real key, such as an instance pinned to the wrong key account, is Google's own answer and is relayed as it is: nothing in it says the account was the wrong one.
+
 **Testing:** `GoogleAuthRouteTest` runs the real proxy against a stub of the four hosts with the requests the probe recorded: the exchange that becomes a session and the placeholders it answers, a key account's and a stranger's exchange relayed untouched, an oversized one refused, the macOS window and its refusals, the proof matrix on the backend, refused paths and shapes, refreshes answered and relayed, Google's refusals, the local revocation, and a minted digest forgotten by a restart.
 `AntigravitySetupTest` runs the login script in a shell against each state of the token file.
+`AntigravityAccountModeTest` goes through the lookups a build, a branch and `isx account set` use, and `CredentialProofProxyTest` holds the refusal of a key request on a Google account.
 Nothing here was tried against Google or a real Antigravity plan, and the integration is experimental until it is.
 
 ## Credential Isolation
