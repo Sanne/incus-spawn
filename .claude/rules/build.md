@@ -269,6 +269,9 @@ Cached files under an older isx's names (a 31-bit `hashCode`, `OLD_NAME`) are sw
 Only a download with a `sha256` continues another run's file; a resumed file that fails the checksum is fetched once more from byte 0, and never returned.
 Each use of the cache sweeps old `download-*.tmp` files and partial files abandoned for a week; see design/host-resources.md "A download survives the process that started it".
 A body that delivers no bytes for `bodyIdleTimeout` (about 60 s, re-armed on each chunk) is cancelled as a connection failure, so the retry and resume path takes over and the holder of the URL's lock ends or retries instead of stalling its waiters (#2417).
+A download waiting for another reports that one's progress from its partial file and record (`Listener.anotherReceived`), which `TransferProgress` shows as `another isx download: ...`.
+`BuildDownloads.plan` lists a build's downloads (base image, a VM's disk image, each unbuilt layer's `ToolSetup.pinnedDownloads`), and `BackgroundDownloads` fetches them ahead, silently, through `DownloadCache.download` (#2411).
+A tool that downloads a pinned file through the cache declares it in `pinnedDownloads`, or it is not fetched ahead; see design/host-resources.md "A build's downloads can start ahead of it".
 Errors name the failing hop's host.
 `file://` goes only through `downloadAllowingLocalFile()`, which only base images use; see design/host-resources.md "Host-side downloads reach only remote hosts".
 A `DownloadCache.Listener` observes a download (cache verification, bytes against `Content-Length`, checksum).

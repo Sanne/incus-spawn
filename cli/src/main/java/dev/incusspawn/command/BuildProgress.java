@@ -148,6 +148,10 @@ final class BuildProgress {
         private volatile long bytes;
         private volatile long total = -1;
         private volatile boolean fetched;
+        // Whether this one watches another download it waits for, since when, and how far that one was then
+        private volatile boolean watching;
+        private volatile long watchStart;
+        private volatile long watchFrom;
 
         @Override
         public void verifyingCached() {
@@ -183,7 +187,23 @@ final class BuildProgress {
 
         @Override
         public void waitingForAnother() {
+            // A new wait: its rate counts from its own first report, never an earlier wait's
+            watching = false;
             phase = "waiting for another isx process downloading it";
+        }
+
+        /**
+         * The download this one waits for, fetched ahead (#2411) or by another process: shown as
+         * its own transfer from where it is, its rate counted from when this one began to watch.
+         */
+        @Override
+        public void anotherReceived(long bytes, long total) {
+            if (!watching) {
+                watchStart = System.nanoTime();
+                watchFrom = bytes;
+                watching = true;
+            }
+            phase = "another isx download: " + describeTransfer(bytes, watchFrom, total, System.nanoTime() - watchStart);
         }
 
         /** Whether the body was fetched (or copied from a {@code file://} URL) rather than reused from the cache. */

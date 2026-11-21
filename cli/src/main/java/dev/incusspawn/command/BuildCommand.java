@@ -1869,10 +1869,22 @@ public class BuildCommand extends BaseCommand {
         var releases = baseImageReleases(rootDef.getImageUrl());
         if (releases == null) return BaseImage.of(rootDef); // not a releases-tracked base image
         // Resolved once per invocation, however many templates are built from scratch on it
-        return trackedBaseImages.computeIfAbsent(rootDef.getName(), name -> latestBaseImage(rootDef, releases));
+        return trackedBaseImages.computeIfAbsent(rootDef.getName(), name -> latestBaseImage(rootDef, releases, false));
     }
 
-    private static BaseImage latestBaseImage(ImageDef rootDef, BaseImageReleases releases) {
+    /**
+     * As {@link #resolveTrackedBaseImage}, saying nothing: for a plan made while a question may be
+     * on screen (#2411). The build resolves it again, and says then what it found.
+     */
+    static BaseImage trackedBaseImageQuietly(ImageDef rootDef) {
+        if (rootDef.isPinned()) return BaseImage.of(rootDef);
+        var releases = BaseImageReleases.fromImageUrl(rootDef.getImageUrl());
+        return releases == null ? BaseImage.of(rootDef) : latestBaseImage(rootDef, releases, true);
+    }
+
+    private static BaseImage latestBaseImage(ImageDef rootDef, BaseImageReleases releases, boolean quiet) {
+        java.util.function.Consumer<String> note = quiet ? message -> {} : BuildOutput::note;
+        java.util.function.Consumer<String> step = quiet ? message -> {} : BuildOutput::step;
         var builtin = BaseImage.of(rootDef);
         var fallback = "; using built-in base image (" + builtin.tag() + ").";
         try {
@@ -1883,24 +1895,24 @@ public class BuildCommand extends BaseCommand {
             var checksums = releases.fetchChecksums(latest, rootDef.getImageUrl(), rootDef.getVmImageUrl());
             var arch = ImageDef.hostArch();
             if (checksums == null || !checksums.container().containsKey(arch)) {
-                BuildOutput.note("Could not fetch checksums for " + latest.tag() + fallback);
+                note.accept("Could not fetch checksums for " + latest.tag() + fallback);
                 return builtin;
             }
-            BuildOutput.step("Tracking latest base image: "
+            step.accept("Tracking latest base image: "
                     + (builtin.tag() != null ? builtin.tag() + " -> " : "") + latest.tag() + ".");
             // A release need not carry the VM image this definition names (the one built from
             // scratch is only in releases from #1255 on): the VM then stays on the built-in
             // release, tag and checksum together, never the built-in checksum under the newer tag.
             if (rootDef.getVmImageUrl() == null || !checksums.vm().containsKey(arch)) {
                 if (rootDef.getVmImageUrl() != null) {
-                    BuildOutput.note(latest.tag() + " has no VM image for this definition; a VM build stays on "
+                    note.accept(latest.tag() + " has no VM image for this definition; a VM build stays on "
                             + builtin.vmTag() + ".");
                 }
                 return new BaseImage(latest.tag(), checksums.container(), builtin.vmTag(), builtin.vmSha256());
             }
             return new BaseImage(latest.tag(), checksums.container(), latest.tag(), checksums.vm());
         } catch (IOException e) {
-            BuildOutput.note("Could not read the base-image releases (" + e.getMessage() + ")" + fallback);
+            note.accept("Could not read the base-image releases (" + e.getMessage() + ")" + fallback);
             return builtin;
         }
     }

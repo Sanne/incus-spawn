@@ -688,7 +688,12 @@ public class ImageDef extends DefinitionOrigin {
 
     /** {@code imageUrl} as isx downloads it: {@code {arch}} is the host's, {@code {tag}} is {@code tag} when set. */
     public static String resolveImageUrl(String imageUrl, String tag) {
-        var resolved = imageUrl.replace("{arch}", hostArch());
+        return resolveImageUrl(imageUrl, tag, hostArch());
+    }
+
+    /** {@code imageUrl} for a build on {@code arch} ({@code x86_64}, {@code aarch64}), {@code {tag}} as above. */
+    public static String resolveImageUrl(String imageUrl, String tag, String arch) {
+        var resolved = imageUrl.replace("{arch}", arch);
         return tag != null ? resolved.replace("{tag}", tag) : resolved;
     }
 

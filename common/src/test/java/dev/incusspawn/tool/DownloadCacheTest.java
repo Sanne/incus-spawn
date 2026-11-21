@@ -818,6 +818,72 @@ class DownloadCacheTest {
     }
 
     @Test
+    void aDownloadWaitingForAnotherShowsHowFarThatOneHasGot(@TempDir Path cacheDir) throws Exception {
+        // The holder sends half the body, then waits until the waiter has seen it
+        var seenHalf = new java.util.concurrent.CountDownLatch(1);
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/asset", ex -> {
+            V1.forEach(ex.getResponseHeaders()::add);
+            ex.sendResponseHeaders(200, BODY.length);
+            ex.getResponseBody().write(BODY, 0, BODY.length / 2);
+            ex.getResponseBody().flush();
+            try {
+                seenHalf.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            ex.getResponseBody().write(BODY, BODY.length / 2, BODY.length - BODY.length / 2);
+            ex.close();
+        });
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/asset";
+            var sha = sha256Of(BODY);
+            var holderStarted = new java.util.concurrent.CountDownLatch(1);
+            var holder = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try {
+                    return new DownloadCache(cacheDir, uri -> false).downloadAllowingLocalFile(url, sha,
+                            new DownloadCache.Listener() {
+                                @Override
+                                public void received(long bytes, long total) {
+                                    if (bytes > 0) holderStarted.countDown();
+                                }
+                            });
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+            assertTrue(holderStarted.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            var reports = new java.util.concurrent.CopyOnWriteArrayList<long[]>();
+            var waited = new java.util.concurrent.atomic.AtomicBoolean();
+            var result = new DownloadCache(cacheDir, uri -> false).downloadAllowingLocalFile(url, sha,
+                    new DownloadCache.Listener() {
+                        @Override
+                        public void waitingForAnother() {
+                            waited.set(true);
+                        }
+
+                        @Override
+                        public void anotherReceived(long bytes, long total) {
+                            reports.add(new long[] {bytes, total});
+                            if (bytes == BODY.length / 2) seenHalf.countDown();
+                        }
+                    });
+            assertTrue(waited.get());
+            assertEquals(holder.get(30, java.util.concurrent.TimeUnit.SECONDS), result);
+            assertFalse(reports.isEmpty(), "the waiter saw the other download's progress");
+            assertEquals(BODY.length / 2, reports.getFirst()[0]);
+            assertEquals(BODY.length, reports.getFirst()[1], "with the length the holder's record names");
+            var count = reports.size();
+            Thread.sleep(DownloadCache.WATCH_INTERVAL.toMillis() * 3);
+            assertEquals(count, reports.size(), "nothing is reported once the wait has ended");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void withoutAChecksumAWaitNeverTakesAFileFromBeforeItAsked(@TempDir Path cacheDir) throws Exception {
         // The process it waited for failed, so the file under the name is an earlier download's
         var requests = new AtomicInteger();
