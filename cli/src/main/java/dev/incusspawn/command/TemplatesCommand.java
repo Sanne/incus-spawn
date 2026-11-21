@@ -276,12 +276,20 @@ public class TemplatesCommand extends BaseCommand {
                 description = "With --from, output format: table (default), plain or json, with the check's findings")
         String format;
 
+        @Option(name = "full", hasValue = false,
+                description = "Start from every field, each with a note and commented out, instead of the short file")
+        boolean full;
+
         /** Where {@code --from -} reads, which a test replaces. */
         Supplier<InputStream> stdin = () -> System.in;
 
         @Override
         protected CommandResult doExecute() throws Exception {
             var templateName = name;
+            if (from != null && full) {
+                BuildOutput.error("--full starts a file in the editor, so it cannot go with --from.");
+                return CommandResult.valueOf(1);
+            }
             if (from == null && (replace || format != null)) {
                 BuildOutput.error((replace ? "--replace" : "--format") + " needs --from.");
                 return CommandResult.valueOf(1);
@@ -317,7 +325,7 @@ public class TemplatesCommand extends BaseCommand {
                 }
                 try {
                     makeDirectory(dir);
-                    Files.writeString(targetPath, SKELETON);
+                    Files.writeString(targetPath, full ? FULL_SKELETON : SKELETON);
                 } catch (IOException e) {
                     BuildOutput.error("Failed to create template file: " + e.getMessage());
                     return CommandResult.valueOf(1);
@@ -328,7 +336,7 @@ public class TemplatesCommand extends BaseCommand {
 
             try {
                 var dir = project ? ImageDef.projectImagesDir() : ImageDef.userImagesDir();
-                var targetPath = createTemplateFile(templateName, null, dir);
+                var targetPath = createTemplateFile(templateName, null, dir, full);
                 BuildOutput.step("Created " + targetPath);
                 if (!editLoop(targetPath, templateName, false)) return CommandResult.valueOf(1);
             } catch (IOException e) {
@@ -768,6 +776,10 @@ public class TemplatesCommand extends BaseCommand {
     // ── shared helpers ──────────────────────────────────────────────────────────
 
     public static Path createTemplateFile(String name, String parent, Path dir) throws IOException {
+        return createTemplateFile(name, parent, dir, false);
+    }
+
+    public static Path createTemplateFile(String name, String parent, Path dir, boolean full) throws IOException {
         // The name becomes the filename, so it must be one a template may have before it touches the disk
         var invalid = newTemplateNameProblem(name);
         if (invalid != null) throw new IOException(invalid);
@@ -775,9 +787,9 @@ public class TemplatesCommand extends BaseCommand {
         if (Files.exists(targetPath)) {
             throw new IOException("File already exists: " + targetPath);
         }
-        var skeleton = SKELETON.replace("tpl-CHANGEME", name);
+        var skeleton = (full ? FULL_SKELETON : SKELETON).replace("tpl-CHANGEME", name);
         if (parent != null && !parent.isEmpty()) {
-            skeleton = skeleton.replace("# parent: tpl-minimal", "parent: " + parent);
+            skeleton = skeleton.replace(full ? "# parent: tpl-minimal" : "parent: tpl-minimal", "parent: " + parent);
         }
         try {
             store(targetPath, skeleton, false);
@@ -932,7 +944,18 @@ public class TemplatesCommand extends BaseCommand {
         }
     }
 
+    /** What a new template starts as: the few fields everyone sets, and where the rest are described. */
     static final String SKELETON = """
+            # yaml-language-server: $schema=https://isx.run/schema/template.json
+            # Every other field, with a note each: https://isx.run/docs/template-example
+
+            name: tpl-CHANGEME
+            description: My custom template
+            parent: tpl-minimal
+            """;
+
+    /** {@code isx templates new --full}, and the example page of the docs, which a test holds to the same text. */
+    static final String FULL_SKELETON = """
             # yaml-language-server: $schema=https://isx.run/schema/template.json
             # Template definition for incus-spawn: every field isx reads, one note each.
             # Only 'name' is required; uncomment what you need.

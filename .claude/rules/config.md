@@ -81,7 +81,9 @@ Add the tag to its `RELEASES` and to the CI loop whenever a release changes the 
 What only some releases write (the `accounts:` layout since v0.3.9, the `mcp:` section of v0.3.10 to v0.3.12, v0.4.0's hand-written sections) is a fixture of its own, from a `Generate*.java` beside the generator that the script runs only against a release with the API it calls, listed in the test's `RELEASE_FIXTURES`; `everyCommittedFixtureIsDeclaredForAListedRelease` fails for a committed fixture not declared there.
 v0.3.7 still writes the old `host-path` key, beside `host-paths` naming the same path, which must load as one.
 
-**The new-template skeleton is the format's reference** (#1386): `TemplatesCommand.SKELETON`, which `isx templates new` and the TUI write, shows every field `ImageDef` reads, each with a one-line note.
+**The full new-template skeleton is the format's reference** (#1386): `TemplatesCommand.FULL_SKELETON`, which `isx templates new --full` writes, shows every field `ImageDef` reads, each with a one-line note.
+Plain `isx templates new` and the TUI write the short `SKELETON` instead (name, description, parent and a link), since the commented lines were deleted every time.
+`docs/TEMPLATE-EXAMPLE.md` (isx.run/docs/template-example) holds the full text, and `TemplateSkeletonTest` fails when the two differ, so a changed line goes in both.
 A new `ImageDef` field, or a new key in one of its entries, gets a line there; `TemplateSkeletonTest` takes the field names the mappings bind (`@JqName`, else the field's own) and the env and skills converters' keys, and fails without it.
 It also goes in `ImageDefTest`'s `FINGERPRINTED`, with a value that must change `contentFingerprint()` (added only when set, so no existing template rebuilds: the test pins the fingerprint of a definition without it), or in `NOT_FINGERPRINTED` with the reason it never reaches the image; `everyDefinitionKeyIsFingerprintedOrDeliberatelyLeftOut` fails without either (#1571).
 The skeleton's examples, uncommented, must stay a valid template.

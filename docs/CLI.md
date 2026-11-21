@@ -537,9 +537,12 @@ The name is used exactly as given, and the file is named after it: `isx template
 isx refuses a name whose file is the one an override of a built-in template uses, such as `dev`.
 Without a name, it writes `new-template.yaml` for you to name in the editor.
 
+The file holds a name, a description, a parent and a link to [a template with every field](TEMPLATE-EXAMPLE.md), and `--full` writes that example instead.
+
 ```shell
 isx templates new [<name>]
 isx templates new <name> --from <file>
+isx templates new [<name>] --full
 ```
 
 With `--from`, it takes the whole definition from a file, or from stdin for `-`, and does not open an editor.
@@ -550,6 +553,7 @@ It never prompts, so a script or an agent can run it.
 | Option | What it does |
 |--------|--------------|
 | `--project` | Create it in the project-local directory (`.incus-spawn/images/`) |
+| `--full` | Start from every field, each with a note and commented out, instead of the short file |
 | `--from <file>` | Take the whole definition from this file, or `-` for stdin, check it and store it |
 | `--replace` | With `--from`, replace the template's own file when it has one; isx never replaces a built-in template or a template defined in another file |
 | `--format=<format>` | With `--from`, `table` (the default), `plain` or `json`; see [Template check fields](#template-check-fields) |

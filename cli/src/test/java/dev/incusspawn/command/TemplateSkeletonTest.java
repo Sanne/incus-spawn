@@ -51,7 +51,7 @@ class TemplateSkeletonTest {
 
     @Test
     void everyFieldTheParserReadsIsInTheSkeleton() {
-        var tree = JqYaml.parse(uncommented(TemplatesCommand.SKELETON));
+        var tree = JqYaml.parse(uncommented(TemplatesCommand.FULL_SKELETON));
         var missing = new ArrayList<String>();
         absentFields(ImageDef.class, tree, "", missing);
         // Fields bound by a converter name their entries' keys there, not in Java fields.
@@ -65,7 +65,7 @@ class TemplateSkeletonTest {
     @Test
     void theSkeletonsExamplesUncommentedAreAValidTemplate(@TempDir Path dir) throws Exception {
         var file = dir.resolve("all.yaml");
-        Files.writeString(file, uncommented(TemplatesCommand.SKELETON));
+        Files.writeString(file, uncommented(TemplatesCommand.FULL_SKELETON));
         var result = TemplateValidator.validate(file, Map.of("tpl-minimal", new ImageDef()));
         assertEquals(List.of(), result.errors());
         assertFalse(ImageDef.parseFile(file).getRepos().isEmpty());
@@ -75,6 +75,27 @@ class TemplateSkeletonTest {
     void theSkeletonStartsWithTheSchemaModelineEditorsRead() {
         assertEquals(dev.incusspawn.config.SchemaModeline.TEMPLATE.line(),
                 TemplatesCommand.SKELETON.lines().findFirst().orElseThrow());
+    }
+
+    @Test
+    void theShortSkeletonIsAValidTemplateAndPointsToTheExample(@TempDir Path dir) throws Exception {
+        var file = TemplatesCommand.createTemplateFile("tpl-short", null, dir);
+        var text = Files.readString(file);
+        assertTrue(text.contains("https://isx.run/docs/template-example"), text);
+        assertEquals(List.of(), text.lines().filter(l -> l.startsWith("#") && !l.startsWith("# yaml-language-server:")
+                && !l.contains("template-example")).toList(), "one comment, the link, and no commented-out fields");
+        var def = ImageDef.parseFile(file);
+        assertEquals("tpl-minimal", def.getParent());
+        assertEquals(List.of(), TemplateValidator.validate(file, Map.of("tpl-minimal", new ImageDef())).errors());
+    }
+
+    @Test
+    void theFullSkeletonIsWrittenOnRequestAndKeepsTheNameAndParent(@TempDir Path dir) throws Exception {
+        var file = TemplatesCommand.createTemplateFile("tpl-big", "tpl-java", dir, true);
+        var text = Files.readString(file);
+        assertTrue(text.contains("# packages:"), text);
+        assertEquals("tpl-big", ImageDef.parseFile(file).getName());
+        assertEquals("tpl-java", ImageDef.parseFile(file).getParent());
     }
 
     @Test
