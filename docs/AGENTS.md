@@ -346,6 +346,7 @@ On Linux, the proxy does not keep a sign-in made on an API key account, so Googl
 
 `isx account set <instance> gemini=<account>` moves `agy` between an API key account and a Google account in place.
 Then quit `agy` and start it again from a new `isx shell`, since it reads its settings and its sign-in when it starts.
+`isx account set` says so when a running instance has `agy`.
 
 If `agy` still sends API key requests on a Google account, the proxy refuses them, says why, and sends nothing to Google.
 If that refusal repeats after a restart, rebuild the template.

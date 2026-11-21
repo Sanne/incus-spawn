@@ -281,24 +281,24 @@ public final class InstanceLifecycle {
      * printed from a background thread would be drawn over and lost, or a branch's, which the
      * TUI keeps in its warning log (#1646).
      */
-    public static void reconcileAccountIdentities(IncusClient incus, String name,
-                                                  Output out) {
-        reconcileAccountIdentities(incus, name, null, SpawnConfig.load(), null, out);
+    public static List<String> reconcileAccountIdentities(IncusClient incus, String name,
+                                                          Output out) {
+        return reconcileAccountIdentities(incus, name, null, SpawnConfig.load(), null, out);
     }
 
     /**
      * As above, from the instance as the caller already read it -- the shell path's, which would
      * otherwise read it again. Its account pins, stamps and network mode are all this looks at.
      */
-    public static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance,
-                                                  Output out) {
-        reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, out);
+    public static List<String> reconcileAccountIdentities(IncusClient incus, String name, JqValue instance,
+                                                          Output out) {
+        return reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, out);
     }
 
-    static void reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,
-                                           Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
-                                           Output out) {
-        reconcileAccountIdentities(incus, name, null, config, knownSetups, out);
+    static List<String> reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,
+                                                   Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
+                                                   Output out) {
+        return reconcileAccountIdentities(incus, name, null, config, knownSetups, out);
     }
 
     /**
@@ -306,17 +306,21 @@ public final class InstanceLifecycle {
      * @param knownSetups the credential namespaces' tools, when the caller has them -- the TUI
      *                    passes its own so the tool definitions are not re-read from disk;
      *                    {@code null} decides against the built-in ones that can re-derive
+     * @return what a person has to restart inside the instance for a re-derived identity to reach
+     *         a program already running there ({@link dev.incusspawn.tool.ToolSetup#rebakeForAccount}),
+     *         empty when nothing does
      */
-    static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance, SpawnConfig config,
-                                           Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
-                                           Output out) {
+    static List<String> reconcileAccountIdentities(IncusClient incus, String name, JqValue instance, SpawnConfig config,
+                                                   Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
+                                                   Output out) {
         // Whether this method has a step live: a failure before one started leaves the caller's alone
         var live = new boolean[1];
+        var restarts = new java.util.ArrayList<String>();
         try {
             var plan = instance != null
                     ? AccountSelection.identityReconcile(config, instance, knownSetups)
                     : AccountSelection.identityReconcile(config, incus, name, knownSetups);
-            if (plan.isEmpty()) return;
+            if (plan.isEmpty()) return restarts;
 
             var container = new Container(incus, name, out);
             var setups = knownSetups != null ? knownSetups : AccountSelection.rederivableSetups();
@@ -353,8 +357,9 @@ public final class InstanceLifecycle {
                 if (setup == null) return;
                 out.stepStart("Updating " + namespace + " identity for account '" + account + "'");
                 live[0] = true;
-                setup.rebakeForAccount(container, account);
+                var restart = setup.rebakeForAccount(container, account);
                 out.stepDone(null);
+                if (restart != null) restarts.add(restart);
                 live[0] = false;
                 updates.put(Metadata.accountIdentityKey(namespace), setup.bakedAccountIdentity(config, account));
             });
@@ -366,6 +371,7 @@ public final class InstanceLifecycle {
             out.warn("could not update credential identity for " + name
                     + ": " + e.getMessage());
         }
+        return restarts;
     }
 
     /**
@@ -427,15 +433,16 @@ public final class InstanceLifecycle {
      * @param setups the credential namespaces' tools ({@link AccountSelection#namespaceSetups});
      *               the TUI passes those it already loaded, so nothing here re-reads the tool
      *               definitions from disk
-     * @return the instance's pins afterwards
+     * @return the instance's pins afterwards, and what a person has to restart inside it for the
+     *         change to reach a program already running there
      * @throws AccountSelection.InvalidSelectionException  when the built instance cannot honour it
      * @throws dev.incusspawn.config.AccountResolver.UnknownAccountException  for an unknown or
      *         incomplete account
      */
-    public static Map<String, String> changeAccounts(IncusClient incus, String instance, SpawnConfig config,
-                                                     Map<String, dev.incusspawn.tool.ToolSetup> setups,
-                                                     Map<String, String> changes,
-                                                     Output out) {
+    public static AccountChange changeAccounts(IncusClient incus, String instance, SpawnConfig config,
+                                               Map<String, dev.incusspawn.tool.ToolSetup> setups,
+                                               Map<String, String> changes,
+                                               Output out) {
         var current = AccountSelection.read(incus, instance);
         var merged = checkAccountChange(incus, instance, config, setups, changes, current);
 
@@ -447,19 +454,28 @@ public final class InstanceLifecycle {
         changes.forEach((ns, account) -> {
             if (account == null) origins.remove(ns); else origins.put(ns, dev.incusspawn.config.AccountOrigin.EXPLICIT);
         });
-        if (merged.equals(current) && origins.equals(currentOrigins)) return merged;
+        if (merged.equals(current) && origins.equals(currentOrigins)) return new AccountChange(merged, List.of());
         AccountSelection.stamp(incus, instance, merged, origins, current);
-        if (merged.equals(current)) return merged; // only who chose it changed: nothing to re-derive
+        // Only who chose it changed: nothing to re-derive
+        if (merged.equals(current)) return new AccountChange(merged, List.of());
         dev.incusspawn.proxy.ProxyService.signalAccountRefresh();
 
         // The token swaps live, but anything the build *baked* from the old account -- the
         // git identity -- would still be the old one, so the instance would push with one
         // account and commit as another.
+        // A stopped one is reconciled by its next start, before anything in it runs again
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(instance))) {
-            reconcileAccountIdentities(incus, instance, config, setups, out);
+            return new AccountChange(merged, reconcileAccountIdentities(incus, instance, config, setups, out));
         }
-        return merged;
+        return new AccountChange(merged, List.of());
     }
+
+    /**
+     * What {@link #changeAccounts} did: the instance's pins afterwards, and what a person has to
+     * restart inside it for the change to reach a program already running there, as each tool
+     * that re-derived said it ({@link dev.incusspawn.tool.ToolSetup#rebakeForAccount}).
+     */
+    public record AccountChange(Map<String, String> pins, List<String> restarts) {}
 
     /**
      * Make {@code name} answer exec before a shell or command runs in it: start it if stopped,

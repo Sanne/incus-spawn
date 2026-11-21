@@ -1431,7 +1431,8 @@ class CredentialSetup {
     void refreshIdentities(List<String> instances) {
         var incus = incus();
         for (var instance : instances) {
-            InstanceLifecycle.reconcileAccountIdentities(incus, instance, new dev.incusspawn.util.Output() {
+            // Each names its instance, so it is said as it is
+            var restarts = InstanceLifecycle.reconcileAccountIdentities(incus, instance, new dev.incusspawn.util.Output() {
                 @Override
                 public void step(String msg) {
                     BuildOutput.step(instance + ": " + msg);
@@ -1458,6 +1459,7 @@ class CredentialSetup {
                     BuildOutput.abandonStep();
                 }
             });
+            restarts.forEach(BuildOutput::warn);
         }
     }
 

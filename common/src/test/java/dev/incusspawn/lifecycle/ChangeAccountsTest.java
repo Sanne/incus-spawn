@@ -57,7 +57,7 @@ class ChangeAccountsTest {
     private static Map<String, String> change(FakeIncusDaemon daemon, Map<String, String> changes) throws Exception {
         var config = Jjq.spawnConfig(CONFIG);
         return InstanceLifecycle.changeAccounts(daemon.client(), NAME, config,
-                dev.incusspawn.config.AccountSelection.namespaceSetups(config), changes, RecordingOutput.QUIET);
+                dev.incusspawn.config.AccountSelection.namespaceSetups(config), changes, RecordingOutput.QUIET).pins();
     }
 
     @Test

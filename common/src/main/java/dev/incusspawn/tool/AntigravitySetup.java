@@ -324,12 +324,15 @@ public class AntigravitySetup implements ToolSetup {
     }
 
     /**
-     * Puts agy in the mode {@code accountName} gives, on a built instance that has it; an instance
+     * Puts agy in the Google sign-in mode or the API key mode, on a built instance that has it; an instance
      * without agy is left alone, since the {@code gemini} stamp covers Gemini CLI's images too.
+     *
+     * @return whether the instance has agy, so its mode was rewritten
      */
-    static void rebakeIfInstalled(Container container, String accountName) {
-        if (!container.sh("[ -e " + COMMAND + " ]").success()) return;
-        configure(container, GoogleAccounts.isGoogleAccount(SpawnConfig.load().tree(), accountName));
+    static boolean rebakeIfInstalled(Container container, boolean googleSignIn) {
+        if (!container.sh("[ -e " + COMMAND + " ]").success()) return false;
+        configure(container, googleSignIn);
+        return true;
     }
 
     @Override

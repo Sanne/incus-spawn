@@ -534,10 +534,11 @@ class UnbakedGitIdentityTest {
         int checks;
 
         @Override
-        public void rebakeForAccount(Container container, String accountName) {
+        public String rebakeForAccount(Container container, String accountName) {
             if (fail) throw new dev.incusspawn.incus.IncusException("Could not determine git identity from GitHub");
             rebaked.add(accountName);
             lacks = false;
+            return null;
         }
 
         @Override
