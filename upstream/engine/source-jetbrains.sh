@@ -38,14 +38,17 @@ _releases_json() {
 
 # Every release with both Linux downloads, oldest first.
 src_releases() {
+    local f
+    f="$(_releases_json)" || exit 1
     jq -r --arg c "$(item "$ITEM" source.code)" \
-        '.[$c][] | select(.downloads.linux.link and .downloads.linuxARM64.link) | .version' "$(_releases_json)" \
+        '.[$c][] | select(.downloads.linux.link and .downloads.linuxARM64.link) | .version' "$f" \
         | grep -E '^[0-9]+(\.[0-9]+)+$' | sort -V
 }
 
 src_released_at() {
-    local d
-    d="$(jq -r --arg c "$(item "$ITEM" source.code)" --arg v "$1" '[.[$c][] | select(.version == $v) | .date] | first // empty' "$(_releases_json)")"
+    local d f
+    f="$(_releases_json)" || exit 1
+    d="$(jq -r --arg c "$(item "$ITEM" source.code)" --arg v "$1" '[.[$c][] | select(.version == $v) | .date] | first // empty' "$f")"
     [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "no release date for $1"
     date -u -d "$d" +%s
 }
@@ -74,9 +77,10 @@ _publisher_sum() {
 }
 
 src_apply() {
-    local version="$1" entry link_x link_a sums_x sums_a sum_x sum_a f="$TREE/$TOOL_FILE" desc
+    local version="$1" json entry link_x link_a sums_x sums_a sum_x sum_a f="$TREE/$TOOL_FILE" desc
     [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "not a JetBrains version: '$version'"
-    entry="$(jq -c --arg c "$(item "$ITEM" source.code)" --arg v "$version" '[.[$c][] | select(.version == $v)] | first // empty' "$(_releases_json)")"
+    json="$(_releases_json)" || exit 1
+    entry="$(jq -c --arg c "$(item "$ITEM" source.code)" --arg v "$version" '[.[$c][] | select(.version == $v)] | first // empty' "$json")"
     [[ -n "$entry" ]] || die "JetBrains lists no release $version"
     link_x="$(jq -r '.downloads.linux.link // empty' <<<"$entry")"
     sums_x="$(jq -r '.downloads.linux.checksumLink // empty' <<<"$entry")"
@@ -85,8 +89,8 @@ src_apply() {
     [[ -n "$link_x" && -n "$sums_x" && -n "$link_a" && -n "$sums_a" ]] || die "release $version lacks a Linux download"
     [[ "$link_x" == "$(_prefix)idea-$version.tar.gz" && "$link_a" == "$(_prefix)idea-$version-aarch64.tar.gz" ]] \
         || die "release $version's links are not the expected names: $link_x $link_a"
-    sum_x="$(_publisher_sum "$link_x" "$sums_x")"
-    sum_a="$(_publisher_sum "$link_a" "$sums_a")"
+    sum_x="$(_publisher_sum "$link_x" "$sums_x")" || exit 1
+    sum_a="$(_publisher_sum "$link_a" "$sums_a")" || exit 1
     is_sha256 "$sum_x" && is_sha256 "$sum_a" || die "release $version: no publisher sum for a download"
     desc="$(_desc)"
     replace_once "$f" "$(_url x86_64)" "$link_x"

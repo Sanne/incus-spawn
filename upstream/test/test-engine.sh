@@ -229,6 +229,15 @@ T="$WORK/tampered"; rm -rf "$T"; git -C "$REPO" worktree add -q "$T" HEAD
 sed -i 's/^KERNEL_SHA256="./KERNEL_SHA256="f/' "$T/appliance/kernel/build-kernel.sh"
 "$E" check kernel "$T" > /dev/null 2>&1 && fail "check kernel passed a sum the signed file does not give"
 git -C "$REPO" worktree remove --force "$T"
+# JetBrains' products API not served (a 429 that outlasted fetch's retries): check and releases fail
+# on the download, never on jq reading the path the lost download left empty.
+mv "$FIX/http/$(http "$JB_URL")" "$WORK/jb.bak"
+for cmd in check releases; do
+    "$E" "$cmd" idea-backend > "$WORK/jb.log" 2>&1 && fail "$cmd idea-backend passed with no products API"
+    grep -qF "failed to download $JB_URL" "$WORK/jb.log" || fail "$cmd: the missing API was not what failed: $(cat "$WORK/jb.log")"
+    ! grep -qE "^jq: |no release date|lists no release" "$WORK/jb.log" || fail "$cmd: a failed API read went on to jq: $(cat "$WORK/jb.log")"
+done
+mv "$WORK/jb.bak" "$FIX/http/$(http "$JB_URL")"
 echo "check: ok"
 
 # ---- plan --------------------------------------------------------------------------------------------

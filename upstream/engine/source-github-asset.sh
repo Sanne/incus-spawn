@@ -146,7 +146,7 @@ src_apply() {
         --jq '{draft, prerelease, assets: [.assets[] | {name, digest, url: .browser_download_url}]}')"
     [[ "$(jq -r '.draft or .prerelease' <<<"$rel")" == false ]] || die "release $(_prefix)$version is a draft or a prerelease"
     for l in $(_labels); do
-        sums[$l]="$(_publisher_sum "$rel" "$l" "$version")"
+        sums[$l]="$(_publisher_sum "$rel" "$l" "$version")" || exit 1
         urls[$l]="$(_base)$version/$(_asset "$l" "$version")"
         is_sha256 "${sums[$l]}" || die "release $version: no sum for '$l'"
     done
