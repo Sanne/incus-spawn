@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The model parameter of each agent that can reach an OpenAI-compatible gateway takes a model ID
  * that holds a {@code /}, as gateways name theirs ({@code gateway/zai-org/glm-5-3}), and still
- * refuses what would end the JSON or TOML string the setup writes it into. Gemini CLI and Copilot
+ * refuses what would end the JSON string the setup writes it into. Codex, Gemini CLI and Copilot
  * reach only their vendor's API, whose IDs hold no {@code /}, and keep refusing one.
  */
 class ModelIdParameterTest {
@@ -24,8 +24,7 @@ class ModelIdParameterTest {
         return Stream.of(
                 Arguments.of(new PiSetup(), "model"),
                 Arguments.of(new OpencodeSetup(), "model"),
-                Arguments.of(new OpencodeSetup(), "small-model"),
-                Arguments.of(new CodexSetup(), "model"));
+                Arguments.of(new OpencodeSetup(), "small-model"));
     }
 
     @ParameterizedTest(name = "{0} {1}")
@@ -48,7 +47,7 @@ class ModelIdParameterTest {
 
     @Test
     void vendorOnlyAgentsKeepNativeIds() {
-        for (var tool : new ToolSetup[] {new GeminiSetup(), new CopilotSetup()}) {
+        for (var tool : new ToolSetup[] {new CodexSetup(), new GeminiSetup(), new CopilotSetup()}) {
             var result = ParameterResolver.resolve(tool.parameters(), Map.of("model", "gateway/zai-org/glm-5-3"));
             assertFalse(result.errors().isEmpty(), tool.name() + " took a model ID with a /");
         }
