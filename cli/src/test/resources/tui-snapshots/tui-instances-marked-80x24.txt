@@ -1,8 +1,8 @@
  isx   1.2.3  ● 2 containers running
  Overview   Templates 1   Instances 3   Work                    ←/→ Switch view
  Templates ─────────────────────────────────────────────────────────────────────
-   NAME                    BUILT                DISK     DESCRIPTION
-   tpl-minimal             unknown !            -        Minimal Fedora
+   NAME           BUILT        DISK    DESCRIPTION
+   tpl-minimal    unknown !    -       Minimal Fedora
 
 
 
@@ -11,10 +11,10 @@
 
                                       ! outdated   △ changed   ↑ parent rebuilt
  Instances ─────────────────────────────────────────────────────────────────────
-   NAME        STATUS      IP          PARENT      RUNTIME    AGE        DISK
-  ●alpha       ● Running               tpl-minimal container  -          -
- ▸ beta        ● Running               tpl-minimal container  -          -
-  ●gamma       ○ Stopped               tpl-minimal container  -          -
+   NAME     STATUS       IP            PARENT         RUNTIME      AGE    DISK
+  ●alpha    ● Running                  tpl-minimal    container    -      -
+ ▸ beta     ● Running                  tpl-minimal    container    -      -
+  ●gamma    ○ Stopped                  tpl-minimal    container    -      -
 
 
 

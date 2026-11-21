@@ -3241,46 +3241,73 @@ public class Tui {
             return a.name().compareToIgnoreCase(b.name());
         });
 
-        for (var entry : sorted) {
-            var age = entry.created().isEmpty() ? "-" : Metadata.ageDescription(entry.created());
-            var parent = entry.parent().isEmpty() ? "-" : OutputFormat.oneLine(entry.parent());
-            boolean running = isRunning(entry);
-            boolean stopped = "STOPPED".equalsIgnoreCase(entry.status());
-            boolean busy = !entry.pendingOp().isEmpty();
-            // A row's own style holds only what an operation under way adds; each cell has its colour
-            var rowStyle = Style.EMPTY;
-            if (Metadata.OP_DELETING.equals(entry.pendingOp())) {
-                rowStyle = rowStyle.addModifier(dev.tamboui.style.Modifier.DIM)
-                        .addModifier(dev.tamboui.style.Modifier.ITALIC);
-            } else if (Metadata.OP_STOPPING.equals(entry.pendingOp()) || Metadata.OP_RESTARTING.equals(entry.pendingOp())) {
-                rowStyle = rowStyle.addModifier(dev.tamboui.style.Modifier.DIM);
-            }
-            var stateColor = busy ? theme.statusWarning() : running ? theme.statusRunning()
-                    : stopped ? theme.statusStopped() : theme.statusWarning();
-            var glyph = busy ? Motion.SPINNER_STILL : running ? Glyphs.RUNNING : stopped ? Glyphs.STOPPED : Glyphs.BETWEEN;
-            var status = dev.tamboui.widgets.table.Cell.from(dev.tamboui.text.Line.from(
-                    dev.tamboui.text.Span.styled(glyph + " ", Style.EMPTY.fg(stateColor)),
-                    dev.tamboui.text.Span.styled(busy ? entry.pendingOp() : entry.status(),
-                            Style.EMPTY.fg(running || busy ? stateColor : theme.textDim()))));
-            var nameStyle = running ? Style.EMPTY : Style.EMPTY.fg(theme.textDim());
-            var quiet = Style.EMPTY.fg(theme.textDim());
+        // The widths come from every instance, not the search's, for the same reason: a column
+        // must not change its width as a search narrows the list
+        var natural = new int[INSTANCE_COLUMNS];
+        for (var entry : allEntries != null ? allEntries : entries) {
+            var cells = instanceRow(entry).cells();
+            for (int c = 0; c < natural.length; c++) natural[c] = Math.max(natural[c], cells.get(c).width());
+        }
+        instanceNatural = natural;
 
+        for (var entry : sorted) {
             var before = statusSeen.put(entry.name(), entry.status() + "/" + entry.pendingOp());
             if (statusBaseline && !(entry.status() + "/" + entry.pendingOp()).equals(before)) {
                 motion.flash(MainScreen.instanceKey(entry.name()));
             }
 
-            // OWNER and PURPOSE last: MainScreen keeps the cells of the columns it has room for
-            tableRows.add(Row.from(cell(entry.name(), nameStyle), status, cell(entry.ipv4(), quiet),
-                    cell(parent, quiet), cell(entry.runtime(), quiet), cell(age, quiet),
-                    cell(diskCell(entry.diskUsage()), quiet),
-                    cell(dev.incusspawn.command.ListCommand.ownerCell(entry), quiet),
-                    cell(dev.incusspawn.command.ListCommand.purposeCell(entry), quiet)).style(rowStyle));
+            tableRows.add(instanceRow(entry));
             rowToEntry.add(entry);
         }
         statusSeen.keySet().retainAll((allEntries != null ? allEntries : entries).stream().map(InstanceInfo::name)
                 .collect(java.util.stream.Collectors.toSet()));
         statusBaseline = true;
+    }
+
+    /** The widest name of every template, the search's or not. */
+    int templateNameWidth() {
+        int widest = 0;
+        for (var t : allTemplateEntries != null ? allTemplateEntries : templateEntries) {
+            widest = Math.max(widest, dev.tamboui.text.CharWidth.of(t.name()));
+        }
+        return widest;
+    }
+
+    /** The cells of an instance's row, and the widest of each over every instance (see {@link ColumnFit}). */
+    static final int INSTANCE_COLUMNS = 9;
+    volatile int[] instanceNatural = new int[INSTANCE_COLUMNS];
+
+    /** An instance's row: OWNER and PURPOSE last, since MainScreen keeps the cells of the columns it has room for. */
+    private Row instanceRow(InstanceInfo entry) {
+        var age = entry.created().isEmpty() ? "-" : Metadata.ageDescription(entry.created());
+        var parent = entry.parent().isEmpty() ? "-" : OutputFormat.oneLine(entry.parent());
+        boolean running = isRunning(entry);
+        boolean stopped = "STOPPED".equalsIgnoreCase(entry.status());
+        boolean busy = !entry.pendingOp().isEmpty();
+        // A row's own style holds only what an operation under way adds; each cell has its colour
+        var rowStyle = Style.EMPTY;
+        if (Metadata.OP_DELETING.equals(entry.pendingOp())) {
+            rowStyle = rowStyle.addModifier(dev.tamboui.style.Modifier.DIM)
+                    .addModifier(dev.tamboui.style.Modifier.ITALIC);
+        } else if (Metadata.OP_STOPPING.equals(entry.pendingOp()) || Metadata.OP_RESTARTING.equals(entry.pendingOp())) {
+            rowStyle = rowStyle.addModifier(dev.tamboui.style.Modifier.DIM);
+        }
+        var stateColor = busy ? theme.statusWarning() : running ? theme.statusRunning()
+                : stopped ? theme.statusStopped() : theme.statusWarning();
+        var glyph = busy ? Motion.SPINNER_STILL : running ? Glyphs.RUNNING : stopped ? Glyphs.STOPPED : Glyphs.BETWEEN;
+        var status = dev.tamboui.widgets.table.Cell.from(dev.tamboui.text.Line.from(
+                dev.tamboui.text.Span.styled(glyph + " ", Style.EMPTY.fg(stateColor)),
+                dev.tamboui.text.Span.styled(busy ? entry.pendingOp() : entry.status(),
+                        Style.EMPTY.fg(running || busy ? stateColor : theme.textDim()))));
+        var nameStyle = running ? Style.EMPTY : Style.EMPTY.fg(theme.textDim());
+        var quiet = Style.EMPTY.fg(theme.textDim());
+
+        // OWNER and PURPOSE last: MainScreen keeps the cells of the columns it has room for
+        return Row.from(cell(entry.name(), nameStyle), status, cell(entry.ipv4(), quiet),
+                cell(parent, quiet), cell(entry.runtime(), quiet), cell(age, quiet),
+                cell(diskCell(entry.diskUsage()), quiet),
+                cell(dev.incusspawn.command.ListCommand.ownerCell(entry), quiet),
+                cell(dev.incusspawn.command.ListCommand.purposeCell(entry), quiet)).style(rowStyle);
     }
 
     /** Each instance's status and operation as the rows last showed them: a change flashes its row. */
