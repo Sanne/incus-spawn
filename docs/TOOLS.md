@@ -380,7 +380,7 @@ In this example, send `$MY_SERVICE_TOKEN` as the bearer token, Basic password or
 
 A tool shared across organisations can let each user name their own server.
 Write a `${configKey}` reference in `domains:`, and the user sets the value in `config.yaml` like a credential.
-A comma separated value names several servers, which then share the entry's credential.
+When the entry is the reference alone, a comma separated value names several servers, which then share the entry's credential.
 
 ```yaml
   configuration:
@@ -396,9 +396,9 @@ A comma separated value names several servers, which then share the entry's cred
 
 The proxy skips a configured domain in these cases, so a mistyped value never sends the credential elsewhere.
 
-- The value is not a plain host name, or it holds a wildcard.
+- The value is not a plain host name: an IP address, a wildcard or a comma in an entry with text around the reference.
   Only the definition can write `*.` before the reference.
-- isx or another tool already serves that name, such as `github.com` or a name under `.internal`.
+- isx or another tool already serves that name, such as `github.com` or a name under `.internal`, or another tool configured it first.
   The proxy logs a warning for each skipped name.
 - The reference names a `secret: true` entry, which the tool validation also refuses.
   A domain appears in DNS, certificates and logs.

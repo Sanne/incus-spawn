@@ -85,6 +85,8 @@ public final class ToolProxyResolver {
         var namespaces = new java.util.HashMap<String, String>();
         // Built only when some entry configures its domains
         java.util.function.Predicate<String> taken = null;
+        // Each configured domain resolved so far, with the tool that took it first
+        var configuredBy = new java.util.HashMap<String, String>();
 
         for (var toolEntry : toolSetups.entrySet()) {
             var toolName = toolEntry.getKey();
@@ -119,7 +121,11 @@ public final class ToolProxyResolver {
                 if (taken == null && authEntry.getDomains().stream().anyMatch(ToolProxyResolver::isConfiguredDomain)) {
                     taken = takenDomains(toolSetups);
                 }
-                for (var domain : resolveDomains(toolName, authEntry.getDomains(), domainValues(proxyDef, allConfigValues), taken)) {
+                var servedElsewhere = taken == null ? null : taken.or(served -> claimedByOther(configuredBy, toolName, served));
+                for (var domain : resolveDomains(toolName, authEntry.getDomains(), domainValues(proxyDef, allConfigValues), servedElsewhere)) {
+                    if (!authEntry.getDomains().contains(domain)) {
+                        configuredBy.putIfAbsent(domain.startsWith("*.") ? domain.substring(2) : domain, toolName);
+                    }
                     result.add(new ResolvedToolProxy(toolName, domain, authEntry, Map.copyOf(allConfigValues), spends));
                 }
             }
@@ -389,8 +395,12 @@ public final class ToolProxyResolver {
                 if (auth.getDomains().isEmpty()) continue;
                 if (auth.getType() == null || "anthropic".equals(auth.getType())) continue;
                 var keys = new ArrayList<>(extractReferencedKeys(auth));
-                // An entry with no static domain serves nothing until its configured domain is set
-                if (auth.getDomains().stream().allMatch(ToolProxyResolver::isConfiguredDomain)) {
+                // An entry with no static domain does not serve anything until one of its configured domains is set
+                if (auth.getDomains().stream().noneMatch(domain -> {
+                    var refs = new ArrayList<String>();
+                    extractRefs(domain, refs);
+                    return refs.stream().allMatch(resolved::containsKey);
+                })) {
                     keys.addAll(extractDomainKeys(auth));
                 }
                 var missing = keys.stream().distinct()
@@ -633,14 +643,18 @@ public final class ToolProxyResolver {
     }
 
     /**
-     * Resolve {@code ${configKey}} references in domain entries and split comma-separated
-     * values into individual domains. A domain entry that is a pure literal passes through
-     * unchanged; one containing an unresolvable reference is dropped. A configured domain
-     * must be a plain host name, under the entry's own {@code *.} when it starts with one, and none that {@code taken} says isx or another tool already
-     * serves: it is dropped with a warning otherwise, so a value of {@code github.com} never
-     * puts this entry's credential on GitHub's traffic.
+     * Resolve {@code ${configKey}} references in domain entries. A domain entry that is a pure
+     * literal passes through unchanged; one containing an unresolvable reference is dropped. An
+     * entry that is a lone reference ({@code ${key}} or {@code *.${key}}) takes a comma-separated
+     * value as several domains; in an entry with literal text around its reference a comma is no
+     * part of a host name, so the text the definition writes applies to the whole value. A
+     * configured domain must be a plain host name, under the entry's own {@code *.} when it starts
+     * with one, and none that {@code taken} says isx or another tool already serves: it is dropped
+     * with a warning otherwise, so a value of {@code github.com} never puts this entry's credential
+     * on GitHub's traffic.
      *
-     * @param taken whether a host name is already served, asked only for configured domains
+     * @param taken whether a domain as it would be served ({@code name} or {@code *.name}) lands
+     *              on one already served, asked only for configured domains
      */
     static List<String> resolveDomains(String toolName, List<String> rawDomains, Map<String, String> configValues,
                                        java.util.function.Predicate<String> taken) {
@@ -669,22 +683,35 @@ public final class ToolProxyResolver {
             }
             if (unresolved) continue;
             m.appendTail(resolved);
-            for (var part : resolved.toString().split(",")) {
+            var parts = LONE_REF_PATTERN.matcher(template).matches()
+                    ? resolved.toString().split(",") : new String[] {resolved.toString()};
+            for (var part : parts) {
                 var name = part.strip().toLowerCase(java.util.Locale.ROOT);
                 if (name.isEmpty()) continue;
-                if (!CertStore.isHostname(name)) {
+                var served = wildcard ? "*." + name : name;
+                if (!CertStore.isHostname(name) || isNumericName(name)) {
+                    // Never the value itself: a credential pasted in the wrong key would reach the log
                     dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
-                            + "': configured domain '" + name + "' is not a host name -- skipping it"));
-                } else if (taken.test(name)) {
+                            + "': a configured domain of entry '" + domain + "' is not a host name -- skipping it"));
+                } else if (taken.test(served)) {
                     dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
-                            + "': configured domain '" + name + "' is already served by isx or another tool"
+                            + "': configured domain '" + served + "' is already served by isx or another tool"
                             + " -- skipping it, so its credential is not sent there"));
                 } else {
-                    result.add(wildcard ? "*." + name : name);
+                    result.add(served);
                 }
             }
         }
         return result;
+    }
+
+    /** An entry that is one reference and nothing else, its value the whole domain list. */
+    private static final Pattern LONE_REF_PATTERN = Pattern.compile("\\$\\{[^}]+}");
+
+    /** Whether {@code name}'s last label is all digits: an IP address, never a host name. */
+    private static boolean isNumericName(String name) {
+        var last = name.substring(name.lastIndexOf('.') + 1);
+        return !last.isEmpty() && last.chars().allMatch(c -> c >= '0' && c <= '9');
     }
 
     /** As above, against nothing taken: for tests of the substitution alone. */
@@ -696,7 +723,8 @@ public final class ToolProxyResolver {
      * Whether a configured domain would land on a host name isx already serves: a built-in
      * intercepted domain, ChatGPT's and Google's sign-in hosts, a name under {@code .internal}
      * (host routes, {@code mcp.isx.internal}, {@code host.isx.internal}), or any tool's static
-     * domain, exact or under its wildcard. A name under a taken one is taken too.
+     * domain, exact or under its wildcard. A name under a taken one is taken too, and so is a
+     * wildcard ({@code *.name}) with a taken name under it.
      */
     static java.util.function.Predicate<String> takenDomains(Map<String, ToolSetup> toolSetups) {
         var taken = new java.util.HashSet<String>();
@@ -714,15 +742,40 @@ public final class ToolProxyResolver {
                 }
             }
         }
-        return name -> {
+        return served -> {
+            var name = served.startsWith("*.") ? served.substring(2) : served;
             if (name.equals("internal") || name.endsWith(".internal")) return true;
-            for (var candidate = name; ; ) {
-                if (taken.contains(candidate)) return true;
-                var dot = candidate.indexOf('.');
-                if (dot < 0) return false;
-                candidate = candidate.substring(dot + 1);
-            }
+            return covers(taken, served);
         };
+    }
+
+    /** Whether a tool other than {@code toolName} already took a configured domain {@code served} lands on. */
+    private static boolean claimedByOther(Map<String, String> configuredBy, String toolName, String served) {
+        var others = new java.util.HashSet<String>();
+        configuredBy.forEach((name, owner) -> {
+            if (!owner.equals(toolName)) others.add(name);
+        });
+        return !others.isEmpty() && covers(others, served);
+    }
+
+    /**
+     * Whether {@code served} ({@code name} or {@code *.name}) lands on one of {@code names}: the
+     * name or one it falls under is among them, or, for a wildcard, one of them falls under it.
+     */
+    private static boolean covers(java.util.Collection<String> names, String served) {
+        var wildcard = served.startsWith("*.");
+        var name = wildcard ? served.substring(2) : served;
+        for (var candidate = name; candidate != null; ) {
+            if (names.contains(candidate)) return true;
+            var dot = candidate.indexOf('.');
+            candidate = dot < 0 ? null : candidate.substring(dot + 1);
+        }
+        if (!wildcard) return false;
+        var suffix = "." + name;
+        for (var taken : names) {
+            if (taken.endsWith(suffix)) return true;
+        }
+        return false;
     }
 
     /** @deprecated use {@link AccountResolver#navigate} -- kept for existing callers. */

@@ -720,6 +720,36 @@ class ToolProxyResolutionTest {
         assertEquals(java.util.List.of("static.example.com"), resolved.stream().map(ResolvedToolProxy::domain).toList());
     }
 
+    @Test
+    void twoToolsNeverConfigureTheSameDomain() throws Exception {
+        var yaml = """
+                name: %1$s
+                proxy:
+                  config-namespace: %1$s
+                  configuration:
+                    host:
+                      config-path: "host"
+                    key:
+                      config-path: "key"
+                      secret: true
+                  auth:
+                    - domains:
+                        - "${host}"
+                      type: bearer
+                      token: "${key}"
+                """;
+        var tools = new java.util.LinkedHashMap<String, ToolSetup>();
+        tools.put("first", loadToolSetup(yaml.formatted("first")));
+        tools.put("second", loadToolSetup(yaml.formatted("second")));
+        var config = new SpawnConfig();
+        for (var name : tools.keySet()) {
+            config.setConfigByPath(name + ".host", "ge.example.com");
+            config.setConfigByPath(name + ".key", name + "-key");
+        }
+        var resolved = ToolProxyResolver.resolve(config, tools);
+        assertEquals(java.util.List.of("first"), resolved.stream().map(ResolvedToolProxy::toolName).toList());
+    }
+
     private static ToolSetup loadToolSetup(String yaml) throws Exception {
         var def = ToolDef.loadFromStream(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
         return new YamlToolSetup(def);
