@@ -151,6 +151,25 @@ class ChatGptAuthFlowTest {
     }
 
     @Test
+    void theMenuAsksOneQuestionAndSaysWhatEnterLeaves() {
+        var prompts = new ScriptedPrompts().line("");
+        run(new FakeInit(), new SpawnConfig(), prompts);
+
+        var conversation = prompts.conversation();
+        var question = conversation.indexOf("How should instances authenticate with OpenAI? Choose one:");
+        assertTrue(question >= 0, "the question comes before its options, so they read as alternatives: " + conversation);
+        for (var option : List.of("  1. ChatGPT account, browser on this machine",
+                "  2. ChatGPT account, one-time code entered on any device",
+                "  3. OpenAI API key (platform.openai.com, billed credits)")) {
+            assertTrue(conversation.indexOf(option) > question, option + " follows the question: " + conversation);
+        }
+        assertEquals(List.of("Choice (Enter to leave OpenAI unconfigured): "), prompts.questions(),
+                "the prompt says what Enter does");
+        assertNothingSaved();
+        assertNull(new ChatGptSessionStore().read("default"), "Enter signs nothing in");
+    }
+
+    @Test
     void anApiKeyIsStillThePlatformCredential() {
         run(new FakeInit(), new SpawnConfig(), new ScriptedPrompts().line("3").secret(API_KEY));
 
