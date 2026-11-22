@@ -233,11 +233,10 @@ public class UpdateBaseCommand extends BaseCommand {
     /** Asks whether to track the latest release or pin one, through {@code prompts}, and does it. */
     CommandResult askWhatToDo(Prompts prompts, String latest, List<Release> available, ImageDef unpinned)
             throws IOException {
-        prompts.say("What would you like to do?");
-        prompts.say("1) Track latest (" + latest + ") — always installs the newest release of its line on build");
-        prompts.say("2) Pin a specific version");
-        prompts.say("3) Cancel");
-        var choice = prompts.ask("Choice [1-3]: ");
+        var choice = prompts.choose("What should the base image do?", List.of(
+                "Track the latest release (" + latest + "), installing the newest of its line on each build",
+                "Pin a specific version",
+                "Cancel"), null, "cancel");
         if (choice == null) return CommandResult.SUCCESS;
 
         return switch (choice.strip()) {

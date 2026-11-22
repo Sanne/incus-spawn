@@ -99,6 +99,9 @@ public interface Output {
      */
     default void frame(String... lines) {}
 
+    /** A blank line, none when one just ended the block above: spaces a question from the answer before it. */
+    default void gap() {}
+
     /** A question, at the step indent, with no line end: its answer is typed after it ({@code Prompts}). */
     default void prompt(String question) {}
 

@@ -498,11 +498,10 @@ class CredentialSetup {
             target = managed.get();
         }
 
-        BuildOutput.step("How do you authenticate with Claude?");
-        prompts.say("1. Anthropic API key");
-        prompts.say("2. Claude Pro, Max or Team subscription (OAuth token)");
-        prompts.say("3. Google Cloud Vertex AI");
-        var authChoice = readInput(prompts.ask("Choice (1/2/3, or Enter to skip): "));
+        var authChoice = readInput(prompts.choose("How should instances authenticate with Claude?", List.of(
+                "Anthropic API key",
+                "Claude Pro, Max or Team subscription (OAuth token)",
+                "Google Cloud Vertex AI"), null, "leave Claude unconfigured"));
 
         if (authChoice.equals("3")) {
             while (true) {

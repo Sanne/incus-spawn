@@ -396,6 +396,11 @@ public final class BuildOutput {
         bound.frame(lines);
     }
 
+    /** A blank line before a block that needs room ({@link Output#gap}). */
+    public static void gap() {
+        bound.gap();
+    }
+
     /** A question at the step indent, its answer typed after it ({@link Output#prompt}). */
     public static void prompt(String question) {
         bound.prompt(question);

@@ -161,6 +161,11 @@ public final class TerminalOutput implements Output {
     }
 
     @Override
+    public void gap() {
+        blankLine();
+    }
+
+    @Override
     public void prompt(String question) {
         blankLineEnded = false;
         var stdout = out.get();
