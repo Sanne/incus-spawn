@@ -99,9 +99,15 @@ None of them read the terminal's width, and `isx account` printed every instance
   It sets the header apart from the rows without a row of dashes, which is a line of ink that says nothing.
   A dim header was tried first and read as weak, since some terminals draw dim text very faintly.
   The TUI fills no header, because it has a cursor row to keep loudest; a command's table has none.
-  A command does not ask the terminal for its background, which would be a round trip on every run.
-  It reads `ISX_THEME`, then `COLORFGBG` where the terminal sets it, and otherwise takes the terminal for dark.
+  The band's grey follows the terminal's theme, which isx asks the terminal for (OSC 11, through aesh's `TerminalCapabilities.detectBounded`).
+  It asks once a process, and only when a header is drawn on an ANSI terminal, so a pipe and `plain` or `json` never ask.
+  A terminal that answers costs under 10 ms.
+  One that does not answer costs about half a second whatever deadline aesh is given, so its silence is remembered for a day under the cache directory (`TerminalThemeDetector.probeDark`).
+  It is remembered per kind of terminal: `TERM`, `TERM_PROGRAM`, `VTE_VERSION`, `TERMINAL_EMULATOR` and whether the session is over SSH.
+  What this gives up: two terminals of one kind share that memory, so a silent one keeps the other on the fallback until the day is over.
+  `ISX_THEME` decides without asking, and a silent terminal is read from `COLORFGBG`, then taken for dark.
   The band sets the text's colour with its own, so a wrong guess gives a louder band that is still read.
+  `common` has no terminal library, so the CLI hands `Report` the probe (`Report.themeProbe`).
   Off an ANSI terminal the header is plain upper case, and on the Linux console it is bold.
 - **A column is as wide as its widest cell**, and two spaces separate columns.
   A fixed width is either wasted or too small.
