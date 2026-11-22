@@ -45,9 +45,8 @@ class FakeIncusDaemonConcurrencyTest {
         var reader = new Thread(() -> daemon.instance(NAME));
         reader.start();
         // The reader either blocks on the daemon's lock or, unguarded, reads mid-request and ends.
-        while (reader.getState() != Thread.State.BLOCKED && reader.getState() != Thread.State.TERMINATED) {
-            Thread.onSpinWait();
-        }
+        dev.incusspawn.util.Eventually.await("the reader to block or end",
+                () -> reader.getState() == Thread.State.BLOCKED || reader.getState() == Thread.State.TERMINATED);
         var state = reader.getState();
         release.countDown();
         request.join();

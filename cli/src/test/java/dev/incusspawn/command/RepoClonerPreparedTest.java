@@ -176,8 +176,10 @@ class RepoClonerPreparedTest {
                             dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(30),
                                     () -> returned.getCount() == 0 || java.util.Arrays.stream(tester.getStackTrace())
                                             .anyMatch(frame -> frame.getMethodName().equals("awaitRemoteReads")));
-                        } catch (Exception e) {
+                        } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
+                        } catch (Exception e) {
+                            throw new AssertionError(e);
                         }
                     });
                     assertTrue(locked.await(30, java.util.concurrent.TimeUnit.SECONDS));
