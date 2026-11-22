@@ -78,11 +78,8 @@ class VirtualThreadPollersTest {
                         }
                     });
                     // The reader parks with the poller first: data already there is read without one
-                    var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
-                    while (reader.getState() != Thread.State.WAITING) {
-                        if (System.nanoTime() > deadline) throw new IllegalStateException("the reader never parked");
-                        Thread.sleep(10);
-                    }
+                    dev.incusspawn.util.Eventually.await("the reader to park", java.time.Duration.ofSeconds(30),
+                            () -> reader.getState() == Thread.State.WAITING);
                     client.write(ByteBuffer.wrap(new byte[]{1}));
                     reader.join(TimeUnit.SECONDS.toMillis(30));
                     if (reader.isAlive()) throw new IllegalStateException("the read was never woken");

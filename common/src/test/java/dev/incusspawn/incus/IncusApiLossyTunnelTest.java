@@ -381,7 +381,7 @@ class IncusApiLossyTunnelTest {
             // Hang up only near the end, so the exec need not wait out an abandoned stdin read.
             Thread.ofVirtual().start(() -> {
                 try {
-                    while (server.pings("0") < 2) Thread.sleep(10);
+                    dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(10), () -> server.pings("0") >= 2);
                     typist.close();
                 } catch (Exception ignored) {}
             });

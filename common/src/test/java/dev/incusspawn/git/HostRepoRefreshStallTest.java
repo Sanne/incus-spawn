@@ -48,15 +48,11 @@ class HostRepoRefreshStallTest {
     }
 
     /** Git processes still running under this JVM, after giving killed ones a moment to be reaped. */
-    private static List<Long> gitDescendants() throws InterruptedException {
-        List<Long> live = List.of();
-        for (int i = 0; i < 50; i++) {
-            live = ProcessHandle.current().descendants()
-                    .filter(p -> p.info().command().map(c -> c.contains("git")).orElse(false))
-                    .map(ProcessHandle::pid).toList();
-            if (live.isEmpty()) break;
-            Thread.sleep(100);
-        }
-        return live;
+    private static List<Long> gitDescendants() throws Exception {
+        java.util.function.Supplier<List<Long>> live = () -> ProcessHandle.current().descendants()
+                .filter(p -> p.info().command().map(c -> c.contains("git")).orElse(false))
+                .map(ProcessHandle::pid).toList();
+        dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5), () -> live.get().isEmpty());
+        return live.get();
     }
 }

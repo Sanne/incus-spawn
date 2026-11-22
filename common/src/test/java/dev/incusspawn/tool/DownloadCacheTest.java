@@ -801,7 +801,7 @@ class DownloadCacheTest {
                     throw new java.io.UncheckedIOException(e);
                 }
             });
-            while (requests.get() == 0) Thread.sleep(5);
+            dev.incusspawn.util.Eventually.await("the first request", () -> requests.get() > 0);
             var second = new DownloadCache(cacheDir, uri -> false).downloadAllowingLocalFile(url, sha,
                     new DownloadCache.Listener() {
                         @Override
@@ -915,7 +915,7 @@ class DownloadCacheTest {
                     throw new java.io.UncheckedIOException(e);
                 }
             });
-            while (requests.get() == 0) Thread.sleep(5);
+            dev.incusspawn.util.Eventually.await("the first request", () -> requests.get() > 0);
             var second = new DownloadCache(cacheDir, uri -> false).downloadAllowingLocalFile(url, null,
                     new DownloadCache.Listener() {
                         @Override

@@ -150,12 +150,9 @@ class BuildOutputTest {
     }
 
     /** Wait for the spinner to draw {@code expected}, failing after a few seconds. */
-    private void awaitScreen(String expected) throws InterruptedException {
-        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (!BuildOutput.stripAnsi(text()).contains(expected)) {
-            if (System.nanoTime() > deadline) fail("never drew '" + expected + "': " + text());
-            Thread.sleep(10);
-        }
+    private void awaitScreen(String expected) throws Exception {
+        dev.incusspawn.util.Eventually.await("the spinner to draw '" + expected + "'", java.time.Duration.ofSeconds(5),
+                () -> BuildOutput.stripAnsi(text()).contains(expected), () -> text());
     }
 
     @Test

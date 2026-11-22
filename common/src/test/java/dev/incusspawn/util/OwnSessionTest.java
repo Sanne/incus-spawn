@@ -61,11 +61,8 @@ class OwnSessionTest {
         SessionProbe.assumeSession();
         var process = OwnSession.start(new ProcessBuilder("sh", "-c", "sleep 600 & wait"));
         try {
-            ProcessHandle helper = null;
-            for (int i = 0; i < 100 && helper == null; i++) {
-                helper = process.descendants().findFirst().orElse(null);
-                if (helper == null) Thread.sleep(50);
-            }
+            ProcessHandle helper = dev.incusspawn.util.Eventually.poll("the helper to start", java.time.Duration.ofSeconds(5),
+                    () -> process.descendants().findFirst().orElse(null));
             assertNotNull(helper, "the helper started");
 
             OwnSession.stopRunning();
