@@ -223,10 +223,10 @@ class CredentialSetup {
     /**
      * The openai credential (#1332): a ChatGPT session signed in on the host, or an API key.
      * A ChatGPT plan, Enterprise included, gives no API key a container could use, so the
-     * session is what those users have: isx signs it in by the device-code flow Codex itself
-     * uses and keeps it in the host's session store, where the proxy answers Codex's requests
-     * from; instances hold only placeholders. An API key stays the platform credential it
-     * always was.
+     * session is what those users have: isx signs it in by the browser flow Codex's own login
+     * uses, or by its device-code flow for a host whose browser is elsewhere, and keeps it in
+     * the host's session store, where the proxy answers Codex's requests from; instances hold
+     * only placeholders. An API key stays the platform credential it always was.
      */
     void setupCodexAuth(SpawnConfig config, Prompts prompts) {
         var namespace = "openai";
