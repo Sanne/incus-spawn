@@ -199,7 +199,20 @@ public class ToolDefValidator {
                     }
                 }
 
+                for (var ref : ToolProxyResolver.extractDomainKeys(ae)) {
+                    var entry = configMap.get(ref);
+                    if (entry == null) {
+                        errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "' references '${" + ref + "}' in domains, which is not defined in configuration");
+                    } else if (entry.isSecret()) {
+                        errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "' references secret '${" + ref + "}' in domains -- a domain is written to DNS,"
+                                + " certificates and logs, so it cannot come from a secret");
+                    }
+                }
+
                 for (var domain : ae.getDomains()) {
+                    if (ToolProxyResolver.isConfiguredDomain(domain)) continue;
                     var bare = domain.startsWith("*.") ? domain.substring(2) : domain;
                     if (ProxyConfig.builtinInterceptedDomains().contains(bare)) {
                         warnings.add("auth entry for '" + domain + "' in '" + def.getName()

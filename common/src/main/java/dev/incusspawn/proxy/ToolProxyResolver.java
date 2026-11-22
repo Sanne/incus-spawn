@@ -119,7 +119,7 @@ public final class ToolProxyResolver {
                 if (taken == null && authEntry.getDomains().stream().anyMatch(ToolProxyResolver::isConfiguredDomain)) {
                     taken = takenDomains(toolSetups);
                 }
-                for (var domain : resolveDomains(toolName, authEntry.getDomains(), allConfigValues, taken)) {
+                for (var domain : resolveDomains(toolName, authEntry.getDomains(), domainValues(proxyDef, allConfigValues), taken)) {
                     result.add(new ResolvedToolProxy(toolName, domain, authEntry, Map.copyOf(allConfigValues), spends));
                 }
             }
@@ -388,7 +388,12 @@ public final class ToolProxyResolver {
             for (var auth : proxyDef.getAuth()) {
                 if (auth.getDomains().isEmpty()) continue;
                 if (auth.getType() == null || "anthropic".equals(auth.getType())) continue;
-                var missing = extractReferencedKeys(auth).stream()
+                var keys = new ArrayList<>(extractReferencedKeys(auth));
+                // An entry with no static domain serves nothing until its configured domain is set
+                if (auth.getDomains().stream().allMatch(ToolProxyResolver::isConfiguredDomain)) {
+                    keys.addAll(extractDomainKeys(auth));
+                }
+                var missing = keys.stream().distinct()
                         .filter(key -> !resolved.containsKey(key) && suppliable(proxyDef, key)
                                 && !inherited(proxyDef, key, configTree, accountsByNamespace)
                                 && !heldOutsideConfig(proxyDef, key, configTree, toolSetups, accountsByNamespace))
@@ -597,6 +602,22 @@ public final class ToolProxyResolver {
         while (m.find()) {
             keys.add(m.group(1));
         }
+    }
+
+    /**
+     * The values a {@code domains:} entry may take: never a {@code secret: true} entry's, which
+     * would reach bridge DNS, a certificate and the logs. The validator refuses such a reference;
+     * this keeps a definition that skipped it from leaking the value anyway.
+     */
+    private static Map<String, String> domainValues(ToolDef.ProxyDef proxyDef, Map<String, String> values) {
+        var configuration = proxyDef.getConfiguration();
+        if (configuration.values().stream().noneMatch(ToolDef.ConfigEntry::isSecret)) return values;
+        var result = new LinkedHashMap<String, String>();
+        values.forEach((key, value) -> {
+            var entry = configuration.get(key);
+            if (entry != null && !entry.isSecret()) result.put(key, value);
+        });
+        return result;
     }
 
     /** Whether a raw {@code domains:} entry names a configuration key ({@code ${key}}). */
