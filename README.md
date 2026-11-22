@@ -330,9 +330,8 @@ It signs in through the proxy with an account you configured in `isx init`, whos
 ## Tools
 
 Templates are made of tools.
-`gh`, `herdr`, `maven-3`, `orca`, `podman`, `sshd`, the VS Code and IntelliJ remote backends, `tmux` and `zmx` ship with isx; `isx tools list -v` lists them all.
+`gh`, `herdr`, `maven-3`, `orca`, `podman`, `sshd`, the VS Code and IntelliJ remote backends, `tmux` and `zmx` [ship with isx](docs/TOOLS.md); `isx tools list -v` lists them all.
 Your own tools are YAML files in `~/.config/incus-spawn/tools/` or a project's `.incus-spawn/tools/`: packages, commands, environment variables, TUI actions, and credentials the proxy adds for a service of yours.
-See [Tools](docs/TOOLS.md).
 
 ## Delegating over MCP
 
@@ -425,6 +424,7 @@ A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](do
 | [`isx update-all`](docs/CLI.md#isx-update-all) | Update packages and repos in all templates |
 | [`isx templates`](docs/CLI.md#isx-templates) | Manage template definitions |
 | [`isx tools`](docs/CLI.md#isx-tools) | List and inspect available tool definitions |
+| [`isx validate`](docs/CLI.md#isx-validate) | Check a template, tool, config or mcp file the way isx reads it |
 | [`isx account`](docs/CLI.md#isx-account) | Add credentials, and show or change the accounts an instance uses |
 | [`isx agent`](docs/CLI.md#isx-agent) | Show or set your preferred coding agent |
 | [`isx project`](docs/CLI.md#isx-project) | Manage project templates |

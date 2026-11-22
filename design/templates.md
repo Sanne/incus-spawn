@@ -65,6 +65,9 @@ The schema's completion and hover now do what those comments did, and the short 
 An earlier design added `--tool` and `--repo` flags that wrote the YAML; it was dropped, since a flag per field is a second way to write a template, and every later field would either be refused arbitrarily or make the flags a shadow of the YAML schema.
 Changing part of an existing template stays out: rewriting a hand-written file loses its comments and layout.
 
+`isx validate <file>` (`ValidateCommand`, #2464) picks the kind from the file's schema line, else its name or `--kind`.
+It hands a template or a tool to the two commands above, and checks `config.yaml` (the warnings of `SpawnConfig`'s sections, `UnreadConfigKeys`) and `mcp.yaml` (`McpConfig.load(Path)`) itself.
+
 **`/tmp` is on disk** (#1561): `tpl-minimal` masks `tmp.mount`; what that means for users is in `docs/FEDORA.md`.
 It is in the root template, not in one template (yrodiere/incus-spawn-templates#68 did it in `tpl-dev-base`), because the restarts that empty a tmpfs come from isx itself and hit every template.
 It is not in the base image either, which would put an isx choice in a Fedora image other tools could use.

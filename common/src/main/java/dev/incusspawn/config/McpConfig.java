@@ -279,7 +279,8 @@ public class McpConfig extends McpUndeclaredKeys {
         }
     }
 
-    static McpConfig load(Path file) {
+    /** As {@link #load()} for {@code file} instead of {@link #file()}: {@link Invalid} when it is refused, defaults when there is none. */
+    public static McpConfig load(Path file) {
         var config = read(file);
         return config != null ? config : new McpConfig();
     }
