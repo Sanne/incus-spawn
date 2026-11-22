@@ -728,6 +728,11 @@ final class MainScreen {
                 + (lost > 0 ? ", " + lost + (lost == 1 ? " line lost" : " lines lost") : "") + reading + back;
     }
 
+    /**
+     * The shortest terminal whose footer starts with a rule. Shorter, the row is the lists'.
+     */
+    static final int FOOTER_RULE_MIN_HEIGHT = 16;
+
     void renderToolbar(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                 TableState tableState, boolean hasStatus) {
         var template = tui.selectedTemplate();
@@ -755,6 +760,14 @@ final class MainScreen {
         items.add(makeKey("F10", "Quit", false));
 
         var contextLine = buildContextLine(template, selected, onTemplates);
+
+        // The rule that ends the last panel, where the layout left a row for it
+        if (area.height() > (hasStatus ? 3 : 2)) {
+            frame.renderWidget(Block.builder().borders(java.util.EnumSet.of(Borders.TOP)).borderType(BorderType.PLAIN)
+                    .borderStyle(Style.EMPTY.fg(tui.theme.panelBorderUnfocused())).build(),
+                    new dev.tamboui.layout.Rect(area.left(), area.top(), area.width(), 1));
+            area = new dev.tamboui.layout.Rect(area.left(), area.top() + 1, area.width(), area.height() - 1);
+        }
 
         if (hasStatus) {
             var rows = splitVertical(area, 1, 1, 1);

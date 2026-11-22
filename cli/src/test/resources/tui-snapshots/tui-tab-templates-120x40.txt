@@ -35,6 +35,6 @@
 
 
 
-
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  tpl-minimal  Minimal Fedora  Space Mark
  F1 Info   F2 Shell   F3 Details   F4 Branch…   F5 Build…   F6 Rename…   F7 Stop   F8 Destroy…   F9 Actions   F10 Quit
