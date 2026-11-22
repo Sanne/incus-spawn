@@ -131,6 +131,9 @@ public final class InstanceRegistry {
      * @param running         the names of the address owners that are running (#1586)
      * @param chatGptByAddress the ChatGPT session binding of each address's instance (#1332),
      *                        for those that have one; kept apart for the same reason as the secret
+     * @param addressByChatGptVerifier each ChatGPT proof verifier's hash to the address of the running
+     *                        instance whose current binding holds it, for {@link #chatGptCaller} when
+     *                        the address names no instance (#2497)
      * @param descriptionByName what each instance owning an address is, for the event log's
      *                        {@code instance} line (#2427)
      */
@@ -139,9 +142,10 @@ public final class InstanceRegistry {
                   Map<String, Lineage> lineageByName, Map<String, Map<String, String>> proofsByAddress,
                   Map<String, ProofState> proofStates, Map<String, Map<String, String>> addressByProof,
                   Map<String, String> addressBySecret, java.util.Set<String> running,
-                  Map<String, ChatGptBinding> chatGptByAddress, Map<String, Description> descriptionByName) {
+                  Map<String, ChatGptBinding> chatGptByAddress, Map<String, Description> descriptionByName,
+                  Map<String, String> addressByChatGptVerifier) {
         static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
-                Map.of(), java.util.Set.of(), Map.of(), Map.of());
+                Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of());
     }
 
     /**
@@ -237,13 +241,39 @@ public final class InstanceRegistry {
         }
     }
 
+    /** The instance a ChatGPT proof names: its binding, and the accounts pinned to it. */
+    public record ChatGptCaller(ChatGptBinding binding, InstanceAccounts accounts) {}
+
     /**
-     * The ChatGPT session binding of the instance at this address, or null when the address is
-     * no known instance or its instance has none. Non-blocking.
+     * The instance whose ChatGPT binding the caller at {@code sourceAddress} is, or null. A caller
+     * at a known instance's address is that instance, whatever it presents. With
+     * {@code byProofAlone}, one at an address that names none is the running instance whose current
+     * binding holds the verifier of every digest in {@code digests}, when they all name the same one
+     * (#2497): the proof is then the only thing telling instances apart, as for #1582. Whether a
+     * digest is the right kind for the call is the caller's to check against the binding.
+     * Non-blocking.
      */
-    public ChatGptBinding chatGptBinding(String sourceAddress) {
+    public ChatGptCaller chatGptCaller(String sourceAddress, boolean byProofAlone, java.util.Collection<String> digests) {
         if (sourceAddress == null || sourceAddress.isBlank()) return null;
-        return snapshot.parsed().chatGptByAddress().get(normalize(sourceAddress));
+        var current = snapshot.parsed();
+        var address = normalize(sourceAddress);
+        var instance = current.byAddress().get(address);
+        if (instance == null) {
+            if (!byProofAlone) return null;
+            var presented = digests.stream().filter(java.util.Objects::nonNull).distinct().toList();
+            if (presented.isEmpty()) return null;
+            String proven = null;
+            for (var digest : presented) {
+                // A lookup by the verifier's hash, so its timing tells nothing of the proof
+                var named = current.addressByChatGptVerifier().get(ChatGptProof.verifier(digest));
+                if (named == null || proven != null && !proven.equals(named)) return null;
+                proven = named;
+            }
+            address = proven;
+            instance = current.byAddress().get(address);
+        }
+        var binding = current.chatGptByAddress().get(address);
+        return instance == null || binding == null ? null : new ChatGptCaller(binding, instance);
     }
 
     /**
@@ -546,7 +576,7 @@ public final class InstanceRegistry {
             var previous = snapshot.parsed();
             var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
                     previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of(), Map.of(), Map.of(),
-                    previous.running(), Map.of(), previous.descriptionByName());
+                    previous.running(), Map.of(), previous.descriptionByName(), Map.of());
             // The reason before the failed snapshot, so listingProblem never reads one without it
             listingError = "The listing at " + java.time.LocalTime.ofInstant(java.time.Instant.ofEpochMilli(clock.getAsLong()),
                     java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
@@ -724,6 +754,7 @@ public final class InstanceRegistry {
         var stampedWith = new LinkedHashMap<String, Map<String, List<Claimant>>>();
         var givenSecret = new LinkedHashMap<String, List<Claimant>>();
         var chatGptByAddress = new LinkedHashMap<String, ChatGptBinding>();
+        var chatGptVerified = new LinkedHashMap<String, List<Claimant>>();
         claimants.forEach((address, all) -> {
             var owner = owner("Address " + address, all, "refusing credential injection until only one holds it");
             if (owner == null) return;
@@ -743,7 +774,11 @@ public final class InstanceRegistry {
             lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config(), configByName));
             descriptionByName.put(owner.accounts().instanceName(), Description.of(owner.createdAt(), owner.config()));
             var chatGpt = ChatGptBinding.of(owner.accounts().instanceName(), owner.config());
-            if (chatGpt != null) chatGptByAddress.put(address, chatGpt);
+            if (chatGpt != null) {
+                chatGptByAddress.put(address, chatGpt);
+                chatGptVerified.computeIfAbsent(chatGpt.accessSha256(), h -> new ArrayList<>()).add(owner);
+                chatGptVerified.computeIfAbsent(chatGpt.refreshSha256(), h -> new ArrayList<>()).add(owner);
+            }
         });
         var addressByProof = new LinkedHashMap<String, Map<String, String>>();
         stampedWith.forEach((namespace, byHash) -> addressByProof.put(namespace,
@@ -751,7 +786,8 @@ public final class InstanceRegistry {
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
                 Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(proofsByAddress), Map.copyOf(proofStates),
                 Map.copyOf(addressByProof), runningAddressByHash("An instance secret", givenSecret), java.util.Set.copyOf(running),
-                Map.copyOf(chatGptByAddress), Map.copyOf(descriptionByName));
+                Map.copyOf(chatGptByAddress), Map.copyOf(descriptionByName),
+                runningAddressByHash("A ChatGPT proof verifier", chatGptVerified));
     }
 
     /**

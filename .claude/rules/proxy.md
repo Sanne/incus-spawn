@@ -585,6 +585,7 @@ Key design:
   Only requests carrying an isx placeholder are handled; everything else to those hosts is relayed untouched.
   The allowlist (`ChatGptRoute.Operation`) is a security boundary: widening it is a decision on #1332, never a fix for a failing Codex feature.
   Proofs are verified against SHA-256 verifiers in instance metadata (`Metadata.CHATGPT_*`), never derived from `sha256(secret)` (#1107).
+  On macOS the address names no instance, so `InstanceRegistry.chatGptCaller` finds the caller by the verifier of the proof it presents, only for a running instance and a binding made with its current secret (#2497).
   Sign-in is the browser flow Codex's own login uses by default (`ChatGptSignIn`, offered by init's OpenAI step), which is what an SSO-only organisation needs.
   The device-code flow is beside it, for a host whose browser is elsewhere.
   Every start's secret rotation derives the verifiers and the guest's `~/.codex/auth.json` placeholders in the same locked write (`ChatGptStart`).

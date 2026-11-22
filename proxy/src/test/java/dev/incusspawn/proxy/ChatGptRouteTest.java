@@ -168,6 +168,7 @@ class ChatGptRouteTest {
         mintedTtlSeconds = 3600;
         proxy.clearAuthError();
         lastBackend = null;
+        proxy.proofIdentifies = (remote, local) -> false;
         sessionId = store.create(ACCOUNT, mint(3600)).sessionId();
         bind(SECRET, sessionId);
     }
@@ -539,6 +540,90 @@ class ChatGptRouteTest {
             assertFalse(reply.body().contains("access_token"), "no placeholder handed out: " + reply.body());
         }
         assertTrue(seen.isEmpty(), "never relayed: " + seen);
+    }
+
+    // --- macOS (#2497): the address names no instance, so the proof is the caller ---
+
+    /** The worker listed at an address that is not the test client's, as every container is behind the VM. */
+    private static void macOs(String secret, String session, String currentSecret) {
+        useListing(listing(secret, session, currentSecret, ACCOUNT).replace("127.0.0.1", "10.99.99.99")
+                .replace("\"created_at\"", "\"status\":\"Running\",\"created_at\""));
+        proxy.proofIdentifies = (remote, local) -> true;
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"POST /backend-api/codex/responses", "GET /backend-api/wham/accounts/check"})
+    void onMacOsTheCurrentAccessProofIsServedFromAnAddressThatNamesNoInstance(String request) throws Exception {
+        macOs(SECRET, sessionId, SECRET);
+        var parts = request.split(" ");
+        var reply = backend(parts[0], parts[1], accessPlaceholder(proofs().access()));
+
+        assertEquals(200, reply.status(), reply.body());
+        var upstream = seenOn(parts[1]);
+        assertEquals(1, upstream.size(), seen.toString());
+        assertTrue(upstream.getFirst().contains("Bearer " + store.read(ACCOUNT).tokens().accessToken()), upstream.toString());
+    }
+
+    @Test
+    void onMacOsTheCurrentRefreshProofIsAnsweredAndALogoutStaysOnTheHost() throws Exception {
+        macOs(SECRET, sessionId, SECRET);
+
+        assertEquals(200, refresh(proofs().refreshToken()).status());
+        var logout = send(ChatGptRoute.AUTH, ChatGptRoute.AUTH, "POST /oauth/revoke HTTP/1.1\r\nHost: auth.openai.com\r\n",
+                "{\"token\":\"" + proofs().refreshToken() + "\",\"token_type_hint\":\"refresh_token\"}");
+        assertEquals(200, logout.status());
+        assertTrue(revokeBodies.isEmpty(), "the host's session is untouched: " + revokeBodies);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"POST /backend-api/codex/responses", "GET /backend-api/wham/accounts/check"})
+    void onMacOsEveryProofTheAddressCheckWouldRefuseIsRefused(String request) throws Exception {
+        macOs(SECRET, sessionId, SECRET);
+        var parts = request.split(" ");
+        for (var bearer : wrongAccessProofs()) {
+            var reply = backend(parts[0], parts[1], bearer);
+            assertEquals(401, reply.status(), bearer + ": " + reply.body());
+        }
+        assertTrue(seen.isEmpty(), "never relayed: " + seen);
+    }
+
+    @Test
+    void onMacOsEveryRefreshProofTheAddressCheckWouldRefuseIsRefused() throws Exception {
+        macOs(SECRET, sessionId, SECRET);
+        var current = proofs();
+        var forgedFromHash = ChatGptProof.derive(InstanceSecret.sha256(SECRET).substring(0, 64), ACCOUNT, sessionId);
+        for (var token : List.of(
+                ChatGptProof.derive(OTHER_SECRET, ACCOUNT, sessionId).refreshToken(),
+                ChatGptProof.derive(SECRET, ACCOUNT, "previous-session").refreshToken(),
+                ChatGptProof.derive(SECRET, "keyed", sessionId).refreshToken(),
+                ChatGptProof.REFRESH_PREFIX + current.access(),
+                forgedFromHash.refreshToken(),
+                ChatGptProof.REFRESH_PREFIX + ChatGptProof.verifier(current.refresh()))) {
+            var reply = refresh(token);
+            assertEquals(401, reply.status(), token + ": " + reply.body());
+        }
+        // A logout names no instance without a proof of one
+        assertEquals(401, send(ChatGptRoute.AUTH, ChatGptRoute.AUTH, "POST /oauth/revoke HTTP/1.1\r\nHost: auth.openai.com\r\n",
+                "{\"token\":\"rt." + ChatGptProof.MARKER + "placeholder\"}").status());
+        assertTrue(seen.isEmpty(), "never relayed: " + seen);
+    }
+
+    @Test
+    void onMacOsAStartsOldProofsAreRefusedAfterTheSecretMoved() throws Exception {
+        macOs(SECRET, sessionId, OTHER_SECRET);
+
+        assertEquals(401, backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access())).status());
+        assertEquals(401, refresh(proofs().refreshToken()).status());
+        assertTrue(seen.isEmpty(), seen.toString());
+    }
+
+    @Test
+    void onLinuxAProofFromAnAddressThatIsNoInstanceIsStillRefused() throws Exception {
+        useListing(listing(SECRET, sessionId, SECRET, ACCOUNT).replace("127.0.0.1", "10.99.99.99"));
+
+        assertEquals(401, backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access())).status());
+        assertEquals(401, refresh(proofs().refreshToken()).status());
+        assertTrue(seen.isEmpty(), seen.toString());
     }
 
     @Test

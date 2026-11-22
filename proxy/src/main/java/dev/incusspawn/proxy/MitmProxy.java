@@ -1396,9 +1396,9 @@ public class MitmProxy {
                 // First, by Host or SNI: neither half of a route's connection reaches credentials
                 hostRouteRelay.handle(clientReq, address, byTokenAlone, routes, identified -> begin(flow, identified));
             } else if (chatGpt.handles(domain)) {
-                // ChatGPT's own route (#1332): it identifies its caller by address and proof itself
+                // ChatGPT's own route (#1332): it identifies its caller by address and proof itself, by proof alone on macOS (#2497)
                 begin(flow, caller);
-                chatGpt.handle(clientReq, domain, address, started);
+                chatGpt.handle(clientReq, domain, address, byTokenAlone, started);
             } else if (googleAuth.handles(domain)) {
                 // Google sign-ins (#2443): likewise, by address and the digest a placeholder carries
                 begin(flow, caller);
@@ -1855,7 +1855,8 @@ public class MitmProxy {
                 var chatGptFlow = trafficFlow(caller, domain);
                 var accepted = false;
                 try {
-                    accepted = chatGpt.handleWebSocket(handshake, domain, address, chatGptFlow);
+                    accepted = chatGpt.handleWebSocket(handshake, domain, address,
+                            caller == null && proofIdentifiesCaller(handshake.remoteAddress(), handshake.localAddress()), chatGptFlow);
                 } catch (RuntimeException e) {
                     // Handled here, not below: the route may have decided the handshake already
                     ProxyLog.error("Refusing WebSocket to " + domain + " for " + describeCaller(address) + refusal(e));

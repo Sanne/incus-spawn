@@ -817,4 +817,48 @@ class InstanceRegistryTest {
         assertEquals("", registry.description("b").session());
         assertNull(registry.description("nobody"));
     }
+
+    private static java.util.Map<String, String> chatGptBound(String secret, String session, String address) {
+        var proofs = ChatGptProof.derive(secret, "work", session);
+        return java.util.Map.of(ADDRESS_KEY, address,
+                dev.incusspawn.incus.Metadata.INSTANCE_SECRET_SHA256, InstanceSecret.sha256(secret),
+                dev.incusspawn.incus.Metadata.CHATGPT_PROOF_SECRET_SHA256, InstanceSecret.sha256(secret),
+                dev.incusspawn.incus.Metadata.CHATGPT_SESSION, "work:" + session,
+                dev.incusspawn.incus.Metadata.CHATGPT_ACCESS_PROOF_SHA256, ChatGptProof.verifier(proofs.access()),
+                dev.incusspawn.incus.Metadata.CHATGPT_REFRESH_PROOF_SHA256, ChatGptProof.verifier(proofs.refresh()));
+    }
+
+    @Test
+    void aChatGptProofNamesTheRunningInstanceItWasMadeForWhenTheAddressNamesNone() {
+        var secretA = InstanceSecret.generate();
+        var secretB = InstanceSecret.generate();
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("a", "container", "Running", chatGptBound(secretA, "s1", "10.0.0.5"))
+                .instance("b", "container", "Running", chatGptBound(secretB, "s1", "10.0.0.6"))
+                .instance("stopped", "container", "Stopped", chatGptBound(InstanceSecret.generate(), "s1", "10.0.0.7"));
+        var registry = new InstanceRegistry(daemon.client());
+        assertTrue(registry.refresh());
+        var a = ChatGptProof.derive(secretA, "work", "s1");
+        var b = ChatGptProof.derive(secretB, "work", "s1");
+
+        assertEquals("a", registry.chatGptCaller("10.166.11.2", true, java.util.List.of(a.access())).accounts().instanceName());
+        assertEquals("b", registry.chatGptCaller("10.166.11.2", true, java.util.List.of(b.refresh())).binding().instanceName());
+        assertNull(registry.chatGptCaller("10.166.11.2", true, java.util.List.of(a.access(), b.access())), "two instances' proofs");
+        assertNull(registry.chatGptCaller("10.166.11.2", true, java.util.List.of()), "no proof");
+        assertNull(registry.chatGptCaller("10.166.11.2", true, java.util.List.of(ChatGptProof.verifier(a.access()))), "a verifier");
+        assertNull(registry.chatGptCaller("10.166.11.2", false, java.util.List.of(a.access())), "Linux never goes by proof alone");
+        assertEquals("a", registry.chatGptCaller("10.0.0.5", false, java.util.List.of()).accounts().instanceName());
+    }
+
+    @Test
+    void aChatGptProofFromBeforeTheSecretMovedNamesNobody() {
+        var secret = InstanceSecret.generate();
+        var config = new java.util.HashMap<>(chatGptBound(secret, "s1", "10.0.0.5"));
+        config.put(dev.incusspawn.incus.Metadata.INSTANCE_SECRET_SHA256, InstanceSecret.sha256(InstanceSecret.generate()));
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("a", "container", "Running", config);
+        var registry = new InstanceRegistry(daemon.client());
+        assertTrue(registry.refresh());
+
+        assertNull(registry.chatGptCaller("10.166.11.2", true, java.util.List.of(ChatGptProof.derive(secret, "work", "s1").access())));
+    }
 }
