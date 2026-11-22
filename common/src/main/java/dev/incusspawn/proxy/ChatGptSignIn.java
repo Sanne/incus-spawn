@@ -24,15 +24,19 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * Signs a ChatGPT session in on the host (#1332), by the device-code flow Codex itself uses
- * (codex-rs {@code login/src/device_code_auth.rs}): OpenAI's auth server issues a one-time code
- * the person enters at {@code auth.openai.com/codex/device}, isx polls until they did, and
- * exchanges the authorization code at the same token endpoint the proxy later refreshes at.
+ * Signs a ChatGPT session in on the host (#1332), by the two flows Codex's own login drives.
+ * The browser flow ({@link #signInWithBrowser}, codex-rs {@code login/src/server.rs}) is the
+ * one init offers first: the person signs in in a browser on this host, SSO included, and
+ * OpenAI answers a loopback listener with an authorization code. The device-code flow
+ * ({@link #requestDeviceCode}, codex-rs {@code login/src/device_code_auth.rs}) is beside it for
+ * a host whose browser is elsewhere: OpenAI's auth server issues a one-time code the person
+ * enters at {@code auth.openai.com/codex/device}, and isx polls until they did. Both exchange
+ * the authorization code at the same token endpoint the proxy later refreshes at.
  *
  * <p>What this writes is the session only isx keeps: {@link ChatGptSessionStore#create} under
  * {@code ~/.config/incus-spawn/openai/<account>/}, never a file in an instance. The tokens pass
- * through this process's memory alone; the person sees the code and the verification URL, never
- * a credential.
+ * through this process's memory alone; the person sees an address, and in the device-code
+ * flow its one-time code, never a credential.
  *
  * <p>Every request names Codex's OAuth client id, so what this signs in is the session Codex
  * would have made itself: the proxy can answer Codex's refreshes for it, and OpenAI rotates the
@@ -250,17 +254,10 @@ public class ChatGptSignIn {
                     answer(socket, 404, "Not isx's to answer");
                     continue;
                 }
-                Map<String, String> params;
-                try {
-                    params = parseQuery(request.getOrDefault("query", ""));
-                } catch (IllegalArgumentException badEscape) {
-                    // A query that does not decode carries no state of this sign-in, so like a
-                    // mismatched one it is refused without ending the wait
-                    answer(socket, 400, "The callback's query does not decode");
-                    continue;
-                }
+                var params = parseQuery(request.getOrDefault("query", ""));
                 // This sign-in's state first: only its own callback may end it, with a code or
-                // an error, whatever else the query carries
+                // an error, whatever else the query carries. A state that does not decode is
+                // no state, so it is refused here like a mismatched one
                 if (!state.equals(params.get("state"))) {
                     answer(socket, 400, "State mismatch");
                     continue;
@@ -288,12 +285,14 @@ public class ChatGptSignIn {
     static final int MAX_REQUEST_BYTES = 16 * 1024;
 
     /**
-     * A request's method, path, query and headers, read as text lines, or null when the
-     * connection went idle or closed without sending one: a browser preconnect does both. The
-     * whole request must arrive within {@code limit}, and its request line within
-     * {@link #MAX_REQUEST_BYTES}, else it is null too: the listener serves one connection at a
-     * time, so a client sending a byte now and then must not hold it until the sign-in's own
-     * deadline. Headers past the cap are not read, since nothing here reads them.
+     * A request's path and query, from its request line, or null when the connection went idle
+     * or closed without sending one: a browser preconnect does both. The request line must
+     * arrive within {@link #MAX_REQUEST_BYTES} and the whole request within {@code limit}, else
+     * it is null too: the listener serves one connection at a time, so a client sending a byte
+     * now and then must not hold it until the sign-in's own deadline. Headers are read to the
+     * blank line that ends them and kept nowhere, since nothing here reads one. Past the cap
+     * they are still read, and only {@code limit} ends that: a socket closed with bytes unread
+     * resets the connection, and the browser would then show an error where the answer belongs.
      */
     private static Map<String, String> readRequest(Socket socket, Duration limit) throws IOException {
         var deadline = System.nanoTime() + limit.toNanos();
@@ -301,25 +300,43 @@ public class ChatGptSignIn {
         var lines = new java.util.ArrayList<String>();
         var line = new java.io.ByteArrayOutputStream();
         var total = 0;
+        // Past the cap with the request line in hand: the rest is read and dropped
+        var discarding = false;
+        // How much of the line being dropped is not its line end: none at the blank line
+        var dropped = 0;
         try {
             while (true) {
                 var left = Duration.ofNanos(deadline - System.nanoTime()).toMillis();
-                if (left <= 0) return null;
+                if (left <= 0) {
+                    if (discarding) break;
+                    return null;
+                }
                 socket.setSoTimeout((int) Math.max(1, left));
                 var b = in.read();
                 if (b < 0) {
                     // Closed after its last line, as readLine took it: what it sent still counts
-                    if (line.size() > 0) {
+                    if (!discarding && line.size() > 0) {
                         var text = line.toString(StandardCharsets.ISO_8859_1);
                         lines.add(text.endsWith("\r") ? text.substring(0, text.length() - 1) : text);
                     }
                     break;
                 }
-                if (++total > MAX_REQUEST_BYTES) {
-                    // Only the request line is read from it: headers past the cap, such as a
+                if (!discarding && ++total > MAX_REQUEST_BYTES) {
+                    // Only the request line is kept from it: headers past the cap, such as a
                     // large Cookie for 127.0.0.1, are dropped rather than the callback
                     if (lines.isEmpty()) return null;
-                    break;
+                    discarding = true;
+                    var partial = line.toString(StandardCharsets.ISO_8859_1);
+                    dropped = partial.endsWith("\r") ? partial.length() - 1 : partial.length();
+                }
+                if (discarding) {
+                    if (b == '\n') {
+                        if (dropped == 0) break;
+                        dropped = 0;
+                    } else if (b != '\r') {
+                        dropped++;
+                    }
+                    continue;
                 }
                 if (b == '\n') {
                     var text = line.toString(StandardCharsets.ISO_8859_1);
@@ -332,17 +349,13 @@ public class ChatGptSignIn {
                 }
             }
         } catch (java.net.SocketTimeoutException idleConnection) {
-            return null;
+            // While dropping headers the request line is already in hand, and is still served
+            if (!discarding) return null;
         } catch (IOException closedWithoutARequest) {
-            return null;
+            if (!discarding) return null;
         }
         if (lines.isEmpty()) return null;
         var out = new HashMap<String, String>();
-        for (var header : lines.subList(1, lines.size())) {
-            var colon = header.indexOf(':');
-            if (colon > 0) out.putIfAbsent("header:" + header.substring(0, colon).trim().toLowerCase(java.util.Locale.ROOT),
-                    header.substring(colon + 1).trim());
-        }
         var parts = lines.get(0).split(" ");
         if (parts.length >= 2) {
             var target = parts[1];
@@ -389,13 +402,22 @@ public class ChatGptSignIn {
         return out.toString();
     }
 
+    /**
+     * The query's pairs, each decoded on its own. A pair with a bad percent escape is left out
+     * and the rest are kept: a callback carrying this sign-in's state and an
+     * {@code error_description} that does not decode still ends the wait with its error.
+     */
     private static Map<String, String> parseQuery(String query) {
         var params = new HashMap<String, String>();
         for (var pair : query.split("&")) {
             var eq = pair.indexOf('=');
             if (eq <= 0) continue;
-            params.putIfAbsent(java.net.URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8),
-                    java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+            try {
+                params.putIfAbsent(java.net.URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8),
+                        java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+            } catch (IllegalArgumentException badEscape) {
+                // This pair alone is unreadable
+            }
         }
         return params;
     }

@@ -307,17 +307,21 @@ class ChatGptSignInTest {
 
     @Test
     void aCallbackWithHeadersPastTheCapStillEndsIt() throws Exception {
+        var statusLine = new java.util.concurrent.CompletableFuture<String>();
         var thread = new Thread(() -> {
-            // A browser with many cookies for 127.0.0.1: its headers alone pass the cap
+            // A browser with many cookies for 127.0.0.1: its headers alone pass the cap, many
+            // times over, so the bytes left unread would not fit a socket buffer unnoticed
             var state = paramOf(lastAuthorizeUrl, "state");
             try (var socket = new java.net.Socket("127.0.0.1", callbackPort())) {
+                socket.setSoTimeout(10_000);
                 socket.getOutputStream().write(("GET " + CALLBACK + "?code=browser-code-1&state=" + state
-                        + " HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: c=" + "x".repeat(ChatGptSignIn.MAX_REQUEST_BYTES)
+                        + " HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: c=" + "x".repeat(8 * ChatGptSignIn.MAX_REQUEST_BYTES)
                         + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
                 socket.getOutputStream().flush();
-                socket.getInputStream().read();
-            } catch (Exception ignored) {
-                // the answer may be cut by the unread headers; the sign-in's result is the point
+                statusLine.complete(new java.io.BufferedReader(new java.io.InputStreamReader(
+                        socket.getInputStream(), StandardCharsets.ISO_8859_1)).readLine());
+            } catch (Exception e) {
+                statusLine.completeExceptionally(e);
             }
         });
 
@@ -328,6 +332,29 @@ class ChatGptSignInTest {
 
         thread.join(10_000);
         assertEquals("at-real", tokens.accessToken(), "the callback's code was exchanged despite its headers");
+        // The headers were read to their end, so the connection closes cleanly and the browser
+        // shows the answer, never a reset
+        assertEquals("HTTP/1.1 200 OK", statusLine.get(1, java.util.concurrent.TimeUnit.SECONDS));
+    }
+
+    @Test
+    void anErrorWhoseDescriptionDoesNotDecodeStillEndsIt() {
+        var thread = new Thread(() -> {
+            try {
+                // This sign-in's own state, and a description with a bad percent escape: the
+                // pair that does not decode is left out, the error still ends the wait
+                assertEquals(400, browseTo(CALLBACK + "?error=access_denied&error_description=100%&state="
+                        + paramOf(lastAuthorizeUrl, "state")));
+            } catch (Throwable e) {
+                browserFailure = e;
+            }
+        });
+
+        var refused = assertThrows(IOException.class, () -> signIn.signInWithBrowser(url -> {
+            lastAuthorizeUrl = url;
+            thread.start();
+        }));
+        assertTrue(refused.getMessage().contains("access_denied"), refused.getMessage());
     }
 
     @Test
