@@ -62,6 +62,38 @@ class CredentialCheckTest {
                 """.formatted(ns, keyed, key, keyed, other);
     }
 
+    // --- An OpenAI key, for each agent that spends one, in the account the instance uses
+
+    private static final String CHATGPT_ONLY = """
+            openai:
+              accounts:
+                sub: { type: chatgpt }
+              default: sub
+            """;
+
+    private static final List<String> OPENAI_AGENTS = List.of(
+            template("[codex]"), piTemplate("openai"), "name: tpl-oc\ntools:\n  - opencode: {provider: openai}\n");
+
+    @Test
+    void aMissingOpenAiKeyIsReportedForEveryAgent() throws Exception {
+        for (var agent : OPENAI_AGENTS) {
+            assertEquals("Missing credentials: OpenAI API key. Run 'isx account add openai' to configure it.",
+                    check("{}", agent), agent);
+        }
+    }
+
+    @Test
+    void anOpenAiKeyInThePinnedAccountIsEnoughForEveryAgent() throws Exception {
+        for (var agent : OPENAI_AGENTS) {
+            assertEquals("", check(keyOnlyIn("openai", "apiKey", "work"), agent, Map.of("openai", "work")), agent);
+        }
+    }
+
+    @Test
+    void aChatGptAccountNeedsNoOpenAiKeyForCodex() throws Exception {
+        assertEquals("", check(CHATGPT_ONLY, template("[codex]")));
+    }
+
     // --- pi + OpenAI: the case #793 reported
 
     @Test

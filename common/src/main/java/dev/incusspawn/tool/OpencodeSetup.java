@@ -128,7 +128,8 @@ public class OpencodeSetup implements ToolSetup {
     /**
      * {@code OPENAI_API_KEY} and {@code GEMINI_API_KEY} are Codex's and Gemini CLI's; this one is
      * opencode's own. Theirs are filled whether or not Codex or Gemini CLI is in the image: a start
-     * reads the declarations of every tool isx knows ({@link ProofToken#declared()}).
+     * reads the declarations of every tool the proxy serves ({@link ProofToken#declared()}), which
+     * includes both built-in tools.
      */
     @Override
     public List<ProofToken.Placeholder> placeholders() {
@@ -145,25 +146,22 @@ public class OpencodeSetup implements ToolSetup {
         };
     }
 
+    /**
+     * Only Claude's typed accounts are checked here: a missing OpenAI or Gemini key is found by the
+     * check of every tool's {@code secret: true} entries, for the account the instance uses. That
+     * check accepts a keyless {@code type: chatgpt} or {@code type: google} account, which gives
+     * opencode no key, as it does for Pi; reporting that for both is #2525.
+     */
     @Override
     public String credentialProblem(SpawnConfig config, Map<String, String> resolvedParams,
                                     Map<String, String> selection) {
-        return switch (credentialFor(resolvedParams)) {
-            case ANTHROPIC -> ClaudeSetup.missingAccount(config, selection);
-            case OPENAI -> config.getOpenai().hasAuth() ? "" : "OpenAI API key";
-            case GEMINI, NONE -> "";
-        };
+        return credentialFor(resolvedParams) == Credential.ANTHROPIC ? ClaudeSetup.missingAccount(config, selection) : "";
     }
 
     @Override
     public List<String> credentialNote(Map<String, String> resolvedParams) {
-        var account = switch (credentialFor(resolvedParams)) {
-            case ANTHROPIC -> "a Claude account";
-            case OPENAI -> "an OpenAI API key";
-            case GEMINI, NONE -> "";
-        };
-        if (account.isEmpty()) return List.of();
-        return List.of("opencode needs " + account + " for its provider '" + provider(resolvedParams) + "'.",
+        if (credentialFor(resolvedParams) != Credential.ANTHROPIC) return List.of();
+        return List.of("opencode needs a Claude account for its provider '" + provider(resolvedParams) + "'.",
                 "To use another provider, set it in the template's tools, run 'isx build' on the template"
                         + " and branch from it:"
                         + " '- opencode: {provider: openai}' spends an OpenAI API key,"
