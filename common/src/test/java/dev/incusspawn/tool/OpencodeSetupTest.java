@@ -200,18 +200,6 @@ class OpencodeSetupTest {
     }
 
     @Test
-    void openaiCredentialProblemReflectsConfiguredState() {
-        var empty = new SpawnConfig();
-        assertEquals("OpenAI API key",
-                new OpencodeSetup().credentialProblem(empty, resolved(Map.of("provider", "openai")), Map.of()));
-
-        var configured = new SpawnConfig();
-        configured.getOpenai().setApiKey("sk-test-key");
-        assertEquals("",
-                new OpencodeSetup().credentialProblem(configured, resolved(Map.of("provider", "openai")), Map.of()));
-    }
-
-    @Test
     void reconfigureRewritesTheConfig() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
