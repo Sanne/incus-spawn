@@ -233,6 +233,33 @@ class MavenMirrorProxyTest {
     }
 
     @Test
+    void aRequestRightAfterADownloadWaitsForItsCommitInsteadOfDownloadingAgain() throws Exception {
+        centralHolds.put(JAR, CONTENT);
+        mirrorHolds.put(MIRRORED, CONTENT);
+
+        // The client is answered before its copy is committed; hold the commit back
+        var second = new java.util.concurrent.CompletableFuture<Answer>();
+        synchronized (VerifiedArtifactStore.lockFor(copy())) {
+            assertEquals(new Answer(200, CONTENT), get());
+            var asking = new Thread(() -> {
+                try {
+                    second.complete(get());
+                } catch (Exception e) {
+                    second.completeExceptionally(e);
+                }
+            });
+            asking.setDaemon(true);
+            asking.start();
+            Thread.sleep(500);
+            assertFalse(second.isDone(), "the second request waits for the first one's commit");
+        }
+        assertEquals(new Answer(200, CONTENT), second.get(20, TimeUnit.SECONDS));
+        assertEquals(List.of("GET " + MIRRORED + ".sha1", "GET " + MIRRORED), atMirror,
+                "the mirror is asked once, never again for a copy being committed");
+        assertEquals(List.of("HEAD " + JAR), atCentral, "the second request confirms the copy with Central");
+    }
+
+    @Test
     void anArtifactTheMirrorDoesNotHaveIsFetchedFromTheRepository() throws Exception {
         centralHolds.put(JAR, CONTENT);
 
