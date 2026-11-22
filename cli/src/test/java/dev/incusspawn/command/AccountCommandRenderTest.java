@@ -90,35 +90,66 @@ class AccountCommandRenderTest {
         assertEquals("tpl-dev (template):", out.get(0));
     }
 
+    private static List<String> list(List<AccountCommand.NamespaceListing> namespaces, String unavailable,
+                                     boolean verbose, int width) {
+        return AccountCommand.renderList(namespaces, unavailable, verbose, () -> width, true);
+    }
+
+    private static final List<AccountCommand.NamespaceListing> GITHUB = List.of(
+            new AccountCommand.NamespaceListing("github", List.of(
+                    new AccountCommand.AccountLine("me", "", true, "", List.of(), List.of("scratch", "other")),
+                    new AccountCommand.AccountLine("bot", "commits as bot@x", false, "",
+                            List.of("review-1", "review-2"), List.of())),
+                    Map.of("gone", List.of("old-box"))));
+
     @Test
-    void listMarksTheDefaultAndNamesWhoIsPinned() {
-        var out = String.join("\n", AccountCommand.renderList(List.of(
-                new AccountCommand.NamespaceListing("github", List.of(
-                        new AccountCommand.AccountLine("me", "", true, "", List.of(), List.of("scratch")),
-                        new AccountCommand.AccountLine("bot", "commits as bot@x", false, "",
-                                List.of("review-1", "review-2"), List.of())),
-                        Map.of("gone", List.of("old-box")))), ""));
-        assertTrue(out.contains("  me   [default]"), out);
-        assertTrue(out.contains("  bot  commits as bot@x"), out);
-        assertTrue(out.contains("pinned to it: review-1, review-2"), out);
-        assertTrue(out.contains("following the default (not pinned): scratch"), out);
-        assertTrue(out.contains("Problem: 'gone' is not configured, but old-box is pinned to it"), out);
-        assertFalse(out.contains("*"), "no unexplained markers:\n" + out);
+    void listMarksTheDefaultCountsItsFollowersAndNamesWhoIsPinned() {
+        assertEquals(List.of(
+                "github",
+                "  me   default",
+                "                2 instances follow it",
+                "  bot           commits as bot@x",
+                "                pinned to it: review-1, review-2",
+                "  Problem: 'gone' is not configured, but old-box is pinned to it",
+                "",
+                "Instances not pinned to an account use the default; changing it moves them all.",
+                "Name them with: isx account list --verbose"), list(GITHUB, "", false, 80));
+    }
+
+    /** The followers of a default are nearly every instance, so only --verbose names them. */
+    @Test
+    void verboseNamesTheFollowers() {
+        var out = list(GITHUB, "", true, 80);
+        assertEquals("  me   default", out.get(1));
+        assertEquals("                following it: scratch, other", out.get(2));
+        assertFalse(String.join("\n", out).contains("--verbose"), out.toString());
+    }
+
+    @Test
+    void aLongListOfPinsWrapsUnderItsFirstName() {
+        var pins = java.util.stream.IntStream.range(0, 12).mapToObj(i -> "instance-number-" + i).toList();
+        var out = list(List.of(new AccountCommand.NamespaceListing("claude", List.of(
+                new AccountCommand.AccountLine("api", "Anthropic API key", false, "", pins, List.of())), Map.of())),
+                "", false, 70);
+        assertEquals("       pinned to it: instance-number-0, instance-number-1,", out.get(2));
+        assertEquals("                     instance-number-2, instance-number-3,", out.get(3));
+        assertTrue(out.stream().allMatch(l -> l.length() <= 70), String.join("\n", out));
     }
 
     @Test
     void listWorksWithoutIncus() {
-        var out = AccountCommand.renderList(List.of(
+        var out = list(List.of(
                 new AccountCommand.NamespaceListing("github", List.of(
                         new AccountCommand.AccountLine("me", "", true, "", List.of(), List.of())), Map.of())),
-                "connection refused");
+                "connection refused", false, 80);
+        assertEquals("  me  default", out.get(1));
         assertTrue(out.get(out.size() - 1).contains("connection refused"), String.join("\n", out));
     }
 
     @Test
     void listWithNothingConfiguredSaysHowToStart() {
         assertEquals(List.of("No accounts configured. Run 'isx account add' to add one."),
-                AccountCommand.renderList(List.of(), ""));
+                list(List.of(), "", false, 80));
     }
 
     @Test

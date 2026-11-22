@@ -9,6 +9,7 @@ import dev.incusspawn.tool.ToolDefValidator;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.Report;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -81,16 +82,11 @@ public class ToolsCommand extends BaseCommand {
                 tools.keySet().forEach(name -> out.println(cell(name)));
                 return;
             }
-            int maxName = tools.keySet().stream().mapToInt(String::length).max().orElse(10);
-            int maxSource = tools.keySet().stream()
-                    .mapToInt(name -> sourceOf.apply(name).length())
-                    .max().orElse(7);
-            var fmt = "%-" + maxName + "s  %-" + maxSource + "s  %s%n";
-            out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
+            var table = Report.table("NAME", "SOURCE", "DESCRIPTION");
             for (var entry : tools.entrySet()) {
-                out.printf(fmt, cell(entry.getKey()),
-                        cell(sourceOf.apply(entry.getKey())), cell(entry.getValue().description()));
+                table.row(entry.getKey(), sourceOf.apply(entry.getKey()), entry.getValue().description());
             }
+            table.print(out);
         }
 
         /** The fields of {@code isx tools list --format=plain|json}, in order: add to the end, never rename. */

@@ -5,6 +5,8 @@ paths:
   - "common/src/main/java/dev/incusspawn/util/TerminalOutput.java"
   - "common/src/main/java/dev/incusspawn/util/CopyingOutput.java"
   - "common/src/main/java/dev/incusspawn/util/TerminalProgress.java"
+  - "common/src/main/java/dev/incusspawn/util/Report.java"
+  - "cli/src/test/java/dev/incusspawn/ReportTableGateTest.java"
   - "common/src/main/java/dev/incusspawn/tool/**"
   - "cli/src/main/java/dev/incusspawn/command/BuildProgress.java"
   - "cli/src/main/java/dev/incusspawn/command/RepoCloner.java"
@@ -50,6 +52,10 @@ The proxy daemon's own lines go through `ProxyLog`, its one gate: `stdout` for i
 
 **Clean off a terminal (#1037).**
 Every escape `BuildOutput` writes goes through `styled()`/`ansi()`, which is `TerminalProgress.isAnsiTerminal()`: false without a console, for `TERM=dumb`, and under a non-empty `NO_COLOR`.
+A report (a query command's `table` format, the accounts of `isx account`) is laid out with `Report` (`common/util`), never with a padded format string: `Report.table(headers).row(...).print(BuildOutput.results())`.
+It fits columns to their cells, right-aligns numbers (`right`), drops a column no row fills (`optional`), passes every cell through `OutputFormat.oneLine`, and on a terminal cuts the last column to the terminal's width.
+A cell's tone is a `Report.Tone` (`Report.cell`), a block's title `Report.heading`, a list under a row `Table.detail`, and a long common case is counted with `Report.count` and named only with `--verbose`.
+`ReportTableGateTest` enforces it; the rules are design/terminal.md "Reports".
 `warn`, `stepWarn`, `note` and `warnBanner` write to stderr; steps, headers, groups and `success` to stdout, so a piped action command's stdout holds what it did, not diagnostics.
 A line that *is* the command's result (a dry-run's "Would delete ...", pool usage, the current base image, "already installed") is a `step()`, never a `note()`.
 A query's answer (a status report, a table, `OutputFormat`'s records) is printed as given to `BuildOutput.results()`: the terminal's stdout, nothing while the TUI draws.

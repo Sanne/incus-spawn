@@ -336,6 +336,7 @@ Fields are added, never renamed, removed or reordered.
 Stdout holds only results, never colour, glyphs, progress or prose.
 No value writes a control character raw (`plain` spaces them through `OutputFormat.oneLine`, `json` escapes them, #1118).
 `table` is for people and may change.
+It is laid out with `Report` (`common/util`), like every report, never with a padded format string (`ReportTableGateTest`, design/terminal.md "Reports").
 `isx list` from the CLI costs one Incus request and loads no definitions.
 Commands that act need only clean stdout: `BuildOutput.ansi()` is the one gate for colour and hyperlinks (nothing off an ANSI terminal or under `NO_COLOR`; it follows stdout, not stderr), and its warnings and notes go to stderr.
 A status report goes to stdout in every state, its exit code saying which (#1037).

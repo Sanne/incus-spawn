@@ -127,14 +127,13 @@ reload_proxy
 echo "[1] Every configured credential is listed as its account 'default'"
 LISTING="$(isx account list 2>&1)"
 echo "$LISTING" | sed 's/^/       /'
+# Read from the json format: the table is for people and may change.
+ACCOUNTS="$(isx account list --format=json 2>/dev/null)"
 for ns in claude github bob openai testProxyTool; do
-    if echo "$LISTING" | python3 -c "
-import sys
-ns, lines = sys.argv[1], sys.stdin.read().splitlines()
-i = lines.index(ns + ':')
-# The account's name, then what it is (when the tool can say), then its [default] tag.
-line = lines[i + 1].strip()
-sys.exit(0 if line.split()[0] == 'default' and line.endswith('[default]') else 1)" "$ns" 2>/dev/null; then
+    if echo "$ACCOUNTS" | python3 -c "
+import json, sys
+accounts = [a for a in json.load(sys.stdin) if a['namespace'] == sys.argv[1]]
+sys.exit(0 if len(accounts) == 1 and accounts[0]['account'] == 'default' and accounts[0]['default'] is True else 1)" "$ns" 2>/dev/null; then
         pass "$ns lists its flat credential as 'default'"
     else
         fail "$ns lists its flat credential as 'default'"

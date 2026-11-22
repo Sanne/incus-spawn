@@ -12,6 +12,7 @@ import dev.incusspawn.proxy.ProxyHolder;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.Report;
 import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -331,8 +332,6 @@ public class ProxyCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
-        private static final String DOMAIN_ROW = "%-30s %-28s %9s %9s %10s %10s  %s%n";
-        private static final String ROW = "%-30s %9s %9s %10s %10s  %-14s %11s %13s%n";
 
         static void print(ProxyActivity activity, OutputFormat format, boolean byDomain, ZoneId zone,
                           Instant now, PrintStream out) {
@@ -342,21 +341,24 @@ public class ProxyCommand extends BaseCommand {
                 return;
             }
             if (byDomain) {
-                out.printf(DOMAIN_ROW, "INSTANCE", "DOMAIN", "REQUESTS", "IN FLIGHT", "SENT", "RECEIVED", "LAST ACTIVITY");
+                var table = Report.table("INSTANCE", "DOMAIN", "REQUESTS", "IN FLIGHT", "SENT", "RECEIVED", "LAST ACTIVITY")
+                        .right("REQUESTS", "IN FLIGHT", "SENT", "RECEIVED");
                 for (var r : records) {
-                    out.printf(DOMAIN_ROW, name(r), r.get("domain"), r.get("requests"), r.get("in_flight"),
+                    table.row(name(r), r.get("domain"), r.get("requests"), r.get("in_flight"),
                             size(r.get("request_bytes")), size(r.get("response_bytes")), ago(r.get("last_activity_at"), now));
                 }
+                table.print(out);
                 printPlacement(activity, now, out);
                 return;
             }
-            out.printf(ROW, "INSTANCE", "REQUESTS", "IN FLIGHT", "SENT", "RECEIVED", "LAST ACTIVITY", "MODEL CALLS",
-                    "OUTPUT TOKENS");
+            var table = Report.table("INSTANCE", "REQUESTS", "IN FLIGHT", "SENT", "RECEIVED", "LAST ACTIVITY", "MODEL CALLS",
+                    "OUTPUT TOKENS").right("REQUESTS", "IN FLIGHT", "SENT", "RECEIVED", "MODEL CALLS", "OUTPUT TOKENS");
             for (var r : records) {
-                out.printf(ROW, name(r), r.get("requests"), r.get("in_flight"), size(r.get("request_bytes")),
+                table.row(name(r), r.get("requests"), r.get("in_flight"), size(r.get("request_bytes")),
                         size(r.get("response_bytes")), ago(r.get("last_activity_at"), now),
                         dash(r.get("model_requests")), dash(r.get("output_tokens")));
             }
+            table.print(out);
             printPlacement(activity, now, out);
         }
 

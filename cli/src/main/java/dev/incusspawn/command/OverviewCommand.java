@@ -10,6 +10,7 @@ import dev.incusspawn.proxy.EventLogReader;
 import dev.incusspawn.proxy.EventLogReader.Effort;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.Report;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
@@ -274,16 +275,14 @@ public class OverviewCommand extends BaseCommand {
             out.println("No isx instances found.");
             return;
         }
-        var nameWidth = Math.max(20, instances.stream().mapToInt(e -> e.name().length()).max().orElse(20));
-        var fmt = "  %-" + nameWidth + "s  %-10s  %-14s  %-7s  %-15s  %-28s  %-40s  %-" + ListCommand.PURPOSE_CELL_MAX + "s  %s%n";
-        out.printf(fmt, "NAME", "STATUS", "LAST USED", "TOKENS", "ACTIVE", "WORK", "GITHUB", "PURPOSE", "DONE");
-        out.printf(fmt, "-".repeat(nameWidth), "------", "---------", "------", "------", "----", "------", "-------", "----");
+        var table = Report.table("NAME", "STATUS", "LAST USED", "TOKENS", "ACTIVE", "WORK", "GITHUB", "PURPOSE", "DONE");
         for (var i : instances) {
             var effort = effortOf(log, i);
-            out.printf(fmt, i.name(), i.status(), lastUsedCell(i), tokensCell(effort), activeCell(effort, zone),
-                    reading.workOf(i).cell(), githubCell(effort, statesOf(reading, i, effort), 40), ListCommand.purposeCell(i),
-                    doneCell(reading.summaryOf(i), 80));
+            table.row(i.name(), ListCommand.statusCell(i.status()), lastUsedCell(i), tokensCell(effort),
+                    activeCell(effort, zone), reading.workOf(i).cell(), githubCell(effort, statesOf(reading, i, effort), 40),
+                    ListCommand.purposeCell(i), doneCell(reading.summaryOf(i), 80));
         }
+        table.print(out);
         out.println();
         var note = coverage(log, zone);
         if (note != null) out.println(note);
