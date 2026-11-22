@@ -73,7 +73,12 @@ public final class TerminalProgress {
      * not {@code dumb}, and no {@code NO_COLOR} (any non-empty value, per no-color.org).
      */
     public static boolean isAnsiTerminal() {
-        return !Headless.active() && isAnsiTerminal(TerminalStreams.hasConsole(), System::getenv);
+        return isAnsiTerminal(isTerminal(), System::getenv);
+    }
+
+    /** Whether a person reads the output on a terminal, with or without colour: its width then bounds a report. */
+    static boolean isTerminal() {
+        return !Headless.active() && TerminalStreams.hasConsole();
     }
 
     static boolean isAnsiTerminal(boolean console, UnaryOperator<String> env) {

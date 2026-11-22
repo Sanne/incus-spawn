@@ -6,6 +6,7 @@ import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.Report;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -89,10 +90,9 @@ public class AgentCommand extends BaseCommand {
         }
         var out = BuildOutput.results();
         out.println(preferred == null ? "No preferred agent." : "Preferred agent: " + OutputFormat.oneLine(preferred));
-        for (var r : records) {
-            out.println(String.format("%s %-12s %s", Boolean.TRUE.equals(r.get("preferred")) ? "*" : " ",
-                    r.get("agent"), r.get("on_host")));
-        }
+        var table = Report.table();
+        for (var r : records) table.row(Boolean.TRUE.equals(r.get("preferred")) ? "*" : " ", r.get("agent"), r.get("on_host"));
+        table.print(out);
         return 0;
     }
 

@@ -23,6 +23,7 @@ import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.Report;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -114,17 +115,14 @@ public class TemplatesCommand extends BaseCommand {
          * the terminal (#1133).
          */
         static void printTable(PrintStream out, Map<String, ImageDef> defs, boolean verbose) {
-            int maxName = Math.max(4, defs.keySet().stream().mapToInt(name -> cell(name).length()).max().orElse(0));
-            int maxSource = Math.max(6, defs.values().stream().mapToInt(d -> cell(d.getSource()).length()).max().orElse(0));
-            var fmt = verbose ? "%-" + maxName + "s  %-" + maxSource + "s  %s%n" : "%-" + maxName + "s  %s%n";
-            if (verbose) out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
-            else out.printf(fmt, "NAME", "DESCRIPTION");
+            var table = verbose ? Report.table("NAME", "SOURCE", "DESCRIPTION") : Report.table("NAME", "DESCRIPTION");
             for (var entry : defs.entrySet()) {
                 var def = entry.getValue();
-                var description = cell(java.util.Objects.toString(def.getDescription(), ""));
-                if (verbose) out.printf(fmt, cell(entry.getKey()), cell(def.getSource()), description);
-                else out.printf(fmt, cell(entry.getKey()), description);
+                var description = java.util.Objects.toString(def.getDescription(), "");
+                if (verbose) table.row(entry.getKey(), def.getSource(), description);
+                else table.row(entry.getKey(), description);
             }
+            table.print(out);
         }
 
         /**

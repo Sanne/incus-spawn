@@ -9,6 +9,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.Report;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -170,27 +171,25 @@ public class ListCommand extends BaseCommand {
     }
 
     public static void printTable(List<InstanceInfo> items, java.io.PrintStream out) {
-        var nameWidth = Math.max(20, items.stream().mapToInt(e -> e.name().length()).max().orElse(20));
-        // The OWNER column only for someone whose instances have one, an isx mcp session or another
-        // tool (#1720): without it, the format has no conversion for the last argument, which
-        // printf ignores. AGE is padded when OWNER follows.
-        var owned = items.stream().anyMatch(e -> e.mcp() != null || e.owner() != null);
-        // PURPOSE (#2239) likewise only when an instance has one, as the last column
-        var purposed = items.stream().anyMatch(e -> e.purpose() != null);
-        var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  "
-                + (purposed ? "%-13s  %-13s  %s%n" : owned ? "%-13s  %s%n" : "%s%n");
-
-        out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "OWNER", "PURPOSE");
-        out.printf(fmt, "-".repeat(nameWidth), "----------", "---------------",
-                "--------------------", "----------", "---", "---", "-------");
+        // OWNER (#1720) only for someone whose instances have one, an isx mcp session or another
+        // tool, and PURPOSE (#2239) only when an instance has one
+        var table = Report.table("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "OWNER", "PURPOSE")
+                .optional("OWNER", "PURPOSE");
         for (var entry : items) {
             var age = entry.created().isEmpty() ? "-" : Metadata.ageDescription(entry.created());
-            var parent = entry.parent().isEmpty() ? "-" : OutputFormat.oneLine(entry.parent());
+            var parent = entry.parent().isEmpty() ? "-" : entry.parent();
             var ip = entry.ipv4().isEmpty() ? "-" : entry.ipv4();
-            out.printf(fmt, entry.name(), entry.status(), ip, parent, entry.runtime(), age, ownerCell(entry),
+            table.row(entry.name(), statusCell(entry.status()), ip, parent, entry.runtime(), age, ownerCell(entry),
                     purposeCell(entry));
         }
-        out.println();
+        table.print(out);
+    }
+
+    /** A status in its tone: a running instance is the one the eye should find, a stopped one is quiet. */
+    public static Report.Cell statusCell(String status) {
+        var tone = "running".equalsIgnoreCase(status) ? Report.Tone.GOOD
+                : "stopped".equalsIgnoreCase(status) ? Report.Tone.QUIET : Report.Tone.CAUTION;
+        return Report.cell(status, tone);
     }
 
     /** The most of a purpose the table shows, so one long stamp does not push the rest off the line. */

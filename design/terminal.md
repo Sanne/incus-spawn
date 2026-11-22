@@ -79,7 +79,56 @@ This prevents leaked output (e.g. systemd's "Created symlink" lines) from breaki
 
 **Adding new output:** use `BuildOutput.section()` to introduce a block of work, `header()` to frame a named multi-step operation within it, `group()` for a batch of related steps, `step()`/`ok()` for quick actions, `stepStart()`/`stepDone()`/ `stepDone(detail)` for slow ones (with `stepProgress()` when a phase can take a while), `stepNote()`/`stepWarn()` for detail about the step above, `note()` for informational dim messages, `warnBanner()` for bordered stderr warnings, and `success()` for the final confirmation.
 Never print to the raw streams or indent a line with leading spaces (a `group` indents its children), and write labels bare: a `Doing X` that did work is a live step, never a `Doing X...` step left dangling.
-Pure reports/tables and interactive prompts (e.g. `proxy` status, `clean` summaries, the TUI) are not step sequences and stay as plain output.
+A report or a table is not a step sequence: it is laid out with `Report`, by the rules of "Reports" below.
+Interactive prompts and the TUI have their own rules.
+
+## Reports
+
+A report is a command's answer when that answer is a list of things: the `table` format of a query command, or the accounts of `isx account`.
+Its reader looks for one row, so the rows are the loudest thing in it, as in the TUI ([The TUI's visual language](visual-language.md)).
+Every report is laid out by `Report` (`common/.../util/Report.java`), so these rules hold in one place and a change to them reaches every command.
+
+Each command once laid out its own table.
+`isx list` drew a rule of dashes under its header and indented its rows, `isx templates` did neither, and `isx proxy activity` gave the instance a fixed 30 columns, which a longer name pushed out of line.
+None of them read the terminal's width, and `isx account` printed every instance following a default on one line, once per credential.
+
+**The rules:**
+
+- **A header is upper case and quiet, with no rule under it.**
+  A row of dashes is a line of ink that says nothing, and the header's case and dimness already set it apart.
+- **A column is as wide as its widest cell**, and two spaces separate columns.
+  A fixed width is either wasted or too small.
+- **Numbers end at the same column** (`Table.right`), so their sizes compare at a glance.
+- **A column no row fills is left out** (`Table.optional`), as `isx list` does for OWNER and PURPOSE.
+- **A report starts at column 0.**
+  Only rows under a heading are indented, by two.
+- **Tone says what a piece is, and colour never says it alone.**
+  `Report.Tone` has the TUI's roles: text, strong, quiet, good, caution and bad.
+  A running instance is good and a stopped one quiet, and both still say so in a word.
+  Off an ANSI terminal, or under `NO_COLOR`, the same text is written without escapes.
+- **Every cell is one line that cannot drive the terminal.**
+  The table passes each cell through `OutputFormat.oneLine`, so a command cannot forget to.
+- **A report fits the terminal.**
+  On a terminal the last column is cut with `…` at the terminal's width, and a list is wrapped to it.
+  Through a pipe nothing is cut, so `isx list | grep` sees whole rows, and a list wraps at 100 columns.
+- **A list belongs under its row, wrapped under its first item** (`Table.detail`, `Report.wrap`).
+  The label is quiet and the names are not.
+- **The common case is counted and the exceptions are named** (`Report.count`).
+  `isx account` names the instances pinned to an account and counts those following a default, which are nearly all of them.
+  `--verbose` names them, and `plain` and `json` always hold every name.
+
+**What this gives up.**
+A cut last column hides the end of a long description on a narrow terminal; `plain` and `json` hold it whole.
+The width is counted in code points, so a table of wide characters, such as CJK text, is cut a little late.
+The terminal's width costs a process (`stty size`), so `Report` asks for it only when a line is longer than 80 columns.
+A terminal narrower than that wraps such a report itself.
+
+**Adding a report.**
+Build a `Report.table(...)`, add a `row` per record, and `print` it to `BuildOutput.results()`.
+Give a cell a tone with `Report.cell`, title a block with `Report.heading`, and never pad with a format string.
+`ReportTableGateTest` fails a command class that pads a table by hand.
+It names the files that still do: `isx init`'s frames, which are its own, and pairs of a label and a value (`isx proxy status`, `isx clean`, `isx reset`), which `Report` has no helper for yet.
+`table` may change in any release, so a script reads `plain` or `json` ("Output for scripts" below).
 
 ## One layout for a question with several choices
 

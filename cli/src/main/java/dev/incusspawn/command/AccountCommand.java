@@ -16,6 +16,7 @@ import dev.incusspawn.tool.ToolDefValidator;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.Report;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -27,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntSupplier;
 
 /**
  * Inspect and change which credential account an instance uses.
@@ -68,10 +70,15 @@ public class AccountCommand extends BaseCommand {
     @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
     String format;
 
+    @Option(shortName = 'v', name = "verbose", hasValue = false,
+            description = "Name the instances that follow each default, which are otherwise counted")
+    boolean verbose;
+
     @Override
     protected CommandResult doExecute() throws Exception {
         var list = new ListSub();
         list.format = format;
+        list.verbose = verbose;
         return list.doExecute();
     }
 
@@ -85,6 +92,10 @@ public class AccountCommand extends BaseCommand {
         // Output for scripts (#1036): see OutputFormat for what plain and json promise.
         @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
         String format;
+
+        @Option(shortName = 'v', name = "verbose", hasValue = false,
+                description = "Name the instances that follow each default, which are otherwise counted")
+        boolean verbose;
 
         // Read by the completion scripts of releases before #1842; see completionLines.
         @Option(name = "completion", hasValue = false,
@@ -128,7 +139,8 @@ public class AccountCommand extends BaseCommand {
                 outputFormat.print(BuildOutput.results(), listRecords(namespaces, pinsKnown));
                 return CommandResult.SUCCESS;
             }
-            renderList(namespaces, pinsUnavailable).forEach(BuildOutput.results()::println);
+            renderList(namespaces, pinsUnavailable, verbose, Report.widthOnce(), Report.onTerminal())
+                    .forEach(BuildOutput.results()::println);
             return CommandResult.SUCCESS;
         }
     }
@@ -270,38 +282,43 @@ public class AccountCommand extends BaseCommand {
         return record;
     }
 
-    static List<String> renderList(List<NamespaceListing> namespaces, String pinsUnavailable) {
+    /**
+     * The {@code table} format. An account's pins are named, since they are the exceptions; the
+     * instances following a default are nearly all of them, so they are counted, and named only
+     * with {@code verbose}. {@code width} is the terminal's, asked only when a list needs wrapping.
+     */
+    static List<String> renderList(List<NamespaceListing> namespaces, String pinsUnavailable, boolean verbose,
+                                   IntSupplier width, boolean cut) {
         var out = new ArrayList<String>();
+        boolean followed = false;
         for (var ns : namespaces) {
             if (ns.accounts().isEmpty() && ns.danglingPins().isEmpty()) continue;
             if (!out.isEmpty()) out.add("");
-            out.add(ns.namespace() + ":");
-            int width = ns.accounts().stream().mapToInt(a -> a.name().length()).max().orElse(0);
+            out.add(Report.heading(ns.namespace()));
+            // The default's marker stands beside the name, where a long description cannot move it
+            var table = Report.table().indent(2).detailUnder(2);
             for (var a : ns.accounts()) {
-                var line = new StringBuilder("  ").append(pad(a.name(), width));
-                if (!a.description().isEmpty()) line.append("  ").append(a.description());
-                var tags = new ArrayList<String>();
-                if (a.isDefault()) tags.add("default");
-                if (!a.problem().isEmpty()) tags.add(a.problem());
-                if (!tags.isEmpty()) line.append("  [").append(String.join(", ", tags)).append("]");
-                out.add(line.toString().stripTrailing());
-                if (!a.pinnedBy().isEmpty()) {
-                    out.add("    pinned to it: " + String.join(", ", a.pinnedBy()));
-                }
+                followed |= !a.following().isEmpty();
+                table.row(a.name(), Report.cell(a.isDefault() ? "default" : "", Report.Tone.STRONG), a.description(),
+                        Report.cell(a.problem(), Report.Tone.CAUTION));
                 if (!a.following().isEmpty()) {
-                    out.add("    following the default (not pinned): " + String.join(", ", a.following()));
+                    if (verbose) table.detail("following it:", a.following());
+                    else table.detail("", List.of(Report.count(a.following().size(), "instance follows it", "instances follow it")));
                 }
+                if (!a.pinnedBy().isEmpty()) table.detail("pinned to it:", a.pinnedBy());
             }
-            ns.danglingPins().forEach((account, instances) -> out.add(
-                    "  Problem: '" + account + "' is not configured, but " + String.join(", ", instances)
-                            + (instances.size() == 1 ? " is" : " are") + " pinned to it"));
+            out.addAll(table.lines(width, cut));
+            ns.danglingPins().forEach((account, instances) -> out.add("  " + Report.styled(Report.Tone.CAUTION,
+                    "Problem: '" + account + "' is not configured, but " + String.join(", ", instances)
+                            + (instances.size() == 1 ? " is" : " are") + " pinned to it")));
         }
         if (out.isEmpty()) {
             out.add("No accounts configured. Run 'isx account add' to add one.");
-        } else {
+        } else if (followed) {
             out.add("");
-            out.add("[default] is the global default: the account used by every instance that is not"
-                    + " pinned to one. Changing it moves them all.");
+            out.add(Report.styled(Report.Tone.QUIET,
+                    "Instances not pinned to an account use the default; changing it moves them all."));
+            if (!verbose) out.add(Report.styled(Report.Tone.QUIET, "Name them with: isx account list --verbose"));
         }
         if (!pinsUnavailable.isEmpty()) {
             out.add("(Could not read which instances use each account: " + pinsUnavailable + ")");

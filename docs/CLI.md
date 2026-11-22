@@ -696,12 +696,14 @@ isx account <subcommand>
 
 | Subcommand | What it does |
 |------------|--------------|
-| `list` | Configured accounts per credential, the default, and the instances pinned to each |
+| `list [--verbose]` | Configured accounts per credential, the default, and the instances pinned to each |
 | `add [<credential>]` | Add or replace one credential with the step `isx init` runs for it |
 | `show <instance>` | The account the instance uses for each credential, and where it comes from |
 | `set <instance> <ns>=<account>...` | Pin the instance to these accounts; takes effect on its next request |
 | `unset <instance> <ns>...` | Remove the pins, so the instance follows the default again |
 | `reset-proofs <instance>` | Revoke shared proofs and deliver replacements, waiting for the proxy to acknowledge. Afterwards, restart tools and nested services yourself so they use the new tokens |
+
+`list` counts the instances that follow each default, and `--verbose` names them.
 
 `isx account add` runs that one step and nothing else: no sudo, no other step.
 Name the credential by namespace (`github`, `claude`, `openai`) or by tool (`gh`, `codex`); without a name, choose from init's credential menu.

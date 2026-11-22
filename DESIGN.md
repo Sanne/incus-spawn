@@ -132,6 +132,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Running one command: `isx exec`
 - [Terminal output and the TUI](design/terminal.md)
   - Terminal Output Visual Language
+  - Reports
   - One layout for a question with several choices
   - Output for scripts: `--format=table|plain|json`
   - Shell completion asks the running binary
