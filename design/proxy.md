@@ -880,6 +880,12 @@ A private repository cannot take a mirror, since its credential never goes to an
 An entry naming no cached repository, or one of these, is dropped with a warning naming why (`CachedRepository.withMirrors`).
 The mirror's host is not intercepted: only the proxy talks to it.
 Uncached paths (`maven-metadata.xml`, SNAPSHOTs, a sidecar with no stored copy) still go to the repository alone, which leaves a build that resolves a version range or a plugin prefix exposed to its limit.
+**A request right after a download waits for its commit** (#2491).
+The client is answered when the last byte arrives, and the copy is committed after that.
+A client that asks again at once, as Maven checking a jar it just took does, would find nothing cached and download the artifact a second time, which a mirror or a throttling repository then answers.
+So a Maven artifact or sidecar lookup whose commit is under way waits for it (`ArtifactCacheHandler.afterCommit`), on its own connection's context.
+The wait is bounded by a mirror's (`mirrorWaitMillis`, half the client's remaining time), and then the lookup goes on as if nothing were pending.
+A miss with no commit pending pays nothing, and the npm tarball and container image lookups do not wait.
 
 `maven-metadata.xml` stays relayed because confirming it costs the same round trip as fetching it.
 SNAPSHOTs stay relayed: Central and the Plugin Portal reject them, and where a declared repository serves them, sidecar confirmation would be unsound and offline serves of content replaced on every deploy rarely right.

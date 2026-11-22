@@ -1056,13 +1056,23 @@ class ArtifactCacheHandler {
 
         private void complete() {
             finish();
+            // Named before the client can hear the end, so its next request waits for the commit (#2491)
+            var committed = Promise.<Void>promise();
+            // A second download of the same file in flight is waited for too, so its commit is never hidden
+            var earlier = committing.put(cacheFile, committed);
             file.close().onComplete(closed -> {
                 if (!clientGone) clientResp.end();
-                verification.expected().apply(first).onComplete(ar -> vertx.executeBlocking(() -> {
+                // compose, so a throw from the function is a failure and the promise below still completes
+                Future.<Void>succeededFuture().compose(v -> verification.expected().apply(first)).onComplete(ar -> vertx.executeBlocking(() -> {
                     finalizeCacheFile(tempFile, cacheFile, ref, isGzip,
                             verification, ar.succeeded() ? ar.result() : null);
                     return null;
-                }, false));
+                }, false).onComplete(done -> (earlier == null ? Future.<Void>succeededFuture()
+                        : earlier.future().timeout(CLIENT_READ_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS))
+                        .onComplete(settled -> {
+                            committing.remove(cacheFile, committed);
+                            committed.complete();
+                        })));
             });
         }
 
@@ -2003,6 +2013,34 @@ class ArtifactCacheHandler {
                 : null;
     }
 
+    /**
+     * Completes when a commit under way for the artifact has finished, or when the wait has taken as
+     * long as a mirror's is allowed ({@link #mirrorWaitMillis}), whichever is first: the lookup then
+     * goes on as it would have without a commit, and a hung one never outlasts the client's patience.
+     * A client is answered before its copy is committed, and one that asks again at once (Maven,
+     * checking a jar it just took) would find nothing cached and download it a second time, from a
+     * mirror or from a throttling repository. The result completes on the caller's context, never on
+     * the commit's, as {@code SingleFlight} does.
+     */
+    private Future<Void> afterCommit(Path artifact, long started) {
+        var pending = committing.get(artifact);
+        if (pending == null) return Future.succeededFuture();
+        var context = Vertx.currentContext();
+        var resumed = Promise.<Void>promise();
+        var settled = new java.util.concurrent.atomic.AtomicBoolean();
+        Runnable resume = () -> {
+            if (!settled.compareAndSet(false, true)) return;
+            if (context == null || Vertx.currentContext() == context) resumed.complete();
+            else context.runOnContext(v -> resumed.complete());
+        };
+        var timer = vertx.setTimer(mirrorWaitMillis(started), id -> resume.run());
+        pending.future().onComplete(ar -> {
+            vertx.cancelTimer(timer);
+            resume.run();
+        });
+        return resumed.future();
+    }
+
     private record LocalCopies(VerifiedArtifactStore.CachedCopy cached, boolean hostCopy) {}
 
     /**
@@ -2013,11 +2051,11 @@ class ArtifactCacheHandler {
                                ArtifactTarget target) {
         var ref = domain + clientReq.path();
 
-        vertx.executeBlocking(() -> {
+        afterCommit(target.artifact(), started).compose(committed -> vertx.executeBlocking(() -> {
             var cached = VerifiedArtifactStore.cachedCopy(target.artifact(), target.checksum(), null);
             return new LocalCopies(cached,
                     cached == null && target.hostCopy() != null && Files.isRegularFile(target.hostCopy()));
-        }, false).onSuccess(local -> {
+        }, false)).onSuccess(local -> {
             var cached = local.cached();
             if (cached != null) {
                 var tier = trustTier(revalidation, cached);
@@ -2431,6 +2469,9 @@ class ArtifactCacheHandler {
     // Mirrors that failed, hung or throttled, by host, and the System.nanoTime until which they are not asked
     final Map<String, Long> mirrorBackoffs = new ConcurrentHashMap<>();
 
+    // Downloads whose client has been answered while the copy is still being committed (#2491)
+    private final Map<Path, Promise<Void>> committing = new ConcurrentHashMap<>();
+
     private boolean mirrorResting(String host) {
         var until = mirrorBackoffs.get(host);
         if (until == null) return false;
@@ -2492,7 +2533,8 @@ class ArtifactCacheHandler {
     private void serveSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
                               Sidecar sidecar, ArtifactTarget target) {
         var artifact = target.artifact();
-        vertx.executeBlocking(() -> VerifiedArtifactStore.cachedCopy(artifact, target.checksum(), sidecar), false
+        afterCommit(artifact, System.nanoTime()).compose(committed ->
+                vertx.executeBlocking(() -> VerifiedArtifactStore.cachedCopy(artifact, target.checksum(), sidecar), false)
         ).onComplete(ar -> {
             var cached = ar.succeeded() ? ar.result() : null;
             var stored = cached == null ? null : cached.sidecar();
