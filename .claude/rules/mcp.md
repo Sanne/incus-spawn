@@ -112,6 +112,7 @@ The steps are joined by `&&` and a failure removes the temp file, so a failed wr
 `diff()` reads `base.txt` and the index it copies the same way, and runs under the guest's `timeout` (`DIFF_LIMIT_SECONDS`), since git opens repository files no script can check; a diff past it exits non-zero, which `Tasks.run` makes `unavailable` (#1105).
 `ExecScript.kill` reads the pid file through `readFile`.
 A kill that finds no pid file yet leaves a `<id>.killed` directory (never a file, which a FIFO there could hold open) and the script checks for it after writing its pid file, so an interrupt before the login profile finishes still stops the run (#2467).
+`exec` resolves the run directory into the outer shell's `$1` and passes it on as the inner shell's `$0` before the caller's `env` is exported; a variable would be replaceable by an export, a positional parameter is not (#2471).
 The probe is `InstanceBackend.probe` (agentuser's uid, no login shell, bounded: see incus.md), never more than one per instance (`Tasks.probing`, which drops a probe before completing it, so a count started once another answered asks afresh, #1223), and `Orphans.probe` uses it too (no answer = in use).
 Guest output is read with `TaskScripts.taskIds()`, which ignores anything that is not a task line.
 Ending a session never destroys: `release()` (end of input, shutdown hook) stamps `mcp-orphaned`.

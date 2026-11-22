@@ -249,6 +249,26 @@ class ExecScriptTest {
     }
 
     @Test
+    void aCallersHomeNeitherMovesTheRunsPidFileNorHidesItFromTheKill(@TempDir Path other) throws Exception {
+        var pb = new ProcessBuilder("bash", "-c",
+                build(home.toString(), Map.of("HOME", other.toString()), "sleep 300", null));
+        pb.environment().put("HOME", home.toString());
+        pb.redirectErrorStream(true);
+        var p = pb.start();
+        var pidFile = home.resolve(".isx-mcp/run/exec-1-1.pid");
+        waitFor(() -> Files.exists(pidFile) && !readQuietly(pidFile).isBlank());
+        var session = Long.parseLong(readQuietly(pidFile).strip());
+        waitFor(() -> countInSession(session) >= 1);
+        assertFalse(Files.exists(other.resolve(".isx-mcp")), "the run directory followed the caller's HOME");
+
+        run(ExecScript.kill("exec-1-1"));
+
+        assertTrue(p.waitFor(15, TimeUnit.SECONDS), "the run did not end");
+        waitFor(() -> countInSession(session) == 0);
+        assertFalse(Files.exists(pidFile), "the pid file is removed");
+    }
+
+    @Test
     void killingARunThatAlreadyEndedIsHarmless() throws Exception {
         assertEquals(0, run(ExecScript.kill("exec-9-9")).exit());
     }

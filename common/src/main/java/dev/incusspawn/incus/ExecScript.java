@@ -41,11 +41,15 @@ public final class ExecScript {
                         Integer timeoutSeconds) {
         requireId(runId);
         var sb = new StringBuilder();
-        sb.append("mkdir -p ").append(RUN_DIR).append(" && cd -- ").append(quote(cwd)).append(" || exit 125; ");
+        // The run directory is resolved here, before the caller's exports, into the shell's first
+        // positional parameter: an export can set HOME but cannot reach "$1", so the run and its
+        // kill (a fresh login shell reading agentuser's own HOME) agree on the directory.
+        sb.append("set -- \"").append(RUN_DIR).append("\"; mkdir -p \"$1\" && cd -- ")
+                .append(quote(cwd)).append(" || exit 125; ");
         appendExports(sb, env, "; ");
         // The pid file goes once the session ends, however it ends: a stale one would name a
         // session id the guest may since have given to something else, for a later kill to signal.
-        sb.append("trap ").append(quote("rm -f " + pidFile(runId))).append(" EXIT; ");
+        sb.append("trap ").append(quote("rm -f " + pidFile("$1", runId))).append(" EXIT; ");
         // $$ of the inner bash is the new session's id (setsid made it the leader), so the pid
         // file names the session every descendant belongs to. Not exec'd itself, so this shell
         // outlives the session to run the trap; its exit code is setsid's, which is the command's.
@@ -56,10 +60,10 @@ public final class ExecScript {
         sb.append("setsid --wait bash -c ")
                 // In a subshell: its variable must not replace one the command was given.
                 // A kill that found no pid file left the marker: stop before the command starts.
-                .append(quote("( " + writeAside(RUN_DIR, runId + ".pid", "echo $$") + " ); "
-                        + "if [ -e " + marker(runId) + " ]; then rm -rf " + marker(runId) + " " + pidFile(runId)
+                .append(quote("( " + writeAside("$0", runId + ".pid", "echo $$") + " ); "
+                        + "if [ -e " + marker("$0", runId) + " ]; then rm -rf " + marker("$0", runId) + " " + pidFile("$0", runId)
                         + "; echo 'isx: this run was cancelled before its command started' >&2; exit 143; fi; \"$@\"; exit $?"))
-                .append(" isx-exec ");
+                .append(" \"$1\" ");
         if (timeoutSeconds != null) {
             if (timeoutSeconds <= 0) throw new Refused("timeout_seconds must be positive");
             sb.append("timeout --kill-after=10s ").append(timeoutSeconds).append("s ");
@@ -74,8 +78,8 @@ public final class ExecScript {
      * path would hold a file's creation open. The script checks for it after writing its pid file,
      * and the kill re-reads the pid file after leaving it, so whichever comes second sees the other.
      */
-    private static String marker(String runId) {
-        return RUN_DIR + "/" + runId + ".killed";
+    private static String marker(String dir, String runId) {
+        return "\"" + dir + "/" + runId + ".killed\"";
     }
 
     /**
@@ -99,21 +103,21 @@ public final class ExecScript {
      */
     public static String kill(String runId) {
         requireId(runId);
-        var pidFile = pidFile(runId);
+        var pidFile = pidFile(RUN_DIR, runId);
         // A stat line is "pid (comm) state ppid pgrp session ...", and comm may hold ") "
-        return "mkdir -p " + RUN_DIR + " && mkdir -p " + marker(runId) + "; "
-                + "p=$(" + ifFile(pidFile, "cat") + ") || exit 0; "
+        return "mkdir -p \"" + RUN_DIR + "\" && mkdir -p " + marker(RUN_DIR, runId) + "; "
+                + "p=$(" + ifFile(RUN_DIR + "/" + runId + ".pid", "cat") + ") || exit 0; "
                 + "k() { kill -\"$1\" -- -\"$p\" 2>/dev/null; "
                 + "for f in /proc/[0-9]*/stat; do { read -r s < \"$f\"; } 2>/dev/null || continue; "
                 + "s=${s##*) }; set -- \"$1\" $s; "
                 + "[ \"$5\" = \"$p\" ] && { q=${f#/proc/}; kill -\"$1\" \"${q%/stat}\" 2>/dev/null; }; done; }; "
                 + "k TERM; sleep 3; k KILL; "
-                + "rm -rf " + pidFile + " " + marker(runId);
+                + "rm -rf " + pidFile + " " + marker(RUN_DIR, runId);
     }
 
-    /** Where a run's session id is kept while it runs (a path the shell expands, unquoted). */
-    private static String pidFile(String runId) {
-        return RUN_DIR + "/" + runId + ".pid";
+    /** Where a run's session id is kept while it runs, under {@code dir} (a shell expression): double-quoted already. */
+    private static String pidFile(String dir, String runId) {
+        return "\"" + dir + "/" + runId + ".pid\"";
     }
 
     /** Single-quote {@code value} for a POSIX shell. */
