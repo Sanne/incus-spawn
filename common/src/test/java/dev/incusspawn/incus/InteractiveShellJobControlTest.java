@@ -141,15 +141,14 @@ class InteractiveShellJobControlTest {
             });
         }
 
-        void await(String marker, Process process) throws InterruptedException {
-            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_MS);
-            while (text.indexOf(marker) < 0) {
+        void await(String marker, Process process) throws Exception {
+            dev.incusspawn.util.Eventually.await(marker + " on the terminal", java.time.Duration.ofMillis(WAIT_MS), () -> {
+                if (text.indexOf(marker) >= 0) return true;
                 if (!process.isAlive() && process.waitFor(200, TimeUnit.MILLISECONDS) && text.indexOf(marker) < 0) {
                     fail("the session ended before " + marker + ":\n" + text);
                 }
-                if (System.nanoTime() > deadline) fail("no " + marker + " on the terminal:\n" + text);
-                Thread.sleep(20);
-            }
+                return false;
+            }, () -> text.toString());
         }
 
         @Override

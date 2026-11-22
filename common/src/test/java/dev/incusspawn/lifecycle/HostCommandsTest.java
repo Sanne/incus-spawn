@@ -51,14 +51,10 @@ class HostCommandsTest {
         var commands = new SystemHostCommands() {
             @Override
             void kill(Process process) {
-                for (var giveUp = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-                        !Files.exists(printed) && System.nanoTime() < giveUp; ) {
-                    try {
-                        Thread.sleep(10);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
+                try {
+                    dev.incusspawn.util.Eventually.holdsWithin(Duration.ofSeconds(10), () -> Files.exists(printed));
+                } catch (Exception e) {
+                    Thread.currentThread().interrupt();
                 }
                 super.kill(process);
             }

@@ -104,9 +104,8 @@ class ShellStatusBarTest {
         assertTimeoutPreemptively(Duration.ofSeconds(5), () -> bar.handleMenuKey((byte) 'V'));
         assertFalse(bar.isMenuActive());
         release.countDown();
-        for (int i = 0; i < 200 && !terminal.toString(StandardCharsets.UTF_8).contains("✗ no handler"); i++) {
-            Thread.sleep(10);
-        }
+        dev.incusspawn.util.Eventually.holdsWithin(Duration.ofSeconds(2),
+                () -> terminal.toString(StandardCharsets.UTF_8).contains("✗ no handler"));
         assertEquals(1, runs.get());
         assertTrue(drained().contains("✗ no handler"));
     }
@@ -284,10 +283,10 @@ class ShellStatusBarTest {
         bar.showMenu();
         assertEquals("", drained(), "not straight into the sequence");
         var out = new StringBuilder();
-        for (int i = 0; i < 300 && !out.toString().contains("[Esc] Close"); i++) {
-            Thread.sleep(10);
+        dev.incusspawn.util.Eventually.holdsWithin(Duration.ofSeconds(3), () -> {
             out.append(drained());
-        }
+            return out.toString().contains("[Esc] Close");
+        });
         assertTrue(out.toString().contains("[Esc] Close"), out.toString());
     }
 

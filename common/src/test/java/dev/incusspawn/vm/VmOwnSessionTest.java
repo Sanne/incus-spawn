@@ -25,11 +25,9 @@ class VmOwnSessionTest {
         var process = new ProcessBuilder(OwnSession.command(List.of("sleep", "30"))).start();
         try {
             // The wrapper execs the command in its own place; wait for that to have happened.
+            dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5),
+                    () -> SessionProbe.look(process.pid()).command().endsWith("sleep"));
             var seen = SessionProbe.look(process.pid());
-            for (int i = 0; i < 100 && !seen.command().endsWith("sleep"); i++) {
-                Thread.sleep(50);
-                seen = SessionProbe.look(process.pid());
-            }
             assertTrue(seen.command().endsWith("sleep"), "the pid must be the command's own: " + seen);
             assertEquals(String.valueOf(process.pid()), seen.processGroup(),
                     "still in the process group of whoever started it, which takes it down with them");

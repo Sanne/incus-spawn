@@ -67,11 +67,8 @@ class IsxAgentPoolLockTest {
                 "waited within the host's 5 s reply timeout: " + Duration.ofNanos(waited));
         // Once the settle is through its last step, the lock is free and the verb goes on to the pool,
         // which has no qgroups (whether the settle rescans depends on the filesystem its directory is on)
-        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-        while (!Files.exists(log) || Files.readString(log).split("filesystem sync", -1).length < 3) {
-            assertTrue(System.nanoTime() < deadline, "the settle did not finish");
-            Thread.sleep(50);
-        }
+        dev.incusspawn.util.Eventually.await("the settle to finish",
+                () -> Files.exists(log) && Files.readString(log).split("filesystem sync", -1).length >= 3);
         Thread.sleep(300);
         assertEquals("error: no qgroups", ask(agent, bin, "btrfs-skip-drop-accounting isx-test-pool previous"));
     }
