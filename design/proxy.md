@@ -877,7 +877,7 @@ What it gives up: the cache-integrity rule above holds from the first hit on, no
 The build that misses uses bytes the mirror's operator vouched for, under the mirror's TLS, and a release the repository withdrew is served again by every new miss while the mirror still holds it (each such copy evicted at its next hit).
 That is the trust the user chose by naming the mirror.
 A private repository cannot take a mirror, since its credential never goes to another host and its copies are confirmed before every serve; nor does one that replaces releases, for the same second reason; nor the Gradle distributions, which are not laid out as Maven coordinates.
-An entry naming no cached repository, or one of these, is dropped with a warning naming why (`CachedRepository.withMirrors`).
+An entry naming no cached repository, or one of these, is dropped with a warning naming why (`CachedRepositoryRules.mirrorRefusal`, which `isx validate` runs too, so it warns about the same entry).
 The mirror's host is not intercepted: only the proxy talks to it.
 Uncached paths (`maven-metadata.xml`, SNAPSHOTs, a sidecar with no stored copy) still go to the repository alone, which leaves a build that resolves a version range or a plugin prefix exposed to its limit.
 **A request right after a download waits for its commit** (#2491).

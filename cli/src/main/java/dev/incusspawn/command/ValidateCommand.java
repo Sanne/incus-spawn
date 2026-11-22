@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.Jjq;
+import dev.incusspawn.proxy.CachedRepositoryRules;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.config.McpConfig;
@@ -110,7 +111,7 @@ public class ValidateCommand extends BaseCommand {
             return valid ? CommandResult.SUCCESS : CommandResult.valueOf(1);
         }
         return ToolsCommand.Validate.report(outputFormat, null, target, findings,
-                chosen == Kind.CONFIG ? "config.yaml is valid" : "mcp.yaml is valid");
+                cell(fromStdin ? "stdin" : target) + " is valid");
     }
 
     /**
@@ -168,11 +169,14 @@ public class ValidateCommand extends BaseCommand {
         // The proxy's own checks, against the domains it intercepts, so what it drops is said here
         var problems = new ArrayList<String>();
         config.gitIdentity(problems::add);
-        ToolProxyResolver.hostRoutes(config, ToolProxyResolver.resolveAcrossAccounts(config, tools), problems::add);
+        var acrossAccounts = ToolProxyResolver.resolveAcrossAccounts(config, tools);
+        ToolProxyResolver.hostRoutes(config, acrossAccounts, problems::add);
         config.exposedHostPorts().ports(problems::add);
-        config.mavenRepositories().entries(
+        // The proxy's two passes: each entry's own shape, then against what the tools inject and isx caches
+        var repositories = config.mavenRepositories().entries(
                 ToolProxyResolver.repositoryDomainsTaken(ToolProxyResolver.handlerDomains(config.tree())), problems::add);
-        config.mavenMirrors().entries(problems::add);
+        var mirrors = config.mavenMirrors().entries(problems::add);
+        CachedRepositoryRules.check(repositories, mirrors, acrossAccounts, problems::add);
         problems.forEach(p -> findings.add(warning(p)));
         UnreadConfigKeys.all(config.tree(), tools).forEach((namespace, unread) ->
                 findings.add(warning(UnreadConfigKeys.note(namespace, unread, tools))));
@@ -187,7 +191,17 @@ public class ValidateCommand extends BaseCommand {
             if (retired != null) findings.add(warning(retired));
             policy.hostTools(p -> findings.add(warning(p)));
         } catch (McpConfig.Invalid e) {
-            findings.add(error(e.getMessage()));
+            // What refusing it means for isx mcp holds only for the file isx mcp reads, never a draft
+            findings.add(error(isLive(name) ? e.getMessage() : e.why()));
+        }
+    }
+
+    /** Whether {@code name} is the mcp.yaml that isx mcp reads. */
+    private static boolean isLive(String name) {
+        try {
+            return Files.isSameFile(Path.of(name), McpConfig.file());
+        } catch (IOException | RuntimeException e) {
+            return false;
         }
     }
 

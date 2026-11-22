@@ -111,17 +111,9 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
                                                  java.util.function.Consumer<String> warn) {
         var all = new ArrayList<>(BUILT_IN);
         for (var entry : entries) {
-            var injecting = toolProxies.stream().filter(tp -> covers(tp.domain(), entry.domain())).toList();
-            if (!entry.isPrivate() && !injecting.isEmpty()) {
-                warn.accept("Ignoring maven-repositories " + entry.url() + " in config.yaml: a tool injects a credential"
-                        + " at " + entry.domain() + ", so it is private; declare it access: private with credentials: "
-                        + injecting.getFirst().namespaces().stream().sorted().findFirst().orElse("<namespace>"));
-                continue;
-            }
-            if (entry.isPrivate() && injecting.stream().noneMatch(tp -> tp.namespaces().contains(entry.credentials()))) {
-                warn.accept("Ignoring maven-repositories " + entry.url() + " in config.yaml: no tool injects a "
-                        + entry.credentials() + " credential at " + entry.domain()
-                        + ", so its requests are relayed uncached");
+            var refusal = CachedRepositoryRules.repositoryRefusal(entry, toolProxies);
+            if (refusal != null) {
+                warn.accept(refusal);
                 continue;
             }
             var revalidation = (switch (entry.confirm()) {
@@ -130,7 +122,7 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
                         case SIDECAR -> Revalidation.SIDECAR;
                     })
                     .trustedFor(new ArtifactCacheTiers(entry.fresh(), entry.maxStale()));
-            if (entry.replacesReleases() || entry.isPrivate()) revalidation = revalidation.onlyConfirmed();
+            if (CachedRepositoryRules.cached(entry).servesOnlyConfirmed()) revalidation = revalidation.onlyConfirmed();
             all.add(new CachedRepository(entry.domain(), entry.pathPrefix(), Layout.MAVEN, revalidation, entry.credentials()));
         }
         return List.copyOf(all);
@@ -146,24 +138,15 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
     static List<CachedRepository> withMirrors(List<CachedRepository> repositories,
                                               List<MavenMirrors.Entry> mirrors, Consumer<String> warn) {
         var all = new ArrayList<>(repositories);
+        // Attaching a mirror changes nothing the rules see, so one view serves every entry
+        var seen = all.stream().map(CachedRepository::asCached).toList();
         for (var entry : mirrors) {
-            var url = entry.repository();
-            var index = -1;
-            for (int i = 0; i < all.size(); i++) {
-                var r = all.get(i);
-                if (r.domain().equals(url.host()) && r.pathPrefix().equals(url.pathPrefix())) index = i;
-            }
-            var refusal = index < 0 ? "isx caches no repository at " + url
-                    + " (the built-in ones, or one maven-repositories: declares)"
-                    : all.get(index).isPrivate() ? "a private repository's credential never goes to another host"
-                    : all.get(index).revalidation().servesOnlyConfirmed()
-                    ? "a repository that replaces releases is confirmed before every serve, so a mirror cannot stand in for it"
-                    : all.get(index).layout() != Layout.MAVEN ? "only a Maven repository may have a mirror"
-                    : null;
+            var refusal = CachedRepositoryRules.mirrorRefusal(entry, seen);
             if (refusal != null) {
-                warn.accept("Ignoring maven-mirrors " + url + " in config.yaml: " + refusal);
+                warn.accept(refusal);
                 continue;
             }
+            var index = CachedRepositoryRules.indexOf(entry, seen);
             var r = all.get(index);
             all.set(index, new CachedRepository(r.domain(), r.pathPrefix(), r.layout(), r.revalidation(),
                     r.credentials(), entry.mirror()));
@@ -171,13 +154,10 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
         return List.copyOf(all);
     }
 
-    /** Whether a tool proxy entry for {@code entryDomain} (exact, or {@code *.suffix}) covers {@code domain}. */
-    private static boolean covers(String entryDomain, String domain) {
-        if (entryDomain.startsWith("*.")) {
-            var base = entryDomain.substring(2);
-            return domain.equals(base) || domain.endsWith("." + base);
-        }
-        return entryDomain.equals(domain);
+    /** This repository as {@link CachedRepositoryRules} sees it. */
+    CachedRepositoryRules.Cached asCached() {
+        return new CachedRepositoryRules.Cached(domain, pathPrefix, isPrivate(), revalidation.servesOnlyConfirmed(),
+                layout == Layout.MAVEN);
     }
 
     /** The built-in domains, which a configured repository may not take. */
