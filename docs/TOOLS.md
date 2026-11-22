@@ -376,6 +376,36 @@ An entry for the exact domain is tried first.
 The most specific wildcard wins when multiple tools register overlapping suffixes.
 In this example, send `$MY_SERVICE_TOKEN` as the bearer token, Basic password or `X-API-Key` value for the corresponding domain.
 
+##### Domains from config.yaml
+
+A tool shared across organisations can let each user name their own server.
+Write a `${configKey}` reference in `domains:`, and the user sets the value in `config.yaml` like a credential.
+A comma separated value names several servers, which then share the entry's credential.
+
+```yaml
+  configuration:
+    instances:
+      config-path: "instances"
+      description: "Develocity servers, comma separated"
+  auth:
+    - domains:
+        - "${instances}"
+      type: bearer
+      token: "${token}"
+```
+
+The proxy skips a configured domain in these cases, so a mistyped value never sends the credential elsewhere.
+
+- The value is not a plain host name, or it holds a wildcard.
+  Only the definition can write `*.` before the reference.
+- isx or another tool already serves that name, such as `github.com` or a name under `.internal`.
+  The proxy logs a warning for each skipped name.
+- The reference names a `secret: true` entry, which the tool validation also refuses.
+  A domain appears in DNS, certificates and logs.
+
+Until the value is set, `isx branch` names it as missing.
+A nested isx whose account is `inherit` does not intercept configured domains, since the value lives in the host's `config.yaml`.
+
 ##### Path-scoped injection
 
 An auth entry can restrict credential injection to specific request paths with `paths:`.

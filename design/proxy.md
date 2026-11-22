@@ -1239,6 +1239,27 @@ The rules for what comes next, agreed with the decision on #935:
 - Every grant expires: the proxy enforces the expiry on read, revoking is the fast path and expiry the safety net for a coordinator that dies, and a grant without one is refused.
 Until a resource to lease exists, only the read side ships; the health server stays read-only (`MitmProxy.healthRoute`).
 
+## A tool's domains can come from config.yaml (#1419)
+A self-hosted service such as Develocity lives at whatever domain each organisation chose, so a shared tool definition cannot list it.
+An auth entry's `domains:` may therefore hold `${configKey}` references, resolved against the same configuration map as its credential fields, with a comma separated value naming several domains (`ToolProxyResolver.resolveDomains`).
+The value comes from the user's own `config.yaml`, beside the credential it pairs with, so nothing a guest controls decides where a credential goes.
+
+Every consumer takes the resolved names, never the raw `${key}`: routing, the bridge DNS block and certificates through `resolveAcrossAccounts`, and the proof check through `ProofCarriers` and `AccountSelection.namespacesByDomain`, both built from the same entries in `ConfigState`.
+Without the last two the domain was intercepted but its proof was looked for under `${key}`, so no request proved its namespace and nothing was injected.
+
+A configured name is checked where it is resolved, since the validator sees only the definition:
+- It must be a plain host name (`CertStore.isHostname`), lower-cased; a wildcard comes only from a `*.` the definition writes before the reference.
+- It must not land on a name isx or another tool already serves (`ToolProxyResolver.takenDomains`): the built-in intercepted domains, ChatGPT's and Google's hosts, anything under `.internal`, and every tool's static domain or a name under it.
+  So a value of `github.com` cannot put this entry's credential on GitHub's traffic, where the first-wins routing would otherwise have chosen it.
+- It never takes a `secret: true` value, which would reach bridge DNS, a certificate's name and the logs; the validator refuses that reference and the resolver ignores it.
+A name that fails is dropped with a warning, and the entry's static domains are still served.
+
+An entry with no static domain serves nothing until its value is set, so `missingSecrets` counts its domain keys as needed and `isx branch` names the gap.
+A nested isx whose account is `inherit` adds configured domains to nothing (`inheritable()` skips them): the value lives in the parent's host `config.yaml`, which the nested proxy cannot read.
+
+Given up: one credential per entry, so every configured server shares it; a tool needing one key per server declares one entry, and one config key, per server.
+Not covered: an MCP server's `url:` cannot take a configured domain, so a tool registering one still names its server in the definition.
+
 ## Upstream rate limits are counted per domain (#2303)
 A registry that answers 429 to the host's address makes a build inside an instance slow or failing, behind isx's proxy, so the user reasonably suspects isx.
 `Throttles` (`Upstream.throttles`) counts, per domain, the 429s upstream answered to any request the proxy made, the cached copies served unconfirmed because of one (after the 429 itself, or without asking while the domain still refuses, as in the backoff a 429 starts), when the first and last came, and whether the domain's latest answer was one.
