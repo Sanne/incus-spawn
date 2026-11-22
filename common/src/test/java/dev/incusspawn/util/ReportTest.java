@@ -104,6 +104,33 @@ class ReportTest {
         }
     }
 
+    /** The header is a band as wide as the table, and plain text where there is no colour. */
+    @Test
+    void theHeaderIsABandAsWideAsTheWidestRow() {
+        var previous = BuildOutput.forceAnsi;
+        try {
+            BuildOutput.forceAnsi = true;
+            var table = Report.table("NAME", "AGE").indent(2).row("a", "3 days ago").row("a-long-name", "1h");
+            var header = lines(table, 80, true).getFirst();
+            assertTrue(header.startsWith("  \033[") && header.endsWith(BuildOutput.RESET), header);
+            assertEquals("  NAME         AGE       ", BuildOutput.stripAnsi(header));
+            BuildOutput.forceAnsi = false;
+            assertEquals("  NAME         AGE", lines(table, 80, true).getFirst());
+        } finally {
+            BuildOutput.forceAnsi = previous;
+        }
+    }
+
+    @Test
+    void theThemeIsReadFromTheEnvironmentAndDarkWhenItSaysNothing() {
+        assertTrue(Report.darkTerminal(null, null));
+        assertFalse(Report.darkTerminal("light", "15;0"));
+        assertTrue(Report.darkTerminal("dark", "0;15"));
+        assertFalse(Report.darkTerminal(null, "0;15"));
+        assertFalse(Report.darkTerminal(null, "0;default;7"));
+        assertTrue(Report.darkTerminal(null, "15;0"));
+    }
+
     @Test
     void aCountNamesItsNoun() {
         assertEquals("1 instance", Report.count(1, "instance"));

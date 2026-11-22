@@ -65,6 +65,37 @@ public final class Report {
         return tone == Tone.TEXT || text.isEmpty() ? text : BuildOutput.styled(tone.style, text);
     }
 
+    /**
+     * A table's header row: a band a little apart from the terminal's background, on an ANSI
+     * terminal. It sets the text's colour with the background's, so a wrong guess of the theme
+     * gives a band that is louder than meant and still read. The Linux console has no grey ramp,
+     * so there the header is bold.
+     */
+    static String band(String text, boolean dark) {
+        if ("linux".equals(System.getenv("TERM"))) return styled(Tone.STRONG, text);
+        return BuildOutput.styled(dark ? BuildOutput.BAND_ON_DARK : BuildOutput.BAND_ON_LIGHT, text);
+    }
+
+    /**
+     * Whether the terminal's background is dark, from what costs nothing to read: {@code ISX_THEME}
+     * as the TUI takes it, else the background {@code COLORFGBG} names where a terminal sets it,
+     * else dark. A command does not ask the terminal itself, which is a round trip per run.
+     */
+    static boolean darkTerminal() {
+        return darkTerminal(System.getenv("ISX_THEME"), System.getenv("COLORFGBG"));
+    }
+
+    static boolean darkTerminal(String isxTheme, String colorFgBg) {
+        if (isxTheme != null && !isxTheme.isBlank()) return !"light".equalsIgnoreCase(isxTheme.strip());
+        if (colorFgBg != null) {
+            var background = colorFgBg.substring(colorFgBg.lastIndexOf(';') + 1).strip();
+            // The ANSI colours 7 and 9 to 15 are the light ones
+            if (background.equals("7") || background.length() == 2 && background.charAt(0) == '1') return false;
+            if (background.equals("9")) return false;
+        }
+        return true;
+    }
+
     /** The title of a block of a report, such as one credential's accounts. */
     public static String heading(String text) {
         return styled(Tone.STRONG, OutputFormat.oneLine(text));
@@ -144,8 +175,8 @@ public final class Report {
     }
 
     /**
-     * Rows under headers, each column as wide as its widest cell. The rules it holds: headers are
-     * quiet and no rule is drawn under them, columns are two spaces apart, the last column is not
+     * Rows under headers, each column as wide as its widest cell. The rules it holds: the header
+     * is a {@link Report#band} and no rule is drawn under it, columns are two spaces apart, the last column is not
      * padded, every cell is one line that cannot drive the terminal ({@link OutputFormat#oneLine}),
      * and on a terminal the last column is cut to its width.
      */
@@ -261,8 +292,15 @@ public final class Report {
             var out = new ArrayList<String>();
             if (headers.length > 0) {
                 var header = new Cell[headers.length];
-                for (int c = 0; c < headers.length; c++) header[c] = new Cell(headers[c], Tone.QUIET);
-                out.add(render(header, shown, widths, Integer.MAX_VALUE));
+                for (int c = 0; c < headers.length; c++) header[c] = new Cell(headers[c], Tone.TEXT);
+                int rows = 0;
+                for (var line : lines) {
+                    if (line.cells() != null) rows = Math.max(rows, rowLength(line.cells(), shown, widths));
+                }
+                var text = render(header, shown, widths, Integer.MAX_VALUE);
+                // The band ends where the widest row does, or where the terminal does if that is sooner
+                int end = !BuildOutput.ansi() ? length(text) : Math.max(length(text), cut ? Math.min(rows, limit) : rows);
+                out.add(" ".repeat(indent) + band(text.substring(indent) + " ".repeat(end - length(text)), darkTerminal()));
             }
             for (var line : lines) {
                 if (line.cells() != null) out.add(render(line.cells(), shown, widths, cut ? limit : Integer.MAX_VALUE));

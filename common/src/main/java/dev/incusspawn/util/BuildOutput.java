@@ -25,6 +25,9 @@ public final class BuildOutput {
     public static final String GREEN = "\033[32m";
     public static final String YELLOW = "\033[33m";
     public static final String CYAN = "\033[36m";
+    /** A report header's band ({@link Report#band}) on a dark terminal and on a light one: the 256-colour grey ramp, a step from the background. */
+    public static final String BAND_ON_DARK = "\033[38;5;252;48;5;237m";
+    public static final String BAND_ON_LIGHT = "\033[38;5;238;48;5;253m";
     public static final String RESET = "\033[0m";
 
     /** Green check that marks a finished step. */
