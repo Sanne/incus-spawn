@@ -273,11 +273,8 @@ class InstanceSessionTest {
         assertTrue(entered.await(10, TimeUnit.SECONDS), "the first call never reached its listing");
         var b = new Thread(() -> outcomes[1] = failureOf(session));
         b.start();
-        var deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-        while (b.getState() != Thread.State.BLOCKED) {
-            assertTrue(System.nanoTime() < deadline, "the second call never waited on the first");
-            Thread.sleep(1);
-        }
+        dev.incusspawn.util.Eventually.await("the second call to wait on the first",
+                () -> b.getState() == Thread.State.BLOCKED);
         release.countDown();
         a.join();
         b.join();

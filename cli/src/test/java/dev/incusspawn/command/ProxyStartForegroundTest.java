@@ -72,17 +72,12 @@ class ProxyStartForegroundTest {
         return proxy;
     }
 
-    private static ProcessHandle awaitChild(ProcessHandle parent, Duration timeout) throws InterruptedException {
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            // Wait for the exec to `sleep 600`: before it, a trap may not be in place yet.
-            var child = parent.children()
-                    .filter(c -> List.of("600").equals(c.info().arguments().map(List::of).orElse(null)))
-                    .findFirst();
-            if (child.isPresent()) return child.get();
-            Thread.sleep(20);
-        }
-        return fail("the CLI never started the proxy");
+    private static ProcessHandle awaitChild(ProcessHandle parent, Duration timeout) throws Exception {
+        // Wait for the exec to `sleep 600`: before it, a trap may not be in place yet.
+        return dev.incusspawn.util.Eventually.poll("the CLI to start the proxy", timeout,
+                () -> parent.children()
+                        .filter(c -> List.of("600").equals(c.info().arguments().map(List::of).orElse(null)))
+                        .findFirst().orElse(null));
     }
 
     private static void awaitExit(ProcessHandle proxy, Duration timeout) throws Exception {
