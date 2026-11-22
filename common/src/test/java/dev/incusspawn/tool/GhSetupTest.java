@@ -319,6 +319,35 @@ class GhSetupTest {
                 contains("octocat@users.noreply.github.com"));
     }
 
+    @Test
+    void configuredNameAndEmailNeedNoApiLookup(@TempDir Path home) throws IOException {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user")))
+                .thenReturn(new IncusClient.ExecResult(1, "", "HTTP 403: rate limited"));
+
+        var setup = new GhSetup();
+        setup.retryDelaysMs = new long[0];
+        withGitHubConfig(home, "github:\n  token: ghp_x\n  name: CI\n  email: ci@x.example\n", () ->
+                setup.install(new Container(incus, CONTAINER), java.util.Map.of()));
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("ci@x.example"));
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user"));
+    }
+
+    @Test
+    void configuredNameAndEmailApplyWithoutATokenToo(@TempDir Path home) throws IOException {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+
+        withGitHubConfig(home, "github:\n  name: CI\n  email: ci@x.example\n", () ->
+                new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of()));
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("ci@x.example"));
+    }
+
     // --- Test helpers ---
 
     private static void withTokenConfig(Path home, Runnable action) throws IOException {

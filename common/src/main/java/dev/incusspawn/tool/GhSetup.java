@@ -291,6 +291,13 @@ public class GhSetup implements ToolSetup {
      */
     private GitIdentity resolveIdentity(Container c, SpawnConfig config,
                                         String accountName, boolean required) {
+        // Both configured: nothing the API says is used, so a lookup that fails (rate limit, no
+        // network, no token) must not fail the build or a re-point (#2396)
+        var fixedName = AccountResolver.value(config, NAMESPACE, accountName, "name");
+        var fixedEmail = AccountResolver.value(config, NAMESPACE, accountName, "email");
+        if (!fixedName.isBlank() && !fixedEmail.isBlank()) {
+            return new GitIdentity(fixedName, fixedEmail);
+        }
         var command = LOGIN_TOKEN + " gh api user --jq '[.login, .name, .email] | @tsv'";
         var tokenConfigured = !AccountResolver.value(config, NAMESPACE, accountName, "token").isBlank();
         var result = c.sh(command);
