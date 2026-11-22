@@ -127,6 +127,17 @@ class ProxyStopTest {
         assertTrue(log.contains("may still be bound"), "the warning does not explain the bound port:\n" + log);
     }
 
+    /**
+     * Quarkus closes Vert.x before the shutdown hook stops a proxy that served (#2391): every
+     * close is then rejected, and stop() used to throw at the first, skipping the closes after it.
+     */
+    @Test
+    void stopAfterVertxIsClosedThrowsNothing() throws Exception {
+        vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        assertDoesNotThrow(proxy::stop);
+        assertDoesNotThrow(proxy::stop, "a second stop is as harmless");
+    }
+
     private void stallEventLoop() throws InterruptedException {
         var stalled = new CountDownLatch(1);
         vertx.runOnContext(v -> {

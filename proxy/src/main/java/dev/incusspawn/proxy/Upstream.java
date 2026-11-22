@@ -210,12 +210,23 @@ class Upstream {
         wsUpstreamClient = vertx.createWebSocketClient(wsClientOptions);
     }
 
+    /** One client's close, left out when it is absent or Vert.x can no longer schedule it. */
+    private static void closeOne(Map<String, Future<Void>> into, String what, java.util.function.Supplier<Future<Void>> close) {
+        if (close == null) return;
+        try {
+            into.put(what, close.get());
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // Its event loop is gone, so nothing is left open
+        }
+    }
+
     /** Starts closing the upstream clients, as {@link MitmProxy#stop} does, and gives each close by name. */
     Map<String, Future<Void>> closeClients() {
         var closing = new LinkedHashMap<String, Future<Void>>();
-        if (upstreamClient != null) closing.put("Upstream client", upstreamClient.close());
-        if (probeClient != null) closing.put("Upstream probe client", probeClient.close());
-        if (wsUpstreamClient != null) closing.put("Upstream WebSocket client", wsUpstreamClient.close());
+        // Each on its own: one that can no longer be scheduled (Vert.x already closed) leaves the rest to close
+        closeOne(closing, "Upstream client", upstreamClient == null ? null : upstreamClient::close);
+        closeOne(closing, "Upstream probe client", probeClient == null ? null : probeClient::close);
+        closeOne(closing, "Upstream WebSocket client", wsUpstreamClient == null ? null : wsUpstreamClient::close);
         return closing;
     }
 
