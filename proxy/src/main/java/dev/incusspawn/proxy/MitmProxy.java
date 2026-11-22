@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -531,10 +532,30 @@ public class MitmProxy {
     /** Set when the nesting changed, cleared once a reload has completed: what the watcher retries. */
     private volatile boolean nestingReloadDue;
 
+    private final Object parentSecretLock = new Object();
+
     /** Blocking: the parent's secret, read again. */
     private void readParentSecret() {
-        parentSecret = InheritedProof.parentSecret();
-        parentSecretReadAt = System.nanoTime();
+        readParentSecret(InheritedProof::parentSecret);
+    }
+
+    /**
+     * Reads with {@code read} and stores the result, one read at a time: a read that enters while
+     * another is in flight waits and then reads the file again, so the held secret is the content
+     * of the read that ran last and never moves back to older file content (#2327).
+     * The lock is held across a read of a tmpfs file, about once a second, always off the event loop.
+     * The seam is the test's.
+     */
+    void readParentSecret(Supplier<String> read) {
+        synchronized (parentSecretLock) {
+            parentSecret = read.get();
+            parentSecretReadAt = System.nanoTime();
+        }
+    }
+
+    /** The held secret as it is, without the background read {@link #parentSecret()} may start. */
+    String heldParentSecret() {
+        return parentSecret;
     }
 
     /**
