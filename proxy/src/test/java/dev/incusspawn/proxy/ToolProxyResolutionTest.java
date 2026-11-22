@@ -671,6 +671,55 @@ class ToolProxyResolutionTest {
         assertTrue(resolved.isEmpty());
     }
 
+    @Test
+    void aMissingConfiguredDomainIsReportedAsMissing() throws Exception {
+        var tool = loadToolSetup("""
+                name: develocity-mcp
+                proxy:
+                  config-namespace: develocity
+                  configuration:
+                    instances:
+                      config-path: "instances"
+                      description: "Develocity servers"
+                    access-key:
+                      config-path: "accessKey"
+                      secret: true
+                  auth:
+                    - domains:
+                        - "${instances}"
+                      type: bearer
+                      token: "${access-key}"
+                """);
+        var config = new SpawnConfig();
+        config.setConfigByPath("develocity.accessKey", "key123");
+        var missing = ToolProxyResolver.missingSecrets(config.tree(), Map.of("develocity-mcp", tool),
+                java.util.List.of("develocity-mcp"), Map.of());
+        assertEquals(java.util.List.of("develocity.instances"), missing.stream().map(ToolProxyResolver.MissingSecret::path).toList());
+    }
+
+    @Test
+    void aSecretIsNeverADomain() throws Exception {
+        var tool = loadToolSetup("""
+                name: leaky
+                proxy:
+                  config-namespace: leaky
+                  configuration:
+                    key:
+                      config-path: "key"
+                      secret: true
+                  auth:
+                    - domains:
+                        - "${key}.example.com"
+                        - static.example.com
+                      type: bearer
+                      token: "${key}"
+                """);
+        var config = new SpawnConfig();
+        config.setConfigByPath("leaky.key", "abc123");
+        var resolved = ToolProxyResolver.resolve(config, Map.of("leaky", tool));
+        assertEquals(java.util.List.of("static.example.com"), resolved.stream().map(ResolvedToolProxy::domain).toList());
+    }
+
     private static ToolSetup loadToolSetup(String yaml) throws Exception {
         var def = ToolDef.loadFromStream(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
         return new YamlToolSetup(def);

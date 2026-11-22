@@ -439,6 +439,34 @@ class ToolDefValidatorTest {
     }
 
     @Test
+    void aDomainReferenceMustBeADefinedEntryAndNoSecret() throws Exception {
+        var file = writeTemp("""
+                name: configured
+                proxy:
+                  config-namespace: configured
+                  configuration:
+                    instances:
+                      config-path: instances
+                      description: "servers"
+                    key:
+                      config-path: key
+                      description: "access key"
+                      secret: true
+                  auth:
+                    - domains:
+                        - "${instances}"
+                        - "${key}.example.com"
+                        - "${nowhere}"
+                      type: bearer
+                      token: "${key}"
+                """);
+        var errors = ToolDefValidator.validate(file).errors();
+        assertTrue(errors.stream().anyMatch(e -> e.contains("${nowhere}") && e.contains("not defined")), errors.toString());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("secret '${key}'")), errors.toString());
+        assertEquals(2, errors.size(), "a defined, non-secret reference is fine: " + errors);
+    }
+
+    @Test
     void proxyMissingConfigRefIsError() throws Exception {
         var file = writeTemp("""
                 name: bad-ref
