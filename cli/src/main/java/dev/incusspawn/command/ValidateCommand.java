@@ -1,6 +1,9 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.Jjq;
+import dev.incusspawn.proxy.ToolProxyResolver;
+import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.config.UnreadConfigKeys;
@@ -13,7 +16,6 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -42,9 +44,9 @@ public class ValidateCommand extends BaseCommand {
     }
 
     /** The schema a file's yaml-language-server modeline names, in the comment lines the file opens with. */
-    private static final Pattern MODELINE = Pattern.compile("# yaml-language-server:\\s*\\$schema=\\S*/(template|tool|config|mcp)\\.json");
+    private static final Pattern MODELINE = Pattern.compile("# yaml-language-server:\\s*\\$schema=(?:\\S*/)?(template|tool|config|mcp)\\.json");
 
-    @Argument(required = true, description = "The file to check")
+    @Argument(required = true, description = "The file to check ('-' for stdin)")
     String target;
 
     @Option(name = "kind",
@@ -55,15 +57,25 @@ public class ValidateCommand extends BaseCommand {
     @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
     String format;
 
+    /** Where {@code -} reads, which a test replaces. */
+    java.util.function.Supplier<java.io.InputStream> stdin = () -> System.in;
+
     @Override
     protected CommandResult doExecute() throws Exception {
+        var outputFormat = OutputFormat.parse(format);
+        var fromStdin = "-".equals(target);
         Path file;
         String yaml;
         try {
-            file = Path.of(target);
-            // Any file but a directory: process substitution's /dev/fd/63 is a pipe
-            if (Files.isDirectory(file)) throw new IOException("it is a directory");
-            yaml = Files.readString(file, StandardCharsets.UTF_8);
+            file = fromStdin ? null : Path.of(target);
+            // Any file but a directory: process substitution's /dev/fd/63 is a pipe, read once, here
+            if (file != null && Files.isDirectory(file)) throw new IOException("it is a directory");
+            if (file != null && !Files.exists(file)) {
+                BuildOutput.error("No file named '" + cell(target) + "'.",
+                        "isx validate takes a file; 'isx templates validate' and 'isx tools validate' also take a name.");
+                return CommandResult.valueOf(1);
+            }
+            yaml = TemplatesCommand.readDefinition(target, stdin);
         } catch (IOException | RuntimeException e) {
             BuildOutput.error("Could not read '" + cell(target) + "': " + cell(String.valueOf(e.getMessage())));
             return CommandResult.valueOf(1);
@@ -75,48 +87,43 @@ public class ValidateCommand extends BaseCommand {
             BuildOutput.error(cell(e.getMessage()));
             return CommandResult.valueOf(1);
         }
+        // Every check below takes the text read above, never the path again: a pipe has nothing left
+        var fileName = file == null || file.getFileName() == null ? "stdin.yaml" : file.getFileName().toString();
+        var findings = new ArrayList<ToolsCommand.Validate.Finding>();
         switch (chosen) {
             case TEMPLATE -> {
-                var cmd = new TemplatesCommand.Validate();
-                cmd.target = target;
-                cmd.format = format;
-                return cmd.doExecute();
+                var location = file == null ? ImageDef.userImagesDir().resolve("stdin.yaml") : file;
+                return TemplatesCommand.Validate.check(yaml, location, ImageDef.loadAll(), outputFormat);
             }
             case TOOL -> {
-                var cmd = new ToolsCommand.Validate();
-                cmd.target = target;
-                cmd.format = format;
-                return cmd.doExecute();
+                // Read now, not the process's cached tools, so a file just written counts
+                var loader = new ToolDefLoader(SpawnConfig.load().getSearchPaths());
+                var name = ToolsCommand.Validate.checkText(yaml, fileName, loader, findings);
+                return ToolsCommand.Validate.report(outputFormat, name, target, findings, "Tool is valid");
             }
-            default -> {
-            }
+            case CONFIG -> checkConfig(yaml, fileName, findings);
+            case MCP -> checkMcp(yaml, fromStdin ? fileName : target, findings);
         }
-        var outputFormat = OutputFormat.parse(format);
-        var findings = new ArrayList<ToolsCommand.Validate.Finding>();
-        if (chosen == Kind.CONFIG) checkConfig(yaml, file, findings); else checkMcp(file, findings);
         var valid = findings.stream().noneMatch(ToolsCommand.Validate.Finding::error);
-        if (outputFormat == OutputFormat.PLAIN) {
-            var lines = new ArrayList<Map<String, Object>>();
-            for (var f : findings) {
-                var line = new LinkedHashMap<String, Object>();
-                line.put("kind", f.severity());
-                line.put("text", f.message());
-                lines.add(line);
-            }
-            outputFormat.print(BuildOutput.results(), lines);
-        } else if (outputFormat == OutputFormat.JSON) {
-            var record = new LinkedHashMap<String, Object>();
-            record.put("kind", chosen.id());
-            record.put("path", file.toString());
-            record.put("valid", valid);
-            record.put("findings", ToolsCommand.Validate.record(null, "", valid, findings).get("findings"));
-            outputFormat.printOne(BuildOutput.results(), record);
-        } else {
-            findings.stream().filter(ToolsCommand.Validate.Finding::error).forEach(f -> BuildOutput.error(cell(f.message())));
-            findings.stream().filter(f -> !f.error()).forEach(f -> BuildOutput.warn(cell(f.message())));
-            if (findings.isEmpty()) BuildOutput.ok(chosen == Kind.CONFIG ? "config.yaml is valid" : "mcp.yaml is valid");
+        if (outputFormat == OutputFormat.JSON) {
+            outputFormat.printOne(BuildOutput.results(), record(chosen, target, valid, findings));
+            return valid ? CommandResult.SUCCESS : CommandResult.valueOf(1);
         }
-        return valid ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+        return ToolsCommand.Validate.report(outputFormat, null, target, findings,
+                chosen == Kind.CONFIG ? "config.yaml is valid" : "mcp.yaml is valid");
+    }
+
+    /**
+     * The fields of {@code isx validate --format=json} for {@code config.yaml} and {@code mcp.yaml}, in order:
+     * add to the end, never rename.
+     */
+    static Map<String, Object> record(Kind kind, String path, boolean valid, List<ToolsCommand.Validate.Finding> findings) {
+        var record = new LinkedHashMap<String, Object>();
+        record.put("kind", kind.id());
+        record.put("path", path);
+        record.put("valid", valid);
+        record.put("findings", ToolsCommand.Validate.record(null, path, valid, findings).get("findings"));
+        return record;
     }
 
     private static String cell(Object value) {
@@ -138,43 +145,45 @@ public class ValidateCommand extends BaseCommand {
         }
         var matcher = MODELINE.matcher(head);
         if (matcher.find()) return parseKind(matcher.group(1));
-        var name = file.getFileName() == null ? "" : file.getFileName().toString();
+        var name = file == null || file.getFileName() == null ? "" : file.getFileName().toString();
         if (name.equals("config.yaml")) return Kind.CONFIG;
         if (name.equals("mcp.yaml")) return Kind.MCP;
-        throw new IllegalArgumentException("Cannot tell what '" + name + "' is: it has no yaml-language-server schema line"
+        throw new IllegalArgumentException("Cannot tell what '" + (file == null ? "-" : name) + "' is: it has no yaml-language-server schema line"
                 + " and is not named config.yaml or mcp.yaml. Pass --kind=template, tool, config or mcp.");
     }
 
-    private static void checkConfig(String yaml, Path file, List<ToolsCommand.Validate.Finding> findings) {
+    private static void checkConfig(String yaml, String fileName, List<ToolsCommand.Validate.Finding> findings) {
         SpawnConfig config;
         try {
             config = Jjq.spawnConfig(yaml);
         } catch (IOException e) {
-            findings.add(error(YamlErrors.friendly(file.getFileName().toString(), e)));
+            findings.add(error(YamlErrors.friendly(fileName, e)));
             return;
         } catch (RuntimeException e) {
-            findings.add(error(file.getFileName() + ": " + e.getMessage()));
+            findings.add(error(fileName + ": " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName())));
             return;
         }
         if (config == null) return; // an empty document reads as the defaults
+        var tools = UnreadConfigKeys.trustedTools(config);
+        // The proxy's own checks, against the domains it intercepts, so what it drops is said here
         var problems = new ArrayList<String>();
         config.gitIdentity(problems::add);
-        config.hostRoutes().routes(dev.incusspawn.proxy.ProxyConfig.interceptedDomains(), problems::add);
+        ToolProxyResolver.hostRoutes(config, ToolProxyResolver.resolveAcrossAccounts(config, tools), problems::add);
         config.exposedHostPorts().ports(problems::add);
-        config.mavenRepositories().entries(dev.incusspawn.config.MavenRepositories.builtInTaken(), problems::add);
+        config.mavenRepositories().entries(
+                ToolProxyResolver.repositoryDomainsTaken(ToolProxyResolver.handlerDomains(config.tree())), problems::add);
         config.mavenMirrors().entries(problems::add);
         problems.forEach(p -> findings.add(warning(p)));
-        UnreadConfigKeys.all(config.tree(), UnreadConfigKeys.trustedTools(config)).forEach((namespace, unread) ->
-                findings.add(warning("Unread keys in config.yaml: " + String.join(", ", unread)
-                        + ", which no tool reads")));
+        UnreadConfigKeys.all(config.tree(), tools).forEach((namespace, unread) ->
+                findings.add(warning(UnreadConfigKeys.note(namespace, unread, tools))));
         var legacy = McpConfig.legacySectionNotice(config);
         if (legacy != null) findings.add(warning(legacy));
     }
 
-    private static void checkMcp(Path file, List<ToolsCommand.Validate.Finding> findings) {
+    private static void checkMcp(String yaml, String name, List<ToolsCommand.Validate.Finding> findings) {
         try {
-            var policy = McpConfig.load(file);
-            var retired = policy.retiredKeysNotice();
+            var policy = McpConfig.parse(yaml, name);
+            var retired = policy.retiredKeysNotice(name);
             if (retired != null) findings.add(warning(retired));
             policy.hostTools(p -> findings.add(warning(p)));
         } catch (McpConfig.Invalid e) {

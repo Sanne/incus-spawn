@@ -330,6 +330,12 @@ public class ToolsCommand extends BaseCommand {
                     // A tool in isx's own code has no definition to check
                 }
             }
+            return report(outputFormat, name, path, findings, "Tool is valid");
+        }
+
+        /** Prints {@code findings} in {@code outputFormat}; success when none is an error. */
+        static CommandResult report(OutputFormat outputFormat, String name, String path, List<Finding> findings,
+                                    String validMessage) {
             var valid = findings.stream().noneMatch(Finding::error);
             if (outputFormat == OutputFormat.PLAIN) {
                 var lines = new ArrayList<Map<String, Object>>();
@@ -345,7 +351,7 @@ public class ToolsCommand extends BaseCommand {
             } else {
                 findings.stream().filter(Finding::error).forEach(f -> BuildOutput.error(cell(f.message())));
                 findings.stream().filter(f -> !f.error()).forEach(f -> BuildOutput.warn(cell(f.message())));
-                if (findings.isEmpty()) BuildOutput.ok("Tool is valid");
+                if (findings.isEmpty()) BuildOutput.ok(validMessage);
             }
             return valid ? CommandResult.SUCCESS : CommandResult.valueOf(1);
         }
@@ -366,6 +372,30 @@ public class ToolsCommand extends BaseCommand {
                 return (Object) finding;
             }).toList());
             return record;
+        }
+
+        /** As {@link #checkFile}, for {@code yaml}, the text of the file named {@code fileName}. */
+        static String checkText(String yaml, String fileName, ToolDefLoader loader, List<Finding> findings) {
+            var result = ToolDefValidator.validate(yaml, fileName);
+            result.errors().forEach(e -> findings.add(new Finding(true, e)));
+            result.warnings().forEach(w -> findings.add(new Finding(false, w)));
+            if (result.hasErrors()) {
+                try {
+                    return ToolDef.loadFromStream(new java.io.ByteArrayInputStream(
+                            yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))).getName();
+                } catch (java.io.IOException | RuntimeException e) {
+                    return null;
+                }
+            }
+            try {
+                var def = ToolDef.loadFromStream(new java.io.ByteArrayInputStream(
+                        yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                checkRequires(def, loader, findings);
+                ToolDefValidator.embeddedTokens(def).forEach(w -> findings.add(new Finding(false, w)));
+                return def.getName();
+            } catch (java.io.IOException e) {
+                return null;
+            }
         }
 
         /** Checks the tool file {@code file}; the name it gives, or null. */

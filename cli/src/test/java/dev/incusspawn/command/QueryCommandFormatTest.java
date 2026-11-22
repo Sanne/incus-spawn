@@ -166,6 +166,23 @@ class QueryCommandFormatTest {
     }
 
     @Test
+    void validateJsonFields() throws Exception {
+        var record = ValidateCommand.record(ValidateCommand.Kind.MCP, "/home/me/mcp.yaml", false,
+                List.of(new ToolsCommand.Validate.Finding(true, "unknown key bogus")));
+        assertEquals("""
+                {
+                  "kind" : "mcp",
+                  "path" : "/home/me/mcp.yaml",
+                  "valid" : false,
+                  "findings" : [ {
+                    "severity" : "error",
+                    "message" : "unknown key bogus"
+                  } ]
+                }
+                """, json(record));
+    }
+
+    @Test
     void toolsValidateJsonFields() throws Exception {
         var record = ToolsCommand.Validate.record("example", "/tools/example.yaml", false,
                 List.of(new ToolsCommand.Validate.Finding(true, "download entry in 'example' is missing a 'url'")));

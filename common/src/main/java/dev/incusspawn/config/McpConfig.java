@@ -279,8 +279,7 @@ public class McpConfig extends McpUndeclaredKeys {
         }
     }
 
-    /** As {@link #load()} for {@code file} instead of {@link #file()}: {@link Invalid} when it is refused, defaults when there is none. */
-    public static McpConfig load(Path file) {
+    static McpConfig load(Path file) {
         var config = read(file);
         return config != null ? config : new McpConfig();
     }
@@ -299,7 +298,7 @@ public class McpConfig extends McpUndeclaredKeys {
     }
 
     /** {@code yaml} as the contents of {@code name}, validated: what {@link #load} returns. */
-    static McpConfig parse(String yaml, String name) {
+    public static McpConfig parse(String yaml, String name) {
         McpConfig config;
         try {
             config = Jjq.mcpConfig(yaml);
@@ -337,8 +336,13 @@ public class McpConfig extends McpUndeclaredKeys {
      * or null when it sets none.
      */
     public String retiredKeysNotice() {
+        return retiredKeysNotice(file().toString());
+    }
+
+    /** As {@link #retiredKeysNotice()}, naming {@code name} as the file that sets them. */
+    public String retiredKeysNotice(String name) {
         return retired.isEmpty() ? null
-                : file() + " sets " + String.join(", ", retired) + ", which no longer "
+                : name + " sets " + String.join(", ", retired) + ", which no longer "
                         + (retired.size() == 1 ? "has" : "have") + " any effect: delegated agents run with full access "
                         + "inside their instance; delete " + (retired.size() == 1 ? "it" : "them");
     }
