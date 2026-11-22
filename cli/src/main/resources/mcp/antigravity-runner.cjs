@@ -53,6 +53,8 @@ try {
   const stderr = output('stderr-' + run + '.log');
   const child = spawn('agy', argv, {stdio: ['pipe', 'pipe', stderr]});
   let named = false, malformed = false, lost = false, ended = false, success = false, error = '', report = '';
+  // A model call that failed, and whether a model call answered after the last such failure (agy retries).
+  let answeredAfterError = false;
   let turns = 0;
   const usage = {};
   const count = (key, value) => {
@@ -73,7 +75,9 @@ try {
       named = true;
     }
     const step = e.step_update || {};
+    if (e.event === 'step_update' && step.step_type === 'error_message') answeredAfterError = false;
     if (e.event === 'step_update' && step.step_type === 'agent_response' && step.state === 'DONE') {
+      answeredAfterError = true;
       // One model call: the result's usage and num_turns count the whole conversation, these this run.
       turns++;
       count('input_tokens', step.usage?.input_tokens);
@@ -106,8 +110,14 @@ try {
   child.on('close', (code, signal) => {
     try {
       records.end();
-      const ok = code === 0 && named && ended && success && !malformed && !lost;
       const message = Buffer.from(lost ? '' : report);
+      // agy reports ERROR (and exits 1) when a model call failed and its own retry then answered. That run
+      // finished: a non-empty response that a model call produced after the last failure is its answer,
+      // and the failure stays in the outcome's error and agy's stderr. An empty response, or a failure
+      // no answer followed (a 429 that agy gave up on), still fails.
+      const retried = ended && !success && named && !malformed && !lost && signal === null
+        && answeredAfterError && report.trim() !== '';
+      const ok = (code === 0 && success || retried) && named && ended && !malformed && !lost;
       const text = utf8(message.subarray(0, LIMIT));
       publish('result-' + run + '.txt', text);
       publish('outcome-' + run + '.json', JSON.stringify({type: 'isx.antigravity.result', success: ok,

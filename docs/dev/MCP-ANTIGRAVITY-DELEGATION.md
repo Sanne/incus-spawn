@@ -59,9 +59,11 @@ The result's own `usage` and `num_turns` count the whole conversation, not the r
 `input_tokens` there excludes what was read from the cache, which is `cache_read_tokens`, reported as `cached_input_tokens`.
 agy reports no cost and no cache writes.
 A record above 8 MiB is dropped unparsed, as for Pi and opencode; when the dropped one was the `result`, the report counts as lost and the run fails.
-A run succeeds only with exit zero, a `result` whose status is `SUCCESS`, and no malformed record.
-agy itself decides that status: after a model call timed out and a retry answered, it still reports `ERROR`, the retry's answer as its `response` and exit 1 (seen on a real instance).
-The task then fails with the report kept and the timeout as its stderr, so a coordinator reads both.
+A run succeeds with exit zero, a `result` whose status is `SUCCESS`, and no malformed record.
+agy reports `ERROR` and exits 1 when a model call timed out and its own retry then answered, the retry's answer being the `response` (seen on a real instance).
+The runner counts that run as finished when the `response` is not empty and a model answer (an `agent_response` step) came after the last `error_message` step.
+The task then succeeds with its report, and the timeout stays in agy's stderr and the result's text.
+A `result` with an empty `response`, or with no answer after the last failure, still fails, as the default model's 429 does.
 A failed model call shows in `recent` as "a model call failed", since its `error_message` step carries no text; agy may retry it, or give up, as it does on a 429.
 
 ## Policy and capability differences
