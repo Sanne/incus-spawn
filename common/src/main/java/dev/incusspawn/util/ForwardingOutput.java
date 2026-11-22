@@ -30,6 +30,7 @@ abstract class ForwardingOutput implements Output {
     @Override public void step(String msg) { delegate().step(msg); }
     @Override public java.io.PrintStream results() { return delegate().results(); }
     @Override public void frame(String... lines) { delegate().frame(lines); }
+    @Override public void gap() { delegate().gap(); }
     @Override public void prompt(String question) { delegate().prompt(question); }
     @Override public void windowTitle(String title) { delegate().windowTitle(title); }
     @Override public void stepNote(String msg) { delegate().stepNote(msg); }

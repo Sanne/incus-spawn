@@ -32,7 +32,7 @@ public final class RecordingOutput implements Output {
     public enum Kind {
         WARN, ERROR, WARN_ASIDE, STEP_WARN, WARN_BANNER, STEP_FAIL, NOTE,
         HEADER, BUILD_HEADER, BRANCH_HEADER, SECTION, GROUP, GROUP_END,
-        STEP, STEP_NOTE, OK, SUCCESS, LIST, RESULT, FRAME, PROMPT, WINDOW_TITLE,
+        STEP, STEP_NOTE, OK, SUCCESS, LIST, RESULT, FRAME, GAP, PROMPT, WINDOW_TITLE,
         STEP_START, STEP_PROGRESS, STEP_DONE, STEP_BREAK, RELEASE_TERMINAL, ABANDON_STEP
     }
 
@@ -166,6 +166,7 @@ public final class RecordingOutput implements Output {
     @Override public PrintStream results() { return results; }
     /** Its lines as the details; the message is them as one text. */
     @Override public void frame(String... lines) { record(Kind.FRAME, String.join("\n", lines), lines); }
+    @Override public void gap() { record(Kind.GAP, ""); }
     @Override public void prompt(String question) { record(Kind.PROMPT, question); }
     @Override public void windowTitle(String title) { record(Kind.WINDOW_TITLE, title); }
     @Override public void stepStart(String msg) { record(Kind.STEP_START, msg); }

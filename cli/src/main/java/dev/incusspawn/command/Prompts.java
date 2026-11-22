@@ -57,6 +57,38 @@ public interface Prompts {
     }
 
 
+    /**
+     * Asks a question with several choices, laid out one way for every wizard (#2492): a blank
+     * line, the lead-in asking the question and saying to choose one, the options numbered
+     * and indented as a group (a newline in an option continues it under its text), a note
+     * that holds for several options once, and a final prompt that says what Enter does.
+     * The lines are said, the prompt is shown, so a test reads the whole conversation.
+     *
+     * @param question  what is asked, without "Choose one": that is added
+     * @param options   one entry per choice, one or two lines each
+     * @param note      a line after the list, or {@code null}
+     * @param enterDoes what an empty answer does, as it completes "Enter to ...": e.g. "skip"
+     * @return the answer as typed, {@code null} at EOF
+     */
+    default String choose(String question, java.util.List<String> options, String note, String enterDoes) {
+        BuildOutput.gap();
+        say(question + " Choose one:");
+        say("");
+        var width = String.valueOf(options.size()).length() + 2;
+        for (int i = 0; i < options.size(); i++) {
+            var lines = options.get(i).split("\n");
+            var number = (i + 1) + ".";
+            say("  " + number + " " + lines[0]);
+            for (int l = 1; l < lines.length; l++) say("  " + " ".repeat(width) + lines[l]);
+        }
+        if (note != null) {
+            say("");
+            say(note);
+        }
+        say("");
+        return ask("Choice (Enter to " + enterDoes + "): ");
+    }
+
     /** {@link #show}s the question and reads its answer without echoing it: {@code null} at EOF. */
     default char[] askSecret(String question) {
         show(question);
