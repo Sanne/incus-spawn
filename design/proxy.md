@@ -996,7 +996,16 @@ A start that serves no session clears both, so the guest's Codex does not keep a
 A branch is served its session from the copy request on: the same write that mints its secret derives its verifiers against the selection the branch was asked for (`ChatGptStart.stampBranchInto`), so a copy never carries its source's stamps, and one served no session clears what its source had.
 A build does not stamp a ChatGPT session: builds keep their temporary-proof grant, so Codex in a credentialed build stays signed out unless the account is an API-key one.
 
-The route identifies its caller by source address alone, so on macOS, where every container arrives from the VM's address (#1582), it serves no instance yet.
+On Linux the route identifies its caller by source address, then checks the proof against that instance's binding.
+On macOS, where every container arrives from the VM's address (#1582), the address names no instance, so the proof is the caller (#2497).
+`InstanceRegistry.chatGptCaller` finds the running instance whose current binding holds the verifier of the presented access placeholder on a backend call or WebSocket, of the refresh placeholder on a refresh, and of the token a logout names.
+It looks up only verifiers of bindings made with the instance's current secret, so a previous start's proof, a copy's, another session's or account's, a verifier presented as a token and a proof keyed with the metadata hash each name nobody.
+The route then applies the same kind check as on Linux, so a refresh proof does not pass as an access one.
+A logout is answered locally whichever kind it names, as on Linux, where it needs no proof at all, and on macOS it still needs one that names an instance.
+A caller at a known instance's address is still held to that instance's own binding, and the Linux proxy never takes this path.
+What this gives up is the address check, as for every proof on macOS (#1582): a proof replayed from another instance on the same Mac serves the instance that owns it.
+A ChatGPT proof reaches the user's conversations, so it matters more than most, and it is held to the same bar.
+It is keyed with a secret the guest cannot read, rotated on every start and checked against a verifier no guest can forge, so an instance holds another's proof only if something hands it over.
 
 **The session:** `~/.config/incus-spawn/openai/<account>/session.json` (owner-only) holds the tokens, a `session_id` minted at sign-in, a `generation`, and `refreshing` while a refresh is out (`ChatGptSessionStore`, on the mechanics `SessionStore` shares with Google sign-ins, #2443).
 `config.yaml` only names the account and its type.
