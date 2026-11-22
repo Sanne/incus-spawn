@@ -228,6 +228,14 @@ The Arch leg found at once that isx init needed `which`, which Arch's base syste
 **Integration tests** (`mvn verify -DskipITs=false`, requires Incus):
 - `TemplateBuildIT` — builds actual images, verifies metadata, agentuser, and that the generated agent context file lands without touching the user-layer CLAUDE.md
 
+## Waiting for another thread or process
+
+A test that waits for something asynchronous uses `Eventually` (`common` test-jar, `dev.incusspawn.util`), never its own `Thread.sleep` loop (#2504).
+It samples after 1 ms, doubling up to 10 ms, so a wait lasts barely longer than the condition takes.
+A long timeout therefore costs nothing when the condition is met, and only a hung test pays it.
+`Eventually.await(what, timeout, condition)` fails naming what was awaited, `poll` returns the first non-null value, and `holdsWithin` answers a boolean for a test that asserts afterwards.
+A fixed `Thread.sleep` stays only where the test asserts that something does not happen within a period.
+
 ## Site previews: built without secrets, deployed without PR code
 
 Every PR the AI assistant opens comes from its fork (`Sanne-ai-bot/incus-spawn`), and a fork's `pull_request` run gets no secret, so a preview that built and deployed in one job never ran for any of them (#2180).

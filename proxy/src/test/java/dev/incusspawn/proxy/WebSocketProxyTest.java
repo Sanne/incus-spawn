@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import java.time.Duration;
 import dev.incusspawn.DerEncoder;
 import dev.incusspawn.tool.ToolDef;
 
@@ -33,6 +34,7 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
+import dev.incusspawn.util.Eventually;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -214,8 +216,12 @@ class WebSocketProxyTest {
 
     /** Polls {@code done} until it holds or {@link #WAIT_SECONDS} pass, whichever is first. */
     private static void waitUntil(BooleanSupplier done) throws InterruptedException {
-        for (int i = 0; i < WAIT_SECONDS * 10 && !done.getAsBoolean(); i++) {
-            Thread.sleep(100);
+        try {
+            Eventually.holdsWithin(Duration.ofSeconds(WAIT_SECONDS), done::getAsBoolean);
+        } catch (InterruptedException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AssertionError(e);
         }
     }
 

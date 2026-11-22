@@ -58,8 +58,7 @@ class HostLockTest {
                 Thread.sleep(200);
                 assertFalse(waiter.isDone(), "a second thread took the lock while the first held it");
                 assertEquals(List.of(), log, "a brief wait between threads is not said");
-                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-                while (log.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+                Eventually.holdsWithin(Duration.ofSeconds(10), () -> !(log.isEmpty()));
                 assertEquals(List.of("Another isx operation is testing — waiting..."), log,
                         "a longer one is, as another process's is");
                 release.countDown();
@@ -107,8 +106,7 @@ class HostLockTest {
                     return lock.waited();
                 }
             });
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (log.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+            Eventually.holdsWithin(Duration.ofSeconds(10), () -> !(log.isEmpty()));
             assertEquals(List.of("Another isx process is testing — waiting..."), log);
             assertFalse(acquired.isDone(), "acquired while another process held the lock");
             in.println("release");
@@ -342,8 +340,7 @@ class HostLockTest {
                     return child.isAlive();
                 }
             });
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (log.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+            Eventually.holdsWithin(Duration.ofSeconds(10), () -> !(log.isEmpty()));
             assertEquals(List.of("Another isx process is testing — waiting..."), log);
             assertFalse(exclusive.isDone(), "taken exclusively while another process held it shared");
             in.println("release");
@@ -366,8 +363,7 @@ class HostLockTest {
                     return child.isAlive();
                 }
             });
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (log.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+            Eventually.holdsWithin(Duration.ofSeconds(10), () -> !(log.isEmpty()));
             assertEquals(List.of("Another isx process is testing — waiting..."), log);
             assertFalse(shared.isDone(), "taken shared while another process held it exclusively");
             in.println("release");

@@ -1,5 +1,7 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -315,10 +317,13 @@ class ExecScriptTest {
     }
 
     private static void waitFor(java.util.function.BooleanSupplier condition) throws InterruptedException {
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
-        while (!condition.getAsBoolean()) {
-            if (System.nanoTime() > deadline) throw new AssertionError("condition not met in time");
-            Thread.sleep(50);
+        try {
+            Eventually.await("the condition", Duration.ofSeconds(15),
+                    condition::getAsBoolean);
+        } catch (InterruptedException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AssertionError(e);
         }
     }
 }

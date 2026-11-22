@@ -1,5 +1,7 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -135,7 +137,7 @@ class IncusApiLossyTunnelTest {
         server.waitHttpStatus = 404;
         server.instanceStatus = null;
         var said = RecordingOutput.during(() -> assertEquals(-1, api().execStreamWithin("c1", List.of("true"),
-                null, null, null, null, null, null, java.time.Duration.ofSeconds(30))));
+                null, null, null, null, null, null, Duration.ofSeconds(30))));
         assertEquals(List.of(), said.warnings());
         assertEquals(1, server.requestCount("GET /1.0/instances/c1"), "read with its bound");
     }
@@ -148,7 +150,7 @@ class IncusApiLossyTunnelTest {
         server.instanceStallMillis = 10_000; // past the grace, short of UnixSocketTransport.DEFAULT_TIMEOUT_SECONDS
         long start = System.nanoTime();
         var said = RecordingOutput.during(() -> assertEquals(-1, api().execStreamWithin("c1", List.of("true"),
-                null, null, null, null, null, null, java.time.Duration.ofSeconds(30))));
+                null, null, null, null, null, null, Duration.ofSeconds(30))));
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         assertTrue(elapsedMs < 6000, "the instance read has the kill's grace, no more: " + elapsedMs + "ms");
         assertEquals(1, said.warnings().size(), "an unread instance explains nothing: " + said.warnings());
@@ -156,7 +158,7 @@ class IncusApiLossyTunnelTest {
 
     private IncusException execPastItsLimit() {
         return assertThrows(IncusException.class, () -> api().execStreamWithin("c1", List.of("su", "-", "agentuser"),
-                null, null, null, null, null, null, java.time.Duration.ofMillis(300)));
+                null, null, null, null, null, null, Duration.ofMillis(300)));
     }
 
     @Test
@@ -182,7 +184,7 @@ class IncusApiLossyTunnelTest {
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         assertTrue(elapsedMs < 6000, "the host is free once the /wait overruns: " + elapsedMs + "ms");
         // The frame is sent before the throw; give the server's reader a moment to see it.
-        for (int i = 0; i < 100 && server.controlMessages.isEmpty(); i++) Thread.sleep(10);
+        Eventually.holdsWithin(Duration.ofMillis(1000), () -> !(server.controlMessages.isEmpty()));
         assertEquals(List.of(IncusApi.signalMessage(9)), server.controlMessages,
                 "the command is killed on this way out too, not left running in the guest");
     }

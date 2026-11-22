@@ -1,5 +1,7 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.config.McpConfig;
@@ -520,10 +522,7 @@ class DelegationToolsTest {
         assertTrue(launchEntered.await(5, java.util.concurrent.TimeUnit.SECONDS), "first launch under way");
         // The first launch has not returned yet; its slot must already count.
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":102,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
-        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 102) && System.nanoTime() < deadline) {
-            Thread.sleep(10);
-        }
+        Eventually.holdsWithin(Duration.ofSeconds(5), () -> !(out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 102)));
         var second = out.byId(102).path("result");
         assertTrue(second.path("isError").asBoolean(false), second.toString());
         launchRelease.countDown();
@@ -541,10 +540,7 @@ class DelegationToolsTest {
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":201,\"method\":\"tools/call\",\"params\":{\"name\":\"send_message\",\"arguments\":" + args + "}}");
         assertTrue(launchEntered.await(5, java.util.concurrent.TimeUnit.SECONDS));
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":202,\"method\":\"tools/call\",\"params\":{\"name\":\"send_message\",\"arguments\":" + args + "}}");
-        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 202) && System.nanoTime() < deadline) {
-            Thread.sleep(10);
-        }
+        Eventually.holdsWithin(Duration.ofSeconds(5), () -> !(out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 202)));
         assertTrue(out.byId(202).path("result").path("isError").asBoolean(false));
         launchRelease.countDown();
         server.awaitIdle();
@@ -1235,10 +1231,7 @@ class DelegationToolsTest {
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":301,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
         assertTrue(launchEntered.await(5, java.util.concurrent.TimeUnit.SECONDS), "first launch under way");
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":302,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
-        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 302) && System.nanoTime() < deadline) {
-            Thread.sleep(10);
-        }
+        Eventually.holdsWithin(Duration.ofSeconds(5), () -> !(out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 302)));
         var second = out.byId(302).path("result");
         assertEquals("busy", code(second), second.toString());
         assertTrue(text(second).contains("call again"), text(second));

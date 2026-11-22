@@ -1,5 +1,7 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import dev.incusspawn.incus.ExecScript;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -812,7 +814,7 @@ class TaskScriptsTest {
                 "nothing to report before a run has written anything, and no failure");
         recordedTask("t21-abc", Tasks.AGENT, false);
         recordedTask("t22-abc", Tasks.COMMAND, false); // a command's output is not a delegate's progress
-        var twoHoursAgo = java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(java.time.Duration.ofHours(2)));
+        var twoHoursAgo = java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(Duration.ofHours(2)));
         try (var files = Files.list(home.resolve(".isx-mcp/tasks/t21-abc"))) {
             for (var f : files.toList()) Files.setLastModifiedTime(f, twoHoursAgo);
         }
@@ -1280,8 +1282,7 @@ class TaskScriptsTest {
                 """);
         launchCodex("t4-codex", 1, "wait");
         var d = home.resolve(".isx-mcp/tasks/t4-codex");
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while ((!Files.exists(d.resolve("session_id")) || !Files.exists(home.resolve("codex-child"))) && System.nanoTime() < deadline) Thread.sleep(50);
+        Eventually.holdsWithin(Duration.ofSeconds(10), () -> !((!Files.exists(d.resolve("session_id")) || !Files.exists(home.resolve("codex-child")))));
         try {
             assertEquals("codex-session-123", Files.readString(d.resolve("session_id")));
             assertTrue(Tasks.parse(sh(TaskScripts.status("t4-codex", 1000), "")).running());
@@ -1503,8 +1504,7 @@ class TaskScriptsTest {
                 """);
         launchPi("t6-pi", 1, "wait");
         var d = home.resolve(".isx-mcp/tasks/t6-pi");
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while ((!Files.exists(d.resolve("session_id")) || !Files.exists(home.resolve("pi-child"))) && System.nanoTime() < deadline) Thread.sleep(50);
+        Eventually.holdsWithin(Duration.ofSeconds(10), () -> !((!Files.exists(d.resolve("session_id")) || !Files.exists(home.resolve("pi-child")))));
         try {
             assertTrue(Files.exists(d.resolve("session_id")), "saved once Pi has written its session, before the run ends");
             assertTrue(Tasks.parse(sh(TaskScripts.status("t6-pi", 1000), "")).running());
@@ -1522,8 +1522,7 @@ class TaskScriptsTest {
         piStub("setTimeout(() => {}, 120000);");
         launchPi("t7-pi", 1, "wait");
         var d = home.resolve(".isx-mcp/tasks/t7-pi");
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (!Files.exists(d.resolve("session_started")) && System.nanoTime() < deadline) Thread.sleep(50);
+        Eventually.holdsWithin(Duration.ofSeconds(10), () -> !(!Files.exists(d.resolve("session_started"))));
         assertTrue(Files.exists(d.resolve("session_started")));
         sh(TaskScripts.cancel("t7-pi"), "");
         var status = Tasks.parse(sh(TaskScripts.status("t7-pi", 1000), ""));
@@ -1541,8 +1540,7 @@ class TaskScriptsTest {
         pb.environment().remove(TaskScripts.TASK_ENV);
         var person = pb.start();
         try {
-            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (!Files.exists(home.resolve("pi-ready")) && System.nanoTime() < deadline) Thread.sleep(10);
+            Eventually.holdsWithin(Duration.ofSeconds(5), () -> !(!Files.exists(home.resolve("pi-ready"))));
             var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
             assertFalse(who.attended(), "with no terminal it is no one's, for orphan cleanup");
             assertEquals(person.pid(), who.holderOf(DelegateAgent.PI, "any-session", cwd));
@@ -2002,8 +2000,7 @@ class TaskScriptsTest {
             Files.deleteIfExists(home.resolve("agy-ready"));
             var person = pb.start();
             try {
-                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-                while (!Files.exists(home.resolve("agy-ready")) && System.nanoTime() < deadline) Thread.sleep(10);
+                Eventually.holdsWithin(Duration.ofSeconds(5), () -> !(!Files.exists(home.resolve("agy-ready"))));
                 var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
                 assertEquals(person.pid(), who.holderOf(DelegateAgent.ANTIGRAVITY, sessionId(), "/elsewhere"), args.toString());
                 assertNull(who.holderOf(DelegateAgent.ANTIGRAVITY, "another-session", "/elsewhere"), args.toString());
@@ -2027,8 +2024,7 @@ class TaskScriptsTest {
             Files.deleteIfExists(home.resolve("oc-ready"));
             var person = pb.start();
             try {
-                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-                while (!Files.exists(home.resolve("oc-ready")) && System.nanoTime() < deadline) Thread.sleep(10);
+                Eventually.holdsWithin(Duration.ofSeconds(5), () -> !(!Files.exists(home.resolve("oc-ready"))));
                 var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
                 assertEquals(person.pid(), who.holderOf(DelegateAgent.OPENCODE, sessionId(), "/elsewhere"), args.toString());
                 assertNull(who.holderOf(DelegateAgent.OPENCODE, "another-session", "/elsewhere"), args.toString());
@@ -2631,8 +2627,7 @@ class TaskScriptsTest {
         var locked = home.resolve("run-locked");
         var holder = start("D=" + TaskScripts.dir(id) + "; " + TaskScripts.CONVERSATION_LOCK + "bash -c ': > \"$HOME/run-locked\"; sleep 300'");
         try {
-            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (!Files.exists(locked) && holder.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+            Eventually.holdsWithin(Duration.ofSeconds(5), () -> !(!Files.exists(locked) && holder.isAlive()));
             assertTrue(Files.exists(locked), "the run did not take the lock");
             var nonce = TaskJoin.nonce();
             var refused = joinAs(join.entry().guestCommand(nonce));
@@ -2655,8 +2650,7 @@ class TaskScriptsTest {
 
     /** The pid the {@link #JOINED_AGENT} {@code person} started reported, once it has. */
     private static long joinedAgent(Path ready, Process person) throws Exception {
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while ((!Files.exists(ready) || Files.readString(ready).isBlank()) && person.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+        Eventually.holdsWithin(Duration.ofSeconds(5), () -> !((!Files.exists(ready) || Files.readString(ready).isBlank()) && person.isAlive()));
         assertTrue(Files.exists(ready) && !Files.readString(ready).isBlank(), "the joined agent did not start");
         return Long.parseLong(Files.readString(ready).strip());
     }
@@ -2757,8 +2751,7 @@ class TaskScriptsTest {
         if (managed) pb.environment().put(TaskScripts.TASK_ENV, "another-task");
         else pb.environment().remove(TaskScripts.TASK_ENV);
         var proc = pb.start();
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (!Files.exists(ready) && proc.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+        Eventually.holdsWithin(Duration.ofSeconds(5), () -> !(!Files.exists(ready) && proc.isAlive()));
         if (!Files.exists(ready)) {
             proc.destroyForcibly();
             throw new AssertionError("Codex presence stand-in did not start: " + args);

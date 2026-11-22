@@ -198,6 +198,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - A VM's hostname is set at each start (#2334)
   - Considered and deferred
 - [Testing](design/testing.md)
+  - Waiting for another thread or process
   - Site previews: built without secrets, deployed without PR code
 - [Doctor, support bundles and secret scanning](design/doctor.md)
   - Doctor: a finding that is neither healthy nor broken

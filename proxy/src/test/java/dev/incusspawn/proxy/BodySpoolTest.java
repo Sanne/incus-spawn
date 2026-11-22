@@ -1,5 +1,7 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -563,9 +565,9 @@ class BodySpoolTest {
                 spool.closeOnceSent();
                 return null;
             });
-            for (int i = 0; i < 50 && store.closedOn == null; i++) Thread.sleep(100);
+            Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(store.closedOn == null));
             assertSame(spoolThread, store.closedOn, "closed off the spool's own event loop");
-            for (int i = 0; i < 50 && budget.held() != 0; i++) Thread.sleep(100);
+            Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(budget.held() != 0));
             assertEquals(0, budget.held());
         } finally {
             other.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);

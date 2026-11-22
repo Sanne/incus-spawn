@@ -1,5 +1,6 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.util.Eventually;
 import dev.incusspawn.config.GitCacheConfig;
 import dev.incusspawn.config.GitTransferConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -120,7 +121,7 @@ class GitPreparationTest {
     @Execution(CONCURRENT) @Test void refreshFetchesOnlyNewObjectsIntoASnapshotTheCacheDidNotKeep() throws Exception {
         start();
         // Retention off: preparing again would clone in full, which a refresh exists to avoid (#1980).
-        var unkept = new GitPreparation(tmp.resolve("unkept"), new GitCacheConfig(0, java.time.Duration.ofDays(7)),
+        var unkept = new GitPreparation(tmp.resolve("unkept"), new GitCacheConfig(0, Duration.ofDays(7)),
                 GitTransferConfig.DEFAULT);
         var request = new GitPreparation.Request(server.url(remote), null, host);
         var phases = new ArrayList<String>();
@@ -1345,8 +1346,7 @@ class GitPreparationTest {
                 server.url(remote), signal.toString()).redirectErrorStream(true)
                 .redirectOutput(tmp.resolve("reader.log").toFile()).start();
         try {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-            while (!Files.exists(signal) && process.isAlive() && System.nanoTime() < deadline) Thread.sleep(20);
+            Eventually.holdsWithin(Duration.ofSeconds(20), () -> !(!Files.exists(signal) && process.isAlive()));
             assertTrue(Files.exists(signal), Files.readString(tmp.resolve("reader.log")));
             var active = Path.of(Files.readString(signal));
             assertTrue(active.isAbsolute(), "the reader published no lease path: " + active);
