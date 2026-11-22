@@ -100,13 +100,9 @@ class GroupContinuationTest {
         // The outer sh forks an inner one and waits, as a logging sg waits for its shell; the
         // inner one stands for the continued isx, and its sleep for what that isx started
         var forking = new ProcessBuilder("sh", "-c", "sh -c 'sleep 60; :'; :").start();
-        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
-        var tree = forking.descendants().toList();
-        while (tree.size() < 2 && System.nanoTime() < deadline) {
-            Thread.sleep(10);
-            tree = forking.descendants().toList();
-        }
-        var descendants = tree;
+        dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(10),
+                () -> forking.descendants().count() >= 2);
+        var descendants = forking.descendants().toList();
         assertEquals(2, descendants.size(), "sh started no inner sh and sleep");
         var isx = forking.children().findFirst().orElseThrow();
         var started = descendants.stream().filter(p -> !p.equals(isx)).findFirst().orElseThrow();

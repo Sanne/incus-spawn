@@ -149,14 +149,10 @@ class TaskScriptsTest {
     }
 
     private Tasks.Status awaitFinished(String id) throws Exception {
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        Tasks.Status status;
-        do {
-            status = Tasks.parse(sh(TaskScripts.status(id, 65536), ""));
-            if (!status.running()) return status;
-            Thread.sleep(100);
-        } while (System.nanoTime() < deadline);
-        throw new AssertionError("task did not finish: " + status);
+        return dev.incusspawn.util.Eventually.poll("task " + id + " to finish", java.time.Duration.ofSeconds(20), () -> {
+            var status = Tasks.parse(sh(TaskScripts.status(id, 65536), ""));
+            return status.running() ? null : status;
+        });
     }
 
     @Test
@@ -201,11 +197,8 @@ class TaskScriptsTest {
     /** Waits until run {@code run} of task {@code id} has written {@code text} to its events. */
     private void awaitEvents(String id, int run, String text) throws Exception {
         var events = home.resolve(".isx-mcp/tasks/" + id + "/events-" + run + ".jsonl");
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        while (!(Files.exists(events) && Files.readString(events).contains(text))) {
-            if (System.nanoTime() > deadline) throw new AssertionError("no " + text + " in " + events);
-            Thread.sleep(50);
-        }
+        dev.incusspawn.util.Eventually.await(text + " in " + events, java.time.Duration.ofSeconds(20),
+                () -> Files.exists(events) && Files.readString(events).contains(text));
     }
 
     @Test
@@ -215,11 +208,8 @@ class TaskScriptsTest {
         awaitEvents(id, 1, "\"subtype\":\"init\"");
         // The transcript is written just after the init event.
         var transcript = home.resolve(".claude/projects/-work/" + sessionId() + ".jsonl");
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        while (!Files.exists(transcript)) {
-            if (System.nanoTime() > deadline) throw new AssertionError("no transcript at " + transcript);
-            Thread.sleep(50);
-        }
+        dev.incusspawn.util.Eventually.await("the transcript at " + transcript, java.time.Duration.ofSeconds(20),
+                () -> Files.exists(transcript));
         sh(TaskScripts.cancel(id), "");
         var cancelled = Tasks.parse(sh(TaskScripts.status(id, 1000), ""));
         assertEquals(143, cancelled.exit());
@@ -528,11 +518,8 @@ class TaskScriptsTest {
         pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
         var cancel = pb.start();
         try {
-            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (!sh("systemctl is-active isx-task-" + id + "-1 || true", "").contains("inactive")) {
-                assertTrue(System.nanoTime() < deadline, "the cancel never stopped the unit");
-                Thread.sleep(50);
-            }
+            dev.incusspawn.util.Eventually.await("the cancel to stop the unit",
+                    () -> sh("systemctl is-active isx-task-" + id + "-1 || true", "").contains("inactive"));
             assertFalse(Files.exists(home.resolve(".isx-mcp/tasks/" + id + "/exit-1")), "still in the window");
             assertEquals("task " + id + " 1 running\n", sh(TaskScripts.watch(ids), ""), "not lost: being cancelled");
             assertEquals("running", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state());
@@ -695,14 +682,10 @@ class TaskScriptsTest {
     }
 
     private Tasks.Status awaitAttached(String id) throws Exception {
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        Tasks.Status status;
-        do {
-            status = Tasks.parse(sh(TaskScripts.status(id, 0), ""));
-            if (status.state().equals("attached")) return status;
-            Thread.sleep(100);
-        } while (System.nanoTime() < deadline);
-        throw new AssertionError("never attached: " + status);
+        return dev.incusspawn.util.Eventually.poll("task " + id + " to attach", () -> {
+            var status = Tasks.parse(sh(TaskScripts.status(id, 0), ""));
+            return status.state().equals("attached") ? status : null;
+        });
     }
 
     @Test
@@ -744,19 +727,13 @@ class TaskScriptsTest {
         sh(TaskScripts.launch("t11-abc", 1, Tasks.COMMAND, TaskScripts.commandRun("t11-abc", work.toString(), Map.of(),
                 "setsid sleep 300 & echo $! > \"$HOME/escaped\"; wait")), "");
         var escaped = Path.of(home.toString(), "escaped");
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (!Files.exists(escaped) || Files.readString(escaped).isBlank()) {
-            assertTrue(System.nanoTime() < deadline, "the task never started");
-            Thread.sleep(50);
-        }
+        dev.incusspawn.util.Eventually.await("the task to start",
+                () -> Files.exists(escaped) && !Files.readString(escaped).isBlank());
         var pid = Long.parseLong(Files.readString(escaped).strip());
         assertTrue(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
         sh(TaskScripts.cancel("t11-abc"), "");
-        var gone = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)) {
-            assertTrue(System.nanoTime() < gone, "the escaped process survived the cancel");
-            Thread.sleep(50);
-        }
+        dev.incusspawn.util.Eventually.await("the escaped process to die with the cancel",
+                () -> !ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
     }
 
     @Test
@@ -2331,9 +2308,7 @@ class TaskScriptsTest {
         elsewhere.environment().remove(TaskScripts.TASK_ENV);
         var resumer = elsewhere.start();
         try {
-            var seen = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, sessionId(), "/x") == null
-                    && System.nanoTime() < seen) Thread.sleep(10);
+            dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5), () -> Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, sessionId(), "/x") != null);
             var held = joinAs(join.entry().guestCommand());
             assertEquals(1, held.exit(), held.stderr());
             assertTrue(held.stderr().contains("a person is already in its conversation (agent pid " + resumer.pid() + ")"), held.stderr());
@@ -2487,11 +2462,10 @@ class TaskScriptsTest {
             pb.environment().remove(TaskScripts.TASK_ENV);
             var person = pb.start();
             try {
-                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-                Tasks.Status status;
-                while (!"attached".equals((status = Tasks.parse(sh(TaskScripts.status(id, 0), ""))).state()) && System.nanoTime() < deadline) {
-                    Thread.sleep(10);
-                }
+                var status = dev.incusspawn.util.Eventually.poll("the task to attach", java.time.Duration.ofSeconds(5), () -> {
+                    var s = Tasks.parse(sh(TaskScripts.status(id, 0), ""));
+                    return "attached".equals(s.state()) ? s : null;
+                });
                 assertEquals("attached", status.state(), args);
                 assertEquals(person.pid(), status.attachedPid(), args);
                 // The guest's twin agrees: the reclaim finds the same holder.
@@ -2519,9 +2493,7 @@ class TaskScriptsTest {
         pb.environment().remove(TaskScripts.TASK_ENV);
         var other = pb.start();
         try {
-            var seen = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, "0b7d1e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d", "/x") == null
-                    && System.nanoTime() < seen) Thread.sleep(10);
+            dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5), () -> Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, "0b7d1e2a-3c4f-4a5b-8c6d-7e8f9a0b1c2d", "/x") != null);
             assertEquals("finished", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state(), "not attached");
             assertEquals(Reclaim.Outcome.NONE, Reclaim.parse(sh(Reclaim.script(id, DelegateAgent.CLAUDE, "me", null, 1), "")).outcome());
             assertTrue(other.isAlive(), "never signalled");
@@ -2531,10 +2503,8 @@ class TaskScriptsTest {
             picker.environment().remove(TaskScripts.TASK_ENV);
             var choosing = picker.start();
             try {
-                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-                Long held = null;
-                while ((held = Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, sessionId(), cwd)) == null
-                        && System.nanoTime() < deadline) Thread.sleep(10);
+                var held = dev.incusspawn.util.Eventually.poll("the conversation's holder", java.time.Duration.ofSeconds(5),
+                        () -> Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, sessionId(), cwd));
                 assertEquals(choosing.pid(), held);
             } finally {
                 choosing.destroy();
@@ -2576,9 +2546,7 @@ class TaskScriptsTest {
         codex.environment().remove(TaskScripts.TASK_ENV);
         var other = codex.start();
         try {
-            var seen = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CODEX, null, cwd) == null
-                    && System.nanoTime() < seen) Thread.sleep(10);
+            dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5), () -> Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CODEX, null, cwd) != null);
             assertEquals("finished", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state(), "not attached");
             var join = assertInstanceOf(TaskJoin.Outcome.Join.class, TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id));
             var person = start(join.entry().guestCommand());
