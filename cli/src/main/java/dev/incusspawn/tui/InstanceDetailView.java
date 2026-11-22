@@ -437,18 +437,24 @@ public final class InstanceDetailView {
                         use, template == null ? "-" : template, info.name().equals(template)), wrapWidth)) {
                     lines.add(Line.from(List.of(Span.styled(text, dimStyle))));
                 }
+                // Wrapped like the line above, never cut at the dialog's edge
+                var note = "";
+                var noteStyle = dimStyle;
                 if (!use.problem().isEmpty()) {
-                    lines.add(Line.from(List.of(Span.styled("    not configured: requests fail until it is,"
-                            + " or it is changed", Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())))));
+                    note = "not configured: requests fail until it is, or it is changed";
+                    noteStyle = Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg());
                 } else if (!use.refusal().isEmpty()) {
-                    lines.add(Line.from(List.of(Span.styled("    refused: built for another auth mode;"
-                            + " press a to pin one it can use", Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())))));
+                    note = "refused: built for another auth mode; press a to pin one it can use";
+                    noteStyle = Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg());
                 } else if (!use.templateProblem().isEmpty()) {
-                    lines.add(Line.from(List.of(Span.styled("    the template names '" + use.templateAccount()
-                            + "', which is not configured", dimStyle))));
+                    note = "the template names '" + use.templateAccount() + "', which is not configured";
                 } else if (use.differsFromTemplate()) {
-                    lines.add(Line.from(List.of(Span.styled("    the template now names '"
-                            + use.templateAccount() + "'", dimStyle))));
+                    note = "the template now names '" + use.templateAccount() + "'";
+                }
+                if (!note.isEmpty()) {
+                    for (var text : ModalRenderer.wrapText("    " + note, wrapWidth)) {
+                        lines.add(Line.from(List.of(Span.styled(text, noteStyle))));
+                    }
                 }
             }
             lines.add(Line.styled("", lineStyle));
