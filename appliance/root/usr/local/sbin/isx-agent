@@ -11,6 +11,8 @@
 FORWARDER_MATCH='UNIX-CONNECT:/var/lib/incus/unix.socket'
 INCUS_VSOCK_PORT=8443
 POOL_MOUNT_PREFIX=/var/lib/incus/storage-pools
+# Where each pool's lock lives, on tmpfs, so a reboot drops it with the processes that held it.
+LOCK_DIR=/run/isx-agent
 
 # The btrfs filesystem UUID (its /sys/fs/btrfs/<fsid> directory name) backing path $1, or nothing.
 # btrfs st_dev numbers are per-subvolume, so neither stat nor mountinfo's major:minor identify the
@@ -43,6 +45,17 @@ valid_pool() {
         ''|*[!A-Za-z0-9._-]*) echo "error: bad pool name"; return 1 ;;
     esac
     return 0
+}
+
+# Open pool $1's lock as fd 9, for flock (#2436). btrfs-settle holds it from before its reply until
+# its detached rescan has started, and btrfs-skip-drop-accounting takes it before it sets 0, since
+# the drop of a delete made meanwhile would cancel that rescan. The pool is already validated; the
+# "btrfs-" prefix keeps "." and ".." a file name. Returns 1 when the file cannot be opened, checked
+# first because a failed redirection on exec would end the agent without a reply. The waits need
+# util-linux's flock, which Alpine's util-linux installs over busybox's applet, which has no -w.
+open_pool_lock() {
+    mkdir -p "$LOCK_DIR" 2>/dev/null && touch "$LOCK_DIR/btrfs-$1.lock" 2>/dev/null || return 1
+    exec 9>>"$LOCK_DIR/btrfs-$1.lock"
 }
 
 # One line per connection: "<verb> [arg] [opt] [extra]". arg, opt and extra are optional and only
@@ -179,7 +192,18 @@ case "$verb" in
         # each other left the pool refusing every rescan until a remount; one that outlasts the
         # wait keeps the threshold, so the delete is traced as before. Mirrors
         # BtrfsUsage.skipDropAccounting.
+        # A btrfs-settle that has not started its rescan yet holds the pool's lock, and no rescan
+        # runs during its cleaner wait, so the lock is waited for before anything else (#2436).
+        # Both waits fit the host's 5 s reply timeout; a busy reply leaves the threshold as it is,
+        # and the host asks again. The lock is released when this agent exits, after the reply.
+        # With opt "previous" the reply is "ok <the threshold before>", 0 when it already read 0;
+        # without it, plain "ok", for a host that predates it.
         valid_pool "$arg" || exit 0
+        open_pool_lock "$arg" || { echo "error: no lock"; exit 0; }
+        if ! flock -w 2 9; then
+            echo "error: settle running"
+            exit 0
+        fi
         fsid=$(btrfs_fsid "$POOL_MOUNT_PREFIX/$arg")
         q="/sys/fs/btrfs/$fsid/qgroups"
         if [ -z "$fsid" ] || [ ! -w "$q/drop_subtree_threshold" ]; then
@@ -187,11 +211,12 @@ case "$verb" in
         elif [ "$(cat "$q/mode" 2>/dev/null)" = squota ]; then
             echo "error: simple quotas"
         elif [ "$(cat "$q/inconsistent" 2>/dev/null)" = 1 ] \
-                && ! timeout 4 btrfs quota rescan -W "$POOL_MOUNT_PREFIX/$arg" >/dev/null 2>&1; then
-            # Within the host's 5 s reply timeout; the delete keeps the threshold and is traced
+                && ! timeout 2 btrfs quota rescan -W "$POOL_MOUNT_PREFIX/$arg" >/dev/null 2>&1 9>&-; then
             echo "error: rescan running"
-        elif echo 0 > "$q/drop_subtree_threshold" 2>/dev/null; then
-            echo ok
+        elif ! previous=$(cat "$q/drop_subtree_threshold" 2>/dev/null); then
+            echo "error: could not read the threshold"
+        elif [ "$previous" = 0 ] || echo 0 > "$q/drop_subtree_threshold" 2>/dev/null; then
+            if [ "$opt" = previous ]; then echo "ok $previous"; else echo ok; fi
         else
             echo "error: could not set the threshold"
         fi
@@ -204,6 +229,11 @@ case "$verb" in
         # inconsistent btrfs enforces no qgroup limit. Detached, so the host does not wait.
         # The optional opt is the threshold isx replaced, put back once the cleaner is done, so a
         # delete isx does not make is traced as before. Mirrors BtrfsUsage.settleDeletes.
+        # The pool's lock is taken here, before the reply, and the detached settle keeps it on the
+        # fd it inherits until its rescan has started (#2436): the next delete's
+        # btrfs-skip-drop-accounting waits for it, so its drop cannot cancel that rescan. A lock still
+        # held after 3 s, by another settle, is waited for by the detached settle instead, since a
+        # settle never given up leaves no threshold at 0 with nobody to put it back.
         valid_pool "$arg" || exit 0
         case "$opt" in
             ''|[0-8]) ;;
@@ -211,9 +241,17 @@ case "$verb" in
         esac
         mount="$POOL_MOUNT_PREFIX/$arg"
         q="/sys/fs/btrfs/$(btrfs_fsid "$mount")/qgroups"
-        # The rescan only when the accounting reads inconsistent, as on Linux; unconditionally when it cannot be read
-        setsid sh -c 'btrfs filesystem sync "$1"; timeout 60 btrfs subvolume sync "$1"; if [ -n "$3" ]; then echo "$3" > "$2/drop_subtree_threshold"; fi; timeout 60 btrfs quota rescan -W "$1"; btrfs filesystem sync "$1"; if [ ! -r "$2/inconsistent" ] || [ "$(cat "$2/inconsistent")" = 1 ]; then btrfs quota rescan "$1"; fi' \
-            sh "$mount" "$q" "$opt" </dev/null >/dev/null 2>&1 &
+        locked=0
+        if open_pool_lock "$arg"; then
+            flock -w 3 9 && locked=1
+        else
+            exec 9>/dev/null
+            locked=1
+        fi
+        # The rescan only when the accounting reads inconsistent, as on Linux; unconditionally when it
+        # cannot be read. Only the settle's own shell holds fd 9: the commands it runs get none.
+        setsid sh -c '[ "$4" = 1 ] || flock -w 300 9; btrfs filesystem sync "$1" 9>&-; timeout 60 btrfs subvolume sync "$1" 9>&-; if [ -n "$3" ]; then echo "$3" > "$2/drop_subtree_threshold"; fi; timeout 60 btrfs quota rescan -W "$1" 9>&-; btrfs filesystem sync "$1" 9>&-; if [ ! -r "$2/inconsistent" ] || [ "$(cat "$2/inconsistent")" = 1 ]; then btrfs quota rescan "$1" 9>&-; fi' \
+            sh "$mount" "$q" "$opt" "$locked" </dev/null >/dev/null 2>&1 &
         echo started
         ;;
     btrfs-orphan-delete)

@@ -299,4 +299,69 @@ class BtrfsUsageTest {
         assertEquals("/sys/fs/btrfs/4e47dfd0-7cd8-4069-893a-3410114af64f/qgroups/drop_subtree_threshold",
                 BtrfsUsage.dropThresholdPath("4e47dfd0-7cd8-4069-893a-3410114af64f"));
     }
+
+    /**
+     * The agent's settle runs detached, so on macOS only the agent knows whether one still holds the
+     * pool at 0 (#2436): its answer, not the read before it, says what this delete put at 0.
+     */
+    @Test
+    void theAgentsAnswerSaysWhatTheSettlePutsBack() {
+        var at3 = new BtrfsUsage.QgroupStatus(true, true, false, "qgroup", 3);
+        var at0 = at3.withDropSubtreeThreshold(0);
+        // The threshold the agent found under its lock, even when the host read 0 during a settle
+        var set = BtrfsUsage.agentDropAccounting(at0, "ok 3");
+        assertTrue(set.status().skipsDropAccounting());
+        assertEquals(3, set.restoreTo());
+        // 0 under the agent's lock was left by a killed isx: never put back, but still settled
+        var left = BtrfsUsage.agentDropAccounting(at0, "ok 0");
+        assertTrue(left.status().skipsDropAccounting());
+        assertEquals(-1, left.restoreTo());
+        // An agent that predates the lock answers a bare ok, and the read stands in
+        assertEquals(3, BtrfsUsage.agentDropAccounting(at3, "ok").restoreTo());
+        assertEquals(-1, BtrfsUsage.agentDropAccounting(at0, "ok").restoreTo());
+        // Refused: nothing set, and a pool read at 0 is another delete's, so this one is not settled
+        for (var reply : List.of(BtrfsUsage.AGENT_SETTLING, BtrfsUsage.AGENT_RESCANNING, "", "ok 9", "ok 33", "error: no qgroups")) {
+            assertFalse(BtrfsUsage.agentDropAccounting(at0, reply).status().skipsDropAccounting(), reply);
+            var kept = BtrfsUsage.agentDropAccounting(at3, reply);
+            assertEquals(at3, kept.status(), reply);
+            assertEquals(-1, kept.restoreTo(), reply);
+        }
+    }
+
+    /** A busy agent is asked again, for as long as a Linux delete would wait for the same thing (#2436). */
+    @Test
+    void aBusyAgentIsAskedAgainUntilItsWaitRunsOut() {
+        var lockWait = java.time.Duration.ofSeconds(300);
+        var rescanWait = java.time.Duration.ofSeconds(60);
+        long[] now = {0};
+        java.util.function.LongSupplier clock = () -> now[0];
+        Runnable pause = () -> now[0] += java.time.Duration.ofSeconds(2).toNanos();
+        // A settle that releases the lock after three busy answers
+        var replies = new java.util.ArrayDeque<>(List.of(BtrfsUsage.AGENT_SETTLING, BtrfsUsage.AGENT_SETTLING,
+                BtrfsUsage.AGENT_RESCANNING, "ok 3"));
+        assertEquals("ok 3", BtrfsUsage.skipDropsOnAgent(() -> java.util.Optional.of(replies.poll()), clock, lockWait, rescanWait, pause));
+        assertTrue(replies.isEmpty());
+        // A settle that never lets go, or a rescan that never ends: each gives up at its own wait
+        now[0] = 0;
+        int[] asked = {0};
+        assertEquals(BtrfsUsage.AGENT_SETTLING, BtrfsUsage.skipDropsOnAgent(() -> {
+            asked[0]++;
+            return java.util.Optional.of(BtrfsUsage.AGENT_SETTLING);
+        }, clock, lockWait, rescanWait, pause));
+        assertEquals(151, asked[0]);
+        now[0] = 0;
+        asked[0] = 0;
+        assertEquals(BtrfsUsage.AGENT_RESCANNING, BtrfsUsage.skipDropsOnAgent(() -> {
+            asked[0]++;
+            return java.util.Optional.of(BtrfsUsage.AGENT_RESCANNING);
+        }, clock, lockWait, rescanWait, pause));
+        assertEquals(31, asked[0]);
+        // Any other answer, no answer included, is final at once
+        asked[0] = 0;
+        assertEquals("", BtrfsUsage.skipDropsOnAgent(() -> {
+            asked[0]++;
+            return java.util.Optional.empty();
+        }, clock, lockWait, rescanWait, pause));
+        assertEquals(1, asked[0]);
+    }
 }

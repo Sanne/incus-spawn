@@ -224,6 +224,12 @@ That holds even when the pool reads 0, another delete's, since a settle without 
 A process that already holds a pool's lock waits only five seconds for another: the holder may be its own delete, released only when a batch closes, or another process may wait for the pool this one holds.
 The lock is held by a small thread of its own, since a batch is prepared on one thread and settled on another, and the kernel drops it if isx is killed.
 On macOS it holds off host processes until the appliance agent has the settle, which then runs detached (#2436).
+So the agent holds a lock of its own per pool, on the VM's tmpfs, which its settle takes before it answers and keeps until its rescan has started (#2436).
+The next delete's `btrfs-skip-drop-accounting` waits for it, since no rescan runs during that settle's cleaner wait, and a drop made then would cancel the rescan when it starts.
+The pool reads 0 throughout that wait, so the host asks the agent even then, and the agent's `ok <n>` names the threshold it found under its lock, the one that delete's settle puts back.
+Each answer comes within the host's 5 s reply timeout, so the agent waits two seconds for the lock and two for a running rescan, and answers busy when either is still held.
+The host asks again while it does: for five minutes while a settle holds the pool, as a Linux delete waits for another process, and for a minute while a rescan runs, as on Linux.
+A settle that cannot take the lock at once still answers, and its detached half waits for the lock, since a settle given up would leave the pool at 0 with nobody to put the threshold back.
 The settle runs once per batch of deletes (`IncusClient.deleteBatch`: `isx destroy --all-*`, the TUI's batch delete, `isx clean`), so a destroy of one instance pays it once, under 0.1 s of its 0.7 s here, and a batch of 70 about 2 s.
 The forced commit writes whatever the pool has not committed yet, so on a busy pool it can take longer.
 On macOS the appliance's `isx-agent` does the same through its `btrfs-skip-drop-accounting` and `btrfs-settle` verbs, the second detached so the host does not wait.

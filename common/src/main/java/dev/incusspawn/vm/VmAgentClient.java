@@ -165,11 +165,13 @@ public final class VmAgentClient {
     /**
      * Ask the agent to set the pool's {@code drop_subtree_threshold} to 0 under full qgroups, so a
      * delete skips tracing what it shared (#2061, {@code BtrfsUsage.skipDropAccounting}). Replies
-     * {@code ok} or {@code error: ...}; an agent that predates the verb answers {@code error: unknown verb}.
+     * {@code ok <the threshold it replaced>}, or {@code error: ...}, {@code error: settle running}
+     * while its detached settle of the pool has not started its rescan (#2436). An agent that
+     * predates the lock answers a bare {@code ok}, and one that predates the verb {@code error: unknown verb}.
      */
     public static Optional<String> btrfsSkipDropAccounting(String poolName) {
         if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
-        return send("btrfs-skip-drop-accounting " + poolName);
+        return send("btrfs-skip-drop-accounting " + poolName + " previous");
     }
 
     /**

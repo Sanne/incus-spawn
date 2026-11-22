@@ -160,6 +160,16 @@ expect '[ "$r" = started ] || [ "$r" = running ] || [[ "$r" == error:* ]]' \
 r=$(agent "btrfs-skip-drop-accounting cow")
 expect '[ "$r" = ok ] || [[ "$r" == error:* ]]' "btrfs-skip-drop-accounting answered ('$(echo "$r" | head -1)')"
 expect '[ "$(agent "btrfs-settle cow")" = started ]' "btrfs-settle answered at once"
+# The detached settle holds the pool's lock only until its rescan has started (#2436), and with quotas
+# off it is through within a second or two. A skip-drop answering busy after that means the lock
+# never frees, or the image's flock is busybox's, which has no -w: every delete would wait out the host's minutes.
+for _ in 1 2 3 4 5; do
+    sleep 1
+    r=$(agent "btrfs-skip-drop-accounting cow previous")
+    [ "$r" = "error: settle running" ] || break
+done
+expect '[ "$r" != "error: settle running" ] && { [[ "$r" == "ok "* ]] || [[ "$r" == error:* ]]; }' \
+    "btrfs-skip-drop-accounting goes on once the settle has started its rescan ('$(echo "$r" | head -1)')"
 expect '[ "$(agent "btrfs-settle ../x")" = "error: bad pool name" ]' "btrfs-settle rejects a path-like pool name"
 expect '[ "$(agent "btrfs-settle cow 9")" = "error: bad option" ]' "btrfs-settle rejects a threshold the kernel would not take"
 
