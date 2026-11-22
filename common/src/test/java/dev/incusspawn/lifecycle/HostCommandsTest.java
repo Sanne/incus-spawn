@@ -53,8 +53,10 @@ class HostCommandsTest {
             void kill(Process process) {
                 try {
                     dev.incusspawn.util.Eventually.holdsWithin(Duration.ofSeconds(10), () -> Files.exists(printed));
-                } catch (Exception e) {
+                } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                } catch (Exception e) {
+                    throw new AssertionError(e);
                 }
                 super.kill(process);
             }

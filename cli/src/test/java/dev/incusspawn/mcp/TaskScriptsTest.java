@@ -469,11 +469,12 @@ class TaskScriptsTest {
         awaitFinished("t24-abc");
         var resumed = claude(home, "bash -c 'sleep 30; :' --resume " + sessionId()).start();
         try {
-            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            String watched;
-            do {
-                watched = sh(TaskScripts.watch(java.util.List.of("t24-abc")), "");
-            } while (!watched.contains("presence resume " + resumed.pid() + " ") && System.nanoTime() < deadline);
+            var last = new String[] {""};
+            dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(10), () -> {
+                last[0] = sh(TaskScripts.watch(java.util.List.of("t24-abc")), "");
+                return last[0].contains("presence resume " + resumed.pid() + " ");
+            });
+            var watched = last[0];
             assertTrue(watched.startsWith("task t24-abc 1 finished 0\nsid t24-abc " + sessionId()
                     + "\ncwd t24-abc " + work.toRealPath() + "\n"), watched);
             assertTrue(watched.contains("presence resume " + resumed.pid() + " " + sessionId() + "\n"), watched);

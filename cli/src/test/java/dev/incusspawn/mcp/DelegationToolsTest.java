@@ -1354,9 +1354,11 @@ class DelegationToolsTest {
             if (backend.instances.values().stream().noneMatch(c -> "k".equals(c.get(dev.incusspawn.incus.Metadata.MCP_IDEMPOTENCY_KEY)))) return;
             backend.onListing = null;
             server.handle("{\"jsonrpc\":\"2.0\",\"id\":401,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
-            var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-            while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 401) && System.nanoTime() < deadline) {
-                Thread.onSpinWait();
+            try {
+                dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5),
+                        () -> out.sent.stream().anyMatch(m -> m.path("id").asInt(0) == 401));
+            } catch (Exception e) {
+                throw new AssertionError(e);
             }
         };
         var first = call("delegate", args);

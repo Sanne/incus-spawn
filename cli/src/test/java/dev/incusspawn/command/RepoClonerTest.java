@@ -1227,8 +1227,8 @@ class RepoClonerTest {
                 new java.util.concurrent.CountDownLatch(1).await();
             } catch (InterruptedException discarded) {
                 returned.await();
-                long deadline = System.nanoTime() + 1_000_000_000L;
-                while (tester.getState() != Thread.State.TIMED_WAITING && System.nanoTime() < deadline) Thread.sleep(1);
+                dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(1),
+                        () -> tester.getState() == Thread.State.TIMED_WAITING);
                 Thread.currentThread().interrupt();
             }
             return refs;
