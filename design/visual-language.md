@@ -140,6 +140,7 @@ The screen is read top to bottom: where am I, what is there, what is selected, w
    NAME            STATUS         IP      PARENT        RUNTIME     AGE
    quarkus-42871   ● Running              tpl-quarkus   container   1h ago
    docs-site       ○ Stopped              tpl-minimal   container   2 days ago
+ ───────────────────────────────────────────────────────────────────────────────────────
  tpl-minimal  Minimal Fedora  Space Mark
  F1 Info   F2 Shell   F3 Details   F4 Branch…   F5 Build…   F6 Rename…   F7 Stop   …
 ```
@@ -147,6 +148,8 @@ The screen is read top to bottom: where am I, what is there, what is selected, w
 **A panel is a rule and a title, not a box.**
 A box around each table spent two columns and a row on lines that say nothing, and two boxes stacked drew four horizontal lines between the tables' rows.
 A panel has one rule across its top that carries its title, and the next panel's rule ends it.
+The last panel is ended by a rule with no title, above the messages and the keys, so a warning under the list is not read as one of its rows.
+A terminal shorter than 16 rows has no such rule and gives the row to the lists.
 The table inside keeps the width it had in a box, through one cell of padding at each side, so the widths at which the OWNER and PURPOSE columns appear are unchanged.
 The focused panel's title is bold and in the accent, and only the focused panel shows the cursor, so focus reads without colour.
 

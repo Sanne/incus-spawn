@@ -17,7 +17,6 @@
 
 
 
-
  Instances ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
    NAME      STATUS       IP            PARENT         RUNTIME            AGE           DISK
  ▸ work-1    ● Running                  tpl-minimal    container          3h ago        -
@@ -36,5 +35,6 @@
 
 
 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  work-1  from tpl-minimal  [proxy]  Space Mark
  F1 Info   F2 Shell   F3 Details   F4 Branch…   F5 Build…   F6 Rename…   F7 Stop   F8 Destroy…   F9 Actions   F10 Quit

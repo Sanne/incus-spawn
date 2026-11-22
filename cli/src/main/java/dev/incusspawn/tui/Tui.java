@@ -1852,7 +1852,8 @@ public class Tui {
 
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
-        int footerHeight = hasStatus ? 3 : 2;
+        // A rule ends the last panel, so the messages and keys under it are not read as its rows
+        int footerHeight = (hasStatus ? 3 : 2) + (area.height() >= MainScreen.FOOTER_RULE_MIN_HEIGHT ? 1 : 0);
         // The header band is always present — it anchors the app identity (brand chip) and
         // carries the storage gauge on the right when pool usage is available.
         int headerHeight = 1;
