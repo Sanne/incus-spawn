@@ -386,7 +386,9 @@ final class ModalRenderer {
     }
 
     void renderErrorModal(Frame frame, Rect screen, String message) {
-        var lines = message.lines().toList();
+        // Wrapped to the widest the dialog gets, never cut at its frame: two cells of frame and
+        // two of padding inside a dialog two cells from each edge of the screen
+        var lines = wrapText(message, Math.max(20, screen.width() - 8));
         int height = lines.size() + 4;
         int width = Math.min(lines.stream().mapToInt(CharWidth::of).max().orElse(30) + 6, screen.width() - 4);
         var modalArea = centerRect(screen, Math.max(width, 40), height);
