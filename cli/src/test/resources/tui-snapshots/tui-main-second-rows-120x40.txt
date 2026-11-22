@@ -18,9 +18,9 @@
 
 
  Instances ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   NAME      STATUS       IP            PARENT         RUNTIME            AGE           DISK
-   work-1    ● Running                  tpl-minimal    container          3h ago        -
- ▸ vm-1      ○ Stopped                  tpl-minimal    virtual-machine    2 days ago    -
+   NAME      STATUS       IP               PARENT         RUNTIME            AGE           DISK
+   work-1    ● Running                     tpl-minimal    container          3h ago        -
+ ▸ vm-1      ○ Stopped                     tpl-minimal    virtual-machine    2 days ago    -
 
 
 

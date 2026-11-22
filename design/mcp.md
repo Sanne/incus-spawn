@@ -676,7 +676,8 @@ A plain `isx destroy` of an owned instance asks, and refuses without a terminal 
 
 **Who owns what is one column.**
 `isx list` has one `OWNER` column, into which `isx mcp`'s standing folds (`mcp held: <purpose>`) beside a tool's name, and its formats append `owner` and `owner_id`.
-The TUI's instance table shows the same `OWNER` column from a 100-column terminal (`MainScreen.OWNER_COLUMN_MIN_WIDTH`) and leaves it out when narrower: the bare fit is 80, but there the column takes the other columns' slack and clips them; the instance details show the owner either way (Sanne's decision).
+The TUI's instance table shows the same `OWNER` column from a 100-column terminal (`MainScreen.OWNER_COLUMN_MIN_WIDTH`) and leaves it out when narrower; the instance details show the owner either way (Sanne's decision).
+The width dates from when columns shared the table by minimum widths and the column clipped the others; it remains so that a narrower table keeps RUNTIME, IP, DISK and PARENT before it shows an owner.
 Each row carries the owner cell, and the table draws as many cells as it has columns, so the choice is made per frame, on a resize too, with no rebuild.
 Whether any instance is owned is read from every instance, not the search's matches, so the column does not come and go while typing a search.
 

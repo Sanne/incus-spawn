@@ -28,6 +28,8 @@ The theme is written in RGB and `TuiTheme.of` fits each colour to the terminal's
 **A table's column widths come from `ColumnFit`**, never from `Constraint.min` or `fill`: each column is as wide as its widest cell (`Tui.instanceNatural`, over every instance, not the search's), gives width up in its `give` order down to its `floor`, and a cut cell ends in `…` (`ColumnFit.clipped`).
 An instance's name is never cut (`give` 0): where the Instances table does not fit, `ColumnFit.kept` leaves whole columns out in their `dropping` order, RUNTIME, IP, DISK, PARENT, OWNER, PURPOSE, then AGE.
 An empty panel says whether a search emptied it (`MainScreen.searchHidesAll`).
+Every table measures over every row, the search's or not: `Tui.templateNatural`, `instanceNatural`, and `measuredRows` for the Work tab's columns.
+A column's `reserving` width counts in `kept`, and `widths` grants it from the content's width, so content arriving moves no column where the table has room.
 A new column says its floor, its turn to be cut and whether it is the free text that takes spare room (`ColumnFitTest`).
 **Every dialog has one shape**: content from the first row inside the frame, one blank row, the keys on the last row (`ModalRenderer.confirmModalHeight` adds four to the text's lines).
 A dialog's label is `textDim` and never the accent, a list's current line is marked with `Glyphs.CURSOR`, a title names its subject in quotes, and text is wrapped, never cut at the frame.
@@ -106,7 +108,7 @@ Otherwise it does one `incus.exists()`.
 A failed existence check lets the action proceed rather than blocking the UI.
 
 **Purpose** (#2239): `p` on an instance opens `PurposeDialog`, one metadata write on a running or a stopped one (empty text unsets it), and the branch dialog's Purpose field, right after the name, goes to the copy request as `Metadata.PURPOSE` in `extraConfig`.
-The instance table's PURPOSE column (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`, 118, or `PURPOSE_ALONE_MIN_WIDTH`, 108, when OWNER is not shown, since the minimum widths then need 101 cells) is drawn only when some instance has a purpose, from the ninth cell of each row, `ListCommand.purposeCell`.
+The instance table's PURPOSE column (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`, 118, or `PURPOSE_ALONE_MIN_WIDTH`, 108, when OWNER is not shown) is drawn only when some instance has a purpose, from the ninth cell of each row, `ListCommand.purposeCell`.
 `Tui.buildRowData` always makes nine cells and `MainScreen` keeps those of the columns it draws.
 
 **The overview** (#2241): `o` on the instance table sets `Tui.overview`, the Work tab shows the same (`Tui.overviewShown()`), and `MainScreen.overviewColumns` draws NAME, STATUS, LAST USED, WORK, TOKENS, from 100 columns ACTIVE, GITHUB, from 120 DONE and, from 150, PURPOSE, the cells made by `OverviewCommand`'s cell methods from the parked `Tui.overviewLog` and `Tui.overviewReading`.

@@ -201,7 +201,10 @@ Before, spare width was shared evenly whatever the cells held, so a name was cut
 - **Only then is a column cut,** each down to its floor in a set order, the status before the name.
 - **A cut cell ends in `…`,** so a cut value is never taken for a whole one.
   This holds in a table narrower than every floor too: the columns give the rest up from the right, and the table's own layout never narrows them unmarked.
-- **IP keeps room for an address** once the columns stand apart, so the table does not shift when an instance starts.
+- **IP keeps room for an address.**
+  The room counts when columns are left out, so an instance that starts never costs the table a column.
+  A table with room has the same widths before the address arrives and after.
+  Where the content alone fills the table, the address takes its room from the gaps between columns, and they shift.
 
 What this gives up is columns that line up between the two panels of the Overview, which they did not do before either.
 

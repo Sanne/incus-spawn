@@ -40,8 +40,10 @@ final class ColumnFit {
         }
 
         /**
-         * The same column, kept at least {@code width} wide once the others stand apart: room for
-         * content it does not hold yet, so the columns after it hold still when it arrives.
+         * The same column, kept at least {@code width} wide: room for content it does not hold
+         * yet, so the columns after it hold still when it arrives. {@link #kept} counts it, so
+         * the content arriving leaves no column out; {@link #widths} grants it once every column
+         * stands one cell apart, and not at all where the content alone fills the table.
          */
         Column reserving(int width) {
             return new Column(header, floor, natural, give, fill, width, drop);
@@ -59,7 +61,7 @@ final class ColumnFit {
 
         /** The least this column takes before another is left out: free text is cut first. */
         int least() {
-            return fill ? Math.max(floor, CharWidth.of(header)) : want();
+            return fill ? Math.max(floor, CharWidth.of(header)) : Math.max(want(), reserve);
         }
 
         static Column fixed(String header, int width) {
@@ -109,16 +111,23 @@ final class ColumnFit {
             return widths;
         }
         int spare = room - needed;
-        // Every column but the last stands apart from the next, as far as there is room
-        int pad = Math.min(PAD_MOST, count > 1 ? spare / (count - 1) : 0);
-        for (int i = 0; i < count - 1; i++) widths[i] += pad;
-        spare -= pad * (count - 1);
+        // Every column but the last stands one cell apart from the next, then a column gets the
+        // room it reserves, then the columns stand further apart as far as there is room. The
+        // reserve is counted from the content's width, so the widths are the same before the
+        // reserved content arrives and after.
+        int gaps = count - 1;
+        int first = gaps > 0 ? Math.min(1, spare / gaps) : 0;
+        for (int i = 0; i < gaps; i++) widths[i] += first;
+        spare -= first * gaps;
         for (int i = 0; i < count && spare > 0; i++) {
-            int more = Math.min(spare, columns.get(i).reserve() - widths[i]);
+            int more = Math.min(spare, columns.get(i).reserve() - columns.get(i).want());
             if (more <= 0) continue;
             widths[i] += more;
             spare -= more;
         }
+        int pad = gaps > 0 ? Math.min(PAD_MOST - first, spare / gaps) : 0;
+        for (int i = 0; i < gaps; i++) widths[i] += pad;
+        spare -= pad * gaps;
         // What is left is the free text's, or blank at the table's end
         var fills = IntStream.range(0, count).filter(i -> columns.get(i).fill()).toArray();
         if (fills.length == 0) {

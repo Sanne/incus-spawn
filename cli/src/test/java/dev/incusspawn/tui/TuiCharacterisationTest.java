@@ -293,6 +293,28 @@ class TuiCharacterisationTest {
         snapshotInContext("main-gauge-legend-status", tui);
     }
 
+    /** The widths come from every row, not the search's: a narrower listing moved the columns on a keystroke. */
+    @Test
+    void theColumnsHoldStillWhileASearchNarrowsTheLists() {
+        var tui = tui();
+        var templates = header(tui, "DESCRIPTION");
+        var instances = header(tui, "STATUS");
+        press(tui, KeyEvent.ofChar('/'));
+        // Leaves tpl-dev, "not built", and no instance of its own
+        typeText(tui, "dev");
+        assertEquals(templates, header(tui, "DESCRIPTION"), "the Templates table");
+        press(tui, ESC);
+        press(tui, KeyEvent.ofChar('/'));
+        // Leaves the one instance with no address and the shorter age
+        typeText(tui, "vm-1");
+        assertEquals(instances, header(tui, "STATUS"), "the Instances table");
+    }
+
+    private static String header(Tui tui, String column) {
+        return TuiSnapshot.toText(TuiSnapshot.render(80, 24, tui::render)).lines()
+                .filter(line -> line.strip().startsWith("NAME ") && line.contains(column)).findFirst().orElseThrow();
+    }
+
     @Test
     void searching() {
         var tui = tui();

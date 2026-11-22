@@ -317,12 +317,16 @@ public final class InstanceDetailView {
         var labelStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
         var dimStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
 
-        var statusColor = isRunning(info) ? theme.statusRunning() : theme.statusStopped();
         boolean stopped = "STOPPED".equalsIgnoreCase(info.status());
+        // What the STATUS column shows, an operation under way before the state, so the two
+        // never disagree and the state reads without colour here too
+        boolean busy = !info.pendingOp().isEmpty();
+        var statusColor = busy ? theme.statusWarning() : isRunning(info) ? theme.statusRunning()
+                : stopped ? theme.statusStopped() : theme.statusWarning();
+        var glyph = busy ? modal.spinner() : isRunning(info) ? Glyphs.RUNNING : stopped ? Glyphs.STOPPED : Glyphs.BETWEEN;
         lines.add(Line.from(List.of(
                 Span.styled("Status:         ", labelStyle),
-                // The glyph the STATUS column shows, so the state reads without colour here too
-                Span.styled((isRunning(info) ? Glyphs.RUNNING : stopped ? Glyphs.STOPPED : Glyphs.BETWEEN) + " " + info.status(),
+                Span.styled(glyph + " " + (busy ? info.pendingOp() : info.status()),
                         Style.EMPTY.fg(statusColor).bg(modal.bg())))));
 
         lines.add(Line.from(List.of(
