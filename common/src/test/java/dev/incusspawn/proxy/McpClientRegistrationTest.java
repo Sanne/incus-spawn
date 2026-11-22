@@ -111,6 +111,7 @@ class McpClientRegistrationTest {
                 .replace("/home/agentuser", home.toString())
                 .replace("/var/lib/isx", root + "/var/lib/isx")
                 .replace("/usr/local/bin", root + "/usr/local/bin")
+                .replace("/usr/local/lib/isx", root + "/usr/local/lib/isx")
                 .replace("runuser -u agentuser -- ", asAgent + " ");
     }
 
@@ -593,5 +594,83 @@ class McpClientRegistrationTest {
 
         start("1");
         assertTrue(Files.readString(opencodeConfig()).contains(ProxyConfig.MCP_DOMAIN + "/mcp\""));
+    }
+
+    private Path agyMarker() {
+        return root.resolve("var/lib/isx/mcp-client-registered-antigravity");
+    }
+
+    private Path agyConfig() {
+        return home.resolve(".gemini/config/mcp_config.json");
+    }
+
+    /** An {@code agy} on the agent's PATH (never run: Node edits its config), the bridge the build installed, and a config holding a person's server. */
+    private void installAgy(boolean withBridge) throws Exception {
+        assumeTrue(HAS_NODE, "no node in /usr/bin or /bin");
+        var bin = Files.createDirectories(home.resolve(".local/bin"));
+        var agy = bin.resolve("agy");
+        Files.writeString(agy, "#!/bin/sh\nexit 1\n");
+        Files.setPosixFilePermissions(agy, PosixFilePermissions.fromString("rwxr-xr-x"));
+        if (withBridge) {
+            Files.createDirectories(root.resolve("usr/local/lib/isx"));
+            Files.writeString(root.resolve("usr/local/lib/isx/mcp-bridge.cjs"), "// bridge\n");
+        }
+        Files.createDirectories(agyConfig().getParent());
+        Files.writeString(agyConfig(), "{\"mcpServers\": {\"mine\": {\"command\": \"m\"}}}\n");
+    }
+
+    @Test
+    void aCoordinatorsFirstStartRegistersTheBridgeInAntigravity() throws Exception {
+        installAgy(true);
+        start("1");
+
+        var text = Files.readString(agyConfig());
+        var config = JqValues.parse(text);
+        var entry = config.path("mcpServers").path("isx");
+        assertEquals("node", entry.path("command").asText());
+        assertEquals("[\"" + root + "/usr/local/lib/isx/mcp-bridge.cjs\",\"--url\",\"https://" + ProxyConfig.MCP_DOMAIN + "/mcp\","
+                + "\"--header\",\"" + InstanceSecret.HEADER + "\",\"--header-file\",\"" + root + "/run/isx/instance-secret\"]",
+                entry.path("args").toJsonString(),
+                "the secret is named by its file, never held in the config");
+        assertEquals("m", config.path("mcpServers").path("mine").path("command").asText(), "a person's own server stays");
+        assertEquals(McpClientRegistration.ANTIGRAVITY_ENTRY_VERSION + "\n", Files.readString(agyMarker()));
+        assertEquals(1, agentRuns().size());
+
+        start("1");
+        assertEquals(1, agentRuns().size(), "a start that changes nothing runs nothing as the agent");
+    }
+
+    @Test
+    void aCopysFirstStartRemovesTheAntigravityRegistration() throws Exception {
+        installAgy(true);
+        start("1");
+
+        start("0");
+        var config = JqValues.parse(Files.readString(agyConfig()));
+        assertTrue(config.path("mcpServers").path("isx").isMissingNode() || config.path("mcpServers").path("isx").isNull(),
+                Files.readString(agyConfig()));
+        assertEquals("m", config.path("mcpServers").path("mine").path("command").asText());
+        assertFalse(Files.exists(agyMarker()));
+    }
+
+    @Test
+    void anAntigravityConfigThatIsNotJsonIsLeftAsItIs() throws Exception {
+        installAgy(true);
+        var commented = "{\n  // a person's note\n  \"mcpServers\": {}\n}\n";
+        Files.writeString(agyConfig(), commented);
+        start("1");
+
+        assertEquals(commented, Files.readString(agyConfig()));
+        assertFalse(Files.exists(agyMarker()), "so the next start tries again");
+    }
+
+    @Test
+    void anImageWithoutTheBridgeWaitsForARebuild() throws Exception {
+        installAgy(false);
+        start("1");
+
+        assertEquals(List.of(), agentRuns());
+        assertFalse(Files.exists(agyMarker()));
+        assertFalse(Files.readString(agyConfig()).contains(ProxyConfig.MCP_DOMAIN));
     }
 }

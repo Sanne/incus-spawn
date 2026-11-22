@@ -402,7 +402,7 @@ A folder outside them asks once.
 The first-run questions are skipped by `cache/onboarding.json`, which the build writes only when it is missing.
 **Instructions** go to `~/.gemini/config/rules/isx.md`, which agy loads only after front matter saying when the rule applies (`trigger: always_on`).
 `AgentInstructions` therefore reads a rendered file's heading after a front matter block, so it still tells its own file from a template's.
-**MCP:** agy reads no variable in `~/.gemini/config/mcp_config.json`, and a `${VAR}` header reaches the server as written, so its client refuses a server with `bearer-token-env` (`McpClient.refuses`): the build warns, and records the server as written for agy only when it was, so an entry of that name the user made is never removed as isx's.
+**MCP:** agy reads no variable in `~/.gemini/config/mcp_config.json`, and a `${VAR}` header reaches the server as written, so a server with `bearer-token-env` is written as a stdio server running `McpStdioBridge` (`/usr/local/lib/isx/mcp-bridge.cjs`), which reads the variable when agy starts it, and no token is written there (#2476).
 **What it still sends:** agy also reports to `play.googleapis.com`, Google's logging service, which no documented setting turns off; it carries at most the guest's proof, never the key.
 
 `OpencodeSetup` installs `opencode-ai` through `NpmGlobalInstall`, then runs the package's `postinstall.mjs`, which `--ignore-scripts` skipped (#2211).

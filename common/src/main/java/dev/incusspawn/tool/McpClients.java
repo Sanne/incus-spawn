@@ -174,38 +174,38 @@ public final class McpClients {
      * Antigravity CLI: {@code mcpServers} in {@code ~/.gemini/config/mcp_config.json}, a remote
      * server under {@code serverUrl}, as {@code agy mcp add} writes it. It expands no variable in
      * that file (its own plugin guide says so, and a {@code ${VAR}} header reaches the server as
-     * written), so it refuses a server whose bearer token is read from a variable: the proof would
-     * have to be written there.
+     * written), so a server whose bearer token is read from a variable is registered as a stdio
+     * server running {@link McpStdioBridge}, which reads the variable it was started with: the
+     * token is never written there (#2476).
      */
-    public static final McpClient ANTIGRAVITY = refusingBearerServers(
+    public static final McpClient ANTIGRAVITY = withBridge(
             jsonFile("antigravity", AntigravitySetup.MCP_CONFIG_PATH, true, McpClients::antigravityEntry));
 
     static JqObject antigravityEntry(McpServer server) {
         var entry = JqObject.builder(4);
         if (server.stdio()) {
             stdio(entry, server);
+        } else if (server.bearerTokenEnv() != null) {
+            // agy hands its own environment to the server it starts, so the variable is read there
+            stdio(entry, new McpServer(server.name(), null, McpStdioBridge.commandForBearer(server.url(), server.bearerTokenEnv()),
+                    java.util.Map.of(), null, null));
         } else {
             entry.put("serverUrl", server.url());
         }
         return entry.build();
     }
 
-    /** {@code client}, refusing every server whose bearer token is read from a variable. */
-    private static McpClient refusingBearerServers(McpClient client) {
+    /** {@code client}, putting the bridge in the guest first when a server needs it. */
+    private static McpClient withBridge(McpClient client) {
         return new McpClient() {
             @Override public String agent() { return client.agent(); }
-
-            @Override public String refuses(McpServer server) {
-                return server.bearerTokenEnv() == null ? null
-                        : "It reads no variable in its MCP config, so the server's bearer token, "
-                                + server.bearerTokenEnv() + ", would have to be written there.";
-            }
 
             @Override public String addScript(McpServer server) { return client.addScript(server); }
 
             @Override public String removeScript(String name) { return client.removeScript(name); }
 
             @Override public void apply(Container container, List<McpServer> servers, List<String> stale) {
+                if (servers.stream().anyMatch(s -> s.bearerTokenEnv() != null)) McpStdioBridge.install(container);
                 client.apply(container, servers, stale);
             }
         };

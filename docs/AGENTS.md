@@ -423,7 +423,9 @@ Your own `~/.gemini/GEMINI.md` and `AGENTS.md` stay yours.
 Skills already in a folder there are copied into `~/.agents/skills` first, unless isx installs a skill of the same name.
 
 MCP servers that tools declare go to `~/.gemini/config/mcp_config.json`.
-`agy` reads no variable in that file, so a server that takes its token from `bearer-token-env` is left out, with a warning.
+`agy` reads no variable in that file.
+A server that takes its token from `bearer-token-env` goes through a stdio bridge, which reads the variable when agy starts it.
+
 `agy` also reports usage to Google's logging service at `play.googleapis.com`, which isx does not turn off.
 That traffic carries no credential, since the instance holds only the proof placeholder.
 

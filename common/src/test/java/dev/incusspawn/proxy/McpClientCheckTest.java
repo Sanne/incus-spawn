@@ -91,7 +91,7 @@ class McpClientCheckTest {
         var outcome = McpClientCheck.parse(runCheck(curl("ok"), InstanceSecret.generate()));
         assertTrue(outcome.reached());
         assertFalse(outcome.ok());
-        assertTrue(outcome.describe("coord").contains("none of its Claude Code, Pi or opencode has an 'isx' server"), outcome.describe("coord"));
+        assertTrue(outcome.describe("coord").contains("none of its Claude Code, Pi, opencode or Antigravity CLI has an 'isx' server"), outcome.describe("coord"));
     }
 
     @Test

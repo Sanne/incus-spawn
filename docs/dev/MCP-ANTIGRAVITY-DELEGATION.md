@@ -86,11 +86,27 @@ A task's own `model` wins, and the task's recorded model stays what the task cho
 agy keeps its command line, so `Presence` finds a person's agy by the `--conversation` it resumes, with one dash or two and the value apart or after `=`, as Go's flags take it, as well as by its directory.
 `isx shell --task` runs `agy --conversation <id>` in the task's recorded directory, under the conversation lock.
 
-## Not done: a coordinator's agy
+## MCP servers: a stdio bridge (#2476)
 
-An instance branched with `--mcp-client` does not get the isx server in agy.
-agy expands no variable or file in `mcp_config.json`, so the rotating instance secret would have to be written into the file on every start, where Claude Code, Pi and opencode read it from `/run/isx` themselves.
-A coordinator whose only agent is agy therefore cannot reach `mcp.isx.internal`.
+agy expands no variable, file or header helper in `mcp_config.json`, so a credential cannot be named there the way Claude Code, Pi and opencode name it.
+isx gives agy a stdio server instead, `/usr/local/lib/isx/mcp-bridge.cjs`, which Node runs and which forwards each message to the Streamable HTTP server.
+The bridge keeps no credential and none is written into `mcp_config.json`.
+A file (`--header` and `--header-file`) is read when each request is sent, so a rotation reaches the next request.
+A variable (`--bearer-env`) is the bridge's environment as agy started it, so a changed proof, after `isx account reset-proofs`, reaches it only when agy starts the bridge again.
+The script is root's file in the guest, written by the build (`McpStdioBridge.install`, from `AntigravitySetup` and from `McpClients.ANTIGRAVITY` when it registers a server that needs it), so the agent cannot rewrite it.
+
+Two servers use it:
+- A tool's remote server with `bearer-token-env` is registered as `node <bridge> --url <url> --bearer-env <VAR>`.
+  agy hands its own environment to the stdio server it starts (verified with 1.5.14: a variable set for agy reached the server, as did `NODE_EXTRA_CA_CERTS`), so the variable is read there.
+  A server with no bearer token stays a plain `serverUrl`.
+- A coordinator's `isx` server is registered from the stamp on every start like Pi's and opencode's (`McpClientRegistration`), as `node <bridge> --url https://mcp.isx.internal/mcp --header X-Isx-Instance-Secret --header-file /run/isx/instance-secret`.
+  An image built before the bridge existed has no bridge file, so its start registers nothing and tries again after a rebuild.
+
+The proxy ends an instance's session when another client initializes, and drops all of them on a restart, and agy never sees the 404.
+So on a 404 the bridge initializes again with the `initialize` agy first sent, and retries the request once.
+The bridge answers a request it cannot forward with a JSON-RPC error, never a response of agy's, and ends the session with a `DELETE` when agy closes its stdin.
+It follows no redirect, so the secret header cannot reach another origin.
+It opens no stream for server-initiated messages, which `isx mcp` does not send.
 
 ## Validation in this checkout
 
