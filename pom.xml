@@ -46,7 +46,7 @@
         <skipITs>true</skipITs>
         <surefire-plugin.version>3.6.1</surefire-plugin.version>
         <tamboui.version>0.7.0</tamboui.version>
-        <aesh.version>3.19.1</aesh.version>
+        <aesh.version>3.19.2</aesh.version>
         <jjq.version>0.2.4</jjq.version>
         <!--
           Keeps AESCrypt.makeSessionKey out of the test JVM's JIT: GraalVM 25's JIT sometimes
