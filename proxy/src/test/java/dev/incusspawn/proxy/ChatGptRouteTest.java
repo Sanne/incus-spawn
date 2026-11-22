@@ -617,6 +617,24 @@ class ChatGptRouteTest {
         assertTrue(seen.isEmpty(), seen.toString());
     }
 
+    @Test
+    void onMacOsAWebSocketIsAcceptedOnTheCurrentAccessProofAndRefusedOnAnyOtherProof() throws Exception {
+        macOs(SECRET, sessionId, SECRET);
+        var current = proofs();
+
+        assertEquals(101, upgrade(codexWebSocket()));
+        for (var bearer : List.of(
+                accessPlaceholder(ChatGptProof.derive(OTHER_SECRET, ACCOUNT, sessionId).access()),
+                accessPlaceholder(ChatGptProof.derive(SECRET, ACCOUNT, "previous-session").access()),
+                accessPlaceholder(current.refresh()),
+                accessPlaceholder(ChatGptProof.verifier(current.access())))) {
+            assertEquals(401, upgrade(webSocket("/backend-api/codex/responses", "Bearer " + bearer)), bearer);
+        }
+        // A start that moved the secret leaves the old proofs worth nothing
+        macOs(SECRET, sessionId, OTHER_SECRET);
+        assertEquals(401, upgrade(codexWebSocket()));
+    }
+
     private static ProxyActivity activityNow() {
         var incarnations = proxy.instanceRegistry().incarnations();
         return proxy.apiActivity.snapshot(incarnations.byName(), incarnations.view());
