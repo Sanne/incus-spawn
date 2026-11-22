@@ -6,11 +6,14 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValues;
+import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.proxy.ProofToken;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -164,13 +167,36 @@ class OpencodeSetupTest {
     }
 
     @Test
-    void declaresItsOwnClaudeAndGeminiPlaceholders() {
-        assertEquals(List.of(
-                        new dev.incusspawn.proxy.ProofToken.Placeholder(
-                                "OPENCODE_ANTHROPIC_API_KEY", "sk-ant-", SpawnConfig.ClaudeConfig.NAMESPACE),
-                        new dev.incusspawn.proxy.ProofToken.Placeholder(
-                                "GEMINI_API_KEY", "gemini-", "gemini")),
+    void declaresItsOwnClaudePlaceholder() {
+        assertEquals(List.of(new dev.incusspawn.proxy.ProofToken.Placeholder(
+                        "OPENCODE_ANTHROPIC_API_KEY", "sk-ant-", SpawnConfig.ClaudeConfig.NAMESPACE)),
                 new OpencodeSetup().placeholders());
+    }
+
+    /**
+     * The variables opencode's providers read get a proof without Codex or Gemini CLI in the
+     * image: a start fills the placeholders of every tool the proxy serves, every built-in tool
+     * without a feature gate among them, so theirs cover opencode's.
+     */
+    @Test
+    void everyProviderKeyIsFilledWithoutTheToolThatDeclaresIt() {
+        var ungated = RuntimeConstants.CDI_TOOLS.stream().filter(t -> t.feature() == null).toList();
+        var declared = ProofToken.declaredBy(ungated).stream()
+                .collect(Collectors.toMap(ProofToken.Placeholder::env, p -> p));
+        for (var provider : List.of("anthropic", "openai", "google")) {
+            var params = resolved(Map.of("provider", provider));
+            var namespace = new OpencodeSetup().credentialNamespaces(params).iterator().next();
+            for (var entry : new OpencodeSetup().envEntries(params)) {
+                var what = provider + ": " + entry.getName();
+                var placeholder = declared.get(entry.getName());
+                assertNotNull(placeholder, what);
+                assertEquals(namespace, placeholder.namespace(), what);
+                // A guard could hold only where the declaring tool is installed
+                assertEquals("", placeholder.guard(), what);
+                // The start replaces only a value that starts with the declared static placeholder
+                assertTrue(entry.getValue().startsWith(placeholder.staticValuePrefix()), what + "=" + entry.getValue());
+            }
+        }
     }
 
     @Test
