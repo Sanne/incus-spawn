@@ -14,9 +14,10 @@ import java.util.stream.IntStream;
 
 /**
  * A table's column widths, from what its cells hold (design/visual-language.md "Layout"). A column
- * is as wide as its widest cell. Where the table does not fit, the columns give width up in a set
- * order, each down to its floor, so what a person reads first is cut last. Where it has room to
- * spare, the columns stand a little apart and the rest goes to the column of free text.
+ * is as wide as its widest cell. Where the table does not fit, whole columns are left out in a set
+ * order ({@link #kept}), and then the columns left give width up in a set order, each down to its
+ * floor, so what a person reads first is cut last. Where it has room to spare, the columns stand a
+ * little apart and the rest goes to the column of free text.
  */
 final class ColumnFit {
 
@@ -28,12 +29,14 @@ final class ColumnFit {
 
     /**
      * A column: its header, the narrowest it is cut to, the width its content needs, and its turn
-     * to be cut ({@code give}: 1 gives first, 0 never gives). A {@code fill} column holds free
-     * text and takes the room no other column needs.
+     * to be cut ({@code give}: 1 gives first, 0 gives only when every other column is at its
+     * floor and the table still does not fit). A {@code fill} column holds free text and takes
+     * the room no other column needs. {@code drop} is its turn to be left out whole where the
+     * table does not fit: 1 goes first, 0 never goes.
      */
-    record Column(String header, int floor, int natural, int give, boolean fill, int reserve) {
+    record Column(String header, int floor, int natural, int give, boolean fill, int reserve, int drop) {
         Column(String header, int floor, int natural, int give, boolean fill) {
-            this(header, floor, natural, give, fill, 0);
+            this(header, floor, natural, give, fill, 0, 0);
         }
 
         /**
@@ -41,7 +44,22 @@ final class ColumnFit {
          * content it does not hold yet, so the columns after it hold still when it arrives.
          */
         Column reserving(int width) {
-            return new Column(header, floor, natural, give, fill, width);
+            return new Column(header, floor, natural, give, fill, width, drop);
+        }
+
+        /** The same column, left out whole in its {@code turn} where the table does not fit. */
+        Column dropping(int turn) {
+            return new Column(header, floor, natural, give, fill, reserve, turn);
+        }
+
+        /** The same column, holding content {@code width} cells wide. */
+        Column holding(int width) {
+            return new Column(header, floor, width, give, fill, reserve, drop);
+        }
+
+        /** The least this column takes before another is left out: free text is cut first. */
+        int least() {
+            return fill ? Math.max(floor, CharWidth.of(header)) : want();
         }
 
         static Column fixed(String header, int width) {
@@ -54,6 +72,25 @@ final class ColumnFit {
     }
 
     private ColumnFit() {
+    }
+
+    /**
+     * Which of {@code columns} a table {@code width} cells wide shows, as their indexes in order.
+     * Columns are left out whole, in their {@code drop} order, until those left show their content
+     * uncut, the free text aside. Leaving a column out says less than cutting three to stubs.
+     */
+    static List<Integer> kept(List<Column> columns, int width) {
+        var kept = new ArrayList<Integer>();
+        for (int i = 0; i < columns.size(); i++) kept.add(i);
+        while (true) {
+            int needed = kept.size() - 1;
+            for (int i : kept) needed += columns.get(i).least();
+            if (needed <= width) return kept;
+            var next = kept.stream().filter(i -> columns.get(i).drop() > 0)
+                    .min(Comparator.comparingInt(i -> columns.get(i).drop()));
+            if (next.isEmpty()) return kept;
+            kept.remove(next.get());
+        }
     }
 
     /** The widths of {@code columns} in a table {@code width} cells wide, with one cell between two columns. */
@@ -104,7 +141,14 @@ final class ColumnFit {
             widths[i] -= taken;
             deficit -= taken;
         }
-        // Narrower than every floor: the table clips at its right edge, as it always did
+        // Narrower than every floor: the columns give up the rest from the right, the first column
+        // last, so every cut cell still ends in an ellipsis. Left to the table's own layout, the
+        // columns were narrowed with no mark on what they cut.
+        for (int i = widths.length - 1; i >= 0 && deficit > 0; i--) {
+            int taken = Math.min(deficit, Math.max(0, widths[i] - 1));
+            widths[i] -= taken;
+            deficit -= taken;
+        }
     }
 
     static List<Constraint> constraints(int[] widths) {

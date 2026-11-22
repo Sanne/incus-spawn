@@ -48,7 +48,33 @@ class ColumnFitTest {
         assertArrayEquals(new int[] {14, 11, 6, 20}, ColumnFit.widths(COLUMNS, 54), "the free text first");
         assertArrayEquals(new int[] {14, 9, 6, 12}, ColumnFit.widths(COLUMNS, 44), "then the parent");
         assertArrayEquals(new int[] {11, 8, 6, 12}, ColumnFit.widths(COLUMNS, 40), "the name last");
-        assertArrayEquals(new int[] {10, 8, 6, 12}, ColumnFit.widths(COLUMNS, 20), "and none below its floor");
+        assertArrayEquals(new int[] {10, 8, 6, 12}, ColumnFit.widths(COLUMNS, 39), "and none below its floor");
+    }
+
+    /** The table's own layout narrowed the columns with no mark on what they cut. */
+    @Test
+    void narrowerThanEveryFloorTheColumnsStillFitAndTheFirstGivesLast() {
+        assertArrayEquals(new int[] {10, 5, 1, 1}, ColumnFit.widths(COLUMNS, 20));
+        for (int width = 8; width < 40; width++) {
+            int sum = java.util.Arrays.stream(ColumnFit.widths(COLUMNS, width)).sum();
+            assertEquals(width - 3, sum, "at " + width);
+        }
+    }
+
+    @Test
+    void wholeColumnsAreLeftOutInTheirOrderBeforeAnyIsCut() {
+        var columns = List.of(new ColumnFit.Column("NAME", 10, 20, 0, false),
+                new ColumnFit.Column("IP", 7, 13, 2, false).dropping(2),
+                new ColumnFit.Column("RUNTIME", 9, 9, 1, false).dropping(1),
+                new ColumnFit.Column("PURPOSE", 12, 40, 1, true).dropping(3));
+        // 20 + 13 + 9 + 12 for the free text at its floor, and 3 between them
+        assertEquals(List.of(0, 1, 2, 3), ColumnFit.kept(columns, 57), "free text is cut before a column goes");
+        assertEquals(List.of(0, 1, 3), ColumnFit.kept(columns, 56), "the first to go");
+        assertEquals(List.of(0, 3), ColumnFit.kept(columns, 46));
+        assertEquals(List.of(0), ColumnFit.kept(columns, 32));
+        assertEquals(List.of(0), ColumnFit.kept(columns, 5), "a column with no turn is never left out");
+        var shown = ColumnFit.kept(columns, 46).stream().map(columns::get).toList();
+        assertEquals(20, ColumnFit.widths(shown, 46)[0], "and the name is whole");
     }
 
     @Test
@@ -63,7 +89,7 @@ class ColumnFitTest {
 
     @Test
     void aFixedColumnNeverGives() {
-        for (int width = 10; width < 120; width++) {
+        for (int width = 39; width < 120; width++) {
             assertEquals(6 + (width >= 67 ? Math.min(3, (width - 64) / 3) : 0), ColumnFit.widths(COLUMNS, width)[2], "at " + width);
         }
     }

@@ -274,7 +274,8 @@ final class MainScreen {
             var inner = block.inner(area);
             if (inner.height() > 0) {
                 frame.renderWidget(Paragraph.from(
-                        Line.styled("  No template definitions found.",
+                        Line.styled(searchHidesAll(tui.allTemplateEntries)
+                                ? "  No template matches the search." : "  No template definitions found.",
                                 Style.EMPTY.fg(tui.theme.textDim()))), inner);
             }
             return;
@@ -312,7 +313,7 @@ final class MainScreen {
         // The description is cut first and the name last; a name is as wide as the longest of every
         // template, so the columns hold still while a search narrows the list
         var templateWidths = ColumnFit.widths(List.of(
-                new ColumnFit.Column("NAME", 12, tui.templateNameWidth(), 3, false),
+                new ColumnFit.Column("NAME", 12, tui.templateNameWidth(), 0, false),
                 new ColumnFit.Column("BUILT", 9, ColumnFit.natural(tui.templateRows, 1), 2, false),
                 ColumnFit.Column.fixed("DISK", Math.max(4, ColumnFit.natural(tui.templateRows, 2))),
                 new ColumnFit.Column("DESCRIPTION", 10, ColumnFit.natural(tui.templateRows, 3), 1, true)),
@@ -409,8 +410,15 @@ final class MainScreen {
             for (var row : Glyphs.LOGO) lines.add(gradient(row));
             lines.add(Line.from(""));
         }
-        lines.add(Line.styled("No instances yet", Style.EMPTY.bold()));
-        if (inner.height() >= 2) {
+        // A search that matches none is not a pool with none: say which, and how to get back
+        boolean searched = searchHidesAll(tui.allEntries);
+        lines.add(Line.styled(searched ? "No instance matches the search" : "No instances yet", Style.EMPTY.bold()));
+        if (searched && inner.height() >= 2) {
+            lines.add(Line.from(
+                    Span.styled("Press ", Style.EMPTY.fg(tui.theme.textDim())),
+                    Span.styled("Esc", Style.EMPTY.bold().fg(tui.theme.accent())),
+                    Span.styled(" to show them all", Style.EMPTY.fg(tui.theme.textDim()))));
+        } else if (inner.height() >= 2) {
             lines.add(Line.from(
                     Span.styled("Select a template and press ", Style.EMPTY.fg(tui.theme.textDim())),
                     Span.styled("Enter", Style.EMPTY.bold().fg(tui.theme.accent())),
@@ -422,6 +430,11 @@ final class MainScreen {
                     .alignment(dev.tamboui.layout.Alignment.CENTER).build(),
                     new dev.tamboui.layout.Rect(inner.left(), top + i, inner.width(), 1));
         }
+    }
+
+    /** Whether a search, and not an empty listing, is why a panel has no row: {@code all} is the listing before it. */
+    private boolean searchHidesAll(List<?> all) {
+        return tui.searchActive && all != null && !all.isEmpty();
     }
 
     /** {@code text} drawn from the accent to its second colour, cell by cell: for the logo alone. */
@@ -503,29 +516,34 @@ final class MainScreen {
             shownRows = columns.rows();
         } else {
             var natural = tui.instanceNatural;
-            // The order in which the columns give width up where the table does not fit: the free
-            // text first, the name and the status last, and DISK never
-            var columns = new ArrayList<>(List.of(
-                    new ColumnFit.Column("NAME", 10, natural[0], 7, false),
+            // The name is never cut (Sanne, review of the column widths). Where the table does
+            // not fit, the purpose is cut first, then whole columns are left out: RUNTIME, IP,
+            // DISK and PARENT in that order, then OWNER, PURPOSE and AGE. Only then is the status
+            // cut, and the name when nothing else is left.
+            var all = new ArrayList<>(List.of(
+                    new ColumnFit.Column("NAME", 10, natural[0], 0, false),
                     new ColumnFit.Column("STATUS", 9, natural[1], 8, false),
                     // Room for an address is kept once the columns stand apart, so they
                     // hold still when an instance starts and gets one
-                    new ColumnFit.Column("IP", 7, natural[2], 6, false).reserving(IP_WIDTH),
-                    new ColumnFit.Column("PARENT", 8, natural[3], 3, false),
-                    new ColumnFit.Column("RUNTIME", 9, natural[4], 2, false),
-                    new ColumnFit.Column("AGE", 6, natural[5], 5, false),
-                    ColumnFit.Column.fixed("DISK", Math.max(4, natural[6]))));
+                    new ColumnFit.Column("IP", 7, natural[2], 6, false).reserving(IP_WIDTH).dropping(2),
+                    new ColumnFit.Column("PARENT", 8, natural[3], 3, false).dropping(4),
+                    new ColumnFit.Column("RUNTIME", 9, natural[4], 2, false).dropping(1),
+                    new ColumnFit.Column("AGE", 6, natural[5], 5, false).dropping(7),
+                    ColumnFit.Column.fixed("DISK", Math.max(4, natural[6])).dropping(3)));
             // The cells of the columns drawn, from each row's: OWNER is the eighth, PURPOSE the ninth
-            var cells = new java.util.ArrayList<>(IntStream.range(0, columns.size()).boxed().toList());
+            var source = new java.util.ArrayList<>(IntStream.range(0, all.size()).boxed().toList());
             boolean showOwner = tui.anyOwner && actualArea.width() >= OWNER_COLUMN_MIN_WIDTH;
             if (showOwner) {
-                columns.add(new ColumnFit.Column("OWNER", 9, natural[7], 4, false));
-                cells.add(7);
+                all.add(new ColumnFit.Column("OWNER", 9, natural[7], 4, false).dropping(5));
+                source.add(7);
             }
             if (tui.anyPurpose && actualArea.width() >= (showOwner ? PURPOSE_COLUMN_MIN_WIDTH : PURPOSE_ALONE_MIN_WIDTH)) {
-                columns.add(new ColumnFit.Column("PURPOSE", 12, natural[8], 1, true));
-                cells.add(8);
+                all.add(new ColumnFit.Column("PURPOSE", 12, natural[8], 1, true).dropping(6));
+                source.add(8);
             }
+            var shown = ColumnFit.kept(all, actualArea.width() - HIGHLIGHT_WIDTH);
+            var columns = shown.stream().map(all::get).toList();
+            var cells = shown.stream().map(source::get).toList();
             var fitted = ColumnFit.widths(columns, actualArea.width() - HIGHLIGHT_WIDTH);
             widths = ColumnFit.constraints(fitted);
             headers = columns.stream().map(ColumnFit.Column::header).toList();
@@ -604,7 +622,8 @@ final class MainScreen {
         var natural = tui.instanceNatural;
         // WORK, DONE and PURPOSE get their content's width once the rows are made, below
         var columns = new ArrayList<>(List.of(
-                new ColumnFit.Column("NAME", 10, natural[0], 5, false),
+                // Never cut: GITHUB takes its width from what the name leaves
+                new ColumnFit.Column("NAME", Math.max(10, natural[0]), natural[0], 0, false),
                 // Down to 7 as before, so a pull request stays whole at 80 columns (#2292)
                 new ColumnFit.Column("STATUS", 7, natural[1], 6, false),
                 ColumnFit.Column.fixed("LAST USED", 12),
@@ -670,8 +689,7 @@ final class MainScreen {
         for (int c = 0; c < columns.size(); c++) {
             var column = columns.get(c);
             if (column.give() == 0 || c < 2) continue;
-            columns.set(c, new ColumnFit.Column(column.header(), column.floor(),
-                    Math.max(column.floor(), ColumnFit.natural(rows, c)), column.give(), column.fill()));
+            columns.set(c, column.holding(Math.max(column.floor(), ColumnFit.natural(rows, c))));
         }
         var fitted = ColumnFit.widths(columns, width - HIGHLIGHT_WIDTH);
         return new Columns(ColumnFit.constraints(fitted), columns.stream().map(ColumnFit.Column::header).toList(),
