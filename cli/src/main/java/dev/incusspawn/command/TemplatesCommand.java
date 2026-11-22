@@ -448,6 +448,11 @@ public class TemplatesCommand extends BaseCommand {
                 BuildOutput.error("Could not read '" + cell(target) + "': " + cell(e.getMessage()));
                 return CommandResult.valueOf(1);
             }
+            return check(yaml, location, defs, outputFormat);
+        }
+
+        /** Checks {@code yaml}, the text of the definition at {@code location}, and prints what it found. */
+        static CommandResult check(String yaml, Path location, Map<String, ImageDef> defs, OutputFormat outputFormat) {
             var result = TemplateValidator.validate(yaml, location, defs);
             var findings = new ArrayList<>(result.findings());
             if (!result.hasErrors()) findings.addAll(hostFindings(() -> ImageDef.parseYaml(yaml), defs));
@@ -471,7 +476,7 @@ public class TemplatesCommand extends BaseCommand {
         try (var in = "-".equals(from) ? stdin.get() : Files.newInputStream(Path.of(from))) {
             var bytes = in.readNBytes(MAX_DEFINITION_BYTES + 1);
             if (bytes.length > MAX_DEFINITION_BYTES) {
-                throw new IOException("larger than " + (MAX_DEFINITION_BYTES >> 10) + " KiB, which no template is");
+                throw new IOException("larger than " + (MAX_DEFINITION_BYTES >> 10) + " KiB, which no file isx reads is");
             }
             try {
                 // Strict, as the loader is: a lenient decode would store U+FFFD in place of what was given

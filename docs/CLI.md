@@ -688,13 +688,15 @@ In `json` it prints one object with `name`, `path`, `valid` and `findings`, each
 ## `isx validate`
 
 Check any of isx's YAML files with the loader that reads it, so the errors match what a build or a start reports.
-It takes a template, a tool, `config.yaml` or `mcp.yaml`.
-It knows which from the schema line at the top of the file, or else from the name `config.yaml` or `mcp.yaml`.
+It takes a template, a tool, `config.yaml` or `mcp.yaml`, and `-` reads stdin.
+It knows which from the schema line at the top of the file, or else from its name.
 A file with neither takes `--kind`.
 
 A template or a tool is checked as `isx templates validate` and `isx tools validate` check it, and prints what they print.
-A `config.yaml` or `mcp.yaml` that does not parse, or that `isx mcp` would refuse, is an error, and the command exits 1.
-A section isx would ignore, a key no tool reads and a setting that no longer has any effect are warnings.
+
+A `config.yaml` or `mcp.yaml` that does not parse, or that `isx mcp` refuses, is an error, and the command exits 1.
+Warnings name a git identity, host route, exposed port, repository or mirror isx ignores, a credential key no tool reads, and a dead setting.
+A misspelled top-level section is not checked: it may belong to a tool you lack.
 
 ```shell
 isx validate <file>

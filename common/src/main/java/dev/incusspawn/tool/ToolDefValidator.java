@@ -33,6 +33,21 @@ public class ToolDefValidator {
     /** {@code loginctl}, any options, then {@code enable-linger}, within one command. */
     private static final Pattern ENABLE_LINGER = Pattern.compile("\\bloginctl\\b[^\\n;&|]*\\benable-linger\\b");
 
+    /** As {@link #validate(Path)}, for {@code yaml}, the text of the file named {@code name}. */
+    public static ValidationResult validate(String yaml, String name) {
+        var errors = new ArrayList<String>();
+        var warnings = new ArrayList<String>();
+        ToolDef def;
+        try {
+            def = ToolDef.loadFromStream(new java.io.ByteArrayInputStream(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (IOException e) {
+            errors.add(YamlErrors.friendly(name, e));
+            return new ValidationResult(errors, warnings);
+        }
+        validateDef(def, errors, warnings);
+        return new ValidationResult(errors, warnings);
+    }
+
     public static ValidationResult validate(Path file) {
         var errors = new ArrayList<String>();
         var warnings = new ArrayList<String>();
