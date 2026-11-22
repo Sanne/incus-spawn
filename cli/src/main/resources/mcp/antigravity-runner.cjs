@@ -75,6 +75,7 @@ try {
       named = true;
     }
     const step = e.step_update || {};
+    // A failed model call: an answer must follow it, since agy may give up after it.
     if (e.event === 'step_update' && step.step_type === 'error_message') answeredAfterError = false;
     if (e.event === 'step_update' && step.step_type === 'agent_response' && step.state === 'DONE') {
       answeredAfterError = true;
@@ -115,7 +116,7 @@ try {
       // finished: a non-empty response that a model call produced after the last failure is its answer,
       // and the failure stays in the outcome's error and agy's stderr. An empty response, or a failure
       // no answer followed (a 429 that agy gave up on), still fails.
-      const retried = ended && !success && named && !malformed && !lost && signal === null
+      const retried = ended && !success && named && !malformed && !lost && code === 1
         && answeredAfterError && report.trim() !== '';
       const ok = (code === 0 && success || retried) && named && ended && !malformed && !lost;
       const text = utf8(message.subarray(0, LIMIT));

@@ -1955,7 +1955,9 @@ class TaskScriptsTest {
         int trial = 0;
         for (var ending : List.of(
                 "say('early'); step('error_message', {}); result('early', 'ERROR', 'gave up'); process.exitCode = 1;",
-                "step('error_message', {}); say('x'); result('  ', 'ERROR', 'gave up'); process.exitCode = 1;")) {
+                "step('error_message', {}); say('x'); result('  ', 'ERROR', 'gave up'); process.exitCode = 1;",
+                // Not agy's documented retry exit: the answer after the error does not make it a success.
+                "step('error_message', {}); say('x'); result('x', 'ERROR', 'crashed'); process.exitCode = 2;")) {
             antigravityStub(ending);
             var id = "t6-agy-notretried-" + trial++;
             launchAntigravity(id, 1, "go", Tasks.Profile.NONE);
