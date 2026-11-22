@@ -379,4 +379,11 @@ class MavenMirrorProxyTest {
         assertNull(all.stream().filter(r -> r.domain().equals(CENTRAL)).findFirst().orElseThrow().mirror(),
                 "each name of Central is a repository of its own");
     }
+
+    @Test
+    void theRulesSeeTheBuiltInRepositoriesAsTheProxyCachesThem() {
+        // isx validate checks mirrors against CachedRepositoryRules.BUILT_IN, so it must be the proxy's own list
+        assertEquals(CachedRepository.BUILT_IN.stream().map(CachedRepository::asCached).toList(),
+                CachedRepositoryRules.BUILT_IN);
+    }
 }

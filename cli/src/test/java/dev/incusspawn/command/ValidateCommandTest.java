@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -110,6 +111,53 @@ class ValidateCommandTest {
         var out = RecordingOutput.during(() -> exit[0] = cmd.doExecute().getResultValue());
         assertEquals(1, exit[0]);
         assertTrue(out.events(RecordingOutput.Kind.ERROR).getFirst().msg().startsWith("No file named"));
+    }
+
+    @Test
+    void aMirrorOfARepositoryIsxDoesNotCacheIsAWarning() throws Exception {
+        // The proxy's second pass, against the repositories it caches, not only the entry's own shape
+        var run = run(file("config.yaml", """
+                maven-mirrors:
+                  - repository: https://nexus.example.com/repo/
+                    mirror: https://m.example.com/repo/
+                """).toString(), null, null);
+        assertEquals(0, run.exit());
+        assertEquals(1, run.findings().size(), run.findings().toString());
+        assertTrue(run.findings().getFirst().contains("isx caches no repository at"), run.findings().toString());
+    }
+
+    @Test
+    void aPrivateRepositoryNoToolInjectsForIsAWarning() throws Exception {
+        var run = run(file("config.yaml", """
+                maven-repositories:
+                  - url: https://nexus.example.com/repo/
+                    access: private
+                    credentials: nobody
+                    confirm: etag-sha1
+                    replaces-releases: false
+                """).toString(), null, null);
+        assertEquals(0, run.exit());
+        assertEquals(1, run.findings().size(), run.findings().toString());
+        assertTrue(run.findings().getFirst().contains("no tool injects a nobody credential"), run.findings().toString());
+    }
+
+    @Test
+    void aMirrorOfABuiltInRepositoryIsValid() throws Exception {
+        var run = run(file("config.yaml", """
+                maven-mirrors:
+                  - repository: https://repo1.maven.org/maven2/
+                    mirror: https://m.example.com/maven2/
+                """).toString(), null, null);
+        assertEquals(0, run.exit());
+        assertEquals(List.of(), run.findings());
+    }
+
+    @Test
+    void aDraftMcpYamlIsNotSaidToStopIsxMcp() throws Exception {
+        // Only the file isx mcp reads makes it refuse anything
+        var run = run(file("mcp.yaml", "bogus: 1\n").toString(), null, null);
+        assertEquals(1, run.exit());
+        assertFalse(run.findings().getFirst().contains("isx mcp refuses"), run.findings().toString());
     }
 
     @Test

@@ -62,8 +62,16 @@ public class McpConfig extends McpUndeclaredKeys {
 
     /** Why the policy file cannot be used; its message names the file and says what is wrong. */
     public static final class Invalid extends IllegalStateException {
-        Invalid(String message) {
+        private final String why;
+
+        Invalid(String why, String message) {
             super(message);
+            this.why = why;
+        }
+
+        /** What is wrong, without what refusing the live file means for {@code isx mcp}: for a draft checked before use. */
+        public String why() {
+            return why;
         }
     }
 
@@ -315,7 +323,7 @@ public class McpConfig extends McpUndeclaredKeys {
     }
 
     private static Invalid invalid(String why) {
-        return new Invalid(why + "; isx mcp refuses everything that depends on it until it is fixed");
+        return new Invalid(why, why + "; isx mcp refuses everything that depends on it until it is fixed");
     }
 
     /** Every value checked on use, checked at once, so no call runs on part of a policy. */
