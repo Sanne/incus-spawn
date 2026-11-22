@@ -254,7 +254,10 @@ class HostSetup {
             BuildOutput.stepNote("Install the 'incus' package");
             BuildOutput.stepNote("Enable the incus systemd service");
             BuildOutput.stepNote("Add your user to the 'incus-admin' group");
-            if (installCmd != null) {
+            if (installCmd != null && init.firstRun) {
+                // The first run said it installs what the host lacks, and asks nothing here
+                BuildOutput.step("Installing it with " + installCmd[0] + ".");
+            } else if (installCmd != null) {
                 BuildOutput.step("If you prefer to install manually, abort now (Ctrl+C) and run:");
                 if ("apt".equals(installCmd[0])) BuildOutput.stepNote(String.join(" ", APT_UPDATE));
                 BuildOutput.stepNote("sudo " + String.join(" ", installCmd) + " incus");
@@ -262,9 +265,11 @@ class HostSetup {
                 BuildOutput.step("No supported package manager found (dnf, apt, zypper, pacman).");
                 BuildOutput.step("Install Incus manually (see " + TerminalLink.link("https://linuxcontainers.org/incus/docs/main/installing/") + "), then run:");
             }
-            BuildOutput.stepNote("sudo systemctl enable --now incus");
-            BuildOutput.stepNote("sudo usermod -aG incus-admin " + System.getProperty("user.name"));
-            BuildOutput.step("Then re-run 'isx init' to continue setup.");
+            if (!(installCmd != null && init.firstRun)) {
+                BuildOutput.stepNote("sudo systemctl enable --now incus");
+                BuildOutput.stepNote("sudo usermod -aG incus-admin " + System.getProperty("user.name"));
+                BuildOutput.step("Then re-run 'isx init' to continue setup.");
+            }
 
             if (installCmd == null) {
                 BuildOutput.error("Cannot auto-install without a supported package manager.");
@@ -272,7 +277,8 @@ class HostSetup {
             }
 
             var prompts = init.prompts();
-            if (prompts != null) {
+            // A first run asked its questions before sudo, which was its last (#2412): installing is what it said it does
+            if (prompts != null && !init.firstRun) {
                 if (!askYesNo(prompts, "Proceed with automatic installation?", true)) {
                     BuildOutput.step("Aborted. Install Incus manually and re-run 'isx init'.");
                     System.exit(0);

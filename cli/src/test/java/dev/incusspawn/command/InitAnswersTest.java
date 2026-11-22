@@ -50,7 +50,7 @@ class InitAnswersTest {
             var list = field.getAnnotation(OptionList.class);
             if (list != null) names.add(list.name());
         }
-        assertEquals(new TreeSet<>(Set.of("plan", "format", "no-sudo", "search-path", "code-dir", "fork-templates",
+        assertEquals(new TreeSet<>(Set.of("all", "plan", "format", "no-sudo", "search-path", "code-dir", "fork-templates",
                 "service", "no-service", "git-identity-from-host")), names);
     }
 
