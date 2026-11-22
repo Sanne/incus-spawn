@@ -42,13 +42,6 @@ public class OpencodeSetup implements ToolSetup {
     static final ProofToken.Placeholder ANTHROPIC_KEY = new ProofToken.Placeholder(
             "OPENCODE_ANTHROPIC_API_KEY", "sk-ant-", SpawnConfig.ClaudeConfig.NAMESPACE);
 
-    /**
-     * opencode's {@code google} provider reads {@code GEMINI_API_KEY}, which Gemini CLI declares.
-     * This placeholder lets {@code provider: google} work without {@code gemini-cli} co-installed.
-     */
-    static final ProofToken.Placeholder GEMINI_KEY = new ProofToken.Placeholder(
-            "GEMINI_API_KEY", "gemini-", PiSetup.GEMINI_NAMESPACE);
-
     @Override
     public boolean codingAgent() { return true; }
 
@@ -132,10 +125,14 @@ public class OpencodeSetup implements ToolSetup {
         return new LinkedHashSet<>(List.of(SpawnConfig.ClaudeConfig.NAMESPACE, "openai", PiSetup.GEMINI_NAMESPACE));
     }
 
-    /** {@code OPENAI_API_KEY} is Codex's; this tool's own are the Anthropic and Gemini ones. */
+    /**
+     * {@code OPENAI_API_KEY} and {@code GEMINI_API_KEY} are Codex's and Gemini CLI's; this one is
+     * opencode's own. Theirs are filled whether or not Codex or Gemini CLI is in the image: a start
+     * reads the declarations of every tool isx knows ({@link ProofToken#declared()}).
+     */
     @Override
     public List<ProofToken.Placeholder> placeholders() {
-        return List.of(ANTHROPIC_KEY, GEMINI_KEY);
+        return List.of(ANTHROPIC_KEY);
     }
 
     @Override
