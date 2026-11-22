@@ -2,7 +2,7 @@
 
 How a new user gets from an installed package to a first agent, and what is left for later.
 
-**Status: proposed, not built.**
+**Status: built, except "Templates: the person's preferences are not a layer".**
 This page is the plan agreed on 2026-11-20.
 Each section says what exists today and what changes.
 It is kept here, outside `design/`, because `isx ask` reads every `design/` page as a description of what isx does.
@@ -23,133 +23,11 @@ The first run should end with an agent running in a machine of its own, and ask 
 
 ## Nothing is taken from experienced users
 
-The first run gets shorter, and isx does not get smaller.
-People who use the advanced capabilities must still find and configure each of them.
-These rules hold for every change in this plan:
-
-- **No capability is removed.**
-  A step that leaves the first run keeps its work, its flags and its place in `isx init --plan`.
-  Only the moment it is asked changes.
-- **Every deferred step can be run by name**, and the menu of a second `isx init` lists them all with their state.
-- **One flag runs the whole walk-through.**
-  `isx init --all` asks every step in turn, the deferred ones included, on a first run or a later one.
-  A person who knows what they want sets everything up in one sitting, as today.
-- **The flags that answer init's questions stay**, for search paths, code directories, the templates fork and the services, so a scripted install loses nothing.
-- **The first run ends by naming what it left out.**
-  The completion message lists each deferred step in one line, with the command that runs it.
-- **`isx doctor` names a capability that is not set up** as a note, which is not a problem and does not change its exit code.
-- **The example template points further.**
-  Its comments name the fields a first template does not use.
-- **A host that is already set up is not walked through the first run.**
-  Its configuration is kept as it is, and `isx init` there shows the menu.
-- **A test holds the list.**
-  Every step that today's init runs is either in the first run or in the menu, so a step cannot be dropped from both.
+Built in #2412; described in design/init.md "Nothing is taken from experienced users".
 
 ## Minimal init
 
-A first run of `isx init` asks its questions first, then works with nobody watching, in this order:
-
-1. It reads the host without changing it: which agents are installed and signed in, which credentials exist, and what the plumbing still needs.
-2. It says in a few lines what the run will do and how long it takes, and starts the downloads in the background.
-3. It asks for the user's preferred agent, with the one found on the host preselected.
-4. It sets up the one credential that agent spends, and verifies it.
-   A credential found on the host is confirmed with one answer.
-   The person may skip this step; see "Skipping the agent's credential".
-5. It offers to set up a GitHub account for the agent, which the person may skip; see "Git in the first run".
-6. On Linux it asks for the sudo password, the last thing it asks.
-7. It does the host plumbing, shown as one progress block, and installs the services.
-8. It writes an example template that installs the chosen agent, and builds it, waiting first for any download still running.
-   When the person chose no agent it writes none and builds `tpl-minimal`.
-9. It prints the completion message, then asks whether to open a first agent now.
-
-**Every question comes before the long work.**
-The plumbing and the first build take minutes, and a question in the middle of them waits for a person who has left.
-This gives up something: a person whose plumbing then fails has already given a credential.
-The credential is saved on the host, so the next run does not ask for it again.
-
-**The downloads start before the first question.**
-The base image is the longest wait of a first run, and on macOS the VM's image is another.
-Both are fetched by the host into its download cache (`DownloadCache`), checked against their pinned checksums, and need neither Incus nor sudo.
-So init starts them as soon as it has told the person, and they run while the person answers.
-The preferred agent's own download starts when that answer is given.
-These rules hold for the background downloads:
-
-- They print nothing while a question is on screen.
-  When a step needs a file that is still downloading, that step shows the download's progress and waits.
-- A download that failed in the background is not reported while the person answers.
-  The step that needs the file retries it in the foreground and reports the failure there.
-- `isx init --plan` downloads nothing, since it only reads.
-- A person who stops init early keeps what finished.
-  An unfinished file is never used, and the next run recovers from it without help; see "Recovering an interrupted download".
-- On a fresh Linux host init continues in a second process under `sg incus-admin`.
-  Only one process downloads a file, and the other waits for it under a `HostLock`.
-
-This gives up one thing: a person who leaves at the first question has already downloaded several hundred megabytes into the cache.
-
-**Recovering an interrupted download.**
-Today `DownloadCache` writes to a temporary file with a random name, and moves it into place only after its checksum matches.
-So a partial file is never used, and the next run downloads the file again.
-Two things are missing today, and a first run that downloads in the background makes both more likely to be met:
-
-- A process that is killed leaves its temporary file behind, since only a `finally` block deletes it, and nothing found in the code removes it later.
-  Each interrupted run can leave several hundred megabytes in the cache.
-- The next run starts from byte 0, though the cache can already resume a transfer that broke off within one run.
-
-The change: a download in progress is kept under a name derived from its URL, held under a `HostLock`.
-A later run that finds one continues it from where it stopped, when the server can resume it, and from byte 0 otherwise.
-The checksum is checked over the whole file as today, and a file that fails it is deleted and fetched once more from byte 0.
-Temporary files of the old kind are deleted when the cache is next used, once they are old enough that no download can still be writing them.
-Today's code takes no lock on such a file, so its age is the only sign that an older isx is not still writing it.
-
-**The first agent opens only when the person says so.**
-An agent takes the whole terminal, so opening one unasked would hide the completion message.
-Init prints that message first, with the command that opens an agent later, and asks as its last line:
-
-```
-Open your first agent now? [Y/n]
-```
-
-Without a terminal it does not ask and opens nothing.
-
-**Skipping the agent's credential.**
-A person may not have the credential at hand, or may want to see isx work before giving one.
-Init then does everything else: the plumbing, the downloads and the build of the example template.
-The slow work is done, so the agent opens as soon as the credential is added.
-
-What changes is the end of the run:
-
-- The build inside init does not ask for the credential again, since the person has just declined it.
-- The completion message says the agent has no account yet, and gives the command that adds one.
-- Init does not ask whether to open a first agent, because it could not sign in.
-- The first `isx branch` at a terminal asks for the credential, as "Missing accounts are asked for when a build needs them" describes.
-
-**On a fresh Linux host the answers are given once, to the first process.**
-There init's first plumbing step adds the user to `incus-admin`, and init then runs its whole command again as a new process under `sg incus-admin` (`InitCommand.continueInGroup`).
-Today that process is told only that it is a continuation.
-Under this plan it must ask nothing, since the questions came before the plumbing:
-
-- Every answer that is a setting is written to `config.yaml` before the handover: the preferred agent, the credential, the GitHub account and the commit identity.
-  The continuation reads them there.
-- An answer that stores nothing is passed to the continuation beside the marker it already gets: that the questions were asked, and which were declined.
-  These are the agent's credential declined, the GitHub account skipped, the identity answered No, and "none for now".
-  None of them is a secret.
-- The continuation asks no question of the first run, and treats a declined one as declined.
-- The first process stays alive until the continuation ends, as today, so the downloads it started go on.
-
-**The services are installed without a question.**
-Today init asks whether to install them, and nearly everyone wants them; `--no-service` still declines.
-
-**The plumbing is one block.**
-Each of today's steps keeps its work and its planner (`InitCommand.InitStep`), so `isx init --plan` and `--no-sudo` read as they do now.
-What changes is what a run shows: one line per step as it completes, with no hint paragraph.
-The explanation of each step stays in `--plan`, where the person who wants it already looks.
-
-**A failed step still stops the run and says what failed.**
-The single block gives up the per-step explanation on screen, so a failure prints the step's hint with its error.
-
-**Init is still safe to run again.**
-A second run does not ask the first run's questions again.
-It shows the deferred steps as a menu, described below.
+Built in #2412; described in design/init.md, with "Skipping the agent's credential" and "The continuation under `sg` asks nothing".
 
 ## The preferred agent
 
@@ -249,44 +127,7 @@ In return nothing reaches a guest that the person did not look at.
 
 ## Git in the first run
 
-Git setup is two separate things today, and only one of them is plumbing.
-
-**The host's side is plumbing.**
-The Git Remote Helper step installs what lets the host fetch an agent's commits from an instance.
-It asks nothing, and stays in the plumbing block.
-
-**The agent's Git identity comes from the GitHub credential.**
-At build, the `gh` tool asks GitHub whose token the instance's account holds, and writes that name and email to the instance's `.gitconfig` (`GhSetup.configureGitIdentity`).
-Without a GitHub credential no identity is written, and the build warns.
-
-Init keeps this to one step that the person may skip, and never decides the identity for them.
-
-**Init offers a GitHub account, and the person may skip it.**
-The step says what the account is for: the agent's access to GitHub, and the name on its commits.
-A `gh` login found on the host is offered as one of the choices, agreed on 2026-11-20.
-Using it must be an explicit request: the choice names the account's login, says that the agent would act with that account's own access, and is taken only when the person types it.
-Enter never chooses it.
-With an account set up, the first agent has GitHub access and that account's identity, as today.
-
-**A person who skips is asked about the commits, and must answer.**
-Without a GitHub account nothing supplies an identity, and an agent with none cannot commit.
-Init then offers the host's own `git config` name and email, and shows both:
-
-```
-No GitHub account: the agent has no name to commit under.
-Let it commit as Jane Doe <jane@example.org>, the identity of this host? [y/N]
-```
-
-The answer is No unless the person types yes, and Enter is No.
-Committing under the person's own name is acceptable only as a choice they made and saw.
-The choice is recorded in `config.yaml` as a key of its own, used only when no GitHub account gives an identity.
-A person who answers No gets an agent that cannot commit yet, and the closing message says so with the command that changes it.
-
-**Without a terminal the identity is never assumed.**
-A flag gives the answer, as for init's other questions that are not secrets, and without it the answer is No.
-
-**Every instance that commits under the host's identity says so.**
-`isx doctor` and the template's build report name the identity and where it came from, so the choice stays visible after init.
+Built in #2412; described in design/init.md "A GitHub account in the first run" and design/accounts.md "A Git identity no account supplies".
 
 ## Missing accounts are asked for when a build needs them
 

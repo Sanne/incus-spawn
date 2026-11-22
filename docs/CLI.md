@@ -18,13 +18,40 @@ isx
 Set up the host once: install Incus, configure credentials and their [accounts](CONFIGURATION.md#credential-accounts), and test connectivity.
 Running it again is safe.
 
-At a terminal, a second run asks none of the questions the first one asked, and ends with a menu of the steps you can run again.
-On a fresh Linux host it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
-
 ```shell
-isx init [--no-sudo] [--search-path=<dir>,...] [--code-dir=<dir>,...] [--fork-templates] [--service | --no-service] [--git-identity-from-host] [--format=table|plain|json]
+isx init [--all] [--no-sudo] [--search-path=<dir>,...] [--code-dir=<dir>,...] [--fork-templates] [--service | --no-service] [--git-identity-from-host] [--format=table|plain|json]
 isx init --plan [--format=table|plain|json]
 ```
+
+### The first run
+
+The first run at a terminal ends with a built template for your agent, and asks only what that needs.
+It asks its questions first, so the long work then runs while nobody has to watch:
+
+1. Which coding agent to set up.
+   One found on this host is chosen by Enter, and "None for now" is a choice too.
+2. The account that agent spends, which you may skip.
+3. A GitHub account for the agent, which you may skip too.
+4. When you skip GitHub, whether the agent may commit under your own Git name and email.
+   Enter is No.
+5. On Linux, your sudo password.
+
+The downloads start before the first question.
+Init then sets up the host and installs the services.
+It writes `~/.config/incus-spawn/images/tpl-agent.yaml` for your agent, and builds it.
+With no agent it writes nothing and builds `tpl-minimal`.
+
+At the end it asks whether to open your first agent.
+After a skipped account it does not ask, and the closing message says how to add one.
+It also lists each step it left for later, with the command that runs it.
+
+A Claude Code subscription found on this host is never copied.
+Init runs `claude setup-token` to get a token of isx's own, and you paste the token it prints.
+
+`isx init --all` asks every step in turn, those the first run leaves for later included, on a first run or a later one.
+On a fresh Linux host it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
+
+At a terminal, a run on a host that completed init once asks none of these questions, and ends with a menu of the steps you can run again.
 
 ### One step by name
 
@@ -52,13 +79,15 @@ Each question that is not a secret has a flag that answers it, with or without a
 | `--search-path=<dir>,...` | Adds these directories to the template search paths |
 | `--code-dir=<dir>,...` | Adds these directories to the code directories |
 | `--fork-templates` | Forks the community templates with `gh` if you have no copy, then clones and adds it |
-| `--service`, `--no-service` | Whether to install the proxy as a service, and on macOS the VM too |
+| `--service`, `--no-service` | Whether to install the proxy as a service, and on macOS the VM too; a first run at a terminal installs them unless you pass `--no-service` |
 | `--git-identity-from-host` | Lets agents with no GitHub account commit under your own `git config` name and email ([details](CONFIGURATION.md#a-git-identity-for-agents)) |
 
 There is no flag, variable or piped input for a secret.
 Adding a missing credential stays your step, which you do with the `isx account add` command.
 Approving templates for agents stays your step too, which you do with `isx mcp setup`.
 A question no flag answers is skipped when there is no terminal, and the step says how to answer it later.
+
+Without a terminal init builds no template and opens nothing.
 
 With `--format=json` or `plain`, init ends with a summary on stdout and its progress on stderr.
 The summary has a record per step, with the fields `isx init --plan` prints, their values read after the run.

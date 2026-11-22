@@ -208,8 +208,12 @@ Without a terminal, in a machine format, or when `requireInit` starts init for a
 `isx doctor` notes each of them that is not set up (`DoctorCommand.notSetUp`), never as a problem.
 `isx agent [<agent>|none]` (`AgentCommand`, #2409) shows or sets `preferred-agent` in `config.yaml`, one of the tools with `codingAgent()`, and lists each with what `HostAgentProbe` found of it.
 `ExampleTemplate` gives the text of `tpl-agent.yaml` for an agent (the schema modeline, `parent: tpl-minimal`, the agent in `tools:` and, when it has an action, as `default-action`) and writes it to the user's images directory only when no file is there.
-Nothing calls it from init yet (#2412); `ExampleTemplateTest` validates it for every agent, so a new agent is covered or fails it.
-The two service steps ask whether to install, so they keep their header.
+`ExampleTemplateTest` validates it for every agent, so a new agent is covered or fails it.
+The two service steps ask whether to install in that walk, so they keep their header there.
+**The first run** (#2412, design/init.md): at a terminal, in `table`, with no init-complete marker or with `--all` (`isFirstRun`), `runFirstRun` asks its questions first (the agent, its account found through `agentGaps`, a GitHub account, then the Git identity after a skip), then runs `firstRunPlumbing` as one block (`allPlumbing`: every step joins it, DNS and the services included), writes and builds the example template and offers to open it.
+A run with no terminal or in a machine format keeps the walk above, and a host with the marker gets the menu.
+The continuation under `sg` asks nothing: the answers that store nothing travel in `ANSWERS_ENV` (`FirstRunAnswers`).
+A new step goes in the first run or in `DEFERRED`; `InitFirstRunTest#everyStepIsInTheFirstRunOrInTheMenu` fails a step in `planSteps` that is in neither.
 *Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded.
 When a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.
 A step that runs several commands runs each through `ran()`, which names the one that failed, and combines the results (`ok &= ran(...)`, never short-circuiting, so the remaining rules are still applied) before choosing between its success line and a warning (#1102: the firewall and PREROUTING steps).

@@ -64,7 +64,8 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
   Credential Setup's plan also notes the coding agents already set up on the host (`HostAgentProbe`, #2408), and `isx doctor` lists them as notes: for each agent isx supports, whether it is installed and signed in, the kind of account, its cloud project and region, and the model chosen.
   The probe only reads the agents' files and the environment; it runs no agent, `gh` or `gcloud`, which could refresh a session, and never opens the macOS Keychain.
   It returns no secret: a sign-in is reported by where it was seen, a file or a variable's name, and a model, project or region is kept only when it cannot be a token.
-  A file it cannot read or parse makes its agent not found, with no error, and init does not act on what it finds yet.
+  A file it cannot read or parse makes its agent not found, with no error.
+  A first run of init offers the agent it found, and asks the rest of what a first agent needs before any work (design/init.md).
   `isx init --no-sudo` (#2074) turns the plan's sudo changes into one root script for the person and does not run any step as root itself; a process-wide guard (`Privilege`) refuses any command that elevates.
   The script is the plan's `sudo_script`, so what the person reads is what the plan reported, and it records what it ran in `/var/lib/isx/init-applied` for the checks only root could make.
   One script serves a fresh host: the redirect reads the bridge's gateway as the script runs, rather than waiting for a second round trip after Incus exists.
@@ -100,6 +101,12 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Socket wakeups come from platform threads
   - jjq rather than Jackson
   - Considered and deferred
+- [Host setup: the first run of `isx init`](design/init.md)
+  - The first run asks first, then works (#2412)
+  - Skipping the agent's credential
+  - A GitHub account in the first run
+  - The continuation under `sg` asks nothing
+  - Nothing is taken from experienced users
 - [Templates, tools and builds](design/templates.md)
   - Template Image Hierarchy
   - A schema for editors
