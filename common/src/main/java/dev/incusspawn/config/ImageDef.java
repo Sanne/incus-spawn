@@ -1021,6 +1021,11 @@ public class ImageDef extends DefinitionOrigin {
         return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), Warnings::warn, false, true).defs();
     }
 
+    /** {@link #loadTrusted()}, with what it would warn of handed to {@code warnings}: init plans while a question is on screen. */
+    public static Map<String, ImageDef> loadTrusted(Consumer<String> warnings) {
+        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), warnings, false, true).defs();
+    }
+
     /**
      * The trusted definitions as {@link #loadTrusted()}, but without the base-image pin applied:
      * what {@code isx update-base} pins a release of.

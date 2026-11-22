@@ -549,6 +549,29 @@ class CredentialSetup {
         }
     }
 
+    /**
+     * The first run's Claude step when Claude Code on this host is signed in with a subscription
+     * (#2412): the question of which kind of account is answered by what was found, and the token
+     * comes from {@code claude setup-token}, never from the host's own sign-in, which is not copied.
+     *
+     * <p>The person still pastes the token the command prints. Reading it without the paste would
+     * mean reading the command's output while it keeps the terminal, which takes a pseudo-terminal
+     * this process cannot open, or a {@code script} log that would hold the token on disk.
+     * Anything else to go on (a credential in the environment, accounts already saved) takes the
+     * full step instead, which reads and keeps those.
+     */
+    void setupClaudeSubscription(SpawnConfig config, Prompts prompts) {
+        var fromEnvironment = "1".equals(env("CLAUDE_CODE_USE_VERTEX")) || !env("ANTHROPIC_API_KEY").isBlank()
+                || !env("CLAUDE_CODE_OAUTH_TOKEN").isBlank();
+        if (fromEnvironment || !config.getClaude().allAccounts().isEmpty()) {
+            setupClaudeAuth(config, prompts);
+            return;
+        }
+        BuildOutput.step("Claude Code on this host is signed in with a subscription. isx gets a token of its own"
+                + " from 'claude setup-token', and never copies that sign-in.");
+        setupClaudeOauth(config, prompts, AccountTarget.FRESH);
+    }
+
     /** Asks for an Anthropic API key until one verifies or is saved anyway: false when the user skips. */
     private boolean setupClaudeApiKey(SpawnConfig config, Prompts prompts, AccountTarget target) {
         while (true) {
@@ -1173,7 +1196,11 @@ class CredentialSetup {
         if (!askYesNo(prompts, "Reuse your personal 'gh' token anyway?", false)) {
             return GhTokenOutcome.NOT_OFFERED;
         }
+        return useGhToken(config, prompts, account);
+    }
 
+    /** Reads, verifies and saves the host's 'gh' token into {@code account}, the person having asked for it. */
+    private GhTokenOutcome useGhToken(SpawnConfig config, Prompts prompts, AccountTarget account) {
         var token = readGhAuthToken();
         if (token == null || token.isBlank()) {
             BuildOutput.warn("Could not read a token from 'gh auth token' — continuing with manual setup.");
@@ -1732,6 +1759,43 @@ class CredentialSetup {
         var account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
         while (account.isPresent() && collectGitHubToken(config, prompts, account.get())) {
             account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
+        }
+    }
+
+    /**
+     * The first run's GitHub step (#2412): an account for the agent, which the person may skip.
+     * The host's {@code gh} login is one of the choices, named by its {@code login}, and taken only
+     * when the person types its number: Enter skips, and never picks it.
+     * A namespace that already holds accounts, usable or not, gets the full step, which keeps them.
+     *
+     * @param login the host's {@code gh} login, or null when there is none
+     * @return whether an account was saved
+     */
+    boolean offerGitHubForAgent(SpawnConfig config, Prompts prompts, String login) {
+        if (hasAccountsToPreserve(config, GhSetup.NAMESPACE)) {
+            setupGitHubAuth(config, prompts);
+            return !dev.incusspawn.config.AccountResolver.usableAccountNames(config, GhSetup.NAMESPACE).isEmpty();
+        }
+        var options = new ArrayList<String>(List.of(
+                "A token of the agent's own account (recommended)\n(a dedicated account, such as yourname-ai-bot, with a fine-grained token)"));
+        if (login != null) {
+            var shown = OutputFormat.oneLine(login);
+            options.add("Your gh login, " + shown + "\n(the agent would act with " + shown + "'s own access to GitHub)");
+        }
+        while (true) {
+            var choice = readInput(prompts.choose("Which GitHub account should the agent use? It is the agent's access to GitHub"
+                    + " and the name on its commits.", options, null, "skip GitHub for now"));
+            if (choice.equals("1")) return collectGitHubToken(config, prompts, AccountTarget.FRESH);
+            if (choice.equals("2") && login != null) {
+                // A failure says it continues with manual setup, which is the agent's own token
+                if (useGhToken(config, prompts, AccountTarget.FRESH) == GhTokenOutcome.SAVED) return true;
+                return collectGitHubToken(config, prompts, AccountTarget.FRESH);
+            }
+            if (choice.isEmpty()) {
+                BuildOutput.step("Skipped GitHub. Add an account later with 'isx account add github'.");
+                return false;
+            }
+            // A typo is asked again, never taken as a skip
         }
     }
 
