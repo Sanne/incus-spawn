@@ -239,6 +239,8 @@ While it is inconsistent no root `size` is enforced, so a new delete path goes t
 Prepare and settle of a pool are one critical section across processes under `PoolQgroupLock` (`locks/btrfs-pool/<pool>.lock`, #2435): a rescan trigger takes it only if free, and a second delete waits and reads the pool again.
 `IncusClient.PoolAccounting` is the seam: `FakeIncusDaemon` records it and never runs the host's, which uses sudo.
 On Linux the sudoers rule's `tee` names the pool filesystem's UUID in full (`HostSetup.thresholdEntry`); on macOS the agent's `btrfs-skip-drop-accounting` and `btrfs-settle` verbs do it.
+The agent's settle runs detached, past the host's lock, so the agent holds a lock of its own per pool (`/run/isx-agent/btrfs-<pool>.lock`, #2436) from before its reply until its rescan has started.
+`btrfs-skip-drop-accounting` waits for it, the host asks it even when the pool reads 0 and asks again while it answers busy, and its `ok <n>` names the threshold the settle puts back.
 `isx doctor` names the backlog as a note (`BtrfsUsage.pendingCleanup`: the qgroups `qgroup show` paths as `<under deletion>`, never `<stale>` ones, which keep their bytes after the cleaner is done), from the read the sudoers rule and the agent's `btrfs-usage` verb already allow; see design/storage.md.
 
 **Orphaned subvolumes and dangling records** (#717): `InstanceSubvolumes` compares a btrfs pool's top-level instance subvolumes (names-only parse of `btrfs subvolume list` via `BtrfsUsage.subvolumeList`, anchored at the pool so a guest's nested Incus pool is ignored) with Incus's volumes (all projects, `<project>_<name>` on disk) and instances.

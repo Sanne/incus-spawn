@@ -59,8 +59,11 @@ class PoolQgroupLockTest {
         var atZero = new BtrfsUsage.QgroupStatus(true, true, false, "qgroup", 0);
         var oldStatus = BtrfsUsage.statusSource;
         var oldFsid = BtrfsUsage.fsidSource;
+        var oldAgent = BtrfsUsage.agentSkipDropSource;
         BtrfsUsage.statusSource = pool -> atZero;
         BtrfsUsage.fsidSource = pool -> java.util.Optional.of("00000000-0000-0000-0000-000000000000");
+        // On macOS the agent decides under its own lock: it found 0, which a killed isx left (#2436)
+        BtrfsUsage.agentSkipDropSource = pool -> java.util.Optional.of("ok 0");
         var holder = PoolQgroupLock.acquire("p5", Duration.ofSeconds(5), false).orElseThrow();
         try {
             var second = new java.util.concurrent.CompletableFuture<BtrfsUsage.DropAccounting>();
@@ -78,6 +81,7 @@ class PoolQgroupLockTest {
         } finally {
             BtrfsUsage.statusSource = oldStatus;
             BtrfsUsage.fsidSource = oldFsid;
+            BtrfsUsage.agentSkipDropSource = oldAgent;
             holder.release();
         }
     }

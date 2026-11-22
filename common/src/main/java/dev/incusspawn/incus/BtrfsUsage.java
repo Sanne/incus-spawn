@@ -168,6 +168,9 @@ public final class BtrfsUsage {
     /** What {@link #status} and {@link #fsid} read from, swappable by a test, which has no pool. */
     static volatile java.util.function.Function<String, QgroupStatus> statusSource = BtrfsUsage::readStatus;
     static volatile java.util.function.Function<String, java.util.Optional<String>> fsidSource = BtrfsUsage::readFsid;
+    /** What a macOS delete asks the appliance's agent to set the threshold through, swappable by a test, which has no VM. */
+    static volatile java.util.function.Function<String, java.util.Optional<String>> agentSkipDropSource =
+            VmAgentClient::btrfsSkipDropAccounting;
 
     private static QgroupStatus readStatus(String poolName) {
         if (poolName == null || !isSafePoolName(poolName)) return QgroupStatus.UNAVAILABLE;
@@ -422,6 +425,24 @@ public final class BtrfsUsage {
         if (!status.canSkipDrops()) return new DropAccounting(status, -1);
         boolean set;
         try {
+            // The agent's settle runs detached, after this process's lock is gone, and holds the pool
+            // at 0 until its cleaner is done: only the agent knows whether one is still settling, so
+            // it is asked even when the pool reads 0, and it waits for that settle and the rescan (#2436)
+            // The full wait, never waitFor()'s short one: this process already holds the pool's
+            // lock, but the agent's settle waits for nothing of this process's, so no deadlock
+            if (Platform.isMacOS()) {
+                boolean[] said = {false};
+                return agentDropAccounting(status, skipDropsOnAgent(() -> {
+                    var reply = agentSkipDropSource.apply(poolName);
+                    // As the Linux wait for another process's settle is logged
+                    if (!said[0] && reply.filter(AGENT_SETTLING::equals).isPresent()) {
+                        said[0] = true;
+                        dev.incusspawn.ClientLog.warn("The VM is still settling an earlier delete from btrfs pool " + poolName + " — waiting...");
+                    }
+                    return reply;
+                }, System::nanoTime, PoolQgroupLock.wait, Duration.ofSeconds(SETTLE_TIMEOUT_SECONDS),
+                        () -> pause(AGENT_RETRY_PAUSE)));
+            }
             // The flag stays set while a rescan runs, so a consistent pool has none to wait for.
             // One still running after the wait keeps the threshold: this delete is traced, as before.
             if (status.inconsistent() && Platform.isLinux()) {
@@ -431,14 +452,70 @@ public final class BtrfsUsage {
             // Already 0 with nobody holding the lock: a killed isx left it. Nothing to write or restore,
             // and the settle rescans.
             if (status.skipsDropAccounting()) return new DropAccounting(status, -1);
-            set = Platform.isMacOS()
-                    ? VmAgentClient.btrfsSkipDropAccounting(poolName).map("ok"::equals).orElse(false)
-                    : writeThresholdOf(fsid, SKIP_DROP_ACCOUNTING);
+            set = writeThresholdOf(fsid, SKIP_DROP_ACCOUNTING);
         } catch (RuntimeException e) {
+            // On macOS a 0 may be the agent's settle's, as for any answer that set nothing
+            if (Platform.isMacOS()) return withoutLock(status);
             set = false;
         }
         return set ? new DropAccounting(status.withDropSubtreeThreshold(SKIP_DROP_ACCOUNTING), status.dropSubtreeThreshold())
                 : new DropAccounting(status, -1);
+    }
+
+    /** Between two of the agent's busy replies, each of which already waited about 2 s in the VM. */
+    private static final Duration AGENT_RETRY_PAUSE = Duration.ofMillis(200);
+
+    private static void pause(Duration d) {
+        try {
+            Thread.sleep(d);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Ask the appliance's agent to set the threshold until it answers other than busy (macOS). Each
+     * answer comes within the client's 5 s, so the agent waits only briefly in the VM, and a busy
+     * one is asked again: for {@code lockWait} while a detached settle of the agent's holds the
+     * pool, as a Linux delete waits for another process's settle, and for {@code rescanWait} while a
+     * rescan runs, as Linux waits for it. Returns the last reply, empty when there was none.
+     */
+    static String skipDropsOnAgent(java.util.function.Supplier<java.util.Optional<String>> ask,
+                                   java.util.function.LongSupplier nanos, Duration lockWait,
+                                   Duration rescanWait, Runnable pause) {
+        long start = nanos.getAsLong();
+        while (true) {
+            var reply = ask.get().orElse("");
+            long waited = nanos.getAsLong() - start;
+            boolean again = AGENT_SETTLING.equals(reply) ? waited < lockWait.toNanos()
+                    : AGENT_RESCANNING.equals(reply) && waited < rescanWait.toNanos();
+            if (!again || Thread.currentThread().isInterrupted()) return reply;
+            pause.run();
+        }
+    }
+
+    static final String AGENT_SETTLING = "error: settle running";
+    static final String AGENT_RESCANNING = "error: rescan running";
+
+    /**
+     * What the agent's answer to {@code btrfs-skip-drop-accounting} means for this delete (macOS).
+     * {@code ok <n>} names the threshold the agent found under its lock, which the settle puts back,
+     * and 0 is never put back: a killed isx left it, and the settle only rescans. A bare {@code ok}
+     * comes from an agent that predates the lock, and the threshold read before it stands in.
+     * Any other answer set nothing; a pool read at 0 is then another delete's, so this one is not
+     * settled ({@link #withoutLock}).
+     */
+    static DropAccounting agentDropAccounting(QgroupStatus status, String reply) {
+        int previous;
+        if ("ok".equals(reply)) {
+            previous = status.dropSubtreeThreshold();
+        } else if (reply.startsWith("ok ") && reply.length() == 4 && reply.charAt(3) >= '0' && reply.charAt(3) <= '8') {
+            previous = reply.charAt(3) - '0';
+        } else {
+            return withoutLock(status);
+        }
+        return new DropAccounting(status.withDropSubtreeThreshold(SKIP_DROP_ACCOUNTING),
+                previous == SKIP_DROP_ACCOUNTING ? -1 : previous);
     }
 
     /** Write {@code threshold} to the pool's {@code drop_subtree_threshold} through the sudoers rule's {@code tee} (Linux). */
