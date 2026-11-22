@@ -1357,6 +1357,8 @@ class DelegationToolsTest {
             try {
                 dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5),
                         () -> out.sent.stream().anyMatch(m -> m.path("id").asInt(0) == 401));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             } catch (Exception e) {
                 throw new AssertionError(e);
             }

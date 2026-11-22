@@ -72,11 +72,7 @@ class ProxyNetworkIT {
             }
         });
 
-        boolean healthy = false;
-        for (int i = 0; i < 30; i++) {
-            if (isHealthy(proxyAddress)) { healthy = true; break; }
-            Thread.sleep(500);
-        }
+        boolean healthy = dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(15), () -> isHealthy(proxyAddress));
         Assumptions.assumeTrue(healthy, "Proxy health check failed after 15s");
 
         originalDnsmasq = client.networkConfigGet("incusbr0", "raw.dnsmasq");

@@ -65,7 +65,7 @@ class TemplateBuildIT {
 
     @Test
     @Order(3)
-    void minimalImageHasAgentuser() {
+    void minimalImageHasAgentuser() throws Exception {
         Assumptions.assumeTrue(incus.exists(TEST_MINIMAL),
                 "Skipping: " + TEST_MINIMAL + " was not built");
 
@@ -82,7 +82,7 @@ class TemplateBuildIT {
 
     @Test
     @Order(4)
-    void minimalImageHasMitmCaCert() {
+    void minimalImageHasMitmCaCert() throws Exception {
         Assumptions.assumeTrue(incus.exists(TEST_MINIMAL),
                 "Skipping: " + TEST_MINIMAL + " was not built");
 
@@ -108,7 +108,7 @@ class TemplateBuildIT {
 
     @Test
     @Order(5)
-    void minimalImageHasDnsConfig() {
+    void minimalImageHasDnsConfig() throws Exception {
         Assumptions.assumeTrue(incus.exists(TEST_MINIMAL),
                 "Skipping: " + TEST_MINIMAL + " was not built");
 
@@ -130,7 +130,7 @@ class TemplateBuildIT {
 
     @Test
     @Order(6)
-    void minimalImageHasAgentContextFile() {
+    void minimalImageHasAgentContextFile() throws Exception {
         Assumptions.assumeTrue(incus.exists(TEST_MINIMAL),
                 "Skipping: " + TEST_MINIMAL + " was not built");
 
@@ -159,11 +159,8 @@ class TemplateBuildIT {
         }
     }
 
-    private void startAndWait(String container) {
+    private void startAndWait(String container) throws Exception {
         incus.start(container);
-        for (int i = 0; i < 30; i++) {
-            if (incus.shellExec(container, "true").success()) return;
-            try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
-        }
+        dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(30), () -> incus.shellExec(container, "true").success());
     }
 }

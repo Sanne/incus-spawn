@@ -434,8 +434,11 @@ class SshKeyManagerTest {
         SshKeyManager.afterConfigRead = () -> {
             SshKeyManager.afterConfigRead = () -> {};
             secondThread.start();
-            while (secondThread.isAlive() && !waitingForHostLock(secondThread)) {
-                Thread.onSpinWait();
+            try {
+                dev.incusspawn.util.Eventually.await("the second writer to end or wait for the host lock",
+                        () -> !secondThread.isAlive() || waitingForHostLock(secondThread));
+            } catch (Exception e) {
+                throw new AssertionError(e);
             }
         };
         try {

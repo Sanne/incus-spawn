@@ -510,7 +510,8 @@ class InstanceRegistryTest {
         }
         // Every waiter has asked, and is waiting for the listing under way, before it ends
         for (var waiter : waiters) {
-            while (waiter.getState() != Thread.State.TIMED_WAITING) Thread.onSpinWait();
+            dev.incusspawn.util.Eventually.await("a waiter to wait for the listing under way",
+                    () -> waiter.getState() == Thread.State.TIMED_WAITING);
         }
         release.countDown();
         for (var waiter : waiters) waiter.join(5_000);
