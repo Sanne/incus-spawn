@@ -78,13 +78,25 @@ class ColumnFitTest {
     }
 
     @Test
-    void aReservedWidthIsKeptOnlyOnceTheColumnsStandApart() {
+    void aReservedWidthIsKeptOnceTheColumnsStandOneCellApart() {
         var columns = List.of(new ColumnFit.Column("NAME", 10, 12, 2, false),
                 new ColumnFit.Column("IP", 2, 2, 1, false).reserving(13),
                 new ColumnFit.Column("AGE", 6, 10, 3, false));
         assertArrayEquals(new int[] {12, 2, 10}, ColumnFit.widths(columns, 26), "no room: the content alone");
-        assertArrayEquals(new int[] {15, 5, 10}, ColumnFit.widths(columns, 32), "the columns stand apart first");
-        assertArrayEquals(new int[] {15, 13, 12}, ColumnFit.widths(columns, 42), "then the address has its room");
+        assertArrayEquals(new int[] {13, 7, 10}, ColumnFit.widths(columns, 32), "one cell apart, then what room there is");
+        assertArrayEquals(new int[] {14, 15, 11}, ColumnFit.widths(columns, 42), "the address has its room");
+        var arrived = List.of(columns.get(0), columns.get(1).holding(13), columns.get(2));
+        assertArrayEquals(ColumnFit.widths(columns, 42), ColumnFit.widths(arrived, 42), "and no column moves when it arrives");
+    }
+
+    @Test
+    void aReservedWidthCountsWhenColumnsAreLeftOut() {
+        var columns = List.of(new ColumnFit.Column("NAME", 10, 12, 0, false),
+                new ColumnFit.Column("IP", 2, 2, 1, false).reserving(13),
+                new ColumnFit.Column("RUNTIME", 9, 9, 2, false).dropping(1));
+        // 12 + 13 + 9 and 2 between them: an address arriving must not be what leaves RUNTIME out
+        assertEquals(List.of(0, 1, 2), ColumnFit.kept(columns, 36));
+        assertEquals(List.of(0, 1), ColumnFit.kept(columns, 35));
     }
 
     @Test

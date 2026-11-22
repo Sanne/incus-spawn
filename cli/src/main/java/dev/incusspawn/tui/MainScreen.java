@@ -313,10 +313,10 @@ final class MainScreen {
         // The description is cut first and the name last; a name is as wide as the longest of every
         // template, so the columns hold still while a search narrows the list
         var templateWidths = ColumnFit.widths(List.of(
-                new ColumnFit.Column("NAME", 12, tui.templateNameWidth(), 0, false),
-                new ColumnFit.Column("BUILT", 9, ColumnFit.natural(tui.templateRows, 1), 2, false),
-                ColumnFit.Column.fixed("DISK", Math.max(4, ColumnFit.natural(tui.templateRows, 2))),
-                new ColumnFit.Column("DESCRIPTION", 10, ColumnFit.natural(tui.templateRows, 3), 1, true)),
+                new ColumnFit.Column("NAME", 12, tui.templateNatural[0], 0, false),
+                new ColumnFit.Column("BUILT", 9, tui.templateNatural[1], 2, false),
+                ColumnFit.Column.fixed("DISK", Math.max(4, tui.templateNatural[2])),
+                new ColumnFit.Column("DESCRIPTION", 10, tui.templateNatural[3], 1, true)),
                 actualTableArea.width() - HIGHLIGHT_WIDTH);
         var tableBuilder = Table.builder()
                 .header(Row.from("NAME", "BUILT", "DISK", "DESCRIPTION")
@@ -460,11 +460,12 @@ final class MainScreen {
     }
 
     /**
-     * The narrowest table that shows OWNER (#1720), the inner width of a 100-column terminal. The
-     * bare fit of every column's minimum is 80, but there OWNER takes the other columns' slack and
-     * clips them (PARENT showed {@code tpl-minima} at 84 to 90); from 100 nothing a default
-     * listing holds is clipped (Sanne, review of #1820). Narrower, the column is left out; the
-     * instance details show the owner either way.
+     * The narrowest table that shows OWNER (#1720), the inner width of a 100-column terminal
+     * (Sanne, review of #1820). Narrower, the column is left out; the instance details show the
+     * owner either way. The width was chosen when columns shared the table by minimum widths, and
+     * OWNER clipped the others below it. {@link ColumnFit#kept} would now show OWNER wherever it
+     * fits, at the cost of RUNTIME, IP, DISK and PARENT, which it leaves out first. The threshold
+     * remains so that a table narrower than this keeps those four before it shows an owner.
      */
     static final int OWNER_COLUMN_MIN_WIDTH = 98;
 
@@ -475,7 +476,11 @@ final class MainScreen {
      */
     static final int PURPOSE_COLUMN_MIN_WIDTH = 118;
 
-    /** The same without OWNER: the minimum widths need 101 cells, so it starts where they fit with room to spare. */
+    /**
+     * The same without OWNER, the inner width of a 110-column terminal. Like the two above it
+     * remains from the layout by minimum widths, for the same reason: narrower, the table keeps
+     * RUNTIME, IP, DISK and PARENT before it shows a purpose.
+     */
     static final int PURPOSE_ALONE_MIN_WIDTH = 108;
 
     void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
@@ -646,9 +651,13 @@ final class MainScreen {
         var efforts = new ArrayList<dev.incusspawn.proxy.EventLogReader.Effort>();
         var github = new ArrayList<List<OverviewCommand.GitHubPart>>();
         int githubWidth = GITHUB_MIN_WIDTH;
-        for (int i = 0; i < tui.tableRows.size(); i++) {
-            var instance = tui.instanceOnRow(i);
-            if (instance == null || log == null) {
+        // Every instance's row is made, the search's or not: the columns are as wide as the widest
+        // cell of them all, so they hold still while a search narrows the list (review of #2511)
+        var instanceRows = tui.measuredRows;
+        var pool = List.copyOf(instanceRows.keySet());
+        for (int i = 0; i < pool.size(); i++) {
+            var instance = pool.get(i);
+            if (log == null) {
                 efforts.add(null);
                 github.add(null);
                 continue;
@@ -662,15 +671,12 @@ final class MainScreen {
                     .mapToInt(piece -> OverviewCommand.width(piece.text())).sum());
         }
         columns.add(githubColumn, ColumnFit.Column.fixed("GITHUB", githubWidth));
-        var rows = new ArrayList<Row>();
-        for (int i = 0; i < tui.tableRows.size(); i++) {
-            var row = tui.tableRows.get(i);
-            var instance = tui.instanceOnRow(i);
+        var every = new ArrayList<Row>();
+        var made = new java.util.IdentityHashMap<InstanceInfo, Row>();
+        for (int i = 0; i < pool.size(); i++) {
+            var instance = pool.get(i);
+            var row = instanceRows.get(instance);
             var cells = new ArrayList<>(List.of(row.cells().get(0), row.cells().get(1)));
-            if (instance == null) {
-                rows.add(row);
-                continue;
-            }
             cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.lastUsedCell(instance)));
             cells.add(dev.tamboui.widgets.table.Cell.from(reading == null ? "\u2026" : reading.workOf(instance).cell()));
             if (log == null) {
@@ -684,12 +690,20 @@ final class MainScreen {
             if (done) cells.add(dev.tamboui.widgets.table.Cell.from(
                     reading == null ? "\u2026" : OverviewCommand.doneCell(reading.summaryOf(instance), 120)));
             if (purpose) cells.add(row.cells().get(8));
-            rows.add(Row.from(cells).style(row.style()));
+            var overviewRow = Row.from(cells).style(row.style());
+            every.add(overviewRow);
+            made.put(instance, overviewRow);
+        }
+        var rows = new ArrayList<Row>();
+        for (int i = 0; i < tui.tableRows.size(); i++) {
+            var instance = tui.instanceOnRow(i);
+            var row = instance == null ? null : made.get(instance);
+            rows.add(row != null ? row : tui.tableRows.get(i));
         }
         for (int c = 0; c < columns.size(); c++) {
             var column = columns.get(c);
             if (column.give() == 0 || c < 2) continue;
-            columns.set(c, column.holding(Math.max(column.floor(), ColumnFit.natural(rows, c))));
+            columns.set(c, column.holding(Math.max(column.floor(), ColumnFit.natural(every, c))));
         }
         var fitted = ColumnFit.widths(columns, width - HIGHLIGHT_WIDTH);
         return new Columns(ColumnFit.constraints(fitted), columns.stream().map(ColumnFit.Column::header).toList(),

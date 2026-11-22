@@ -3159,7 +3159,16 @@ public class Tui {
         var parentRebuilt = new java.util.HashSet<String>();
         var outOfSync = new java.util.LinkedHashSet<String>();
 
-        var built = templateEntries.stream().filter(TemplateInfo::isBuilt)
+        // Every template's row is made, the search's or not: the columns are as wide as the widest
+        // cell of them all, so they hold still while a search narrows the list (review of #2511)
+        var every = new ArrayList<TemplateInfo>(allTemplateEntries != null ? allTemplateEntries : templateEntries);
+        var known = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<TemplateInfo, Boolean>());
+        known.addAll(every);
+        for (var t : templateEntries) if (known.add(t)) every.add(t);
+        var rows = new java.util.IdentityHashMap<TemplateInfo, Row>();
+        var natural = new int[TEMPLATE_COLUMNS];
+
+        var built = every.stream().filter(TemplateInfo::isBuilt)
                 .map(t -> new TemplateStaleness.Built(t.name(), t.buildStatus(), t.buildVersion(), t.definitionSha(),
                         MachineType.fromIncus(t.runtime())))
                 .toList();
@@ -3167,7 +3176,7 @@ public class Tui {
                 () -> TemplateStaleness.toolFingerprints(imageDefs.values(), toolDefLoader),
                 currentVersion());
 
-        for (var t : templateEntries) {
+        for (var t : every) {
             var statusDisplay = "not built".equals(t.buildStatus()) ? "not built" : Metadata.ageDescription(t.buildStatus());
             var statusStyle = Style.EMPTY.fg("not built".equals(t.buildStatus()) ? theme.textFaint() : theme.textDim());
             var rowStyle = Style.EMPTY;
@@ -3211,9 +3220,13 @@ public class Tui {
 
             boolean isBuilt = !"not built".equals(t.buildStatus());
             var quiet = Style.EMPTY.fg(theme.textDim());
-            templateRows.add(Row.from(cell(t.name(), isBuilt ? rowStyle : rowStyle.fg(theme.textDim())),
-                    cell(statusDisplay, statusStyle), cell(diskCell(t.diskUsage()), quiet), cell(desc, quiet)).style(rowStyle));
+            var row = Row.from(cell(t.name(), isBuilt ? rowStyle : rowStyle.fg(theme.textDim())),
+                    cell(statusDisplay, statusStyle), cell(diskCell(t.diskUsage()), quiet), cell(desc, quiet)).style(rowStyle);
+            rows.put(t, row);
+            for (int c = 0; c < natural.length; c++) natural[c] = Math.max(natural[c], row.cells().get(c).width());
         }
+        for (var t : templateEntries) templateRows.add(rows.get(t));
+        templateNatural = natural;
         templatesDefChanged = defChanged;
         templatesParentRebuilt = parentRebuilt;
         templatesOutOfSync = outOfSync;
@@ -3244,12 +3257,15 @@ public class Tui {
 
         // The widths come from every instance, not the search's, for the same reason: a column
         // must not change its width as a search narrows the list
+        var rows = new java.util.IdentityHashMap<InstanceInfo, Row>();
+        for (var entry : allEntries != null ? allEntries : entries) rows.put(entry, instanceRow(entry));
+        for (var entry : entries) rows.computeIfAbsent(entry, this::instanceRow);
         var natural = new int[INSTANCE_COLUMNS];
-        for (var entry : allEntries != null ? allEntries : entries) {
-            var cells = instanceRow(entry).cells();
-            for (int c = 0; c < natural.length; c++) natural[c] = Math.max(natural[c], cells.get(c).width());
+        for (var row : rows.values()) {
+            for (int c = 0; c < natural.length; c++) natural[c] = Math.max(natural[c], row.cells().get(c).width());
         }
         instanceNatural = natural;
+        measuredRows = rows;
 
         for (var entry : sorted) {
             var before = statusSeen.put(entry.name(), entry.status() + "/" + entry.pendingOp());
@@ -3257,7 +3273,7 @@ public class Tui {
                 motion.flash(MainScreen.instanceKey(entry.name()));
             }
 
-            tableRows.add(instanceRow(entry));
+            tableRows.add(rows.get(entry));
             rowToEntry.add(entry);
         }
         statusSeen.keySet().retainAll((allEntries != null ? allEntries : entries).stream().map(InstanceInfo::name)
@@ -3265,14 +3281,12 @@ public class Tui {
         statusBaseline = true;
     }
 
-    /** The widest name of every template, the search's or not. */
-    int templateNameWidth() {
-        int widest = 0;
-        for (var t : allTemplateEntries != null ? allTemplateEntries : templateEntries) {
-            widest = Math.max(widest, dev.tamboui.text.CharWidth.of(t.name()));
-        }
-        return widest;
-    }
+    /** The widest cell of each template column over every template, the search's or not (see {@link ColumnFit}). */
+    static final int TEMPLATE_COLUMNS = 4;
+    volatile int[] templateNatural = new int[TEMPLATE_COLUMNS];
+
+    /** Every instance's row, the search's or not: what the Work tab measures its columns over. */
+    volatile java.util.Map<InstanceInfo, Row> measuredRows = Map.of();
 
     /** The cells of an instance's row, and the widest of each over every instance (see {@link ColumnFit}). */
     static final int INSTANCE_COLUMNS = 9;
