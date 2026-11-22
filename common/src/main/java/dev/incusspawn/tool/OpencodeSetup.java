@@ -195,9 +195,7 @@ public class OpencodeSetup implements ToolSetup {
         return switch (credentialFor(resolvedParams)) {
             case ANTHROPIC -> List.of(EnvEntry.set(ANTHROPIC_KEY.env(), ANTHROPIC_KEY.staticValuePrefix()));
             case OPENAI -> List.of(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
-            case GEMINI -> List.of(
-                    EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY),
-                    EnvEntry.set("GOOGLE_GENERATIVE_AI_API_KEY", "$GEMINI_API_KEY").expandingAtLogin());
+            case GEMINI -> List.of(EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY));
             case NONE -> List.of();
         };
     }
@@ -273,8 +271,16 @@ public class OpencodeSetup implements ToolSetup {
         var small = resolvedParams.get("small-model");
         var smallLine = small == null ? "" : "  \"small_model\": \"" + provider + "/" + small + "\",\n";
         var agentLine = agentLine(provider, model, resolvedParams.get("effort"));
-        var providerLine = credentialFor(resolvedParams) != Credential.ANTHROPIC ? ""
-                : "  \"provider\": {\"anthropic\": {\"options\": {\"apiKey\": \"{env:" + ANTHROPIC_KEY.env() + "}\"}}},\n";
+        // As of opencode 1.19.6 (installed unpinned), its google provider reads GOOGLE_GENERATIVE_AI_API_KEY
+        // alone, never GEMINI_API_KEY, so the setting names the variable the start's proof replaces. A login-expanded
+        // copy would not do: isx-env.sh runs before the proofs, so it would copy the static placeholder.
+        var keyEnv = switch (credentialFor(resolvedParams)) {
+            case ANTHROPIC -> ANTHROPIC_KEY.env();
+            case GEMINI -> "GEMINI_API_KEY";
+            case OPENAI, NONE -> "";
+        };
+        var providerLine = keyEnv.isEmpty() ? ""
+                : "  \"provider\": {\"" + provider + "\": {\"options\": {\"apiKey\": \"{env:" + keyEnv + "}\"}}},\n";
         return """
                 {
                   "$schema": "https://opencode.ai/config.json",
