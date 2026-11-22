@@ -1,7 +1,7 @@
  isx   1.2.3  ● 1 container running
  Overview   Templates 0   Instances 1   Work                    ←/→ Switch view
  Templates ─────────────────────────────────────────────────────────────────────
-   No template definitions found.
+   No template matches the search.
 
 
 

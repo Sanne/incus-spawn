@@ -190,14 +190,21 @@ A column is as wide as its widest cell (`ColumnFit`), measured over every row an
 Before, spare width was shared evenly whatever the cells held, so a name was cut (`bench-nativ`) beside a column of blanks.
 
 - **With room to spare,** each column stands up to three cells apart from the next, and the rest goes to the column of free text (DESCRIPTION, PURPOSE, DONE), or stays blank at the end.
-- **Without room,** the columns give width up in a set order, each down to its floor: the free text first, then RUNTIME, PARENT, OWNER, AGE and IP, and NAME and STATUS last.
-- **A cut cell ends in `…`,** so a cut name is never taken for a whole one.
+- **An instance's name is never cut.**
+  It is what a person acts on, and two cut names can read the same.
+- **Without room, the free text is cut first, and then whole columns are left out** (`ColumnFit.kept`).
+  The Instances table leaves out RUNTIME, IP, DISK and PARENT in that order, then OWNER, PURPOSE and AGE.
+  A column left out says less than three columns cut to stubs, and the instance details still show it.
+- **Only then is a column cut,** each down to its floor in a set order, the status before the name.
+- **A cut cell ends in `…`,** so a cut value is never taken for a whole one.
+  This holds in a table narrower than every floor too: the columns give the rest up from the right, and the table's own layout never narrows them unmarked.
 - **IP keeps room for an address** once the columns stand apart, so the table does not shift when an instance starts.
 
 What this gives up is columns that line up between the two panels of the Overview, which they did not do before either.
 
 **An empty panel says what to do next.**
 With no instance, the panel shows the logo, "No instances yet" and the key that makes one, in its middle.
+When a search is why the panel is empty, it says "No instance matches the search" and names the key that ends the search, since the pool is not empty.
 
 ## Motion
 

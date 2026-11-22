@@ -275,7 +275,7 @@ public class Tui {
     // Search/filter state
     boolean searchActive = false;
     TextInputState searchInput;
-    private List<TemplateInfo> allTemplateEntries;
+    List<TemplateInfo> allTemplateEntries;
     List<InstanceInfo> allEntries;
     // AI Help modal state
     /** Kept after closing, so reopening preselects the account used last. */

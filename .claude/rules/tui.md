@@ -26,6 +26,8 @@ The theme is written in RGB and `TuiTheme.of` fits each colour to the terminal's
 `ColorFit` is the last step of every frame the runner draws and fits what a blend left, so `Tui.drawUntilQuit` is the one place a runner is made.
 `TuiThemeTest` fails on an RGB colour below truecolor and on two surfaces that fit to the same palette entry.
 **A table's column widths come from `ColumnFit`**, never from `Constraint.min` or `fill`: each column is as wide as its widest cell (`Tui.instanceNatural`, over every instance, not the search's), gives width up in its `give` order down to its `floor`, and a cut cell ends in `…` (`ColumnFit.clipped`).
+An instance's name is never cut (`give` 0): where the Instances table does not fit, `ColumnFit.kept` leaves whole columns out in their `dropping` order, RUNTIME, IP, DISK, PARENT, OWNER, PURPOSE, then AGE.
+An empty panel says whether a search emptied it (`MainScreen.searchHidesAll`).
 A new column says its floor, its turn to be cut and whether it is the free text that takes spare room (`ColumnFitTest`).
 **Every dialog has one shape**: content from the first row inside the frame, one blank row, the keys on the last row (`ModalRenderer.confirmModalHeight` adds four to the text's lines).
 A dialog's label is `textDim` and never the accent, a list's current line is marked with `Glyphs.CURSOR`, a title names its subject in quotes, and text is wrapped, never cut at the frame.
