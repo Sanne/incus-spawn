@@ -83,6 +83,7 @@ The file is opened read-write, which never waits on a FIFO, and the type of what
 The path is still checked first, since a read-write open creates a missing file.
 Writes never open the file they write: `launch`, `cancel`, every exit record and `exec`'s pid file write into a file `mktemp` creates in the same directory and rename it into place, which replaces a FIFO without opening it (#1074).
 A kill that finds no pid file yet leaves a `<id>.killed` directory, which the run checks for after writing its pid file, so an interrupt during the login profile still stops the command (#2467).
+`exec` resolves its run directory into `$1` before the agent's `env` is exported, so an `env` that sets `HOME` moves neither the pid file nor the marker away from the kill's (#2471).
 Run ids carry a random part per `isx mcp` process, so a later process with a reused pid never meets that marker.
 Bounding these execs instead was the alternative, and it would turn a stalled read into a slow one rather than none.
 `task_diff` (and `ask` on a diff) is the exception that gets a bound as well (#1105).

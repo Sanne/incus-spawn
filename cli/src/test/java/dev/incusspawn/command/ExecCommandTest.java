@@ -149,7 +149,9 @@ class ExecCommandTest {
 
         // What the guest's session runs once it has written its pid file, run here by a real bash
         var script = script(daemon);
-        var tail = script.substring(script.indexOf(" isx-exec ") + " isx-exec ".length());
+        // The inner shell's $0 is the run directory ("$1" of the outer one), which the tail does not use
+        var marker = " \"$1\" ";
+        var tail = script.substring(script.indexOf(marker, script.indexOf("setsid")) + marker.length());
         var bash = new ProcessBuilder("bash", "-c", tail).redirectErrorStream(true).start();
         assertEquals("[a b][$(id)][it's][*][]", new String(bash.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
         assertEquals(0, bash.waitFor());
@@ -208,7 +210,7 @@ class ExecCommandTest {
         var scripts = scripts(daemon);
         assertEquals(2, scripts.size(), scripts.toString());
         var first = scripts.getFirst();
-        var from = first.indexOf("/run/cli-") + "/run/".length();
+        var from = first.indexOf("$1/cli-") + "$1/".length();
         var runId = first.substring(from, first.indexOf(".pid", from));
         assertTrue(scripts.get(1).contains("k TERM; sleep 3; k KILL") && scripts.get(1).contains("/" + runId + ".pid"),
                 "the kill names the same run: " + scripts.get(1));
