@@ -999,7 +999,9 @@ A build does not stamp a ChatGPT session: builds keep their temporary-proof gran
 On Linux the route identifies its caller by source address, then checks the proof against that instance's binding.
 On macOS, where every container arrives from the VM's address (#1582), the address names no instance, so the proof is the caller (#2497).
 `InstanceRegistry.chatGptCaller` finds the running instance whose current binding holds the verifier of the presented access placeholder on a backend call or WebSocket, of the refresh placeholder on a refresh, and of the token a logout names.
-It looks up only verifiers of bindings made with the instance's current secret, so a previous start's proof, a copy's, another session's or account's, a verifier presented as a token and a proof keyed with the metadata hash each name nobody.
+It looks up only verifiers of bindings made with the instance's current secret.
+So a previous start's proof, a copy's, another session's or account's, a verifier presented as a token and a proof keyed with the metadata hash each name nobody.
+The flow is counted as the proven instance's, once the proof names it, so `instance_activity` shows its Codex as busy.
 The route then applies the same kind check as on Linux, so a refresh proof does not pass as an access one.
 A logout is answered locally whichever kind it names, as on Linux, where it needs no proof at all, and on macOS it still needs one that names an instance.
 A caller at a known instance's address is still held to that instance's own binding, and the Linux proxy never takes this path.

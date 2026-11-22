@@ -617,6 +617,30 @@ class ChatGptRouteTest {
         assertTrue(seen.isEmpty(), seen.toString());
     }
 
+    private static ProxyActivity activityNow() {
+        var incarnations = proxy.instanceRegistry().incarnations();
+        return proxy.apiActivity.snapshot(incarnations.byName(), incarnations.view());
+    }
+
+    @Test
+    void onMacOsTheTrafficOfAProvenCallerIsCountedAsItsInstancesNotAsNobodys() throws Exception {
+        macOs(SECRET, sessionId, SECRET);
+        var before = activityNow();
+        var workerBefore = before.instances().get(INSTANCE);
+        var servedBefore = workerBefore == null ? 0 : workerBefore.traffic().total().requests();
+        assertEquals(200, backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access())).status());
+        assertEquals(101, upgrade(codexWebSocket()));
+        assertEquals(401, backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().refresh())).status());
+
+        var activity = activityNow();
+        var worker = activity.instances().get(INSTANCE);
+        assertNotNull(worker, activity.toString());
+        assertEquals(servedBefore + 2, worker.traffic().total().requests(), "the request and the socket: " + worker);
+        assertTrue(worker.identifiedByProof(), worker.toString());
+        assertEquals(before.unattributed().total().requests() + 1, activity.unattributed().total().requests(),
+                "only the refused one: " + activity.unattributed());
+    }
+
     @Test
     void onLinuxAProofFromAnAddressThatIsNoInstanceIsStillRefused() throws Exception {
         useListing(listing(SECRET, sessionId, SECRET, ACCOUNT).replace("127.0.0.1", "10.99.99.99"));

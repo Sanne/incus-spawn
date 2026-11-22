@@ -1385,7 +1385,8 @@ public class MitmProxy {
                     && proofIdentifiesCaller(clientReq.remoteAddress(), clientReq.localAddress());
             var byProofAlone = authorizes && byTokenAlone;
             // A caller only its proof or secret can name is counted once that has been checked
-            var flow = countTraffic(clientReq, byTokenAlone && (authorizes || hostRoute || mcp)
+            var chatGptRoute = domain != null && chatGpt.handles(domain);
+            var flow = countTraffic(clientReq, byTokenAlone && (authorizes || hostRoute || mcp || chatGptRoute)
                     ? apiActivity.proofFlow(trafficDomain(domain)) : trafficFlow(caller, domain));
             if (domain == null) {
                 sendError(clientReq.response(), 502, "Unknown domain");
@@ -1397,8 +1398,9 @@ public class MitmProxy {
                 hostRouteRelay.handle(clientReq, address, byTokenAlone, routes, identified -> begin(flow, identified));
             } else if (chatGpt.handles(domain)) {
                 // ChatGPT's own route (#1332): it identifies its caller by address and proof itself, by proof alone on macOS (#2497)
-                begin(flow, caller);
-                chatGpt.handle(clientReq, domain, address, byTokenAlone, started);
+                // On macOS its flow is the instance's the proof names, counted once it does
+                if (caller != null) begin(flow, caller);
+                chatGpt.handle(clientReq, domain, address, byTokenAlone, identified -> begin(flow, identified), started);
             } else if (googleAuth.handles(domain)) {
                 // Google sign-ins (#2443): likewise, by address and the digest a placeholder carries
                 begin(flow, caller);
@@ -1852,11 +1854,12 @@ public class MitmProxy {
             var caller = callerAt(address);
             if (domain != null && chatGpt.handles(domain)) {
                 // ChatGPT's own route (#1332): it rejects a claimed handshake itself, or relays it
-                var chatGptFlow = trafficFlow(caller, domain);
+                var byProof = caller == null && proofIdentifiesCaller(handshake.remoteAddress(), handshake.localAddress());
+                var chatGptFlow = byProof ? apiActivity.proofFlow(trafficDomain(domain)) : trafficFlow(caller, domain);
                 var accepted = false;
                 try {
-                    accepted = chatGpt.handleWebSocket(handshake, domain, address,
-                            caller == null && proofIdentifiesCaller(handshake.remoteAddress(), handshake.localAddress()), chatGptFlow);
+                    accepted = chatGpt.handleWebSocket(handshake, domain, address, byProof,
+                            identified -> begin(chatGptFlow, identified), chatGptFlow);
                 } catch (RuntimeException e) {
                     // Handled here, not below: the route may have decided the handshake already
                     ProxyLog.error("Refusing WebSocket to " + domain + " for " + describeCaller(address) + refusal(e));

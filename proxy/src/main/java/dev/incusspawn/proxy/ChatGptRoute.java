@@ -203,9 +203,11 @@ final class ChatGptRoute {
     /**
      * @param byProofAlone whether a caller at an address that names no instance may be identified
      *                     by the proof it presents (macOS, #2497)
+     * @param identified told the instance a proof named, so its flow is counted as that instance's
      * @param started when the client last heard from the proxy, as {@code Upstream.relayRequest} counts it
      */
-    void handle(HttpServerRequest req, String domain, String sourceAddress, boolean byProofAlone, long started) {
+    void handle(HttpServerRequest req, String domain, String sourceAddress, boolean byProofAlone,
+                java.util.function.Consumer<InstanceRegistry.Caller> identified, long started) {
         if (domain.equals(AUTH) && req.method() == HttpMethod.POST
                 && (Operation.REFRESH.path.equals(req.path()) || Operation.REVOKE.path.equals(req.path()))) {
             // The claim is in the body: read it, bounded, before deciding. A body too large to be
@@ -221,7 +223,7 @@ final class ChatGptRoute {
                 }
                 var op = allowed(req, domain, sourceAddress);
                 if (op == Operation.REFRESH) {
-                    refresh(req, body, sourceAddress, byProofAlone);
+                    refresh(req, body, sourceAddress, byProofAlone, identified);
                 } else if (op == Operation.REVOKE) {
                     // A guest's 'codex logout' must never end the host's session: answered here, to
                     // an instance bound to a session, whatever token it names (it holds no real one)
@@ -230,7 +232,7 @@ final class ChatGptRoute {
                     if (digest == null) digest = ChatGptProof.accessDigestOf(token);
                     var named = digest;
                     // Without a proof, the address alone names the caller; on macOS nothing does
-                    proven(req, sourceAddress, byProofAlone, op, named == null ? List.of() : List.of(named), binding -> true, binding -> {
+                    proven(req, sourceAddress, byProofAlone, identified, op, named == null ? List.of() : List.of(named), binding -> true, binding -> {
                         ProxyLog.info("Answering a ChatGPT token revocation from " + describe(sourceAddress)
                                 + " locally; the host session is untouched");
                         req.response().putHeader("Content-Type", "application/json").end("{}");
@@ -252,7 +254,7 @@ final class ChatGptRoute {
         }
         if (Upstream.hasBody(req)) req.pause();
         var digest = ChatGptProof.accessDigestOf(bearer(req.getHeader("Authorization")));
-        proven(req, sourceAddress, byProofAlone, op, java.util.Collections.singletonList(digest), binding -> ChatGptProof.matches(digest, binding.accessSha256()),
+        proven(req, sourceAddress, byProofAlone, identified, op, java.util.Collections.singletonList(digest), binding -> ChatGptProof.matches(digest, binding.accessSha256()),
                 binding -> forwardBackend(req, binding, op, sourceAddress, started));
     }
 
@@ -355,7 +357,8 @@ final class ChatGptRoute {
      * {@link CallerCheck}'s one throttled refresh and one more try, as {@code isx mcp} and host
      * routes do.
      */
-    private void proven(HttpServerRequest req, String sourceAddress, boolean byProofAlone, Operation op,
+    private void proven(HttpServerRequest req, String sourceAddress, boolean byProofAlone,
+                        java.util.function.Consumer<InstanceRegistry.Caller> identified, Operation op,
                         java.util.Collection<String> digests,
                         java.util.function.Predicate<InstanceRegistry.ChatGptBinding> proof,
                         java.util.function.Consumer<InstanceRegistry.ChatGptBinding> then) {
@@ -365,14 +368,16 @@ final class ChatGptRoute {
             return;
         }
         CallerCheck.identify(vertx, req, registry, r -> {
-            var binding = binding(r, sourceAddress, byProofAlone, digests);
-            return binding != null && proof.test(binding) ? binding : null;
-        }, binding -> {
-            if (binding != null) {
-                then.accept(binding);
+            var named = named(r, sourceAddress, byProofAlone, digests);
+            return named != null && proof.test(named.binding()) ? named : null;
+        }, named -> {
+            if (named != null) {
+                identified.accept(named.caller());
+                then.accept(named.binding());
             } else {
-                refuseProof(req.response(), op, sourceAddress, binding(registry, sourceAddress, byProofAlone, digests) == null
-                        ? "no ChatGPT session is bound to this instance"
+                refuseProof(req.response(), op, sourceAddress, named(registry, sourceAddress, byProofAlone, digests) == null
+                        ? (byProofAlone ? "no running instance's current ChatGPT binding holds this proof"
+                                : "no ChatGPT session is bound to this instance")
                         : "the proof is not this instance's current one");
             }
         });
@@ -468,7 +473,8 @@ final class ChatGptRoute {
         }
     }
 
-    private void refresh(HttpServerRequest req, Buffer body, String sourceAddress, boolean byProofAlone) {
+    private void refresh(HttpServerRequest req, Buffer body, String sourceAddress, boolean byProofAlone,
+                         java.util.function.Consumer<InstanceRegistry.Caller> identified) {
         var resp = req.response();
         JqValue parsed;
         try {
@@ -486,7 +492,7 @@ final class ChatGptRoute {
             return;
         }
         var digest = ChatGptProof.refreshDigestOf(request.pathText("refresh_token", ""));
-        proven(req, sourceAddress, byProofAlone, Operation.REFRESH, java.util.Collections.singletonList(digest), binding -> ChatGptProof.matches(digest, binding.refreshSha256()),
+        proven(req, sourceAddress, byProofAlone, identified, Operation.REFRESH, java.util.Collections.singletonList(digest), binding -> ChatGptProof.matches(digest, binding.refreshSha256()),
                 binding -> refresh(req, request, binding, digest));
     }
 
@@ -731,7 +737,7 @@ final class ChatGptRoute {
      * {@code MitmProxy.relayWebSocketWith} does. Unclaimed sockets go back to the ordinary relay.
      */
     boolean handleWebSocket(ServerWebSocketHandshake ws, String domain, String sourceAddress, boolean byProofAlone,
-                            ApiActivity.Flow flow) {
+                            java.util.function.Consumer<InstanceRegistry.Caller> identified, ApiActivity.Flow flow) {
         if (!claims(ws.headers())) return proxy.relayWebSocketWith(ws, domain, flow, Future.succeededFuture(options -> {}), status -> {});
         var problem = shapeProblem(ws.headers(), domain, ws.uri(), sni(ws));
         if (problem != null) {
@@ -747,12 +753,14 @@ final class ChatGptRoute {
             return false;
         }
         var digest = ChatGptProof.accessDigestOf(bearer(ws.headers().get("Authorization")));
-        var binding = binding(proxy.instanceRegistry(), sourceAddress, byProofAlone, java.util.Collections.singletonList(digest));
+        var named = named(proxy.instanceRegistry(), sourceAddress, byProofAlone, java.util.Collections.singletonList(digest));
+        var binding = named == null ? null : named.binding();
         if (binding == null || !ChatGptProof.matches(digest, binding.accessSha256())) {
             warnOnce("Refusing a ChatGPT WebSocket from " + describe(sourceAddress) + ": no valid proof");
             ws.reject(401);
             return false;
         }
+        identified.accept(named.caller());
         var dialled = new java.util.concurrent.atomic.AtomicReference<SessionStore.Session<ChatGptSessionStore.Tokens>>();
         return proxy.relayWebSocketWith(ws, domain, flow, currentSession(binding).map(session -> {
             if (session == null) throw new IllegalStateException(SESSION_CHANGED);
@@ -773,8 +781,8 @@ final class ChatGptRoute {
      * The caller's binding, if the instance at {@code sourceAddress} (on macOS, the one the presented
      * {@code digests} name, #2497) is bound to a ChatGPT account that is the {@code openai} account it is served now. Non-blocking.
      */
-    private InstanceRegistry.ChatGptBinding binding(InstanceRegistry registry, String sourceAddress, boolean byProofAlone,
-                                                    java.util.Collection<String> digests) {
+    private InstanceRegistry.ChatGptCaller named(InstanceRegistry registry, String sourceAddress, boolean byProofAlone,
+                                                 java.util.Collection<String> digests) {
         var named = registry == null ? null : registry.chatGptCaller(sourceAddress, byProofAlone, digests);
         if (named == null) return null;
         var binding = named.binding();
@@ -783,7 +791,7 @@ final class ChatGptRoute {
         var account = effectiveAccount(caller.accountsByNamespace().get(ChatGptAccounts.NAMESPACE));
         if (account == null || !account.equals(binding.account())
                 || !ChatGptAccounts.isChatGpt(configTree.path(ChatGptAccounts.NAMESPACE).path("accounts").path(account))) return null;
-        return binding;
+        return named;
     }
 
     /** The account's session, read now, if it is still the one {@code binding} was made for; else null. */

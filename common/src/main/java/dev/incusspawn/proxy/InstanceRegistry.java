@@ -242,7 +242,9 @@ public final class InstanceRegistry {
     }
 
     /** The instance a ChatGPT proof names: its binding, and the accounts pinned to it. */
-    public record ChatGptCaller(ChatGptBinding binding, InstanceAccounts accounts) {}
+    public record ChatGptCaller(ChatGptBinding binding, Caller caller) {
+        public InstanceAccounts accounts() { return caller.accounts(); }
+    }
 
     /**
      * The instance whose ChatGPT binding the caller at {@code sourceAddress} is, or null. A caller
@@ -255,7 +257,8 @@ public final class InstanceRegistry {
      */
     public ChatGptCaller chatGptCaller(String sourceAddress, boolean byProofAlone, java.util.Collection<String> digests) {
         if (sourceAddress == null || sourceAddress.isBlank()) return null;
-        var current = snapshot.parsed();
+        var view = snapshot;
+        var current = view.parsed();
         var address = normalize(sourceAddress);
         var instance = current.byAddress().get(address);
         if (instance == null) {
@@ -273,7 +276,7 @@ public final class InstanceRegistry {
             instance = current.byAddress().get(address);
         }
         var binding = current.chatGptByAddress().get(address);
-        return instance == null || binding == null ? null : new ChatGptCaller(binding, instance);
+        return instance == null || binding == null ? null : new ChatGptCaller(binding, callerOf(view, instance));
     }
 
     /**
