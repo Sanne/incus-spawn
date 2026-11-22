@@ -578,7 +578,8 @@ The open risks are Vertex model-ID mapping and the non-messages endpoints that c
 Without a GitHub account an agent has no name to commit under, since only `gh` writes one.
 `git-identity:` in config.yaml names one for that case (`GitIdentity`), and isx writes the key only after a person said yes to it.
 `isx init` asks once the credentials are set and only when no GitHub account is usable, showing the host's own `git config` name and email (`AgentGitIdentityStep`).
-It asks wherever Credential Setup runs: a first run, a run given an answer flag, and `isx init credentials`, but not a re-run at a terminal, which leaves Credential Setup to its menu.
+It asks wherever Credential Setup runs: a run given an answer flag, a run with no terminal, and `isx init credentials`, but not a re-run at a terminal, which leaves Credential Setup to its menu.
+A first run asks it when the person skips its GitHub step (design/init.md "A GitHub account in the first run").
 Enter is No, and without a terminal the answer is No unless `--git-identity-from-host` gives it.
 This gives up the convenience of a first run that commits without a question: committing under a person's own name is acceptable only as a choice they saw.
 

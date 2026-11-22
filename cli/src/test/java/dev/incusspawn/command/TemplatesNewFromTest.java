@@ -32,7 +32,7 @@ class TemplatesNewFromTest {
 
     static final String QUICK_START = """
             name: tpl-agent
-            description: Claude Code on the base OS
+            description: Claude Code on a minimal Fedora machine
             parent: tpl-minimal
             tools:
               - claude

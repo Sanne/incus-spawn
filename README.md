@@ -79,20 +79,20 @@ jbang app install isx-proxy@Sanne/incus-spawn
 The package is called `incus-spawn`, and it installs the `isx` command.
 
 ```shell
-# One-time host setup (Incus, firewall, auth)
+# One-time host setup, ending with a first agent
 isx init
 ```
 
-On a fresh Linux host, `isx init` adds you to the `incus-admin` group and finishes its run in that group.
-Other terminals get the group at your next login, or in each one with `newgrp incus-admin`.
+`isx init` asks which coding agent you use, then its account and a GitHub account, each of which you may skip.
+It then sets up the host, builds a template for your agent and offers to open it.
+On a fresh Linux host, it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
 
 A template is a machine image you build once: an OS, tools and repos.
-The template below adds Claude Code to the built-in `tpl-minimal` template.
-Save it as `~/.config/incus-spawn/images/tpl-agent.yaml`, or run `isx templates new tpl-agent` and paste it over the skeleton that opens in your editor:
+For Claude Code, init writes this one to `~/.config/incus-spawn/images/tpl-agent.yaml`, and it is yours to edit:
 
 ```yaml
 name: tpl-agent
-description: Claude Code on the base OS
+description: Claude Code on a minimal Fedora machine
 parent: tpl-minimal
 tools:
   - claude
@@ -100,11 +100,11 @@ default-action: claude
 ```
 
 ```shell
-# Build it (builds missing parent images first)
-isx build tpl-agent
-
 # Branch it: an instant copy-on-write machine of its own, with Claude Code open inside
 isx branch my-first --from tpl-agent
+
+# Rebuild it after you edit it
+isx build tpl-agent
 
 # The interactive TUI: your templates and branches
 isx
@@ -112,7 +112,7 @@ isx
 
 Claude Code signs in with the Claude credential you set up in `isx init`; `isx account add claude` adds one later.
 Claude Code never sees the credential: the proxy adds the credential to each request after the request leaves the instance.
-If you did not install the services `isx init` offers, start them before building: `isx proxy start` on Linux, `isx vm start && isx proxy start` on macOS.
+If you declined the services with `--no-service`, start them before building: `isx proxy start` on Linux, `isx vm start && isx proxy start` on macOS.
 
 For another agent, replace `claude` with `codex`, `pi`, `opencode`, `gemini-cli`, `antigravity`, `bob` or `copilot`; see [Agents](#agents).
 Pi and opencode use your Claude credential too, unless their `provider` names another API ([Pi](docs/AGENTS.md#pi-coding-agent), [opencode](docs/AGENTS.md#opencode)).

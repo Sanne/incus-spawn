@@ -26,7 +26,7 @@ public class HelpContext {
             "help/docs/CREDENTIAL-PROOFS.md", "help/docs/FAQ.md", "help/docs/FEDORA.md", "help/docs/INTEGRATIONS.md", "help/docs/MCP-PROTOCOL.md", "help/docs/MCP.md", "help/docs/SANDBOXES.md",
             "help/docs/TEMPLATE-EXAMPLE.md", "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md", "help/DESIGN.md",
             "help/design/accounts.md", "help/design/doctor.md", "help/design/git.md",
-            "help/design/host-resources.md", "help/design/instances.md", "help/design/macos-and-vms.md",
+            "help/design/host-resources.md", "help/design/init.md", "help/design/instances.md", "help/design/macos-and-vms.md",
             "help/design/mcp.md", "help/design/native-image.md", "help/design/network.md", "help/design/proxy.md",
             "help/design/storage.md", "help/design/templates.md", "help/design/terminal.md", "help/design/testing.md",
             "help/design/upstream.md", "help/design/visual-language.md");
