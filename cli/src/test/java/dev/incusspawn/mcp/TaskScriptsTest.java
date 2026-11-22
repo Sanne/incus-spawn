@@ -1939,6 +1939,33 @@ class TaskScriptsTest {
     }
 
     @Test
+    void antigravityCountsARunThatAnsweredAfterItsOwnRetryAsFinished() throws Exception {
+        // agy reports ERROR and exits 1 when a model call timed out and its retry answered.
+        antigravityStub("""
+                step('error_message', {});
+                say('kiwi');
+                result('kiwi\\n', 'ERROR', 'timeout awaiting response headers');
+                process.exitCode = 1;
+                """);
+        launchAntigravity("t6-agy-retried", 1, "go", Tasks.Profile.NONE);
+        var status = awaitFinished("t6-agy-retried");
+        assertEquals(0, status.exit(), status.toString());
+        assertFalse(AntigravityEvents.summarize(status.output(), 0).isError());
+        // Without an answer after the failure, or with an empty response, it still fails.
+        int trial = 0;
+        for (var ending : List.of(
+                "say('early'); step('error_message', {}); result('early', 'ERROR', 'gave up'); process.exitCode = 1;",
+                "step('error_message', {}); say('x'); result('  ', 'ERROR', 'gave up'); process.exitCode = 1;")) {
+            antigravityStub(ending);
+            var id = "t6-agy-notretried-" + trial++;
+            launchAntigravity(id, 1, "go", Tasks.Profile.NONE);
+            var failed = awaitFinished(id);
+            assertTrue(failed.exit() != 0, ending);
+            assertTrue(AntigravityEvents.summarize(failed.output(), 0).isError(), ending);
+        }
+    }
+
+    @Test
     void antigravityNeverReportsAResultTooLargeToKeep() throws Exception {
         antigravityStub("say('big'); result('b'.repeat(9 * 1024 * 1024));");
         launchAntigravity("t8-agy", 1, "huge report", Tasks.Profile.NONE);
