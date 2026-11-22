@@ -60,11 +60,8 @@ class IncusErrorHealthTest {
         // No instance sends a request: the status read itself lists again, in the background
         up.set(true);
         now.addAndGet(60_000);
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (ProxyHealthCheck.fetchProxyInfo("127.0.0.1", proxy.healthPort(), 5_000).hasIncusError()) {
-            assertTrue(System.nanoTime() < deadline, "a status read after Incus answers lists again");
-            Thread.sleep(20);
-        }
+        dev.incusspawn.util.Eventually.await("a status read after Incus answers to list again",
+                () -> !ProxyHealthCheck.fetchProxyInfo("127.0.0.1", proxy.healthPort(), 5_000).hasIncusError());
         assertFalse(registry.listingUnavailable());
     }
 }

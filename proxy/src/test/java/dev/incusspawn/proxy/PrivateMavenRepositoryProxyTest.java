@@ -272,11 +272,8 @@ class PrivateMavenRepositoryProxyTest {
     }
 
     private static void awaitCached(String path) throws Exception {
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (cachedCopies(path).isEmpty()) {
-            assertTrue(System.nanoTime() < deadline, "the download was never cached");
-            Thread.sleep(10);
-        }
+        dev.incusspawn.util.Eventually.await("the download to be cached", java.time.Duration.ofSeconds(5),
+                () -> !cachedCopies(path).isEmpty());
     }
 
     @Test
@@ -382,11 +379,8 @@ class PrivateMavenRepositoryProxyTest {
     @Test
     void aPublicNexusProxyRepositorysMd5ETagFallsBackToItsSha1Sidecar() throws Exception {
         assertEquals(new Answer(200, CONTENT), getProxied());
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (!Files.exists(proxiedCopy())) {
-            assertTrue(System.nanoTime() < deadline, "the download was never cached through its .sha1");
-            Thread.sleep(10);
-        }
+        dev.incusspawn.util.Eventually.await("the download to be cached through its .sha1", java.time.Duration.ofSeconds(5),
+                () -> Files.exists(proxiedCopy()));
         assertEquals(List.of("GET " + PROXIED + " null", "GET " + PROXIED + ".sha1 null"), received,
                 "an MD5 ETag is no SHA-1, so the download is checked against its sidecar");
         assertTrue(proxy.artifactCache.warnedHeaderless.contains("https://" + PROXIED_HOST + "/repository/maven-central/"),

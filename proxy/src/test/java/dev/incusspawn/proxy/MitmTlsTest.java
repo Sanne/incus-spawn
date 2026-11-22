@@ -302,11 +302,8 @@ class MitmTlsTest {
                 try {
                     oldHealth.close();
                     // start() ends parked on the stop latch, ready or not: stop() goes on then.
-                    var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-                    while (starting.get().getState() != Thread.State.WAITING && starting.get().isAlive()
-                            && System.nanoTime() < deadline) {
-                        Thread.sleep(10);
-                    }
+                    dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5),
+                            () -> starting.get().getState() == Thread.State.WAITING || !starting.get().isAlive());
                 } catch (Exception e) {
                     throw new AssertionError(e);
                 }

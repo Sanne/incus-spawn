@@ -874,10 +874,10 @@ class ChatGptRouteTest {
         backendRefuses = false;
 
         // The refusal is recorded once upstream's answer is in: until then a refresh is answered here
-        for (int i = 0; i < 200 && refreshes.get() == 0; i++) {
+        dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5), () -> {
             assertEquals(200, refresh(proofs().refreshToken()).status());
-            if (refreshes.get() == 0) Thread.sleep(25);
-        }
+            return refreshes.get() != 0;
+        });
         assertEquals(1, refreshes.get(), "refreshed upstream although the token was not near expiry");
     }
 

@@ -124,13 +124,8 @@ class ExitWithTest {
         return gone.pid();
     }
 
-    private static void awaitEnded(long pid, String what) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        while (System.nanoTime() < deadline) {
-            if (ended(pid)) return;
-            Thread.sleep(50);
-        }
-        fail(what + " (pid " + pid + ") did not end");
+    private static void awaitEnded(long pid, String what) throws Exception {
+        dev.incusspawn.util.Eventually.await(what + " (pid " + pid + ") to end", java.time.Duration.ofSeconds(20), () -> ended(pid));
     }
 
     /** Gone, or a zombie nobody has reaped yet: either way it has stopped running. */
