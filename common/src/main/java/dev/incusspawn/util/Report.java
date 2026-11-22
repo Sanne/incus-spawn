@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
 /**
  * What a command's report is laid out with: the {@code table} format of a query command, and any
@@ -76,13 +77,39 @@ public final class Report {
         return BuildOutput.styled(dark ? BuildOutput.BAND_ON_DARK : BuildOutput.BAND_ON_LIGHT, text);
     }
 
+    /** Asks the terminal whether its background is dark; null when it does not say. Set by the CLI, which has aesh. */
+    private static volatile Supplier<Boolean> themeProbe = () -> null;
+    /** What {@link #themeProbe} answered, asked once a process: {@code Optional.empty()} is "did not say". */
+    private static volatile java.util.Optional<Boolean> probed;
+
+    /** The probe {@link #darkTerminal} asks the terminal with. {@code common} has no terminal library, so its user gives one. */
+    public static void themeProbe(Supplier<Boolean> probe) {
+        themeProbe = probe;
+        probed = null;
+    }
+
     /**
-     * Whether the terminal's background is dark, from what costs nothing to read: {@code ISX_THEME}
-     * as the TUI takes it, else the background {@code COLORFGBG} names where a terminal sets it,
-     * else dark. A command does not ask the terminal itself, which is a round trip per run.
+     * Whether the terminal's background is dark. {@code ISX_THEME} decides when set, as for the
+     * TUI. Otherwise the terminal is asked, once a process and only when a header is drawn on an
+     * ANSI terminal; one that does not answer is read from {@code COLORFGBG}, and taken for dark
+     * when that is not set either.
      */
     static boolean darkTerminal() {
-        return darkTerminal(System.getenv("ISX_THEME"), System.getenv("COLORFGBG"));
+        var isxTheme = System.getenv("ISX_THEME");
+        if (isxTheme == null || isxTheme.isBlank()) {
+            var answer = probed;
+            if (answer == null) {
+                Boolean dark = null;
+                try {
+                    dark = themeProbe.get();
+                } catch (RuntimeException ignored) {
+                    // A terminal that cannot be asked is one that did not say
+                }
+                probed = answer = java.util.Optional.ofNullable(dark);
+            }
+            if (answer.isPresent()) return answer.get();
+        }
+        return darkTerminal(isxTheme, System.getenv("COLORFGBG"));
     }
 
     static boolean darkTerminal(String isxTheme, String colorFgBg) {

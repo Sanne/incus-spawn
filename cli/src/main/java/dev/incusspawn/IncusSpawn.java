@@ -35,6 +35,8 @@ public class IncusSpawn implements QuarkusApplication {
     public int run(String... args) {
         // Before any virtual thread waits on a socket: the poller mode is read once (#2129)
         VirtualThreadPollers.usePlatformThreads();
+        // A report's header band follows the terminal's theme, asked only when one is drawn
+        dev.incusspawn.util.Report.themeProbe(dev.incusspawn.tui.TerminalThemeDetector::probeDark);
         try {
             // A session that predates the user's incus-admin membership runs the command under sg (#2167)
             if (!Platform.isMacOS()) {
