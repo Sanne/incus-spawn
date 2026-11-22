@@ -156,13 +156,8 @@ class ProxyStopTest {
         return Files.exists(file) ? Files.readString(file) : "";
     }
 
-    private static boolean becomesFree(int port) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(RELEASE_GRACE_MILLIS);
-        while (!isFree(port)) {
-            if (System.nanoTime() - deadline > 0) return false;
-            Thread.sleep(5);
-        }
-        return true;
+    private static boolean becomesFree(int port) throws Exception {
+        return dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofMillis(RELEASE_GRACE_MILLIS), () -> isFree(port));
     }
 
     private static boolean isFree(int port) {

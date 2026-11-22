@@ -279,13 +279,10 @@ class StaleUpstreamConnectionTest {
      * The blob is committed after the client has its answer: wait for it, so the next test's reset
      * does not run before the commit and leave that test a cache hit.
      */
-    static void awaitCached() throws InterruptedException {
+    static void awaitCached() throws Exception {
         var cached = Environment.registryCacheDir().resolve(DIGEST.replace(":", "-"));
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (!Files.isRegularFile(cached)) {
-            assertTrue(System.nanoTime() < deadline, "The fetched blob was never cached");
-            Thread.sleep(10);
-        }
+        dev.incusspawn.util.Eventually.await("the fetched blob to be cached", java.time.Duration.ofSeconds(5),
+                () -> Files.isRegularFile(cached));
     }
 
     static String sha256Hex(String text) {

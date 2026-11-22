@@ -559,17 +559,18 @@ class WebSocketProxyTest {
             }
             // Vert.x 5 reports Netty's refusal as a failed accept(): the proxy says so instead of dropping it
             var failed = "WebSocket handshake to api.openai.com failed";
-            String logged = "";
-            for (int i = 0; i < 50 && !logged.contains(failed); i++) {
+            var loggedNow = new String[] {""};
+            dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(5), () -> {
                 if (Files.exists(log)) {
                     // logStart counts bytes: cut the bytes, then decode
                     var bytes = Files.readAllBytes(log);
                     // A log truncated meanwhile is read whole
                     int from = logStart <= bytes.length ? (int) logStart : 0;
-                    logged = new String(bytes, from, bytes.length - from, StandardCharsets.UTF_8);
+                    loggedNow[0] = new String(bytes, from, bytes.length - from, StandardCharsets.UTF_8);
                 }
-                if (!logged.contains(failed)) Thread.sleep(100);
-            }
+                return loggedNow[0].contains(failed);
+            });
+            String logged = loggedNow[0];
             assertTrue(logged.contains(failed), "The failed accept should be logged, log was: " + logged);
             assertFalse(logged.contains(proof), "The failed accept's diagnostic must never include the proof");
         } finally {

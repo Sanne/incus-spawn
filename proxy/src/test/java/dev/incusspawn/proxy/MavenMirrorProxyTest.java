@@ -201,12 +201,9 @@ class MavenMirrorProxyTest {
     /** Waits for the copy and its stored checksum to be committed with {@code content}. */
     private static void awaitCopy(String content) throws Exception {
         var checksum = copy().resolveSibling(copy().getFileName() + ".sha1");
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (!(Files.isRegularFile(checksum) && Files.isRegularFile(copy())
-                && content.equals(Files.readString(copy())))) {
-            assertTrue(System.nanoTime() < deadline, "the download was never cached");
-            Thread.sleep(10);
-        }
+        dev.incusspawn.util.Eventually.await("the download to be cached", java.time.Duration.ofSeconds(5),
+                () -> Files.isRegularFile(checksum) && Files.isRegularFile(copy())
+                        && content.equals(Files.readString(copy())));
     }
 
     @Test
