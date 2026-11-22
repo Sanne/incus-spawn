@@ -1,5 +1,7 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import dev.incusspawn.incus.IncusEventStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -159,7 +161,7 @@ class InstanceEventWatcherTest {
                     });
                     return s;
                 }, c -> {}, () -> {}, () -> gaveUp.set(true), 5, 30).start()) {
-            while (attempts.get() < InstanceEventWatcher.MAX_CONSECUTIVE_FAILURES + 3) Thread.sleep(10);
+            Eventually.await("the failed attempts", () -> attempts.get() >= InstanceEventWatcher.MAX_CONSECUTIVE_FAILURES + 3);
             assertFalse(gaveUp.get());
             assertFalse(watcher.hasGivenUp());
         }
@@ -195,8 +197,7 @@ class InstanceEventWatcherTest {
         watcher.close();
         // The opener hands us the stream before the watcher stores it as current. If close()
         // lands in that gap, the watcher thread closes the stream itself, just after.
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (!stream.closed && System.nanoTime() < deadline) Thread.sleep(5);
+        Eventually.holdsWithin(Duration.ofSeconds(2), () -> !(!stream.closed));
         assertTrue(stream.closed);
         Thread.sleep(300);
         assertTrue(streams.isEmpty(), "must not reconnect after close");

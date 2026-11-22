@@ -1,5 +1,7 @@
 package dev.incusspawn;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -202,7 +204,7 @@ class UninstallScriptTest {
             assertEquals(0, result.exit(), result.output());
             var child = ProcessHandle.of(Long.parseLong(Files.readString(bin.resolve("child")).strip()));
             // Killed, it still has to be reaped by whoever inherited it
-            for (int i = 0; i < 50 && child.isPresent() && child.get().isAlive(); i++) Thread.sleep(100);
+            Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(child.isPresent() && child.get().isAlive()));
             assertFalse(child.isPresent() && child.get().isAlive(), "isx's child outlived the bound:\n" + result.output());
         } finally {
             vm.destroyForcibly();

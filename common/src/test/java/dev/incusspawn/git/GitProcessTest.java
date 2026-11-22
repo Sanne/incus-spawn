@@ -1,5 +1,6 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.util.Eventually;
 import dev.incusspawn.config.GitTransferConfig;
 import dev.incusspawn.util.SessionProbe;
 import org.junit.jupiter.api.Test;
@@ -280,9 +281,9 @@ class GitProcessTest {
                 .map(ProcessHandle::pid);
     }
 
-    private static void assertNoneAlive(Long pid) throws InterruptedException {
+    private static void assertNoneAlive(Long pid) throws Exception {
         assertNotNull(pid, "the helper was seen");
-        for (int i = 0; i < 50 && ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false); i++) Thread.sleep(100);
+        Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)));
         assertFalse(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false), "helper " + pid + " survived");
     }
 }

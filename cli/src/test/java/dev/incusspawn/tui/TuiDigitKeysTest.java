@@ -1,5 +1,7 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import dev.incusspawn.Environment;
 import dev.incusspawn.command.InstanceListing;
 import dev.incusspawn.command.IsolatedHome;
@@ -219,8 +221,7 @@ class TuiDigitKeysTest {
         assertTrue(screen(tui).contains("why 7"), "7 is typed into the question: " + screen(tui));
         // Opening AI Help reads every definition on a virtual thread; wait for its size to show, so
         // that read ends inside this test's isolated home rather than after it
-        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
-        while (!screen(tui).contains("(~") && System.nanoTime() < deadline) Thread.sleep(10);
+        Eventually.holdsWithin(Duration.ofSeconds(30), () -> !(!screen(tui).contains("(~")));
         assertTrue(screen(tui).contains("(~"), "the definitions were read: " + screen(tui));
     }
 

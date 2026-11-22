@@ -29,6 +29,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.incusspawn.util.Eventually;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.ConnectException;
@@ -653,21 +654,14 @@ class ArtifactCacheProxyTest {
         boolean holds() throws Exception;
     }
 
-    /** Polls every 10 ms, so a wait lasts barely longer than the condition takes. */
+    /** Samples often ({@link Eventually}), so a wait lasts barely longer than the condition takes. */
     static void await(String what, Condition condition) throws Exception {
         awaitOr(what, condition, () -> null);
     }
 
     /** As {@link #await}, a timeout also reporting {@code state}, read when it happens. */
     static void awaitOr(String what, Condition condition, Supplier<String> state) throws Exception {
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (!condition.holds()) {
-            if (System.nanoTime() - deadline > 0) {
-                var seen = state.get();
-                fail("Timed out waiting for " + what + (seen == null ? "" : " (" + seen + ")"));
-            }
-            Thread.sleep(10);
-        }
+        Eventually.await(what, Duration.ofSeconds(5), condition::holds, state);
     }
 
     /** Commits happen after the response ends, on a worker thread. */

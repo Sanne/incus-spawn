@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import java.time.Duration;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.SpawnConfig;
 
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.incusspawn.util.Eventually;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -388,10 +390,12 @@ class ManifestCacheProxyTest {
     }
 
     static void await(BooleanSupplier condition, String message) throws InterruptedException {
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (!condition.getAsBoolean()) {
-            assertTrue(System.nanoTime() < deadline, message);
-            Thread.sleep(10);
+        try {
+            Eventually.await(message, Duration.ofSeconds(5), condition::getAsBoolean);
+        } catch (InterruptedException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AssertionError(e);
         }
     }
 

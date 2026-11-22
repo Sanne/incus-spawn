@@ -1,5 +1,7 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 
@@ -529,7 +531,7 @@ class ApiRequestBodyTest {
         vertexProxy.spoolBudget = small;
         try {
             body.run();
-            for (int i = 0; i < 50 && small.held() != 0; i++) Thread.sleep(100);
+            Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(small.held() != 0));
             assertEquals(0, small.held(), "the exchange gave its spool back");
         } finally {
             vertexProxy.spoolBudget = budget;
@@ -888,7 +890,7 @@ class ApiRequestBodyTest {
             var answer = RelayRequestBodyTest.collectUntilClose(socket);
             socket.write(head("POST", "api.anthropic.com", path, "Content-Length: " + body.length()) + body);
             var upstream = heldOpen.get(5, TimeUnit.SECONDS);
-            for (int i = 0; i < 50 && small.held() != 0; i++) Thread.sleep(100);
+            Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(small.held() != 0));
             assertEquals(0, small.held(), "the body was kept while the answer streamed");
             upstream.end("data: done\n\n");
             assertTrue(answer.get(10, TimeUnit.SECONDS).contains("data: done"));

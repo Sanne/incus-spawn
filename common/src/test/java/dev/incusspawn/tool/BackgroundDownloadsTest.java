@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.util.Eventually;
 import com.sun.net.httpserver.HttpServer;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
@@ -136,7 +137,7 @@ class BackgroundDownloadsTest {
             var sha = sha256(BODY);
             var ahead = BackgroundDownloads.start(cache(cacheDir), () -> List.of(new DownloadCache.Pinned(url, sha)));
             var partial = cacheDir.resolve(DownloadCache.PARTIAL_DIR).resolve(DownloadCache.cacheFilename(url));
-            for (var i = 0; i < 500 && !(Files.exists(partial) && Files.size(partial) > 0); i++) Thread.sleep(10);
+            Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(!(Files.exists(partial) && Files.size(partial) > 0)));
             ahead.close();
             assertTrue(ahead.await(Duration.ofSeconds(10)), "the download stopped");
             assertEquals(List.of(), ahead.fetched());

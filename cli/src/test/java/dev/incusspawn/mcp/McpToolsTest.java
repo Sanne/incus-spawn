@@ -1,5 +1,7 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.Environment;
@@ -719,10 +721,7 @@ class McpToolsTest {
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":901,\"method\":\"tools/call\",\"params\":{\"name\":\"create_instance\",\"arguments\":" + args + "}}");
         assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS), "first copy under way");
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":902,\"method\":\"tools/call\",\"params\":{\"name\":\"create_instance\",\"arguments\":" + args + "}}");
-        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 902) && System.nanoTime() < deadline) {
-            Thread.sleep(10);
-        }
+        Eventually.holdsWithin(Duration.ofSeconds(5), () -> !(out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 902)));
         assertEquals("busy", code(out.byId(902).path("result")), out.byId(902).toString());
         release.countDown();
         server.awaitIdle();

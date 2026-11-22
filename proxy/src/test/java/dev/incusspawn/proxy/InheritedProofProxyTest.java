@@ -1,5 +1,7 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.Eventually;
+import java.time.Duration;
 import dev.incusspawn.incus.IncusClient;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -311,7 +313,7 @@ class InheritedProofProxyTest {
         var wsClient = vertx.createWebSocketClient(new WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
         try {
             wsClient.connect(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
-            for (int i = 0; i < 100 && !received.containsKey("ws:/forged"); i++) Thread.sleep(10);
+            Eventually.holdsWithin(Duration.ofMillis(1000), () -> !(!received.containsKey("ws:/forged")));
             assertEquals(forged, received.get("ws:/forged"));
         } finally { wsClient.close(); }
     }
@@ -355,7 +357,7 @@ class InheritedProofProxyTest {
         var wsClient = vertx.createWebSocketClient(new WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
         try {
             wsClient.connect(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
-            for (int i = 0; i < 100 && !received.containsKey("ws:/socket"); i++) Thread.sleep(50);
+            Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(!received.containsKey("ws:/socket")));
         } finally {
             wsClient.close();
         }

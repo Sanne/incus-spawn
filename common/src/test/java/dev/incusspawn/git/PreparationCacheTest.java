@@ -1,5 +1,6 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.util.Eventually;
 import dev.incusspawn.config.GitCacheConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -109,8 +110,7 @@ class PreparationCacheTest {
                 "-cp", System.getProperty("java.class.path"), Writer.class.getName(), root.toString(), key,
                 ready.toString()).redirectErrorStream(true).redirectOutput(root.resolve("writer.log").toFile()).start();
         try (var workers = java.util.concurrent.Executors.newSingleThreadExecutor()) {
-            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
-            while (!Files.exists(ready) && child.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+            Eventually.holdsWithin(Duration.ofSeconds(10), () -> !(!Files.exists(ready) && child.isAlive()));
             assertTrue(Files.exists(ready), Files.readString(root.resolve("writer.log")));
             assertTrue(PreparationCache.WRITER_TIMEOUT.compareTo(dev.incusspawn.util.HostLock.TIMEOUT) > 0);
             // production passes it: the test below injects a short wait, so this is what pins the real one

@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import java.time.Duration;
 import dev.incusspawn.incus.IncusClient;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import io.vertx.core.Vertx;
@@ -22,6 +23,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import dev.incusspawn.util.Eventually;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -851,7 +853,7 @@ class ChatGptRouteTest {
         holdBackend = new CompletableFuture<>();
         var late = CompletableFuture.supplyAsync(() -> uncheck(() ->
                 backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access()))));
-        for (int i = 0; i < 200 && seenOn("/backend-api/codex/responses").isEmpty(); i++) Thread.sleep(25);
+        Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(seenOn("/backend-api/codex/responses").isEmpty()));
         assertEquals(200, refresh(proofs().refreshToken()).status(), "near expiry: refreshed upstream");
         holdBackend.complete(null);
         assertEquals(401, late.get(15, TimeUnit.SECONDS).status());
@@ -868,7 +870,7 @@ class ChatGptRouteTest {
         backendRefuses = true;
         upgrade(codexWebSocket());
         // The client's handshake completes before the proxy dials: the stub refuses the dial itself
-        for (int i = 0; i < 200 && seen.stream().noneMatch(e -> e.startsWith("WS ")); i++) Thread.sleep(25);
+        Eventually.holdsWithin(Duration.ofMillis(5000), () -> !(seen.stream().noneMatch(e -> e.startsWith("WS "))));
         backendRefuses = false;
 
         // The refusal is recorded once upstream's answer is in: until then a refresh is answered here
@@ -898,7 +900,7 @@ class ChatGptRouteTest {
             awaitRefreshes(1);
             for (int i = 0; i < 19; i++) replies.add(pool.submit(() -> refresh(token)));
             if (joins > 0) {
-                for (int i = 0; i < 400 && proxy.chatGpt.joined.get() - joinedBefore < joins; i++) Thread.sleep(25);
+                Eventually.holdsWithin(Duration.ofMillis(10000), () -> !(proxy.chatGpt.joined.get() - joinedBefore < joins));
             } else {
                 // Answered at once, while the first still waits upstream
                 for (var reply : replies.subList(1, replies.size())) {
@@ -1340,13 +1342,13 @@ class ChatGptRouteTest {
         assertEquals(401, backend(method, path, accessPlaceholder(proofs().access())).status());
     }
 
-    static void awaitRefreshes(int n) throws InterruptedException {
-        for (int i = 0; i < 200 && refreshes.get() < n; i++) Thread.sleep(25);
+    static void awaitRefreshes(int n) throws Exception {
+        Eventually.holdsWithin(Duration.ofSeconds(5), () -> refreshes.get() >= n);
         assertEquals(n, refreshes.get());
     }
 
-    static void awaitRevokes(int n) throws InterruptedException {
-        for (int i = 0; i < 200 && revokeBodies.size() < n; i++) Thread.sleep(25);
+    static void awaitRevokes(int n) throws Exception {
+        Eventually.holdsWithin(Duration.ofSeconds(5), () -> revokeBodies.size() >= n);
         assertEquals(n, revokeBodies.size(), "revokes: " + revokeBodies);
     }
 
