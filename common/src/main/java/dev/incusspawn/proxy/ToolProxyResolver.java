@@ -83,6 +83,8 @@ public final class ToolProxyResolver {
                                                   Map<String, String> accountsByNamespace) {
         var result = new ArrayList<ResolvedToolProxy>();
         var namespaces = new java.util.HashMap<String, String>();
+        // Built only when some entry configures its domains
+        java.util.function.Predicate<String> taken = null;
 
         for (var toolEntry : toolSetups.entrySet()) {
             var toolName = toolEntry.getKey();
@@ -114,7 +116,10 @@ public final class ToolProxyResolver {
                 if (isAnthropic ? allConfigValues.isEmpty() : !allReferenced) continue;
 
                 var spends = namespacesOf(proxyDef, authEntry);
-                for (var domain : resolveDomains(authEntry.getDomains(), allConfigValues)) {
+                if (taken == null && authEntry.getDomains().stream().anyMatch(ToolProxyResolver::isConfiguredDomain)) {
+                    taken = takenDomains(toolSetups);
+                }
+                for (var domain : resolveDomains(toolName, authEntry.getDomains(), allConfigValues, taken)) {
                     result.add(new ResolvedToolProxy(toolName, domain, authEntry, Map.copyOf(allConfigValues), spends));
                 }
             }
@@ -278,7 +283,7 @@ public final class ToolProxyResolver {
                 if (auth.getType() == null) continue;
                 var spends = namespacesOf(proxyDef, auth);
                 for (var domain : auth.getDomains()) {
-                    if (!domain.isBlank() && !REF_PATTERN.matcher(domain).find()) {
+                    if (!domain.isBlank() && !isConfiguredDomain(domain)) {
                         result.add(new ResolvedToolProxy(toolName, domain, auth, Map.of(), spends));
                     }
                 }
@@ -594,38 +599,109 @@ public final class ToolProxyResolver {
         }
     }
 
+    /** Whether a raw {@code domains:} entry names a configuration key ({@code ${key}}). */
+    public static boolean isConfiguredDomain(String rawDomain) {
+        return rawDomain != null && REF_PATTERN.matcher(rawDomain).find();
+    }
+
+    /** The configuration keys {@code auth}'s {@code domains:} entries reference. */
+    public static List<String> extractDomainKeys(ToolDef.AuthDef auth) {
+        var keys = new ArrayList<String>();
+        for (var domain : auth.getDomains()) extractRefs(domain, keys);
+        return keys;
+    }
+
     /**
      * Resolve {@code ${configKey}} references in domain entries and split comma-separated
      * values into individual domains. A domain entry that is a pure literal passes through
-     * unchanged; one containing an unresolvable reference is dropped.
+     * unchanged; one containing an unresolvable reference is dropped. A configured domain
+     * must be a plain host name, under the entry's own {@code *.} when it starts with one, and none that {@code taken} says isx or another tool already
+     * serves: it is dropped with a warning otherwise, so a value of {@code github.com} never
+     * puts this entry's credential on GitHub's traffic.
+     *
+     * @param taken whether a host name is already served, asked only for configured domains
      */
-    static List<String> resolveDomains(List<String> rawDomains, Map<String, String> configValues) {
+    static List<String> resolveDomains(String toolName, List<String> rawDomains, Map<String, String> configValues,
+                                       java.util.function.Predicate<String> taken) {
         if (rawDomains == null) return List.of();
         var result = new ArrayList<String>();
         for (var domain : rawDomains) {
-            if (domain == null) continue;
-            var resolved = domain;
-            boolean hasUnresolved = false;
-            Matcher m = REF_PATTERN.matcher(domain);
+            if (domain == null || domain.isBlank()) continue;
+            if (!isConfiguredDomain(domain)) {
+                result.add(domain);
+                continue;
+            }
+            // A wildcard is the definition's to write, never a configured value's
+            var wildcard = domain.startsWith("*.");
+            var template = wildcard ? domain.substring(2) : domain;
+            // One pass over the entry: a value is never itself searched for references
+            var resolved = new StringBuilder();
+            boolean unresolved = false;
+            Matcher m = REF_PATTERN.matcher(template);
             while (m.find()) {
                 var value = configValues.get(m.group(1));
                 if (value == null || value.isBlank()) {
-                    hasUnresolved = true;
+                    unresolved = true;
                     break;
                 }
+                m.appendReplacement(resolved, Matcher.quoteReplacement(value));
             }
-            if (hasUnresolved) continue;
-            for (var entry : configValues.entrySet()) {
-                resolved = resolved.replace("${" + entry.getKey() + "}", entry.getValue());
-            }
-            for (var part : resolved.split(",")) {
-                var trimmed = part.trim();
-                if (!trimmed.isEmpty()) {
-                    result.add(trimmed);
+            if (unresolved) continue;
+            m.appendTail(resolved);
+            for (var part : resolved.toString().split(",")) {
+                var name = part.strip().toLowerCase(java.util.Locale.ROOT);
+                if (name.isEmpty()) continue;
+                if (!CertStore.isHostname(name)) {
+                    dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
+                            + "': configured domain '" + name + "' is not a host name -- skipping it"));
+                } else if (taken.test(name)) {
+                    dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
+                            + "': configured domain '" + name + "' is already served by isx or another tool"
+                            + " -- skipping it, so its credential is not sent there"));
+                } else {
+                    result.add(wildcard ? "*." + name : name);
                 }
             }
         }
         return result;
+    }
+
+    /** As above, against nothing taken: for tests of the substitution alone. */
+    static List<String> resolveDomains(List<String> rawDomains, Map<String, String> configValues) {
+        return resolveDomains("", rawDomains, configValues, name -> false);
+    }
+
+    /**
+     * Whether a configured domain would land on a host name isx already serves: a built-in
+     * intercepted domain, ChatGPT's and Google's sign-in hosts, a name under {@code .internal}
+     * (host routes, {@code mcp.isx.internal}, {@code host.isx.internal}), or any tool's static
+     * domain, exact or under its wildcard. A name under a taken one is taken too.
+     */
+    static java.util.function.Predicate<String> takenDomains(Map<String, ToolSetup> toolSetups) {
+        var taken = new java.util.HashSet<String>();
+        for (var name : dev.incusspawn.config.MavenRepositories.builtInTaken()) taken.add(name.toLowerCase(java.util.Locale.ROOT));
+        for (var name : ChatGptAccounts.DOMAINS) taken.add(name.toLowerCase(java.util.Locale.ROOT));
+        for (var name : GoogleAccounts.DOMAINS) taken.add(name.toLowerCase(java.util.Locale.ROOT));
+        for (var tool : toolSetups.values()) {
+            var proxyDef = tool.proxy();
+            if (proxyDef == null) continue;
+            for (var auth : proxyDef.getAuth()) {
+                for (var domain : auth.getDomains()) {
+                    if (domain == null || domain.isBlank() || isConfiguredDomain(domain)) continue;
+                    var bare = domain.startsWith("*.") ? domain.substring(2) : domain;
+                    taken.add(bare.toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+        }
+        return name -> {
+            if (name.equals("internal") || name.endsWith(".internal")) return true;
+            for (var candidate = name; ; ) {
+                if (taken.contains(candidate)) return true;
+                var dot = candidate.indexOf('.');
+                if (dot < 0) return false;
+                candidate = candidate.substring(dot + 1);
+            }
+        };
     }
 
     /** @deprecated use {@link AccountResolver#navigate} -- kept for existing callers. */

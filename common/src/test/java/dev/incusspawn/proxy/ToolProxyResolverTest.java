@@ -269,6 +269,46 @@ class ToolProxyResolverTest {
         assertEquals(List.of("*.example.com"), result);
     }
 
+    @Test
+    void aConfiguredValueThatIsNotAHostNameIsDropped() {
+        var result = ToolProxyResolver.resolveDomains(List.of("${instances}"),
+                Map.of("instances", "good.example.com, evil.example.com/path, a b.example.com, *.example.com, localhost"));
+        assertEquals(List.of("good.example.com"), result);
+    }
+
+    @Test
+    void aConfiguredValueIsNotSearchedForReferences() {
+        var result = ToolProxyResolver.resolveDomains(List.of("${a}.example.com"),
+                Map.of("a", "${b}", "b", "x"));
+        assertEquals(List.of(), result, "'${b}.example.com' is no host name, never 'x.example.com'");
+    }
+
+    @Test
+    void aConfiguredDomainIsLowerCased() {
+        assertEquals(List.of("ge.example.com"),
+                ToolProxyResolver.resolveDomains(List.of("${d}"), Map.of("d", "GE.Example.COM")));
+    }
+
+    @Test
+    void aConfiguredDomainNeverLandsOnOneAlreadyServed() {
+        var gh = new ToolDef.ProxyDef();
+        var auth = authDef("bearer");
+        auth.setDomains(List.of("github.com", "*.githubusercontent.com"));
+        gh.setAuth(List.of(auth));
+        var taken = ToolProxyResolver.takenDomains(Map.of("gh", new ProxyOnly(gh)));
+        var result = ToolProxyResolver.resolveDomains("develocity", List.of("${d}"), Map.of("d",
+                "github.com, api.github.com, raw.githubusercontent.com, api.anthropic.com, repo1.maven.org,"
+                        + " chatgpt.com, oauth2.googleapis.com, mcp.isx.internal, controller.internal, ge.example.com"),
+                taken);
+        assertEquals(List.of("ge.example.com"), result);
+    }
+
+    /** A tool that declares only a proxy, for {@link ToolProxyResolver#takenDomains}. */
+    private record ProxyOnly(ToolDef.ProxyDef proxy) implements dev.incusspawn.tool.ToolSetup {
+        @Override public String name() { return "proxy-only"; }
+        @Override public void install(dev.incusspawn.incus.Container container, Map<String, String> params) {}
+    }
+
     private static ToolDef.AuthDef authDef(String type) {
         var auth = new ToolDef.AuthDef();
         auth.setType(type);

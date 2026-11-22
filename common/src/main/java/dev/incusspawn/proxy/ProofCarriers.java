@@ -29,6 +29,15 @@ public final class ProofCarriers {
     private final Map<MissingPlaceholders, java.util.Set<String>> missing;
 
     public ProofCarriers(Collection<? extends ToolSetup> tools) {
+        this(tools, List.of());
+    }
+
+    /**
+     * @param resolved the entries the proxy serves for any account ({@link ToolProxyResolver#resolveAcrossAccounts}):
+     *                 a domain an entry takes from {@code config.yaml} ({@code ${key}}) has a carrier only
+     *                 as resolved there, never as its raw {@code ${key}}
+     */
+    public ProofCarriers(Collection<? extends ToolSetup> tools, Collection<ResolvedToolProxy> resolved) {
         var placeholders = InheritedProof.byNamespace(ProofToken.declaredBy(tools));
         var declared = new ArrayList<Carrier>();
         missing = new LinkedHashMap<>();
@@ -37,12 +46,7 @@ public final class ProofCarriers {
             if (proxy == null) continue;
             for (var auth : proxy.getAuth()) {
                 var namespaces = ToolProxyResolver.namespacesOf(proxy, auth);
-                var headers = switch (String.valueOf(auth.getType())) {
-                    case "anthropic" -> List.of("Authorization", "x-api-key");
-                    case "header" -> auth.getName() == null ? List.<String>of() : List.of(auth.getName());
-                    case "basic", "bearer" -> List.of("Authorization");
-                    default -> List.<String>of();
-                };
+                var headers = headersOf(auth);
                 for (var namespace : namespaces) {
                     if (!placeholders.containsKey(namespace)) {
                         missing.computeIfAbsent(new MissingPlaceholders(tool.name(), namespace),
@@ -51,8 +55,21 @@ public final class ProofCarriers {
                     var patterns = tokens(placeholders, namespace);
                     var claims = claims(placeholders, namespace);
                     for (var domain : auth.getDomains()) {
+                        if (ToolProxyResolver.isConfiguredDomain(domain)) continue;
                         for (var header : headers) declared.add(new Carrier(domain, namespace, header, patterns, claims));
                     }
+                }
+            }
+        }
+        for (var entry : resolved) {
+            var auth = entry.auth();
+            if (auth == null || auth.getDomains().contains(entry.domain())
+                    || auth.getDomains().stream().noneMatch(ToolProxyResolver::isConfiguredDomain)) continue;
+            for (var namespace : entry.namespaces()) {
+                if (!placeholders.containsKey(namespace)) continue;
+                for (var header : headersOf(auth)) {
+                    declared.add(new Carrier(entry.domain(), namespace, header,
+                            tokens(placeholders, namespace), claims(placeholders, namespace)));
                 }
             }
         }
@@ -64,6 +81,15 @@ public final class ProofCarriers {
             }
         }
         carriers = List.copyOf(declared);
+    }
+
+    private static List<String> headersOf(dev.incusspawn.tool.ToolDef.AuthDef auth) {
+        return switch (String.valueOf(auth.getType())) {
+            case "anthropic" -> List.of("Authorization", "x-api-key");
+            case "header" -> auth.getName() == null ? List.<String>of() : List.of(auth.getName());
+            case "basic", "bearer" -> List.of("Authorization");
+            default -> List.<String>of();
+        };
     }
 
     private static List<Pattern> tokens(Map<String, List<ProofToken.Placeholder>> placeholders, String namespace) {

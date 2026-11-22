@@ -641,6 +641,15 @@ public final class AccountSelection {
      * that use it, rather than cutting the instance off from every service.
      */
     public static Map<String, java.util.Set<String>> namespacesByDomain(Map<String, ToolSetup> toolSetups) {
+        return namespacesByDomain(toolSetups, List.of());
+    }
+
+    /**
+     * As above, with the domains entries take from {@code config.yaml} ({@code ${key}}) as
+     * {@code resolved} has them, the entries served for any account: never a raw {@code ${key}}.
+     */
+    public static Map<String, java.util.Set<String>> namespacesByDomain(Map<String, ToolSetup> toolSetups,
+            java.util.Collection<dev.incusspawn.proxy.ResolvedToolProxy> resolved) {
         var byDomain = new LinkedHashMap<String, java.util.Set<String>>();
         toolSetups.values().forEach(setup -> {
             var proxyDef = setup.proxy();
@@ -649,10 +658,20 @@ public final class AccountSelection {
             if (namespaces.isEmpty()) return;
             for (var auth : proxyDef.getAuth()) {
                 for (var domain : auth.getDomains()) {
+                    if (dev.incusspawn.proxy.ToolProxyResolver.isConfiguredDomain(domain)) continue;
                     byDomain.computeIfAbsent(domain, d -> new java.util.LinkedHashSet<>()).addAll(namespaces);
                 }
             }
         });
+        for (var entry : resolved) {
+            var setup = toolSetups.get(entry.toolName());
+            var auth = entry.auth();
+            if (setup == null || auth == null || auth.getDomains().contains(entry.domain())
+                    || auth.getDomains().stream().noneMatch(dev.incusspawn.proxy.ToolProxyResolver::isConfiguredDomain)) continue;
+            var namespaces = setup.credentialNamespaces();
+            if (namespaces.isEmpty()) continue;
+            byDomain.computeIfAbsent(entry.domain(), d -> new java.util.LinkedHashSet<>()).addAll(namespaces);
+        }
         // The proxy's own route for Pi's google-vertex provider, which spends the Claude account (#1114)
         var claude = SpawnConfig.ClaudeConfig.NAMESPACE;
         if (byDomain.values().stream().anyMatch(namespaces -> namespaces.contains(claude))) {
