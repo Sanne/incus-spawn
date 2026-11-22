@@ -587,9 +587,12 @@ class McpSessionTest {
     @Test
     void anInstanceThatAnswersSlowlyIsCountedOnceThenCoolsDown() {
         var asked = new java.util.concurrent.atomic.AtomicInteger();
-        var held = withASlowInstance("mcp-slow", java.time.Duration.ofMillis(400), asked, () -> {
+        var held = withASlowInstance("mcp-slow", java.time.Duration.ofMillis(3000), asked, () -> {
             try {
-                Thread.sleep(250); // in time, but past half of it: a FIFO a loop feeds just in time
+                // In time, but past half of it: a FIFO a loop feeds just in time.
+                // The margin to the timeout is wide: a loaded runner that oversleeps would otherwise
+                // push the answer past it, where it counts nothing and the test sees no refusal (#2502).
+                Thread.sleep(1700);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
