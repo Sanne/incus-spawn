@@ -173,13 +173,10 @@ class RepoClonerPreparedTest {
                             locked.countDown();
                             // Released once the call waits for the cut read, or once the test has listed the leases:
                             // a call that returns without waiting always finds the lease, however slow the guest.
-                            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
-                            while (returned.getCount() > 0 && System.nanoTime() < deadline
-                                    && java.util.Arrays.stream(tester.getStackTrace())
-                                            .noneMatch(frame -> frame.getMethodName().equals("awaitRemoteReads"))) {
-                                Thread.sleep(1);
-                            }
-                        } catch (InterruptedException e) {
+                            dev.incusspawn.util.Eventually.holdsWithin(java.time.Duration.ofSeconds(30),
+                                    () -> returned.getCount() == 0 || java.util.Arrays.stream(tester.getStackTrace())
+                                            .anyMatch(frame -> frame.getMethodName().equals("awaitRemoteReads")));
+                        } catch (Exception e) {
                             Thread.currentThread().interrupt();
                         }
                     });
