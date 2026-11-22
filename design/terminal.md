@@ -94,8 +94,15 @@ None of them read the terminal's width, and `isx account` printed every instance
 
 **The rules:**
 
-- **A header is upper case and quiet, with no rule under it.**
-  A row of dashes is a line of ink that says nothing, and the header's case and dimness already set it apart.
+- **A header is upper case on a modest band, with no rule under it.**
+  The band is a grey one step from the terminal's background, as wide as the widest row (`Report.band`).
+  It sets the header apart from the rows without a row of dashes, which is a line of ink that says nothing.
+  A dim header was tried first and read as weak, since some terminals draw dim text very faintly.
+  The TUI fills no header, because it has a cursor row to keep loudest; a command's table has none.
+  A command does not ask the terminal for its background, which would be a round trip on every run.
+  It reads `ISX_THEME`, then `COLORFGBG` where the terminal sets it, and otherwise takes the terminal for dark.
+  The band sets the text's colour with its own, so a wrong guess gives a louder band that is still read.
+  Off an ANSI terminal the header is plain upper case, and on the Linux console it is bold.
 - **A column is as wide as its widest cell**, and two spaces separate columns.
   A fixed width is either wasted or too small.
 - **Numbers end at the same column** (`Table.right`), so their sizes compare at a glance.
