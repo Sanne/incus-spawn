@@ -196,25 +196,27 @@ class McpServerEntryTest {
     }
 
     /**
-     * Antigravity CLI reads no variable in its MCP config (#2366), so it refuses a server whose
-     * bearer token is one; every other server is written in the form {@code agy mcp add} writes.
+     * Antigravity CLI reads no variable in its MCP config (#2366), so a server whose bearer token
+     * is one is registered as the stdio bridge, which reads it per request (#2476): the entry
+     * holds the variable's name and never a token. Every other server is written in the form
+     * {@code agy mcp add} writes.
      */
     @Test
-    void antigravityRefusesAServerWhoseTokenWouldHaveToBeWritten() {
+    void antigravityGetsABridgeForAServerWhoseTokenIsAVariable() {
         assertSame(McpClients.ANTIGRAVITY, new AntigravitySetup().mcpClient());
         var plain = new McpServer("docs", null, List.of(), Map.of(), "https://docs.example.com/mcp", null);
-        assertNull(McpClients.ANTIGRAVITY.refuses(STDIO));
-        assertNull(McpClients.ANTIGRAVITY.refuses(plain));
-        assertTrue(McpClients.ANTIGRAVITY.refuses(HTTP).contains("ATLASSIAN_MCP_AUTH"), McpClients.ANTIGRAVITY.refuses(HTTP));
-        assertNull(McpClients.GEMINI.refuses(HTTP), "the others resolve the variable when they connect");
+        assertNull(McpClients.ANTIGRAVITY.refuses(HTTP), "none is refused any more");
 
         var mine = "{\"mcpServers\": {\"mine\": {\"command\": \"m\"}}}";
-        var merged = (JqObject) JqValues.parse(McpClients.mergeServers(mine, "p", List.of(STDIO, plain),
+        var merged = (JqObject) JqValues.parse(McpClients.mergeServers(mine, "p", List.of(STDIO, plain, HTTP),
                 List.of(), McpClients::antigravityEntry));
         var servers = (JqObject) merged.get("mcpServers");
-        assertEquals(java.util.Set.of("mine", "jasolo", "docs"), new java.util.HashSet<>(servers.keys()));
+        assertEquals(java.util.Set.of("mine", "jasolo", "docs", "atlassian"), new java.util.HashSet<>(servers.keys()));
         assertEquals("{\"command\":\"java\",\"args\":[\"-jar\",\"/opt/jasolo/jasolo.jar\"],\"env\":{\"JASOLO_GIT_ROOTS\":\"/home/agentuser/q\"}}",
                 servers.get("jasolo").toJsonString());
         assertEquals("{\"serverUrl\":\"https://docs.example.com/mcp\"}", servers.get("docs").toJsonString());
+        var bridged = servers.get("atlassian").toJsonString();
+        assertEquals("{\"command\":\"node\",\"args\":[\"" + McpStdioBridge.PATH + "\",\"--url\",\"" + HTTP.url()
+                + "\",\"--bearer-env\",\"ATLASSIAN_MCP_AUTH\"],\"env\":{}}", bridged);
     }
 }

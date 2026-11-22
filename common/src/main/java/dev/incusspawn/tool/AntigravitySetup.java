@@ -400,6 +400,7 @@ public class AntigravitySetup implements ToolSetup {
                 .assertSuccess("Failed to read Antigravity CLI's settings");
         c.shAsUser("agentuser", "mkdir -p " + CLI_DIR + "/cache " + RULES_DIR + " && " + linkSkillsScript())
                 .assertSuccess("Failed to create Antigravity CLI's directories");
+        McpStdioBridge.install(c);
         c.writeFile(SETTINGS_PATH, settingsJson(read.stdout(), googleSignIn));
         c.chown(SETTINGS_PATH, "agentuser:agentuser");
         if (googleSignIn) {

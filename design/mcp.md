@@ -20,7 +20,7 @@ agy names its conversation in its `init` event, saved and recovered as opencode'
 So a resume, and a person's join, first check that the conversation's file is still there, and a resume whose `init` names another conversation is stopped.
 The prompt goes on stdin as one stream-json message, since `-p` takes the prompt as an argument, capped at 128 KiB.
 agy is a Go binary, so the tool installs Node for the runner alone; the alternative, a runner in shell with no JSON parser in a minimal image, would have to parse agy's events by hand.
-A coordinator's agy does not get the isx server: agy expands nothing in `mcp_config.json`, so the rotating instance secret would have to be written into the file on every start.
+A coordinator's agy reaches the isx server through a stdio bridge: agy expands nothing in `mcp_config.json`, so the entry runs `McpStdioBridge`, which reads the rotating instance secret from its file for each request (#2476).
 
 **Workers run with full access, bounded by the instance (#1857).**
 Claude runs in `bypassPermissions`, Codex in `danger-full-access` with `approval_policy=never`, Pi with every tool, opencode with `--auto`, Antigravity CLI with `--dangerously-skip-permissions`, and none has a turn limit (`DelegateAgent.permissionMode`).
@@ -576,7 +576,7 @@ The pieces, and why each is the way it is:
   Each mismatch is said by one function, naming the list, file and key to change, wherever it surfaces: `isx branch` and the TUI branch, a refusal and `list_templates`' `scope_note`, the session log, `isx doctor`, and the TUI's instance details; `isx list` shows only `mcp_client`, since it loads no definitions.
   `coordinator:` is an object so per-caller limits can join it later as keys that only narrow `mcp.yaml`'s global values, the same intersection.
   It is deliberately apart from #1720's `drivers:`: that names host programs already running as the user with the full CLI, a guard rail on `isx destroy`; this restricts guests the proxy identified, a security boundary, and merging them would give `isx mcp` a reason to read `config.yaml`.
-- *How its Claude Code, Pi or opencode finds the server: registered from the stamp on every start (#1182).*
+- *How its Claude Code, Pi, opencode or Antigravity CLI finds the server: registered from the stamp on every start (#1182).*
   Branching with `--mcp-client` is the only per-instance act.
   The exec that delivers each start's secret (`InstanceSecret.GUEST_SCRIPT`, root in the guest) also gets `ISX_MCP_CLIENT` (`InstanceSecret.guestEnv(secret, mcpCaller)`), which every start path reads from the instance it already holds, so it costs no request.
   `McpClientRegistration` compares it with a root-owned marker in the rootfs (`/var/lib/isx/mcp-client-registered`, holding a digest of the entry it registered, `ENTRY_VERSION`, so an isx that changes the entry re-registers existing coordinators on their next start), and checks that Claude Code's own config still holds the entry (`CONFIG_HAS_ENTRY`, so an entry the agent removed comes back; root reads that agent-owned file through `timeout -k 1 2 head -c 16MiB`, since the agent may swap in a FIFO or a vast sparse file and the readiness exec has no time limit of its own -- a read cut short answers "no entry", which costs a re-registration, never a hang).
@@ -760,7 +760,7 @@ opencode's `mcp add` has no remove and rewrites the `opencode.json` of the direc
 Gemini CLI, Bob Shell and Copilot are merged the same way, into the `mcpServers` of `~/.gemini/settings.json`, `~/.bob/settings/settings.json` and `~/.copilot/mcp-config.json`, with every other key kept.
 Gemini's `gemini mcp add` would expand a token into the file, which the merge avoids.
 Antigravity CLI is merged into `~/.gemini/config/mcp_config.json`, a remote server under `serverUrl`, as its own `agy mcp add` writes it.
-It expands no variable there, so its client refuses a server with `bearer-token-env` (`McpClient.refuses`): a warning names each one, and the record lists only what was written, so an entry of that name the user made is never taken for isx's.
+It expands no variable there, so a server with `bearer-token-env` is written as a stdio server running `McpStdioBridge`, which reads the variable when agy starts it, and no token is written into the file (#2476, docs/dev/MCP-ANTIGRAVITY-DELEGATION.md).
 Pi gets `--exposure direct`, as `isx`'s own entry does, so the tools are declared to its model as Claude Code declares them; that choice is the adapter's, never the tool's.
 Root records what it registered in `/var/lib/isx/mcp-servers`, one `<agent> <server>` per line, so a later build removes a server no tool declares any more and leaves an entry isx did not make alone.
 A stdio command not on agentuser's PATH fails the build, since every agent would list a server that cannot start and say so only when a session tries it.

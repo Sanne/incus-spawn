@@ -3,22 +3,24 @@ package dev.incusspawn.proxy;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.AntigravitySetup;
 import dev.incusspawn.tool.ClaudeSetup;
+import dev.incusspawn.tool.McpStdioBridge;
 import dev.incusspawn.tool.ToolDef;
 
 import java.util.List;
 
 /**
  * Registers {@code isx mcp} in the agents of an instance branched with {@code --mcp-client},
- * Claude Code (#1182), Pi and opencode, and takes it out of every other.
+ * Claude Code (#1182), Pi, opencode and Antigravity CLI (#2476), and takes it out of every other.
  *
  * <p>Reconciled from the {@link Metadata#MCP_CALLER} stamp on every isx start, by the exec that
  * already delivers the per-start secret ({@link InstanceSecret#GUEST_SCRIPT}): the host says
  * whether the instance holds the grant ({@link #ENV}), and a marker per agent in the rootfs says
  * whether isx registered the server there before. Only on a mismatch does the script run the
  * agent's own commands ({@code claude mcp add-json} or {@code claude mcp remove} at user scope,
- * {@code pi mcp add} or {@code pi mcp remove}, for opencode a Node edit of its config,
- * {@link #OPENCODE_EDIT}), so a steady-state start costs a few file tests
+ * {@code pi mcp add} or {@code pi mcp remove}, for opencode and Antigravity CLI a Node edit of
+ * their config, {@link #configEdit}), so a steady-state start costs a few file tests
  * per agent and runs nothing as the agent, whichever agents the template has. A copy of a
  * coordinator carries the registrations and markers until its first isx start, which removes
  * them: no copy carries the stamp.
@@ -45,6 +47,8 @@ public final class McpClientRegistration {
     static final String PI_MARKER = MARKER_DIR + "/mcp-client-registered-pi";
     /** The same record for opencode: {@link #OPENCODE_ENTRY_VERSION}. */
     static final String OPENCODE_MARKER = MARKER_DIR + "/mcp-client-registered-opencode";
+    /** The same record for Antigravity CLI: {@link #ANTIGRAVITY_ENTRY_VERSION}. */
+    static final String ANTIGRAVITY_MARKER = MARKER_DIR + "/mcp-client-registered-antigravity";
     private static final String AGENT_HOME = "/home/agentuser";
     /** Claude Code's user-scope config, where the entry lives. */
     static final String CLAUDE_CONFIG = ClaudeSetup.CLAUDE_JSON_PATH;
@@ -52,6 +56,8 @@ public final class McpClientRegistration {
     static final String PI_CONFIG = AGENT_HOME + "/.pi/agent/mcp.json";
     /** opencode's global config, which {@code OpencodeSetup} writes and its {@code mcp} section is in. */
     static final String OPENCODE_CONFIG = AGENT_HOME + "/.config/opencode/opencode.json";
+    /** Antigravity CLI's MCP config, which {@code mcpServers} is in. */
+    static final String ANTIGRAVITY_CONFIG = AntigravitySetup.MCP_CONFIG_PATH;
     /** How long root may spend reading an agent's config, and how much of it. */
     static final int CONFIG_READ_SECONDS = 2;
     static final int CONFIG_READ_BYTES = 16 << 20;
@@ -97,12 +103,15 @@ public final class McpClientRegistration {
     /** {@link #CONFIG_HAS_ENTRY}'s test of opencode's config. */
     static final String OPENCODE_CONFIG_HAS_ENTRY = configHasEntry(OPENCODE_CONFIG);
 
+    /** {@link #CONFIG_HAS_ENTRY}'s test of Antigravity CLI's config. */
+    static final String ANTIGRAVITY_CONFIG_HAS_ENTRY = configHasEntry(ANTIGRAVITY_CONFIG);
+
     /**
      * Shell test that some agent's config holds an entry for the endpoint, so the instance has
      * a client for it: what {@link McpClientCheck} reports.
      */
     static final String ANY_CONFIG_HAS_ENTRY = "{ " + CONFIG_HAS_ENTRY + " || " + PI_CONFIG_HAS_ENTRY
-            + " || " + OPENCODE_CONFIG_HAS_ENTRY + "; }";
+            + " || " + OPENCODE_CONFIG_HAS_ENTRY + " || " + ANTIGRAVITY_CONFIG_HAS_ENTRY + "; }";
 
     private static String configHasEntry(String config) {
         return "{ [ -f " + config + " ] && timeout -k 1 " + CONFIG_READ_SECONDS + " head -c "
@@ -151,26 +160,53 @@ public final class McpClientRegistration {
             .substring(0, 16);
 
     /**
-     * Node, run as the agent, that sets ({@code add}) or deletes ({@code remove}) the server's
-     * entry under {@code mcp} in opencode's config: opencode has no command that removes one, and
-     * its {@code mcp add} cannot set {@code oauth}. It reads the file as JSON, which is what
-     * {@code OpencodeSetup} writes; a file it cannot parse (a person's comments) is left as it is,
-     * and the failure leaves the marker too, so the next start tries again. It replaces the file
-     * by a rename, keeping its mode; a link (a dotfiles resource) is followed, so the rename
-     * replaces its target, never the link.
+     * Antigravity CLI's entry: it reads no variable, file or helper in its config, so the server is
+     * {@link McpStdioBridge}, a stdio server that reads the secret's file for each request. Nothing
+     * secret is in the entry. Registered only where the bridge is installed (a build of this
+     * version); an older image tries again after it is rebuilt.
      */
-    static final String OPENCODE_EDIT = "const fs=require('fs'),path=require('path');"
-            + "let f='" + OPENCODE_CONFIG + "';try{f=fs.realpathSync(f)}catch(e){}"
-            + "const add=process.argv[1]==='add';let c={},mode=0o644;"
-            + "try{mode=fs.statSync(f).mode&0o777;c=JSON.parse(fs.readFileSync(f,'utf8'))}"
-            + "catch(e){if(e.code!=='ENOENT')process.exit(1);if(!add)process.exit(0)}"
-            + "if(!c||typeof c!=='object'||Array.isArray(c))process.exit(1);"
-            + "const m=c.mcp&&typeof c.mcp==='object'&&!Array.isArray(c.mcp)?c.mcp:{};"
-            + "if(add)m." + SERVER_NAME + "=" + OPENCODE_SERVER_JSON + ";"
-            + "else if(!m." + SERVER_NAME + ")process.exit(0);"
-            + "else delete m." + SERVER_NAME + ";"
-            + "c.mcp=m;fs.mkdirSync(path.dirname(f),{recursive:true});"
-            + "const t=f+'.isx-'+process.pid;fs.writeFileSync(t,JSON.stringify(c,null,2)+'\\n',{mode});fs.renameSync(t,f)";
+    static final String ANTIGRAVITY_SERVER_JSON = JqObject.builder(2)
+            .put("command", "node")
+            .put("args", io.hyperfoil.tools.jjq.value.JqArray.arrayBuilder()
+                    .add(McpStdioBridge.PATH).add("--url").add("https://" + ProxyConfig.MCP_DOMAIN + "/mcp")
+                    .add("--header").add(InstanceSecret.HEADER)
+                    .add("--header-file").add(InstanceSecret.GUEST_PATH).build())
+            .build().toJsonString();
+
+    /** {@link #ENTRY_VERSION} for Antigravity CLI's entry. */
+    static final String ANTIGRAVITY_ENTRY_VERSION = ToolDef.sha256hex("antigravity " + SERVER_NAME + " " + ANTIGRAVITY_SERVER_JSON)
+            .substring(0, 16);
+
+    /**
+     * Node, run as the agent, that sets ({@code add}) or deletes ({@code remove}) the server's
+     * entry under {@code key} in the agent's JSON config at {@code config}: opencode has no command
+     * that removes one, its {@code mcp add} cannot set {@code oauth}, and Antigravity CLI's config
+     * is a file only. It reads the file as JSON, which is what the agent's setup writes; a file it
+     * cannot parse (a person's comments) is left as it is, and the failure leaves the marker too,
+     * so the next start tries again. It replaces the file by a rename, keeping its mode; a link (a
+     * dotfiles resource) is followed, so the rename replaces its target, never the link. A file
+     * that is missing is made by an {@code add}.
+     */
+    static String configEdit(String config, String key, String serverJson) {
+        return "const fs=require('fs'),path=require('path');"
+                + "let f='" + config + "';try{f=fs.realpathSync(f)}catch(e){}"
+                + "const add=process.argv[1]==='add';let c={},mode=0o644;"
+                + "try{mode=fs.statSync(f).mode&0o777;c=JSON.parse(fs.readFileSync(f,'utf8'))}"
+                + "catch(e){if(e.code!=='ENOENT')process.exit(1);if(!add)process.exit(0)}"
+                + "if(!c||typeof c!=='object'||Array.isArray(c))process.exit(1);"
+                + "const m=c." + key + "&&typeof c." + key + "==='object'&&!Array.isArray(c." + key + ")?c." + key + ":{};"
+                + "if(add)m." + SERVER_NAME + "=" + serverJson + ";"
+                + "else if(!m." + SERVER_NAME + ")process.exit(0);"
+                + "else delete m." + SERVER_NAME + ";"
+                + "c." + key + "=m;fs.mkdirSync(path.dirname(f),{recursive:true});"
+                + "const t=f+'.isx-'+process.pid;fs.writeFileSync(t,JSON.stringify(c,null,2)+'\\n',{mode});fs.renameSync(t,f)";
+    }
+
+    /** {@link #configEdit} for opencode's {@code mcp} object. */
+    static final String OPENCODE_EDIT = configEdit(OPENCODE_CONFIG, "mcp", OPENCODE_SERVER_JSON);
+
+    /** {@link #configEdit} for Antigravity CLI's {@code mcpServers} object. */
+    static final String ANTIGRAVITY_EDIT = configEdit(ANTIGRAVITY_CONFIG, "mcpServers", ANTIGRAVITY_SERVER_JSON);
 
     /** The PATH the agent's commands run with, the agent's own directory first. */
     private static final List<String> AGENT_PATH = List.of(AGENT_HOME + "/.local/bin", "/usr/local/bin", "/usr/bin", "/bin");
@@ -222,6 +258,11 @@ public final class McpClientRegistration {
             + reconcile(onAgentPath("opencode") + " && " + onAgentPath("node"), OPENCODE_MARKER, OPENCODE_ENTRY_VERSION, OPENCODE_CONFIG_HAS_ENTRY, false,
                     "node -e " + Container.shellQuote(OPENCODE_EDIT) + " remove",
                     "node -e " + Container.shellQuote(OPENCODE_EDIT) + " add")
+            // The same edit of agy's config; the bridge is root's file from the build, and an image without it waits for a rebuild
+            + reconcile(onAgentPath("agy") + " && " + onAgentPath("node") + " && [ -f " + McpStdioBridge.PATH + " ]",
+                    ANTIGRAVITY_MARKER, ANTIGRAVITY_ENTRY_VERSION, ANTIGRAVITY_CONFIG_HAS_ENTRY, false,
+                    "node -e " + Container.shellQuote(ANTIGRAVITY_EDIT) + " remove",
+                    "node -e " + Container.shellQuote(ANTIGRAVITY_EDIT) + " add")
             + "} >/dev/null 2>&1; unset isx_mcp isx_have; true";
 
     /**

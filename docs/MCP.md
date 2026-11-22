@@ -301,11 +301,14 @@ The box is not offered while the network is Airgapped.
 Such a coordinator cannot control any template until its template lists templates under `control-over`, and isx warns of that with a link to the steps above.
 
 Once the instance has started, isx checks the connection to the `isx mcp` server from inside the instance.
-It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code, Pi or opencode has the server registered.
+It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code, Pi, opencode or Antigravity CLI has the server registered.
 
-If the template has the `claude`, `pi` or `opencode` tool, there is nothing to set up.
+If the template has the `claude`, `pi`, `opencode` or `antigravity` tool, there is nothing to set up.
 Every isx start registers the server in each of them the instance has, where `claude mcp list`, `pi mcp list` or `opencode mcp list` shows it as `isx`.
-Interactive sessions, and `claude -p`, `pi -p` or `opencode run` under a systemd unit, all have the tools.
+
+Antigravity CLI shows it as the `isx` entry of `~/.gemini/config/mcp_config.json`.
+
+Interactive sessions, and `claude -p`, `pi -p`, `opencode run` or a delegated `agy` under a systemd unit, all have the tools.
 
 Claude Code also lists the coordination workflow as the prompt `/mcp__isx__coordinate`; Pi does not list MCP prompts.
 
@@ -352,6 +355,6 @@ What differs:
 - No coordinator makes another.
   Only `isx branch`, from the flag or the template's default, or the dialog's box makes an instance a coordinator.
   The grant never passes to a copy: not to `isx branch --from coord`, and not to anything created through MCP.
-  A copy of the coordinator loses the grant and its Claude Code, Pi and opencode registrations on its first start.
+  A copy of the coordinator loses the grant and its agents' registrations on its first start.
 - The coordinator reaches the `isx mcp` server only through the host proxy.
   The proxy serves the `isx mcp` server to the coordinator, so a coordinator works with `--proxy-only`; an `--airgap` instance cannot be a coordinator.

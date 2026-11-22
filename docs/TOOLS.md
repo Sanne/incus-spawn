@@ -749,7 +749,7 @@ The name `isx` is reserved for isx's own server.
 
 A server that a tool no longer declares is removed from each agent at the next build.
 An entry you add to an agent yourself is left alone.
-Antigravity CLI reads no variable in its MCP config, so it does not get a server with `bearer-token-env`.
+Antigravity CLI reads no variable in its MCP config, so a server with `bearer-token-env` reaches it through a small stdio bridge that reads the variable when agy starts it.
 
 ### Tool Actions
 
