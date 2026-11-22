@@ -19,6 +19,7 @@ paths:
 All multi-step lifecycle commands use `BuildOutput` (`common/.../util/BuildOutput.java`) for terminal output formatting -- not just build/branch but also `vm` (start/stop/resize), `destroy`, `update-all`, `update-base`, `project`, and the shared `VmManager`.
 `isx init` keeps its own frames (the setup banner, the numbered step boxes, the closing box), which `InitCommand` lays out and `BuildOutput.frame` draws as given (a kind of its own: not a result, nothing off a terminal); what it reports between them is steps, warnings and errors like any command's (#1703).
 Its questions are shown by the `Prompts` that reads their answers (`show`, `ask`, and `say` for a line said only because one is asked), which the terminal's shows through `BuildOutput.prompt` at the step indent; `BaseCommand.askYesNo` asks a yes/no question that way.
+A question with several choices goes through `Prompts.choose`, which spaces it with `BuildOutput.gap()`: one blank line before a block, none when a closing group or warning just printed one.
 Every question in `cli/command` is asked through `Prompts` (`askYesNo` for yes or no), `isx update-base`'s choice and `isx run`'s wait included; the old `askConfirmation` overloads, which printed the question as the caller wrote it, are gone.
 This centralizes ANSI constants and step patterns -- individual commands should not define their own.
 `BuildOutput`'s printing methods delegate to the bound `Output` (#1703); the printing itself, with the indent depth and the live step, lives in `TerminalOutput`.

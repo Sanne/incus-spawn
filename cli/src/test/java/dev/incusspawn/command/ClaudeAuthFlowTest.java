@@ -141,6 +141,22 @@ class ClaudeAuthFlowTest {
 
     // ── first-time setup, one per auth mode ──────────────────────────────────────
 
+    /** #2492: the auth-mode menu has the shared layout, and Enter leaves Claude unconfigured. */
+    @Test
+    void theAuthModeMenuUsesTheSharedLayout() {
+        var prompts = new ScriptedPrompts().line("");
+        run(new FakeInit(), prompts);
+        assertEquals(java.util.List.of(
+                "How should instances authenticate with Claude? Choose one:",
+                "",
+                "  1. Anthropic API key",
+                "  2. Claude Pro, Max or Team subscription (OAuth token)",
+                "  3. Google Cloud Vertex AI",
+                "",
+                "? Choice (Enter to leave Claude unconfigured): "),
+                prompts.conversation().stream().map(dev.incusspawn.util.BuildOutput::stripAnsi).toList());
+    }
+
     @Test
     void aVerifiedApiKeyIsSaved() {
         run(new FakeInit().acceptKey(API_KEY), new ScriptedPrompts().line("1").secret(API_KEY));
