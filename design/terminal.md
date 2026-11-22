@@ -81,6 +81,16 @@ This prevents leaked output (e.g. systemd's "Created symlink" lines) from breaki
 Never print to the raw streams or indent a line with leading spaces (a `group` indents its children), and write labels bare: a `Doing X` that did work is a live step, never a `Doing X...` step left dangling.
 Pure reports/tables and interactive prompts (e.g. `proxy` status, `clean` summaries, the TUI) are not step sequences and stay as plain output.
 
+## One layout for a question with several choices
+
+A menu that each step laid out by hand read as a wall of text under the previous answer, and its numbered lines read as steps to follow in order (#2492).
+`Prompts.choose(question, options, note, enterDoes)` gives every such question one layout.
+It leaves a blank line (`BuildOutput.gap()`, which does not double one a closing group just left), asks the question ending in "Choose one:", lists the options numbered and indented as a group, states a note that holds for several options once after the list, and ends with "Choice (Enter to ...)" naming what Enter does.
+An option's second line is written as a newline in its text and aligns under the first.
+The layout leaves the caveats of each option out of the choice, at the cost of a step that needs a long disclosure having to put it elsewhere.
+A menu keyed by letters (account management) is not yet on it.
+`PromptsChooseTest` pins the text.
+
 ## Output for scripts: `--format=table|plain|json`
 
 A script driving isx needs output it can parse, and the human output is the wrong thing to parse: padded columns, a header, ages like `3h ago` that contain a space, prose when the list is empty.

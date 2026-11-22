@@ -46,6 +46,20 @@ class BuildOutputTest {
         assertEquals("\u001b]0;⚠ log in  ]0;not isx\u0007", text(), "nothing in the title ends its escape");
     }
 
+    /** #2492: a gap spaces a question from the answer above it, and never doubles a blank line that just ended a block. */
+    @Test
+    void aGapIsOneBlankLineEvenAfterABlockThatEndedOnOne() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.step("answer");
+        BuildOutput.gap();
+        BuildOutput.step("question");
+        BuildOutput.header("Block", null);
+        BuildOutput.success("done");
+        BuildOutput.gap();
+        BuildOutput.step("next");
+        assertEquals("    answer\n\n    question\n\n  ● Block\n\n  ✓ done\n\n    next\n", text());
+    }
+
     @Test
     void plainStepCompletesItsLine() {
         BuildOutput.stepStart("Waiting for network");
