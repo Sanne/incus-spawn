@@ -241,10 +241,10 @@ public class MitmProxy {
                     alsoIntercepting(buildRouting(credentials.toolProxies(), proxiesAcrossAccounts, true),
                             hostRoutes.keySet(), alsoIntercepted),
                     dev.incusspawn.config.AccountSelection.byNamespace(toolSetups),
-                    dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups),
+                    dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups, proxiesAcrossAccounts),
                     new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), hostRoutes,
                     InheritedProof.byNamespace(ProofToken.declaredBy(toolSetups.values())),
-                    new ProofCarriers(toolSetups.values()), nested);
+                    new ProofCarriers(toolSetups.values(), proxiesAcrossAccounts), nested);
             proofCarriers.warnings().forEach(ProxyLog::warn);
         }
     }
