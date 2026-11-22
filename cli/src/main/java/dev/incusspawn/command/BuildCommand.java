@@ -2925,7 +2925,7 @@ public class BuildCommand extends BaseCommand {
         return null;
     }
 
-    private static void validateDefaultAction(String ref, ImageDef imageDef, Map<String, ImageDef> defs) {
+    static void validateDefaultAction(String ref, ImageDef imageDef, Map<String, ImageDef> defs) {
         var toolName = ref;
         int colon = ref.indexOf(':');
         if (colon >= 0) toolName = ref.substring(0, colon);
@@ -2937,7 +2937,17 @@ public class BuildCommand extends BaseCommand {
             }
         }
         if (!allTools.contains(toolName)) {
-            BuildOutput.warn("default-action '" + ref
+            String declaredBy = imageDef.getName();
+            for (var current : ImageDef.chain(imageDef, defs).reversed()) {
+                if (ref.equals(current.getDefaultAction())) {
+                    declaredBy = current.getName();
+                    break;
+                }
+            }
+            var origin = declaredBy.equals(imageDef.getName())
+                    ? "template '" + imageDef.getName() + "'"
+                    : "template '" + imageDef.getName() + "' (inherited from '" + declaredBy + "')";
+            BuildOutput.warn("In " + origin + ": default-action '" + ref
                     + "' references tool '" + toolName
                     + "' which is not in the tools list. "
                     + "Add it to tools: [" + toolName + "] or remove default-action.");
