@@ -147,7 +147,7 @@ Moving `agy` between an API key account and a Google account rewrites its settin
 A running `agy` keeps its old mode, so `isx account set` tells you to start it again from a new `isx shell`.
 
 The `name` and `email` fields on a GitHub account override the git identity that would otherwise come from the GitHub profile.
-When unset, they are derived from the GitHub API.
+When both are set, the build uses them and makes no GitHub API call; otherwise the missing one is derived from the GitHub API.
 `isx init` does not prompt for `name`; write it by hand.
 
 Changing a default switches every instance that follows it to the new account; `isx init` lists those instances first and lets you keep them on their current account.
