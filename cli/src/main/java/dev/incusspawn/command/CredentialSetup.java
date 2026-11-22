@@ -253,17 +253,21 @@ class CredentialSetup {
             }
         }
 
-        prompts.say("1. Sign in with ChatGPT — for a ChatGPT or ChatGPT Enterprise plan;");
-        prompts.say("   isx prints an address you open in a browser on this host,");
-        prompts.say("   where your organisation's SSO works too, and the session");
-        prompts.say("   stays on this host. isx signs in as Codex's own client,");
-        prompts.say("   which OpenAI has not endorsed — you opt in knowingly.");
-        prompts.say("2. Sign in with a one-time code — the same sign-in, for a host");
-        prompts.say("   whose browser is elsewhere; not yet tested against the real");
-        prompts.say("   service.");
-        prompts.say("3. Paste an OpenAI API key — for platform.openai.com usage,");
-        prompts.say("   which requires billing credits.");
-        var choice = readInput(prompts.ask("Choice (Enter to skip): "));
+        // The question first, so the numbers read as alternatives, and what both ChatGPT
+        // options share said once after them. The layout is by hand until Prompts has a
+        // menu of its own (#2492)
+        prompts.say("");
+        prompts.say("How should instances authenticate with OpenAI? Choose one:");
+        prompts.say("");
+        prompts.say("  1. ChatGPT account, browser on this machine");
+        prompts.say("     (ChatGPT and Enterprise plans, SSO included)");
+        prompts.say("  2. ChatGPT account, one-time code entered on any device");
+        prompts.say("     (not yet tested against the real service)");
+        prompts.say("  3. OpenAI API key (platform.openai.com, billed credits)");
+        prompts.say("");
+        prompts.say("Either ChatGPT option keeps the session on this host.");
+        prompts.say("");
+        var choice = readInput(prompts.ask("Choice (Enter to leave OpenAI unconfigured): "));
         switch (choice) {
             case "1" -> signInChatGptInBrowser(config, target);
             case "2" -> signInChatGptWithDeviceCode(config, target);
