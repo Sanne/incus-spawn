@@ -1011,6 +1011,34 @@ class BuildCommandTest {
     // --- resolveEffectiveDefaultAction ---
 
     @Test
+    void validateDefaultActionWarningNamesTheTemplate() {
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setDefaultAction("claude");
+
+        var out = RecordingOutput.during(() ->
+                BuildCommand.validateDefaultAction("claude", imageDef, Map.of("tpl-test", imageDef)));
+        var warning = out.events(RecordingOutput.Kind.WARN).get(0).msg();
+        assertTrue(warning.startsWith("In template 'tpl-test': default-action 'claude'"), warning);
+        assertFalse(warning.contains("inherited"), warning);
+    }
+
+    @Test
+    void validateDefaultActionWarningNamesTheInheritedLayer() {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setDefaultAction("claude");
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var out = RecordingOutput.during(() -> BuildCommand.validateDefaultAction("claude", child,
+                Map.of("tpl-parent", parent, "tpl-child", child)));
+        var warning = out.events(RecordingOutput.Kind.WARN).get(0).msg();
+        assertTrue(warning.startsWith("In template 'tpl-child' (inherited from 'tpl-parent'): "), warning);
+    }
+
+    @Test
     void resolveEffectiveDefaultActionExplicit() {
         var imageDef = new ImageDef();
         imageDef.setName("tpl-test");
