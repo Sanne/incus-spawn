@@ -88,13 +88,14 @@ class OpencodeSetupTest {
     }
 
     @Test
-    void geminiProviderExportsBothApiKeys() {
-        var entries = env(Map.of("provider", "google"));
-        assertEquals(List.of("GEMINI_API_KEY=" + GeminiSetup.PLACEHOLDER_API_KEY,
-                "GOOGLE_GENERATIVE_AI_API_KEY=$GEMINI_API_KEY"), entries);
-        var raw = new OpencodeSetup().envEntries(resolved(Map.of("provider", "google")));
-        assertFalse(raw.get(0).expandsAtLogin());
-        assertTrue(raw.get(1).expandsAtLogin());
+    void theGoogleProviderReadsTheGeminiProofThroughItsSettings() {
+        // opencode 1.19.6's google provider takes GOOGLE_GENERATIVE_AI_API_KEY alone from the
+        // environment: with GEMINI_API_KEY only it fails with "API key is missing". The setting
+        // names GEMINI_API_KEY, the variable whose static placeholder the start's proof replaces.
+        var config = config(Map.of("provider", "google"));
+        assertEquals("\"{env:GEMINI_API_KEY}\"", ((JqObject) ((JqObject) ((JqObject) config.getField("provider")).getField("google"))
+                        .getField("options")).getField("apiKey").toJsonString());
+        assertEquals(List.of("GEMINI_API_KEY=" + GeminiSetup.PLACEHOLDER_API_KEY), env(Map.of("provider", "google")));
     }
 
     @Test
