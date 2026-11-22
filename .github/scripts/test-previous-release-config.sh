@@ -132,7 +132,8 @@ ACCOUNTS="$(isx account list --format=json 2>/dev/null)"
 for ns in claude github bob openai testProxyTool; do
     if echo "$ACCOUNTS" | python3 -c "
 import json, sys
-accounts = [a for a in json.load(sys.stdin) if a['namespace'] == sys.argv[1]]
+# Configured accounts only: a pin left over from another test names one the config lacks (not-configured).
+accounts = [a for a in json.load(sys.stdin) if a['namespace'] == sys.argv[1] and a['problem'] != 'not-configured']
 sys.exit(0 if len(accounts) == 1 and accounts[0]['account'] == 'default' and accounts[0]['default'] is True else 1)" "$ns" 2>/dev/null; then
         pass "$ns lists its flat credential as 'default'"
     else
