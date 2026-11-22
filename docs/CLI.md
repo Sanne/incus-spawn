@@ -685,6 +685,29 @@ isx tools validate <file-or-name>
 In `json` it prints one object with `name`, `path`, `valid` and `findings`, each finding with `severity` and `message`.
 `plain` prints one line per finding: its severity and its message, tab-separated.
 
+## `isx validate`
+
+Check any of isx's YAML files with the loader that reads it, so the errors match what a build or a start reports.
+It takes a template, a tool, `config.yaml` or `mcp.yaml`.
+It knows which from the schema line at the top of the file, or else from the name `config.yaml` or `mcp.yaml`.
+A file with neither takes `--kind`.
+
+A template or a tool is checked as `isx templates validate` and `isx tools validate` check it, and prints what they print.
+A `config.yaml` or `mcp.yaml` that does not parse, or that `isx mcp` would refuse, is an error, and the command exits 1.
+A section isx would ignore, a key no tool reads and a setting that no longer has any effect are warnings.
+
+```shell
+isx validate <file>
+```
+
+| Option | What it does |
+|--------|--------------|
+| `--kind=<kind>` | `template`, `tool`, `config` or `mcp`, when the file does not say |
+| `--format=<format>` | `table` (the default), `plain` or `json` |
+
+For `config.yaml` and `mcp.yaml`, `json` prints one object with `kind`, `path`, `valid` and `findings`, each finding with `severity` and `message`.
+`plain` prints one line per finding: its severity and its message, tab-separated.
+
 ## `isx account`
 
 Add credentials, and show or change which [credential account](CONFIGURATION.md#credential-accounts) an instance uses.
@@ -1094,7 +1117,7 @@ The zsh, fish and PowerShell scripts mark each namespace's default account; bash
 
 Query commands print `plain` and `json` output that a script can rely on, and exit codes that say what happened.
 
-Query commands take `--format=table|plain|json`: `isx init --plan`, `isx list`, `isx overview`, `isx templates [list]`, `isx templates validate`, `isx tools list`, `isx tools show`, `isx tools validate`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
+Query commands take `--format=table|plain|json`: `isx init --plan`, `isx list`, `isx overview`, `isx templates [list]`, `isx templates validate`, `isx tools list`, `isx tools show`, `isx tools validate`, `isx validate`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
 
 ### Formats
 
@@ -1200,6 +1223,7 @@ The fields of each command, in order:
 | `isx vm status` | `running`, `pid`, `rest_api` (always empty since the launcher replaced vfkit), `log`, `appliance`, `appliance_pending`, `vsock_connections`, `incus_reachable`, `incus_error`, `vsock_connections_high`, `launcher`, `control_socket` |
 | `isx update-base --list` | newest first: `tag`, `date`, `latest`, `current`, `pinned`, `listed` |
 | `isx branch <name>` | `name` |
+| `isx validate` (`config.yaml` and `mcp.yaml`) | `kind`, `path`, `valid`, `findings` (each `severity`, `message`) |
 | `isx templates validate`, `isx templates new --from` | `name`, `path`, `valid`, `written`, `findings`, `reach` |
 
 The sections below explain the fields that need an explanation.
