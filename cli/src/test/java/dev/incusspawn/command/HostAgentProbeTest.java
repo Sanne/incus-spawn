@@ -211,6 +211,23 @@ class HostAgentProbeTest {
     }
 
     @Test
+    void antigravityGoogleSignInAndModelLabel() throws IOException {
+        write(".gemini/antigravity-cli/settings.json", "{\"model\": \"Gemini 4 Neon (Medium)\"}");
+        write(".gemini/antigravity-cli/antigravity-oauth-token", SENTINEL);
+        var agy = only("antigravity");
+        assertAccount(agy, Kind.SUBSCRIPTION, "~/.gemini/antigravity-cli/antigravity-oauth-token");
+        assertEquals("google", agy.provider());
+        assertEquals("Gemini 4 Neon (Medium)", agy.model());
+        assertFalse(agy.toString().contains(SENTINEL));
+    }
+
+    @Test
+    void antigravityModelHoldingASecretIsDropped() throws IOException {
+        write(".gemini/antigravity-cli/settings.json", "{\"model\": \"" + SENTINEL + "\"}");
+        assertNull(only("antigravity").model());
+    }
+
+    @Test
     void antigravityOtherwiseInstalledOnly() throws IOException {
         onPath("agy");
         var agy = only("antigravity");

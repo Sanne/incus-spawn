@@ -44,6 +44,8 @@ public final class HostAgentProbe {
 
     /** What a model, project, region or provider name may look like: no spaces, no quotes, bounded. */
     private static final Pattern PLAIN_VALUE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:/@\\[\\]-]{0,127}");
+    /** A model's display name, such as {@code Gemini 4 Neon (Medium)}: {@link #PLAIN_VALUE} with spaces and parentheses. */
+    private static final Pattern MODEL_LABEL = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:/@\\[\\]() -]{0,127}");
     /** A run this long without a separator is a key or a token, never a model or a region; {@code /} separates, as in {@code openrouter/anthropic/claude-sonnet-4}. */
     private static final Pattern TOKEN_RUN = Pattern.compile("[A-Za-z0-9+_]{24,}");
     /** Codex's {@code model = "..."} at the top level of {@code config.toml}. */
@@ -297,17 +299,26 @@ public final class HostAgentProbe {
     }
 
     /**
-     * Antigravity CLI: only its Gemini API key mode, {@code modelProvider: gemini} with
-     * {@code GEMINI_API_KEY}, can be told apart; how its Google sign-in is stored is not read.
+     * Antigravity CLI: the {@code model} of its {@code settings.json}, its Gemini API key mode
+     * ({@code modelProvider: gemini} with {@code GEMINI_API_KEY}), and a Google sign-in when its
+     * token file {@code antigravity-oauth-token} exists; the file is only looked for, never read.
      */
     private static Optional<HostAgent> antigravity(Host host) {
         var dir = host.home.resolve(".gemini").resolve("antigravity-cli");
         if (!host.onPath("agy") && !Files.isDirectory(dir)) return Optional.empty();
         var settings = host.json(dir.resolve("settings.json"));
-        if ("gemini".equals(text(settings, "modelProvider")) && host.env("GEMINI_API_KEY") != null) {
-            return found("antigravity", true, Kind.API_KEY, "google", null, null, null, "$GEMINI_API_KEY");
+        var model = label(text(settings, "model"));
+        if ("gemini".equals(text(settings, "modelProvider"))) {
+            if (host.env("GEMINI_API_KEY") != null) {
+                return found("antigravity", true, Kind.API_KEY, "google", null, null, model, "$GEMINI_API_KEY");
+            }
+        } else {
+            var token = dir.resolve("antigravity-oauth-token");
+            if (Files.isRegularFile(token)) {
+                return found("antigravity", true, Kind.SUBSCRIPTION, "google", null, null, model, host.display(token));
+            }
         }
-        return found("antigravity", false, Kind.UNKNOWN, null, null, null, null, null);
+        return found("antigravity", false, Kind.UNKNOWN, null, null, null, model, null);
     }
 
     /**
@@ -431,6 +442,14 @@ public final class HostAgentProbe {
         if (value == null) return null;
         var v = value.strip();
         if (!PLAIN_VALUE.matcher(v).matches() || TOKEN_RUN.matcher(v).find() || SecretRedactor.hasSecretShape(v)) return null;
+        return v;
+    }
+
+    /** {@link #plain} for a model's display name, which may hold spaces and parentheses. */
+    static String label(String value) {
+        if (value == null) return null;
+        var v = value.strip();
+        if (!MODEL_LABEL.matcher(v).matches() || TOKEN_RUN.matcher(v).find() || SecretRedactor.hasSecretShape(v)) return null;
         return v;
     }
 
