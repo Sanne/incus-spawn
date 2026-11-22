@@ -1171,7 +1171,27 @@ public class MitmProxy {
     }
 
     private static void awaitClose(String what, HttpServer server, long deadline) {
-        if (server != null) awaitClose(what, server.close(), deadline);
+        if (server != null) awaitClose(what, closing(server), deadline);
+    }
+
+    /** {@code server.close()}, or a completed future when Vert.x can no longer schedule it (see {@link #awaitClose}). */
+    private static Future<?> closing(HttpServer server) {
+        try {
+            return server.close();
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            return Future.succeededFuture();
+        }
+    }
+
+    /** One step of {@link #stop()}: a failure is said and never keeps the steps after it from running. */
+    private static void stopStep(String what, Runnable step) {
+        try {
+            step.run();
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // Its event loop is gone: nothing of it is left to stop (#1953)
+        } catch (RuntimeException e) {
+            ProxyLog.warn(what + " failed to stop (" + e + "), so something it held may still be open");
+        }
     }
 
     /**
@@ -1254,17 +1274,20 @@ public class MitmProxy {
         }
         ProxyLog.info("Stopping proxy");
         try {
-            artifactCache.logCacheStats();
+            stopStep("Cache statistics", artifactCache::logCacheStats);
             var deadline = stopDeadline();
             // The upstream clients close beside the MITM listener; the health listener closes once
             // the MITM port is free, since a new proxy waits only while the health port answers (#1219)
-            var mitmClosing = mitmServer == null ? null : mitmServer.close();
-            var clientsClosing = upstream.closeClients();
+            var mitm = mitmServer;
+            var mitmClosing = mitm == null ? null : closing(mitm);
+            var clientsClosing = new java.util.LinkedHashMap<String, Future<Void>>();
+            stopStep("Upstream clients", () -> clientsClosing.putAll(upstream.closeClients()));
             if (mitmClosing != null) awaitClose("MITM listener", mitmClosing, deadline);
             clientsClosing.forEach((what, closing) -> awaitClose(what, closing, deadline));
-            if (mcpBridge != null) mcpBridge.stop();
-            hostRouteRelay.stop();
-            hostPortRelay.stop();
+            var bridge = mcpBridge;
+            if (bridge != null) stopStep("MCP bridge", bridge::stop);
+            stopStep("Host route relay", hostRouteRelay::stop);
+            stopStep("Host port relay", hostPortRelay::stop);
             awaitClose("Health listener", healthHttpServer, healthDeadline(deadline));
         } finally {
             // Guarantee stopLatch is always counted down, even if an unexpected exception occurs
