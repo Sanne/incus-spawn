@@ -552,14 +552,16 @@ public final class VmManager {
     private enum StartResult { LAUNCHED, ALREADY_RUNNING, FAILED }
 
     private static StartResult startLocked() {
-        return startLocked(false);
+        return startLocked(false, false);
     }
 
     /**
      * @param replacesLegacy the VM this start replaces ran under vfkit: macOS asks again for the
      *                       new program, though the old one left a log behind (#2552)
+     * @param proxyChecked   the caller already restarted a drifted proxy for this start (a restart,
+     *                       before its stop), so its {@code /health} is not asked twice
      */
-    private static StartResult startLocked(boolean replacesLegacy) {
+    private static StartResult startLocked(boolean replacesLegacy, boolean proxyChecked) {
         requireMacOs();
         if (isRunning()) {
             BuildOutput.note("VM already running (pid=" + readPid() + ").");
@@ -609,6 +611,10 @@ public final class VmManager {
             BuildOutput.note("Local network access gives the Linux containers their network.");
         }
 
+        // Every start, the automatic one included: an older isx's proxy still running would take
+        // the booting VM's sockets for stale ones and remove them (#2552).
+        if (!proxyChecked) dev.incusspawn.proxy.ProxyHealthCheck.restartDriftedBeforeVmStart();
+
         BuildOutput.stepStart("Launching VM (" + LAUNCHER + ", cpus=" + cpus + ", memory=" + memoryMiB + "M)");
         try {
             Files.createDirectories(Environment.vmStateDir());
@@ -636,6 +642,7 @@ public final class VmManager {
     public static boolean restart() {
         try (var ignored = acquireVmLock()) {
             boolean fromLegacy = false;
+            boolean proxyChecked = false;
             if (!runningOrAdopted()) {
                 BuildOutput.note("VM not running — starting.");
             } else {
@@ -643,10 +650,13 @@ public final class VmManager {
                 // which is a JBang install's first restart after the move from vfkit (#2552).
                 findLauncher();
                 downloadPendingAppliance();
+                // Last, once nothing can stop the restart: it cuts the instances' connections.
+                dev.incusspawn.proxy.ProxyHealthCheck.restartDriftedBeforeVmStart();
+                proxyChecked = true;
                 fromLegacy = runsUnderLegacyHypervisor();
                 stopLocked();
             }
-            if (startLocked(fromLegacy) != StartResult.LAUNCHED) return false;
+            if (startLocked(fromLegacy, proxyChecked) != StartResult.LAUNCHED) return false;
             return awaitReady();
         } catch (VmException e) {
             BuildOutput.error(e.getMessage());

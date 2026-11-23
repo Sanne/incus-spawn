@@ -626,8 +626,30 @@ public final class ProxyHealthCheck {
     }
 
     static void warnIfDrifted(IncusClient incus) {
+        String address;
         try {
-            var info = fetchProxyInfo(healthAddress(incus));
+            address = healthAddress(incus);
+        } catch (Exception e) {
+            return;
+        }
+        warnIfDrifted(incus, address);
+    }
+
+    /**
+     * Before the Mac's VM is started or restarted: a proxy of an older isx still running would
+     * take the new VM's sockets, absent while it boots, for stale ones and remove them (an isx
+     * from before the launcher, after {@code brew upgrade}, #2552). A drifted service is restarted
+     * onto the installed proxy first, as any command that needs the proxy does; a proxy run by
+     * hand is only warned about. Nothing on Linux, where the VM is not isx's.
+     */
+    public static void restartDriftedBeforeVmStart() {
+        if (!dev.incusspawn.Platform.isMacOS()) return;
+        warnIfDrifted(null, healthAddress((String) null));
+    }
+
+    private static void warnIfDrifted(IncusClient incus, String address) {
+        try {
+            var info = fetchProxyInfo(address);
             var report = assessDrift(info);
             if (report.isEmpty()) return;
             var lines = new ArrayList<String>();
