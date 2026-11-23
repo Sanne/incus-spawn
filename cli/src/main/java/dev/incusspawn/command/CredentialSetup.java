@@ -2157,7 +2157,7 @@ class CredentialSetup {
             }
             return;
         }
-        // A secret asked for and left blank, with none entered or kept: the step was skipped
+        // A secret asked for and left blank, with none entered or there before: no credential was set up
         var secretSkipped = false;
         var secretHeld = false;
         for (var entry : proxyDef.getConfiguration().entrySet()) {
@@ -2165,8 +2165,6 @@ class CredentialSetup {
             var configDef = entry.getValue();
             if (!configDef.getValue().isBlank()) continue;
             if (configDef.getConfigPath().isBlank()) continue;
-            // A consent is not asked for a credential the person just declined to give
-            if (configDef.isConfirm() && secretSkipped && !secretHeld) continue;
 
             // Definition text, so one line each, like describeTool.
             var description = OutputFormat.oneLine(configDef.getDescription());
@@ -2213,11 +2211,12 @@ class CredentialSetup {
             }
             boolean hasExisting = configDef.isConfirm() ? "true".equals(existing) : !existing.isBlank();
             if (hasExisting) {
+                // Kept whatever is answered: a replacement left blank does not clear it
+                secretHeld |= configDef.isSecret();
                 BuildOutput.step(label + ": " + maskSecret(existing));
                 if (askYesNo(prompts, "Keep current?", true, true)) {
                     // A kept value still has to travel with a "replace" into the new layout.
                     if (perAccount) accountValues.put(key, existing);
-                    secretHeld |= configDef.isSecret();
                     continue;
                 }
             }
@@ -2275,7 +2274,8 @@ class CredentialSetup {
         if (savedAny && (secretHeld || !secretSkipped)) {
             BuildOutput.step(desc + " credentials saved.");
         } else {
-            BuildOutput.step("Skipped. Configure later with '"
+            // What was saved without its credential is said, never reported as nothing
+            BuildOutput.step((savedAny ? "Saved without a credential." : "Skipped.") + " Configure later with '"
                     + CredentialCheck.stepCommand(toolName, new dev.incusspawn.tool.ToolDefLoader().allToolSetups()) + "'.");
         }
     }

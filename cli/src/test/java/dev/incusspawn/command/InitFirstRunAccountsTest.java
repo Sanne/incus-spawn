@@ -85,6 +85,9 @@ class InitFirstRunAccountsTest {
         assertEquals(1, count(lines, "Which GitHub account should the agent use?"), String.join("\n", lines));
         assertEquals(1, count(lines, "has no account of its own: it spends a github account."), String.join("\n", lines));
         assertEquals(0, count(lines, "GitHub Account"), String.join("\n", lines));
+        // Said here, since the GitHub step's own header, which says it, is never shown on this path
+        assertTrue(at(lines, "also the name on the agent's commits") < at(lines, "Which GitHub account"), String.join("\n", lines));
+        assertEquals(0, count(lines, "set up already"), String.join("\n", lines));
         assertTrue(init.answers.noCredential());
         assertTrue(init.answers.noGitHub());
         assertEquals(List.of(), dev.incusspawn.config.AccountResolver.usableAccountNames(
@@ -103,13 +106,13 @@ class InitFirstRunAccountsTest {
         assertEquals(0, count(lines, "A credential entered here"), String.join("\n", lines));
     }
 
-    /** A key left blank is a skip: no consent is asked for it, and nothing is said to be saved. */
+    /** A key left blank is not a credential: the consent saved after it is not reported as one. */
     @Test
     void aSkippedKeyIsNotSaidToBeSaved() {
-        var lines = ask("bob", new ScriptedPrompts().secret(""), new Init());
+        var lines = ask("bob", new ScriptedPrompts().secret("").line(""), new Init());
 
         assertEquals(0, count(lines, "credentials saved"), String.join("\n", lines));
-        assertEquals(0, count(lines, "license"), String.join("\n", lines));
-        assertEquals(1, count(lines, "Skipped. Configure later with 'isx account add bob'."), String.join("\n", lines));
+        assertEquals(1, count(lines, "Saved without a credential. Configure later with 'isx account add bob'."),
+                String.join("\n", lines));
     }
 }

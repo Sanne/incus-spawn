@@ -59,7 +59,7 @@ Then come the commands to return to the machine, list every machine and edit the
 No line is wider than the box, which `InitFirstRunTest#noLineOfTheClosingMessageIsWiderThanItsBox` holds on every path.
 
 **A run that stops half way says how to go on.**
-A setup step that fails ends the run with its error, after a line saying that the answers are saved and that `isx init`, run again, carries on from them.
+A setup step that fails ends the run with its error, after a line saying that the agent and the accounts set up are saved and that `isx init`, run again, asks only what was skipped.
 
 **The agent opens only when the person says so.**
 An agent takes the whole terminal, so opening one unasked would hide the completion message, which comes first.
