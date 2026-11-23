@@ -113,8 +113,14 @@ sudo dnf copr enable sanne/isx-dev
 sudo dnf install incus-spawn
 
 # Ubuntu/Debian (APT)
-# Use "dev" instead of "stable" in the sources list:
-echo "deb [signed-by=...] https://sanne.github.io/isx-apt-releases dev main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
+# Import the key as for stable (see docs/dev/APT.md), then use the "dev" suite:
+sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://sanne.github.io/isx-apt-releases
+Suites: dev
+Components: main
+Signed-By: /usr/share/keyrings/incus-spawn.gpg
+EOF
 sudo apt update && sudo apt install incus-spawn
 ```
 
@@ -136,8 +142,8 @@ sudo dnf copr enable sanne/incus-spawn
 sudo dnf reinstall incus-spawn
 # (reverse the enable/disable to go back to dev)
 
-# Ubuntu/Debian (APT) — change "dev" to "stable" in the sources list
-sudo sed -i 's/ dev main/ stable main/' /etc/apt/sources.list.d/incus-spawn.list
+# Ubuntu/Debian (APT) — change "dev" to "stable" in the sources file
+sudo sed -i 's/^Suites: dev$/Suites: stable/' /etc/apt/sources.list.d/incus-spawn.sources
 sudo apt update && sudo apt install incus-spawn
 # (change "stable" back to "dev" to go back to dev)
 ```

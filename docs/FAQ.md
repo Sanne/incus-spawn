@@ -145,6 +145,27 @@ The source on the host looks like a complete project, but built on the host it m
 - **`readonly` and `overlay` host-resources** ([Host Resources](TEMPLATES.md#host-resources)): for sharing host files with the instance, which cannot change them on the host.
   `readonly` is a read-only bind mount; `overlay` gives the instance a writable view backed by an ephemeral layer, without modifying the host.
 
+### Why did isx stop updating after I upgraded Ubuntu?
+
+Replace the old repository file with the one the [Quick Start](../README.md#quick-start) now writes, then update.
+Run this, with `Suites: dev` in place of `Suites: stable` if you follow the dev channel:
+
+```shell
+sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://sanne.github.io/isx-apt-releases
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/incus-spawn.gpg
+EOF
+sudo rm -f /etc/apt/sources.list.d/incus-spawn.list /etc/apt/sources.list.d/incus-spawn.list.disabled
+sudo apt update && sudo apt upgrade
+```
+
+Older install steps wrote `incus-spawn.list`, in the one-line format that apt now deprecates.
+An Ubuntu release upgrade turns off third-party repositories, and it cannot convert that file, so it leaves `incus-spawn.list.disabled`.
+Until you replace it, apt no longer sees new isx releases.
+
 ### How do I upgrade a Mac whose VM ran with vfkit?
 
 isx used to run the Mac's VM with vfkit, and now runs it with its own launcher, `isx-vm`.

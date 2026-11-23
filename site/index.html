@@ -111,7 +111,13 @@ sudo dnf install incus-spawn</code></pre>
         </div>
         <div class="tab-panel" id="tab-ubuntu">
           <pre><code>curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
-echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.io/isx-apt-releases stable main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
+sudo tee /etc/apt/sources.list.d/incus-spawn.sources &gt;/dev/null &lt;&lt;'EOF'
+Types: deb
+URIs: https://sanne.github.io/isx-apt-releases
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/incus-spawn.gpg
+EOF
 sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
         </div>
         <!-- <div class="tab-panel" id="tab-arch">
