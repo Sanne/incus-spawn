@@ -1773,12 +1773,7 @@ public class InitCommand extends BaseCommand {
      * while a question waits on the person.
      */
     static SpawnConfig firstRunConfig() {
-        try {
-            return SpawnConfig.loadStrict();
-        } catch (IOException e) {
-            throw new IllegalStateException(dev.incusspawn.config.YamlErrors.friendly("config.yaml", e)
-                    + "; it is left as it is, so fix it and run 'isx init' again", e);
-        }
+        return SpawnConfig.loadToChange("run 'isx init' again");
     }
 
     /** Whether Claude Code on this host is signed in with a subscription. */
@@ -2398,7 +2393,7 @@ public class InitCommand extends BaseCommand {
     private void setupMacOsCa() {
         incus.createBridgeIfMissing("incusbr0", VmManager.gatewayIp());
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-        var config = SpawnConfig.load();
+        var config = SpawnConfig.loadToChange("run 'isx init' again");
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
         if (CertificateAuthority.exists()) {
@@ -2520,6 +2515,8 @@ public class InitCommand extends BaseCommand {
 
     /** {@code isx doctor}'s remedy for a bridge subnet conflict (#1203); see {@link #moveBridgeOff}. */
     static void moveBridgeOffSubnetConflict(IncusClient incus) {
+        // The move ends by saving the new gateway: a config.yaml that does not parse stops it before anything moves
+        SpawnConfig.loadToChange("run 'isx doctor' again");
         var init = new InitCommand();
         init.incus = incus;
         init.moveBridgeOff(BridgeSubnetCheck.detect(incus));
@@ -2622,34 +2619,42 @@ public class InitCommand extends BaseCommand {
             skipped.add("credentials");
             return List.of();
         }
-        return credentials.selectCredentials(allTools, SpawnConfig.load(), prompts);
+        return credentials.selectCredentials(allTools, credentialConfig(), prompts);
+    }
+
+    /**
+     * config.yaml for a credential step, which saves it: a file that does not parse stops the step
+     * before it asks for a secret, rather than losing every account to the save (#2523).
+     */
+    private static SpawnConfig credentialConfig() {
+        return SpawnConfig.loadToChange("try again");
     }
 
     private void setupClaudeAuth() {
         var prompts = consoleOrExplain();
-        if (prompts != null) credentials.setupClaudeAuth(SpawnConfig.load(), prompts);
+        if (prompts != null) credentials.setupClaudeAuth(credentialConfig(), prompts);
     }
 
     private void setupGitHubAuth() {
         var prompts = consoleOrExplain();
-        if (prompts != null) credentials.setupGitHubAuth(SpawnConfig.load(), prompts);
+        if (prompts != null) credentials.setupGitHubAuth(credentialConfig(), prompts);
     }
 
     private void setupCodexAuth() {
         var prompts = consoleOrExplain();
-        if (prompts != null) credentials.setupCodexAuth(SpawnConfig.load(), prompts);
+        if (prompts != null) credentials.setupCodexAuth(credentialConfig(), prompts);
     }
 
     private void setupGenericToolCredentials(String toolName, ToolSetup tool) {
         var prompts = consoleOrExplain();
-        if (prompts != null) credentials.setupGenericToolCredentials(toolName, tool, SpawnConfig.load(), prompts);
+        if (prompts != null) credentials.setupGenericToolCredentials(toolName, tool, credentialConfig(), prompts);
     }
 
     private void setupPathList(
             java.util.function.Function<SpawnConfig, java.util.List<String>> getter,
             java.util.function.BiConsumer<SpawnConfig, java.util.List<String>> setter,
             String skipMessage, String step, List<String> answers, String flag) {
-        var config = SpawnConfig.load();
+        var config = SpawnConfig.loadToChange("run 'isx init " + step + "' again");
         if (answers != null) {
             addPaths(getter, setter, config, answers);
             return;
@@ -3113,7 +3118,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private void addToSearchPaths(String path) {
-        var config = SpawnConfig.load();
+        var config = SpawnConfig.loadToChange("run 'isx init search-paths' again");
         var paths = new java.util.ArrayList<>(config.getSearchPaths());
         if (!paths.contains(path)) {
             paths.add(path);

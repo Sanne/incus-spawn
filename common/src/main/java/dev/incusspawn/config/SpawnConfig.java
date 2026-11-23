@@ -24,7 +24,7 @@ import java.nio.file.Path;
  * Global incus-spawn configuration stored in ~/.config/incus-spawn/config.yaml
  */
 @JqMapped
-public class SpawnConfig extends UndeclaredKeys {
+public class SpawnConfig extends UnreadableFile {
 
     /**
      * This config as a navigable tree.
@@ -976,12 +976,34 @@ public class SpawnConfig extends UndeclaredKeys {
         return bench != null ? bench : configDir.resolve("config.yaml");
     }
 
+    /**
+     * config.yaml, or an empty configuration when it cannot be read or parsed. That empty one
+     * refuses {@link #save}, since saving it would replace every account in the file (#2523): a
+     * caller that changes the file reads it with {@link #loadToChange} instead.
+     */
     public static SpawnConfig load() {
         try {
             return loadStrict();
         } catch (IOException e) {
-            ClientLog.warn(YamlErrors.friendly("config.yaml", e));
-            return new SpawnConfig();
+            var reason = YamlErrors.friendly("config.yaml", e);
+            ClientLog.warn(reason);
+            var empty = new SpawnConfig();
+            empty.unreadable = reason;
+            return empty;
+        }
+    }
+
+    /**
+     * config.yaml, read to be changed and saved: a file that cannot be read or parsed stops the
+     * caller before it asks anything, and is left as it is. {@code again} says what to run once
+     * the file is fixed, such as {@code "run 'isx init' again"}.
+     */
+    public static SpawnConfig loadToChange(String again) {
+        try {
+            return loadStrict();
+        } catch (IOException e) {
+            throw new IllegalStateException(YamlErrors.friendly("config.yaml", e)
+                    + "; it is left as it is, so fix it and " + again, e);
         }
     }
 
@@ -1009,6 +1031,9 @@ public class SpawnConfig extends UndeclaredKeys {
     }
 
     public void save() {
+        if (unreadable != null) {
+            throw new IllegalStateException(unreadable + "; it is left as it is, so fix it and try again");
+        }
         try {
             migrateHostPath();
             var configFile = file();

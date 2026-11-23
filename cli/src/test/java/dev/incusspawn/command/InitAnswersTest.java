@@ -98,6 +98,22 @@ class InitAnswersTest {
         assertEquals(Set.of(), init.skipped);
     }
 
+    /** A step that saves config.yaml stops on a file that does not parse, rather than dropping its accounts (#2523). */
+    @Test
+    void aDirectoryIsNotSavedOverAConfigThatDoesNotParse(@TempDir Path dir) throws Exception {
+        var broken = "claude:\n  accounts:\n    work: {apiKey: x\n";
+        java.nio.file.Files.createDirectories(IsolatedHome.configFile().getParent());
+        java.nio.file.Files.writeString(IsolatedHome.configFile(), broken);
+        var init = new NoTerminal();
+        init.searchPathAnswers = List.of(dir.toString());
+        init.checkAnswers();
+        var steps = init.finalSteps(init.proxyServiceStep(new java.util.concurrent.atomic.AtomicBoolean()));
+        var failure = assertThrows(IllegalStateException.class,
+                () -> RecordingOutput.during(() -> steps.get(0).run().run()));
+        assertTrue(failure.getMessage().contains("run 'isx init search-paths' again"), failure.getMessage());
+        IsolatedHome.assertUnchanged(broken);
+    }
+
     /** --fork-templates answers Template Search Paths: with its templates among the paths, the step is not skipped. */
     @Test
     void forkTemplatesAnswersTheSearchPaths(@TempDir Path dir) throws Exception {

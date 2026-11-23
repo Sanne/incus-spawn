@@ -9,6 +9,45 @@ import static org.junit.jupiter.api.Assertions.*;
 class SpawnConfigTest {
 
 
+    /** A config.yaml that does not parse reads as empty, and that empty config is never saved over it (#2523). */
+    @Test
+    void anUnreadableFileReadsAsEmptyAndIsNotSavedOver(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        var file = dir.resolve("config.yaml");
+        var broken = "claude:\n  accounts:\n    work: {apiKey: x\n";
+        java.nio.file.Files.writeString(file, broken);
+        SpawnConfig.useBenchFile(file);
+        try {
+            var config = SpawnConfig.load();
+            assertTrue(config.getSearchPaths().isEmpty());
+            config.setSearchPaths(java.util.List.of("/somewhere"));
+            var refused = assertThrows(IllegalStateException.class, config::save);
+            assertTrue(refused.getMessage().contains("left as it is"), refused.getMessage());
+            var stopped = assertThrows(IllegalStateException.class, () -> SpawnConfig.loadToChange("try again"));
+            assertTrue(stopped.getMessage().endsWith("so fix it and try again"), stopped.getMessage());
+            assertEquals(broken, java.nio.file.Files.readString(file));
+        } finally {
+            SpawnConfig.useBenchFile(null);
+        }
+    }
+
+    /** A file that parses is saved as before: the guard is only for one that did not. */
+    @Test
+    void aReadableFileIsSaved(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        var file = dir.resolve("config.yaml");
+        java.nio.file.Files.writeString(file, "claude:\n  accounts:\n    work: {apiKey: x}\n");
+        SpawnConfig.useBenchFile(file);
+        try {
+            var config = SpawnConfig.loadToChange("try again");
+            config.setSearchPaths(java.util.List.of("/somewhere"));
+            config.save();
+            var saved = SpawnConfig.load();
+            assertEquals(java.util.List.of("/somewhere"), saved.getSearchPaths());
+            assertEquals("x", AccountResolver.navigate(saved.tree(), "claude.accounts.work.apiKey"));
+        } finally {
+            SpawnConfig.useBenchFile(null);
+        }
+    }
+
     @Test
     void deserializeWithHostPath() throws Exception {
         var yaml = """
