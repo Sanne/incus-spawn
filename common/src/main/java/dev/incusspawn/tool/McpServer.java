@@ -59,6 +59,57 @@ public record McpServer(String name, String description, List<String> command, M
                 entry.getCommand().stream().map(sub).toList(), env, entry.getUrl(), entry.getBearerTokenEnv());
     }
 
+    /** Every {@code ${...}} reference. */
+    private static final Pattern REF = Pattern.compile("\\$\\{([^}]+)}");
+
+    /**
+     * {@code entry}, which repeats over a list ({@link ToolDef.McpEntry#getForEach}), as one server
+     * per item of {@code items}: each item's values ({@code servers.label}, {@code servers.host})
+     * and the tool's parameters substituted. An item whose server would still hold a reference,
+     * or break {@link #problem}'s rules, is left out and {@code warn} is told why.
+     *
+     * @param items each served item's label and non-secret fields, as the proxy serves them
+     */
+    public static List<McpServer> forEach(ToolDef.McpEntry entry, Map<String, String> params,
+                                          List<Map<String, String>> items, java.util.function.Consumer<String> warn) {
+        var result = new java.util.ArrayList<McpServer>();
+        for (var item : items) {
+            UnaryOperator<String> sub = s -> {
+                if (s == null) return null;
+                var text = s;
+                for (var value : item.entrySet()) text = text.replace("${" + value.getKey() + "}", value.getValue());
+                return ParameterSubstitutor.substitute(text, params);
+            };
+            var expanded = new ToolDef.McpEntry();
+            expanded.setName(sub.apply(entry.getName()));
+            expanded.setDescription(sub.apply(entry.getDescription()));
+            expanded.setUrl(sub.apply(entry.getUrl()));
+            expanded.setBearerTokenEnv(entry.getBearerTokenEnv());
+            var problem = problem(expanded);
+            if (problem == null && java.util.stream.Stream.of(expanded.getName(), expanded.getDescription(), expanded.getUrl())
+                    .anyMatch(text -> text != null && REF.matcher(text).find())) {
+                problem = "it still holds a reference no item value fills";
+            }
+            if (problem != null) {
+                warn.accept("MCP server '" + entry.getName() + "' is not registered for one item: " + problem);
+                continue;
+            }
+            result.add(new McpServer(expanded.getName(), expanded.getDescription(), List.of(), Map.of(),
+                    expanded.getUrl(), expanded.getBearerTokenEnv()));
+        }
+        return result;
+    }
+
+    /** The reference a {@code for-each} server's url names its host by ({@code servers.host}), or null. */
+    public static String hostRef(String url) {
+        if (url == null || !url.startsWith("https://")) return null;
+        var rest = url.substring("https://".length());
+        var end = rest.indexOf('/');
+        var host = end < 0 ? rest : rest.substring(0, end);
+        var m = REF.matcher(host);
+        return m.matches() ? m.group(1) : null;
+    }
+
     /**
      * This server as the build registers it: {@link #REPO_PATHS} in its command and environment
      * replaced by {@code repoPaths}, and each variable left empty not set at all, which is what an

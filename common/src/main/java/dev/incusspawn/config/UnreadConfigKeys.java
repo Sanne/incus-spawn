@@ -154,7 +154,8 @@ public final class UnreadConfigKeys {
             var proxy = tool.proxy();
             if (proxy == null || !namespace.equals(proxy.getConfigNamespace())) continue;
             for (var entry : proxy.getConfiguration().values()) {
-                if (!entry.isSecret() || !namespace.equals(proxy.namespaceOf(entry))) continue;
+                var secret = entry.isSecret() || entry.hasSecretField();
+                if (!secret || !namespace.equals(proxy.namespaceOf(entry))) continue;
                 var path = proxy.fullConfigPath(entry);
                 if (path.length() > namespace.length() + 1) keys.add(path.substring(namespace.length() + 1));
             }

@@ -78,6 +78,15 @@ public interface ToolSetup {
     }
 
     /**
+     * The {@code mcp:} entries this tool repeats over a {@code proxy.configuration} list, one
+     * server per item the proxy serves ({@link McpServer#forEach}): the build expands them from
+     * the host's {@code config.yaml}, so they are not in {@link #mcpServers}.
+     */
+    default java.util.List<ToolDef.McpEntry> mcpForEach() {
+        return java.util.List.of();
+    }
+
+    /**
      * How this agent takes the MCP servers the image's tools declare ({@link #mcpServers}), or
      * null for a tool that is not an MCP client. An agent added here gets every tool's servers
      * with no change to those tools.

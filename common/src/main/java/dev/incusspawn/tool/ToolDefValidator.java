@@ -199,7 +199,46 @@ public class ToolDefValidator {
                     }
                 }
 
+                var listKey = ae.getForEach();
+                if (listKey != null) {
+                    var list = configMap.get(listKey);
+                    if (list != null && list.isList()) {
+                        for (var domain : ae.getDomains()) {
+                            if (!isLoneRef(domain) || ToolProxyResolver.listField(proxyDef, refOf(domain)) == null
+                                    || !ToolProxyResolver.isListRef(proxyDef, listKey, refOf(domain))) {
+                                errors.add(OutputFormat.oneLine("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                        + "': with for-each, each domain must be one field of a " + listKey
+                                        + " item alone, such as '${" + listKey + ".host}'"));
+                            }
+                        }
+                    }
+                }
+                var allRefs = new ArrayList<>(ToolProxyResolver.extractReferencedKeys(ae));
+                allRefs.addAll(ToolProxyResolver.extractDomainKeys(ae));
+                for (var ref : allRefs.stream().distinct().toList()) {
+                    if (configMap.containsKey(ref) && configMap.get(ref).isList()) {
+                        errors.add(OutputFormat.oneLine("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "' references the list '${" + ref + "}' -- name one of its fields, as '${"
+                                + ref + ".<field>}', in an entry with for-each: " + ref));
+                    } else if (!configMap.containsKey(ref) && ref.contains(".")
+                            && ToolProxyResolver.isListRef(proxyDef, ref.substring(0, ref.indexOf('.')), ref)
+                            && (listKey == null || !ToolProxyResolver.isListRef(proxyDef, listKey, ref))) {
+                        errors.add(OutputFormat.oneLine("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "' references '${" + ref + "}', which only an entry with for-each: "
+                                + ref.substring(0, ref.indexOf('.')) + " reads"));
+                    }
+                }
+
                 for (var ref : ToolProxyResolver.extractDomainKeys(ae)) {
+                    if (listKey != null && ToolProxyResolver.isListRef(proxyDef, listKey, ref)) {
+                        var field = ToolProxyResolver.listField(proxyDef, ref);
+                        if (field != null && field.isSecret()) {
+                            errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                    + "' references secret '${" + ref + "}' in domains -- a domain is written to DNS,"
+                                    + " certificates and logs, so it cannot come from a secret");
+                        }
+                        continue;
+                    }
                     var entry = configMap.get(ref);
                     if (entry == null) {
                         errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
@@ -228,6 +267,9 @@ public class ToolDefValidator {
 
                 var refs = ToolProxyResolver.extractReferencedKeys(ae);
                 for (var ref : refs) {
+                    if (listKey != null && ToolProxyResolver.isListRef(proxyDef, listKey, ref)) continue;
+                    if (!configMap.containsKey(ref) && ref.contains(".")
+                            && ToolProxyResolver.isListRef(proxyDef, ref.substring(0, ref.indexOf('.')), ref)) continue;
                     if (!configMap.containsKey(ref)) {
                         errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
                                 + "' references '${" + ref + "}' which is not defined in configuration");
@@ -295,6 +337,7 @@ public class ToolDefValidator {
         if (invalidNamespace != null) refusals.add(invalidNamespace);
         refusals.addAll(invalidPathScopes(def));
         refusals.addAll(invalidMcpServers(def));
+        refusals.addAll(invalidLists(def));
         refusals.addAll(invalidFileMerges(def));
         refusals.addAll(invalidResources(def));
         return refusals;
@@ -396,7 +439,9 @@ public class ToolDefValidator {
                 : def.getProxy().getAuth().stream().filter(java.util.Objects::nonNull)
                         .flatMap(a -> a.getDomains().stream()).filter(java.util.Objects::nonNull).toList();
         for (var entry : def.getMcp()) {
-            var problem = McpServer.problem(entry);
+            var forEach = entry.getForEach();
+            var problem = forEach == null ? McpServer.problem(entry) : forEachProblem(def, entry, forEach);
+            if (problem == null && forEach != null) problem = McpServer.problem(sampled(entry));
             var label = entry.getName() == null ? "" : entry.getName();
             if (problem != null) {
                 errors.add(OutputFormat.oneLine("mcp server '" + label + "' in '" + def.getName() + "': " + problem));
@@ -410,7 +455,7 @@ public class ToolDefValidator {
                 errors.add(OutputFormat.oneLine("mcp server '" + label + "' in '" + def.getName() + "': bearer-token-env "
                         + entry.getBearerTokenEnv() + " is not one of the tool's proxy.placeholders,"
                         + " so no start fills it with a proof the proxy checks"));
-            } else if (entry.getBearerTokenEnv() != null && domains.stream().noneMatch(d ->
+            } else if (forEach == null && entry.getBearerTokenEnv() != null && domains.stream().noneMatch(d ->
                     dev.incusspawn.proxy.ProofCarriers.matchesDomain(d, urlHost(entry.getUrl())))) {
                 errors.add(OutputFormat.oneLine("mcp server '" + label + "' in '" + def.getName()
                         + "': its url's host is none of the tool's proxy.auth domains,"
@@ -418,6 +463,126 @@ public class ToolDefValidator {
             }
         }
         return errors;
+    }
+
+    /** What a list item's field may be called: a reference's last part, never the label's. */
+    private static final java.util.regex.Pattern FIELD_NAME = java.util.regex.Pattern.compile("[a-z][a-z0-9-]*");
+
+    /** Every {@code ${...}} reference in a string. */
+    private static final java.util.regex.Pattern ANY_REF = java.util.regex.Pattern.compile("\\$\\{([^}]+)}");
+
+    private static boolean isLoneRef(String s) { return s != null && ANY_REF.matcher(s).matches(); }
+
+    private static String refOf(String loneRef) { return loneRef.substring(2, loneRef.length() - 1); }
+
+    /**
+     * Every {@code proxy.configuration} list that cannot be read, and every auth entry repeated
+     * over something that is no list, as errors. Such a tool is refused where definitions load:
+     * the proxy and the build read each item's fields by these rules.
+     */
+    public static List<String> invalidLists(ToolDef def) {
+        var proxy = def.getProxy();
+        if (proxy == null) return List.of();
+        var errors = new ArrayList<String>();
+        proxy.getConfiguration().forEach((key, entry) -> {
+            if (entry != null && entry.isList()) errors.addAll(listProblems(def.getName(), key, entry));
+        });
+        for (var auth : proxy.getAuth()) {
+            if (auth == null || auth.getForEach() == null) continue;
+            var list = proxy.getConfiguration().get(auth.getForEach());
+            if (list == null || !list.isList()) {
+                errors.add(OutputFormat.oneLine("auth entry for " + auth.getDomains() + " in '" + def.getName()
+                        + "': for-each '" + auth.getForEach() + "' is not a configuration entry with for-each fields"));
+            }
+        }
+        return errors;
+    }
+
+    /**
+     * Why list entry {@code key} cannot be read, as errors: its path is one plain key, and each
+     * field is one plain value read from one key of an item.
+     */
+    static List<String> listProblems(String tool, String key, ToolDef.ConfigEntry list) {
+        var errors = new ArrayList<String>();
+        var where = "configuration '" + key + "' in proxy for '" + tool + "'";
+        if (key.contains(".")) errors.add(where + ": a list's key cannot hold a dot");
+        if (list.isSecret()) errors.add(where + ": a list is not a secret itself -- mark its secret fields 'secret: true'");
+        if (list.isConfirm() || !list.getValue().isBlank()) errors.add(where + ": a list takes neither 'type: confirm' nor 'value'");
+        if (list.getConfigPath().isBlank() || list.getConfigPath().contains(".")) {
+            errors.add(where + ": a list needs a 'config-path' of one key, with no dot");
+        }
+        list.getForEach().forEach((field, def) -> {
+            var at = where + ", field '" + field + "'";
+            if (def == null) {
+                errors.add(at + ": is empty");
+                return;
+            }
+            if (!FIELD_NAME.matcher(field).matches() || ToolProxyResolver.LABEL_FIELD.equals(field)) {
+                errors.add(OutputFormat.oneLine(at + ": a field is named with lowercase letters, digits and '-',"
+                        + " and 'label' is the item's own name"));
+            }
+            if (def.getConfigPath().contains(".")) errors.add(at + ": its config-path is one key of the item, with no dot");
+        });
+        return errors;
+    }
+
+    /**
+     * Why {@code entry}, repeated over list {@code listKey}, cannot be registered, or null: its
+     * name holds the item's label, so each item's server is its own; it reaches an item's host as
+     * a {@code for-each} auth entry over the same list serves it, so its proof goes only where
+     * that item's credential is injected; and it reads no secret field, which would be written
+     * into each agent's config.
+     */
+    private static String forEachProblem(ToolDef def, ToolDef.McpEntry entry, String listKey) {
+        var proxy = def.getProxy();
+        var list = proxy == null ? null : proxy.getConfiguration().get(listKey);
+        if (list == null || !list.isList()) {
+            return "for-each '" + listKey + "' is not a proxy.configuration entry with for-each fields";
+        }
+        if (entry.getUrl() == null || !entry.getCommand().isEmpty()) return "a for-each server is a 'url' server";
+        if (entry.getName() == null || !entry.getName().contains("${" + listKey + "." + ToolProxyResolver.LABEL_FIELD + "}")) {
+            return "a for-each server's name must hold '${" + listKey + ".label}', so each item's server is its own";
+        }
+        for (var text : java.util.Arrays.asList(entry.getName(), entry.getDescription(), entry.getUrl())) {
+            if (text == null) continue;
+            var m = ANY_REF.matcher(text);
+            while (m.find()) {
+                var ref = m.group(1);
+                if (ref.startsWith("param_")) continue;
+                if (!ToolProxyResolver.isListRef(proxy, listKey, ref)) {
+                    return "'${" + ref + "}' is not the label or a field of a " + listKey + " item";
+                }
+                var field = ToolProxyResolver.listField(proxy, ref);
+                if (field != null && field.isSecret()) {
+                    return "'${" + ref + "}' is a secret, which would be written into each agent's config";
+                }
+            }
+        }
+        var rest = entry.getUrl().startsWith("https://") ? entry.getUrl().substring("https://".length()) : "";
+        var end = rest.indexOf('/');
+        var hostPart = end < 0 ? rest : rest.substring(0, end);
+        var served = isLoneRef(hostPart) && proxy.getAuth().stream().anyMatch(auth -> auth != null
+                && listKey.equals(auth.getForEach()) && auth.getDomains().equals(List.of(hostPart)));
+        if (!served) {
+            return "a for-each server's url must be 'https://${" + listKey + ".<field>}/...', with a for-each: "
+                    + listKey + " auth entry whose domains are that field alone";
+        }
+        return null;
+    }
+
+    /** {@code entry} with every reference of a list item replaced by a sample value, for {@link McpServer#problem}. */
+    private static ToolDef.McpEntry sampled(ToolDef.McpEntry entry) {
+        var sample = new ToolDef.McpEntry();
+        java.util.function.UnaryOperator<String> sub = text -> text == null ? null
+                : ANY_REF.matcher(text).replaceAll(m -> m.group(1).endsWith("." + ToolProxyResolver.LABEL_FIELD)
+                        ? "item" : m.group(1).startsWith("param_") ? java.util.regex.Matcher.quoteReplacement(m.group()) : "item.example.test");
+        sample.setName(sub.apply(entry.getName()));
+        sample.setDescription(sub.apply(entry.getDescription()));
+        sample.setUrl(sub.apply(entry.getUrl()));
+        sample.setCommand(entry.getCommand());
+        sample.setEnv(entry.getEnv());
+        sample.setBearerTokenEnv(entry.getBearerTokenEnv());
+        return sample;
     }
 
     /** The host of {@code url}, or {@code ""} when it has none. */

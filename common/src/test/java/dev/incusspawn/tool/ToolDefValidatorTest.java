@@ -468,6 +468,110 @@ class ToolDefValidatorTest {
         assertEquals(3, errors.size(), "a defined, non-secret reference is fine: " + errors);
     }
 
+    /** Yoann's Develocity tool in the for-each form, with {@code %s} where a case changes it. */
+    private static final String DEVELOCITY = """
+            name: develocity
+            env:
+              - name: DEVELOCITY_TOKEN
+                value: develocity-placeholder
+            proxy:
+              config-namespace: develocity
+              placeholders:
+                - env: DEVELOCITY_TOKEN
+                  prefix: develocity-
+              configuration:
+                servers:
+                  config-path: servers
+                  description: "Develocity servers"
+                  for-each:
+                    host:
+                      description: "Server host"
+                    access-key:
+                      config-path: accessKey
+                      description: "Access key"
+                      secret: true
+              auth:
+                - for-each: servers
+                  domains: ["${servers.host}"]
+                  paths: [/mcp]
+                  type: bearer
+                  token: "${servers.access-key}"
+            mcp:
+              - for-each: servers
+                name: "%s"
+                url: "%s"
+                bearer-token-env: DEVELOCITY_TOKEN
+            """;
+
+    private static List<String> develocityErrors(String name, String url) {
+        return ToolDefValidator.validate(DEVELOCITY.formatted(name, url), "develocity").errors();
+    }
+
+    @Test
+    void aServerRepeatedForEachItemIsValid() {
+        var result = ToolDefValidator.validate(DEVELOCITY.formatted("develocity-${servers.label}",
+                "https://${servers.host}/mcp"), "develocity");
+        assertEquals(List.of(), result.errors());
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("unknown") || w.contains("ignore")), result.warnings().toString());
+    }
+
+    @Test
+    void aRepeatedServerMayReadAParameterInItsUrl() {
+        // The sampled url keeps ${param_...} as written, never read as a group reference
+        assertEquals(List.of(), develocityErrors("develocity-${servers.label}", "https://${servers.host}/${param_path}"));
+    }
+
+    @Test
+    void aRepeatedServerIsNamedForItsItemAndReachesOnlyAServedHost() {
+        assertTrue(develocityErrors("develocity", "https://${servers.host}/mcp").stream()
+                .anyMatch(e -> e.contains("must hold '${servers.label}'")));
+        assertTrue(develocityErrors("develocity-${servers.label}", "https://ge.example.test/mcp").stream()
+                .anyMatch(e -> e.contains("url must be 'https://${servers.<field>}/")));
+        assertTrue(develocityErrors("develocity-${servers.label}", "https://${servers.host}.evil.test/mcp").stream()
+                .anyMatch(e -> e.contains("url must be 'https://${servers.<field>}/")));
+        assertTrue(develocityErrors("develocity-${servers.label}", "https://${servers.host}/${servers.access-key}").stream()
+                .anyMatch(e -> e.contains("is a secret")));
+        assertTrue(develocityErrors("develocity-${servers.label}", "https://${servers.host}/${other.thing}").stream()
+                .anyMatch(e -> e.contains("is not the label or a field")));
+    }
+
+    @Test
+    void aListsFieldsAreReadOnlyWhereTheyRepeat() {
+        var yaml = """
+                name: lists
+                proxy:
+                  config-namespace: lists
+                  configuration:
+                    servers:
+                      config-path: servers
+                      description: "servers"
+                      secret: true
+                      for-each:
+                        host: { description: "host" }
+                        key: { config-path: a.b, secret: true }
+                        label: { description: "clashes with the item's name" }
+                  auth:
+                    - for-each: servers
+                      domains: ["${servers.key}", "x.${servers.host}"]
+                      type: bearer
+                      token: "${servers.key}"
+                    - domains: [static.example.test]
+                      type: bearer
+                      token: "${servers.key}"
+                    - for-each: nowhere
+                      domains: ["${servers.host}"]
+                      type: bearer
+                      token: "${servers}"
+                """;
+        var errors = ToolDefValidator.validate(yaml, "lists").errors();
+        for (var expected : List.of("a list is not a secret itself", "its config-path is one key of the item",
+                "'label' is the item's own name", "references secret '${servers.key}' in domains",
+                "each domain must be one field of a servers item alone", "which only an entry with for-each: servers reads",
+                "for-each 'nowhere' is not a configuration entry", "references the list '${servers}'")) {
+            assertTrue(errors.stream().anyMatch(e -> e.contains(expected)), expected + " in " + errors);
+        }
+    }
+
     @Test
     void proxyMissingConfigRefIsError() throws Exception {
         var file = writeTemp("""
