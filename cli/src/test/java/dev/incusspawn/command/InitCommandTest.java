@@ -27,23 +27,27 @@ public class InitCommandTest {
         assertNull(HostSetup.readIfReadable(file));
     }
 
+    /** One letter per meaning across the account step: s skips, as in the step's own menu (#2528). */
     @Test
     void verificationFailureActionParsesAllSupportedResponses() {
         assertEquals(CredentialSetup.VerificationFailureAction.RETRY,
-                CredentialSetup.parseVerificationFailureAction(" y "));
+                CredentialSetup.parseVerificationFailureAction(" y ", false));
         assertEquals(CredentialSetup.VerificationFailureAction.RETRY,
-                CredentialSetup.parseVerificationFailureAction(""));
+                CredentialSetup.parseVerificationFailureAction("", false));
         assertEquals(CredentialSetup.VerificationFailureAction.SKIP,
-                CredentialSetup.parseVerificationFailureAction("n"));
+                CredentialSetup.parseVerificationFailureAction("S", false));
         assertEquals(CredentialSetup.VerificationFailureAction.SKIP,
-                CredentialSetup.parseVerificationFailureAction(null));
+                CredentialSetup.parseVerificationFailureAction(null, false));
         assertEquals(CredentialSetup.VerificationFailureAction.SAVE_UNVERIFIED,
-                CredentialSetup.parseVerificationFailureAction("S"));
+                CredentialSetup.parseVerificationFailureAction("u", true));
     }
 
+    /** Saving unverified is an answer only when the check could not run: a rejected credential is not saved. */
     @Test
     void verificationFailureActionRejectsUnsupportedResponses() {
-        assertNull(CredentialSetup.parseVerificationFailureAction("later"));
+        assertNull(CredentialSetup.parseVerificationFailureAction("later", true));
+        assertNull(CredentialSetup.parseVerificationFailureAction("u", false));
+        assertNull(CredentialSetup.parseVerificationFailureAction("n", true));
     }
 
     @Test

@@ -35,6 +35,12 @@ final class AgentGitIdentityStep {
      * @return whether config.yaml was written
      */
     static boolean offer(SpawnConfig config, Prompts prompts, boolean fromHost, Supplier<GitIdentity> host) {
+        return offer(config, prompts, fromHost, host, "instances", true);
+    }
+
+    /** {@link #offer}, naming what the agent runs in as {@code machines}: "isx machines" in the first run (#2528). */
+    static boolean offer(SpawnConfig config, Prompts prompts, boolean fromHost, Supplier<GitIdentity> host, String machines,
+                         boolean agent) {
         if (!AccountResolver.usableAccountNames(config, dev.incusspawn.tool.GhSetup.NAMESPACE).isEmpty()) {
             if (fromHost) BuildOutput.note("A GitHub account gives agents their Git identity, so --" + FLAG + " set none.");
             return false;
@@ -47,23 +53,46 @@ final class AgentGitIdentityStep {
         var identity = host.get();
         if (identity == null) {
             if (fromHost) {
-                BuildOutput.warn("This host has no Git identity to give agents, so --" + FLAG + " set none.",
+                BuildOutput.warn("Git on " + dev.incusspawn.Platform.thisComputer() + " has no identity to give agents, so --" + FLAG + " set none.",
                         "Set user.name and user.email with 'git config --global', then run 'isx init --" + FLAG + "' again.");
             }
             return false;
         }
         if (!fromHost) {
-            prompts.say("No GitHub account: the agent has no name to commit under.");
-            if (!BaseCommand.askYesNo(prompts, "Let it commit as " + identity + ", the identity of this host?", false)) {
-                BuildOutput.note("Agents commit under no name until a GitHub account is added with 'isx account add github'.");
-                return false;
-            }
+            // What is asked first, then what each answer does, in one question (#2528)
+            var here = dev.incusspawn.Platform.thisComputer();
+            BuildOutput.gap();
+            prompts.say(agent ? "Should the agent's commits carry your name and email?"
+                    : "Should commits in " + machines + " carry your name and email?");
+            for (var line : Lines.wrap("Git on " + here + " uses " + identity + ".")) prompts.say(line);
+            prompts.say("");
+            prompts.say("  y  yes: they carry it, and look like your own commits");
+            prompts.say("  N  no: Git in " + machines + " refuses to commit until it");
+            prompts.say("     has a name. 'isx account add github' gives it one.");
+            // What "no" means was said with the question, and the first run's closing box repeats it once
+            if (!yes(prompts)) return false;
         }
         config.useGitIdentity(identity);
         config.save();
-        BuildOutput.step("Agents without a GitHub account commit as " + identity
-                + "; templates built from now on get it.");
+        var said = Lines.wrap((agent ? "Agents with no GitHub account commit as " : "Commits in " + machines + " carry ")
+                + identity, Lines.WIDTH - 2);
+        BuildOutput.ok(said.getFirst());
+        // Under the text of the ✓, not under the ✓
+        for (var line : said.subList(1, said.size())) BuildOutput.stepNote(line);
         return true;
+    }
+
+    /** The answer to the identity question: y or yes; Enter, n and end of input are No, anything else is asked again. */
+    private static boolean yes(Prompts prompts) {
+        while (true) {
+            var answer = prompts.ask("Choice [N]: ");
+            if (answer == null) return false;
+            switch (answer.strip().toLowerCase(java.util.Locale.ROOT)) {
+                case "y", "yes" -> { return true; }
+                case "", "n", "no" -> { return false; }
+                default -> prompts.say("Please answer y or n.");
+            }
+        }
     }
 
     /**

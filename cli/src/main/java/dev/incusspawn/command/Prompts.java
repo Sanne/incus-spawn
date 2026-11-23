@@ -67,7 +67,8 @@ public interface Prompts {
      * @param question  what is asked, without "Choose one": that is added
      * @param options   one entry per choice, one or two lines each
      * @param note      a line after the list, or {@code null}
-     * @param enterDoes what an empty answer does, as it completes "Enter to ...": e.g. "skip"
+     * @param enterDoes what an empty answer does, as it completes "Enter to ...": e.g. "skip";
+     *                  null when an empty answer chooses nothing, so the caller asks again
      * @return the answer as typed, {@code null} at EOF
      */
     default String choose(String question, java.util.List<String> options, String note, String enterDoes) {
@@ -86,7 +87,7 @@ public interface Prompts {
             say(note);
         }
         say("");
-        return ask("Choice (Enter to " + enterDoes + "): ");
+        return ask(enterDoes == null ? "Choice: " : "Choice (Enter to " + enterDoes + "): ");
     }
 
     /** {@link #show}s the question and reads its answer without echoing it: {@code null} at EOF. */

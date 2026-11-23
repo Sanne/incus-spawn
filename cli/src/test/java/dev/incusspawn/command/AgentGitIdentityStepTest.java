@@ -46,8 +46,14 @@ class AgentGitIdentityStepTest {
         assertFalse(offer(prompts, false, JANE));
         prompts.assertFullyConsumed();
         assertUnchanged(NO_ACCOUNT);
-        assertEquals(List.of("No GitHub account: the agent has no name to commit under.",
-                        "? Let it commit as Jane Doe <jane@example.org>, the identity of this host? (y/N): "),
+        // What is asked first, then what each answer does (#2528)
+        assertEquals(List.of("Should the agent's commits carry your name and email?",
+                        "Git on " + dev.incusspawn.Platform.thisComputer() + " uses Jane Doe <jane@example.org>.",
+                        "",
+                        "  y  yes: they carry it, and look like your own commits",
+                        "  N  no: Git in instances refuses to commit until it",
+                        "     has a name. 'isx account add github' gives it one.",
+                        "? Choice [N]: "),
                 prompts.conversation());
     }
 

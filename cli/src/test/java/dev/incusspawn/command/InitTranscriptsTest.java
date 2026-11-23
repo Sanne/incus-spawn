@@ -40,10 +40,18 @@ import static org.junit.jupiter.api.Assertions.*;
 class InitTranscriptsTest {
 
     static final Path OUT = Path.of("target", "init-transcripts");
-    /** The frame is {@link InitCommand#BOX_WIDTH} wide inside its two borders. */
-    static final int WIDTH = InitCommand.BOX_WIDTH + 2;
+    /** A box is {@link InitCommand#BOX_WIDTH} wide inside its two borders. */
+    static final int BOX = InitCommand.BOX_WIDTH + 2;
+    /** A line under a step header, its indent included (.claude/rules/interface-text.md "A line fits its frame"). */
+    static final int WIDTH = InitCommand.BOX_WIDTH;
 
     private static final Pattern OSC = Pattern.compile("\u001B\\]8;;[^\u001B\u0007]*(?:\u001B\\\\|\u0007)");
+    /**
+     * The first run's "Never" words (.claude/rules/interface-text.md "One word for one thing"):
+     * "machine" alone, not after "isx", and the words isx uses elsewhere.
+     */
+    private static final Pattern NEVER = Pattern.compile("(?i)\\b(instances?|containers?|host|hosts|box)\\b|(?<!isx )\\bmachines?\\b");
+    private static final Pattern ECHO = Pattern.compile("(⏎|••••|⟪end of input⟫)$");
     private static final Pattern CSI = Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
 
     static final HostAgentProbe.HostAgent CLAUDE_SUBSCRIPTION = new HostAgentProbe.HostAgent("claude", true,
@@ -66,8 +74,8 @@ class InitTranscriptsTest {
         /** What Anthropic answers a credential: verified or not. */
         boolean anthropicAccepts = true;
         boolean vertexAccepts = true;
-        /** What GitHub answers a token: null for a rejected token. */
-        GitHubVerifyResult gitHub = new CredentialSetup.GitHubVerifyResult("jdoe-ai", "jdoe-ai@example.org");
+        /** What GitHub answers a token: its account, or null for a rejected token. */
+        CredentialSetup.GitHubUser gitHub = new CredentialSetup.GitHubUser("jdoe-ai", 81234567, "jdoe-ai@example.org");
         boolean chatGptSignsIn = true;
 
         @Override String env(String name) { return env.getOrDefault(name, ""); }
@@ -79,29 +87,26 @@ class InitTranscriptsTest {
         @Override
         AuthResult verifyAnthropicApiKey(String key) {
             return anthropicAccepts ? new AuthResult(true, "API key verified.")
-                    : new AuthResult(false, "API key rejected (HTTP 401). It may be expired or invalid.");
+                    : new AuthResult(false, "Anthropic rejected it (HTTP 401): it may be expired or mistyped.");
         }
 
         @Override
         AuthResult verifyOauthToken(String token) {
             return anthropicAccepts ? new AuthResult(true, "OAuth token verified.")
-                    : new AuthResult(false, "OAuth token rejected (HTTP 401). It may be expired or invalid.");
+                    : new AuthResult(false, "Anthropic rejected it (HTTP 401): it may be expired or mistyped.");
         }
 
         @Override
         AuthResult verifyVertexConfig(String region, String projectId) {
+            // As the real check answers with no gcloud on this computer: it could not run
             return vertexAccepts ? new AuthResult(true, "Vertex AI configuration verified.")
-                    : new AuthResult(false, "gcloud is not installed. Install the Google Cloud SDK.");
+                    : AuthResult.unchecked("gcloud is not installed on this computer. Install it from"
+                    + " https://cloud.google.com/sdk/docs/install, then run 'gcloud auth login'.");
         }
 
         @Override
-        CredentialSetup.GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts) {
-            BuildOutput.stepStart("Testing GitHub token");
-            if (gitHub == null) {
-                BuildOutput.stepFail("Authentication failed (HTTP 401).");
-                return null;
-            }
-            BuildOutput.stepDone();
+        CredentialSetup.GitHubUser fetchGitHubUser(String token) throws Exception {
+            if (gitHub == null) throw new GitHubRejected("GitHub rejected it (HTTP 401): it may be expired or mistyped.");
             return gitHub;
         }
 
@@ -143,9 +148,38 @@ class InitTranscriptsTest {
         String login;
         GitIdentity identity = new GitIdentity("Jane Doe", "jane@example.org");
         boolean buildFails;
+        /** The whole run, its setup steps faked: {@link #runFirstRun} on Linux with {@code --no-sudo}. */
+        boolean wholeRun;
+        /** In a whole run, the setup step that throws, or null. */
+        String failingStep;
+        /** The continuation under {@code sg}, which ends the run its parent started. */
+        boolean continuation;
+        /** A project's {@code .incus-spawn/} in the working directory overrides a tool of the first template. */
+        boolean inAProject;
         final List<String> ran = new ArrayList<>();
 
         @Override Prompts prompts() { return prompts; }
+        @Override Set<String> projectToolsHere() { return inAProject ? Set.of("claude") : Set.of(); }
+        @Override InitStep gitRemoteHelper() { return faked("git-remote-helper"); }
+        @Override InitStep dnsStep() { return faked("dns"); }
+        @Override List<InitStep> linuxSetup() { return List.of(faked("subids"), faked("storage-network"), faked("mitm-proxy")); }
+
+        @Override
+        InitStep proxyServiceStep(AtomicBoolean installed) {
+            return new InitStep("proxy-service", "Proxy Service", new String[0], () -> {
+                BuildOutput.step("⟪the proxy service is installed here⟫");
+                installed.set(true);
+            }, null);
+        }
+
+        /** A setup step that prints a marker, or throws when it is {@link #failingStep}. */
+        InitStep faked(String id) {
+            return new InitStep(id, "Step " + id, new String[]{"What " + id + " does."}, () -> {
+                if (id.equals(failingStep)) throw new IllegalStateException(id + " failed for the test");
+                BuildOutput.step("⟪setup step " + id + " runs here⟫");
+            }, InitPlan.Assessment::done);
+        }
+
         @Override List<HostAgentProbe.HostAgent> probeAgents() { return found; }
         @Override String ghLogin() { return login; }
         @Override GitIdentity hostGitIdentity() { return identity; }
@@ -213,124 +247,150 @@ class InitTranscriptsTest {
     static List<Branch> branches() {
         var b = new ArrayList<Branch>();
         Init probe = new Init();
+        var sub = List.of(CLAUDE_SUBSCRIPTION);
+        Consumer<Host> claudeHere = h -> h.commands.add("claude");
+        var gho = "gho_" + "d".repeat(36);
+        var openaiKey = "sk-proj-" + "e".repeat(40);
+        var geminiKey = "AIza" + "f".repeat(35);
 
         // The path Sanne ran: Claude Code with a subscription, a GitHub account of the agent's own
         b.add(new Branch("01-claude-subscription-agent-github", "Claude Code signed in with a subscription; the agent's own GitHub account",
-                i -> { i.found = List.of(CLAUDE_SUBSCRIPTION); i.login = "jdoe"; },
-                h -> h.commands.add("claude"),
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("", "1", "n").secret(GITHUB_TOKEN)));
+                i -> { i.found = sub; i.login = "jdoe"; }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("")));
         b.add(new Branch("02-claude-subscription-own-github", "Claude Code with a subscription; your own GitHub account, from gh",
-                i -> { i.found = List.of(CLAUDE_SUBSCRIPTION); i.login = "jdoe"; },
-                h -> { h.commands.add("claude"); h.ghLoggedIn = true; h.ghToken = "gho_" + "d".repeat(36);
-                    h.gitHub = new CredentialSetup.GitHubVerifyResult("jdoe", "jane@example.org"); },
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("", "2")));
-        b.add(new Branch("03-claude-subscription-skipped", "Claude Code with a subscription; the token skipped, GitHub skipped, no Git identity",
-                i -> { i.found = List.of(CLAUDE_SUBSCRIPTION); i.login = "jdoe"; },
-                h -> h.commands.add("claude"),
-                new ScriptedPrompts().line("", "n").secret("").line("", "")));
-        b.add(new Branch("04-claude-api-key-found", "Claude Code signed in with an API key; the key pasted",
-                i -> i.found = List.of(CLAUDE_API_KEY),
-                h -> h.commands.add("claude"),
-                new ScriptedPrompts().line("", "1").secret(API_KEY).line("")));
-        b.add(new Branch("05-no-agent-found-claude-chosen-subscription", "No agent found; Claude Code chosen from the list; Claude Code not installed; a subscription token",
-                i -> { },
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "2").secret(OAUTH_TOKEN).line("", "")));
+                i -> { i.found = sub; i.login = "jdoe"; },
+                h -> { h.commands.add("claude"); h.ghLoggedIn = true; h.ghToken = gho;
+                    h.gitHub = new CredentialSetup.GitHubUser("jdoe", 1234567, "jane@example.org"); },
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("2", "2")));
+        b.add(new Branch("03-claude-subscription-skipped", "Claude Code with a subscription; its account skipped, GitHub skipped, no Git identity",
+                i -> { i.found = sub; i.login = "jdoe"; }, claudeHere,
+                new ScriptedPrompts().line("", "s", "3", "")));
+        b.add(new Branch("04-claude-api-key-found", "Claude Code signed in with an API key; a key pasted; no gh login",
+                i -> i.found = List.of(CLAUDE_API_KEY), claudeHere,
+                new ScriptedPrompts().line("", "1").secret(API_KEY).line("2", "")));
+        b.add(new Branch("05-no-agent-found-claude-not-installed", "No agent found; Claude Code chosen; not installed here; a subscription token",
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "2").secret(OAUTH_TOKEN).line("2", "")));
         b.add(new Branch("06-claude-vertex-fails-saved-anyway", "Claude Code chosen; Vertex AI, whose check fails, saved anyway",
-                i -> { },
-                h -> h.vertexAccepts = false,
-                new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "3", "us-east5", "my-project", "s", "")));
-        b.add(new Branch("07-claude-token-fails-skipped", "Claude Code with a subscription; the pasted token fails, then skipped",
-                i -> i.found = List.of(CLAUDE_SUBSCRIPTION),
-                h -> { h.commands.add("claude"); h.anthropicAccepts = false; },
-                new ScriptedPrompts().line("", "n").secret(OAUTH_TOKEN).line("n", "")));
+                i -> { }, h -> h.vertexAccepts = false,
+                new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "3", "my-project", "us-east5", "u", "2", "")));
+        b.add(new Branch("07-claude-token-fails-skipped", "Claude Code with a subscription; run by hand; the pasted token fails, then skipped",
+                i -> i.found = sub, h -> { h.commands.add("claude"); h.anthropicAccepts = false; },
+                new ScriptedPrompts().line("", "n").secret(OAUTH_TOKEN).line("s", "2", "")));
         b.add(new Branch("08-claude-env-oauth-token", "CLAUDE_CODE_OAUTH_TOKEN in the environment",
-                i -> i.found = List.of(CLAUDE_SUBSCRIPTION),
-                h -> { h.commands.add("claude"); h.env.put("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN); },
-                new ScriptedPrompts().line("", "", "", "")));
+                i -> i.found = sub, h -> { h.commands.add("claude"); h.env.put("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN); },
+                new ScriptedPrompts().line("", "", "2", "")));
         b.add(new Branch("09-claude-env-api-key", "ANTHROPIC_API_KEY in the environment",
-                i -> i.found = List.of(CLAUDE_API_KEY),
-                h -> { h.commands.add("claude"); h.env.put("ANTHROPIC_API_KEY", API_KEY); },
-                new ScriptedPrompts().line("", "", "")));
-        b.add(new Branch("10-claude-env-vertex-incomplete", "Vertex AI's variables in the environment, the project missing",
-                i -> { },
-                h -> { h.env.put("CLAUDE_CODE_USE_VERTEX", "1"); h.env.put("CLOUD_ML_REGION", "us-east5"); },
-                new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "", "")));
-        b.add(new Branch("11-several-agents-found", "Claude Code and Codex found; another agent chosen",
-                i -> i.found = List.of(CLAUDE_SUBSCRIPTION, CODEX_FOUND),
-                h -> h.commands.add("claude"),
-                new ScriptedPrompts().line("o", String.valueOf(probe.number("codex")), "3").secret("sk-proj-" + "e".repeat(40)).line("")));
+                i -> i.found = List.of(CLAUDE_API_KEY), h -> { h.commands.add("claude"); h.env.put("ANTHROPIC_API_KEY", API_KEY); },
+                new ScriptedPrompts().line("", "", "2", "")));
+        b.add(new Branch("10-claude-env-vertex-incomplete", "Vertex AI's variables in the environment, the project missing; None for now",
+                i -> { }, h -> { h.env.put("CLAUDE_CODE_USE_VERTEX", "1"); h.env.put("CLOUD_ML_REGION", "us-east5"); },
+                new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "4", "2", "")));
+        b.add(new Branch("11-several-agents-found-another-chosen", "Claude Code and Codex found; Codex chosen from the list; an OpenAI API key",
+                i -> i.found = List.of(CLAUDE_SUBSCRIPTION, CODEX_FOUND), claudeHere,
+                new ScriptedPrompts().line("o", String.valueOf(probe.number("codex")), "3").secret(openaiKey).line("2", "")));
         b.add(new Branch("12-codex-chatgpt-browser", "Codex chosen; ChatGPT in the browser",
-                i -> { },
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "1", "")));
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "1", "2", "")));
         b.add(new Branch("13-codex-chatgpt-code-fails", "Codex chosen; ChatGPT with a one-time code, which expires",
-                i -> { },
-                h -> h.chatGptSignsIn = false,
-                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "2", "")));
-        b.add(new Branch("14-codex-skipped", "Codex chosen; its account skipped",
-                i -> { },
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "", "")));
-        b.add(new Branch("15-pi", "Pi chosen; it uses a Claude account, skipped",
-                i -> { },
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "", "")));
+                i -> { }, h -> h.chatGptSignsIn = false,
+                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "2", "2", "")));
+        b.add(new Branch("14-codex-none-for-now", "Codex chosen; None for now",
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "4", "2", "")));
+        b.add(new Branch("15-pi", "Pi chosen; it uses a Claude account; None for now",
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "4", "2", "")));
         b.add(new Branch("16-opencode", "opencode chosen; a Claude API key",
-                i -> { },
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("opencode")), "1").secret(API_KEY).line("", "")));
-        b.add(new Branch("17-copilot", "GitHub Copilot CLI chosen; its account is GitHub's",
-                i -> i.login = "jdoe",
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("copilot")), "1", "n").secret(GITHUB_TOKEN)));
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("opencode")), "1").secret(API_KEY).line("2", "")));
+        b.add(new Branch("17-copilot", "GitHub Copilot CLI chosen; its account is GitHub's; the agent's own",
+                i -> i.login = "jdoe", h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("copilot")), "1").secret(GITHUB_TOKEN).line("")));
         b.add(new Branch("18-gemini-api-key", "Gemini CLI chosen; an API key",
-                i -> { },
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("gemini-cli"))).line("").secret("AIza" + "f".repeat(35)).line("", "")));
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("gemini-cli")), "1").secret(geminiKey).line("2", "")));
         b.add(new Branch("19-antigravity-google", "Antigravity CLI chosen; a Google sign-in",
-                i -> { },
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("antigravity")), "2", "", "")));
-        b.add(new Branch("20-bob", "Bob Shell chosen; its key skipped",
-                i -> { },
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("bob"))).secret("").line("", "", "")));
-        b.add(new Branch("21-none-for-now-identity-yes", "None for now; GitHub skipped; the Git identity of this computer taken",
-                i -> i.login = "jdoe",
-                h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.none()), "", "y")));
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("antigravity")), "2", "2", "")));
+        b.add(new Branch("20-bob", "Bob Shell chosen; its key skipped, the license declined",
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("bob"))).secret("").line("", "2", "")));
+        b.add(new Branch("21-none-for-now-identity-yes", "No agent; GitHub None for now; the Git identity of this computer taken",
+                i -> i.login = "jdoe", h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.none()), "3", "y")));
         b.add(new Branch("22-github-token-fails", "Claude Code; the agent's GitHub token fails, then skipped",
-                i -> i.found = List.of(CLAUDE_SUBSCRIPTION),
-                h -> { h.commands.add("claude"); h.gitHub = null; },
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("", "1", "n").secret(GITHUB_TOKEN).line("n", "")));
-        b.add(new Branch("23-github-no-email", "Claude Code; the agent's GitHub token gives no email",
-                i -> i.found = List.of(CLAUDE_SUBSCRIPTION),
-                h -> { h.commands.add("claude"); h.gitHub = new CredentialSetup.GitHubVerifyResult("jdoe-ai", null); },
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("", "1", "n").secret(GITHUB_TOKEN).secret("")));
-        b.add(new Branch("24-github-own-account-fails", "Claude Code; your own GitHub account, whose gh token fails",
-                i -> { i.found = List.of(CLAUDE_SUBSCRIPTION); i.login = "jdoe"; },
-                h -> { h.commands.add("claude"); h.ghLoggedIn = true; h.ghToken = "gho_" + "d".repeat(36); h.gitHub = null; },
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("", "2", "n").secret("").line("", "")));
+                i -> i.found = sub, h -> { h.commands.add("claude"); h.gitHub = null; },
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("s", "")));
+        b.add(new Branch("23-github-no-email", "Claude Code; the agent's GitHub token shows no email",
+                i -> i.found = sub, h -> { h.commands.add("claude"); h.gitHub = new CredentialSetup.GitHubUser("jdoe-ai", 81234567, null); },
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN)));
+        b.add(new Branch("24-github-own-account-fails", "Claude Code; your own GitHub account, whose gh token fails; then None for now",
+                i -> { i.found = sub; i.login = "jdoe"; },
+                h -> { h.commands.add("claude"); h.ghLoggedIn = true; h.ghToken = gho; h.gitHub = null; },
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("2", "3", "")));
         b.add(new Branch("25-build-fails", "Claude Code; everything given; the build fails",
-                i -> { i.found = List.of(CLAUDE_SUBSCRIPTION); i.buildFails = true; },
-                h -> h.commands.add("claude"),
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("", "1", "n").secret(GITHUB_TOKEN)));
-        b.add(new Branch("26-proxy-not-running", "Claude Code; everything given; the services declined",
-                i -> i.found = List.of(CLAUDE_SUBSCRIPTION),
-                h -> h.commands.add("claude"),
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("", "1", "n").secret(GITHUB_TOKEN),
+                i -> { i.found = sub; i.buildFails = true; }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("")));
+        b.add(new Branch("26-proxy-not-running", "Claude Code; everything given; the services not installed",
+                i -> i.found = sub, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line(""),
                 true, false));
         b.add(new Branch("27-linux-ready", "Linux; Claude Code; everything given",
-                i -> i.found = List.of(CLAUDE_SUBSCRIPTION),
-                h -> h.commands.add("claude"),
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("", "1", "n").secret(GITHUB_TOKEN),
+                i -> i.found = sub, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line(""),
+                false, true));
+        b.add(new Branch("28-go-back", "Claude Code; Enter at the paste goes back; another kind of account; an API key",
+                i -> i.found = sub, claudeHere,
+                new ScriptedPrompts().line("", "n").secret("").line("o", "1").secret(API_KEY).line("2", "")));
+        b.add(new Branch("29-github-address-and-back", "The agent's own GitHub account: the full address asked for, back, then the token; the primary email",
+                i -> i.found = sub, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret("u").secret("").line("1").secret(GITHUB_TOKEN).line("2")));
+        b.add(new Branch("31-preferred-agent-in-config", "A preferred agent in config.yaml, before init ever completed",
+                i -> seed("preferred-agent: codex\n"), h -> { },
+                new ScriptedPrompts().line("", "4", "2", "")));
+        b.add(new Branch("32-accounts-already-set-up", "Claude Code preferred, its account and a GitHub account in config.yaml already",
+                i -> { i.found = sub; seed("""
+                        preferred-agent: claude
+                        claude:
+                          accounts:
+                            default:
+                              oauthToken: %s
+                          default: default
+                        github:
+                          accounts:
+                            default:
+                              token: %s
+                              email: jdoe-ai@example.org
+                          default: default
+                        """.formatted(OAUTH_TOKEN, GITHUB_TOKEN)); },
+                claudeHere, new ScriptedPrompts().line("")));
+        b.add(new Branch("33-whole-run-setup-fails", "The whole run on Linux with --no-sudo; no agent; a setup step fails",
+                i -> { i.wholeRun = true; i.failingStep = "storage-network"; }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.none()), "2", ""), false, true));
+        b.add(new Branch("34-whole-run-linux-no-sudo", "The whole run on Linux with --no-sudo; Claude Code; everything given",
+                i -> { i.wholeRun = true; i.found = sub; }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
+                false, true));
+        b.add(new Branch("35-continuation-under-sg", "Linux; the end of the run, in the continuation under sg",
+                i -> { i.found = sub; i.continuation = true; }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line(""),
+                false, true));
+        b.add(new Branch("36-in-a-project-directory", "Claude Code; run in a directory whose .incus-spawn/ overrides the claude tool",
+                i -> { i.found = sub; i.inAProject = true; }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("")));
+        b.add(new Branch("30-linux-no-sudo", "Linux with --no-sudo; no agent; GitHub None for now",
+                i -> i.noSudo = true, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.none()), "2", ""),
                 false, true));
         return b;
     }
 
     @Test
     void everyBranchIsWrittenAndNoLineIsWiderThanTheFrame() throws Exception {
+        // ... and none uses a word outside the first run's vocabulary before its closing line
+        // Only this run's branches: one renamed or gone leaves no stale file behind
+        if (Files.isDirectory(OUT)) try (var old = Files.list(OUT)) { for (var f : old.toList()) Files.delete(f); }
         Files.createDirectories(OUT);
         var tooWide = new ArrayList<String>();
         for (var branch : branches()) {
@@ -341,12 +401,38 @@ class InitTranscriptsTest {
             var lineNo = 0;
             for (var line : text.split("\n", -1)) {
                 lineNo++;
-                if (line.codePointCount(0, line.length()) > WIDTH && !line.startsWith("⟪"))
+                // What the person typed is not the program's line, and an address cannot be broken
+                var shown = ECHO.matcher(line).replaceAll("");
+                // A box's own lines are as wide as the box; every other line is held to the frame
+                var limit = shown.startsWith("│") || shown.startsWith("╭") || shown.startsWith("╰") ? BOX : WIDTH;
+                if (shown.codePointCount(0, shown.length()) > limit && !shown.strip().startsWith("⟪")
+                        && !shown.strip().startsWith("https://"))
                     tooWide.add(branch.name() + ":" + lineNo + ": " + line);
             }
         }
         Files.writeString(OUT.resolve("too-wide.txt"), String.join("\n", tooWide) + "\n");
-        if (Boolean.getBoolean("transcripts.strict")) assertEquals(List.of(), tooWide);
+        var words = new ArrayList<String>();
+        for (var branch : branches()) {
+            var lineNo = 0;
+            for (var line : Files.readAllLines(OUT.resolve(branch.name() + ".txt"))) {
+                lineNo++;
+                // The closing message's bridging line is the one place "instance" is said
+                if (line.contains("isx commands and docs call")) break;
+                if (line.strip().startsWith("⟪") || line.strip().startsWith("https://")) continue;
+                if (NEVER.matcher(ECHO.matcher(line).replaceAll("")).find()) words.add(branch.name() + ":" + lineNo + ": " + line);
+            }
+        }
+        Files.writeString(OUT.resolve("never-words.txt"), String.join("\n", words) + "\n");
+        assertEquals(List.of(), words, "a word outside the first run's vocabulary (.claude/rules/interface-text.md)");
+        assertEquals(List.of(), tooWide, "wider than the frame (rule 8 of the review on #2528)");
+    }
+
+    static void seed(String yaml) {
+        try {
+            IsolatedHome.seed(yaml);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 
     /** {@code branch} run from its first question to the end of the run, as the terminal shows it. */
@@ -367,11 +453,16 @@ class InitTranscriptsTest {
         };
         try (var ansi = ForcedAnsi.on(); var bound = BuildOutput.bind(TerminalOutput.to(out, out))) {
             out.println("⟪" + branch.about() + (branch.macOs() ? ", on a Mac" : ", on Linux") + "⟫");
-            init.printFirstRunIntro(branch.macOs());
-            init.askFirstRunQuestions();
-            out.println();
-            out.println("⟪the host's setup runs here⟫");
-            init.finishFirstRun(branch.macOs(), branch.servicesInstalled(), false);
+            if (init.wholeRun) {
+                init.noSudo = true;
+                init.runFirstRun(false);
+            } else {
+                init.printFirstRunIntro(branch.macOs());
+                init.askFirstRunQuestions();
+                out.println();
+                out.println("⟪the host's setup runs here⟫");
+                init.finishFirstRun(branch.macOs(), branch.servicesInstalled(), init.continuation);
+            }
         } catch (Exception | AssertionError e) {
             out.println("⟪the run threw: " + e + "⟫");
         }

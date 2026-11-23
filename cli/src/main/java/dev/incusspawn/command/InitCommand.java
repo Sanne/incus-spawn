@@ -125,6 +125,11 @@ public class InitCommand extends BaseCommand {
     private static String topBorder() { return styled(CYAN, "╭" + BORDER_H + "╮"); }
     private static String bottomBorder() { return styled(CYAN, "╰" + BORDER_H + "╯"); }
 
+    /** A top border that carries {@code title}: {@code ╭─ isx setup ───╮}. */
+    private static String topBorder(String title) {
+        return styled(CYAN, "╭─ ") + styled(BOLD, title) + styled(CYAN, " " + "─".repeat(BOX_WIDTH - title.length() - 3) + "╮");
+    }
+
     private static final String[] DNS_HINT = {
             "Configures the Incus bridge network so that containers",
             "resolve intercepted domains (GitHub, Anthropic, etc.) to",
@@ -198,8 +203,9 @@ public class InitCommand extends BaseCommand {
 
     void startStep(String title, String... hintLines) {
         currentStep++;
-        String left = "  " + currentStep + "  " + title;
-        String right = "[" + currentStep + "/" + totalSteps + (totalKnown ? "" : "+") + "]  ";
+        // The number once, in [n/m] (#2528)
+        String left = "  " + title;
+        String right = "[" + currentStep + "/" + totalSteps + (totalKnown ? "" : "+") + "] ";
         int gap = BOX_WIDTH - left.length() - right.length();
 
         var out = new ArrayList<String>();
@@ -258,7 +264,7 @@ public class InitCommand extends BaseCommand {
             step.run().run();
             return;
         }
-        if (plumbingBlock == null) plumbingBlock = BuildOutput.group("Setting up this host", "");
+        if (plumbingBlock == null) plumbingBlock = BuildOutput.group("Setting up " + dev.incusspawn.Platform.thisComputer(), "");
         unannounced = step;
         try {
             step.run().run();
@@ -274,6 +280,22 @@ public class InitCommand extends BaseCommand {
         } finally {
             unannounced = null;
         }
+    }
+
+    /** The first run's closing box under {@code title}, then {@code later} under it, at the step indent. */
+    private static void printClosing(String title, List<String> box, List<String> later) {
+        var out = new ArrayList<String>();
+        out.add("");
+        out.add(topBorder(title));
+        out.add(boxLine(""));
+        for (var line : box) out.add(boxLine(line));
+        out.add(boxLine(""));
+        out.add(bottomBorder());
+        out.add("");
+        for (var line : later) out.add("    " + line);
+        out.add("");
+        // A frame of init's own: laid out here, drawn as given
+        BuildOutput.frame(out.toArray(String[]::new));
     }
 
     private static void printCompletionBox(String... lines) {
@@ -776,12 +798,19 @@ public class InitCommand extends BaseCommand {
     /** The Linux steps before Credential Setup, in order. */
     List<InitStep> linuxSetup() {
         var host = host();
+        // A first run shows a step's header and hint only when the step asks: in its own words (#2528)
+        var first = firstRun;
         return List.of(
-                new InitStep("incus", "Incus Installation", HostSetup.INCUS_HINT, this::installIncus, host::planIncusInstallation),
-                new InitStep("subids", "User Namespace Mappings", HostSetup.SUBID_HINT, host::configureSubuidSubgid, host::planSubids),
-                new InitStep("storage-network", "Storage & Network", HostSetup.STORAGE_HINT, host::initializeIncus, host::planStorageAndNetwork),
-                new InitStep("firewall", "Firewall Configuration", HostSetup.FIREWALL_HINT, host::configureFirewall, host::planFirewall),
-                new InitStep("mitm-proxy", "MITM Authentication Proxy", HostSetup.MITM_HINT, host::configureMitmProxy, host::planMitmProxy),
+                new InitStep("incus", first ? "Incus" : "Incus Installation", first ? HostSetup.INCUS_FIRST_RUN : HostSetup.INCUS_HINT,
+                        this::installIncus, host::planIncusInstallation),
+                new InitStep("subids", first ? "User Mappings" : "User Namespace Mappings", first ? HostSetup.SUBID_FIRST_RUN : HostSetup.SUBID_HINT,
+                        host::configureSubuidSubgid, host::planSubids),
+                new InitStep("storage-network", "Storage & Network", first ? HostSetup.STORAGE_FIRST_RUN : HostSetup.STORAGE_HINT,
+                        host::initializeIncus, host::planStorageAndNetwork),
+                new InitStep("firewall", first ? "Firewall" : "Firewall Configuration", first ? HostSetup.FIREWALL_FIRST_RUN : HostSetup.FIREWALL_HINT,
+                        host::configureFirewall, host::planFirewall),
+                new InitStep("mitm-proxy", first ? "The isx Proxy" : "MITM Authentication Proxy", first ? HostSetup.MITM_FIRST_RUN : HostSetup.MITM_HINT,
+                        host::configureMitmProxy, host::planMitmProxy),
                 sshKeyPair());
     }
 
@@ -1148,7 +1177,8 @@ public class InitCommand extends BaseCommand {
                     "Fix config.yaml, then run 'isx init credentials'.");
             return;
         }
-        AgentGitIdentityStep.offer(config, prompts(), gitIdentityFromHost, this::hostGitIdentity);
+        AgentGitIdentityStep.offer(config, prompts(), gitIdentityFromHost, this::hostGitIdentity,
+                firstRun ? "isx machines" : "instances", !firstRun || chosenAgent != null);
     }
 
     /** This host's Git identity, or null; tests answer it instead. */
@@ -1244,8 +1274,9 @@ public class InitCommand extends BaseCommand {
                     this.incus = RuntimeServices.incus();
                 }
                 if (!macOs && !noSudo) {
-                    BuildOutput.step("Several steps need " + styled(BOLD, "sudo") + " to install packages, configure"
-                            + " the firewall, and set up user namespace mappings.");
+                    // The one sudo prompt the intro promised, said before it asks (#2528)
+                    BuildOutput.step("isx asks for your sudo password now, to install packages,");
+                    BuildOutput.step("set up the firewall and the user namespace mappings.");
                     if (runHost("sudo", "-v") != 0) {
                         BuildOutput.error("sudo authentication failed.", "Please ensure you have sudo access and try again.");
                         return CommandResult.valueOf(1);
@@ -1260,12 +1291,29 @@ public class InitCommand extends BaseCommand {
             try {
                 // A continuation starts after Incus Installation, which its parent ran
                 runPlumbing(firstRunPlumbing(macOs, servicesInstalled), !macOs && continued ? 1 : 0);
+                // The paths and settings the steps wrote are in the log, not on the screen (#2528)
+                var log = Environment.clientLogFile().toString();
+                var home = System.getProperty("user.home");
+                BuildOutput.note("Details of this setup are in its log:");
+                BuildOutput.step(OutputFormat.oneLine(log.startsWith(home + "/") ? "~" + log.substring(home.length()) : log));
             } catch (WaitingOnPerson waiting) {
                 return handOver(waiting.changes);
             } catch (Exception e) {
                 // The failure is reported by the command; what to do about a run that stopped half way is said here
-                BuildOutput.step("Setup stopped before it finished. The agent and accounts you set up are saved: once the"
-                        + " failure below is fixed, run 'isx init' again, and it asks only what you skipped.");
+                BuildOutput.step("Setup stopped before it finished.");
+                // Only what this run kept is named: an account counts when one was given or was there (#2528)
+                var accounts = answers != null && (!answers.noGitHub() || chosenAgent != null && !answers.noCredential());
+                var restart = "Fix the error below, then run 'isx init' again.";
+                if (chosenAgent != null && accounts) {
+                    Lines.step("Your agent and your accounts are saved. " + restart
+                            + " Enter keeps your agent, and it asks only for the accounts you skipped.");
+                } else if (chosenAgent != null) {
+                    Lines.step("Your agent is saved. " + restart + " Enter keeps your agent.");
+                } else if (accounts) {
+                    Lines.step("Your accounts are saved. " + restart + " It asks its questions again, and keeps those accounts.");
+                } else {
+                    Lines.step(restart + " It asks its questions again.");
+                }
                 throw e;
             }
             return finishFirstRun(macOs, servicesInstalled.get(), continued);
@@ -1274,13 +1322,58 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    /** What a first run shows before its first question. */
-    void printFirstRunIntro(boolean macOs) {
-        printSetupBanner(macOs ? " (macOS)" : "", noSudo ? "runs nothing as root: the script did that" : "~5 minutes");
-        BuildOutput.step("First, isx asks a few questions: your coding agent, its account and a GitHub account.");
-        BuildOutput.step("Then it sets up this host and builds your first template"
-                + (macOs || noSudo ? "." : ". It asks for sudo once, after the questions."));
+    /** What the agent runs in: "isx machines" in the first run, which introduces the word, else "instances" (#2528). */
+    String machines() {
+        return firstRun ? "isx machines" : "instances";
     }
+
+    /**
+     * What a first run shows before its first question: a map of the run, in the box (#2528).
+     * What the person answers lists only the questions this run asks. A re-run, on a computer
+     * init configured before, keeps its own banner.
+     */
+    void printFirstRunIntro(boolean macOs) {
+        // Only a computer where init completed is a re-run: a config.yaml written by 'isx account
+        // add', or by a first run that stopped, still gets the map
+        if (Files.exists(Environment.initCompleteMarker())) {
+            printSetupBanner(macOs ? " (macOS)" : "", noSudo ? "runs nothing as root: the script did that" : "~5 minutes");
+            return;
+        }
+        var config = SpawnConfig.load();
+        var needsGitHub = dev.incusspawn.config.AccountResolver.usableAccountNames(config, dev.incusspawn.tool.GhSetup.NAMESPACE).isEmpty();
+        // The questions for the agent the run offers first; with none to offer, those of an agent with an account to set up
+        var suggested = suggestedAgent();
+        var questions = suggested == null ? new Questions(true, false, needsGitHub) : questionsFor(suggested, needsGitHub);
+        var asked = new ArrayList<>(List.of("your coding agent"));
+        if (questions.accountIsGitHub()) asked.add("its GitHub account");
+        else if (questions.account()) asked.add("its account");
+        if (questions.gitHub()) asked.add("GitHub");
+        var out = new ArrayList<String>();
+        out.add("");
+        out.add(topBorder("isx setup"));
+        out.add(boxLine(""));
+        out.add(boxLine(String.format("   %-13s%s", "You answer", String.join(", ", asked))));
+        if (macOs) {
+            out.add(boxLine(String.format("   %-13s%s", "isx then", "sets up this Mac: a Linux VM and the proxy")));
+        } else if (noSudo) {
+            // The root steps ran from the script the --no-sudo run before this one printed
+            out.add(boxLine(String.format("   %-13s%s", "isx then", "sets up the rest of this computer")));
+            out.add(boxLine(String.format("   %-13s%s", "", "(you ran init-privileged.sh as root)")));
+        } else {
+            out.add(boxLine(String.format("   %-13s%s", "isx then", "sets up this computer: Incus and the proxy")));
+            out.add(boxLine(String.format("   %-13s%s", "", "(asks for your sudo password)")));
+        }
+        out.add(boxLine(String.format("   %-13s%s", "", "builds your first template")));
+        out.add(boxLine(String.format("   %-13s%s", "You get", "an isx machine (an isolated Linux system)")));
+        out.add(boxLine(String.format("   %-13s%s", "", "with your agent, ready to open")));
+        out.add(boxLine(""));
+        out.add(boxLine("   " + styled(DIM, "3 to 5 minutes, most of it downloads.")));
+        out.add(boxLine(""));
+        out.add(bottomBorder());
+        // A frame of init's own: laid out here, drawn as given
+        BuildOutput.frame(out.toArray(String[]::new));
+    }
+
 
     /** The preferred agent in config.yaml, as a coding agent's tool, or null. */
     ToolSetup preferredAgentTool() {
@@ -1377,6 +1470,9 @@ public class InitCommand extends BaseCommand {
      */
     void askFirstRunQuestions() throws Exception {
         currentStep = 0;
+        // Its questions use the first run's words, and leave some questions to later (#2528)
+        firstRun = true;
+        credentials.firstRun = true;
         // A broken config.yaml stops the run before its first question, rather than at a step that saves
         var gitHub = firstRunConfig();
         var needsGitHub = dev.incusspawn.config.AccountResolver.usableAccountNames(gitHub, dev.incusspawn.tool.GhSetup.NAMESPACE).isEmpty();
@@ -1384,15 +1480,20 @@ public class InitCommand extends BaseCommand {
         if (all || searchPathAnswers != null || forkTemplates) later.add(searchPathsStep());
         if (all || codeDirAnswers != null) later.add(codeDirectoriesStep());
         if (all) later.add(mcpStep());
-        totalSteps = 2 + (needsGitHub ? 1 : 0) + (all ? 1 : 0) + later.size();
-        totalKnown = !all;
+        // Counted for the agent offered first; with none, the fewest a run can ask, marked "+" (#2528)
+        var extra = (all ? 1 : 0) + later.size();
+        var suggested = suggestedAgent();
+        totalSteps = (suggested == null ? new Questions(false, false, needsGitHub) : questionsFor(suggested, needsGitHub)).count() + extra;
+        totalKnown = !all && suggested != null;
         var noCredential = false;
         try {
             begin(agentStep());
             if (chosenAgent != null) startDownloadsAhead(chosenAgent);
+            // Counted again for the agent chosen, before the next header shows it
+            totalSteps = questionsFor(chosenAgent, needsGitHub).count() + extra;
+            totalKnown = !all;
             var gaps = chosenAgent == null ? Map.<CredentialCheck.Missing, List<String>>of() : agentGaps();
             if (gaps.isEmpty()) {
-                totalSteps--;
                 if (chosenAgent != null) BuildOutput.note(ExampleTemplate.title(templateAgent()) + "'s account is set up already.");
             } else {
                 begin(agentCredentialStep(templateAgent()));
@@ -1404,7 +1505,6 @@ public class InitCommand extends BaseCommand {
             var gitHubNow = dev.incusspawn.config.AccountResolver.usableAccountNames(SpawnConfig.load(),
                     dev.incusspawn.tool.GhSetup.NAMESPACE).isEmpty();
             // Asked already when GitHub's is the account the agent spends (Copilot): never twice
-            if (needsGitHub && (!gitHubNow || gitHubAsked)) totalSteps--;
             if (needsGitHub && gitHubNow) {
                 if (!gitHubAsked) {
                     var saved = new AtomicBoolean();
@@ -1435,12 +1535,59 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    /** What {@link #probeAgents} found, read once a run: the intro and the agent question both ask. */
+    private List<HostAgentProbe.HostAgent> probed;
+
+    private List<HostAgentProbe.HostAgent> probed() {
+        if (probed == null) probed = probeAgents();
+        return probed;
+    }
+
+    /** The agent the question offers first: the one preferred in config.yaml, else one found signed in, else one found. */
+    ToolSetup suggestedAgent() {
+        var preferred = preferredAgentTool();
+        if (preferred != null) return preferred;
+        var agents = codingAgentTools();
+        return probed().stream()
+                .sorted(java.util.Comparator.comparing(a -> !a.signedIn()))
+                .map(a -> agents.stream().filter(t -> t.name().equals(a.agent())).findFirst().orElse(null))
+                .filter(java.util.Objects::nonNull).findFirst().orElse(null);
+    }
+
+    /**
+     * Which questions the run asks for {@code agent} (null for none), after the agent's own:
+     * its account, whether that account is GitHub's (Copilot), so the GitHub question is that
+     * step, and the GitHub question apart from it.
+     */
+    record Questions(boolean account, boolean accountIsGitHub, boolean gitHub) {
+        int count() {
+            return 1 + (account ? 1 : 0) + (gitHub ? 1 : 0);
+        }
+    }
+
+    Questions questionsFor(ToolSetup agent, boolean needsGitHub) {
+        if (agent == null) return new Questions(false, false, needsGitHub);
+        var chosen = chosenAgent;
+        chosenAgent = agent;
+        try {
+            var gaps = agentGaps();
+            var tools = trustedToolLoader().allToolSetups();
+            // The account step asks the GitHub question itself when GitHub's is among the accounts it sets up
+            var steps = gaps.keySet().stream().map(g -> CredentialCheck.stepTool(g, tools)).toList();
+            var gitHubOnly = !steps.isEmpty() && steps.stream().allMatch("gh"::equals);
+            return new Questions(!gaps.isEmpty(), gitHubOnly, needsGitHub && !steps.contains("gh"));
+        } catch (RuntimeException e) {
+            return new Questions(true, false, needsGitHub);
+        } finally {
+            chosenAgent = chosen;
+        }
+    }
+
     /** The first question: which agent isx sets this host up for. */
     InitStep agentStep() {
         return new InitStep("agent", "Your Coding Agent", new String[]{
-                "isx sets this host up for one agent: its account, and a first",
-                "template that installs it. Other templates still install",
-                "whichever agent they name."}, this::askAgent, null);
+                "Which coding agent do you prefer?",
+                "You can change it later with 'isx agent'."}, this::askAgent, null);
     }
 
     /**
@@ -1450,31 +1597,34 @@ public class InitCommand extends BaseCommand {
     void askAgent() {
         var prompts = prompts();
         var agents = codingAgentTools();
-        var found = probeAgents();
-        var preferred = preferredAgentTool();
-        var suggested = preferred != null ? preferred : found.stream()
-                .sorted(java.util.Comparator.comparing(a -> !a.signedIn()))
-                .map(a -> agents.stream().filter(t -> t.name().equals(a.agent())).findFirst().orElse(null))
-                .filter(java.util.Objects::nonNull).findFirst().orElse(null);
+        var found = probed();
+        var suggested = suggestedAgent();
         chosenAgent = suggested == null ? chooseAgent(prompts, agents) : confirmAgent(prompts, agents, suggested, found);
         if (chosenAgent == null) {
-            BuildOutput.step("No agent for now. The first template is tpl-minimal, a plain machine.");
+            BuildOutput.step("No agent for now.");
+            BuildOutput.step("Your first isx machine is a plain Linux system.");
             return;
         }
         var config = firstRunConfig();
         config.setPreferredAgent(chosenAgent.name());
         config.save();
-        BuildOutput.step("Your agent: " + ExampleTemplate.title(chosenAgent));
+        BuildOutput.ok("Preferred agent: " + ExampleTemplate.title(chosenAgent));
     }
 
     private ToolSetup confirmAgent(Prompts prompts, List<ToolSetup> agents, ToolSetup suggested,
                                    List<HostAgentProbe.HostAgent> found) {
         var title = ExampleTemplate.title(suggested);
         var seen = found.stream().filter(a -> a.agent().equals(suggested.name())).findFirst();
-        prompts.say(seen.map(a -> a.found())
-                .orElse("Your preferred agent is " + title + "."));
+        prompts.say(seen.isPresent() ? "Found " + title + " on " + dev.incusspawn.Platform.thisComputer() + "."
+                : "Your preferred agent is " + title + ".");
+        BuildOutput.gap();
+        // Each answer says what it does, as the account step's do (#2528)
+        prompts.say("Use " + title + "?");
+        prompts.say("  Y  yes");
+        prompts.say("  o  choose another agent");
+        prompts.say("  n  no agent for now");
         while (true) {
-            var answer = prompts.ask("Set up isx for " + title + ", so templates that include it can run it? (Y/n/other): ");
+            var answer = prompts.ask("Choice [Y]: ");
             if (answer == null) return null;
             switch (answer.strip().toLowerCase(java.util.Locale.ROOT)) {
                 case "", "y", "yes" -> {
@@ -1486,7 +1636,7 @@ public class InitCommand extends BaseCommand {
                 case "o", "other" -> {
                     return chooseAgent(prompts, agents);
                 }
-                default -> prompts.say("Please answer y, n or other.");
+                default -> prompts.say("Please answer y, o or n.");
             }
         }
     }
@@ -1494,10 +1644,9 @@ public class InitCommand extends BaseCommand {
     /** The list of agents and "None for now", until one is chosen: Enter chooses nothing, EOF none. */
     private ToolSetup chooseAgent(Prompts prompts, List<ToolSetup> agents) {
         var options = new ArrayList<>(agents.stream().map(ExampleTemplate::title).toList());
-        options.add("None for now\n(a plain machine, with no agent and no account)");
+        options.add("None for now\nA plain isx machine, with no agent and no account.");
         while (true) {
-            var answer = prompts.choose("Which agent should isx set up, so templates that include it can run it?",
-                    options, null, "see the list again");
+            var answer = prompts.choose("isx can set up these agents.", options, null, "see the list again");
             if (answer == null) return null;
             try {
                 var n = Integer.parseInt(answer.strip());
@@ -1529,11 +1678,17 @@ public class InitCommand extends BaseCommand {
     /** The step that sets up the account {@code agent} spends, and verifies it; the person may skip it. */
     InitStep agentCredentialStep(ToolSetup agent) {
         var title = ExampleTemplate.title(agent);
-        return new InitStep("agent-credential", title + " Account", new String[]{
-                "The account " + title + " spends. It stays on this host:",
-                "instances hold a placeholder, and the proxy adds the real",
-                "credential to each request."},
-                this::setUpAgentCredential, null);
+        return new InitStep("agent-credential", title + " Account", accountHint(title), this::setUpAgentCredential, null);
+    }
+
+    /** The agent account step's hint: whose account it is, and where its credential stays (#2528). */
+    static String[] accountHint(String title) {
+        var stays = "Its credential stays on " + dev.incusspawn.Platform.thisComputer() + ".";
+        var never = "isx machines never get it.";
+        var first = "The account " + title + " uses inside isx machines.";
+        // One line when it fits the frame under the hint's bar: on neither platform with today's words
+        return (stays + " " + never).length() <= BOX_WIDTH - 4 ? new String[]{first, stays + " " + never}
+                : new String[]{first, stays, never};
     }
 
     /**
@@ -1544,6 +1699,17 @@ public class InitCommand extends BaseCommand {
     void setUpAgentCredential() throws Exception {
         var tools = trustedToolLoader().allToolSetups();
         var agent = templateAgent();
+        // An account kind only another agent can use is not offered (#2528); only in this step,
+        // so a later step of --all decides it for its own tool
+        credentials.agent = agent.name();
+        try {
+            setUpAgentCredential(agent, tools);
+        } finally {
+            credentials.agent = null;
+        }
+    }
+
+    private void setUpAgentCredential(ToolSetup agent, Map<String, ToolSetup> tools) throws Exception {
         var ran = new java.util.HashSet<String>();
         for (var gap : agentGaps().keySet()) {
             var step = CredentialCheck.stepTool(gap, tools);
@@ -1554,7 +1720,6 @@ public class InitCommand extends BaseCommand {
             } else if (step.equals("gh")) {
                 // The first run's GitHub question, which then is not asked a second time
                 gitHubAsked = true;
-                BuildOutput.step("The account is also the name on the agent's commits.");
                 offerGitHub();
             } else if (step.equals("claude") && claudeSubscriptionFound()) {
                 var prompts = consoleOrExplain();
@@ -1583,16 +1748,23 @@ public class InitCommand extends BaseCommand {
         if (!agent.credentialNamespaces().contains(namespace)) return;
         // Only the account the agent spends with no provider set is its default: a kept template may name another
         var byDefault = agent.parameters().containsKey("provider") && agent.credentialNamespaces(Map.of()).contains(namespace);
-        var shown = OutputFormat.oneLine(namespace);
-        BuildOutput.step(title + " has no account of its own: " + (byDefault ? "by default " : "") + "it spends "
-                + ("aeiou".indexOf(shown.charAt(0)) >= 0 ? "an " : "a ") + shown + " account.");
+        var shown = CredentialSetup.accountName(namespace);
+        // "an OpenAI account", "a Claude account"
+        var article = "AEIOUaeiou".indexOf(shown.charAt(0)) >= 0 ? "an " : "a ";
         if (byDefault) {
-            BuildOutput.step("For another provider, skip this step. Then set it in the template");
-            BuildOutput.step("(isx templates edit " + ExampleTemplate.NAME + "), as '- " + agent.name() + ": {provider: openai}', and");
-            BuildOutput.step("add that provider's account (isx account add openai).");
+            BuildOutput.step(title + " works with several providers, and isx sets it up");
+            BuildOutput.step("with " + article + shown + " account first. To use another provider,");
+            BuildOutput.step("choose None for now here, then see:");
+            var anchor = agent.name().equals("pi") ? "pi-coding-agent" : OutputFormat.oneLine(agent.name());
+            BuildOutput.step(TerminalLink.link("https://isx.run/docs/agents#" + anchor, "https://isx.run/docs/agents#" + anchor));
+        } else {
+            Lines.step(shown.equals("GitHub")
+                    ? title + " signs in with a GitHub account, and the agent acts on GitHub as that same account."
+                    : title + " uses " + article + shown + " account.");
         }
-        BuildOutput.gap();
+        // The question that follows opens with a gap of its own
     }
+
 
     /**
      * config.yaml for a first-run step that saves it, read strictly: {@code load()} reads a broken
@@ -1618,6 +1790,7 @@ public class InitCommand extends BaseCommand {
     /** The GitHub question: an account for the agent, which the person may skip. */
     boolean offerGitHub() {
         var prompts = consoleOrExplain();
+        credentials.noAgent = firstRun && chosenAgent == null;
         return prompts != null && credentials.offerGitHubForAgent(firstRunConfig(), prompts, ghLogin());
     }
 
@@ -1646,9 +1819,11 @@ public class InitCommand extends BaseCommand {
 
     /** The GitHub question, which records in {@code saved} whether an account was saved. */
     InitStep gitHubStep(AtomicBoolean saved) {
-        return new InitStep("github", "GitHub Account", new String[]{
-                "A GitHub account gives the agent its access to GitHub and the",
-                "name on its commits. Prefer an account of the agent's own."},
+        return new InitStep("github", "GitHub Account", chosenAgent == null ? new String[]{
+                "Git and gh in isx machines act on GitHub as this account.",
+                "What they commit, push or open there carries its name."} : new String[]{
+                "The agent acts on GitHub as this account. Its commits,",
+                "pull requests, issues and comments carry its name."},
                 () -> saved.set(offerGitHub()), null);
     }
 
@@ -1688,18 +1863,21 @@ public class InitCommand extends BaseCommand {
         } else if (project != null) {
             // A build here would read the cloned repository's definition in place of the person's
             var builtAlready = templateBuilt(template);
-            BuildOutput.warn((builtAlready ? template + " is built, and init does not open it here" : "Did not build " + template)
-                            + ": the project in " + OutputFormat.oneLine(project.toString())
-                            + " defines a template or tool of its chain, which a build in this directory reads in place of yours.",
-                    (builtAlready ? "Open it with 'isx branch <name> --from " : "Run 'isx build ")
-                            + template + "' from a directory with no .incus-spawn/ of its own.");
+            // The details at the width of the frame, under the warning's indent (#2528)
+            var details = new ArrayList<>(Lines.wrap("The project in " + OutputFormat.oneLine(project.toString())
+                    + " defines a template or tool that " + template + " uses, and a build in this directory would use"
+                    + " the project's in place of yours.", Lines.WIDTH - 2));
+            details.addAll(Lines.wrap((builtAlready ? "Open it with 'isx branch <name> --from " : "Run 'isx build ")
+                    + template + "' from a directory with no .incus-spawn/ of its own.", Lines.WIDTH - 2));
+            BuildOutput.warn(builtAlready ? template + " is built, and isx does not open it here"
+                    : "isx did not build " + template + " here", details.toArray(String[]::new));
             built = false;
             shownBuilt = builtAlready;
         } else if (!servicesInstalled) {
             // One built before is still said to be built, though nothing opens it without the proxy
             shownBuilt = templateBuilt(template);
-            BuildOutput.note((shownBuilt ? template + " is built, and init does not open it" : "Did not build " + template)
-                    + ": the proxy is not running as a service.");
+            BuildOutput.note(shownBuilt ? template + " is built. isx does not open it: the proxy is not running."
+                    : "isx did not build " + template + ": the proxy is not running.");
         } else if (templateBuilt(template)) {
             built = true;
         } else {
@@ -1710,25 +1888,27 @@ public class InitCommand extends BaseCommand {
                 : linuxServices(servicesInstalled);
         // The name the offer branches, so the command printed is the one that works
         var instance = firstInstanceName();
-        var lines = new ArrayList<>(List.of(firstRunNextSteps(new Closing(services, template, built || shownBuilt, buildFailed,
+        var message = firstRunNextSteps(new Closing(services, template, built || shownBuilt, buildFailed,
                 agent == null ? null : ExampleTemplate.title(agent), agentAccountCommand,
                 agent == null ? List.of() : agent.firstStartNote(SpawnConfig.load()),
-                answers.noIdentity(), instance, !all))));
+                answers.noIdentity(), instance, !all));
+        var lines = new ArrayList<>(message.box());
         if (project != null) {
             // In this directory the commands would read the project's definitions, as the warning says
-            var open = lines.indexOf(lines.stream().filter(l -> l.contains("isx branch " + instance)).findFirst().orElse(null));
-            if (open >= 0) {
-                // Under the command, at its indent, which is deeper when the steps are numbered
-                var command = lines.get(open);
-                lines.add(open + 1, command.substring(0, command.indexOf("isx branch"))
-                        + "(from a directory with no .incus-spawn/ of its own)");
+            // Under each command a build here would read the project for: the build and the branch
+            for (var command : List.of("isx build " + template, "isx branch " + instance)) {
+                var at = lines.indexOf(lines.stream().filter(l -> l.contains(command)).findFirst().orElse(null));
+                if (at < 0) continue;
+                // At the command's indent, which is deeper when the steps are numbered
+                var line = lines.get(at);
+                lines.add(at + 1, line.substring(0, line.indexOf(command)) + "(from a directory with no .incus-spawn/ of its own)");
             }
         }
         if (continued) lines.addAll(GROUP_PENDING);
-        printCompletionBox(false, lines.toArray(String[]::new));
+        printClosing(message.title(), lines, message.later());
         var prompts = prompts();
         if (built && chosenAgent != null && agentAccountCommand == null && !automatic && prompts != null
-                && askYesNo(prompts, "Open your first agent now?", true)) {
+                && askYesNo(prompts, "Run 'isx branch " + instance + " --from " + template + "' now?", true)) {
             return CommandResult.valueOf(openAgent(template, instance));
         }
         return CommandResult.valueOf(buildFailed ? 1 : 0);
@@ -1787,10 +1967,9 @@ public class InitCommand extends BaseCommand {
             var agent = templateAgent();
             BuildOutput.note("Kept your own " + ExampleTemplate.NAME + " as it is" + (agent == chosenAgent ? "."
                     : "; it installs " + ExampleTemplate.title(agent) + ", not " + ExampleTemplate.title(chosenAgent) + "."));
-        } else if (ExampleTemplate.write(ExampleTemplate.file(), chosenAgent,
-                ExampleTemplate.hasGitHubAccount(SpawnConfig.load()))) {
-            BuildOutput.step("Wrote " + OutputFormat.oneLine(ExampleTemplate.file().toString())
-                    + ", a template for " + ExampleTemplate.title(chosenAgent) + " that is yours to edit");
+        } else {
+            // The closing box says what it is and how to change it (#2528); it lists gh with a GitHub account (#2535)
+            ExampleTemplate.write(ExampleTemplate.file(), chosenAgent, ExampleTemplate.hasGitHubAccount(SpawnConfig.load()));
         }
         return ExampleTemplate.NAME;
     }
@@ -1824,28 +2003,27 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    /** What a short line of the completion message says each deferred step is for. */
-    static final Map<String, String> LATER = Map.of(
-            "credentials", "more accounts, for other agents",
-            "search-paths", "templates of your own",
-            "code-directories", "your repositories on this host",
-            "mcp", "agents on this host using isx");
-
     /** What a first run's closing message is told of the run. */
     record Closing(Services services, String template, boolean built, boolean buildFailed, String agent,
                    String accountCommand, List<String> firstStart, boolean noIdentity, String instance, boolean listLater) {}
 
+    /** The closing message: the box's title and lines, then the lines under it, for later. */
+    record ClosingMessage(String title, List<String> box, List<String> later) {}
+
     /**
-     * The first run's completion message. What is ready comes first, then what the person does
-     * next, in the order it has to be done and one command to a line: start the services, build
-     * the template, add the agent's account, open the agent. Then how to come back to it and
-     * change its template, and each step left for later.
+     * The first run's closing message (#2528). The box holds the result and the one next
+     * command; when more is left, the steps in the order they have to be done, one command to
+     * a line: start the services, build the template, add the agent's account, open it.
+     * Under the box, what the person may want later, and the one line that bridges "isx
+     * machine" to the "instance" of isx's commands and docs.
      */
-    static String[] firstRunNextSteps(Closing c) {
-        var machine = c.agent() == null;
+    static ClosingMessage firstRunNextSteps(Closing c) {
+        var plain = c.agent() == null;
         var steps = new ArrayList<List<String>>();
         if (c.services().label != null) {
-            var start = new ArrayList<>(List.of(c.services().label + ":", c.services().command));
+            // The first run's own words for what the short label of the other boxes says
+            var label = c.services() == Services.START_VM_AND_PROXY ? "Start the VM and the proxy" : c.services().label;
+            var start = new ArrayList<>(List.of(label + ":", c.services().command));
             if (c.services().holdsTerminal()) start.add("(it keeps its terminal: use another for the rest)");
             steps.add(start);
         }
@@ -1854,49 +2032,47 @@ public class InitCommand extends BaseCommand {
                     "isx build " + c.template()));
         }
         if (c.accountCommand() != null) steps.add(List.of("Add " + c.agent() + "'s account:", c.accountCommand()));
-        var open = new ArrayList<>(List.of(machine ? "Open your first machine:" : "Open your first agent:",
+        var open = new ArrayList<>(List.of(plain ? "Open a new isx machine:" : "Open " + c.agent() + " in a new isx machine:",
                 "isx branch " + c.instance() + " --from " + c.template()));
         open.addAll(c.firstStart());
         steps.add(open);
 
-        var lines = new ArrayList<String>();
         var ready = steps.size() == 1;
-        if (ready) {
-            lines.add("   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"));
-        } else {
-            lines.add("   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " This host is set up."));
-            if (c.buildFailed()) lines.add("   " + c.template() + " did not build.");
-            lines.add("   Your first " + (machine ? "machine" : "agent") + " needs these " + steps.size() + " steps:");
+        var box = new ArrayList<String>();
+        if (c.buildFailed()) box.add("   " + c.template() + " did not build.");
+        if (c.built()) {
+            // Where "template" is explained (#2528)
+            box.add("   " + c.template() + " is built: a template that makes "
+                    + (plain ? "plain" : "isx machines"));
+            box.add("   " + (plain ? "isx machines." : "with " + c.agent() + "."));
         }
-        lines.add("");
-        if (c.services().label == null) lines.add("   isx's services start on their own.");
-        if (c.built()) lines.add("   " + c.template() + " is built" + (machine ? "." : ", with " + c.agent() + "."));
-        if (c.services().label == null || c.built()) lines.add("");
+        // The title counts what is left; the steps follow it
         for (int i = 0; i < steps.size(); i++) {
             var step = steps.get(i);
+            if (i > 0 || !box.isEmpty()) box.add("");
             // Numbered only when there is an order to keep
             var number = ready ? "" : (i + 1) + ". ";
-            lines.add("   " + number + step.getFirst());
-            for (var more : step.subList(1, step.size())) lines.add("   " + " ".repeat(number.length()) + "  " + more);
+            box.add("   " + number + step.getFirst());
+            for (var more : step.subList(1, step.size())) box.add("   " + " ".repeat(number.length()) + "  " + more);
         }
         if (c.noIdentity()) {
-            lines.add("");
-            lines.add("   Agents have no name to commit under. To give them one:");
-            lines.add("     isx account add github");
+            box.add("");
+            box.add("   Git in isx machines refuses to commit until it has a");
+            box.add("   name: 'isx account add github' gives it one.");
         }
-        lines.add("");
-        lines.add("   " + styled(BOLD, "After that:"));
-        lines.add("   Return to the machine:   isx shell " + c.instance());
-        lines.add("   See all your machines:   isx");
-        if (!machine) lines.add("   Change the template:     isx templates edit " + c.template());
-        lines.add("   Write your own template:");
-        lines.add("     " + TerminalLink.link("https://isx.run/docs/templates#adding-your-own"));
-        if (!c.listLater()) return lines.toArray(String[]::new);
-        lines.add("");
-        lines.add("   " + styled(BOLD, "Left for later, when you need them:"));
-        for (var id : DEFERRED) lines.add(String.format("   isx init %-17s %s", id, LATER.get(id)));
-        lines.add(String.format("   isx init %-17s %s", "--all", "every step in turn"));
-        return lines.toArray(String[]::new);
+
+        var later = new ArrayList<String>();
+        later.add("Later:");
+        later.add(String.format("  %-26s%s", "Return to it", "isx shell " + c.instance()));
+        later.add(String.format("  %-26s%s", "See your isx machines", "isx"));
+        if (!plain) later.add(String.format("  %-26s%s", "Change " + c.template(), "isx templates edit " + c.template()));
+        later.add(String.format("  %-26s%s", "Add your own templates",
+                TerminalLink.link("https://isx.run/docs/templates")));
+        if (c.listLater()) later.add(String.format("  %-26s%s", "Set up more", "isx init"));
+        later.add("isx commands and docs call an isx machine an \"instance\".");
+        // Titled by what is left, never "set up" above a list of what is not (#2528)
+        var title = ready ? "Setup complete" : steps.size() + " steps left";
+        return new ClosingMessage(title, box, later);
     }
 
     /** The steps chosen at Credential Setup, which {@link #credentialSteps} runs. */
@@ -2197,6 +2373,8 @@ public class InitCommand extends BaseCommand {
         for (int attempt = 1; ; attempt++) {
             try {
                 ProxyConfig.configureBridgeDns(incus, domains, gatewayIp, hostAddress);
+                // For the log the first run names, not for the screen (#2528)
+                dev.incusspawn.ClientLog.debug("DNS overrides: " + domains.size() + " domains -> " + gatewayIp + " (via bridge dnsmasq)");
                 return;
             } catch (IncusException e) {
                 if (attempt == BRIDGE_DNS_ATTEMPTS) throw e;
@@ -2224,10 +2402,15 @@ public class InitCommand extends BaseCommand {
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
         if (CertificateAuthority.exists()) {
-            BuildOutput.step("MITM CA certificate already exists.");
+            BuildOutput.step("The isx proxy's certificate is ready.");
         } else {
             CertificateAuthority.loadOrCreate();
-            BuildOutput.ok("CA certificate generated");
+            // What it is for, once, where it is made (#2528)
+            for (var line : Lines.wrap("The proxy uses it to open the HTTPS requests that " + machines()
+                    + " send to your accounts' services, and adds your credentials."
+                    + " This Mac's own traffic does not go through the proxy.", Lines.WIDTH - 2)) {
+                BuildOutput.step(styled(DIM, line));
+            }
         }
     }
 
@@ -2418,13 +2601,9 @@ public class InitCommand extends BaseCommand {
 
     void setupSshKeyPair() {
         try {
-            if (SshKeyManager.exists()) {
-                BuildOutput.step("SSH key pair already exists.");
-            } else {
-                SshKeyManager.ensureKeyPairExists();
-            }
+            if (!SshKeyManager.exists()) SshKeyManager.ensureKeyPairExists();
             if (SshKeyManager.ensureSshConfigInclude()) {
-                BuildOutput.ok("SSH configuration ready");
+                BuildOutput.ok("SSH access to " + machines() + " ready");
             } else {
                 BuildOutput.warn("SSH key generated but ~/.ssh/config could not be updated.",
                         "Add manually: Include ~/.config/incus-spawn/ssh/config");
@@ -2980,7 +3159,7 @@ public class InitCommand extends BaseCommand {
      */
     boolean completeWithMacOsServices(Prompts prompts) throws IOException {
         var present = macOsServicesInstalled();
-        if (present) BuildOutput.step("macOS services already installed.");
+        if (present) BuildOutput.step("isx services are installed already.");
         var install = !present && wantsMacOsServices(prompts);
         markInitComplete();
         return present || install && installProxyService();

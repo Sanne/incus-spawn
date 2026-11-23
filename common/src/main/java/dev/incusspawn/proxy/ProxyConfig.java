@@ -225,9 +225,9 @@ public final class ProxyConfig {
      */
     public static void configureBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp,
                                           String hostAddress) {
+        // Silent: what was written is for a log, not for the person setting up (#2528). The
+        // proxy logs "DNS overrides configured" in its own lifecycle log, and init in the client log
         writeBridgeDns(incus, allDomains, gatewayIp, hostAddress);
-        // A note: the proxy logs "DNS overrides configured" for its lifecycle log itself
-        BuildOutput.note("DNS overrides: " + allDomains.size() + " domains -> " + gatewayIp + " (via bridge dnsmasq)");
     }
 
     /**

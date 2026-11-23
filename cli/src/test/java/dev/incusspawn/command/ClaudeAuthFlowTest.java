@@ -91,6 +91,8 @@ class ClaudeAuthFlowTest {
 
         @Override
         AuthResult verifyAnthropicApiKey(String key) {
+            // A key named "unreachable" is one whose check could not reach Anthropic
+            if (key.contains("unreachable")) return AuthResult.unchecked("isx could not reach api.anthropic.com");
             return new AuthResult(validKeys.contains(key), "key checked");
         }
 
@@ -101,6 +103,7 @@ class ClaudeAuthFlowTest {
 
         @Override
         AuthResult verifyVertexConfig(String region, String projectId) {
+            if (projectId.contains("unreachable")) return AuthResult.unchecked("isx could not reach Vertex AI");
             return new AuthResult(validVertex.contains(region + "/" + projectId), "vertex checked");
         }
 
@@ -141,19 +144,27 @@ class ClaudeAuthFlowTest {
 
     // ── first-time setup, one per auth mode ──────────────────────────────────────
 
-    /** #2492: the auth-mode menu has the shared layout, and Enter leaves Claude unconfigured. */
+    /**
+     * #2492: the kind-of-account menu has the shared layout; "None for now" is one of its
+     * options, and Enter asks again (#2528).
+     */
     @Test
     void theAuthModeMenuUsesTheSharedLayout() {
-        var prompts = new ScriptedPrompts().line("");
+        var prompts = new ScriptedPrompts().line("4");
         run(new FakeInit(), prompts);
         assertEquals(java.util.List.of(
-                "How should instances authenticate with Claude? Choose one:",
+                "Which kind of Claude account do you have? Choose one:",
                 "",
-                "  1. Anthropic API key",
-                "  2. Claude Pro, Max or Team subscription (OAuth token)",
+                "  1. An Anthropic API key",
+                "     From the Claude Console, billed by use.",
+                "  2. A Claude subscription (Pro, Max or Team)",
+                "     Claude Code makes a token for it.",
                 "  3. Google Cloud Vertex AI",
+                "     Billed to your Google Cloud project.",
+                "  4. None for now",
+                "     Add one later with 'isx account add claude'.",
                 "",
-                "? Choice (Enter to leave Claude unconfigured): "),
+                "? Choice: "),
                 prompts.conversation().stream().map(dev.incusspawn.util.BuildOutput::stripAnsi).toList());
     }
 
@@ -230,7 +241,7 @@ class ClaudeAuthFlowTest {
     @Test
     void aVerifiedVertexConfigurationIsSaved() {
         run(new FakeInit().acceptVertex("us-east5", "my-project"),
-                ScriptedPrompts.lines("3", "us-east5", "my-project"));
+                ScriptedPrompts.lines("3", "my-project", "us-east5"));
 
         assertEquals(SpawnConfig.ClaudeAccountType.VERTEX, savedAccount().effectiveType());
         assertEquals("us-east5", savedAccount().getCloudMlRegion());
@@ -248,7 +259,7 @@ class ClaudeAuthFlowTest {
 
     @Test
     void aRejectedKeyIsNotSavedWhenTheUserGivesUp() {
-        run(new FakeInit(), new ScriptedPrompts().line("1").secret("sk-ant-bad").line("n"));
+        run(new FakeInit(), new ScriptedPrompts().line("1").secret("sk-ant-bad").line("s"));
         assertNothingSaved();
     }
 
@@ -259,10 +270,29 @@ class ClaudeAuthFlowTest {
         assertNothingSaved();
     }
 
+    /** A check that could not reach Anthropic need not cost the key (#1441): u saves it unverified. */
     @Test
     void saveAnywayKeepsAnUnverifiedKey() {
-        run(new FakeInit(), new ScriptedPrompts().line("1").secret("sk-ant-unverified").line("s"));
-        assertEquals("sk-ant-unverified", savedAccount().getApiKey());
+        run(new FakeInit(), new ScriptedPrompts().line("1").secret("sk-ant-unreachable").line("u"));
+        assertEquals("sk-ant-unreachable", savedAccount().getApiKey());
+    }
+
+    /** An environment key whose check could not reach Anthropic is offered unverified, never dropped as rejected (#2528). */
+    @Test
+    void anUnreachableEnvironmentKeyCanBeSavedUnverified() {
+        var prompts = ScriptedPrompts.lines("y");
+        run(new FakeInit().env("ANTHROPIC_API_KEY", "sk-ant-unreachable"), prompts);
+        assertEquals("sk-ant-unreachable", savedAccount().getApiKey());
+        assertFalse(prompts.conversation().stream().anyMatch(l -> l.contains("did not verify")), prompts.conversation()::toString);
+    }
+
+    /** A key Anthropic rejected is never offered for saving: it would fail in every isx machine (#2528). */
+    @Test
+    void aRejectedKeyCannotBeSavedUnverified() {
+        var prompts = new ScriptedPrompts().line("1").secret("sk-ant-bad").line("u", "s");
+        run(new FakeInit(), prompts);
+        assertNothingSaved();
+        assertFalse(prompts.conversation().stream().anyMatch(l -> l.contains("save it unverified")), prompts.conversation()::toString);
     }
 
     @Test
@@ -300,14 +330,21 @@ class ClaudeAuthFlowTest {
     /** Unverified, the environment config is saved only on an explicit yes; Enter means "set up manually". */
     @Test
     void anUnverifiedEnvironmentVertexConfigIsNotSavedOnEnter() {
-        run(new FakeInit().vertexEnv("us-east5", "my-project"), ScriptedPrompts.lines("", ""));
+        run(new FakeInit().vertexEnv("us-east5", "my-project"), ScriptedPrompts.lines("", "4"));
         assertNothingSaved();
     }
 
     @Test
-    void anUnverifiedEnvironmentVertexConfigCanBeSavedAnyway() {
-        run(new FakeInit().vertexEnv("us-east5", "my-project"), ScriptedPrompts.lines("y"));
-        assertEquals("my-project", savedAccount().getVertexProjectId());
+    void anUncheckedEnvironmentVertexConfigCanBeSavedAnyway() {
+        run(new FakeInit().vertexEnv("us-east5", "unreachable-project"), ScriptedPrompts.lines("y"));
+        assertEquals("unreachable-project", savedAccount().getVertexProjectId());
+    }
+
+    /** Settings Vertex AI rejected would fail the same way in every instance: never offered unverified. */
+    @Test
+    void aRejectedEnvironmentVertexConfigIsNotOfferedUnverified() {
+        run(new FakeInit().vertexEnv("us-east5", "my-project"), ScriptedPrompts.lines("4"));
+        assertNothingSaved();
     }
 
     /** Half a Vertex config cannot be verified, so nothing is offered: straight to manual setup. */
@@ -339,7 +376,7 @@ class ClaudeAuthFlowTest {
     /** A rejected environment token is not offered for saving at all. */
     @Test
     void aRejectedEnvironmentOauthTokenGoesStraightToManualSetup() {
-        run(new FakeInit().env("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN), ScriptedPrompts.lines(""));
+        run(new FakeInit().env("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN), ScriptedPrompts.lines("4"));
         assertNothingSaved();
     }
 
@@ -380,7 +417,7 @@ class ClaudeAuthFlowTest {
 
     @Test
     void abandoningANewAccountChangesNothing() throws Exception {
-        run(new FakeInit(), seed(ONE_LEGACY_KEY), new ScriptedPrompts().line("a", "work", "1").secret(""));
+        run(new FakeInit(), seed(ONE_LEGACY_KEY), new ScriptedPrompts().line("a", "work", "1").secret("").line("4"));
         assertUnchanged(ONE_LEGACY_KEY);
     }
 
@@ -407,7 +444,7 @@ class ClaudeAuthFlowTest {
     /** Only the credential collected afterwards writes; choosing 'r' alone must not wipe anything. */
     @Test
     void replaceAllAbandonedChangesNothing() throws Exception {
-        run(new FakeInit(), seed(TWO_ACCOUNTS), ScriptedPrompts.lines("r", ""));
+        run(new FakeInit(), seed(TWO_ACCOUNTS), ScriptedPrompts.lines("r", "4"));
         assertUnchanged(TWO_ACCOUNTS);
     }
 

@@ -125,6 +125,8 @@ public class AiHelpClient {
     /** Where Anthropic explains the API credits Max and Team plans include, which can pay for this (#1674). */
     public static final String API_CREDITS_URL =
             "https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers";
+    /** The Claude Console's page for API keys, Settings > API keys (platform.claude.com/docs/en/get-api-key). */
+    public static final String API_KEYS_URL = "https://platform.claude.com/settings/keys";
 
     /**
      * A configured account a question can be sent to. {@code accountName} is the Claude

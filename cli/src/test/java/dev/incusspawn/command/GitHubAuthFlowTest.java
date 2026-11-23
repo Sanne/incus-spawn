@@ -94,15 +94,15 @@ class GitHubAuthFlowTest {
         }
     }
 
-    /** The answer to "open the token page in your browser?" that most scripts start with. */
-    private static final String NO_BROWSER = "n";
-
     /** Enter at the account menu that follows every saved token: no more accounts to add. */
     private static final String FINISHED = "";
 
-    /** A script that declines the browser, and so goes straight to the PAT prompt. */
+    /**
+     * A script for the token prompt, which follows the guide straight away: isx never opens the
+     * page, since the browser is signed in as the person, not the agent (#2528).
+     */
     private static ScriptedPrompts declineBrowser() {
-        return new ScriptedPrompts().line(NO_BROWSER);
+        return new ScriptedPrompts();
     }
 
     /** First-time setup: no config yet. */
@@ -124,19 +124,20 @@ class GitHubAuthFlowTest {
 
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
         assertEquals("bot@example.com", saved("github.accounts.default.email"));
-        assertTrue(init.opened.isEmpty(), "declining the browser must not open it");
+        assertTrue(init.opened.isEmpty(), "the token page is printed, never opened");
     }
 
     /**
-     * readPassword() echoes nothing, so the flow confirms a paste arrived -- by length and
-     * masked form only. The token itself must never reach the terminal.
+     * readPassword() echoes nothing, and the token itself must never reach the terminal: its
+     * check and save say it arrived (#2528).
      */
     @Test
-    void anEnteredTokenIsAcknowledgedWithoutBeingShown() {
+    void anEnteredTokenIsNeverShown() {
         var init = new FakeInit().acceptAgentPat();
         var out = reported(() -> run(init, declineBrowser().secret("  " + AGENT_PAT + " ").line(FINISHED)));
 
-        assertTrue(out.contains("Received 27 characters (github_pat_...0000)"), out);
+        assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
+        assertTrue(out.contains("Token verified and saved"), out);
         assertFalse(out.contains(AGENT_PAT), "the token was printed:\n" + out);
     }
 
@@ -149,9 +150,7 @@ class GitHubAuthFlowTest {
         var prompts = declineBrowser().secret(AGENT_PAT).line(FINISHED);
         run(new FakeInit().acceptAgentPat(), prompts);
 
-        assertTrue(prompts.questions().contains("GitHub PAT for the agent (or press Enter to skip): "), prompts.questions()::toString);
-        assertTrue(prompts.conversation().stream().anyMatch(line -> line.contains("Received 27 characters")),
-                prompts.conversation()::toString);
+        assertTrue(prompts.questions().contains("Paste the token, or Enter to skip: "), prompts.questions()::toString);
         assertTrue(prompts.conversation().stream().noneMatch(line -> line.contains(AGENT_PAT)), "the token was shown");
     }
 
@@ -166,12 +165,23 @@ class GitHubAuthFlowTest {
         return String.join("\n", RecordingOutput.during(body::run).lines());
     }
 
+    /** The browser is signed in as the person, so isx prints the agent's token page rather than opening it (#2528). */
     @Test
-    void theTokenPageOpensByDefault() {
+    void theTokenPageIsPrintedNeverOpened() {
         var init = new FakeInit();
-        run(init, new ScriptedPrompts().line("").secret(""));
+        var out = reported(() -> run(init, new ScriptedPrompts().secret("")));
 
-        assertEquals(List.of(CredentialSetup.GH_PAT_NEW_URL), init.opened);
+        assertEquals(List.of(), init.opened);
+        assertTrue(out.contains(CredentialSetup.GH_PAT_PAGE), out);
+        assertNothingSaved();
+    }
+
+    /** A terminal whose links cannot be clicked gets the page's whole address on request. */
+    @Test
+    void uShowsTheWholeAddress() {
+        var out = reported(() -> run(new FakeInit(), new ScriptedPrompts().secret("u").secret("")));
+
+        assertTrue(out.contains(CredentialSetup.GH_PAT_NEW_URL), out);
         assertNothingSaved();
     }
 
@@ -202,22 +212,23 @@ class GitHubAuthFlowTest {
     @Test
     void rejectedTokenAndDeclinedRetryWritesNothing() {
         var init = new FakeInit();
-        run(init, declineBrowser().secret("ghp_bad").line("n"));
+        run(init, declineBrowser().secret("ghp_bad").line("s"));
 
         assertEquals(List.of("ghp_bad"), init.verified);
         assertNothingSaved();
     }
 
-    /** As in the Claude step, a token whose check failed may be saved anyway, rather than dropped (#1441). */
+    /** As in the Claude step, a token whose check could not reach GitHub may be saved anyway, rather than dropped (#1441). */
     @Test
     void aTokenThatFailedVerificationCanBeSavedAnyway() {
         var init = new FakeInit();
-        var out = reported(() -> run(init, declineBrowser().secret("ghp_unchecked").line("s").line(FINISHED)));
+        init.gitHubReached = false;
+        var out = reported(() -> run(init, declineBrowser().secret("ghp_unchecked").line("u").line(FINISHED)));
 
         assertEquals(List.of("ghp_unchecked"), init.verified);
         assertEquals("ghp_unchecked", saved("github.accounts.default.token"));
         assertEquals("", saved("github.accounts.default.email"));
-        assertTrue(out.contains("saved (unverified"), out);
+        assertTrue(out.contains("Token saved on " + dev.incusspawn.Platform.thisComputer() + ", unverified"), out);
     }
 
     @Test
@@ -256,48 +267,6 @@ class GitHubAuthFlowTest {
         assertNothingSaved();
     }
 
-    /** The fallback promises to "continue with manual setup" when it fails, so it must. */
-    @Test
-    void aPersonalTokenThatFailsVerificationFallsBackToThePatPrompt() {
-        run(new FakeInit().ghLogin(PERSONAL_GH_TOKEN).acceptAgentPat(),
-                declineBrowser().secret("").line("y").secret(AGENT_PAT).line(FINISHED));
-
-        assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
-    }
-
-    // ── tokens without an email ──────────────────────────────────────────────────
-
-    @Test
-    void aTokenWithoutEmailIsSavedWithoutOneRatherThanAnEmptyString() throws Exception {
-        run(new FakeInit().accept(AGENT_PAT, "agent-bot", null), declineBrowser().secret(AGENT_PAT).secret("").line(FINISHED));
-
-        assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
-        assertFalse(Files.readString(configFile()).contains("email"),
-                "an absent email must stay absent, not become email: \"\"");
-    }
-
-    @Test
-    void aRejectedReplacementKeepsTheOriginalToken() {
-        run(new FakeInit().accept(AGENT_PAT, "agent-bot", null),
-                declineBrowser().secret(AGENT_PAT).secret("ghp_bad").secret("").line(FINISHED));
-
-        assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
-    }
-
-    /** A mistyped replacement must not end the step: the prompt comes back until one verifies. */
-    @Test
-    void aRejectedReplacementCanBeRetried() {
-        var init = new FakeInit()
-                .accept(AGENT_PAT, "agent-bot", null)
-                .accept("github_pat_with_email_000", "agent-bot", "bot@example.com");
-        var out = reported(() -> run(init, declineBrowser().secret(AGENT_PAT)
-                .secret("1github_pat_with_email_000").secret("github_pat_with_email_000").line(FINISHED)));
-
-        assertTrue(out.contains("1 character comes before 'github_pat_'"), "the stray keystroke went unnamed:\n" + out);
-        assertEquals("github_pat_with_email_000", saved("github.accounts.default.token"));
-        assertEquals("bot@example.com", saved("github.accounts.default.email"));
-    }
-
     // ── the token's shape ────────────────────────────────────────────────────────
 
     @Test
@@ -333,7 +302,7 @@ class GitHubAuthFlowTest {
     @Test
     void replacingTheSingleCredentialLeavesItTheOnlyAccount() throws Exception {
         run(new FakeInit().acceptAgentPat(), seed(ONE_FLAT_CREDENTIAL),
-                new ScriptedPrompts().line("r", NO_BROWSER).secret(AGENT_PAT).line(FINISHED));
+                new ScriptedPrompts().line("r").secret(AGENT_PAT).line(FINISHED));
 
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
         assertEquals("bot@example.com", saved("github.accounts.default.email"));
@@ -345,7 +314,7 @@ class GitHubAuthFlowTest {
     @Test
     void addingASecondAccountKeepsTheFirst() throws Exception {
         run(new FakeInit().acceptAgentPat(), seed(ONE_FLAT_CREDENTIAL),
-                new ScriptedPrompts().line("a", "work", NO_BROWSER).secret(AGENT_PAT).line(FINISHED));
+                new ScriptedPrompts().line("a", "work").secret(AGENT_PAT).line(FINISHED));
 
         assertEquals("ghp_flat", saved("github.accounts.default.token"));
         assertEquals("me@example.com", saved("github.accounts.default.email"));
@@ -360,7 +329,7 @@ class GitHubAuthFlowTest {
     void aSecondAccountCanBeAddedInTheSameRun() {
         var init = new FakeInit().acceptAgentPat().accept("github_pat_work_000", "work-bot", "work@example.com");
         run(init, declineBrowser().secret(AGENT_PAT)
-                .line("a", "work", NO_BROWSER).secret("github_pat_work_000")
+                .line("a", "work").secret("github_pat_work_000")
                 .line(FINISHED));
 
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
@@ -373,7 +342,7 @@ class GitHubAuthFlowTest {
     @Test
     void skippingASecondAccountSaysOnlyThatOneWasSkipped() {
         var out = reported(() -> run(new FakeInit().acceptAgentPat(),
-                declineBrowser().secret(AGENT_PAT).line("a", "work", NO_BROWSER).secret("")));
+                declineBrowser().secret(AGENT_PAT).line("a", "work").secret("")));
 
         assertTrue(out.contains("No token added for this account."), out);
         assertFalse(out.contains("Skipped GitHub setup"), out);
@@ -384,7 +353,7 @@ class GitHubAuthFlowTest {
     void skippingTheOnlyAccountSaysSetupWasSkipped() {
         var out = reported(() -> run(new FakeInit(), declineBrowser().secret("")));
 
-        assertTrue(out.contains("Skipped GitHub setup"), out);
+        assertTrue(out.contains("No GitHub account yet"), out);
     }
 
     /**
@@ -394,7 +363,7 @@ class GitHubAuthFlowTest {
      */
     @Test
     void abandoningASecondAccountAtThePatPromptChangesNothing() throws Exception {
-        run(new FakeInit(), seed(ONE_FLAT_CREDENTIAL), new ScriptedPrompts().line("a", "work", NO_BROWSER).secret(""));
+        run(new FakeInit(), seed(ONE_FLAT_CREDENTIAL), new ScriptedPrompts().line("a", "work").secret(""));
 
         assertUnchanged(ONE_FLAT_CREDENTIAL);
     }
@@ -402,19 +371,17 @@ class GitHubAuthFlowTest {
     @Test
     void abandoningASecondAccountAfterARejectedTokenChangesNothing() throws Exception {
         run(new FakeInit(), seed(ONE_FLAT_CREDENTIAL),
-                new ScriptedPrompts().line("a", "work", NO_BROWSER).secret("ghp_bad").line("n"));
+                new ScriptedPrompts().line("a", "work").secret("ghp_bad").line("s"));
 
         assertUnchanged(ONE_FLAT_CREDENTIAL);
     }
 
-    /** A re-minted PAT belongs to the account the user picked, not back in the flat field. */
+    /** A token for a named account belongs to that account, not back in the flat field. */
     @Test
-    void aReMintedTokenLandsInTheChosenAccount() throws Exception {
-        var init = new FakeInit()
-                .accept(AGENT_PAT, "agent-bot", null)
-                .accept("github_pat_with_email_000", "agent-bot", "bot@example.com");
+    void aTokenLandsInTheChosenAccount() throws Exception {
+        var init = new FakeInit().accept("github_pat_with_email_000", "agent-bot", "bot@example.com");
         run(init, seed(ONE_FLAT_CREDENTIAL),
-                new ScriptedPrompts().line("a", "work", NO_BROWSER).secret(AGENT_PAT).secret("github_pat_with_email_000").line(FINISHED));
+                new ScriptedPrompts().line("a", "work").secret("github_pat_with_email_000").line(FINISHED));
 
         assertEquals("github_pat_with_email_000", saved("github.accounts.work.token"));
         assertEquals("bot@example.com", saved("github.accounts.work.email"));
@@ -424,7 +391,7 @@ class GitHubAuthFlowTest {
     @Test
     void thePersonalLoginReusedForANamedAccountLandsInThatAccount() throws Exception {
         run(new FakeInit().personalGhLogin(), seed(ONE_FLAT_CREDENTIAL),
-                new ScriptedPrompts().line("a", "mine", NO_BROWSER).secret("").line("y").line(FINISHED));
+                new ScriptedPrompts().line("a", "mine").secret("").line("y").line(FINISHED));
 
         assertEquals(PERSONAL_GH_TOKEN, saved("github.accounts.mine.token"));
         assertEquals("ghp_flat", saved("github.accounts.default.token"));
@@ -433,15 +400,12 @@ class GitHubAuthFlowTest {
 
     // ── choosing the commit email ────────────────────────────────────────────────
 
-    private static final String SEVERAL_EMAILS = """
-            [{"email":"me@work.example","verified":true,"primary":true},
-             {"email":"me@home.example","verified":true,"primary":false},
-             {"email":"unverified@example.com","verified":false,"primary":false},
-             {"email":"1234+me@users.noreply.github.com","verified":true,"primary":false}]""";
+    private static final CredentialSetup.GitHubUser AGENT = new CredentialSetup.GitHubUser("me", 1234, "me@work.example");
+    private static final String NOREPLY = "1234+me@users.noreply.github.com";
 
-    private static String chooseEmail(String json, String... input) {
+    private static String chooseEmail(CredentialSetup.GitHubUser user, String... input) {
         var prompts = ScriptedPrompts.lines(input);
-        var email = CredentialSetup.chooseEmail(CredentialSetup.parseGitHubEmails(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)), prompts);
+        var email = CredentialSetup.chooseCommitEmail(user, prompts);
         prompts.assertFullyConsumed();
         return email;
     }
@@ -449,41 +413,33 @@ class GitHubAuthFlowTest {
     /** The default must be the private address, so pressing Enter never publishes a real one. */
     @Test
     void enterPicksTheNoreplyAddress() {
-        assertEquals("1234+me@users.noreply.github.com", chooseEmail(SEVERAL_EMAILS, ""));
+        assertEquals(NOREPLY, chooseEmail(AGENT, ""));
     }
 
     @Test
     void closedStdinPicksTheNoreplyAddress() {
-        var email = CredentialSetup.chooseEmail(CredentialSetup.parseGitHubEmails(SEVERAL_EMAILS.getBytes(java.nio.charset.StandardCharsets.UTF_8)), new ScriptedPrompts());
-        assertEquals("1234+me@users.noreply.github.com", email);
+        assertEquals(NOREPLY, CredentialSetup.chooseCommitEmail(AGENT, new ScriptedPrompts()));
     }
 
     @Test
-    void aNumberPicksThatAddress() {
-        // Listed as: 1. noreply, 2. work (primary), 3. home -- unverified ones never appear.
-        assertEquals("me@work.example", chooseEmail(SEVERAL_EMAILS, "2"));
-        assertEquals("me@home.example", chooseEmail(SEVERAL_EMAILS, " 3 "));
+    void twoPicksThePrimaryAddress() {
+        assertEquals("me@work.example", chooseEmail(AGENT, "2"));
     }
 
     @Test
-    void anOutOfRangeOrUnreadableChoiceFallsBackToTheFirst() {
-        assertEquals("1234+me@users.noreply.github.com", chooseEmail(SEVERAL_EMAILS, "4"));
-        assertEquals("1234+me@users.noreply.github.com", chooseEmail(SEVERAL_EMAILS, "0"));
-        assertEquals("1234+me@users.noreply.github.com", chooseEmail(SEVERAL_EMAILS, "me@home.example"));
+    void anUnreadableChoiceIsAskedAgain() {
+        assertEquals("me@work.example", chooseEmail(AGENT, "4", "me@home.example", " 2 "));
     }
 
+    /** With no address to read, GitHub's private one is still the account's: taken without asking. */
     @Test
-    void aSingleVerifiedAddressIsTakenWithoutAsking() {
-        // assertFullyConsumed fails if a question was asked.
-        assertEquals("only@example.com", chooseEmail("""
-                [{"email":"only@example.com","verified":true,"primary":true},
-                 {"email":"other@example.com","verified":false,"primary":false}]"""));
+    void withNoReadableAddressTheNoreplyOneIsTakenWithoutAsking() {
+        assertEquals(NOREPLY, chooseEmail(new CredentialSetup.GitHubUser("me", 1234, null)));
     }
 
+    /** With no account number, there is no private address to offer. */
     @Test
-    void withoutANoreplyAddressEnterTakesTheFirstVerifiedOne() {
-        assertEquals("me@work.example", chooseEmail("""
-                [{"email":"me@work.example","verified":true,"primary":true},
-                 {"email":"me@home.example","verified":true,"primary":false}]""", ""));
+    void withNoAccountNumberThePrimaryIsTakenWithoutAsking() {
+        assertEquals("me@work.example", chooseEmail(new CredentialSetup.GitHubUser("me", 0, "me@work.example")));
     }
 }

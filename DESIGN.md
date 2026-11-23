@@ -105,6 +105,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The first run asks first, then works (#2412)
   - Skipping the agent's credential
   - A GitHub account in the first run
+  - The first run's words (#2528)
   - The continuation under `sg` asks nothing
   - Nothing is taken from experienced users
 - [Templates, tools and builds](design/templates.md)

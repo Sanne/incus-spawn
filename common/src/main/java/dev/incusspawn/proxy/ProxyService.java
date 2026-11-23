@@ -339,7 +339,8 @@ public final class ProxyService {
             return false;
         }
 
-        BuildOutput.step("Service file written to " + Environment.proxyServiceFile());
+        // The path is for a log, not for the person setting up (#2528)
+        dev.incusspawn.ClientLog.debug("Service file written to " + Environment.proxyServiceFile());
         // Whether it took is asked below, of the service itself
         BuildOutput.stepStart("Enabling and starting proxy service");
         if (runQuiet("systemctl", "--user", "daemon-reload")
@@ -1510,7 +1511,7 @@ public final class ProxyService {
                     return false;
                 }
                 ProxyLog.info("Service installed and running");
-                BuildOutput.step("Services installed and running.");
+                BuildOutput.ok("isx services installed");
                 return true;
             }
             ProxyLog.info("Service installed but not healthy");
@@ -1518,7 +1519,7 @@ public final class ProxyService {
             return false;
         } else {
             ProxyLog.info("Service installed (waiting for VM)");
-            BuildOutput.step("Services installed (proxy will start when VM is ready).");
+            BuildOutput.ok("isx services installed. The proxy starts once the VM is ready");
             return true;
         }
     }

@@ -133,9 +133,9 @@ class InitFirstRunTest {
         prompts.assertFullyConsumed();
         assertEquals("claude", init.chosenAgent.name());
         assertEquals("claude", SpawnConfig.load().getPreferredAgent());
-        assertEquals(List.of("Set up isx for Claude Code, so templates that include it can run it? (Y/n/other): "),
+        assertEquals(List.of("Choice [Y]: "),
                 prompts.questions());
-        assertTrue(said(prompts).contains("Claude Code is on this host, signed in with a subscription."), said(prompts));
+        assertTrue(said(prompts).contains("Found Claude Code on " + dev.incusspawn.Platform.thisComputer() + "."), said(prompts));
         assertEquals(List.of("agent-credential", "github"), init.ran);
         assertEquals(new InitCommand.FirstRunAnswers(false, false, false, false), init.answers);
         // The agent's own downloads start once it is chosen; the run started the base image's before asking
@@ -157,7 +157,7 @@ class InitFirstRunTest {
         prompts.assertFullyConsumed();
         assertEquals("codex", init.chosenAgent.name());
         assertEquals(List.of("Choice (Enter to see the list again): ", "Choice (Enter to see the list again): "), prompts.questions());
-        assertTrue(said(prompts).contains("Which agent should isx set up, so templates that include it can run it? Choose one:"), said(prompts));
+        assertTrue(said(prompts).contains("isx can set up these agents. Choose one:"), said(prompts));
         assertTrue(said(prompts).contains("None for now"), said(prompts));
     }
 
@@ -213,9 +213,9 @@ class InitFirstRunTest {
         var box = String.join("\n", recorded.frameLines());
         // What is left, in the order it has to be done: the account, then the agent
         assertFalse(box.contains("Setup complete"), box);
-        assertTrue(box.contains("needs these 2 steps"), box);
+        assertTrue(box.contains("2 steps left"), box);
         assertTrue(box.indexOf("1. Add Claude Code's account:") < box.indexOf("isx account add claude"), box);
-        assertTrue(box.indexOf("isx account add claude") < box.indexOf("2. Open your first agent:"), box);
+        assertTrue(box.indexOf("isx account add claude") < box.indexOf("2. Open Claude Code in a new isx machine:"), box);
         assertTrue(Files.readString(ExampleTemplate.file()).contains("  - claude"));
     }
 
@@ -230,13 +230,13 @@ class InitFirstRunTest {
         RecordingOutput.during(init::askFirstRunQuestions);
 
         prompts.assertFullyConsumed();
-        assertEquals("Let it commit as Jane Doe <jane@example.org>, the identity of this host? (y/N): ",
+        assertEquals("Choice [N]: ",
                 prompts.questions().getLast());
         assertNull(SpawnConfig.load().gitIdentity());
         assertEquals(new InitCommand.FirstRunAnswers(false, false, true, true), init.answers);
 
         var recorded = RecordingOutput.during(() -> init.finishFirstRun(false, true, false));
-        assertTrue(String.join("\n", recorded.frameLines()).contains("no name to commit under"));
+        assertTrue(String.join("\n", recorded.frameLines()).contains("refuses to commit until it has a"));
     }
 
     @Test
@@ -266,7 +266,7 @@ class InitFirstRunTest {
         RecordingOutput.during(() -> init.finishFirstRun(false, true, false));
 
         prompts.assertFullyConsumed();
-        assertEquals("Open your first agent now? (Y/n): ", prompts.questions().getLast());
+        assertEquals("Run 'isx branch my-first --from tpl-agent' now? (Y/n): ", prompts.questions().getLast());
         assertEquals(List.of("tpl-agent"), init.built);
         assertEquals(List.of("tpl-agent as my-first"), init.opened);
     }
@@ -277,37 +277,43 @@ class InitFirstRunTest {
                 accountCommand, firstStart, true, "my-first-12", true);
     }
 
-    private static List<String> plain(String[] lines) {
-        return java.util.Arrays.stream(lines).map(l -> l.replaceAll("\u001B\\[[0-9;]*m", "")).toList();
+    private static List<String> plain(List<String> lines) {
+        return lines.stream().map(InitFirstRunTest::drawn).toList();
     }
 
-    /** Ready: one thing to do, said as it is, then how to come back and change the template. */
+    /** Ready: the result and the one next command in the box, then what the person may want later. */
     @Test
     void aReadyRunEndsWithTheOneCommandAndWhatComesAfter() {
-        var box = String.join("\n", plain(InitCommand.firstRunNextSteps(
-                closing(InitCommand.Services.INSTALLED, true, false, "Claude Code", null, List.of()))));
+        var message = InitCommand.firstRunNextSteps(closing(InitCommand.Services.INSTALLED, true, false, "Claude Code", null, List.of()));
+        var box = String.join("\n", plain(message.box()));
+        var later = String.join("\n", plain(message.later()));
 
-        assertTrue(box.contains("Setup complete!"), box);
-        assertTrue(box.contains("tpl-agent is built, with Claude Code."), box);
-        assertTrue(box.contains("   Open your first agent:\n     isx branch my-first-12 --from tpl-agent"), box);
-        assertTrue(box.contains("Return to the machine:   isx shell my-first-12"), box);
-        assertTrue(box.contains("Change the template:     isx templates edit tpl-agent"), box);
-        assertTrue(box.contains("https://isx.run/docs/templates#adding-your-own"), box);
+        assertEquals("Setup complete", message.title());
+        assertTrue(box.contains("tpl-agent is built: a template that makes isx machines\n   with Claude Code."), box);
+        assertTrue(box.contains("   Open Claude Code in a new isx machine:\n     isx branch my-first-12 --from tpl-agent"), box);
+        assertTrue(later.lines().anyMatch(l -> l.strip().startsWith("Return to it ") && l.endsWith(" isx shell my-first-12")), later);
+        assertTrue(later.lines().anyMatch(l -> l.strip().startsWith("Change tpl-agent ") && l.endsWith(" isx templates edit tpl-agent")), later);
+        assertTrue(later.contains("https://isx.run/docs/templates"), later);
+        assertTrue(later.lines().anyMatch(l -> l.strip().startsWith("Set up more ") && l.endsWith(" isx init")), later);
+        // The one line that bridges the first run's word to the rest of isx's
+        assertTrue(later.endsWith("isx commands and docs call an isx machine an \"instance\"."), later);
     }
 
     /** Everything left at once: numbered in the order that works, and never called complete. */
     @Test
     void whatIsLeftIsNumberedInTheOrderItIsDone() {
-        var box = String.join("\n", plain(InitCommand.firstRunNextSteps(closing(InitCommand.Services.START_PROXY, false, true,
-                "Antigravity CLI", "isx account add gemini", List.of("agy then prints a sign-in link.")))));
+        var message = InitCommand.firstRunNextSteps(closing(InitCommand.Services.START_PROXY, false, true,
+                "Antigravity CLI", "isx account add gemini", List.of("agy then prints a sign-in link.")));
+        var box = String.join("\n", plain(message.box()));
 
-        assertFalse(box.contains("Setup complete"), box);
+        assertNotEquals("Setup complete", message.title());
         assertTrue(box.contains("tpl-agent did not build."), box);
-        assertTrue(box.contains("needs these 4 steps"), box);
+        assertEquals("4 steps left", message.title());
         var order = List.of("1. Start the proxy:", "isx proxy start", "it keeps its terminal",
                 "2. Fix the error above, then build tpl-agent:", "isx build tpl-agent",
                 "3. Add Antigravity CLI's account:", "isx account add gemini",
-                "4. Open your first agent:", "isx branch my-first-12 --from tpl-agent", "agy then prints a sign-in link.");
+                "4. Open Antigravity CLI in a new isx machine:", "isx branch my-first-12 --from tpl-agent",
+                "agy then prints a sign-in link.");
         var at = -1;
         for (var part : order) {
             var next = box.indexOf(part, at + 1);
@@ -324,9 +330,11 @@ class InitFirstRunTest {
         for (var services : InitCommand.Services.values()) {
             for (var agent : new String[]{null, "GitHub Copilot CLI"}) {
                 for (var built : new boolean[]{true, false}) {
-                    var lines = plain(InitCommand.firstRunNextSteps(closing(services, built, !built, agent,
-                            agent == null ? null : "isx account add github", google)));
-                    for (var line : lines) assertTrue(line.length() <= InitCommand.BOX_WIDTH, "too wide: '" + line + "'");
+                    var message = InitCommand.firstRunNextSteps(closing(services, built, !built, agent,
+                            agent == null ? null : "isx account add github", google));
+                    for (var line : plain(message.box())) assertTrue(line.length() <= InitCommand.BOX_WIDTH, "too wide: '" + line + "'");
+                    // Under the box, at the step indent
+                    for (var line : plain(message.later())) assertTrue(line.length() + 4 <= InitCommand.BOX_WIDTH + 2, "too wide: '" + line + "'");
                 }
             }
         }
@@ -422,9 +430,29 @@ class InitFirstRunTest {
                 assertEquals("no resolver", assertThrows(IllegalStateException.class, () -> init.runFirstRun(false)).getMessage()));
 
         var said = String.join("\n", recorded.lines());
-        assertTrue(said.contains("The agent and accounts you set up are saved"), said);
-        assertTrue(said.contains("run 'isx init' again"), said);
+        // No agent was chosen in this run: the line says what was kept, never "your agent" (#2528)
+        assertTrue(said.contains("Your accounts are saved."), said);
+        assertTrue(said.contains("run\n'isx init' again"), said);
         assertEquals(List.of(), init.built);
+    }
+
+    /** A run that kept nothing (no agent, GitHub None for now) says only how to start again (#2528). */
+    @Test
+    void aFailedStepAfterNothingWasKeptSaysOnlyHowToStartAgain() throws Exception {
+        var init = new FirstRunInit() {
+            @Override InitStep dnsStep() {
+                return new InitStep("dns", "DNS Configuration", new String[0], () -> { throw new IllegalStateException("no resolver"); }, null);
+            }
+        };
+        init.continued = true;
+        init.handedOver = new InitCommand.FirstRunAnswers(true, false, true, true);
+        init.prompts = ScriptedPrompts.lines();
+
+        var recorded = RecordingOutput.during(() -> assertThrows(IllegalStateException.class, () -> init.runFirstRun(false)));
+
+        var said = String.join("\n", recorded.lines());
+        assertFalse(said.contains("saved"), said);
+        assertTrue(said.contains("Fix the error below, then run 'isx init' again. It asks\nits questions again."), said);
     }
 
     /** A build that failed is named, the run exits 1, and the agent is not offered. */
@@ -591,9 +619,9 @@ class InitFirstRunTest {
         assertTrue(Files.readString(ExampleTemplate.file()).contains("  - claude"));
         assertEquals("claude", init.templateAgent().name());
         var warning = recorded.events().stream().filter(e -> e.kind() == RecordingOutput.Kind.WARN).map(RecordingOutput.Event::text)
-                .filter(w -> w.contains("Did not build tpl-agent")).findFirst().orElseThrow(() -> new AssertionError(recorded.events().toString()));
+                .filter(w -> w.contains("isx did not build tpl-agent")).findFirst().orElseThrow(() -> new AssertionError(recorded.events().toString()));
         assertTrue(warning.contains("/tmp/a-clone"), warning);
-        assertTrue(warning.contains("from a directory with no .incus-spawn/ of its own"), warning);
+        assertTrue(warning.contains(".incus-spawn/ of its own."), warning);
         assertTrue(String.join("\n", recorded.frameLines()).contains("isx build tpl-agent"));
     }
 
@@ -619,7 +647,7 @@ class InitFirstRunTest {
         assertEquals(List.of(), init.built);
         assertEquals(List.of(), init.opened);
         assertTrue(recorded.events().stream().anyMatch(e -> e.kind() == RecordingOutput.Kind.WARN
-                && e.text().contains("Did not build tpl-agent")), recorded.events().toString());
+                && e.text().contains("isx did not build tpl-agent")), recorded.events().toString());
     }
 
     /**
@@ -647,7 +675,7 @@ class InitFirstRunTest {
         assertEquals(List.of(), init.built);
         assertEquals(List.of(), init.opened);
         assertTrue(recorded.events().stream().anyMatch(e -> e.kind() == RecordingOutput.Kind.WARN
-                && e.text().contains("Did not build tpl-agent")), recorded.events().toString());
+                && e.text().contains("isx did not build tpl-agent")), recorded.events().toString());
     }
 
     /** A held-back template built before is said to be built, not to be built again, and is not offered. */
@@ -730,7 +758,7 @@ class InitFirstRunTest {
         assertEquals(List.of(), init.opened);
         var box = String.join("\n", recorded.frameLines());
         assertTrue(box.contains("Add Claude Code's account:"), box);
-        assertTrue(box.contains("no name to commit under"), box);
+        assertTrue(box.contains("refuses to commit until it has a"), box);
         assertTrue(box.contains("newgrp incus-admin"), box);
     }
 
@@ -808,7 +836,7 @@ class InitFirstRunTest {
         }
     }
 
-    /** The gh login is a choice the person types: Enter skips GitHub and never takes it. */
+    /** The gh login is a choice the person types: Enter is asked again and never takes it, and None for now is an option (#2528). */
     @Test
     void theGhLoginIsNamedAndEnterNeverTakesIt() throws Exception {
         var read = new AtomicBoolean();
@@ -819,16 +847,17 @@ class InitFirstRunTest {
                 return null;
             }
         };
-        var prompts = ScriptedPrompts.lines("");
+        var prompts = ScriptedPrompts.lines("", "3");
 
         RecordingOutput.during(() -> assertFalse(setup.offerGitHubForAgent(SpawnConfig.load(), prompts, "jdoe")));
 
         prompts.assertFullyConsumed();
         assertFalse(read.get());
         var said = said(prompts);
-        assertTrue(said.contains("Your gh login, jdoe"), said);
-        assertTrue(said.contains("the agent would act with jdoe's own access to GitHub"), said);
-        assertEquals(List.of("Choice (Enter to skip GitHub for now): "), prompts.questions());
+        assertTrue(said.contains("2. Your own account, jdoe"), said);
+        assertTrue(said.contains("appears as yours, with all of your access."), said);
+        assertTrue(said.contains("3. None for now"), said);
+        assertEquals(List.of("Choice: ", "Choice: "), prompts.questions());
         IsolatedHome.assertNothingSaved();
     }
 

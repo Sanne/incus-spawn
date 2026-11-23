@@ -99,7 +99,7 @@ class ChatGptAuthFlowTest {
         var said = String.join("\n", output.lines());
         assertTrue(said.contains("https://auth.openai.com/oauth/authorize?response_type=code"),
                 "the address is printed for the person to open, never opened for them: " + said);
-        assertTrue(said.contains("in a browser on this machine"),
+        assertTrue(said.contains("in a browser on " + dev.incusspawn.Platform.thisComputer()),
                 "the browser flow's redirect answers only a browser on this host: " + said);
     }
 
@@ -118,7 +118,7 @@ class ChatGptAuthFlowTest {
         var output = run(new FakeInit(), new SpawnConfig(), chooseDeviceCode());
 
         var said = String.join("\n", output.lines());
-        assertTrue(said.contains("Open this address on any device"),
+        assertTrue(said.contains("On any device, open this address"),
                 "the one-time code carries the sign-in from any device, not only a browser on"
                         + " this host: " + said);
         assertTrue(said.contains("https://auth.openai.com/codex/device"), said);
@@ -152,19 +152,20 @@ class ChatGptAuthFlowTest {
 
     @Test
     void theMenuAsksOneQuestionAndSaysWhatEnterLeaves() {
-        var prompts = new ScriptedPrompts().line("");
+        // Enter chooses nothing, and the question is asked again (#2528)
+        var prompts = new ScriptedPrompts().line("", "4");
         run(new FakeInit(), new SpawnConfig(), prompts);
 
         var conversation = prompts.conversation();
-        var question = conversation.indexOf("How should instances authenticate with OpenAI? Choose one:");
+        var question = conversation.indexOf("Which kind of OpenAI account do you have? Choose one:");
         assertTrue(question >= 0, "the question comes before its options, so they read as alternatives: " + conversation);
-        for (var option : List.of("  1. ChatGPT account, browser on this machine",
-                "  2. ChatGPT account, one-time code entered on any device",
-                "  3. OpenAI API key (platform.openai.com, billed credits)")) {
+        for (var option : List.of("  1. ChatGPT, signed in with a browser on " + dev.incusspawn.Platform.thisComputer(),
+                "  2. ChatGPT, signed in with a code on another device",
+                "  3. An OpenAI API key", "  4. None for now")) {
             assertTrue(conversation.indexOf(option) > question, option + " follows the question: " + conversation);
         }
-        assertEquals(List.of("Choice (Enter to leave OpenAI unconfigured): "), prompts.questions(),
-                "the prompt says what Enter does");
+        assertEquals(List.of("Choice: ", "Choice: "), prompts.questions(),
+                "None for now is an option, never what Enter does");
         assertNothingSaved();
         assertNull(new ChatGptSessionStore().read("default"), "Enter signs nothing in");
     }
@@ -290,13 +291,13 @@ class ChatGptAuthFlowTest {
         var warned = String.join("\n", output.warnings());
         assertTrue(warned.contains("'sso'"), "the warning names the session left behind: " + warned);
         var said = String.join("\n", output.lines());
-        assertTrue(said.contains("OpenAI credentials saved"),
+        assertTrue(said.contains("API key saved on " + dev.incusspawn.Platform.thisComputer()),
                 "the step finishes rather than aborting after the save: " + said);
     }
 
     @Test
     void skippingWritesNothing() {
-        run(new FakeInit(), new SpawnConfig(), new ScriptedPrompts().line(""));
+        run(new FakeInit(), new SpawnConfig(), new ScriptedPrompts().line("4"));
 
         assertFalse(Files.exists(Path.of(System.getProperty("user.home"), ".config/incus-spawn/openai")));
         assertEquals("", saved("openai.accounts.default.type"));
