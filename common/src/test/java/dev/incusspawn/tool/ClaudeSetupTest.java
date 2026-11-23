@@ -313,10 +313,33 @@ class ClaudeSetupTest {
     }
 
     @Test
+    void effortIsWrittenAsModelSettingsOfTheSelectedModel() {
+        var json = JqValues.parseStrict(ClaudeSetup.buildUserSettings(
+                Map.of("model", "claude-fable-5-2", "effort", "high")));
+        var text = JqValues.toPrettyJsonString(json);
+        assertTrue(text.contains("\"modelSettings\""), text);
+        assertTrue(text.contains("\"claude-fable-5-2\"") && text.contains("\"effortLevel\": \"high\""), text);
+        assertFalse(ClaudeSetup.buildUserSettings(Map.of("model", "claude-fable-5-2")).contains("modelSettings"));
+    }
+
+    @Test
+    void effortWithoutModelFailsTheBuild() {
+        var e = assertThrows(IllegalStateException.class,
+                () -> ClaudeSetup.buildUserSettings(Map.of("effort", "high")));
+        assertTrue(e.getMessage().contains("needs a model"), e.getMessage());
+    }
+
+    @Test
+    void effortRejectsMax() {
+        var params = ParameterResolver.resolve(new ClaudeSetup().parameters(), Map.of("model", "claude-opus-5-5", "effort", "max"));
+        assertFalse(params.errors().isEmpty());
+    }
+
+    @Test
     void parametersDeclaresAllSettingsAsOptionalReconfigurable() {
         var params = new ClaudeSetup().parameters();
 
-        for (var name : List.of("model", "advisor-model", "attribution-commit", "attribution-pr",
+        for (var name : List.of("model", "effort", "advisor-model", "attribution-commit", "attribution-pr",
                 "theme", "editor-mode", "output-style")) {
             assertTrue(params.containsKey(name), "Should declare parameter: " + name);
             var p = params.get(name);

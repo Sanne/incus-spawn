@@ -32,6 +32,7 @@ The key or token stays on the host, and the proxy adds it to Claude Code's reque
 | Parameter | Default | What it does |
 | --- | --- | --- |
 | `model` | Claude Code's own default | The model Claude Code uses |
+| `effort` | Claude Code's own default | Reasoning effort: `low`, `medium`, `high` or `xhigh`; needs `model` |
 | `advisor-model` | Claude Code's own default | The model Claude Code consults as its advisor, such as `opus` |
 | `theme` | Claude Code's own default | Colour theme: `dark`, `light`, `dark-daltonized` or `light-daltonized` |
 | `editor-mode` | Claude Code's own default | Input editor mode: `normal` or `vim` |
@@ -42,6 +43,12 @@ The key or token stays on the host, and the proxy adds it to Claude Code's reque
 Model IDs follow the `claude-*` naming convention: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`.
 `advisor-model` also takes the aliases `opus`, `sonnet` and `haiku`, which `model` does not.
 A child template can set any of these parameters again without reinstalling Claude Code.
+
+The build writes `effort` to `~/.claude/settings.json` under `modelSettings` for the selected model, the form `/effort` writes, so `/effort` can still change it in a session.
+
+`effort` needs `model`, because Claude Code keeps it per model, and a build with `effort` alone fails.
+A child template that sets `model` again carries the inherited `effort` to the new model.
+`max` is not accepted, since Claude Code keeps it for a session only (`--effort max`).
 
 ```yaml
 tools:
@@ -149,6 +156,7 @@ Your own extensions in `~/.pi/agent/extensions/` load as usual.
 | --- | --- | --- |
 | `provider` | `anthropic` | The API Pi talks to; also accepts `openai`, `google`, `google-vertex` or `vertex` |
 | `model` | `claude-sonnet-5-5` for `anthropic`, otherwise Pi's own | The model Pi uses |
+| `effort` | `medium` | Thinking level: `off`, `minimal`, `low`, `medium`, `high` or `xhigh` |
 
 The `openai` provider uses your OpenAI key, as shown below.
 A provider isx does not manage needs no credential from isx: Pi signs in to it itself.

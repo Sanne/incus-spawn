@@ -117,6 +117,19 @@ class PiSetupTest {
                         && arg.contains("\"extensions\": [\"/etc/isx/pi/isx-status.ts\"]")));
     }
 
+    @Test
+    void effortIsWrittenAsTheThinkingLevel() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        var params = ParameterResolver.resolve(new PiSetup().parameters(), Map.of("effort", "high"));
+        assertTrue(params.errors().isEmpty(), () -> String.join("; ", params.errors()));
+
+        new PiSetup().reconfigure(new Container(incus, CONTAINER), params.resolvedValues());
+
+        verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
+                arg.contains("\"defaultThinkingLevel\": \"high\"")));
+    }
+
     /** A gateway's model ID, which holds slashes, reaches Pi's settings as the template wrote it. */
     @Test
     void modelIdWithSlashesIsWrittenAsGiven() {

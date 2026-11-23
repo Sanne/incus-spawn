@@ -98,6 +98,14 @@ public class PiSetup implements ToolSetup {
         // not tell it from a model the template chose, and every provider would get a Claude model.
         params.put("model", model);
 
+        var effort = new ToolDef.ParameterDef();
+        effort.setType("string");
+        effort.setDescription("Thinking level (off, minimal, low, medium, high, xhigh); omitted, medium");
+        effort.setPattern("^(off|minimal|low|medium|high|xhigh)$");
+        effort.setOptional(true);
+        effort.setReconfigurable(true);
+        params.put("effort", effort);
+
         return params;
     }
 
@@ -305,10 +313,10 @@ public class PiSetup implements ToolSetup {
                   "enableInstallTelemetry": false,
                   "quietStartup": true,
                   "defaultProvider": "%s",
-                %s  "defaultThinkingLevel": "medium",
+                %s  "defaultThinkingLevel": "%s",
                   "extensions": ["%s"]
                 }
-                """.formatted(provider, modelLine, STATUS_EXTENSION_PATH);
+                """.formatted(provider, modelLine, resolvedParams.getOrDefault("effort", "medium"), STATUS_EXTENSION_PATH);
         c.sh("mkdir -p /etc/isx/pi /home/agentuser/.pi/agent");
         c.writeFile(STATUS_EXTENSION_PATH, STATUS_EXTENSION);
         c.writeFile("/home/agentuser/.pi/agent/settings.json", settingsJson);
