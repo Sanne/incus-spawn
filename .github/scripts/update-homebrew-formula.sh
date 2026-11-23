@@ -56,6 +56,28 @@ add_resource isx-vm isx-vm-macos-aarch64 isx-vm "$SHA_VM"
 # alone, and brew autoremove takes it away once nothing else depends on it.
 sed -i.bak '/^  depends_on "vfkit"$/d' "$FORMULA" && rm -f "$FORMULA.bak"
 
+# brew upgrade prints the caveats, and nothing else tells a Mac that ran vfkit that its VM stays on
+# vfkit until it restarts, or that an older isx still open can remove the new VM's sockets (#2552).
+# Added once, before the Documentation line; #2378 removes it with the vfkit-era code.
+UPGRADE_MARK="Upgrading from isx 0.5.3 or earlier"
+if ! grep -q "$UPGRADE_MARK" "$FORMULA"; then
+  awk -v mark="$UPGRADE_MARK" '
+    /^      Documentation: / && !done {
+      print "      " mark ", whose VM ran under vfkit:"
+      print "        quit the isx TUI and every isx mcp, then run"
+      print "        isx proxy restart"
+      print "        isx vm restart"
+      print "      Afterwards brew autoremove removes vfkit. Details:"
+      print "      https://isx.run/docs/faq#how-do-i-upgrade-a-mac-whose-vm-ran-with-vfkit"
+      print ""
+      done=1
+    }
+    {print}
+    END {exit !done}
+  ' "$FORMULA" > "$FORMULA.tmp" || die "no Documentation line in the caveats of $FORMULA to put the upgrade note before"
+  mv "$FORMULA.tmp" "$FORMULA"
+fi
+
 awk -v min="$MACOS_MIN" '
   /^  depends_on macos:/ {next}
   /^  depends_on / && !done {print "  depends_on macos: :" min; done=1}

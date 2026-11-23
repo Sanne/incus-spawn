@@ -42,7 +42,7 @@ When cutting a new release:
 3. **Homebrew formula is updated automatically** by the release workflow.
    It computes SHA256 checksums from the build artifacts, rewrites the formula with
    `.github/scripts/update-homebrew-formula.sh` and pushes it to `Sanne/homebrew-tap`.
-   The first release that ships `isx-vm` adds it as a resource and removes `depends_on "vfkit"`. Requires the `HOMEBREW_TAP_TOKEN`
+   The first release that ships `isx-vm` adds it as a resource, removes `depends_on "vfkit"` and adds an upgrade note to the caveats. Requires the `HOMEBREW_TAP_TOKEN`
    secret (a PAT with `contents: write` on the tap repo).
 
 4. **Users auto-update** on their next `brew update && brew upgrade`
