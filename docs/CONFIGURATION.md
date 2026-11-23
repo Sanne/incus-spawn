@@ -438,6 +438,13 @@ A subvolume pool has no cap of its own, so it can fill the host's disk.
 `isx doctor` warns when the pool is at least 90% full and has less than 5 GiB free.
 Each instance's `--disk` limit still applies.
 
+isx does not start a build on a pool that full, or on one with less than 2 GiB free.
+It does not branch once less than 2 GiB is free, and it warns a branch on a pool that full.
+
+On macOS a full disk stops Incus, so the VM keeps 1 GiB in reserve and releases it when it starts on a full disk.
+If isx says the VM's disk is full, run `isx vm restart` or `isx vm resize <size>`.
+Then delete what you do not need with `isx destroy` and `isx clean pool`.
+
 A subvolume pool also changes the host filesystem as a whole.
 Incus enables btrfs quotas to enforce the `--disk` limit, and they cover the whole filesystem.
 Each time Incus starts on the host, it mounts the filesystem with `user_subvol_rm_allowed`.

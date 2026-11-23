@@ -502,10 +502,25 @@ class IncusApiLossyTunnelTest {
     void vsockDiagnosisIsBoundedAgainstASocketThatNeverAnswers() {
         server.fault = LossyIncusServer.Fault.SILENT_ON_ACCEPT;
         long start = System.nanoTime();
-        var msg = IncusApi.diagnoseVsock(Path.of(server.socketPath()));
+        var msg = IncusApi.diagnoseVsock(Path.of(server.socketPath()), java.util.Optional::empty);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         assertTrue(msg.contains("did not answer"), msg);
+        assertTrue(msg.contains("may still be booting"), msg);
         assertTrue(elapsedMs < 6000, "the diagnosis must use the probe timeout: " + elapsedMs + "ms");
+    }
+
+    /** #2555: a full VM disk stops Incus, and the diagnosis says that and what brings it back. */
+    @Test
+    @Timeout(15)
+    void vsockDiagnosisNamesAFullVmDisk() {
+        server.fault = LossyIncusServer.Fault.SILENT_ON_ACCEPT;
+        long gib = 1024L * 1024 * 1024;
+        var msg = IncusApi.diagnoseVsock(Path.of(server.socketPath()),
+                () -> java.util.Optional.of(new dev.incusspawn.vm.VmDisk(gib / 4, 60 * gib, 0)));
+        assertTrue(msg.contains("did not answer"), msg);
+        assertTrue(msg.contains("The VM's disk is full, so Incus cannot run: 0.3 GiB free of 60.0 GiB."), msg);
+        assertTrue(msg.contains("isx vm resize <size>"), msg);
+        assertFalse(msg.contains("may still be booting"), msg);
     }
 
     @Test

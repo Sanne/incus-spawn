@@ -13,6 +13,9 @@ INCUS_VSOCK_PORT=8443
 POOL_MOUNT_PREFIX=/var/lib/incus/storage-pools
 # Where each pool's lock lives, on tmpfs, so a reboot drops it with the processes that held it.
 LOCK_DIR=/run/isx-agent
+# The room rcS keeps on the data disk, so Incus can still start once the rest is full (#2555).
+# Mirrors RESERVE in /etc/init.d/rcS; keep the two in step.
+RESERVE=/var/lib/incus/.isx-reserve
 
 # The btrfs filesystem UUID (its /sys/fs/btrfs/<fsid> directory name) backing path $1, or nothing.
 # btrfs st_dev numbers are per-subvolume, so neither stat nor mountinfo's major:minor identify the
@@ -146,6 +149,17 @@ case "$verb" in
         btrfs qgroup show -re --raw $sync_flag "$mount" 2>/dev/null || true
         echo "---ISX-SUBVOL---"
         btrfs subvolume list "$mount" 2>/dev/null || true
+        ;;
+    disk-free)
+        # "<free> <total> <reserve>" in bytes, for the disk that holds Incus's database and pools
+        # (#2555): a full one stops Incus, so the host asks here, on a port that answers without it.
+        # free is what df reports available, the reserve counted as used; reserve is 0 when there
+        # is none. Read-only, no arguments.
+        set -- $(df -Pk /var/lib/incus 2>/dev/null | awk 'NR == 2 { print $4, $2 }')
+        if [ $# -ne 2 ]; then echo "error: no disk"; exit 0; fi
+        reserve=0
+        [ -f "$RESERVE" ] && reserve=$(stat -c %s "$RESERVE" 2>/dev/null || echo 0)
+        echo "$(($1 * 1024)) $(($2 * 1024)) $reserve"
         ;;
     btrfs-status)
         # Whether the pool's qgroup accounting can be trusted, straight from the kernel's sysfs

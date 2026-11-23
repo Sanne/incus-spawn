@@ -633,6 +633,8 @@ public final class VmManager {
             return true;
         }
         BuildOutput.stepFail("Incus daemon did not become reachable within 60s.\nCheck 'isx vm console' for boot logs.");
+        // The likeliest cause a person can act on, after the step it explains (#2555)
+        VmDisk.warnIfFull(VmDisk.read());
         return false;
     }
 
@@ -954,7 +956,12 @@ public final class VmManager {
      */
     private static boolean recoverReachability() {
         return recoverReachability(VmManager::waitUntilReady, VmAgentClient::restartForwarder,
-                VmManager::detectLeakLayer);
+                VmManager::detectLeakLayer, VmDisk::read);
+    }
+
+    static boolean recoverReachability(IntPredicate waitUntilReady, BooleanSupplier restartForwarder,
+                                       Supplier<Optional<LeakLayer>> detectLayer) {
+        return recoverReachability(waitUntilReady, restartForwarder, detectLayer, Optional::empty);
     }
 
     /**
@@ -962,12 +969,16 @@ public final class VmManager {
      * for a given number of seconds; {@code restartForwarder} asks the control agent to restart the
      * forwarder and returns whether it confirmed; {@code detectLayer} identifies whether the wedge
      * is on the host (launcher) or guest (forwarder) side. Split out so the grace / restart / backstop
-     * orchestration can be unit-tested without a live VM.
+     * orchestration can be unit-tested without a live VM. {@code disk} is the data disk as the
+     * agent reports it: a full one stops Incus, which no forwarder restart can bring back (#2555).
      */
     static boolean recoverReachability(IntPredicate waitUntilReady, BooleanSupplier restartForwarder,
-                                       Supplier<Optional<LeakLayer>> detectLayer) {
+                                       Supplier<Optional<LeakLayer>> detectLayer, Supplier<Optional<VmDisk>> disk) {
         // A momentary blip (e.g. the daemon finishing a burst of work) may clear on its own.
         if (waitUntilReady.test(REACHABILITY_GRACE_SECONDS)) return true;
+
+        // Incus cannot run on a full disk: say so and what brings it back, rather than wait on a remedy that cannot
+        if (VmDisk.warnIfFull(disk.get())) return false;
 
         // Determine which layer is wedged before attempting the wrong remedy.
         var layer = detectLayer.get();
