@@ -288,6 +288,47 @@ class InitFirstRunTest {
         assertTrue(Files.exists(ExampleTemplate.file()));
     }
 
+    /** A GitHub account given in the same run reaches the first template: it lists gh (#2535). */
+    @Test
+    void aGivenGitHubAccountPutsGhInTheFirstTemplate() throws Exception {
+        var init = new FirstRunInit() {
+            @Override
+            boolean offerGitHub() {
+                var saved = super.offerGitHub();
+                var config = SpawnConfig.load();
+                dev.incusspawn.config.NamespaceAccounts.put(config, "github", "default", "token", "ghp_test");
+                config.save();
+                return saved;
+            }
+        };
+        init.found = List.of(CLAUDE_SUBSCRIPTION);
+        init.credentialGiven = true;
+        init.gitHubGiven = true;
+        init.prompts = ScriptedPrompts.lines("");
+        RecordingOutput.during(init::askFirstRunQuestions);
+
+        RecordingOutput.during(() -> assertEquals("tpl-agent", init.prepareFirstTemplate()));
+
+        var text = Files.readString(ExampleTemplate.file());
+        assertTrue(text.contains("  - claude\n  - gh\n"), text);
+    }
+
+    /** A skipped GitHub account leaves gh out, so the template needs no account the person declined (#2535). */
+    @Test
+    void aSkippedGitHubAccountLeavesGhOutOfTheFirstTemplate() throws Exception {
+        var init = new FirstRunInit();
+        init.found = List.of(CLAUDE_SUBSCRIPTION);
+        init.credentialGiven = true;
+        init.prompts = ScriptedPrompts.lines("");
+        RecordingOutput.during(init::askFirstRunQuestions);
+
+        RecordingOutput.during(() -> assertEquals("tpl-agent", init.prepareFirstTemplate()));
+
+        var text = Files.readString(ExampleTemplate.file());
+        assertTrue(text.contains("  - claude\n"), text);
+        assertFalse(text.contains("  - gh"), text);
+    }
+
     /** An agent whose own account is GitHub's (Copilot) is not asked for GitHub a second time. */
     @Test
     void anAgentSpendingGitHubIsNotAskedForItAgain() throws Exception {
