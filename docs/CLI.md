@@ -1013,6 +1013,10 @@ It keeps instances and templates, but stops running containers.
 When the VM is not running, it starts it, so the VM is up after every restart.
 A VM an older isx started with vfkit counts as running, even untracked, and moves to `isx-vm`.
 
+Before it stops the VM, it checks that `isx-vm` is installed and downloads a pending appliance.
+If either fails, the VM keeps running.
+It also restarts the proxy service when it runs another version or an older config, as every start of the VM does.
+
 ```shell
 isx vm restart [options]
 ```
