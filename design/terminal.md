@@ -804,4 +804,4 @@ The first run has a vocabulary of its own, "isx machine" and "this Mac", set in 
 
 A gate is worth having, since the rules alone did not hold for the docs either.
 It reads generated transcripts of the main flows rather than string literals, because a message is assembled from several of them.
-It checks only what is mechanical: line width, the first run's forbidden words and a step number shown once.
+It checks only what is mechanical: line width, the first run's forbidden words, a step number shown once, and a negated noun outside a marked exception.
