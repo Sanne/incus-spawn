@@ -148,16 +148,10 @@ The source on the host looks like a complete project, but built on the host it m
 ### Why did isx stop updating after I upgraded Ubuntu?
 
 Replace the old repository file with the one the [Quick Start](../README.md#quick-start) now writes, then update.
-Run this, with `Suites: dev` in place of `Suites: stable` if you follow the dev channel:
+Run this, with `incus-spawn-dev.sources` in place of `incus-spawn.sources` in the address if you follow the dev channel:
 
 ```shell
-sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://sanne.github.io/isx-apt-releases
-Suites: stable
-Components: main
-Signed-By: /usr/share/keyrings/incus-spawn.gpg
-EOF
+curl -fsSL https://sanne.github.io/isx-apt-releases/incus-spawn.sources | sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null
 sudo rm -f /etc/apt/sources.list.d/incus-spawn.list /etc/apt/sources.list.d/incus-spawn.list.disabled
 sudo apt update && sudo apt upgrade
 ```

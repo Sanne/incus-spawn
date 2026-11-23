@@ -114,13 +114,8 @@ sudo dnf install incus-spawn
 
 # Ubuntu/Debian (APT)
 # Import the key as for stable (see docs/dev/APT.md), then use the "dev" suite:
-sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://sanne.github.io/isx-apt-releases
-Suites: dev
-Components: main
-Signed-By: /usr/share/keyrings/incus-spawn.gpg
-EOF
+sudo rm -f /etc/apt/sources.list.d/incus-spawn.list
+curl -fsSL https://sanne.github.io/isx-apt-releases/incus-spawn-dev.sources | sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null
 sudo apt update && sudo apt install incus-spawn
 ```
 
