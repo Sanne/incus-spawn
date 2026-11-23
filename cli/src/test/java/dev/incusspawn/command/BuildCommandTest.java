@@ -3034,6 +3034,22 @@ class BuildCommandTest {
         assertFalse(BuildCommand.reportNoVmSupport(incus, "tpl-isx-vm", MachineType.VM, false));
     }
 
+    /** #2555: a build writes gigabytes, so it does not start on a pool that is already critical. */
+    @Test
+    void aBuildIsRefusedOnACriticalPoolAndGoesAheadWithRoom() {
+        long gib = 1024L * 1024 * 1024;
+        var incus = mock(IncusClient.class);
+        when(incus.findCowPool()).thenReturn("cow");
+        when(incus.getPoolUsageBytes("cow")).thenReturn(
+                new IncusClient.PoolUsage(57 * gib, 60 * gib), new IncusClient.PoolUsage(50 * gib, 60 * gib));
+        var recorded = RecordingOutput.during(() -> assertTrue(BuildCommand.reportPoolTooFull(incus, "tpl-isx")));
+        var errors = recorded.events(RecordingOutput.Kind.ERROR);
+        assertEquals(1, errors.size(), recorded::toString);
+        assertTrue(errors.getFirst().msg().startsWith("Cannot build tpl-isx: the storage pool 'cow' has 3.0 GiB free"),
+                errors.getFirst().msg());
+        assertFalse(BuildCommand.reportPoolTooFull(incus, "tpl-isx"));
+    }
+
     @Test
     void aContainerTemplateNeverAsksWhetherIncusRunsVms() {
         var incus = mock(IncusClient.class);

@@ -1088,6 +1088,11 @@ public class IncusClient {
          * and reclaiming space needs some itself.
          */
         public static final long CRIT_FREE_BYTES = 5 * GIB;
+        /**
+         * Below this, whatever the percentage, a branch is refused (#2555): its first writes would
+         * fill the disk, and a full disk stops Incus itself, so nothing could be deleted any more.
+         */
+        public static final long EXHAUSTED_FREE_BYTES = 2 * GIB;
 
         public int percent() {
             return totalBytes == 0 ? 0 : (int) (usedBytes * 100 / totalBytes);
@@ -1102,6 +1107,10 @@ public class IncusClient {
         /** Red: at least 90% used and under 5 GiB free. */
         public boolean isCritical() {
             return totalBytes > 0 && percent() >= CRIT_PERCENT && freeBytes() < CRIT_FREE_BYTES;
+        }
+        /** Under 2 GiB free, on a pool of any size: too little to branch into (#2555). */
+        public boolean isExhausted() {
+            return totalBytes > 0 && freeBytes() < EXHAUSTED_FREE_BYTES;
         }
         public String format(String poolName) {
             return "%s pool: %dMiB used / %dMiB total (%d%% full)".formatted(

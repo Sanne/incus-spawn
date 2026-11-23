@@ -259,6 +259,22 @@ The data disk is deliberately separate from the root disk and survives root-disk
 The resize verifies the pool total actually grew after reboot and warns if the running appliance predates the auto-resize step (the image grew but the filesystem didn't).
 The critical-fill TUI warning names both remedies — `C` to reclaim, `isx vm resize` to expand.
 
+### A full disk is refused before it happens (#2555)
+
+A full pool is worse than a failed write.
+On macOS the pool is a subvolume of the VM's data disk, which also holds Incus's database, so a full disk stops Incus.
+Then `isx destroy` and `isx clean pool` cannot reach it, and nothing can be deleted to make room.
+On a Linux subvolume pool the full disk is the host's own.
+
+So what writes to the pool checks its space first (`PoolSpace`), with one request to the pool's `/resources`.
+A build, which writes gigabytes, is refused once the pool is critical (`PoolUsage.isCritical`: at least 90% used and under 5 GiB free; `BuildCommand.reportPoolTooFull`).
+A branch is a CoW snapshot and costs almost nothing at once, so it is only warned at critical, and refused once the pool is exhausted (`PoolUsage.isExhausted`: under 2 GiB free, whatever the percentage).
+That refusal is part of `BranchFlow.preflight`, so `isx branch`, the TUI and `isx mcp`'s `create_instance` all get it before anything is created, and `isx mcp` answers it as `refused`.
+The branch reads the space of its source's pool, which is the copy's whenever the source is on a CoW pool.
+The read is one more request on the branch path, well under a millisecond, which `BranchPoolSpaceTest` pins.
+A pool whose usage cannot be read lets everything through, and Incus decides.
+What this gives up: a running instance can still fill the pool after its branch, since nothing bounds the pool as a whole (see "The cap and #414" above for why no pool quota is set).
+
 ### Orphaned subvolumes and dangling records
 
 A pool's instance subvolumes and Incus's records can drift apart (#717).
