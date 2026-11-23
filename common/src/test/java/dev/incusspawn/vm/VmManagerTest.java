@@ -38,6 +38,35 @@ class VmManagerTest {
         System.setProperty("user.home", originalHome);
     }
 
+    /** A missing isx-vm is installed the way isx was (#2552): Homebrew, install.sh, or the release. */
+    @Test
+    void aMissingLauncherIsInstalledTheWayIsxWas() {
+        var localBin = Path.of("/Users/u/.local/bin");
+        var release = new dev.incusspawn.BuildInfo("0.6.0", "abc", "native");
+
+        var brew = VmManager.launcherMissing("/opt/homebrew/Cellar/incus-spawn-dev/0.6.0-dev.1/bin/isx", localBin, false, release);
+        assertTrue(brew.contains("brew reinstall Sanne/tap/incus-spawn-dev"), brew);
+
+        var script = VmManager.launcherMissing("/Users/u/.local/bin/isx", localBin, true, release);
+        assertTrue(script.contains("./install.sh"), script);
+        assertFalse(script.contains("brew"), script);
+
+        var jbang = VmManager.launcherMissing("/Users/u/.jbang/bin/isx", localBin, true, release);
+        assertFalse(jbang.contains("brew"), jbang);
+        assertTrue(jbang.contains("JBang"), jbang);
+        // One && chain, so a failed download or checksum check installs nothing
+        assertTrue(jbang.contains("""
+                  cd "$(mktemp -d)" &&
+                  curl -fL -O https://github.com/Sanne/incus-spawn/releases/download/v0.6.0/isx-vm-macos-aarch64 \
+                -O https://github.com/Sanne/incus-spawn/releases/download/v0.6.0/SHA256SUMS &&
+                  grep ' isx-vm-macos-aarch64$' SHA256SUMS | shasum -a 256 -c &&
+                  mkdir -p "/Users/u/.local/bin" && install -m 755 isx-vm-macos-aarch64 "/Users/u/.local/bin/isx-vm\""""), jbang);
+
+        var dev = VmManager.launcherMissing(null, localBin, true, new dev.incusspawn.BuildInfo("0.0.0-SNAPSHOT", "abc", "jvm"));
+        assertTrue(dev.contains("launcher/build-isx-vm.sh"), dev);
+        assertFalse(dev.contains("curl"), dev);
+    }
+
     @Test
     void aDataDiskResetIsRememberedWithItsDate() {
         // #1393: 'isx list' names the reset when the list is empty because of it.
