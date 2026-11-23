@@ -283,6 +283,7 @@ A preallocated extent is never written, so the Mac's sparse `data.img` is not ex
 The reserve is freed only at boot, never while the VM runs, so a person must restart the VM: Incus is already down by then, and a restart stops nothing that still works.
 
 When Incus does not answer, isx asks the VM's control agent about the disk (`disk-free`, `VmDisk`), since the agent answers on a vsock port of its own while Incus is down.
+`incus-spawn-vm-init` starts the agent before it waits for Incus, so that holds after a boot Incus could not survive too: before, the script gave up at that wait and never started the agent, and a stop then had to cut the VM off.
 When the disk is full (under 512 MiB free, `VmDisk.isFull`), `recoverReachability` says so and skips the forwarder restart, which cannot bring Incus back.
 That is far below the branch's 2 GiB, since Incus runs well with 1 or 2 GiB free, and a forwarder wedged there still needs its restart.
 `awaitReady` and `IncusApi.diagnoseVsock` say the same after their own failure.
