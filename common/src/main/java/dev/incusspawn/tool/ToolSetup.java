@@ -147,6 +147,12 @@ public interface ToolSetup {
      */
     record HostedSignIn(String type, String label, java.util.List<String> help) {}
 
+    /**
+     * What a person has to do the first time this agent starts in an instance, beyond opening it:
+     * short lines for the end of {@code isx init}'s first run, none when it just starts.
+     */
+    default java.util.List<String> firstStartNote(dev.incusspawn.config.SpawnConfig config) { return java.util.List.of(); }
+
     /** The hosted sign-in this tool's namespace accepts, or null when its accounts all hold a credential. */
     default HostedSignIn hostedSignIn() { return null; }
 

@@ -167,6 +167,15 @@ public class AntigravitySetup implements ToolSetup {
     @Override
     public List<String> requires() { return List.of("agent-cli-tools"); }
 
+    /** On a Google account agy signs in itself, in the instance, the first time it starts (#2443). */
+    @Override
+    public List<String> firstStartNote(SpawnConfig config) {
+        var type = dev.incusspawn.config.AccountResolver.defaultValue(config, GoogleAccounts.NAMESPACE, "type");
+        if (!GoogleAccounts.TYPE.equals(type)) return List.of();
+        return List.of("agy then prints a Google sign-in link: open it here,",
+                "sign in, and paste the code it gives into agy.");
+    }
+
     @Override
     public String environmentContextPath() { return CONTEXT_PATH; }
 

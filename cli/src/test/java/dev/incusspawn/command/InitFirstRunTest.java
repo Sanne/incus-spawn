@@ -211,8 +211,11 @@ class InitFirstRunTest {
         assertEquals(List.of("tpl-agent"), init.built);
         assertEquals(List.of(), init.opened);
         var box = String.join("\n", recorded.frameLines());
-        assertTrue(box.contains("Claude Code has no account yet"), box);
-        assertTrue(box.contains("isx account add claude"), box);
+        // What is left, in the order it has to be done: the account, then the agent
+        assertFalse(box.contains("Setup complete"), box);
+        assertTrue(box.contains("needs these 2 steps"), box);
+        assertTrue(box.indexOf("1. Add Claude Code's account:") < box.indexOf("isx account add claude"), box);
+        assertTrue(box.indexOf("isx account add claude") < box.indexOf("2. Open your first agent:"), box);
         assertTrue(Files.readString(ExampleTemplate.file()).contains("  - claude"));
     }
 
@@ -266,6 +269,116 @@ class InitFirstRunTest {
         assertEquals("Open your first agent now? (Y/n): ", prompts.questions().getLast());
         assertEquals(List.of("tpl-agent"), init.built);
         assertEquals(List.of("tpl-agent as my-first"), init.opened);
+    }
+
+    private static InitCommand.Closing closing(InitCommand.Services services, boolean built, boolean buildFailed,
+                                               String agent, String accountCommand, List<String> firstStart) {
+        return new InitCommand.Closing(services, agent == null ? "tpl-minimal" : "tpl-agent", built, buildFailed, agent,
+                accountCommand, firstStart, true, "my-first-12", true);
+    }
+
+    private static List<String> plain(String[] lines) {
+        return java.util.Arrays.stream(lines).map(l -> l.replaceAll("\u001B\\[[0-9;]*m", "")).toList();
+    }
+
+    /** Ready: one thing to do, said as it is, then how to come back and change the template. */
+    @Test
+    void aReadyRunEndsWithTheOneCommandAndWhatComesAfter() {
+        var box = String.join("\n", plain(InitCommand.firstRunNextSteps(
+                closing(InitCommand.Services.INSTALLED, true, false, "Claude Code", null, List.of()))));
+
+        assertTrue(box.contains("Setup complete!"), box);
+        assertTrue(box.contains("tpl-agent is built, with Claude Code."), box);
+        assertTrue(box.contains("   Open your first agent:\n     isx branch my-first-12 --from tpl-agent"), box);
+        assertTrue(box.contains("Return to the machine:   isx shell my-first-12"), box);
+        assertTrue(box.contains("Change the template:     isx templates edit tpl-agent"), box);
+        assertTrue(box.contains("https://isx.run/docs/templates#adding-your-own"), box);
+    }
+
+    /** Everything left at once: numbered in the order that works, and never called complete. */
+    @Test
+    void whatIsLeftIsNumberedInTheOrderItIsDone() {
+        var box = String.join("\n", plain(InitCommand.firstRunNextSteps(closing(InitCommand.Services.START_PROXY, false, true,
+                "Antigravity CLI", "isx account add gemini", List.of("agy then prints a sign-in link.")))));
+
+        assertFalse(box.contains("Setup complete"), box);
+        assertTrue(box.contains("tpl-agent did not build."), box);
+        assertTrue(box.contains("needs these 4 steps"), box);
+        var order = List.of("1. Start the proxy:", "isx proxy start", "it keeps its terminal",
+                "2. Fix the error above, then build tpl-agent:", "isx build tpl-agent",
+                "3. Add Antigravity CLI's account:", "isx account add gemini",
+                "4. Open your first agent:", "isx branch my-first-12 --from tpl-agent", "agy then prints a sign-in link.");
+        var at = -1;
+        for (var part : order) {
+            var next = box.indexOf(part, at + 1);
+            assertTrue(next > at, part + " out of order in:\n" + box);
+            at = next;
+        }
+    }
+
+    /** No line is wider than the box, on any path: a wider one breaks its right border. */
+    @Test
+    void noLineOfTheClosingMessageIsWiderThanItsBox() {
+        var google = new dev.incusspawn.tool.AntigravitySetup().firstStartNote(seedGoogle());
+        assertFalse(google.isEmpty());
+        for (var services : InitCommand.Services.values()) {
+            for (var agent : new String[]{null, "GitHub Copilot CLI"}) {
+                for (var built : new boolean[]{true, false}) {
+                    var lines = plain(InitCommand.firstRunNextSteps(closing(services, built, !built, agent,
+                            agent == null ? null : "isx account add github", google)));
+                    for (var line : lines) assertTrue(line.length() <= InitCommand.BOX_WIDTH, "too wide: '" + line + "'");
+                }
+            }
+        }
+    }
+
+    private static SpawnConfig seedGoogle() {
+        try {
+            return IsolatedHome.seed("""
+                    gemini:
+                      accounts:
+                        work:
+                          type: google
+                      default: work
+                    """);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    /** An API key account starts agy with nothing more to do. */
+    @Test
+    void onlyAGoogleAccountHasAFirstStartNote() throws Exception {
+        var keyed = IsolatedHome.seed("""
+                gemini:
+                  accounts:
+                    work:
+                      apiKey: "k"
+                  default: work
+                """);
+        assertEquals(List.of(), new dev.incusspawn.tool.AntigravitySetup().firstStartNote(keyed));
+        assertEquals(List.of(), new dev.incusspawn.tool.AntigravitySetup().firstStartNote(new SpawnConfig()));
+    }
+
+    /** A build that failed is named, the run exits 1, and the agent is not offered. */
+    @Test
+    void aFailedBuildIsNamedAndNothingIsOpened() throws Exception {
+        var init = new FirstRunInit() {
+            @Override int buildTemplate(String template) { return 1; }
+        };
+        init.found = List.of(CLAUDE_SUBSCRIPTION);
+        init.credentialGiven = true;
+        init.gitHubGiven = true;
+        init.prompts = ScriptedPrompts.lines("");
+        RecordingOutput.during(init::askFirstRunQuestions);
+
+        var recorded = RecordingOutput.during(() -> assertEquals(1, init.finishFirstRun(false, true, false).getResultValue()));
+
+        var box = String.join("\n", recorded.frameLines());
+        assertTrue(box.contains("tpl-agent did not build."), box);
+        assertTrue(box.contains("Fix the error above, then build tpl-agent:"), box);
+        assertFalse(box.contains("Setup complete"), box);
+        assertEquals(List.of(), init.opened);
     }
 
     /** Another command's init writes the template, and builds and opens nothing: that command carries on. */
@@ -549,7 +662,7 @@ class InitFirstRunTest {
         assertEquals(List.of("tpl-agent"), init.built);
         assertEquals(List.of(), init.opened);
         var box = String.join("\n", recorded.frameLines());
-        assertTrue(box.contains("Claude Code has no account yet"), box);
+        assertTrue(box.contains("Add Claude Code's account:"), box);
         assertTrue(box.contains("no name to commit under"), box);
         assertTrue(box.contains("newgrp incus-admin"), box);
     }

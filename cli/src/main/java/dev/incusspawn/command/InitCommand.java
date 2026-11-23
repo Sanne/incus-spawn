@@ -920,17 +920,30 @@ public class InitCommand extends BaseCommand {
      * the step that starts them.
      */
     enum Services {
-        INSTALLED(null),
-        START_PROXY("Start the proxy:   isx proxy start"),
-        START_VM_AND_PROXY("Start VM, proxy:   isx vm start && isx proxy start"),
+        INSTALLED(null, null),
+        START_PROXY("Start the proxy", "isx proxy start"),
+        START_VM_AND_PROXY("Start VM, proxy", "isx vm start && isx proxy start"),
         /** Skipped for want of a terminal: the flag that installs them, since 'isx proxy start' holds its terminal. */
-        INSTALL_PROXY("Install the proxy: isx init --service"),
-        INSTALL_PROXY_NO_SUDO("Install the proxy: isx init --no-sudo --service"),
-        INSTALL_VM_AND_PROXY("Install services:  isx init --service");
+        INSTALL_PROXY("Install the proxy", "isx init --service"),
+        INSTALL_PROXY_NO_SUDO("Install the proxy", "isx init --no-sudo --service"),
+        INSTALL_VM_AND_PROXY("Install services", "isx init --service");
 
+        /** What the person does, in a few words, and the command that does it; both null when nothing is left. */
+        final String label;
+        final String command;
+        /** Both on one line, for the walk's closing box. */
         final String step;
 
-        Services(String step) { this.step = step; }
+        Services(String label, String command) {
+            this.label = label;
+            this.command = command;
+            this.step = label == null ? null : String.format("%-19s%s", label + ":", command);
+        }
+
+        /** Whether the command keeps its terminal until it is stopped, so the next step needs another. */
+        boolean holdsTerminal() {
+            return this == START_PROXY || this == START_VM_AND_PROXY;
+        }
     }
 
     /**
@@ -1646,13 +1659,14 @@ public class InitCommand extends BaseCommand {
                 : linuxServices(servicesInstalled);
         // The name the offer branches, so the command printed is the one that works
         var instance = firstInstanceName();
-        var lines = new ArrayList<>(List.of(firstRunNextSteps(services, template, built || shownBuilt,
+        var lines = new ArrayList<>(List.of(firstRunNextSteps(new Closing(services, template, built || shownBuilt, buildFailed,
                 agent == null ? null : ExampleTemplate.title(agent), agentAccountCommand,
-                answers.noIdentity(), instance, !all)));
+                agent == null ? List.of() : agent.firstStartNote(SpawnConfig.load()),
+                answers.noIdentity(), instance, !all))));
         if (project != null) {
-            // In this directory the command would read the project's definitions, as the warning says
+            // In this directory the commands would read the project's definitions, as the warning says
             var open = lines.indexOf(lines.stream().filter(l -> l.contains("isx branch " + instance)).findFirst().orElse(null));
-            if (open >= 0) lines.add(open + 1, "   (from a directory with no .incus-spawn/ of its own)");
+            if (open >= 0) lines.add(open + 1, "     (from a directory with no .incus-spawn/ of its own)");
         }
         if (continued) lines.addAll(GROUP_PENDING);
         printCompletionBox(false, lines.toArray(String[]::new));
@@ -1761,30 +1775,67 @@ public class InitCommand extends BaseCommand {
             "code-directories", "your repositories on this host",
             "mcp", "agents on this host using isx");
 
+    /** What a first run's closing message is told of the run. */
+    record Closing(Services services, String template, boolean built, boolean buildFailed, String agent,
+                   String accountCommand, List<String> firstStart, boolean noIdentity, String instance, boolean listLater) {}
+
     /**
-     * The first run's completion message: whether the services and the first template are ready,
-     * what the agent still lacks, the command that opens it, then each step left for later.
+     * The first run's completion message. What is ready comes first, then what the person does
+     * next, in the order it has to be done and one command to a line: start the services, build
+     * the template, add the agent's account, open the agent. Then how to come back to it and
+     * change its template, and each step left for later.
      */
-    static String[] firstRunNextSteps(Services services, String template, boolean built, String agent,
-                                      String accountCommand, boolean noIdentity, String instance, boolean listLater) {
-        var lines = new ArrayList<>(List.of(
-                "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"), ""));
-        lines.add(services.step == null ? "   isx's services start on their own." : "   " + services.step);
-        lines.add(built ? "   " + template + " is built" + (agent == null ? "." : ", with " + agent + ".")
-                : "   Build it:          isx build " + template);
-        if (accountCommand != null) {
-            lines.add("   " + agent + " has no account yet. Add one:");
-            lines.add("     " + accountCommand);
+    static String[] firstRunNextSteps(Closing c) {
+        var machine = c.agent() == null;
+        var steps = new ArrayList<List<String>>();
+        if (c.services().label != null) {
+            var start = new ArrayList<>(List.of(c.services().label + ":", c.services().command));
+            if (c.services().holdsTerminal()) start.add("(it keeps its terminal: use another for the rest)");
+            steps.add(start);
         }
-        if (noIdentity) {
-            lines.add("   The agent has no name to commit under. Add a GitHub");
-            lines.add("   account with: isx account add github");
+        if (!c.built()) {
+            steps.add(List.of(c.buildFailed() ? "Fix the error above, then build " + c.template() + ":" : "Build " + c.template() + ":",
+                    "isx build " + c.template()));
+        }
+        if (c.accountCommand() != null) steps.add(List.of("Add " + c.agent() + "'s account:", c.accountCommand()));
+        var open = new ArrayList<>(List.of(machine ? "Open your first machine:" : "Open your first agent:",
+                "isx branch " + c.instance() + " --from " + c.template()));
+        open.addAll(c.firstStart());
+        steps.add(open);
+
+        var lines = new ArrayList<String>();
+        var ready = steps.size() == 1;
+        if (ready) {
+            lines.add("   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"));
+        } else {
+            lines.add("   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " This host is set up."));
+            if (c.buildFailed()) lines.add("   " + c.template() + " did not build.");
+            lines.add("   Your first " + (machine ? "machine" : "agent") + " needs these " + steps.size() + " steps:");
         }
         lines.add("");
-        lines.add("   " + (agent == null ? "Open a machine:" : "Open an agent:  ") + "  isx branch " + instance + " --from " + template);
-        lines.add("   Or launch the TUI:  isx");
-        lines.add("   Your own template: " + TerminalLink.link("https://isx.run/docs/templates#adding-your-own"));
-        if (!listLater) return lines.toArray(String[]::new);
+        if (c.services().label == null) lines.add("   isx's services start on their own.");
+        if (c.built()) lines.add("   " + c.template() + " is built" + (machine ? "." : ", with " + c.agent() + "."));
+        if (c.services().label == null || c.built()) lines.add("");
+        for (int i = 0; i < steps.size(); i++) {
+            var step = steps.get(i);
+            // Numbered only when there is an order to keep
+            var number = ready ? "" : (i + 1) + ". ";
+            lines.add("   " + number + step.getFirst());
+            for (var more : step.subList(1, step.size())) lines.add("   " + " ".repeat(number.length()) + "  " + more);
+        }
+        if (c.noIdentity()) {
+            lines.add("");
+            lines.add("   Agents have no name to commit under. To give them one:");
+            lines.add("     isx account add github");
+        }
+        lines.add("");
+        lines.add("   " + styled(BOLD, "After that:"));
+        lines.add("   Return to the machine:   isx shell " + c.instance());
+        lines.add("   See all your machines:   isx");
+        if (!machine) lines.add("   Change the template:     isx templates edit " + c.template());
+        lines.add("   Write your own template:");
+        lines.add("     " + TerminalLink.link("https://isx.run/docs/templates#adding-your-own"));
+        if (!c.listLater()) return lines.toArray(String[]::new);
         lines.add("");
         lines.add("   " + styled(BOLD, "Left for later, when you need them:"));
         for (var id : DEFERRED) lines.add(String.format("   isx init %-17s %s", id, LATER.get(id)));
