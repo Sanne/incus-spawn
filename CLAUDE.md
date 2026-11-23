@@ -342,6 +342,11 @@ Commands that act need only clean stdout: `BuildOutput.ansi()` is the one gate f
 A status report goes to stdout in every state, its exit code saying which (#1037).
 See `.claude/rules/commands.md` and design/terminal.md "Output for scripts".
 
+**A cache that confirms every serve** (#2518): `confirmed-cache:` in `config.yaml` (`ConfirmedCache`) lists HTTPS domains, exact or `*.` wildcards, whose downloads the proxy keeps on the host (`ConfirmedCacheHandler`, `ConfirmedCacheStore`).
+Each GET goes upstream as the client sent it plus `If-None-Match` for the stored `ETag` (keyed by host, path and the query less its signing parameters), and only a `304` serves the copy, whole or one range.
+Anything else is relayed, a whole `200` with a strong `ETag` replacing the copy, and nothing is served while upstream cannot be asked.
+Off by default and host config only, since every instance's traffic to a listed domain is intercepted; the first use is GitHub Actions caches on Azure blob storage (design/proxy.md "A cache that confirms every serve").
+
 **Container image manifests are cached, and every hit is confirmed with the caller's own token** (#2306).
 The proxy stores manifests by digest and serves a copy only after a `HEAD` with the client's own headers answers 200, which Docker Hub does not count as a pull.
 Without that answer it serves only a digest an anonymous check found public in that repository (design/proxy.md "Container image manifests").

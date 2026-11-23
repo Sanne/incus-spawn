@@ -169,6 +169,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The event log (#2241)
   - The socket transport: epoll on Linux
   - Host routes
+  - A cache that confirms every serve (#2518)
   - Exposed host ports
   - A throttled answer reaches the client as upstream sent it (#2309)
   - Vertex AI: container in Vertex mode vs standard mode

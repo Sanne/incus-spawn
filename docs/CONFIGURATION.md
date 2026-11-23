@@ -613,6 +613,35 @@ A release the repository withdrew comes back from a mirror that still holds it, 
 
 `maven-metadata.xml` and SNAPSHOTs still come only from the repository.
 
+### A cache for any HTTPS domain
+
+The proxy can also keep downloads from a domain you name, such as the GitHub Actions caches a self hosted runner restores.
+It serves a stored copy only after the server answers your request with "not modified" for that copy.
+So private and changed files stay correct, and a refused request gets the refusal, not the copy.
+
+```yaml
+confirmed-cache:
+  domains:
+    - "*.blob.core.windows.net"
+  max-size: 20GiB
+```
+
+Each entry is a host name, or `*.` and a name for every host below it.
+`max-size` is optional, 20GiB by default; the copies served least recently go first.
+
+Only `config.yaml` can name a domain, never a template.
+A domain the proxy already handles, or one a tool sends a credential to, is ignored with a warning.
+
+Every download still asks the server once, so nothing is served while it cannot be reached.
+A file is stored only when the server sends a strong `ETag` and its full length.
+
+Links that differ only in their signature, such as Azure's `sig` and `se`, share one copy.
+The first ranged download of a file is relayed, and the proxy fetches the whole file once beside it, so that first time costs its bytes twice.
+
+The proxy intercepts all traffic of your instances to a listed domain, so a tool that pins that domain's certificate stops working there.
+The copies may hold private files.
+`isx doctor` shows where they are and how much space they take, and `isx clean cache` removes them.
+
 Build-time caches:
 
 - **DNF packages**, shared by every build, so builds reuse each other's downloads.
@@ -620,4 +649,4 @@ Build-time caches:
 
 The DNF cache is a volume in the Incus storage pool; every other cache lives under `~/.cache/incus-spawn/`.
 `isx clean cache` removes them all.
-Nothing expires by age or size; the proxy drops an artifact once a confirmation finds that upstream changed or withdrew it.
+Nothing expires by age, and only the cache for the domains you name has a size limit; the proxy drops an artifact once a confirmation finds that upstream changed or withdrew it.

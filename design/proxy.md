@@ -562,6 +562,7 @@ There is no upload size limit: a body passes as long as the host has disk for it
 - **OCI blobs** — keyed by SHA256 content digest, verified on store
 - **OCI manifests** — by digest, verified on store, with their media type beside them; each hit is confirmed with a `HEAD` carrying the caller's token before its copy is served (see "Container image manifests" below)
 - **Maven/Gradle artifacts and Gradle distributions** — keyed by repository path, verified on store, confirmed with upstream as recently as `artifact-cache:` asks (see below)
+- **Downloads of `confirmed-cache:` domains** — keyed by host and path, each serve confirmed by upstream's `304` for the client's own request (see "A cache that confirms every serve" below)
 - **npm tarballs** — keyed by package name and version, with ETag-based verification against the npm registry packument.
   A cached tarball is served without a lookup only while the packument ETag is the one it was verified under and its last confirmation is within the same tiers as Maven/Gradle (`artifactCacheTiers`, see "Confirmation tiers" below).
   The stored shasum's modification time is that confirmation: set when the tarball is stored, renewed by a matching lookup.
@@ -838,7 +839,7 @@ The declarations are the user's claim: a repository that replaces artifacts decl
 The defaults make a repository described too cautiously slow, never wrong.
 Only config.yaml declares one: a template, and above all a project-local definition, cannot, since it would decide what every other instance on the host is served.
 An entry is dropped with a warning naming why, never failing config.yaml: a field that could loosen a protection is required, a domain isx intercepts for something else (built in, `.internal`, ChatGPT's) is refused, and so is a public entry on a domain a tool injects a credential at, whose cache would take the domain's requests from that injection.
-Its domain joins the intercepted ones through `ToolProxyResolver.handlerDomains(SpawnConfig)`, the seam the proxy and the CLI's bridge DNS writers share, so a reload mints its certificate and writes its DNS override.
+Its domain joins the intercepted ones through `ToolProxyResolver.handlerDomains(SpawnConfig, Collection)`, the seam the proxy and the CLI's bridge DNS writers share, so a reload mints its certificate and writes its DNS override.
 **Private repositories** (#2312).
 A company's repository manager is where most of the demand is, so `access: private` is served too, without loosening what makes the shared cache safe.
 The guest holds a proof, never the repository's credential: a private entry names the namespace whose tool injects at its domain, and the proxy drops it when none does.
@@ -1417,6 +1418,76 @@ Rejected:
 - A unix socket or mutual TLS for the hop instead of a shared secret: the first has no portable path on macOS, the second is heavy for a controller; a header compare is a few lines in any language.
 - A route with no `templates:` admitting every instance that is not project-local: a typo or an omission would open the controller to every box.
 - The address alone: #934's secret exists so that a host-side service sees both, and this is that service.
+
+## A cache that confirms every serve (#2518)
+
+A host on a slow connection should download a large file once, whichever instance asks for it next.
+The caches above do that only for repositories whose rules isx knows (`Revalidation`, "Why a repository is declared").
+GitHub Actions caches are the case that needs more: a self-hosted runner downloads each one from Azure blob storage (`*.blob.core.windows.net`) on every job, about 100 MB for a Maven cache and up to 580 MB for the cloud images.
+Those blobs are private, reached by a signed link, and overwritten under the same name.
+Sanne's decision, in the design conversation of #2298: a general mode, not one for Azure alone, off by default, opted into per domain in host config, and tested against GitHub's cache service.
+
+**The mode.**
+config.yaml's `confirmed-cache:` (`ConfirmedCache`) lists domains, exact names or `*.` wildcards, and a `max-size` (20 GiB by default).
+`ConfirmedCacheHandler` takes every bodyless request to them, through the same `cacheHandler` seam as the other caches.
+A GET goes upstream as the client sent it, its signed link and any credential included, with `If-None-Match` naming the stored copy's `ETag` and no `Accept-Encoding`.
+A `304` serves the stored bytes, whole or the one range asked for (`Range`, or Azure's `x-ms-range`), with the headers stored beside the copy, less `Content-MD5` and `x-ms-content-crc64` for a range, which they do not describe.
+Upstream checked the caller before it answered, so a caller without access gets upstream's own `403`, never the copy.
+Anything else is relayed as it came, and a whole `200` that may be stored becomes the new copy as it passes (`Upstream.relayResponse` with a tap).
+Nothing is ever served while upstream cannot be asked: a failed exchange is a `502`, and these domains keep no backoff.
+The handler is built from `Upstream` alone, like `ArtifactCacheHandler`, so it cannot send a credential the client did not send.
+What it gives up: every download still costs one round trip, and nothing is served offline.
+
+**What may be stored.**
+A `200` with a strong, quoted `ETag`, a `Content-Length` within `max-size`, no `Content-Encoding` and no `Content-Range`, no `Cache-Control: no-store`, and no `Vary` beyond `Accept-Encoding`.
+A copy is committed only when every byte arrived.
+Each fill's length is reserved before its file exists, on two counts kept across every fill under way: together they stay within `max-size`, and the host keeps the spool's free-space reserve (one `DiskReserve` shared by the fills, `admit` before and `written` or `abandoned` after).
+A check of free space alone saw only one fill, since those under way had written nothing yet, so a guest asking one byte of many large blobs could have started a fill for each and written past both limits.
+A commit evicts down to `max-size` less what the other fills under way will add.
+A fill's file write is paced like the client: while its queue is full, upstream's response is held back (`ResponseHold`), on the relayed download as on a background fill, so a slow disk never queues an object in the heap.
+A weak `ETag`, or none, is never cached: a `304` against it would not promise the bytes.
+A request that asks a question of its own (`If-None-Match`, `If-Match`, `If-Range` and the like, Azure's `x-ms-if-tags` or a per-range checksum) is relayed untouched, as is a request for several ranges.
+
+**The key.**
+The host is lower-cased first, since a `Host` header's case is the client's.
+A signed link changes on every request while the object does not, so the key is the host, the path and the query less the parameters that sign the link (`ConfirmedCacheStore.unsigned`), while the check still sends the full signed request.
+Those are an Azure shared access signature's (`sv`, `se`, `sig` and the rest) and the `X-Amz-` and `X-Goog-` ones of S3's and Cloud Storage's signed URLs.
+Every other parameter stays in the key, sorted: Azure answers `?comp=metadata` on a blob's path with the blob's own `ETag` and another body, so a key without the query would serve one as the other on a `304`.
+A domain that signs links with other parameter names only misses, it never serves the wrong bytes.
+Whether the key helps depends on the service keeping a blob's path stable across links.
+GitHub's toolkit fetches the blob from the signed URL the cache service hands out (`@actions/cache`, `downloadUtils.ts`, read 2026-11), and whether that path repeats from one job to the next is checked by the real run that #2519 makes possible.
+Correctness never depends on it: a path that changes only misses.
+
+**Ranges.**
+GitHub's toolkit reads a blob with a `HEAD`, then 4 MiB `Range` requests, eight at a time, each with a 30 s timeout.
+A ranged request with a copy to check against is confirmed and served from that copy, so a warm restore asks upstream only for `304`s.
+A ranged miss is relayed as it is, and one download of the whole object is started beside it, once per object (`fillInBackground`), with that request's own headers and link but no range.
+At most four background fills run at once (`MAX_BACKGROUND_FILLS`); a ranged miss beyond them is only relayed, and a later one starts the fill.
+What it gives up: the first restore of a blob costs its bytes twice.
+The alternative, holding each range until a single fill reached it, would leave later ranges waiting past the toolkit's 30 s timeout on a slow link.
+A background fill is given up once it has run two minutes longer than its bytes so far take at 256 KiB/s (`fillDeadlineMillis`, checked every second), so fills that trickle cannot hold those slots and their reservations for hours, however large their objects.
+What it gives up: on a link slower than that, a large object is never filled in the background, and its downloads are relayed.
+A `HEAD` is relayed.
+
+**Versions never splice.**
+Each object's directory holds one immutable file per `ETag`, named by a hash of it, and a `current` file naming the newest.
+A serve confirmed for one tag reads that tag's file, so a refill landing between a `304` and its read cannot hand a range of the new version to a download of the old one.
+A superseded copy is marked when it is first superseded (`.superseded`), and the next commit of that object removes it once the mark is ten minutes old.
+So a copy a `304` just confirmed keeps its window whenever it was last served, though eviction may take it sooner.
+A serve whose copy was removed between its `304` and its read asks for the object again, without a condition.
+Commits, evictions and new fills of one object take that object's lock (one of 64, striped by its key), so two commits never mark each other superseded.
+An object eviction leaves with no copy and no fill under way loses its directory, `current` and marks included, so the directories stay as few as the copies.
+
+**Private content on the host's disk.**
+The copies may be private, though each is served only behind upstream's check.
+They live under `~/.cache/incus-spawn/confirmed/`, removed least recently served first once they pass `max-size`, and by `isx clean cache`; `isx doctor` names the domains, the size and the place.
+Opting a domain in makes isx terminate TLS for every instance's traffic to it, so a tool that pins that domain's certificate stops working there; that is why the mode is off by default and host config only.
+A domain isx serves otherwise is refused (built in, a handler's, a `maven-repositories:` one, `.internal`), and so is one overlapping a domain a tool injects a credential at, since the cache takes requests before injection would (`ToolProxyResolver.servedConfirmedCacheDomains`).
+The trust taken is that the domain answers a conditional request only for a caller it lets in, which Azure does: a bad signature is a `403` before any condition is read.
+
+**Measurement.**
+Once a domain is opted in, `/activity` counts its traffic under its name.
+Before that, its requests never reach the proxy, so `(other)` cannot show which domain is worth opting in.
 
 ## Exposed host ports
 

@@ -358,6 +358,18 @@ Key design:
   - Cert reloads build their `ServerSSLOptions` from `mitmServerOptions()`, never a bare object, because the update replaces client auth, protocols and ciphers.
   - `HttpClientRequest.authority()` is the request's own `Host`, not the `setServer()` target, which is what the redirect and resume paths want.
     That holds because every upstream request sets a host: without one, Vert.x falls back to the server address.
+- **The confirmed cache (#2518)**: `ConfirmedCacheHandler` serves `confirmed-cache:` domains (exact or `*.`, `ConfirmedCache.covers`), reached through `MitmProxy.cacheHandler` after `ArtifactCacheHandler`'s.
+  A stored copy is served only on a `304` to the client's own GET sent with `If-None-Match: <stored ETag>`; never on a connect failure, a `5xx` or a `429`, and these domains keep no backoff.
+  It is built from `Upstream` alone and never injects a credential, like `ArtifactCacheHandler`.
+  A request with its own conditional or per-range checksum header, several ranges, or any method but GET is relayed untouched.
+  A ranged miss is relayed and one whole download is started beside it (`fillInBackground`, once per object, at most `MAX_BACKGROUND_FILLS` at once).
+  Every fill reserves its length before its file exists, against `max-size` across the fills under way and against one shared `DiskReserve` (`openFill`, given back by `Fill.release`).
+  Never check free space alone, which sees none of the fills under way.
+  A fill holds upstream back while its file's write queue is full.
+  A background fill is given up once it has run 2 min longer than its bytes so far take at 256 KiB/s (`fillDeadlineMillis`, checked every second).
+  `ConfirmedCacheStore` serializes commits, evictions and new fills per object (`lockFor`), and eviction removes an object's directory once it holds no copy and no fill (`removeIfEmpty`).
+  `ConfirmedCacheStore` keys by host, path and the query less its signing parameters (`unsigned`: Azure SAS, `X-Amz-*`, `X-Goog-*`; never the whole query dropped, or `?comp=metadata` shares the blob's copy), one immutable file per `ETag` plus `current`, so a confirmed serve never reads another version's bytes; never rewrite a copy in place.
+  Domains are refused against everything isx serves otherwise (`ToolProxyResolver.confirmedCacheDomains`, `servedConfirmedCacheDomains`, the second also against tool credential domains) and intercepted through `handlerDomains(SpawnConfig, Collection)`.
 - Caches OCI manifests (#2306, `ManifestCache`, design/proxy.md "Container image manifests").
   Stored by digest, committed only when the bytes hash to it, with the upstream `Content-Type` stored beside as `.type`.
   Every hit, by digest too, is served only on a `HEAD` carrying the client's own headers, which for a tag must name a stored digest, so the registry vouches for the caller's access each time and Docker Hub counts no pull.
