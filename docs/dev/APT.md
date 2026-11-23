@@ -7,13 +7,8 @@ incus-spawn is distributed via an APT repository for Ubuntu and Debian users, ho
 
 ```bash
 curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
-sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://sanne.github.io/isx-apt-releases
-Suites: stable
-Components: main
-Signed-By: /usr/share/keyrings/incus-spawn.gpg
-EOF
+sudo rm -f /etc/apt/sources.list.d/incus-spawn.list
+curl -fsSL https://sanne.github.io/isx-apt-releases/incus-spawn.sources | sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null
 sudo apt update && sudo apt install incus-spawn
 ```
 
@@ -25,13 +20,8 @@ To track development/pre-release builds, use the `dev` suite instead of `stable`
 
 ```bash
 curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
-sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null <<'EOF'
-Types: deb
-URIs: https://sanne.github.io/isx-apt-releases
-Suites: dev
-Components: main
-Signed-By: /usr/share/keyrings/incus-spawn.gpg
-EOF
+sudo rm -f /etc/apt/sources.list.d/incus-spawn.list
+curl -fsSL https://sanne.github.io/isx-apt-releases/incus-spawn-dev.sources | sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null
 sudo apt update && sudo apt install incus-spawn
 ```
 
@@ -43,10 +33,10 @@ Older instructions wrote the repository as a one-line `/etc/apt/sources.list.d/i
 Ubuntu's release upgrade disables third-party repositories, and it cannot convert that file to the deb822 format, so it leaves `incus-spawn.list.disabled` behind and `apt upgrade` stops updating isx.
 A deb822 `.sources` file with `Signed-By` needs apt 1.1 or later, the first release that accepts `Signed-By`.
 Ubuntu 16.04 ships apt 1.2 and Debian 9 ships apt 1.4, so both read it.
-To move, write the `.sources` file as in the install block above, with `Suites: dev` if you track the dev channel, then remove the old file:
+To move, run the install block above, which also removes `incus-spawn.list`, then remove the file the upgrade left:
 
 ```bash
-sudo rm -f /etc/apt/sources.list.d/incus-spawn.list /etc/apt/sources.list.d/incus-spawn.list.disabled
+sudo rm -f /etc/apt/sources.list.d/incus-spawn.list.disabled
 sudo apt update && sudo apt upgrade
 ```
 
@@ -61,6 +51,8 @@ The APT repo uses `stable` and `dev` suites (not per-Ubuntu-release) because the
 ```
 isx-apt-releases repo:
   public.gpg                              # GPG public key for apt verification
+  incus-spawn.sources                     # deb822 source for the stable suite, fetched by the install steps
+  incus-spawn-dev.sources                 # the same for the dev suite
   pool/
     stable/
       incus-spawn_VERSION_amd64.deb
@@ -77,6 +69,9 @@ isx-apt-releases repo:
     main/binary-amd64/Packages{,.gz}
     main/binary-arm64/Packages{,.gz}
 ```
+
+The release job rewrites `public.gpg`, `pool/` and `dists/`, and leaves the two `.sources` files as they are.
+They are committed to `isx-apt-releases` by hand, so a change to the suites or the key path changes them there too.
 
 Each `.deb` contains:
 - `/usr/bin/isx` -- the native binary
