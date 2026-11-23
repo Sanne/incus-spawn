@@ -2333,7 +2333,9 @@ public class BuildCommand extends BaseCommand {
                 inherited, BuildOutput.bound());
         // In /etc/gitconfig, which the account's ~/.gitconfig overrides, so it changes nothing
         // the stamps above decided (#2410)
-        AgentGitIdentity.applyAndReport(container, config.gitIdentity(), BuildOutput.bound());
+        AgentGitIdentity.applyAndReport(container, config.gitIdentity(),
+                !dev.incusspawn.config.AccountResolver.usableAccountNames(config, dev.incusspawn.tool.GhSetup.NAMESPACE).isEmpty(),
+                BuildOutput.bound());
         return stamps;
     }
 
