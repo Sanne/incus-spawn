@@ -140,7 +140,7 @@ public final class ToolProxyResolver {
                 .collect(Collectors.toCollection(java.util.HashSet::new));
         // The proxy reports what it drops; a CLI writer only needs the names
         domains.addAll(hostRoutes(config, acrossAccounts, warning -> {}).keySet());
-        domains.addAll(handlerDomains(config));
+        domains.addAll(handlerDomains(config, acrossAccounts));
         return Set.copyOf(domains);
     }
 
@@ -149,16 +149,44 @@ public final class ToolProxyResolver {
      * and those of the Maven repositories {@code maven-repositories:} declares for caching (#2312),
      * which may claim none of isx's own. The one place the proxy and {@link #resolvedDomains} take
      * them from, so a configured repository is intercepted, its certificate minted and its name in
-     * the bridge DNS block, on a reload too.
+     * the bridge DNS block, on a reload too. With them, the {@code confirmed-cache:} domains the
+     * proxy serves ({@link #servedConfirmedCacheDomains}, against {@code acrossAccounts}), so a
+     * domain it ignores is not intercepted either.
      */
-    public static Set<String> handlerDomains(SpawnConfig config) {
+    public static Set<String> handlerDomains(SpawnConfig config, Collection<ResolvedToolProxy> acrossAccounts) {
         var tree = config.tree();
         var builtIn = handlerDomains(tree);
         var repositories = config.mavenRepositories().domains(repositoryDomainsTaken(builtIn));
-        if (repositories.isEmpty()) return builtIn;
+        var confirmed = servedConfirmedCacheDomains(config, acrossAccounts, warning -> {});
+        if (repositories.isEmpty() && confirmed.isEmpty()) return builtIn;
         var all = new java.util.HashSet<>(builtIn);
         all.addAll(repositories);
+        confirmed.forEach(domain -> all.add(dev.incusspawn.config.ConfirmedCache.interceptedName(domain)));
         return Set.copyOf(all);
+    }
+
+    /**
+     * The domains of {@code confirmed-cache:} (#2518) that claim none isx serves otherwise: its
+     * built-in and handler domains and the {@code maven-repositories:} ones. Exact names or
+     * {@code *.} wildcards; {@link #handlerDomains(SpawnConfig, Collection)} intercepts each served one's name.
+     */
+    public static List<String> confirmedCacheDomains(SpawnConfig config, Consumer<String> warn) {
+        var repositoryTaken = repositoryDomainsTaken(handlerDomains(config.tree()));
+        var taken = new java.util.HashSet<>(repositoryTaken);
+        taken.addAll(config.mavenRepositories().domains(repositoryTaken));
+        return config.confirmedCache().domains(taken, warn);
+    }
+
+    /**
+     * {@link #confirmedCacheDomains}, less those that overlap a domain a tool injects a credential
+     * at under any account ({@code acrossAccounts}): the cache takes a domain's requests before
+     * injection would, so they would go out with the guest's placeholder. What the proxy caches.
+     */
+    public static List<String> servedConfirmedCacheDomains(SpawnConfig config,
+            Collection<ResolvedToolProxy> acrossAccounts, Consumer<String> warn) {
+        var injected = acrossAccounts.stream().map(ResolvedToolProxy::domain).collect(Collectors.toSet());
+        return dev.incusspawn.config.ConfirmedCache.without(confirmedCacheDomains(config, warn), injected,
+                "a tool injects a credential at", warn);
     }
 
     /** The domains a {@code maven-repositories:} entry may not claim, beside {@code handlerDomains}' own. */

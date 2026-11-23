@@ -103,6 +103,8 @@ public class MitmProxy {
     final Upstream upstream;
     /** Registry, npm and Maven/Gradle caching; built from {@link #upstream}, never given credentials. */
     final ArtifactCacheHandler artifactCache;
+    // The confirm-every-serve cache of config.yaml's confirmed-cache: domains (#2518)
+    final ConfirmedCacheHandler confirmedCache;
     /** Created once, so a {@link #stop()} that comes before {@link #start} is not lost (#966). */
     private final CountDownLatch stopLatch = new CountDownLatch(1);
     // stopLatch drops only once stop() has closed everything, too late for a start() still
@@ -367,6 +369,7 @@ public class MitmProxy {
         this.configFingerprint = java.util.Objects.requireNonNull(configFingerprint, "configFingerprint");
         this.upstream = new Upstream(vertx, this::lookupHost);
         this.artifactCache = new ArtifactCacheHandler(vertx, upstream);
+        this.confirmedCache = new ConfirmedCacheHandler(vertx, upstream);
         this.hostRouteRelay = new HostRouteRelay(vertx, () -> instanceRegistry, upstream);
         this.hostPortRelay = new HostPortRelay(bindAddress);
         this.chatGpt = new ChatGptRoute(this, vertx, new ChatGptSessionStore());
@@ -630,12 +633,14 @@ public class MitmProxy {
         configState = new ConfigState(config, tree, setups, credentials, acrossAccounts,
                 HostRouteRelay.served(ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn),
                         name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)), nested,
-                ToolProxyResolver.handlerDomains(config));
+                ToolProxyResolver.handlerDomains(config, acrossAccounts));
         artifactCache.artifactCacheTiers = ArtifactCacheTiers.configured(config);
         artifactCache.useRepositories(CachedRepository.withMirrors(CachedRepository.withConfigured(
                 config.mavenRepositories().entries(ToolProxyResolver.repositoryDomainsTaken(
                         ToolProxyResolver.handlerDomains(tree)), ProxyLog::warn),
                 acrossAccounts, ProxyLog::warn), config.mavenMirrors().entries(ProxyLog::warn), ProxyLog::warn));
+        confirmedCache.useConfig(ToolProxyResolver.servedConfirmedCacheDomains(config, acrossAccounts, ProxyLog::warn),
+                config.confirmedCache().maxSize(ProxyLog::warn));
         exposedHostPorts = withoutOwnPorts(config.exposedHostPorts().ports(ProxyLog::warn));
         return previous;
     }
@@ -1104,6 +1109,10 @@ public class MitmProxy {
                     + " (at " + dev.incusspawn.config.ExposedHostPorts.HOST_NAME + ")");
         }
         artifactCache.start();
+        if (!confirmedCache.domains().isEmpty()) {
+            ProxyLog.stdout("Confirmed cache: " + ConfirmedCacheStore.dir() + " (domains: " + confirmedCache.domains()
+                    + "; every serve confirmed with upstream)");
+        }
         var credentials = configState.credentials();
         if (credentials.useVertex()) {
             ProxyLog.stdout("Vertex AI mode: translating api.anthropic.com requests" +
@@ -1408,7 +1417,9 @@ public class MitmProxy {
 
     /** The handler of a domain served from a cache, or null: it sees only requests without a body. */
     private Consumer<HttpServerRequest> cacheHandler(String domain, long started) {
-        return artifactCache.cacheHandler(domain, started);
+        var cache = artifactCache.cacheHandler(domain, started);
+        if (cache != null || !confirmedCache.handles(domain)) return cache;
+        return req -> confirmedCache.handle(req, started, domain);
     }
 
     private void routeRequest(HttpServerRequest clientReq) {

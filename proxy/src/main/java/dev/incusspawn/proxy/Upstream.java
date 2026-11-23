@@ -1004,6 +1004,24 @@ class Upstream {
     }
 
     /**
+     * Relays upstream's response as it is, head and body, showing each chunk of the body to
+     * {@code tap} as it passes and running {@code onEnd} once the client's response ends or closes,
+     * or at once when the client has already gone (#2518).
+     */
+    void relayResponse(HttpServerRequest clientReq, String domain, ResponseHold upResp, long since,
+                       java.util.function.Consumer<Buffer> tap, io.vertx.core.Handler<Void> onEnd) {
+        copyResponseHead(upResp.response(), clientReq.response());
+        var watchdog = new RelayWatchdog(clientReq, domain, false, since, upResp, onEnd);
+        if (watchdog.gone()) {
+            upResp.reset();
+            onEnd.handle(null);
+            return;
+        }
+        pipeResponse(upResp, clientReq.response(), watchdog, tap);
+        upResp.release();
+    }
+
+    /**
      * Pipes a response's body under the head already set on {@code clientReq}'s response, with a
      * {@link RelayWatchdog} counting from {@code since}, when the client last heard from us (#1192).
      */

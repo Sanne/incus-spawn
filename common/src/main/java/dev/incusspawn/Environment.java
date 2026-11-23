@@ -129,6 +129,11 @@ public final class Environment {
         return home().resolve(".cache/incus-spawn/npm");
     }
 
+    /** Where the proxy keeps the downloads of {@code confirmed-cache:} domains (#2518). */
+    public static Path confirmedCacheDir() {
+        return home().resolve(".cache/incus-spawn/confirmed");
+    }
+
     public static Path lockDir() {
         return home().resolve(".cache/incus-spawn/locks");
     }

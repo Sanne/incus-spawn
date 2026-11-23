@@ -35,6 +35,11 @@ import java.util.regex.Pattern;
  *       artifact is cached apart per credential and confirmed with that credential before every
  *       serve ({@link CachedRepository#credentials}).</li>
  * </ol>
+ * <p>
+ * A domain that cannot be vetted this way, private or mutable storage such as the blobs behind
+ * GitHub Actions caches, is not declared here at all: config.yaml's {@code confirmed-cache:}
+ * gives it {@link ConfirmedCacheHandler}, which serves a copy only on upstream's {@code 304} for
+ * each request, so it needs no tiers, no checksum and no claim about what the domain publishes.
  *
  * @param headerChecksum the checksum the repository sends as a header with each artifact, or null
  * @param header         that header's name, or null: then a hit fetches the checksum sidecar;
