@@ -135,7 +135,7 @@ class InitFirstRunTest {
         assertEquals("claude", SpawnConfig.load().getPreferredAgent());
         assertEquals(List.of("Set up isx for Claude Code, so templates that include it can run it? (Y/n/other): "),
                 prompts.questions());
-        assertTrue(said(prompts).contains("Found Claude Code on this host, signed in with a subscription"), said(prompts));
+        assertTrue(said(prompts).contains("Claude Code is on this host, signed in with a subscription."), said(prompts));
         assertEquals(List.of("agent-credential", "github"), init.ran);
         assertEquals(new InitCommand.FirstRunAnswers(false, false, false, false), init.answers);
         // The agent's own downloads start once it is chosen; the run started the base image's before asking

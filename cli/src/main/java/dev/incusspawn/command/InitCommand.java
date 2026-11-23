@@ -1223,9 +1223,9 @@ public class InitCommand extends BaseCommand {
                 chosenAgent = answers.noAgent() ? null : preferredAgentTool();
             } else {
                 printSetupBanner(macOs ? " (macOS)" : "", noSudo ? "runs nothing as root: the script did that" : "~5 minutes");
-                BuildOutput.step("This run asks its questions first: your agent, its account and a GitHub account.");
-                BuildOutput.step("Then it sets up this host" + (macOs || noSudo ? "" : ", for which it asks for sudo last")
-                        + ", and builds your first template.");
+                BuildOutput.step("First, isx asks a few questions: your coding agent, its account and a GitHub account.");
+                BuildOutput.step("Then it sets up this host and builds your first template"
+                        + (macOs || noSudo ? "." : ". It asks for sudo once, after the questions."));
                 startDownloadsAhead(null);
                 askFirstRunQuestions();
                 if (macOs) {
@@ -1441,7 +1441,7 @@ public class InitCommand extends BaseCommand {
                                    List<HostAgentProbe.HostAgent> found) {
         var title = ExampleTemplate.title(suggested);
         var seen = found.stream().filter(a -> a.agent().equals(suggested.name())).findFirst();
-        prompts.say(seen.map(a -> "Found " + a.title() + " on this host, " + a.summary() + ".")
+        prompts.say(seen.map(a -> a.found())
                 .orElse("Your preferred agent is " + title + "."));
         while (true) {
             var answer = prompts.ask("Set up isx for " + title + ", so templates that include it can run it? (Y/n/other): ");
@@ -1502,7 +1502,7 @@ public class InitCommand extends BaseCommand {
         return new InitStep("agent-credential", title + " Account", new String[]{
                 "The account " + title + " spends. It stays on this host:",
                 "instances hold a placeholder, and the proxy adds the real",
-                "credential to each request. Press Enter to skip it for now."},
+                "credential to each request."},
                 this::setUpAgentCredential, null);
     }
 
@@ -1783,6 +1783,7 @@ public class InitCommand extends BaseCommand {
         lines.add("");
         lines.add("   " + (agent == null ? "Open a machine:" : "Open an agent:  ") + "  isx branch " + instance + " --from " + template);
         lines.add("   Or launch the TUI:  isx");
+        lines.add("   Your own template: " + TerminalLink.link("https://isx.run/docs/templates#adding-your-own"));
         if (!listLater) return lines.toArray(String[]::new);
         lines.add("");
         lines.add("   " + styled(BOLD, "Left for later, when you need them:"));
