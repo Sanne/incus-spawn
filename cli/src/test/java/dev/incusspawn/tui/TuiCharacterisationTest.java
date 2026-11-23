@@ -643,20 +643,21 @@ class TuiCharacterisationTest {
                 tui.warningMessages().toString());
     }
 
+    /**
+     * With no account that can answer, AI Help leaves the TUI to ask for one there, where the
+     * person needs it, rather than naming a command to run later (#2541).
+     */
     @Test
-    void helpChatWithNoAccountKeepsItsRemedyInTheWarningLog() {
+    void helpChatWithNoAccountLeavesToAskForOne() {
         var tui = tui();
         press(tui, KeyEvent.ofChar('?'));
-        assertEquals(Tui.Mode.BROWSE, tui.mode(), "nothing can answer, so the chat stays closed");
-        // The status bar holds the cause, and where the rest is (#1765)
-        assertEquals("No AI credentials configured. Press w for the rest.", tui.statusMessage);
-        assertEquals(List.of("No AI credentials configured."
-                + " Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials."),
-                tui.warningMessages());
+        assertEquals(Tui.PendingAction.ADD_AI_HELP_ACCOUNT, tui.pendingAction());
+        assertFalse(runner.isRunning(), "the terminal is lent to the question");
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
 
     @Test
-    void helpChatWithOnlyASubscriptionKeepsItsAdviceInTheWarningLog() throws Exception {
+    void helpChatWithOnlyASubscriptionLeavesToAskForAnotherAccount() throws Exception {
         var config = Environment.configDir().resolve("config.yaml");
         Files.createDirectories(config.getParent());
         Files.writeString(config, """
@@ -665,16 +666,10 @@ class TuiCharacterisationTest {
                 """);
         var tui = tui();
         press(tui, KeyEvent.ofChar('?'));
-        assertEquals(Tui.Mode.BROWSE, tui.mode());
-        // Its cause alone is too long for the status bar, so only the first sentence goes there
-        assertEquals("Your Claude Pro/Max subscription cannot answer here. Press w for the rest.",
-                tui.statusMessage);
-        assertTrue(tui.statusMessage.length() < 80, "fits an 80-column status bar after its margin");
-        // Its advice spans lines, the credits URL last; none of it fits the status bar (#1765)
-        var refusal = tui.warningMessages();
-        assertEquals(1, refusal.size(), refusal.toString());
-        assertTrue(refusal.getFirst().contains("\nRun 'isx init' to add an Anthropic API key"), refusal.getFirst());
-        assertTrue(refusal.getFirst().endsWith(AiHelpClient.API_CREDITS_URL), refusal.getFirst());
+        assertEquals(Tui.PendingAction.ADD_AI_HELP_ACCOUNT, tui.pendingAction());
+        // What the status bar says if the person adds nothing: its first sentence fits (#1765)
+        var cause = AiHelpClient.noProvider(dev.incusspawn.config.SpawnConfig.load()).cause();
+        assertTrue(cause.indexOf(". ") + 1 + " Press w for the rest.".length() < 80, cause);
     }
 
     @Test

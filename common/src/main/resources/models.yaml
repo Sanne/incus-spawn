@@ -8,6 +8,7 @@
 ai-help-anthropic: claude-sonnet-5-5
 ai-help-vertex: claude-sonnet-5-5
 ai-help-openai: gpt-6-luna
+ai-help-gemini: gemini-3.8-flash
 # The overview's merged summary of several agent sessions, on the instance's own Claude account.
 overview-merge-anthropic: claude-sonnet-5-5
 overview-merge-vertex: claude-sonnet-5-5

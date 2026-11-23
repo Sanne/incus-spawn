@@ -178,7 +178,7 @@ class ClaudeAuthFlowTest {
 
     @Test
     void aVerifiedOauthTokenIsSaved() {
-        run(new FakeInit().acceptOauth(OAUTH_TOKEN), new ScriptedPrompts().line("2").secret(OAUTH_TOKEN).line(""));
+        run(new FakeInit().acceptOauth(OAUTH_TOKEN), new ScriptedPrompts().line("2").secret(OAUTH_TOKEN));
 
         assertEquals(SpawnConfig.ClaudeAccountType.OAUTH, savedAccount().effectiveType());
         assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
@@ -187,51 +187,30 @@ class ClaudeAuthFlowTest {
     @Test
     void theOauthFlowOffersToRunSetupTokenWhenClaudeIsInstalled() {
         var init = new FakeInit().withClaudeCli().acceptOauth(OAUTH_TOKEN);
-        run(init, new ScriptedPrompts().line("2", "").secret(OAUTH_TOKEN).line(""));
+        run(init, new ScriptedPrompts().line("2", "").secret(OAUTH_TOKEN));
 
         assertEquals(1, init.setupTokenRuns);
         assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
     }
 
     /**
-     * A subscription token cannot answer AI Help, but a Max or Team plan includes API credit that
-     * can: saving one names the credits and adds an API-key account beside it on request (#1674).
+     * Saving a subscription asks nothing more: AI Help asks for an account that can answer where
+     * it is first used, so 'isx account add claude' no longer offers an API key beside it (#2541).
      */
     @Test
-    void anOauthAccountIsOfferedAnApiKeyAccountForAiHelp() {
-        var out = RecordingOutput.during(() -> run(new FakeInit().acceptOauth(OAUTH_TOKEN).acceptKey(API_KEY),
-                new ScriptedPrompts().line("2").secret(OAUTH_TOKEN).line("y", "api").secret(API_KEY)));
-
-        var accounts = savedAccounts();
-        assertEquals(Set.of("default", "api"), accounts.keySet());
-        assertEquals(OAUTH_TOKEN, accounts.get("default").getOauthToken());
-        assertEquals(API_KEY, accounts.get("api").getApiKey());
-        assertEquals("default", savedClaude().accountName(), "the subscription keeps serving instances");
-        var said = out.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).toList();
-        assertTrue(said.stream().anyMatch(line -> line.contains("Max and Team plans include monthly API credits")), said::toString);
-        assertTrue(said.stream().anyMatch(line -> line.contains(AiHelpClient.API_CREDITS_URL)), said::toString);
-    }
-
-    @Test
-    void decliningTheApiKeyOfferSavesTheOauthAccountAlone() {
-        run(new FakeInit().acceptOauth(OAUTH_TOKEN), new ScriptedPrompts().line("2").secret(OAUTH_TOKEN).line("n"));
+    void savingASubscriptionAsksForNoApiKey() {
+        var prompts = new ScriptedPrompts().line("2").secret(OAUTH_TOKEN);
+        var out = RecordingOutput.during(() -> run(new FakeInit().acceptOauth(OAUTH_TOKEN), prompts));
 
         assertEquals(Set.of("default"), savedAccounts().keySet());
         assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
+        var said = out.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).toList();
+        assertFalse(said.stream().anyMatch(line -> line.contains(AiHelpClient.API_CREDITS_URL)), said::toString);
     }
 
-    /** A blank key at the offer keeps the subscription and does not call Claude setup skipped. */
+    /** Adding a subscription beside an API key asks nothing more either (#2541). */
     @Test
-    void aBlankKeyAtTheOfferKeepsTheOauthAccount() {
-        run(new FakeInit().acceptOauth(OAUTH_TOKEN),
-                new ScriptedPrompts().line("2").secret(OAUTH_TOKEN).line("y", "api").secret(""));
-
-        assertEquals(Set.of("default"), savedAccounts().keySet());
-    }
-
-    /** An account that already answers AI Help makes the offer pointless, so it is not made. */
-    @Test
-    void noApiKeyOfferWhenAnAccountAlreadyServesAiHelp() throws Exception {
+    void aSubscriptionBesideAnApiKeyAsksNothingMore() throws Exception {
         run(new FakeInit().acceptOauth(OAUTH_TOKEN), seed(ONE_LEGACY_KEY),
                 new ScriptedPrompts().line("a", "work", "2").secret(OAUTH_TOKEN));
 
@@ -369,7 +348,7 @@ class ClaudeAuthFlowTest {
     @Test
     void aVerifiedEnvironmentOauthTokenIsSavedOnEnter() {
         run(new FakeInit().env("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN).acceptOauth(OAUTH_TOKEN),
-                ScriptedPrompts.lines("", ""));
+                ScriptedPrompts.lines(""));
         assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
     }
 
