@@ -444,6 +444,8 @@ On macOS a full disk stops Incus, so the VM keeps 1 GiB in reserve and releases 
 If isx says the VM's disk is full, run `isx vm restart` or `isx vm resize <size>`.
 Then delete what you do not need with `isx destroy` and `isx clean pool`.
 
+The space a delete frees can take up to about five minutes to show as free.
+
 A subvolume pool also changes the host filesystem as a whole.
 Incus enables btrfs quotas to enforce the `--disk` limit, and they cover the whole filesystem.
 Each time Incus starts on the host, it mounts the filesystem with `user_subvol_rm_allowed`.

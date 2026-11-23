@@ -47,7 +47,9 @@ public final class PoolSpace {
         if (refused) {
             return "the storage pool '" + pool + "' has " + free(usage) + ", too little to "
                     + (need == Need.BUILD ? "build in" : "branch into")
-                    + ", and a full disk stops Incus. " + remedy(macOS) + ".";
+                    + ", and a full disk stops Incus. " + remedy(macOS) + "."
+                    // A delete's space shows once btrfs commits it, minutes later on an older appliance (#2555)
+                    + " The space a delete frees can take up to about five minutes to show as free.";
         }
         if (usage.isCritical()) {
             BuildOutput.warn("The storage pool '" + pool + "' has only " + free(usage) + ".",
