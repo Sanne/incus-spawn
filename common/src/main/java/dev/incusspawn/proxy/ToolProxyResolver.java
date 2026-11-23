@@ -124,7 +124,7 @@ public final class ToolProxyResolver {
                 var servedElsewhere = taken == null ? null : taken.or(served -> claimedByOther(configuredBy, toolName, served));
                 for (var domain : resolveDomains(toolName, authEntry.getDomains(), domainValues(proxyDef, allConfigValues), servedElsewhere)) {
                     if (!authEntry.getDomains().contains(domain)) {
-                        configuredBy.putIfAbsent(domain.startsWith("*.") ? domain.substring(2) : domain, toolName);
+                        configuredBy.putIfAbsent(domain, toolName);
                     }
                     result.add(new ResolvedToolProxy(toolName, domain, authEntry, Map.copyOf(allConfigValues), spends));
                 }
@@ -673,16 +673,15 @@ public final class ToolProxyResolver {
     /**
      * Resolve {@code ${configKey}} references in domain entries. A domain entry that is a pure
      * literal passes through unchanged; one containing an unresolvable reference is dropped. An
-     * entry that is a lone reference ({@code ${key}} or {@code *.${key}}) takes a comma-separated
-     * value as several domains; in an entry with literal text around its reference a comma is no
-     * part of a host name, so the text the definition writes applies to the whole value. A
-     * configured domain must be a plain host name, under the entry's own {@code *.} when it starts
-     * with one, and none that {@code taken} says isx or another tool already serves: it is dropped
-     * with a warning otherwise, so a value of {@code github.com} never puts this entry's credential
-     * on GitHub's traffic.
+     * entry that is a lone reference ({@code ${key}}) takes a comma-separated value as several
+     * domains; in an entry with literal text around its reference a comma is no part of a host
+     * name, so the text the definition writes applies to the whole value. A configured domain is
+     * never a wildcard, whoever writes the {@code *}: the entry is dropped, so no value widens a
+     * credential to names nobody listed. It must be a plain host name and none that {@code taken}
+     * says isx or another tool already serves: it is dropped with a warning otherwise, so a value
+     * of {@code github.com} never puts this entry's credential on GitHub's traffic.
      *
-     * @param taken whether a domain as it would be served ({@code name} or {@code *.name}) lands
-     *              on one already served, asked only for configured domains
+     * @param taken whether a host name is already served, asked only for configured domains
      */
     static List<String> resolveDomains(String toolName, List<String> rawDomains, Map<String, String> configValues,
                                        java.util.function.Predicate<String> taken) {
@@ -694,9 +693,13 @@ public final class ToolProxyResolver {
                 result.add(domain);
                 continue;
             }
-            // A wildcard is the definition's to write, never a configured value's
-            var wildcard = domain.startsWith("*.");
-            var template = wildcard ? domain.substring(2) : domain;
+            if (domain.contains("*")) {
+                dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
+                        + "': configured domain entry '" + domain + "' is a wildcard -- skipping it,"
+                        + " since a configured domain names its hosts exactly"));
+                continue;
+            }
+            var template = domain;
             // One pass over the entry: a value is never itself searched for references
             var resolved = new StringBuilder();
             boolean unresolved = false;
@@ -716,17 +719,16 @@ public final class ToolProxyResolver {
             for (var part : parts) {
                 var name = part.strip().toLowerCase(java.util.Locale.ROOT);
                 if (name.isEmpty()) continue;
-                var served = wildcard ? "*." + name : name;
                 if (!CertStore.isHostname(name) || isNumericName(name)) {
                     // Never the value itself: a credential pasted in the wrong key would reach the log
                     dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
                             + "': a configured domain of entry '" + domain + "' is not a host name -- skipping it"));
-                } else if (taken.test(served)) {
+                } else if (taken.test(name)) {
                     dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
-                            + "': configured domain '" + served + "' is already served by isx or another tool"
+                            + "': configured domain '" + name + "' is already served by isx or another tool"
                             + " -- skipping it, so its credential is not sent there"));
                 } else {
-                    result.add(served);
+                    result.add(name);
                 }
             }
         }
@@ -751,8 +753,7 @@ public final class ToolProxyResolver {
      * Whether a configured domain would land on a host name isx already serves: a built-in
      * intercepted domain, ChatGPT's and Google's sign-in hosts, a name under {@code .internal}
      * (host routes, {@code mcp.isx.internal}, {@code host.isx.internal}), or any tool's static
-     * domain, exact or under its wildcard. A name under a taken one is taken too, and so is a
-     * wildcard ({@code *.name}) with a taken name under it.
+     * domain, exact or under its wildcard. A name under a taken one is taken too.
      */
     static java.util.function.Predicate<String> takenDomains(Map<String, ToolSetup> toolSetups) {
         var taken = new java.util.HashSet<String>();
@@ -770,38 +771,24 @@ public final class ToolProxyResolver {
                 }
             }
         }
-        return served -> {
-            var name = served.startsWith("*.") ? served.substring(2) : served;
-            if (name.equals("internal") || name.endsWith(".internal")) return true;
-            return covers(taken, served);
-        };
+        return name -> name.equals("internal") || name.endsWith(".internal") || covers(taken, name);
     }
 
-    /** Whether a tool other than {@code toolName} already took a configured domain {@code served} lands on. */
-    private static boolean claimedByOther(Map<String, String> configuredBy, String toolName, String served) {
+    /** Whether a tool other than {@code toolName} already configured {@code name} or a name it falls under. */
+    private static boolean claimedByOther(Map<String, String> configuredBy, String toolName, String name) {
         var others = new java.util.HashSet<String>();
-        configuredBy.forEach((name, owner) -> {
-            if (!owner.equals(toolName)) others.add(name);
+        configuredBy.forEach((configured, owner) -> {
+            if (!owner.equals(toolName)) others.add(configured);
         });
-        return !others.isEmpty() && covers(others, served);
+        return !others.isEmpty() && covers(others, name);
     }
 
-    /**
-     * Whether {@code served} ({@code name} or {@code *.name}) lands on one of {@code names}: the
-     * name or one it falls under is among them, or, for a wildcard, one of them falls under it.
-     */
-    private static boolean covers(java.util.Collection<String> names, String served) {
-        var wildcard = served.startsWith("*.");
-        var name = wildcard ? served.substring(2) : served;
+    /** Whether {@code name}, or a name it falls under, is one of {@code names}. */
+    private static boolean covers(java.util.Collection<String> names, String name) {
         for (var candidate = name; candidate != null; ) {
             if (names.contains(candidate)) return true;
             var dot = candidate.indexOf('.');
             candidate = dot < 0 ? null : candidate.substring(dot + 1);
-        }
-        if (!wildcard) return false;
-        var suffix = "." + name;
-        for (var taken : names) {
-            if (taken.endsWith(suffix)) return true;
         }
         return false;
     }

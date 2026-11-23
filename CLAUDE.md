@@ -365,7 +365,7 @@ VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock
 A tool that fetches a pinned file declares it in `ToolSetup.pinnedDownloads`, so `BuildDownloads.plan` lists it and `BackgroundDownloads` can fetch it ahead of the build, silently (#2411, design/host-resources.md "A build's downloads can start ahead of it").
 
 **A tool's auth domains may come from `config.yaml`** (#1419): a `${configKey}` in `domains:` resolves like a credential field, a comma separated value naming several domains when the entry is the reference alone.
-Every consumer, the proof check included, reads the resolved names, and a name that is not a plain host name (an IP address included), that isx or another tool already serves or configured first, a wildcard covering such a name, or a `secret: true` value is dropped with a warning (design/proxy.md "A tool's domains can come from config.yaml").
+Every consumer, the proof check included, reads the resolved names, and a name that is not a plain host name (an IP address included), that isx or another tool already serves or configured first, a wildcard (even one the definition writes) or a `secret: true` value is dropped with a warning (design/proxy.md "A tool's domains can come from config.yaml").
 
 **Tools declare MCP servers once, and every agent in the image gets them (#2206).**
 A tool's `mcp:` entries are a stdio `command` or an HTTPS `url`, with nothing specific to one agent; an agent takes them by implementing `ToolSetup.mcpClient()` (`McpClients`: Claude Code, Codex, Pi, opencode, and Gemini CLI, Antigravity CLI, Copilot and Bob by a merge into their JSON config; Antigravity CLI takes a bearer-token server as a stdio bridge, `McpStdioBridge`, that reads the variable as agy started it).

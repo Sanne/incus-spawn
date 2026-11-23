@@ -1248,10 +1248,11 @@ Every consumer takes the resolved names, never the raw `${key}`: routing, the br
 Without the last two the domain was intercepted but its proof was looked for under `${key}`, so no request proved its namespace and nothing was injected.
 
 A configured name is checked where it is resolved, since the validator sees only the definition:
-- It must be a plain host name (`CertStore.isHostname`), lower-cased and not an IP address; a wildcard comes only from a `*.` the definition writes before the reference.
+- It must be a plain host name (`CertStore.isHostname`), lower-cased and not an IP address.
+- It is never a wildcard, not even one the definition writes as `*.${key}`, which the validator refuses: a configured domain names its hosts exactly, so no value widens a credential to names nobody listed.
+  Given up: a tool cannot reach every subdomain of a user's server; it can be allowed later if a tool needs it.
 - A comma splits a value only in an entry that is the reference alone, so text the definition writes around a reference applies to the whole value.
 - It must not land on a name isx or another tool already serves (`ToolProxyResolver.takenDomains`): the built-in intercepted domains, ChatGPT's and Google's hosts, anything under `.internal`, every tool's static domain or a name under it, and a domain another tool configured first.
-  A configured wildcard is refused when any of those falls under it.
   So a value of `github.com` cannot put this entry's credential on GitHub's traffic, where the first-wins routing would otherwise have chosen it.
 - It never takes a `secret: true` value, which would reach bridge DNS, a certificate's name and the logs; the validator refuses that reference and the resolver ignores it.
 A name that fails is dropped with a warning, and the entry's static domains are still served.
