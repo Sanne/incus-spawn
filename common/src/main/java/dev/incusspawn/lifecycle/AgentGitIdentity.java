@@ -57,43 +57,55 @@ public final class AgentGitIdentity {
     /** The identity commits get, and its source; {@code name}'s source decides. */
     public record Effective(GitIdentity identity, Source source) {}
 
+    /** What config.yaml's GitHub accounts are to the template being built. */
+    public enum GitHub {
+        /** config.yaml holds no usable GitHub account. */
+        NONE,
+        /** It holds one, and the template does not install the {@code gh} tool, which applies it. */
+        NOT_INSTALLED,
+        /** It holds one and the template installs {@code gh}: the account gave no name and email. */
+        INSTALLED
+    }
+
     /**
      * Writes {@code identity} as the fallback (or, when null, removes a fallback isx wrote before),
-     * then says in the build's output whom the agent commits as and why ({@code gitHubAccount}: whether
-     * config.yaml holds a GitHub account, which this template may not use). One exec, as root;
+     * then says in the build's output whom the agent commits as and why. One exec, as root;
      * nothing at all when the image has no Git. A failed write fails the build.
      */
-    public static void applyAndReport(Container container, GitIdentity identity, boolean gitHubAccount, Output out) {
+    public static void applyAndReport(Container container, GitIdentity identity, GitHub gitHub, Output out) {
         var result = container.sh(script(identity));
         // Never a template that silently commits under another identity than config.yaml names
         result.assertSuccess("Could not write the git-identity of config.yaml to " + SYSTEM_FILE);
         if (result.stdout().isBlank()) return;
         var effective = parse(result.stdout());
-        if (effective == null) out.note(report(null, identity, keptTemplatesOwn(result.stdout()), gitHubAccount));
+        if (effective == null) out.note(report(null, identity, keptTemplatesOwn(result.stdout()), gitHub));
         else out.step(report(effective));
     }
 
     /** The build report's line for {@code effective}, null meaning no identity. */
     public static String report(Effective effective) {
-        return report(effective, null, false, false);
+        return report(effective, null, false, GitHub.NONE);
     }
 
     /**
      * The build report's line for {@code effective}, null meaning no identity, when config.yaml's
      * git-identity is {@code configured} (null for none) and {@code kept} says the script left a
      * template's own name or email in its place. The identity is the guest's text, shown on one line.
-     * With a GitHub account in config.yaml that this template does not use, the line says so rather
-     * than that no account exists.
+     * With no identity and none configured, the line says which of {@code gitHub}'s cases it is, and
+     * for an account the template does not use, what would use it.
      */
-    public static String report(Effective effective, GitIdentity configured, boolean kept, boolean gitHubAccount) {
+    public static String report(Effective effective, GitIdentity configured, boolean kept, GitHub gitHub) {
         if (effective == null) {
             if (configured == null) {
-                return gitHubAccount
-                        ? "Agents in this template have no Git identity to commit under: your GitHub account"
-                                + " gave it none (it may not use the account, or the account has no name and email),"
-                                + " and config.yaml has no git-identity"
-                        : "Agents have no Git identity to commit under: there is no GitHub account, and"
-                                + " config.yaml has no git-identity";
+                return switch (gitHub) {
+                    case NONE -> "Agents have no Git identity to commit under: there is no GitHub account, and"
+                            + " config.yaml has no git-identity";
+                    case NOT_INSTALLED -> "Agents in this template have no Git identity to commit under: it does not"
+                            + " install the gh tool, so it does not use your GitHub account, and config.yaml has no"
+                            + " git-identity. A template whose tools list 'gh' uses the account";
+                    case INSTALLED -> "Agents in this template have no Git identity to commit under: your GitHub"
+                            + " account gave no name and email, and config.yaml has no git-identity";
+                };
             }
             return kept
                     ? "Agents have no Git identity to commit under: config.yaml's git-identity was not written,"

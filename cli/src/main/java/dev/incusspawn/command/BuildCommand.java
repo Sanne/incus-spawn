@@ -2328,14 +2328,16 @@ public class BuildCommand extends BaseCommand {
                                                  Map<String, String> inherited) {
         var config = SpawnConfig.load();
         var setups = AccountSelection.namespaceSetups(config, toolDefLoader);
+        var rederivable = AccountSelection.rederivableNamespaces(imageDef, defs, toolDefLoader.allToolSetups(), setups);
         var stamps = BuildAccounts.settleIdentities(container, config, setups, ImageDef.resolveAccounts(imageDef, defs),
-                AccountSelection.rederivableNamespaces(imageDef, defs, toolDefLoader.allToolSetups(), setups),
-                inherited, BuildOutput.bound());
+                rederivable, inherited, BuildOutput.bound());
+        var gitHub = dev.incusspawn.config.AccountResolver.usableAccountNames(config, dev.incusspawn.tool.GhSetup.NAMESPACE).isEmpty()
+                ? AgentGitIdentity.GitHub.NONE
+                : rederivable.contains(dev.incusspawn.tool.GhSetup.NAMESPACE) ? AgentGitIdentity.GitHub.INSTALLED
+                : AgentGitIdentity.GitHub.NOT_INSTALLED;
         // In /etc/gitconfig, which the account's ~/.gitconfig overrides, so it changes nothing
         // the stamps above decided (#2410)
-        AgentGitIdentity.applyAndReport(container, config.gitIdentity(),
-                !dev.incusspawn.config.AccountResolver.usableAccountNames(config, dev.incusspawn.tool.GhSetup.NAMESPACE).isEmpty(),
-                BuildOutput.bound());
+        AgentGitIdentity.applyAndReport(container, config.gitIdentity(), gitHub, BuildOutput.bound());
         return stamps;
     }
 

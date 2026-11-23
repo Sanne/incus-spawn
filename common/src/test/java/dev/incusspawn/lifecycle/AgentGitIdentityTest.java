@@ -67,11 +67,16 @@ class AgentGitIdentityTest {
 
     @Test
     void aGitHubAccountTheTemplateDoesNotUseIsNotSaidToBeMissing() {
-        var without = AgentGitIdentity.report(null, null, false, false);
+        var without = AgentGitIdentity.report(null, null, false, AgentGitIdentity.GitHub.NONE);
         assertTrue(without.contains("there is no GitHub account"), without);
-        var with = AgentGitIdentity.report(null, null, false, true);
-        assertTrue(with.contains("your GitHub account gave it none"), with);
-        assertFalse(with.contains("no GitHub account"), with);
+        // tpl-minimal, and a first tpl-agent: no gh tool, so the account is not used, and the line says what uses it
+        var unused = AgentGitIdentity.report(null, null, false, AgentGitIdentity.GitHub.NOT_INSTALLED);
+        assertTrue(unused.contains("does not install the gh tool"), unused);
+        assertTrue(unused.contains("A template whose tools list 'gh' uses the account"), unused);
+        assertFalse(unused.contains("no GitHub account"), unused);
+        var used = AgentGitIdentity.report(null, null, false, AgentGitIdentity.GitHub.INSTALLED);
+        assertTrue(used.contains("your GitHub account gave no name and email"), used);
+        assertFalse(used.contains("gh tool"), used);
     }
 
     @Test
@@ -127,10 +132,10 @@ class AgentGitIdentityTest {
         var out = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertEquals(0, process.waitFor(), out);
         assertTrue(AgentGitIdentity.keptTemplatesOwn(out), out);
-        var report = AgentGitIdentity.report(null, JANE, true, false);
+        var report = AgentGitIdentity.report(null, JANE, true, AgentGitIdentity.GitHub.NONE);
         assertTrue(report.contains("was not written"), report);
         // Written, but emptied by another file: not said to be the template's
-        assertFalse(AgentGitIdentity.report(null, JANE, false, false).contains("was not written"));
+        assertFalse(AgentGitIdentity.report(null, JANE, false, AgentGitIdentity.GitHub.NONE).contains("was not written"));
     }
 
     /** The identity is the guest's text, and reaches the host's terminal on one line. */
