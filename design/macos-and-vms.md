@@ -416,6 +416,19 @@ It lists processes, so it runs only before a launch and when `vm.pid` names no V
 The other way round holds too: an older isx still running after the upgrade, an open TUI or an `isx mcp` session, takes an `isx-vm` pid for a stale one and deletes `vm.pid` and the vsock sockets.
 The control socket survives, since that isx never knew it, and its `state` names the launcher's pid, so `isRunning()` records it again (`adoptRunningLauncher`) rather than let the next start put a second VM on the same disks.
 Incus stays unreachable until `isx vm restart` brings the sockets back; the upgrade notes say to quit such processes first.
+So every launch of the VM, the automatic one included, first restarts a drifted proxy service, one of another version or an older config (`ProxyHealthCheck.restartDriftedBeforeVmStart`, #2552): after `brew upgrade` the service still runs the old proxy, which reaches the same cleanup on its registry reads.
+It costs one health request on the loopback, against a launch of seconds.
+A restart asks it once, only after nothing else can stop the restart, since it cuts the instances' connections, and its start does not ask again.
+The TUI and `isx mcp` cannot be restarted for the user; the upgrade notes, the Homebrew caveats included, name them.
+
+**The first restart after the upgrade does everything that can fail before it stops the VM** (#2552).
+It changes three things at once: the launcher, the kernel and the root disk of the new release.
+So it looks for `isx-vm` first, and a missing one (a JBang install) fails the restart with the VM still running and the install advice for how this isx was installed (`VmManager.launcherMissing`): the formula's `brew reinstall`, `install.sh`, or the release's asset checked against its `SHA256SUMS`.
+It then downloads the new kernel and disk image while the old VM runs, which boots from memory, so replacing its files is safe.
+A download that fails stops nothing, and a start whose download fails warns and boots the old root disk with the kernel it came with, so an offline dev build still starts, and an old image is never extracted under the new version's stamp.
+Both files download beside the current ones and move into place only once both arrived, and the appliance's `version` file is written last, so a partial download is retried in full.
+macOS may ask again for the home folder and the local network, since the program asking is new, and the notes that say why are shown on that restart too, though vfkit's run left `vm.log` behind.
+`isx-vm` is signed ad hoc, so its designated requirement is the binary's hash; whether each release asks again is for the Mac to show.
 While it is, and while a VM still runs under vfkit, an unreachable Incus is answered with `isx vm restart` (`VmManager.unreachableAdvice`), never the Linux remedies of the generic diagnosis.
 For a VM under vfkit the recovery first tries the guest forwarder's restart, which takes a second and stops no instance, and gives that advice when it did not help; a removed socket goes straight to the advice, since no forwarder restart brings a host socket back.
 A control socket that exists and does not answer is not taken for a dead launcher: the launcher started with that socket is looked for among the user's processes before anything is cleaned up as stale.

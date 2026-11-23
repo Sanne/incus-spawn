@@ -167,19 +167,30 @@ isx used to run the Mac's VM with vfkit, and now runs it with its own launcher, 
 Your VM's disks, instances, templates and settings stay as they are.
 
 A VM that was running during the upgrade keeps running under vfkit until it restarts.
-Run `isx vm restart` once, or let your next login or reboot start it.
+Quit every isx you started before the upgrade, then run `isx proxy restart` and `isx vm restart` once.
+Your next login or reboot also starts it under `isx-vm`.
 `isx vm status` then shows `Launcher: isx-vm`, and `isx doctor` no longer warns that the VM runs under vfkit.
 
+An older isx does not see a VM that `isx-vm` runs, and removes the files the new isx reaches it by.
+That includes the TUI, an agent's `isx mcp` and the proxy service.
+`pgrep -fl 'isx( |-proxy|$)'` lists the isx processes still running.
+An agent's client starts `isx mcp` again from the old binary until you restart the client itself.
+
+Every start of the VM first restarts the proxy service when it runs another version or an older config.
+If the new isx then cannot reach the VM, run `isx vm restart` again.
+
+`isx vm restart` also downloads the new VM image before it stops the VM, so a failed download leaves your VM running.
+While the new image cannot be downloaded, each start of the VM tries again, warns, and boots the current one.
+
 macOS may ask once more for your home folder and the local network, since the program asking is new.
-Both are safe to approve, as before.
+Both are safe to approve, as before, and isx says so on that restart.
+macOS may ask again after a later upgrade, since each release of `isx-vm` is a new program to it.
+
 Homebrew leaves vfkit installed, and `brew autoremove` removes it when nothing else needs it.
 
 A JBang install on a Mac needs `isx-vm` beside `isx`.
-Download `isx-vm-macos-aarch64` from the release with `curl`, save it on your PATH as `isx-vm`, and make it executable.
+Download `isx-vm-macos-aarch64` from the release with `curl`, save it in `~/.local/bin` as `isx-vm`, and make it executable.
 Check it against the release's `SHA256SUMS` before you run it.
-
-Quit every isx you started before the upgrade, such as the TUI or an agent's `isx mcp`, before you run `isx vm restart`.
-An older isx does not see a VM that `isx-vm` runs, and removes the files the new isx reaches it by.
-If the new isx then cannot reach the VM, run `isx vm restart` again.
+Without it, `isx vm restart` leaves the VM running and prints the commands for your version.
 
 To go back to an older isx, run `isx vm stop` before you downgrade.
