@@ -114,6 +114,21 @@ class InitAnswersTest {
         IsolatedHome.assertUnchanged(broken);
     }
 
+    /** --fork-templates on a config.yaml that does not parse stops before it forks or clones anything (#2523). */
+    @Test
+    void forkTemplatesStopsBeforeForkingOnAConfigThatDoesNotParse() throws Exception {
+        var broken = "searchPaths: [unclosed\n";
+        java.nio.file.Files.createDirectories(IsolatedHome.configFile().getParent());
+        java.nio.file.Files.writeString(IsolatedHome.configFile(), broken);
+        var init = new NoTerminal();
+        init.forkTemplates = true;
+        var steps = init.finalSteps(init.proxyServiceStep(new java.util.concurrent.atomic.AtomicBoolean()));
+        var failure = assertThrows(IllegalStateException.class,
+                () -> RecordingOutput.during(() -> steps.get(0).run().run()));
+        assertTrue(failure.getMessage().contains("run 'isx init search-paths' again"), failure.getMessage());
+        IsolatedHome.assertUnchanged(broken);
+    }
+
     /** --fork-templates answers Template Search Paths: with its templates among the paths, the step is not skipped. */
     @Test
     void forkTemplatesAnswersTheSearchPaths(@TempDir Path dir) throws Exception {

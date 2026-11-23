@@ -1,9 +1,11 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck.ConflictResult;
 import dev.incusspawn.incus.FirewallDetector.DetectionResult;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,6 +19,7 @@ import static org.mockito.Mockito.*;
  * is granted, the move acts on the conflict the user agreed to, and a step that did not complete
  * fails the remedy rather than letting doctor report it done.
  */
+@ExtendWith(IsolatedHome.class)
 class MoveBridgeOffTest {
 
     private static final ConflictResult CONFLICT = new ConflictResult(true,
@@ -38,8 +41,21 @@ class MoveBridgeOffTest {
         @Override boolean sudoValidated() { done.add("sudo"); return sudo; }
         @Override int migrateInstances() { done.add("migrate"); return 1; }
         @Override DetectionResult runningFirewall() { return firewall; }
-        @Override boolean followBridgeMove(String gatewayIp, DetectionResult fw) { done.add("redirect " + gatewayIp); return redirected; }
+        @Override boolean followBridgeMove(String gatewayIp, DetectionResult fw, SpawnConfig config) { done.add("redirect " + gatewayIp); return redirected; }
         @Override List<String> staleInstances() { return stale; }
+    }
+
+    /** The move ends by saving the gateway, so a config.yaml that does not parse stops it before anything moves (#2523). */
+    @Test
+    void aConfigThatDoesNotParseStopsTheMoveBeforeAnythingChanges() throws Exception {
+        var broken = "claude:\n  accounts:\n    work: {apiKey: x\n";
+        java.nio.file.Files.createDirectories(IsolatedHome.configFile().getParent());
+        java.nio.file.Files.writeString(IsolatedHome.configFile(), broken);
+        var steps = new Steps();
+        var e = assertThrows(IllegalStateException.class, () -> capture(() -> steps.moveBridgeOff(CONFLICT)));
+        assertTrue(e.getMessage().contains("run 'isx doctor' again"), e.getMessage());
+        assertEquals(List.of(), steps.done);
+        IsolatedHome.assertUnchanged(broken);
     }
 
     @Test
