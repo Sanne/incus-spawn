@@ -1236,10 +1236,7 @@ public class InitCommand extends BaseCommand {
                 answers = continuationAnswers();
                 chosenAgent = answers.noAgent() ? null : preferredAgentTool();
             } else {
-                printSetupBanner(macOs ? " (macOS)" : "", noSudo ? "runs nothing as root: the script did that" : "~5 minutes");
-                BuildOutput.step("First, isx asks a few questions: your coding agent, its account and a GitHub account.");
-                BuildOutput.step("Then it sets up this host and builds your first template"
-                        + (macOs || noSudo ? "." : ". It asks for sudo once, after the questions."));
+                printFirstRunIntro(macOs);
                 startDownloadsAhead(null);
                 askFirstRunQuestions();
                 if (macOs) {
@@ -1275,6 +1272,14 @@ public class InitCommand extends BaseCommand {
         } finally {
             downloadsAhead.forEach(BackgroundDownloads::close);
         }
+    }
+
+    /** What a first run shows before its first question. */
+    void printFirstRunIntro(boolean macOs) {
+        printSetupBanner(macOs ? " (macOS)" : "", noSudo ? "runs nothing as root: the script did that" : "~5 minutes");
+        BuildOutput.step("First, isx asks a few questions: your coding agent, its account and a GitHub account.");
+        BuildOutput.step("Then it sets up this host and builds your first template"
+                + (macOs || noSudo ? "." : ". It asks for sudo once, after the questions."));
     }
 
     /** The preferred agent in config.yaml, as a coding agent's tool, or null. */
