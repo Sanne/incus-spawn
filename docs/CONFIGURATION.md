@@ -86,7 +86,8 @@ A subscription account serves Claude Code in your instances, but not [`isx ask`]
 Claude Max and Team plans include [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) for an API key, claimed on claude.ai under Settings > Billing.
 
 Add the key as a second `claude` account with `type: api-key`, and keep the subscription as the default.
-`isx init` offers this when it saves a subscription.
+`isx ask` offers this the first time it has no account that can answer.
+An OpenAI or Gemini API key answers too.
 
 An instance uses the account from the first of these that is set:
 

@@ -598,13 +598,26 @@ A change to the key reaches a template at its next build, never a running branch
 
 ## The help assistant (`isx ask`)
 
-**AI help credentials (`isx ask` / `?` in the TUI):** `AiHelpClient.targets()` lists the accounts satisfying `ClaudeAccount::servesDirectApi` (the default account first), then `openai`; the first is the one used by default.
+**AI help credentials (`isx ask` / `?` in the TUI):** `AiHelpClient.targets()` lists the accounts satisfying `ClaudeAccount::servesDirectApi` (the default account first), then every `openai` and `gemini` account holding an `apiKey`, each namespace's default first; the first is the one used by default.
+An `openai` or `gemini` account counts by what it holds, not by being the default: a default ChatGPT session or Google sign-in hid a key beside it before #2541.
+Those sign-ins never answer, nor does Copilot's GitHub account: the proxy serves each only for an allowlist of its own agent's operations, and spending one here may be neither allowed by the provider nor wanted.
 An `oauth` account never satisfies it.
 A Claude Pro/Max token is only valid for Claude Code itself.
 The Messages API rejects it unless `system` is a block array whose *first* block is Claude Code's own identity string — rejecting it with an opaque HTTP 429 `rate_limit_error` whose message is the literal text `Error`, so the failure reads as a generic API error rather than an auth hint.
 Satisfying that check would mean isx presenting itself as Claude Code to spend the user's subscription, so a Pro/Max account simply keeps serving instances while an `api-key` or `vertex` account answers here.
 Max and Team plans include monthly API credits for a key, so that second account need not cost a subscriber extra (#1674).
-So when `isx init` saves an `oauth` account and nothing can answer here, `CredentialSetup.offerApiKeyForAiHelp` names the credits and offers to add an `api-key` account beside it, leaving the subscription the default.
+**An account is asked for where AI Help is first used** (#2541).
+The first run cannot know which accounts the person will have once they meet `isx ask`, so it does not ask, and neither does saving a subscription.
+With no account that can answer, `isx ask`, `?` in the TUI and `isx doctor --explain` go through `AiHelpAccount.ask`: off a terminal it is an error naming every kind and `isx account add <ns>`, never `isx init`; on one it says why and offers an Anthropic API key, Claude on Vertex AI, an OpenAI or a Gemini API key.
+Each goes beside the namespace's accounts under a name the person gives, and the namespace's `default:` is left alone, so instances keep the account they spend.
+In a namespace with no account it is the first account, and so its default, as `isx account add` makes it.
+A subscription's user is shown the credits note and link there, with the key.
+Once a key is saved nothing offers again, so a key the provider refuses (401, and at Gemini also a 400 whose reason is `API_KEY_INVALID`) is reported with its account and the `isx account add <ns>` that replaces it; a 403 is left out, since a permission, a model or a disabled API gives it more often than the key (`AiHelpClient.ApiError`, `rejectedKeyAdvice`).
+`isx ask` and `--explain` run the offer under `withStdoutOnStderr`, so stdout still holds only the answer; the TUI lends the terminal to it as a pending action (`ADD_AI_HELP_ACCOUNT`) and opens AI Help on return once an account answers.
+When none was added, the offer ends with one error, which the TUI's log keeps, and the TUI waits for Enter before it draws over the offer's last lines.
+**A Gemini API key** answers through `streamGenerateContent` at `generativelanguage.googleapis.com`, the documentation as its `systemInstruction`, its thinking at `thinkingLevel: LOW` like Claude's effort and its thought parts not shown (`AiHelpClient.processGeminiStream`).
+Gemini caches a repeated prefix by itself and reports what it read as `cachedContentTokenCount`, as OpenAI does.
+Its model is `ai-help-gemini` in `models.yaml`, a Flash model, the kind priced for a help answer.
 This is the one place isx calls a model API on its own behalf; everywhere else (`ProxyCredentials`, `ClaudeSetup`, `PiSetup`) credentials are only forwarded into instances.
 Because providers answer errors with varying usefulness, `describeError()` reports the HTTP status, the error `type` and the `request_id` alongside the message.
 A stream that ends in a refusal, at `max_tokens` or at the context window reads like a finished answer, so `processStream()` returns a note saying which (`StreamEnd`).

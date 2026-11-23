@@ -60,6 +60,7 @@ Every message naming a missing credential's remedy takes it from `CredentialChec
 `InitCommand.askForMissing` (#2405) runs the same step for each missing credential a build or branch reports, after a yes or no, resolved by `CredentialCheck.stepTool` from tools no project defines (`InitCommand.trustedToolLoader`, `ToolDefLoader.withoutProjectTools`; `MissingAccountsAskTest.aProjectsOwnToolIsNeverAskedFor` writes a real `.incus-spawn/tools/`), so a cloned repository's tool never becomes a question for a secret.
 It reads `Prompts.terminal()` through `prompts()`, never a piped stdin, and asks each step once, naming every template that needs it.
 A generic tool step's own "configure later" line uses `CredentialCheck.stepCommand`, the same rule seen from the tool.
+AI Help asks for its account the same way, where it is first used (#2541): `isx ask`, `?` in the TUI and `isx doctor --explain` go through `AiHelpAccount.ask` when `AiHelpClient.targets` is empty, which adds a key beside the namespace's accounts and leaves its `default:` alone, and off a terminal names `isx account add <ns>` (design/accounts.md "The help assistant").
 Claude's and GitHub's steps name their own namespace (`SpawnConfig.ClaudeConfig.NAMESPACE`, `GhSetup.NAMESPACE`) directly: those built-in tools always own it, so the rule would only load every tool definition to print the same command.
 
 **`isx mcp`** is a normal (visible) command, but it is started by an agent, not typed: it serves MCP on stdin/stdout until end of input.
