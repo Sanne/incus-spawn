@@ -139,6 +139,22 @@
         }
       }
     },
+    "confirmed-cache": {
+      "type": ["object", "null"],
+      "description": "HTTPS domains whose downloads the proxy keeps on the host, each copy served only after upstream answers the client's own request with 304 Not Modified. Every instance's traffic to a listed domain is intercepted.",
+      "additionalProperties": false,
+      "properties": {
+        "domains": {
+          "type": "array",
+          "description": "Host names, or *. and a name for every name below it, such as *.blob.core.windows.net for GitHub Actions caches.",
+          "items": {"type": "string"}
+        },
+        "max-size": {
+          "type": "string",
+          "description": "What the stored copies may take on disk, such as 20GiB (the default); the least recently served are removed first."
+        }
+      }
+    },
     "maven-mirrors": {
       "type": ["array", "null"],
       "description": "Mirrors the proxy asks first for an artifact its cache does not hold.",

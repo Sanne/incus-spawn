@@ -1633,7 +1633,59 @@ public class DoctorCommand extends BaseCommand {
         var dropped = new ArrayList<String>();
         var exposed = exposedHostPortsFinding(SpawnConfig.load().exposedHostPorts().ports(dropped::add), dropped, info);
         if (exposed != null) findings.add(exposed);
+        var confirmed = confirmedCacheFinding(SpawnConfig.load());
+        if (confirmed != null) findings.add(confirmed);
         return findings;
+    }
+
+    /**
+     * What {@code confirmed-cache:} keeps on this host (#2518), as information, or null while it
+     * lists no domain: the domains, what their copies take and where, since private content may be
+     * among them. A domain the proxy drops warns with why.
+     */
+    static Finding confirmedCacheFinding(SpawnConfig config) {
+        var dropped = new ArrayList<String>();
+        var domains = dev.incusspawn.proxy.ToolProxyResolver.servedConfirmedCacheDomains(config,
+                dev.incusspawn.proxy.ToolProxyResolver.resolveAcrossAccounts(config,
+                        dev.incusspawn.proxy.ToolProxyResolver.proxyToolSetups(config)), dropped::add);
+        var maxSize = config.confirmedCache().maxSize(dropped::add);
+        if (domains.isEmpty() && dropped.isEmpty()) return null;
+        var dir = dev.incusspawn.Environment.confirmedCacheDir();
+        return confirmedCacheFinding(domains, dropped, maxSize, storedBytes(dir), dir);
+    }
+
+    static Finding confirmedCacheFinding(List<String> domains, List<String> dropped, long maxSize, long stored, Path dir) {
+        if (!dropped.isEmpty()) {
+            return Finding.warn("Confirmed cache", String.join("; ", dropped),
+                    new Remediation("Fix confirmed-cache: in config.yaml as the warning says", false, null));
+        }
+        return Finding.note("Confirmed cache", String.join(", ", domains) + ": "
+                + dev.incusspawn.util.MemorySize.shown(stored) + " of at most " + dev.incusspawn.util.MemorySize.shown(maxSize)
+                + " in " + dir + ", private downloads included, each served only on upstream's 304; isx clean cache removes them");
+    }
+
+    /** The bytes the files under {@code dir} take, 0 when it is missing or cannot be read. */
+    private static long storedBytes(Path dir) {
+        if (!java.nio.file.Files.isDirectory(dir)) return 0;
+        var total = new java.util.concurrent.atomic.AtomicLong();
+        try {
+            // The proxy's eviction removes object directories meanwhile: one gone is skipped, never the whole count
+            java.nio.file.Files.walkFileTree(dir, new java.nio.file.SimpleFileVisitor<>() {
+                @Override
+                public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs) {
+                    if (attrs.isRegularFile()) total.addAndGet(attrs.size());
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public java.nio.file.FileVisitResult visitFileFailed(Path file, java.io.IOException gone) {
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (java.io.IOException e) {
+            return 0;
+        }
+        return total.get();
     }
 
     /**

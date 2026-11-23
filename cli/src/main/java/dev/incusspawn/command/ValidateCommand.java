@@ -177,6 +177,8 @@ public class ValidateCommand extends BaseCommand {
                 ToolProxyResolver.repositoryDomainsTaken(ToolProxyResolver.handlerDomains(config.tree())), problems::add);
         var mirrors = config.mavenMirrors().entries(problems::add);
         CachedRepositoryRules.check(repositories, mirrors, acrossAccounts, problems::add);
+        config.confirmedCache().maxSize(problems::add);
+        ToolProxyResolver.servedConfirmedCacheDomains(config, acrossAccounts, problems::add);
         problems.forEach(p -> findings.add(warning(p)));
         UnreadConfigKeys.all(config.tree(), tools).forEach((namespace, unread) ->
                 findings.add(warning(UnreadConfigKeys.note(namespace, unread, tools))));
