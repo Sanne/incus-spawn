@@ -1298,20 +1298,21 @@ public class InitCommand extends BaseCommand {
      * directory is a cloned repository's, never the person's first template.
      */
     static List<DownloadCache.Pinned> firstTemplateDownloads(ToolSetup agent) throws IOException {
+        var config = SpawnConfig.load();
         var defs = new LinkedHashMap<>(ImageDef.loadTrusted(warning -> {}));
-        var template = agent == null ? defs.get("tpl-minimal") : firstTemplate(defs, agent);
+        var template = agent == null ? defs.get("tpl-minimal") : firstTemplate(defs, agent, config);
         if (template == null) return List.of();
         defs.putIfAbsent(template.getName(), template);
         // Trusted tools too: a project's own tool is not fetched for a template init would not build with it
         return BuildDownloads.plan(template, defs, template.machineType(), ImageDef.hostArch(), name -> false,
-                BuildCommand::trackedBaseImageQuietly, ToolDefLoader.withoutProjectTools(SpawnConfig.load().getSearchPaths()),
+                BuildCommand::trackedBaseImageQuietly, ToolDefLoader.withoutProjectTools(config.getSearchPaths()),
                 RuntimeServices.toolSetups());
     }
 
     /** The first template for {@code agent} among {@code trusted}: the person's own tpl-agent, kept, else the one init writes. */
-    static ImageDef firstTemplate(Map<String, ImageDef> trusted, ToolSetup agent) throws IOException {
+    static ImageDef firstTemplate(Map<String, ImageDef> trusted, ToolSetup agent, SpawnConfig config) throws IOException {
         var own = trusted.get(ExampleTemplate.NAME);
-        return own != null ? own : ImageDef.parseYaml(ExampleTemplate.text(agent));
+        return own != null ? own : ImageDef.parseYaml(ExampleTemplate.text(agent, ExampleTemplate.hasGitHubAccount(config)));
     }
 
     /** The trusted definitions, which decide the first template; tests answer them instead. */
@@ -1487,7 +1488,7 @@ public class InitCommand extends BaseCommand {
             var config = SpawnConfig.load();
             // Trusted only, as the first template is: a project's tpl-agent never asks for an account here
             var defs = new LinkedHashMap<>(trustedTemplates());
-            defs.putIfAbsent(ExampleTemplate.NAME, firstTemplate(defs, chosenAgent));
+            defs.putIfAbsent(ExampleTemplate.NAME, firstTemplate(defs, chosenAgent, config));
             return CredentialCheck.missingByCredential(config, List.of(ExampleTemplate.NAME), defs,
                     ToolDefLoader.withoutProjectTools(config.getSearchPaths()));
         } catch (IOException e) {
@@ -1716,7 +1717,8 @@ public class InitCommand extends BaseCommand {
             var agent = templateAgent();
             BuildOutput.note("Kept your own " + ExampleTemplate.NAME + " as it is" + (agent == chosenAgent ? "."
                     : "; it installs " + ExampleTemplate.title(agent) + ", not " + ExampleTemplate.title(chosenAgent) + "."));
-        } else if (ExampleTemplate.write(ExampleTemplate.file(), chosenAgent)) {
+        } else if (ExampleTemplate.write(ExampleTemplate.file(), chosenAgent,
+                ExampleTemplate.hasGitHubAccount(SpawnConfig.load()))) {
             BuildOutput.step("Wrote " + OutputFormat.oneLine(ExampleTemplate.file().toString())
                     + ", a template for " + ExampleTemplate.title(chosenAgent) + " that is yours to edit");
         }

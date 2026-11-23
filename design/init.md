@@ -29,6 +29,7 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
 6. It runs the plumbing as one block (`firstRunPlumbing`): today's steps that ask nothing, the Git remote helper and DNS among them, then the services.
    DNS is inside the block, since no step before it adds a search path, whose tools' domains it writes.
 7. It writes `tpl-agent.yaml` for the agent (`ExampleTemplate`), or with no agent nothing, and builds it, or `tpl-minimal`.
+   It lists the `gh` tool after the agent only when a usable GitHub account is saved by then, so the first agent uses the account the person gave and a person who skipped it gets no missing-credential warning (#2535).
    A definition already named `tpl-agent`, in the person's directory or a search path, is built as it is and nothing is written, since a second one would make the build refuse both.
    Only trusted definitions decide the first template: a project's `.incus-spawn/` in the working directory is a cloned repository's.
    When a build there would read a project's template or tool for a layer of the chain, init builds and opens nothing, and says to build from a directory with no `.incus-spawn/` of its own.

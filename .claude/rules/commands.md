@@ -208,6 +208,7 @@ Without a terminal, in a machine format, or when `requireInit` starts init for a
 `isx doctor` notes each of them that is not set up (`DoctorCommand.notSetUp`), never as a problem.
 `isx agent [<agent>|none]` (`AgentCommand`, #2409) shows or sets `preferred-agent` in `config.yaml`, one of the tools with `codingAgent()`, and lists each with what `HostAgentProbe` found of it.
 `ExampleTemplate` gives the text of `tpl-agent.yaml` for an agent (the schema modeline, `parent: tpl-minimal`, the agent in `tools:` and, when it has an action, as `default-action`) and writes it to the user's images directory only when no file is there.
+It lists `gh` after the agent when `config.yaml` holds a usable GitHub account, since that tool gives the machine the account's access and Git identity (#2535).
 `ExampleTemplateTest` validates it for every agent, so a new agent is covered or fails it.
 The two service steps ask whether to install in that walk, so they keep their header there.
 **The first run** (#2412, design/init.md): at a terminal, in `table`, with no init-complete marker or with `--all` (`isFirstRun`), `runFirstRun` asks its questions first (the agent, its account found through `agentGaps`, a GitHub account, then the Git identity after a skip), then runs `firstRunPlumbing` as one block (`allPlumbing`: every step joins it, DNS and the services included), writes and builds the example template and offers to open it.
