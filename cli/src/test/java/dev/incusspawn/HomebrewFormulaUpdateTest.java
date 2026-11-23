@@ -57,7 +57,7 @@ class HomebrewFormulaUpdateTest {
         update(file, "0.6.0", 'a');
 
         var text = Files.readString(file);
-        assertFalse(text.contains("vfkit"), text);
+        assertFalse(text.contains("depends_on \"vfkit\""), text);
         assertTrue(text.contains("""
                   resource "isx-vm" do
                     url "https://github.com/Sanne/incus-spawn/releases/download/v0.6.0/isx-vm-macos-aarch64"
@@ -89,6 +89,30 @@ class HomebrewFormulaUpdateTest {
         assertTrue(text.contains("v0.6.1/isx-vm-macos-aarch64\"\n    sha256 \"" + sum('m') + "\""), text);
         assertEquals(0, count(text, "v0.6.0"), text);
         assertEquals(0, count(text, sum('c')), text);
+    }
+
+    /**
+     * brew upgrade prints the caveats, the one place a Mac that ran vfkit hears that its VM moves
+     * to isx-vm only on a restart, after the older isx processes are gone (#2552). Added once, in
+     * the heredoc, however many releases rewrite the formula.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"incus-spawn.rb", "incus-spawn-dev.rb"})
+    void theCaveatsTellAnUpgradeToRestartTheVmOnce(String name) throws Exception {
+        var file = formula(name);
+        update(file, "0.6.0", 'a');
+        update(file, "0.6.1", 'k');
+
+        var text = Files.readString(file);
+        var caveats = text.substring(text.indexOf("<<~EOS"), text.indexOf("    EOS"));
+        assertEquals(1, count(caveats, "Upgrading from isx 0.5.3 or earlier"), text);
+        assertTrue(caveats.contains("""
+                      Upgrading from isx 0.5.3 or earlier, whose VM ran under vfkit:
+                        quit the isx TUI and every isx mcp, then run
+                        isx proxy restart
+                        isx vm restart
+                """), text);
+        assertTrue(caveats.indexOf("isx vm restart") < caveats.indexOf("Documentation:"), text);
     }
 
     /**
