@@ -571,8 +571,9 @@ class CredentialSetup {
             setupClaudeAuth(config, prompts);
             return;
         }
-        BuildOutput.step("Claude Code on this host is signed in with a subscription. isx gets a token of its own"
-                + " from 'claude setup-token', and never copies that sign-in.");
+        BuildOutput.step("isx needs a token of its own, made by 'claude setup-token'.");
+        BuildOutput.step("It never copies your Claude Code sign-in.");
+        BuildOutput.gap();
         setupClaudeOauth(config, prompts, AccountTarget.FRESH);
     }
 
@@ -1029,25 +1030,25 @@ class CredentialSetup {
     }
 
     private void setupClaudeOauth(SpawnConfig config, Prompts prompts, AccountTarget target) {
-        BuildOutput.step("A subscription signs Claude Code in with a long-lived OAuth token (valid");
-        BuildOutput.step("about a year). Pro has no API key; Max and Team include API credits for one.");
-        prompts.say("1. Install Claude Code: " + TerminalLink.link("https://claude.com/claude-code"));
-        prompts.say("2. Sign in with the subscription account: run " + styled(BOLD, "claude")
-                + ", then " + styled(BOLD, "/login"));
-        prompts.say("3. Run " + styled(BOLD, "claude setup-token"));
-        prompts.say("4. Copy the token it prints (it starts with '"
-                + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX + "')");
-        BuildOutput.step("Run 'isx account add claude' to paste a fresh token once this one expires.");
-
         if (hostHasCommand("claude")) {
-            BuildOutput.step("Found 'claude' CLI on this host — steps 1 and 2 are already done.");
+            BuildOutput.step("Claude Code is installed here, so it can make the token for you.");
+            BuildOutput.gap();
             if (askYesNo(prompts, "Run 'claude setup-token' now?", true)) {
                 runClaudeSetupToken();
+            } else {
+                BuildOutput.step("Run it yourself when you are ready, then paste the token it prints.");
             }
         } else {
-            BuildOutput.step("'claude' CLI not found on this host — follow the steps above on any");
-            BuildOutput.step("machine where it is installed, then paste the token here.");
+            BuildOutput.step("A subscription signs Claude Code in with an OAuth token. To get one:");
+            prompts.say("1. Install Claude Code: " + TerminalLink.link("https://claude.com/claude-code"));
+            prompts.say("2. Sign in with the subscription account: run " + styled(BOLD, "claude")
+                    + ", then " + styled(BOLD, "/login"));
+            prompts.say("3. Run " + styled(BOLD, "claude setup-token"));
+            prompts.say("4. Copy the token it prints (it starts with '"
+                    + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX + "')");
+            BuildOutput.step("Do this on any machine where Claude Code is installed, then paste the token here.");
         }
+        BuildOutput.gap();
 
         while (true) {
             var token = askSecret(prompts, "Paste your OAuth token (or press Enter to skip): ");
