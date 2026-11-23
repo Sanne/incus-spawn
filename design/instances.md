@@ -4,7 +4,7 @@ What an instance is, how a branch is made and configured, and how its lifecycle 
 
 ## Container Model
 
-- **System containers** by default (lightweight, full init system), with `--vm` flag for KVM VMs (stronger isolation, separate kernel)
+- **System containers** by default (lightweight, full init system), with a template of `type: vm` for KVM VMs (stronger isolation, separate kernel)
 - Containers don't drop capabilities (`lxc.cap.drop =`) and the host kernel relaxes `perf_event_paranoid` to `-1` so profilers work without restrictions; `ptrace_scope` is unrestricted (Yama is not compiled in) and `ping_group_range` is wide by default
 - No GUI unless the template asks for it (`gui: true`); Wayland + GPU passthrough available at branch time
 - Three network modes at branch time: full internet (default), proxy-only, or airgapped
@@ -19,7 +19,7 @@ However, clones are instant and near-zero cost with CoW storage, which is the co
 - **Containers** (default): share host kernel.
   A kernel exploit could escape.
   Suitable for semi-trusted code (AI agents with scoped permissions, community bug reproducers).
-- **VMs** (`--vm` flag): hardware-level isolation via KVM.
+- **VMs** (a template with `type: vm`): hardware-level isolation via KVM.
   Recommended for actively malicious code.
   Separate kernel eliminates kernel exploit as an escape vector. ~10% performance overhead.
 
@@ -27,7 +27,7 @@ However, clones are instant and near-zero cost with CoW storage, which is the co
 Standard Incus containers drop many Linux capabilities for defense-in-depth.
 We don't, because the container *is* the security boundary and developers expect `ping`, `strace`, `perf`, raw sockets, and `dmesg` to work.
 The risk is that a container escape exploit has more host capabilities to abuse.
-For the strongest isolation, use `--vm`: a separate kernel under KVM, so a kernel exploit inside the guest does not reach the host kernel.
+For the strongest isolation, use a template with `type: vm`: a separate kernel under KVM, so a kernel exploit inside the guest does not reach the host kernel.
 
 ## Branching
 

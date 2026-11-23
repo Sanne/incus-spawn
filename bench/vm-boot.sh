@@ -31,7 +31,7 @@
 #
 # Requires: Linux, the `incus` client with access to the daemon, `script` (util-linux), and a
 #           stopped VM whose guest has systemd (any isx VM template, e.g. one built from
-#           tpl-minimal with --vm).
+#           tpl-minimal with --type vm).
 #
 # Usage:
 #   bench/vm-boot.sh tpl-isx-vm                                  # 3 runs
