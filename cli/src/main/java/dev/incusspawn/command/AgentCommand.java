@@ -2,7 +2,6 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.SpawnConfig;
-import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
@@ -12,7 +11,6 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
-import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,14 +50,7 @@ public class AgentCommand extends BaseCommand {
         var names = agents.stream().map(ToolSetup::name).toList();
         if (agent != null) {
             if (format != null) throw new IllegalArgumentException("--format is for the list; setting the agent prints nothing on stdout");
-            // Strict: load() reads a broken config.yaml as empty, and saving that would drop every account in it
-            SpawnConfig config;
-            try {
-                config = SpawnConfig.loadStrict();
-            } catch (IOException e) {
-                throw new IllegalStateException(YamlErrors.friendly("config.yaml", e)
-                        + "; it is left as it is, so fix it and set the agent again", e);
-            }
+            var config = SpawnConfig.loadToChange("set the agent again");
             if (agent.equals("none")) {
                 config.setPreferredAgent(null);
                 config.save();

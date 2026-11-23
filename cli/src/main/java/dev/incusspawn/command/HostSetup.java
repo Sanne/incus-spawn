@@ -971,7 +971,7 @@ class HostSetup {
     void configureMitmProxy() {
 
         var gatewayIp = ProxyConfig.resolveGatewayIp(init.incus);
-        var config = SpawnConfig.load();
+        var config = SpawnConfig.loadToChange("run 'isx init' again");
         if (!gatewayIp.equals(config.getIncusBridgeGateway())) {
             config.setIncusBridgeGateway(gatewayIp);
             config.save();
@@ -1914,7 +1914,7 @@ class HostSetup {
      * Installing or enabling a firewall stays init's. Whether the redirect was written.
      */
     boolean followBridgeMove(String gatewayIp, DetectionResult firewall) {
-        var config = SpawnConfig.load();
+        var config = SpawnConfig.loadToChange("run 'isx doctor' again");
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
         return redirectToMovedGateway(gatewayIp, firewall, UfwCheck::readBeforeRules);

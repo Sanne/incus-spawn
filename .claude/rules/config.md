@@ -7,7 +7,9 @@ paths:
 
 # Configuration Loading
 
-- `SpawnConfig`: global config from `~/.config/incus-spawn/config.yaml`
+- `SpawnConfig` is the global config, read from `~/.config/incus-spawn/config.yaml`.
+  `load()` reads a file that does not parse as empty, and that empty config refuses `save()`, which would drop every account in the file (#2523).
+  Code that changes and saves the file reads it with `SpawnConfig.loadToChange(again)`, which stops with `YamlErrors.friendly` before anything is asked and leaves the file as it is.
 - `ImageDef.loadAll()`: discovers all image definitions across resolution layers
 - `ToolDefLoader`: discovers tools across resolution layers
 - A key added to `ImageDef`, `ToolDef`, `McpConfig`, `SpawnConfig`, one of their entries or the `KEYS` of a raw `config.yaml` or `mcp.yaml` section needs a property, with a description, in its schema under `site/schema/` (`template.json`, `tool.json`, `mcp.json`, `config.json`), which editors read: `EditorSchemasTest` fails without it (design/templates.md "A schema for editors").
