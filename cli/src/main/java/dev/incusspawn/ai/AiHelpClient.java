@@ -1,11 +1,14 @@
 package dev.incusspawn.ai;
 
+import dev.incusspawn.Platform;
 import dev.incusspawn.config.ModelIds;
 import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.config.AccountResolver;
+import dev.incusspawn.proxy.GoogleAccounts;
 
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.util.ByteLines;
@@ -42,7 +45,8 @@ public class AiHelpClient {
     public enum Provider {
         ANTHROPIC("Anthropic API key"),
         OPENAI("OpenAI API key"),
-        VERTEX("Vertex AI");
+        VERTEX("Vertex AI"),
+        GEMINI("Gemini API key");
 
         private final String credentialKind;
 
@@ -108,6 +112,7 @@ public class AiHelpClient {
     public static final String ANTHROPIC_MODEL = ModelIds.get("ai-help-anthropic");
     public static final String VERTEX_MODEL = ModelIds.get("ai-help-vertex");
     public static final String OPENAI_MODEL = ModelIds.get("ai-help-openai");
+    public static final String GEMINI_MODEL = ModelIds.get("ai-help-gemini");
     /** How hard Claude thinks before answering, on the Claude API and Vertex alike (see {@link #messagesBody}). */
     static final String EFFORT = "low";
     /** The Messages API version a Vertex request names in its body. */
@@ -129,8 +134,8 @@ public class AiHelpClient {
     public static final String API_KEYS_URL = "https://platform.claude.com/settings/keys";
 
     /**
-     * A configured account a question can be sent to. {@code accountName} is the Claude
-     * account's name in {@code config.yaml}, or empty for OpenAI.
+     * A configured account a question can be sent to. {@code accountName} is the account's name
+     * in {@code config.yaml}, under the provider's namespace ({@link #namespace}).
      */
     public record Target(Provider provider, String accountName, String model) {
 
@@ -147,10 +152,23 @@ public class AiHelpClient {
         }
     }
 
+    /** The credential namespace whose accounts each provider's targets come from. */
+    public static String namespace(Provider provider) {
+        return switch (provider) {
+            case ANTHROPIC, VERTEX -> SpawnConfig.ClaudeConfig.NAMESPACE;
+            case OPENAI -> OPENAI_NAMESPACE;
+            case GEMINI -> GoogleAccounts.NAMESPACE;
+        };
+    }
+
+    static final String OPENAI_NAMESPACE = "openai";
+    static final String API_KEY = "apiKey";
+
     /**
      * Every configured account that can answer, the one to use by default first: Claude
      * accounts that serve the API directly (in file order, the default account leading), then
-     * OpenAI. Empty when nothing can answer -- see {@link #noProvider}.
+     * OpenAI's and Gemini's API key accounts, in the same order. Empty when nothing can answer:
+     * see {@link #noProvider}.
      *
      * <p>Selection is by what an account <em>is</em>, not by any designation: a Claude Pro/Max
      * OAuth account cannot serve this, because such a token is only valid for Claude Code
@@ -169,8 +187,34 @@ public class AiHelpClient {
                 result.add(claudeTarget(name, account));
             }
         });
-        if (config.getOpenai().hasAuth()) result.add(new Target(Provider.OPENAI, "", OPENAI_MODEL));
+        for (var name : apiKeyAccounts(config, OPENAI_NAMESPACE)) result.add(new Target(Provider.OPENAI, name, OPENAI_MODEL));
+        for (var name : apiKeyAccounts(config, GoogleAccounts.NAMESPACE)) result.add(new Target(Provider.GEMINI, name, GEMINI_MODEL));
         return result;
+    }
+
+    /**
+     * The accounts of {@code namespace} that hold an API key, its default first, then file order
+     * (#2541). Every one counts, not only the default: an {@code openai} default of
+     * {@code type: chatgpt} or a {@code gemini} default of {@code type: google} is a sign-in the
+     * proxy serves only for its agent's own operations, so it cannot answer, while a key beside it can.
+     */
+    static List<String> apiKeyAccounts(SpawnConfig config, String namespace) {
+        var tree = config.tree();
+        var names = new ArrayList<>(AccountResolver.accountNames(config, namespace));
+        var preferred = AccountResolver.defaultName(tree, namespace);
+        if (names.remove(preferred)) names.addFirst(preferred);
+        var result = new ArrayList<String>();
+        for (var name : names) {
+            if (AccountResolver.INHERIT.equals(name)) continue;
+            var type = AccountResolver.value(tree, namespace, name, "type");
+            if (!type.isBlank() && !type.equals("api-key")) continue;
+            if (!apiKey(config, namespace, name).isBlank()) result.add(name);
+        }
+        return result;
+    }
+
+    private static String apiKey(SpawnConfig config, String namespace, String account) {
+        return AccountResolver.value(config.tree(), namespace, account, API_KEY).strip();
     }
 
     /**
@@ -201,35 +245,39 @@ public class AiHelpClient {
         }
     }
 
+    /** The kinds of account that can answer, as the person reads them. */
+    public static final String KINDS =
+            "An Anthropic API key, Claude on Vertex AI, an OpenAI API key or a Gemini API key can answer.";
+    /** The note on API credits for a subscription's user, before the link (#1674). */
+    public static final String API_CREDITS_NOTE = "Max and Team plans include monthly API credits for an Anthropic API key:";
+    /** The commands that add each kind, never {@code isx init}, which asks everything else too (#2541). */
+    public static final String ADD_ONE = "Add one with 'isx account add claude', 'isx account add openai'"
+            + " or 'isx account add gemini'.";
+
     /**
-     * Why {@link #targets} found nothing usable, and what to do about it. A Claude Pro/Max
-     * OAuth token counts as configured credentials to the rest of isx, so "no credentials"
-     * would be a confusing thing to tell that user -- name the real reason instead.
+     * Why {@link #targets} found nothing usable, and what to do about it. A Claude subscription
+     * counts as configured credentials to the rest of isx, so "no account" would be a confusing
+     * thing to tell that user: name the real reason instead. The cause's first sentence is short,
+     * so it fits on the TUI's status bar (#1765).
      */
     public static NoProvider noProvider(SpawnConfig config) {
-        var configured = config.getClaude().effectiveAccounts();
-        if (configured.isEmpty()) {
-            return new NoProvider("No AI credentials configured.",
-                    List.of("Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials."));
+        var subscriptions = subscriptionAccounts(config);
+        var claude = config.getClaude().effectiveAccounts();
+        if (!claude.isEmpty() && subscriptions.size() == claude.size()) {
+            return new NoProvider(subscriptions.size() > 1
+                    ? "Your Claude subscriptions cannot answer this. Their tokens work only in Claude Code."
+                    : "Your Claude subscription cannot answer this. Its token works only in Claude Code.",
+                    List.of(KINDS, API_CREDITS_NOTE + " " + API_CREDITS_URL, ADD_ONE));
         }
-        // Describe what is actually configured rather than inferring it from the absence of a
-        // provider -- a confidently wrong explanation is worse than a vague one. Both branches
-        // are reachable: an account can be present but unusable (a flat 'useVertex: true'
-        // missing its project is kept so ProxyMain can report it, but is not complete()).
-        var allOauth = configured.values().stream()
-                .allMatch(a -> a.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH);
-        if (allOauth) {
-            // Two sentences, so the first fits on the TUI's status bar (#1765)
-            return new NoProvider(configured.size() > 1
-                    ? "Your Claude Pro/Max subscriptions cannot answer here."
-                            + " Their tokens are only valid for Claude Code itself."
-                    : "Your Claude Pro/Max subscription cannot answer here."
-                            + " Its token is only valid for Claude Code itself.", List.of(
-                    "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.",
-                    "Max and Team plans include monthly API credits for a key: " + API_CREDITS_URL));
-        }
-        return new NoProvider("No configured Claude account can answer this.",
-                List.of("Run 'isx init' to add an Anthropic API key or Vertex AI account."));
+        // Describe what is configured rather than inferring it: an account can be present but
+        // unusable (a flat 'useVertex: true' missing its project is kept so ProxyMain can report
+        // it), and a ChatGPT or Google sign-in answers only its own agent
+        var anyAccount = !claude.isEmpty() || !config.getClaude().allAccounts().isEmpty()
+                || !AccountResolver.accountNames(config, OPENAI_NAMESPACE).isEmpty()
+                || !AccountResolver.accountNames(config, GoogleAccounts.NAMESPACE).isEmpty();
+        return new NoProvider(anyAccount
+                ? "The accounts on " + Platform.thisComputer() + " cannot answer this."
+                : "isx does not have an account that can answer this.", List.of(KINDS, ADD_ONE));
     }
 
     /**
@@ -247,14 +295,79 @@ public class AiHelpClient {
     /** Like {@link #ask}, handing the answer to {@code onChunk} as it arrives. */
     public static StreamEnd askStreaming(String question, List<String> systemBlocks, SpawnConfig config,
                                      Target target, Consumer<String> onChunk) throws IOException {
+        try {
+            return send(question, systemBlocks, config, target, onChunk);
+        } catch (ApiError e) {
+            throw e.withAdvice(rejectedKeyAdvice(target, e.status(), e.keyInvalid));
+        }
+    }
+
+    private static StreamEnd send(String question, List<String> systemBlocks, SpawnConfig config,
+                                  Target target, Consumer<String> onChunk) throws IOException {
         return switch (target.provider()) {
             case ANTHROPIC -> streamAnthropic(question, systemBlocks, target.model(),
                     claudeAccount(config, target), onChunk);
             case VERTEX -> streamVertex(question, systemBlocks, target.model(),
                     claudeAccount(config, target), onChunk);
             case OPENAI -> streamOpenAI(question, String.join("", systemBlocks), target.model(),
-                    config.getOpenai(), onChunk);
+                    targetKey(config, target), onChunk);
+            case GEMINI -> streamGemini(question, systemBlocks, target.model(), targetKey(config, target), onChunk);
         };
+    }
+
+    /** A provider's error answer, with its HTTP status and, when the key is the likely cause, what replaces it. */
+    public static final class ApiError extends IOException {
+        private final int status;
+        /** The body names the key as the cause: Gemini's {@code API_KEY_INVALID} reason. */
+        private final boolean keyInvalid;
+        private final String advice;
+
+        ApiError(int status, String message, boolean keyInvalid) {
+            this(status, message, keyInvalid, null);
+        }
+
+        private ApiError(int status, String message, boolean keyInvalid, String advice) {
+            super(message);
+            this.status = status;
+            this.keyInvalid = keyInvalid;
+            this.advice = advice;
+        }
+
+        public int status() { return status; }
+
+        ApiError withAdvice(String advice) {
+            if (advice == null) return this;
+            var withIt = new ApiError(status, getMessage(), keyInvalid, advice);
+            withIt.setStackTrace(getStackTrace());
+            return withIt;
+        }
+    }
+
+    /**
+     * What replaces the key behind {@code e}, one line, when it is an {@link ApiError} that a wrong
+     * or revoked key gives; else none. Once a key is saved nothing asks for one again (#2541), so
+     * the error is where the person learns how to replace it.
+     */
+    public static String[] advice(Throwable e) {
+        return e instanceof ApiError api && api.advice != null ? new String[] {api.advice} : new String[0];
+    }
+
+    /**
+     * Each provider's answer to a key it does not take: 401 from Anthropic and OpenAI,
+     * 400 {@code API_KEY_INVALID} (or 401) from Gemini. Vertex signs with gcloud, not a key.
+     * Gemini's other 400s, such as a request too large, say nothing of the key.
+     */
+    static String rejectedKeyAdvice(Target target, int status, boolean keyInvalid) {
+        var rejected = switch (target.provider()) {
+            // A 403 is left out: it is a permission, a model or a disabled API more often than the key
+            case ANTHROPIC, OPENAI -> status == 401;
+            case GEMINI -> (status == 400 && keyInvalid) || status == 401;
+            case VERTEX -> false;
+        };
+        var namespace = namespace(target.provider());
+        // Named by its account, which the person chooses to replace in the command's menu
+        return rejected ? "If the key of the " + namespace + " account '" + target.accountName()
+                + "' is wrong, replace that account with 'isx account add " + namespace + "'." : null;
     }
 
     /**
@@ -297,10 +410,21 @@ public class AiHelpClient {
     private static SpawnConfig.ClaudeAccount claudeAccount(SpawnConfig config, Target target) throws IOException {
         var account = config.getClaude().effectiveAccounts().get(target.accountName());
         if (account == null || !account.servesDirectApi()) {
-            throw new IOException("Claude account '" + target.accountName() + "' can no longer answer;"
-                    + " check it with 'isx init'.");
+            throw new IOException("Claude account '" + target.accountName() + "' can no longer answer."
+                    + " Check it with 'isx account add claude'.");
         }
         return account;
+    }
+
+    /** The API key of an OpenAI or Gemini target, read again: it may have changed since {@link #targets}. */
+    private static String targetKey(SpawnConfig config, Target target) throws IOException {
+        var namespace = namespace(target.provider());
+        var key = apiKey(config, namespace, target.accountName());
+        if (key.isEmpty()) {
+            throw new IOException("The " + namespace + " account '" + target.accountName() + "' no longer has an API key."
+                    + " Add one with 'isx account add " + namespace + "'.");
+        }
+        return key;
     }
 
     private static StreamEnd streamAnthropic(String question, List<String> systemBlocks, String model,
@@ -346,7 +470,7 @@ public class AiHelpClient {
     }
 
     private static StreamEnd streamOpenAI(String question, String systemPrompt, String model,
-                                      SpawnConfig.OpenaiConfig openai,
+                                      String apiKey,
                                       Consumer<String> onChunk) throws IOException {
         var body = JqObject.builder(4)
                 .put("model", model)
@@ -362,12 +486,99 @@ public class AiHelpClient {
         var request = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.openai.com/v1/chat/completions"))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + openai.effectiveApiKey())
+                .header("Authorization", "Bearer " + apiKey)
                 .timeout(Duration.ofSeconds(120))
                 .POST(HttpRequest.BodyPublishers.ofString(body.toJsonString()))
                 .build();
 
         return processOpenAiStream(sendStream(request), onChunk);
+    }
+
+    /**
+     * Gemini's {@code streamGenerateContent} as server-sent events, the documentation as the
+     * system instruction. Gemini caches a repeated prefix on its own (implicit caching) and
+     * reports what it read as {@code cachedContentTokenCount}; it reports no writes. Its thinking
+     * is held at {@code LOW}, as Claude's effort is, and its thoughts are not shown.
+     */
+    private static StreamEnd streamGemini(String question, List<String> systemBlocks, String model,
+                                          String apiKey, Consumer<String> onChunk) throws IOException {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create("https://generativelanguage.googleapis.com/v1beta/models/" + model
+                        + ":streamGenerateContent?alt=sse"))
+                .header("Content-Type", "application/json")
+                .header("x-goog-api-key", apiKey)
+                .timeout(Duration.ofSeconds(120))
+                .POST(HttpRequest.BodyPublishers.ofString(geminiBody(question, systemBlocks).toJsonString()))
+                .build();
+        return processGeminiStream(sendStream(request), onChunk);
+    }
+
+    /** A {@code generateContent} request for one question, {@code systemBlocks} as the system instruction's parts. */
+    static JqObject geminiBody(String question, List<String> systemBlocks) {
+        var system = JqArray.arrayBuilder();
+        for (var text : systemBlocks) system.add(JqObject.builder(1).put("text", text).build());
+        return JqObject.builder(3)
+                .put("systemInstruction", JqObject.builder(1).put("parts", system.build()).build())
+                .put("contents", JqArray.arrayBuilder()
+                        .add(JqObject.builder(2)
+                                .put("role", "user")
+                                .put("parts", JqArray.arrayBuilder()
+                                        .add(JqObject.builder(1).put("text", question).build()).build())
+                                .build())
+                        .build())
+                .put("generationConfig", JqObject.builder(2)
+                        // Gemini counts its thinking against this, so it leaves room beyond Claude's 4096
+                        .put("maxOutputTokens", 8192L)
+                        .put("thinkingConfig", JqObject.builder(1).put("thinkingLevel", "LOW").build())
+                        .build())
+                .build();
+    }
+
+    static StreamEnd processGeminiStream(InputStream is, Consumer<String> onChunk) throws IOException {
+        var usage = Usage.NONE;
+        String finish = "";
+        boolean blocked = false;
+        try (var lines = new ByteLines(is)) {
+            byte[] line;
+            while ((line = lines.next()) != null) {
+                var data = sseData(line);
+                if (data == null || data.length == 0) continue;
+                // Gemini ends a stream by closing it; a [DONE] is ended on as everywhere else
+                if (Arrays.equals(data, SSE_DONE)) break;
+                var node = Jjq.parseForeign(data, "the AI provider's stream event");
+                if (node.getField("error").isObject()) {
+                    throw new IOException("API stream error: "
+                            + OutputFormat.oneLine(node.getField("error").pathText("message", "Unknown error")));
+                }
+                blocked |= !node.getField("promptFeedback").pathText("blockReason", "").isEmpty();
+                var candidate = node.getField("candidates").getElement(0);
+                if (candidate.getField("content").getField("parts") instanceof JqArray parts) {
+                    for (var part : parts) {
+                        // A thought is the model's reasoning, not its answer
+                        if (part.pathBoolean("thought", false)) continue;
+                        var text = part.pathText("text", null);
+                        if (text != null) onChunk.accept(text);
+                    }
+                }
+                finish = candidate.pathText("finishReason", finish);
+                var reported = node.getField("usageMetadata");
+                if (reported.isObject()) {
+                    long cached = Jjq.longOr(reported.getField("cachedContentTokenCount"), 0);
+                    usage = new Usage(Jjq.longOr(reported.getField("promptTokenCount"), 0) - cached, cached, 0,
+                            Jjq.longOr(reported.getField("candidatesTokenCount"), 0)
+                                    + Jjq.longOr(reported.getField("thoughtsTokenCount"), 0));
+                }
+            }
+        }
+        if (blocked) return new StreamEnd(usage, REFUSAL_NOTE);
+        return new StreamEnd(usage, switch (finish) {
+            case "", "STOP", "FINISH_REASON_UNSPECIFIED" -> null;
+            case "MAX_TOKENS" -> TRUNCATED_NOTE;
+            // What Gemini's safety and policy filters give: the answer was withheld
+            case "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII" -> REFUSAL_NOTE;
+            // Any other reason, such as OTHER, is no refusal: it is named as Gemini gave it
+            default -> "The answer ended early, for the reason Gemini gives as " + OutputFormat.oneLine(finish) + ".";
+        });
     }
 
     private static final byte[] SSE_DATA = "data: ".getBytes(StandardCharsets.US_ASCII);
@@ -535,7 +746,9 @@ public class AiHelpClient {
             var response = client().send(request, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() >= 400) {
                 try (var errStream = response.body()) {
-                    throw new IOException(describeError(response.statusCode(), errStream.readAllBytes()));
+                    var bytes = errStream.readAllBytes();
+                    throw new ApiError(response.statusCode(), describeError(response.statusCode(), bytes),
+                            new String(bytes, StandardCharsets.UTF_8).contains("API_KEY_INVALID"));
                 }
             }
             return response.body();

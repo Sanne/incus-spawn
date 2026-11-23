@@ -37,21 +37,41 @@ public class AskCommand extends BaseCommand {
         }
 
         var question = String.join(" ", questionWords);
-        var config = SpawnConfig.load();
-        var targets = AiHelpClient.targets(config);
+        var config = answering(SpawnConfig.load(), prompts());
+        if (config == null) return CommandResult.valueOf(1);
 
-        if (targets.isEmpty()) {
-            var why = AiHelpClient.noProvider(config);
-            BuildOutput.error(why.cause(), why.advice().toArray(String[]::new));
-            return CommandResult.valueOf(1);
-        }
-
-        var target = targets.getFirst();
+        var target = AiHelpClient.targets(config).getFirst();
         var label = "Asking " + target.label() + (withTemplates ? " (with templates)" : "");
         var systemBlocks = HelpContext.systemBlocks(withTemplates);
-        answer(label,
-                chunks -> AiHelpClient.askStreaming(question, systemBlocks, config, target, chunks).note());
+        try {
+            answer(label,
+                    chunks -> AiHelpClient.askStreaming(question, systemBlocks, config, target, chunks).note());
+        } catch (AiHelpClient.ApiError e) {
+            // A rejected key says what replaces it: nothing asks for one again once it is saved
+            BuildOutput.error(failure(e), AiHelpClient.advice(e));
+            return CommandResult.valueOf(1);
+        }
         return CommandResult.SUCCESS;
+    }
+
+    /** Where this command asks, overridden by tests: {@link Prompts#terminal()}. */
+    Prompts prompts() {
+        return Prompts.terminal();
+    }
+
+    /**
+     * {@code config} when an account can answer, else the config once {@link AiHelpAccount}
+     * added one, or null (#2541). The offer goes to stderr, as progress does, so a capture of
+     * stdout still holds only the answer.
+     */
+    public static SpawnConfig answering(SpawnConfig config, Prompts prompts) throws Exception {
+        if (!AiHelpClient.targets(config).isEmpty()) return config;
+        var credentials = new CredentialSetup();
+        try {
+            return withStdoutOnStderr(() -> AiHelpAccount.ask(config, prompts, credentials).orElse(null));
+        } finally {
+            credentials.closeHttpClient();
+        }
     }
 
     /**
@@ -183,8 +203,8 @@ public class AskCommand extends BaseCommand {
                 Options:
                   --with-templates  Include tool and image definitions in the AI context
 
-                Credentials: Uses your configured Anthropic, Vertex AI, or OpenAI credentials.
-                Run 'isx init' to configure them.
+                Accounts: an Anthropic API key, Claude on Vertex AI, an OpenAI API key or a
+                Gemini API key answers. Without one, isx asks for one on a terminal.
                 """);
     }
 }

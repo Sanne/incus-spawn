@@ -2,6 +2,8 @@ package dev.incusspawn.tui;
 
 import dev.incusspawn.command.BaseCommand;
 import dev.incusspawn.command.RunCommand;
+import dev.incusspawn.command.AskCommand;
+import dev.incusspawn.command.Prompts;
 import dev.incusspawn.command.BaseImageAge;
 import dev.incusspawn.command.TemplateStaleness;
 import dev.incusspawn.command.ListCommand;
@@ -287,7 +289,7 @@ public class Tui {
 
     private boolean deferredBuildForBranch;
 
-    enum PendingAction { NONE, SHELL, SHELL_NEW_SESSION, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
+    enum PendingAction { NONE, SHELL, SHELL_NEW_SESSION, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION, ADD_AI_HELP_ACCOUNT }
     private PendingAction pendingAction = PendingAction.NONE;
     private ActionContext pendingActionTarget;
     private String pendingShellCommand;
@@ -708,6 +710,19 @@ public class Tui {
                             PreTuiOutput.waitForEnter("Press Enter to continue...");
                         }
                     }
+                    case ADD_AI_HELP_ACCOUNT -> {
+                        try {
+                            if (AskCommand.answering(SpawnConfig.load(), Prompts.terminal()) == null) {
+                                // The offer said why and the log keeps its error: the TUI waits,
+                                // or it would draw over the offer's last lines at once
+                                PreTuiOutput.waitForEnter("Press Enter to continue...");
+                            }
+                        } catch (Exception e) {
+                            // Said where the offer was, and kept in the log, before the TUI draws over it
+                            BuildOutput.error("could not add an account for AI Help: " + BaseCommand.failure(e));
+                            PreTuiOutput.waitForEnter("Press Enter to continue...");
+                        }
+                    }
                     case NONE -> { return; }
                 }
                 // An action that failed mid-step (a branch whose copy or start threw) must not leave the
@@ -749,6 +764,10 @@ public class Tui {
         }
         returnToTemplate = null;
 
+        if (previousAction == PendingAction.ADD_AI_HELP_ACCOUNT && reloadError == null) {
+            var config = SpawnConfig.load();
+            if (!AiHelpClient.targets(config).isEmpty()) openHelpChat(config);
+        }
         if (previousAction == PendingAction.BUILD_THEN_BRANCH) {
             var tpl = templateEntries.stream()
                     .filter(t -> t.name().equals(branchSourceName))
@@ -836,7 +855,7 @@ public class Tui {
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
             case ACCOUNTS -> handleAccountsEvent(key);
-            case INFO -> handleInfoEvent(key);
+            case INFO -> handleInfoEvent(key, tui);
             case WARNINGS -> {
                 if (!warningsModal.handleKey(key)) mode = Mode.BROWSE;
                 yield true;
@@ -933,7 +952,7 @@ public class Tui {
             return true;
         }
         if (!key.hasCtrl() && key.isChar('?')) {
-            openHelpChat(SpawnConfig.load());
+            openHelpChat(SpawnConfig.load(), tui);
             return true;
         }
 
@@ -2111,27 +2130,31 @@ public class Tui {
         };
     }
 
-    private boolean handleInfoEvent(KeyEvent key) {
+    private boolean handleInfoEvent(KeyEvent key, TuiRunner tui) {
         switch (about.handleKey(key)) {
             case HANDLED -> {}
             case CLOSE -> mode = Mode.BROWSE;
-            case HELP_CHAT -> openHelpChat(SpawnConfig.load());
+            case HELP_CHAT -> openHelpChat(SpawnConfig.load(), tui);
         }
         return true;
     }
 
     /**
-     * Opens AI Help, or explains why no configured account can answer: the cause in the status
-     * bar, all of it in the warning log.
+     * Opens AI Help, or, when no configured account can answer, leaves the TUI to ask for one
+     * where the person needs it, and opens AI Help on return once one can (#2541).
      */
-    private void openHelpChat(SpawnConfig config) {
-        var targets = AiHelpClient.targets(config);
-        if (targets.isEmpty()) {
-            // Its advice and the credits URL would fall off the status bar (#1765)
-            refuseAtLength(AiHelpClient.noProvider(config).message());
+    private void openHelpChat(SpawnConfig config, TuiRunner tui) {
+        if (AiHelpClient.targets(config).isEmpty()) {
+            pendingAction = PendingAction.ADD_AI_HELP_ACCOUNT;
             mode = Mode.BROWSE;
+            tui.quit();
             return;
         }
+        openHelpChat(config);
+    }
+
+    private void openHelpChat(SpawnConfig config) {
+        var targets = AiHelpClient.targets(config);
         // Reading every definition takes a moment, so build them once, off the UI thread: the
         // same string sizes the checkbox and is what gets sent when it is ticked.
         var definitions = java.util.concurrent.CompletableFuture.supplyAsync(

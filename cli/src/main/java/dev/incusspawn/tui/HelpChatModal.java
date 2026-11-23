@@ -217,6 +217,8 @@ final class HelpChatModal {
             } catch (Exception e) {
                 // Whatever wrote the message (a provider, gcloud), it must not drive the terminal.
                 failure = e.getMessage() != null ? OutputFormat.oneLine(e.getMessage()) : e.getClass().getSimpleName();
+                // A rejected key says what replaces it here too: nothing asks for one again (#2541)
+                for (var advice : AiHelpClient.advice(e)) failure += " " + advice;
             }
             synchronized (this) {
                 if (requestId != id) return; // cancelled while running: drop the result

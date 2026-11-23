@@ -87,15 +87,12 @@ final class DoctorExplain {
 
     /** Asks the first AI Help account of {@code config}; false once a failure is reported. */
     static boolean run(SupportBundle bundle, SpawnConfig config, Supplier<Prompts> terminal) throws Exception {
-        var targets = AiHelpClient.targets(config);
-        if (targets.isEmpty()) {
-            var why = AiHelpClient.noProvider(config);
-            BuildOutput.error(why.cause(), why.advice().toArray(String[]::new));
-            return false;
-        }
-        var target = targets.getFirst();
+        // With no account that can answer, one is asked for here, where it is needed (#2541)
+        var answering = AiHelpClient.targets(config).isEmpty() ? AskCommand.answering(config, terminal.get()) : config;
+        if (answering == null) return false;
+        var target = AiHelpClient.targets(answering).getFirst();
         return run(bundle, target.label(), terminal,
-                (question, blocks, chunks) -> AiHelpClient.askStreaming(question, blocks, config, target, chunks));
+                (question, blocks, chunks) -> AiHelpClient.askStreaming(question, blocks, answering, target, chunks));
     }
 
     /** {@link #run(SupportBundle, SpawnConfig, Supplier)} sending through {@code sender}, to the account {@code account}. */
@@ -127,7 +124,7 @@ final class DoctorExplain {
                 return end.note();
             });
         } catch (Exception e) {
-            BuildOutput.error("could not explain the findings: " + BaseCommand.failure(e));
+            BuildOutput.error("could not explain the findings: " + BaseCommand.failure(e), AiHelpClient.advice(e));
             return false;
         }
         var summary = usage[0].summary();

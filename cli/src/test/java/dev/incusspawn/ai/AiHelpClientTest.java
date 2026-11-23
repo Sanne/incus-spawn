@@ -76,16 +76,147 @@ class AiHelpClientTest {
     void oauthOnlyConfigIsNotReportedAsMissingCredentials() {
         var config = config();
         config.getClaude().setOauthToken(SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN);
-        var message = AiHelpClient.noProvider(config).message();
-        assertTrue(message.contains("Claude Code"), message);
-        assertTrue(message.contains("Max and Team plans include monthly API credits"), message);
-        assertTrue(message.contains(AiHelpClient.API_CREDITS_URL), message);
-        assertFalse(message.startsWith("No AI credentials"), message);
+        var why = AiHelpClient.noProvider(config);
+        assertEquals("Your Claude subscription cannot answer this. Its token works only in Claude Code.", why.cause());
+        assertEquals(List.of(AiHelpClient.KINDS,
+                AiHelpClient.API_CREDITS_NOTE + " " + AiHelpClient.API_CREDITS_URL, AiHelpClient.ADD_ONE), why.advice());
+    }
+
+    /**
+     * Every kind that can answer is named, OpenAI's and Gemini's included, with the command that
+     * adds each, never 'isx init', which asks everything else too (#2541).
+     */
+    @Test
+    void theAdviceNamesEveryKindAndTheCommandsThatAddThem() {
+        var why = AiHelpClient.noProvider(config());
+        assertEquals("isx does not have an account that can answer this.", why.cause());
+        var message = why.message();
+        for (var kind : List.of("Anthropic API key", "Vertex AI", "OpenAI API key", "Gemini API key")) {
+            assertTrue(message.contains(kind), message);
+        }
+        for (var namespace : List.of("claude", "openai", "gemini")) {
+            assertTrue(message.contains("'isx account add " + namespace + "'"), message);
+        }
+        assertFalse(message.contains("isx init"), message);
+        assertFalse(message.contains(AiHelpClient.API_CREDITS_URL), "no subscription, so no credits: " + message);
+    }
+
+    /** A sign-in answers only its own agent, so it is no account that can answer: it is named as present. */
+    @Test
+    void aSignInAloneIsReportedAsAnAccountThatCannotAnswer() {
+        var config = config();
+        dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "me", "type", "google");
+        assertNull(provider(config));
+        assertEquals("The accounts on " + dev.incusspawn.Platform.thisComputer() + " cannot answer this.", AiHelpClient.noProvider(config).cause());
+    }
+
+    /**
+     * An API key beside a sign-in answers, though the sign-in is the namespace's default: the
+     * default of a ChatGPT session hid the key before (#2541).
+     */
+    @Test
+    void anApiKeyBesideADefaultSignInAnswers() {
+        var config = config();
+        dev.incusspawn.config.NamespaceAccounts.put(config, "openai", "chat", "type", "chatgpt");
+        dev.incusspawn.config.NamespaceAccounts.put(config, "openai", "api", "apiKey", "sk-openai-test");
+        dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "me", "type", "google");
+        dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "key", "apiKey", "AIza-test");
+
+        assertEquals(List.of(
+                new AiHelpClient.Target(AiHelpClient.Provider.OPENAI, "api", AiHelpClient.OPENAI_MODEL),
+                new AiHelpClient.Target(AiHelpClient.Provider.GEMINI, "key", AiHelpClient.GEMINI_MODEL)),
+                AiHelpClient.targets(config));
+        assertEquals("key (Gemini API key)", AiHelpClient.targets(config).get(1).label());
+    }
+
+    /** The regression of #2541 alone, in the symbols the client had before: a default ChatGPT session hid the key beside it. */
+    @Test
+    void anOpenAiKeyBesideADefaultChatGptSessionAnswers() {
+        var config = config();
+        dev.incusspawn.config.NamespaceAccounts.put(config, "openai", "chat", "type", "chatgpt");
+        dev.incusspawn.config.NamespaceAccounts.put(config, "openai", "api", "apiKey", "sk-openai-test");
+        assertEquals(AiHelpClient.Provider.OPENAI, provider(config));
+    }
+
+    /**
+     * Once a key is saved nothing asks for one again, so the error a wrong key gives names the
+     * command that replaces it, for the statuses each provider answers a bad key with.
+     */
+    @Test
+    void aRejectedKeyNamesTheCommandThatReplacesIt() {
+        var openai = new AiHelpClient.Target(AiHelpClient.Provider.OPENAI, "api", AiHelpClient.OPENAI_MODEL);
+        var gemini = new AiHelpClient.Target(AiHelpClient.Provider.GEMINI, "default", AiHelpClient.GEMINI_MODEL);
+        var vertex = new AiHelpClient.Target(AiHelpClient.Provider.VERTEX, "gcp", AiHelpClient.VERTEX_MODEL);
+        assertEquals("If the key of the openai account 'api' is wrong, replace that account with 'isx account add openai'.",
+                AiHelpClient.rejectedKeyAdvice(openai, 401, false));
+        assertEquals("If the key of the gemini account 'default' is wrong, replace that account with 'isx account add gemini'.",
+                AiHelpClient.rejectedKeyAdvice(gemini, 400, true));
+        assertNull(AiHelpClient.rejectedKeyAdvice(openai, 403, false), "a 403 is a permission more often than the key");
+        assertNull(AiHelpClient.rejectedKeyAdvice(gemini, 400, false), "Gemini's other 400s say nothing of the key");
+        assertNull(AiHelpClient.rejectedKeyAdvice(openai, 400, false), "a bad request is no sign of a bad key at OpenAI");
+        assertNull(AiHelpClient.rejectedKeyAdvice(openai, 500, false));
+        assertNull(AiHelpClient.rejectedKeyAdvice(vertex, 401, false), "Vertex signs with gcloud, not a key");
+
+        var error = new AiHelpClient.ApiError(401, "API error (401): bad key", false)
+                .withAdvice(AiHelpClient.rejectedKeyAdvice(openai, 401, false));
+        assertEquals(List.of(AiHelpClient.rejectedKeyAdvice(openai, 401, false)), List.of(AiHelpClient.advice(error)));
+        assertEquals("API error (401): bad key", error.getMessage());
+        assertEquals(0, AiHelpClient.advice(new java.io.IOException("x")).length);
     }
 
     @Test
-    void emptyConfigIsReportedAsMissingCredentials() {
-        assertTrue(AiHelpClient.noProvider(config()).message().startsWith("No AI credentials"));
+    void aGeminiApiKeyAnswers() {
+        var config = config();
+        dev.incusspawn.config.NamespaceAccounts.put(config, "gemini", "default", "apiKey", "AIza-test");
+        assertEquals(List.of(new AiHelpClient.Target(AiHelpClient.Provider.GEMINI, "default", AiHelpClient.GEMINI_MODEL)),
+                AiHelpClient.targets(config));
+        assertEquals("Gemini API key", AiHelpClient.targets(config).getFirst().label());
+    }
+
+    /** The documentation is Gemini's system instruction, and its thinking is held low, as Claude's effort is. */
+    @Test
+    void theGeminiRequestCarriesTheDocumentationAsItsSystemInstruction() {
+        var body = AiHelpClient.geminiBody("How?", List.of("docs", "definitions"));
+        assertEquals("docs", body.getField("systemInstruction").getField("parts").getElement(0).pathText("text", ""));
+        assertEquals("definitions", body.getField("systemInstruction").getField("parts").getElement(1).pathText("text", ""));
+        var content = body.getField("contents").getElement(0);
+        assertEquals("user", content.pathText("role", ""));
+        assertEquals("How?", content.getField("parts").getElement(0).pathText("text", ""));
+        assertEquals("LOW", body.getField("generationConfig").getField("thinkingConfig").pathText("thinkingLevel", ""));
+    }
+
+    @Test
+    void geminiStreamShowsTheAnswerWithoutItsThoughts() throws Exception {
+        var stream = sse("""
+                {"candidates":[{"content":{"role":"model","parts":[{"text":"pondering","thought":true}]}}]}
+                {"candidates":[{"content":{"role":"model","parts":[{"text":"Use isx "}]}}]}
+                {"candidates":[{"content":{"role":"model","parts":[{"text":"branch."}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":50000,"cachedContentTokenCount":49000,"candidatesTokenCount":150,"thoughtsTokenCount":50}}
+                """);
+        var text = new StringBuilder();
+        var end = AiHelpClient.processGeminiStream(stream, text::append);
+        assertEquals("Use isx branch.", text.toString());
+        assertEquals(new AiHelpClient.Usage(1000, 49000, 0, 200), end.usage());
+        assertNull(end.note());
+    }
+
+    @Test
+    void geminiStreamSaysWhyItEndedEarly() throws Exception {
+        var cut = AiHelpClient.processGeminiStream(sse("""
+                {"candidates":[{"content":{"parts":[{"text":"Run isx"}]},"finishReason":"MAX_TOKENS"}]}
+                """), s -> {});
+        assertEquals(AiHelpClient.TRUNCATED_NOTE, cut.note());
+        var refused = AiHelpClient.processGeminiStream(sse("""
+                {"candidates":[{"finishReason":"SAFETY"}]}
+                """), s -> {});
+        assertEquals(AiHelpClient.REFUSAL_NOTE, refused.note());
+        var blocked = AiHelpClient.processGeminiStream(sse("""
+                {"promptFeedback":{"blockReason":"PROHIBITED_CONTENT"}}
+                """), s -> {});
+        assertEquals(AiHelpClient.REFUSAL_NOTE, blocked.note());
+        var other = AiHelpClient.processGeminiStream(sse("""
+                {"candidates":[{"content":{"parts":[{"text":"Run"}]},"finishReason":"OTHER"}]}
+                """), s -> {});
+        assertEquals("The answer ended early, for the reason Gemini gives as OTHER.", other.note());
     }
 
     @Test
@@ -103,7 +234,7 @@ class AiHelpClientTest {
         assertEquals(List.of(
                 new AiHelpClient.Target(AiHelpClient.Provider.VERTEX, "gcp", AiHelpClient.VERTEX_MODEL),
                 new AiHelpClient.Target(AiHelpClient.Provider.ANTHROPIC, "console", AiHelpClient.ANTHROPIC_MODEL),
-                new AiHelpClient.Target(AiHelpClient.Provider.OPENAI, "", AiHelpClient.OPENAI_MODEL)),
+                new AiHelpClient.Target(AiHelpClient.Provider.OPENAI, "default", AiHelpClient.OPENAI_MODEL)),
                 targets);
         assertEquals(AiHelpClient.Provider.VERTEX, provider(config));
         assertEquals(List.of("personal"), AiHelpClient.subscriptionAccounts(config));

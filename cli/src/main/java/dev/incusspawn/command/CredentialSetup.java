@@ -135,9 +135,6 @@ class CredentialSetup {
         return Platform.openUrl(url);
     }
 
-    private static final String ADD_API_KEY_LATER = "No API key added. Add one later with 'isx account add "
-            + SpawnConfig.ClaudeConfig.NAMESPACE + "'.";
-
     private static final String CLAUDE_SKIPPED = "No Claude account yet: 'isx account add "
             + SpawnConfig.ClaudeConfig.NAMESPACE + "' adds one.";
 
@@ -579,11 +576,11 @@ class CredentialSetup {
                 }
                 Lines.step(couldNotCheck("it", result.message()));
                 if (!askYesNo(prompts, envAccountPrompt(config, target, "Save it unverified, and check it later?"), false)) return false;
-                saveOauthConfig(config, prompts, target, envOauthToken, false);
+                saveOauthConfig(config, target, envOauthToken, false);
                 return true;
             }
             if (!askYesNo(prompts, envAccountPrompt(config, target, "Use it for " + machines() + "?"), true)) return false;
-            saveOauthConfig(config, prompts, target, envOauthToken, true);
+            saveOauthConfig(config, target, envOauthToken, true);
             return true;
         }
         if (!envApiKey.isBlank()) {
@@ -610,7 +607,7 @@ class CredentialSetup {
     }
 
     /** Vertex AI's project and region, until they verify or are saved anyway: BACK when the person goes back. */
-    private Outcome setupClaudeVertex(SpawnConfig config, Prompts prompts, AccountTarget target) {
+    Outcome setupClaudeVertex(SpawnConfig config, Prompts prompts, AccountTarget target) {
         var here = Platform.thisComputer();
         BuildOutput.gap();
         BuildOutput.step("Vertex AI needs your Google Cloud project and a region");
@@ -731,7 +728,7 @@ class CredentialSetup {
             if (token.isBlank()) return Outcome.BACK;
             var result = verifyOauthToken(token);
             if (result.verified()) {
-                saveOauthConfig(config, prompts, target, token, true);
+                saveOauthConfig(config, target, token, true);
                 return Outcome.DONE;
             }
             switch (askVerificationFailureAction(prompts, "The token", result.message(), result.reached())) {
@@ -740,7 +737,7 @@ class CredentialSetup {
                     return Outcome.DONE;
                 }
                 case SAVE_UNVERIFIED -> {
-                    saveOauthConfig(config, prompts, target, token, false);
+                    saveOauthConfig(config, target, token, false);
                     return Outcome.DONE;
                 }
                 case RETRY -> {
@@ -754,7 +751,7 @@ class CredentialSetup {
      * Asks for an Anthropic API key until one verifies or is saved anyway: BACK when the person
      * goes back. {@code skipped} is what a skip says, or null for the Claude step's own words.
      */
-    private Outcome setupClaudeApiKey(SpawnConfig config, Prompts prompts, AccountTarget target, String skipped) {
+    Outcome setupClaudeApiKey(SpawnConfig config, Prompts prompts, AccountTarget target, String skipped) {
         var here = Platform.thisComputer();
         BuildOutput.gap();
         BuildOutput.step("Create a key in the Claude Console (Settings > API keys):");
@@ -911,7 +908,7 @@ class CredentialSetup {
         return askAccountName(prompts, taken, "Name for this account (e.g. personal, work — Enter to cancel): ");
     }
 
-    private static String askAccountName(Prompts prompts, java.util.Set<String> taken, String prompt) {
+    static String askAccountName(Prompts prompts, java.util.Set<String> taken, String prompt) {
         while (true) {
             var name = readInput(prompts.ask(prompt));
             if (name.isEmpty()) return "";
@@ -1136,7 +1133,7 @@ class CredentialSetup {
     }
 
     /** Saves the token's account; a verified one is reported as an ok, one saved anyway as a plain step. */
-    private void saveOauthConfig(SpawnConfig config, Prompts prompts, AccountTarget target, String oauthToken,
+    private void saveOauthConfig(SpawnConfig config, AccountTarget target, String oauthToken,
                                  boolean verified) {
         saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofOauth(oauthToken));
         var here = Platform.thisComputer();
@@ -1144,8 +1141,6 @@ class CredentialSetup {
         if (!verified) BuildOutput.stepNote("If it fails, 'isx account add claude' replaces it.");
         // What 'claude setup-token' advises is for a token used by hand: isx answers it (#2528)
         BuildOutput.stepNote("You do not need to store or export it. isx keeps it.");
-        // The first run leaves it to the first use of 'isx ask' (#2541)
-        if (!firstRun) offerApiKeyForAiHelp(config, prompts);
     }
 
     private void saveVertexConfig(SpawnConfig config, AccountTarget target, String region, String projectId) {
@@ -1159,33 +1154,6 @@ class CredentialSetup {
             config.getClaude().putAccount(target.name(), account);
         }
         config.save();
-    }
-
-    /**
-     * A subscription token cannot answer 'isx ask' -- it is only valid for Claude Code itself.
-     * Max and Team plans include monthly API credit that can, so say so when such an account is
-     * saved and offer to add the key beside it, rather than letting AI Help fail later (#1674).
-     * The subscription stays the default: instances keep using it, and AI Help picks the key.
-     */
-    private void offerApiKeyForAiHelp(SpawnConfig config, Prompts prompts) {
-        if (!AiHelpClient.targets(config).isEmpty()) return;
-        BuildOutput.step("'isx ask' and '?' in the TUI cannot use a subscription token, only an API key.");
-        BuildOutput.step("Max and Team plans include monthly API credits for one (Pro does not): claim them");
-        BuildOutput.step("on claude.ai under Settings > Billing, then create a key in the linked Claude Console.");
-        BuildOutput.step(TerminalLink.link(AiHelpClient.API_CREDITS_URL));
-        if (!askYesNo(prompts, "Add an Anthropic API key account now?", false)) {
-            BuildOutput.step(ADD_API_KEY_LATER);
-            return;
-        }
-        var name = askAccountName(prompts, config.getClaude().allAccounts().keySet(),
-                "Name for the API key account (e.g. api — Enter to cancel): ");
-        if (name.isEmpty()) {
-            BuildOutput.step(ADD_API_KEY_LATER);
-            return;
-        }
-        if (setupClaudeApiKey(config, prompts, new AccountTarget(name, false), ADD_API_KEY_LATER) == Outcome.BACK) {
-            BuildOutput.step(ADD_API_KEY_LATER);
-        }
     }
 
     AuthResult verifyAnthropicApiKey(String key) {
