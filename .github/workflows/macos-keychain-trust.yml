@@ -3,7 +3,8 @@ name: macOS Keychain trust (native)
 # The native binaries are built on macOS only by release.yml, so a native-only break in how isx
 # reads the Keychain's trust settings (#1467), or refuses a chain it denies (#1552), would otherwise
 # surface at release time. This builds the CLI and the proxy weekly, on a change to that code, and
-# by hand, and runs the Keychain smoke against both.
+# by hand, and runs the Keychain smoke against both. It also runs KeychainTrustMacTest, which
+# unit-tests-macos runs only on GitHub's runners, never on the project's Mac runner (#2298).
 on:
   schedule:
     - cron: '17 4 * * 1'
@@ -14,6 +15,9 @@ on:
       - 'common/src/main/java/dev/incusspawn/util/MacKeychainTrust.java'
       - 'common/src/main/java/dev/incusspawn/util/SystemTrust.java'
       - 'common/src/main/java/dev/incusspawn/util/DeniedChainTrustManager.java'
+      - 'common/src/test/java/dev/incusspawn/util/KeychainTrustMacTest.java'
+      # KeychainTrustMacTest also tests collectTrustAnchors(), and the Mac runner skips it (#2298)
+      - 'common/src/main/java/dev/incusspawn/proxy/CertificateAuthority.java'
       # The proxy's upstream trust, which the smoke's handshake goes through (#1631)
       - 'proxy/src/main/java/dev/incusspawn/proxy/Upstream.java'
       # What the smoke reads the result through
@@ -63,3 +67,12 @@ jobs:
 
       - name: Keychain trust smoke
         run: .github/scripts/macos-keychain-smoke.sh cli/target/incus-spawn-*-runner proxy/target/incus-spawn-proxy-*-runner
+
+      # Changes the System keychain's trust settings, which only a discarded runner may do (#1467).
+      # unit-tests-macos skips it on the project's Mac runner, so every change to the Keychain code
+      # still runs it here (#2298). It needs no native image, so a failed build or smoke does not hide it.
+      - name: KeychainTrustMacTest
+        if: ${{ !cancelled() }}
+        run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' -B -ntp -pl common test -Dtest=KeychainTrustMacTest
+        env:
+          ISX_TEST_MUTATE_SYSTEM_KEYCHAIN: '1'

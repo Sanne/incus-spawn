@@ -74,19 +74,72 @@ jobs:
           path: proxy/target/quarkus-app/
           retention-days: 1
 
+  # Where the macOS jobs run: the project's Mac Mini for trusted code while it is up and free,
+  # else GitHub's macos-15 (#2298, .github/scripts/mac-route.sh). The Mini's own hook, not this
+  # job, keeps untrusted code off it, since a pull request's copy of this workflow decides its runs-on.
+  mac-route:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      actions: read     # the heartbeat workflow's runs
+      contents: read
+    outputs:
+      runner: ${{ steps.route.outputs.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+
+      - name: Route the macOS jobs
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          ACTOR: ${{ github.event.pull_request.user.login || github.actor }}
+        run: .github/scripts/mac-route.sh
+
   # Unit tests on a macOS host, arm64 only (#970, #974; see .claude/rules/ci.md). macos-15 is a
   # standard label, free on a public repository; -xlarge is billed and would only buy speed. Not in
   # cancel-on-unit-failure's needs: a Mac-only failure leaves the Linux jobs worth finishing, and it
   # starts alongside unit-tests rather than after it, so a Linux failure still cancels it early.
   unit-tests-macos:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
-    runs-on: macos-15
+    needs: [mac-route]
+    runs-on: ${{ fromJSON(needs.mac-route.outputs.runner) }}
     timeout-minutes: 20
+    outputs:
+      fell-back: ${{ steps.gate.outputs.fell-back }}
     steps:
+      # The project's Mac runner takes a job only while the agent runner does not hold the Mac
+      # (#2298). Its job-started hook records which for this job; one it gave up runs again on
+      # GitHub's runner as <job>-fallback, whose own gate always passes.
+      - name: Take the Mac runner's turn
+        id: gate
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          if [ "$RUNNER_KIND" != self-hosted ]; then echo run=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "The project's Mac runner, macOS $(sw_vers -productVersion)"
+          gate="$HOME/.isx-ci/gate/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          case "$(cat "$gate" 2>/dev/null)" in
+            run) echo run=true >> "$GITHUB_OUTPUT" ;;
+            busy)
+              echo fell-back=true >> "$GITHUB_OUTPUT"
+              echo "::notice::The Mac runner is busy with agent work, so this job runs on GitHub's runner as $GITHUB_JOB-fallback" ;;
+            *)
+              echo "::error::The Mac runner's job-started hook recorded no turn for this job (isx-workflow MAC-SETUP.md, \"The CI runner user\")"
+              exit 1 ;;
+          esac
+
       - name: Checkout
+        if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Oracle GraalVM 25.5
+        if: steps.gate.outputs.run == 'true'
         uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
         with:
           version: '25.5'
@@ -94,6 +147,7 @@ jobs:
           distribution: 'graalvm'
 
       - name: Cache Maven dependencies
+        if: steps.gate.outputs.run == 'true'
         id: maven-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -105,13 +159,16 @@ jobs:
       # A test failure in common must not stop cli and proxy from running (-fae would still skip
       # them, as modules depending on a failed one), so failures are counted from the reports after.
       # KeychainTrustMacTest changes the System keychain's trust settings, which only a runner
-      # that is discarded after the job may do (#1467)
+      # that is discarded after the job may do (#1467): GitHub's, never the project's Mac runner,
+      # where macos-keychain-trust.yml runs it instead on GitHub's runner (#2298)
       - name: Test
+        if: steps.gate.outputs.run == 'true'
         run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' -B -ntp -Dmaven.test.failure.ignore=true test
         env:
-          ISX_TEST_MUTATE_SYSTEM_KEYCHAIN: '1'
+          ISX_TEST_MUTATE_SYSTEM_KEYCHAIN: ${{ runner.environment == 'github-hosted' && '1' || '' }}
 
       - name: Fail on test failures
+        if: steps.gate.outputs.run == 'true'
         run: |
           failed=$(find . -path '*/target/surefire-reports/TEST-*.xml' \
             -exec grep -lE '<testsuite [^>]*(failures|errors)="[1-9]' {} + || true)
@@ -122,7 +179,89 @@ jobs:
           fi
 
       - name: Upload test reports
-        if: failure()
+        if: failure() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: surefire-reports-macos
+          overwrite: true  # a re-run of the failed job must not lose its reports to a name clash
+          path: '**/target/surefire-reports/'
+          retention-days: 7
+
+  # unit-tests-macos again on GitHub's runner, when the Mac runner gave it up to the agent runner (#2298).
+  # Its steps are unit-tests-macos's, word for word (MacRunnerWorkflowTest).
+  unit-tests-macos-fallback:
+    needs: [unit-tests-macos]
+    if: ${{ !cancelled() && needs.unit-tests-macos.outputs.fell-back == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      # The project's Mac runner takes a job only while the agent runner does not hold the Mac
+      # (#2298). Its job-started hook records which for this job; one it gave up runs again on
+      # GitHub's runner as <job>-fallback, whose own gate always passes.
+      - name: Take the Mac runner's turn
+        id: gate
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          if [ "$RUNNER_KIND" != self-hosted ]; then echo run=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "The project's Mac runner, macOS $(sw_vers -productVersion)"
+          gate="$HOME/.isx-ci/gate/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          case "$(cat "$gate" 2>/dev/null)" in
+            run) echo run=true >> "$GITHUB_OUTPUT" ;;
+            busy)
+              echo fell-back=true >> "$GITHUB_OUTPUT"
+              echo "::notice::The Mac runner is busy with agent work, so this job runs on GitHub's runner as $GITHUB_JOB-fallback" ;;
+            *)
+              echo "::error::The Mac runner's job-started hook recorded no turn for this job (isx-workflow MAC-SETUP.md, \"The CI runner user\")"
+              exit 1 ;;
+          esac
+
+      - name: Checkout
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Oracle GraalVM 25.5
+        if: steps.gate.outputs.run == 'true'
+        uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
+        with:
+          version: '25.5'
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Cache Maven dependencies
+        if: steps.gate.outputs.run == 'true'
+        id: maven-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/repository
+          # Not maven-<job>-: unit-tests' restore key `maven-unit-tests-` would match maven-unit-tests-macos-.
+          key: macos-maven-unit-tests-macos-${{ hashFiles('**/pom.xml') }}
+          restore-keys: macos-maven-unit-tests-macos-
+
+      # A test failure in common must not stop cli and proxy from running (-fae would still skip
+      # them, as modules depending on a failed one), so failures are counted from the reports after.
+      # KeychainTrustMacTest changes the System keychain's trust settings, which only a runner
+      # that is discarded after the job may do (#1467): GitHub's, never the project's Mac runner,
+      # where macos-keychain-trust.yml runs it instead on GitHub's runner (#2298)
+      - name: Test
+        if: steps.gate.outputs.run == 'true'
+        run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' -B -ntp -Dmaven.test.failure.ignore=true test
+        env:
+          ISX_TEST_MUTATE_SYSTEM_KEYCHAIN: ${{ runner.environment == 'github-hosted' && '1' || '' }}
+
+      - name: Fail on test failures
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          failed=$(find . -path '*/target/surefire-reports/TEST-*.xml' \
+            -exec grep -lE '<testsuite [^>]*(failures|errors)="[1-9]' {} + || true)
+          if [ -n "$failed" ]; then
+            echo "::error::macOS test failures in:"
+            echo "$failed"
+            exit 1
+          fi
+
+      - name: Upload test reports
+        if: failure() && steps.gate.outputs.run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: surefire-reports-macos
@@ -348,13 +487,39 @@ jobs:
   # slow to come does not hold the Linux jobs.
   launcher-macos:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
-    runs-on: macos-15
+    needs: [mac-route]
+    runs-on: ${{ fromJSON(needs.mac-route.outputs.runner) }}
     timeout-minutes: 15
+    outputs:
+      fell-back: ${{ steps.gate.outputs.fell-back }}
     steps:
+      # The project's Mac runner takes a job only while the agent runner does not hold the Mac
+      # (#2298). Its job-started hook records which for this job; one it gave up runs again on
+      # GitHub's runner as <job>-fallback, whose own gate always passes.
+      - name: Take the Mac runner's turn
+        id: gate
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          if [ "$RUNNER_KIND" != self-hosted ]; then echo run=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "The project's Mac runner, macOS $(sw_vers -productVersion)"
+          gate="$HOME/.isx-ci/gate/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          case "$(cat "$gate" 2>/dev/null)" in
+            run) echo run=true >> "$GITHUB_OUTPUT" ;;
+            busy)
+              echo fell-back=true >> "$GITHUB_OUTPUT"
+              echo "::notice::The Mac runner is busy with agent work, so this job runs on GitHub's runner as $GITHUB_JOB-fallback" ;;
+            *)
+              echo "::error::The Mac runner's job-started hook recorded no turn for this job (isx-workflow MAC-SETUP.md, \"The CI runner user\")"
+              exit 1 ;;
+          esac
+
       - name: Checkout
+        if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build the tests of the relay and of the launcher's own parts
+        if: steps.gate.outputs.run == 'true'
         run: |
           swift --version
           swift build --package-path launcher --build-tests
@@ -365,11 +530,13 @@ jobs:
       # test, and one in a test of the launcher's own parts, which have no watchdog.
       # The package has no Swift Testing tests, which only `swift test` would run.
       - name: Test the relay and the launcher's own parts
+        if: steps.gate.outputs.run == 'true'
         timeout-minutes: 10
         run: xcrun xctest "$(swift build --package-path launcher --show-bin-path)/launcherPackageTests.xctest"
 
       # Fails unless the signature verifies and carries exactly the one entitlement.
       - name: Build and sign isx-vm
+        if: steps.gate.outputs.run == 'true'
         run: |
           bin=$(launcher/build-isx-vm.sh)
           cp "$bin" "$RUNNER_TEMP/isx-vm"
@@ -383,11 +550,92 @@ jobs:
       # empty (#2031). This holds the client to its contract where a Mac's bash, perl and nc
       # are; the test's note says what this runner's nc does.
       - name: Test the tunnel checks' agent client
+        if: steps.gate.outputs.run == 'true'
         run: appliance/test-agent-call.sh
 
       # The measurement on the Mac runner runs this very binary, days after the job. Uploading
       # recomputes nothing, so a failed upload is retried.
       - name: Upload isx-vm
+        if: steps.gate.outputs.run == 'true'
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: isx-vm-macos-aarch64
+          path: ${{ runner.temp }}/isx-vm
+          if-no-files-found: error
+          retention-days: 14
+
+  # launcher-macos again on GitHub's runner, when the Mac runner gave it up to the agent runner (#2298).
+  # Its steps are launcher-macos's, word for word (MacRunnerWorkflowTest).
+  launcher-macos-fallback:
+    needs: [launcher-macos]
+    if: ${{ !cancelled() && needs.launcher-macos.outputs.fell-back == 'true' }}
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      # The project's Mac runner takes a job only while the agent runner does not hold the Mac
+      # (#2298). Its job-started hook records which for this job; one it gave up runs again on
+      # GitHub's runner as <job>-fallback, whose own gate always passes.
+      - name: Take the Mac runner's turn
+        id: gate
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          if [ "$RUNNER_KIND" != self-hosted ]; then echo run=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "The project's Mac runner, macOS $(sw_vers -productVersion)"
+          gate="$HOME/.isx-ci/gate/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          case "$(cat "$gate" 2>/dev/null)" in
+            run) echo run=true >> "$GITHUB_OUTPUT" ;;
+            busy)
+              echo fell-back=true >> "$GITHUB_OUTPUT"
+              echo "::notice::The Mac runner is busy with agent work, so this job runs on GitHub's runner as $GITHUB_JOB-fallback" ;;
+            *)
+              echo "::error::The Mac runner's job-started hook recorded no turn for this job (isx-workflow MAC-SETUP.md, \"The CI runner user\")"
+              exit 1 ;;
+          esac
+
+      - name: Checkout
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the tests of the relay and of the launcher's own parts
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          swift --version
+          swift build --package-path launcher --build-tests
+
+      # The bundle runs directly, not under `swift test`, which holds every line until the run
+      # ends: a run that hung printed nothing after the build (#2265). The relay's tests' own
+      # watchdog ends one stuck for 60 s and names it; the step's limit ends a hang outside any
+      # test, and one in a test of the launcher's own parts, which have no watchdog.
+      # The package has no Swift Testing tests, which only `swift test` would run.
+      - name: Test the relay and the launcher's own parts
+        if: steps.gate.outputs.run == 'true'
+        timeout-minutes: 10
+        run: xcrun xctest "$(swift build --package-path launcher --show-bin-path)/launcherPackageTests.xctest"
+
+      # Fails unless the signature verifies and carries exactly the one entitlement.
+      - name: Build and sign isx-vm
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          bin=$(launcher/build-isx-vm.sh)
+          cp "$bin" "$RUNNER_TEMP/isx-vm"
+          # It starts and reads its arguments; a machine it cannot have here.
+          "$RUNNER_TEMP/isx-vm" --cpus 1 --memory 512 --gpu yes 2>&1 | tee "$RUNNER_TEMP/refused.txt" || true
+          grep -qx "isx-vm: unknown option '--gpu'" "$RUNNER_TEMP/refused.txt"
+
+      # The scripts that measure it on the Mac runner call the appliance's agent with
+      # agent-call.pl. Apple's nc, which they used before, shuts its write side down after its
+      # input, and the relay ends the connection there: every agent call under isx-vm came back
+      # empty (#2031). This holds the client to its contract where a Mac's bash, perl and nc
+      # are; the test's note says what this runner's nc does.
+      - name: Test the tunnel checks' agent client
+        if: steps.gate.outputs.run == 'true'
+        run: appliance/test-agent-call.sh
+
+      # The measurement on the Mac runner runs this very binary, days after the job. Uploading
+      # recomputes nothing, so a failed upload is retried.
+      - name: Upload isx-vm
+        if: steps.gate.outputs.run == 'true'
         uses: ./.github/actions/upload-artifact-retry
         with:
           name: isx-vm-macos-aarch64

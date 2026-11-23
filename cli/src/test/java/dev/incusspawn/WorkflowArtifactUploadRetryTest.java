@@ -24,7 +24,9 @@ class WorkflowArtifactUploadRetryTest {
     private static final Path WORKFLOWS = Path.of("../.github/workflows");
     private static final Path ACTION = Path.of("../.github/actions/upload-artifact-retry/action.yml");
     private static final String RETRYING = "./.github/actions/upload-artifact-retry";
-    private static final Pattern DIAGNOSTIC = Pattern.compile("\\s*(?:\\$\\{\\{\\s*)?(?:always|failure)\\(\\)(?:\\s*}})?\\s*");
+    /** A macOS job the Mac runner gave up runs none of its steps, a diagnostic upload included (#2298). */
+    private static final Pattern DIAGNOSTIC = Pattern.compile(
+            "\\s*(?:\\$\\{\\{\\s*)?(?:always|failure)\\(\\)(?: && steps\\.gate\\.outputs\\.run == 'true')?(?:\\s*}})?\\s*");
 
     private static boolean isUpload(JqValue step) {
         return step.pathText("uses", "").matches("actions/upload-artifact[@/].*");
