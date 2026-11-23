@@ -112,9 +112,18 @@ class ClaudeAuthFlowTest {
             return "claude".equals(command) && hasClaudeCli;
         }
 
+        /** What 'claude setup-token' printed that isx read: none unless set. */
+        java.util.List<String> tokensRead = java.util.List.of();
+
+        FakeInit readsTokens(String... tokens) {
+            tokensRead = java.util.List.of(tokens);
+            return this;
+        }
+
         @Override
-        void runClaudeSetupToken() {
+        java.util.List<String> runClaudeSetupToken() {
             setupTokenRuns++;
+            return tokensRead;
         }
     }
 
@@ -190,6 +199,61 @@ class ClaudeAuthFlowTest {
         run(init, new ScriptedPrompts().line("2", "").secret(OAUTH_TOKEN));
 
         assertEquals(1, init.setupTokenRuns);
+        assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
+    }
+
+    /** A token as long as real ones, so its shape passes. */
+    private static final String READ_TOKEN = SetupTokenCaptureTest.TOKEN;
+
+    /**
+     * The token isx read from 'claude setup-token' is verified and saved, and no paste is asked
+     * for (#2543): the first reading that verifies wins, a wrong join of a wrapped token included.
+     */
+    @Test
+    void aTokenReadFromSetupTokenIsSavedWithoutAPaste() {
+        var init = new FakeInit().withClaudeCli().acceptOauth(READ_TOKEN)
+                .readsTokens(READ_TOKEN + "Store", READ_TOKEN);
+        var out = RecordingOutput.during(() -> run(init, new ScriptedPrompts().line("2", "")));
+
+        assertEquals(1, init.setupTokenRuns);
+        assertEquals(READ_TOKEN, savedAccount().getOauthToken());
+        var said = out.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).toList();
+        assertTrue(said.stream().anyMatch(line -> line.startsWith("Token received, verified and saved on ")), said::toString);
+        assertFalse(said.stream().anyMatch(line -> line.contains(READ_TOKEN)), "the token is never shown: " + said);
+    }
+
+    /** A token read that does not verify is said so, never saved, and the paste names what to copy. */
+    @Test
+    void aTokenReadThatDoesNotVerifyFallsBackToThePaste() {
+        var init = new FakeInit().withClaudeCli().acceptOauth(READ_TOKEN).readsTokens(READ_TOKEN + "cut");
+        var prompts = new ScriptedPrompts().line("2", "").secret("").line("s");
+        var out = RecordingOutput.during(() -> run(init, prompts));
+
+        assertNull(savedAccount(), "nothing unverified is saved without a yes");
+        var said = out.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).toList();
+        assertTrue(said.stream().anyMatch(line -> line.startsWith("The token isx read did not verify.")), said::toString);
+        assertTrue(said.contains("The token above starts with 'sk-ant-oat01-'."), said::toString);
+        assertTrue(prompts.conversation().stream().anyMatch(line -> line.contains("Paste the token above, or Enter to go back")),
+                prompts.conversation()::toString);
+    }
+
+    /** A reading too short to be whole is not checked, and the paste is asked for. */
+    @Test
+    void aCutTokenReadIsNotChecked() {
+        var init = new FakeInit().withClaudeCli().acceptOauth(OAUTH_TOKEN).readsTokens(OAUTH_TOKEN);
+        var out = RecordingOutput.during(() -> run(init, new ScriptedPrompts().line("2", "").secret("").line("s")));
+
+        assertNull(savedAccount());
+        var said = out.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).toList();
+        assertTrue(said.contains("isx did not find the whole token on the screen."), said::toString);
+    }
+
+    /** No token read: the paste, which then saves as before. */
+    @Test
+    void noTokenReadAsksForThePaste() {
+        var init = new FakeInit().withClaudeCli().acceptOauth(OAUTH_TOKEN);
+        run(init, new ScriptedPrompts().line("2", "").secret(OAUTH_TOKEN));
+
         assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
     }
 

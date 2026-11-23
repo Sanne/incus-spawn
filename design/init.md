@@ -76,10 +76,19 @@ The completion message says the agent has no account yet, with the command that 
 The first `isx branch` at a terminal asks for it (#2405).
 
 A Claude Code subscription found on the host answers which kind of account to set up (`CredentialSetup.setupClaudeSubscription`): it is re-issued with `claude setup-token`, never copied, since the proxy and the host's Claude Code would otherwise share one refresh token.
-The step says what will happen before it asks: the command runs and opens the browser, the person approves, then pastes the token.
+The step says what will happen before it asks: the command runs and opens the browser, the person approves, then isx reads the token, or the person pastes it when isx cannot.
 Its answers are `Y` (run it here), `n` (run it by hand), `o` (another kind of account) and `s` (skip), and Enter at the paste goes back to them.
-The person pastes the token the command prints, until #2543 takes it without the paste.
-Reading it without the paste would mean reading the command's output while it keeps the terminal, which needs a pseudo-terminal the JVM cannot open, or a `script(1)` log that would hold the token on disk; the plan allowed the paste to stay in that case.
+With `Y`, isx reads the token the command prints, so the person does not copy a wrapped token of about 108 characters back into the terminal (#2543).
+The command draws a full-screen program and needs a terminal, which the JVM cannot open, so it runs under `script(1)`: `script -q /dev/null claude setup-token` on macOS, `script -q -e -f -c 'claude setup-token' /dev/null` with util-linux.
+`script` gives it a pseudo-terminal with the keyboard's settings and window size and logs to `/dev/null`, and isx copies every byte of its stdout to the screen while it reads it (`SetupTokenCapture`).
+Nothing is written to disk: the token is held in memory until it is verified, then saved in `config.yaml` like a pasted one.
+Claude Code places words with cursor moves, wraps the token at the window's width and may redraw only the cells that changed, so isx reads a small screen model rather than matching the bytes.
+Each reading is a candidate: up to three whole ones are verified, longest first, and the first that verifies is saved with one line saying so.
+When none is read or none verifies, the step says so and the person pastes the token, told the prefix it starts with.
+When `script` is missing (Fedora ships it as `util-linux-script`), the command gets the terminal itself and the person pastes the token too.
+A reading that did not verify is never saved without the person's answer at that paste.
+Before a run, isx keeps the terminal's settings (`stty -g`) and restores them after a timeout or an interrupt, since a `script` that dies on SIGTERM may leave the terminal raw.
+Masking the token on the screen, so it stays out of the scrollback, is left for later: masking a wrapped token inside another program's drawing is harder than reading it.
 A credential in the environment, or accounts already saved, take the full step instead, which reads and keeps those.
 
 ## A GitHub account in the first run

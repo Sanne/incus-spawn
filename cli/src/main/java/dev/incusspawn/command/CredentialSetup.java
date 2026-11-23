@@ -649,10 +649,9 @@ class CredentialSetup {
      * comes from {@code claude setup-token}, never from the computer's own sign-in, which is
      * not copied.
      *
-     * <p>The person still pastes the token the command prints (#2543). Reading it without the
-     * paste would mean reading the command's output while it keeps the terminal, which takes a
-     * pseudo-terminal this process cannot open, or a {@code script} log that would hold the
-     * token on disk. Anything else to go on (a credential in the environment, accounts already
+     * <p>isx reads the token the command prints through {@code script(1)}, which gives it a
+     * pseudo-terminal and logs to {@code /dev/null} ({@link SetupTokenCapture}, #2543). The paste
+     * stays for when none is read, none verifies, or {@code script} is missing. Anything else to go on (a credential in the environment, accounts already
      * saved) takes the full step instead, which reads and keeps those.
      */
     void setupClaudeSubscription(SpawnConfig config, Prompts prompts) {
@@ -677,12 +676,13 @@ class CredentialSetup {
     private Outcome claudeToken(SpawnConfig config, Prompts prompts, AccountTarget target, boolean offerOther) {
         var installed = hostHasCommand("claude");
         while (true) {
+            var pastePrompt = "Paste the token, or Enter to go back: ";
             BuildOutput.gap();
             if (installed) {
                 BuildOutput.step("To make the token:");
                 prompts.say("  1. 'claude setup-token' runs and opens your browser");
                 prompts.say("  2. You approve, and it prints a token");
-                prompts.say("  3. You paste the token here");
+                prompts.say("  3. isx reads the token. If it cannot, you paste it");
                 BuildOutput.gap();
                 prompts.say("Make the token now?");
                 prompts.say("  Y  run 'claude setup-token' here");
@@ -692,7 +692,12 @@ class CredentialSetup {
                 var answer = prompts.ask("Choice [Y]: ");
                 var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
                 switch (choice) {
-                    case "", "y", "yes" -> runClaudeSetupToken();
+                    case "", "y", "yes" -> {
+                        if (saveTokenRead(config, target, runClaudeSetupToken())) return Outcome.DONE;
+                        // The token is on the screen above, wrapped and among Claude Code's own lines
+                        BuildOutput.stepNote("The token above starts with '" + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX + "'.");
+                        pastePrompt = "Paste the token above, or Enter to go back: ";
+                    }
                     case "n", "no" -> { }
                     case "s" -> {
                         BuildOutput.step(claudeSkipped(config));
@@ -715,16 +720,16 @@ class CredentialSetup {
                 prompts.say("  3. Paste the token here.");
             }
             BuildOutput.gap();
-            var outcome = pasteClaudeToken(config, prompts, target);
+            var outcome = pasteClaudeToken(config, prompts, target, pastePrompt);
             // Back from a token made here returns to its menu; with no menu, to the kinds of account
             if (outcome == Outcome.DONE || !installed) return outcome;
         }
     }
 
     /** Takes the token until it verifies, is saved anyway or skipped: BACK on Enter. */
-    private Outcome pasteClaudeToken(SpawnConfig config, Prompts prompts, AccountTarget target) {
+    private Outcome pasteClaudeToken(SpawnConfig config, Prompts prompts, AccountTarget target, String prompt) {
         while (true) {
-            var token = readSecret(prompts.askSecret("Paste the token, or Enter to go back: "));
+            var token = readSecret(prompts.askSecret(prompt));
             if (token.isBlank()) return Outcome.BACK;
             var result = verifyOauthToken(token);
             if (result.verified()) {
@@ -1197,8 +1202,73 @@ class CredentialSetup {
         }
     }
 
-    /** Runs 'claude setup-token' attached to the terminal, so its prompts reach the user. */
-    void runClaudeSetupToken() {
+    /**
+     * The first token read from 'claude setup-token' that verifies, saved with one line that says
+     * so: true when saved. Otherwise it says why and the caller asks for the paste (#2543), so a
+     * token that does not verify is saved only after the person's answer there.
+     */
+    private boolean saveTokenRead(SpawnConfig config, AccountTarget target, List<String> tokens) {
+        if (tokens.isEmpty()) return false;
+        // A reading too short to be whole is a token cut at a wrap: not worth a check, or its note
+        var whole = tokens.stream().filter(token -> oauthTokenShapeWarning(token).isEmpty()).toList();
+        if (whole.isEmpty()) {
+            BuildOutput.step("isx did not find the whole token on the screen.");
+            return false;
+        }
+        AuthResult first = null;
+        for (var token : whole) {
+            var result = verifyOauthToken(token);
+            if (result.verified()) {
+                saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofOauth(token));
+                BuildOutput.ok("Token received, verified and saved on " + Platform.thisComputer());
+                // What 'claude setup-token' advises is for a token used by hand: isx answers it (#2528)
+                BuildOutput.stepNote("You do not need to store or export it. isx keeps it.");
+                return true;
+            }
+            if (first == null) first = result;
+        }
+        Lines.step(first.reached() ? "The token isx read did not verify. " + first.message()
+                : couldNotCheck("the token isx read", first.message()));
+        return false;
+    }
+
+    /**
+     * Runs 'claude setup-token' on the terminal and returns the tokens read from what it printed,
+     * longest first, or none. Under {@code script(1)} isx relays the output and reads it
+     * ({@link SetupTokenCapture}); without {@code script} the command gets the terminal itself and
+     * the person pastes the token.
+     */
+    List<String> runClaudeSetupToken() {
+        if (!hostHasCommand("script")) {
+            runClaudeSetupTokenAttached();
+            return List.of();
+        }
+        try {
+            var run = SetupTokenCapture.run(SetupTokenCapture.command(Platform.isMacOS()));
+            if (run.scriptFailed()) {
+                // This script does not take the options isx gives it: the command gets the terminal itself
+                runClaudeSetupTokenAttached();
+                return List.of();
+            }
+            if (run.exitCode() == null) {
+                BuildOutput.warn("'claude setup-token' did not finish within 2 minutes, so isx stopped it.");
+            } else if (run.exitCode() != 0 && run.tokens().isEmpty()) {
+                BuildOutput.warn("'claude setup-token' failed (exit code " + run.exitCode() + ").");
+            } else if (run.tokens().isEmpty()) {
+                BuildOutput.step("isx did not find a token on the screen.");
+            }
+            return run.tokens();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        } catch (Exception e) {
+            BuildOutput.warn("Could not run 'claude setup-token': " + BaseCommand.failure(e));
+            return List.of();
+        }
+    }
+
+    /** Runs 'claude setup-token' attached to the terminal, where {@code script} is missing: the person pastes. */
+    private void runClaudeSetupTokenAttached() {
         try {
             var pb = new ProcessBuilder("claude", "setup-token");
             pb.inheritIO();

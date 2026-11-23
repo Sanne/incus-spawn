@@ -46,7 +46,12 @@ After a skipped account it does not ask, and the closing message says how to add
 It also names `isx init`, whose menu lists each step it left for later.
 
 A Claude Code subscription found on this host is never copied.
-Init runs `claude setup-token` to get a token of isx's own, and you paste the token it prints.
+Init runs `claude setup-token` to get a token of isx's own, and reads the token it prints.
+isx checks the token with Anthropic, then saves it in `config.yaml`.
+If isx does not find a token that works, you paste the token instead.
+
+On Linux, isx reads the screen with `script`, which Fedora ships in the `util-linux-script` package.
+Without `script`, you paste the token.
 
 `isx init --all` asks every step in turn, those the first run leaves for later included, on a first run or a later one.
 On a fresh Linux host it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
