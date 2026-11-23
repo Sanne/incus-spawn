@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.nio.file.Files;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -25,7 +26,7 @@ class ExampleTemplateTest {
             var def = ImageDef.parseYaml(text);
             assertEquals("tpl-agent", def.getName(), agent.name());
             assertEquals("tpl-minimal", def.getParent(), agent.name());
-            assertEquals(java.util.List.of(agent.name()), def.getTools().stream().map(t -> t.getName()).toList(), agent.name());
+            assertEquals(List.of(agent.name()), def.getTools().stream().map(t -> t.getName()).toList(), agent.name());
             // Its default-action names the agent's own action, or is left out for an agent with none
             assertEquals(agent.actions().isEmpty() ? null : agent.name(), def.getDefaultAction(), agent.name());
             var result = TemplateValidator.validate(text, ExampleTemplate.file(), known);
@@ -52,10 +53,10 @@ class ExampleTemplateTest {
     void theGhToolIsListedOnlyWithAGitHubAccount() throws Exception {
         var claude = AgentCommand.agents(RuntimeConstants.CDI_TOOLS).stream().filter(a -> a.name().equals("claude")).findFirst().orElseThrow();
         var with = ImageDef.parseYaml(ExampleTemplate.text(claude, true));
-        assertEquals(java.util.List.of("claude", "gh"), with.getTools().stream().map(t -> t.getName()).toList());
+        assertEquals(List.of("claude", "gh"), with.getTools().stream().map(t -> t.getName()).toList());
         var result = TemplateValidator.validate(ExampleTemplate.text(claude, true), ExampleTemplate.file(), ImageDef.loadBuiltins());
         assertFalse(result.hasErrors(), result.errors().toString());
         var without = ImageDef.parseYaml(ExampleTemplate.text(claude, false));
-        assertEquals(java.util.List.of("claude"), without.getTools().stream().map(t -> t.getName()).toList());
+        assertEquals(List.of("claude"), without.getTools().stream().map(t -> t.getName()).toList());
     }
 }
