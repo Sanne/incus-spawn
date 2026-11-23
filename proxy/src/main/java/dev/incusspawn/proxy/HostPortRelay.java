@@ -152,6 +152,8 @@ final class HostPortRelay {
         private final int port;
         private final ServerSocket server;
         private final Set<Socket> open = ConcurrentHashMap.newKeySet();
+        /** The loopback side of each relayed connection, closed only after every guest side. */
+        private final Set<Socket> hosts = ConcurrentHashMap.newKeySet();
         private volatile boolean closed;
         /** The thread blocked in {@link ServerSocket#accept()}, which {@link #awaitClosed} waits out. */
         private volatile Thread acceptor;
@@ -204,7 +206,7 @@ final class HostPortRelay {
                 closeQuietly(guest);
                 return;
             }
-            open.add(host);
+            hosts.add(host);
             if (closed) {
                 closeBoth(guest, host);
                 return;
@@ -266,6 +268,8 @@ final class HostPortRelay {
         private void closeBoth(Socket a, Socket b) {
             open.remove(a);
             open.remove(b);
+            hosts.remove(a);
+            hosts.remove(b);
             closeQuietly(a);
             closeQuietly(b);
         }
@@ -299,8 +303,12 @@ final class HostPortRelay {
                     Thread.currentThread().interrupt();
                 }
             }
+            // Guests first: a service that sees its end of stream first may answer, and the relay
+            // would still carry that answer to a guest of a port no longer listed.
             for (var socket : new ArrayList<>(open)) closeQuietly(socket);
             open.clear();
+            for (var socket : new ArrayList<>(hosts)) closeQuietly(socket);
+            hosts.clear();
         }
     }
 
