@@ -789,3 +789,19 @@ What this gives up: the first overview after an instance's work changed waits fo
 So a read that failed, a stopped instance, or an opencode database that could not be read never reads as untouched.
 Beside the newest message, DONE names such an agent as not read, since it may have worked since.
 What this gives up: a closing message can overstate what the agent finished, and WORK beside it is the check; a person's work outside an agent is not described.
+
+## Interface text has rules of its own
+
+The writing rules reached only the docs, while the text isx prints was written under no loaded rule, and no test read its wording, only its form (`StepLabelGateTest`, `RawOutputGateTest`) (#2542).
+The review of the first run of `isx init` (#2528) found the same faults at every step, after two passes that were asked to fix exactly them.
+So the rules for that text are `.claude/rules/interface-text.md`, which loads on every source that words a prompt, a message, a TUI label, a 403 body or an `isx mcp` tool description.
+
+It is a file of its own rather than a wider `writing.md`, because an agent editing a Java source should not load 24 KB of rules about web pages.
+It cites `writing.md` for the principles both share, and holds only what a prompt or a status line needs beyond them: what each answer does, one outcome on one line, a line that fits its frame.
+What this gives up: a principle changed in `writing.md` reaches interface text only through that citation, so the two files are read together when one changes.
+
+The first run has a vocabulary of its own, "isx machine" and "this Mac", set in #2528 for a person who has met no isx term yet; every other text keeps the docs' "instance" and "host".
+
+A gate is worth having, since the rules alone did not hold for the docs either.
+It reads generated transcripts of the main flows rather than string literals, because a message is assembled from several of them.
+It checks only what is mechanical: line width, the first run's forbidden words and a step number shown once.

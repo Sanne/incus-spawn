@@ -36,6 +36,7 @@ Check a text in this order, and stop at the first check it fails:
 A sentence that fails the first check is not rescued by passing the others.
 No test covers the first three, so a review has to.
 These rules hold for every text a person reads: the user pages, the website, DESIGN.md and `design/`, a PR description and a review comment.
+They hold for the text isx prints too, and `.claude/rules/interface-text.md` adds what a prompt, a warning or a TUI label needs beyond them; it loads on the sources that word that text.
 
 ### The point
 
