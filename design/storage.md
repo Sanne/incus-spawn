@@ -267,13 +267,27 @@ Then `isx destroy` and `isx clean pool` cannot reach it, and nothing can be dele
 On a Linux subvolume pool the full disk is the host's own.
 
 So what writes to the pool checks its space first (`PoolSpace`), with one request to the pool's `/resources`.
-A build, which writes gigabytes, is refused once the pool is critical (`PoolUsage.isCritical`: at least 90% used and under 5 GiB free; `BuildCommand.reportPoolTooFull`).
+A build, which writes gigabytes, is refused once the pool is critical (`PoolUsage.isCritical`: at least 90% used and under 5 GiB free; `BuildCommand.reportPoolTooFull`), and wherever a branch is refused.
 A branch is a CoW snapshot and costs almost nothing at once, so it is only warned at critical, and refused once the pool is exhausted (`PoolUsage.isExhausted`: under 2 GiB free, whatever the percentage).
 That refusal is part of `BranchFlow.preflight`, so `isx branch`, the TUI and `isx mcp`'s `create_instance` all get it before anything is created, and `isx mcp` answers it as `refused`.
 The branch reads the space of its source's pool, which is the copy's whenever the source is on a CoW pool.
 The read is one more request on the branch path, well under a millisecond, which `BranchPoolSpaceTest` pins.
 A pool whose usage cannot be read lets everything through, and Incus decides.
 What this gives up: a running instance can still fill the pool after its branch, since nothing bounds the pool as a whole (see "The cap and #414" above for why no pool quota is set).
+
+So on macOS the disk can still fill, and two more pieces make that recoverable.
+The appliance keeps a reserve on the data disk: `/var/lib/incus/.isx-reserve`, 1 GiB made with `fallocate` and never written (appliance/DESIGN.md, boot step 6).
+A boot with under 2 GiB free deletes it before `incusd` starts and commits the delete, so Incus starts with room for its database, and `isx destroy` and `isx clean pool` work again.
+A boot with 6 GiB free makes it again, so a reserve is never made and freed on alternate boots.
+A preallocated extent is never written, so the Mac's sparse `data.img` is not expected to grow for it; that has not yet been measured on a Mac.
+The reserve is freed only at boot, never while the VM runs, so a person must restart the VM: Incus is already down by then, and a restart stops nothing that still works.
+
+When Incus does not answer, isx asks the VM's control agent about the disk (`disk-free`, `VmDisk`), since the agent answers on a vsock port of its own while Incus is down.
+When the disk is full (under 512 MiB free, `VmDisk.isFull`), `recoverReachability` says so and skips the forwarder restart, which cannot bring Incus back.
+That is far below the branch's 2 GiB, since Incus runs well with 1 or 2 GiB free, and a forwarder wedged there still needs its restart.
+`awaitReady` and `IncusApi.diagnoseVsock` say the same after their own failure.
+The message names `isx vm restart` when a reserve is there to release, and `isx vm resize <size>` in every case, then `isx destroy` and `isx clean pool`.
+An appliance from before the verb answers `error: unknown verb`, and isx then says what it said before.
 
 ### Orphaned subvolumes and dangling records
 

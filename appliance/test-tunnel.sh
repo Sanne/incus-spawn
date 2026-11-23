@@ -142,6 +142,10 @@ expect '[ -n "$v" ] && [[ "$v" != error* ]]' "version answered ('$(echo "$v" | h
 s=$(agent sshd-status)
 expect '[ "$s" = running ] || [ "$s" = stopped ]' "sshd-status answered ('$s')"
 
+# Free, total and reserve bytes of the data disk, which the host asks for when Incus does not answer (#2555)
+d=$(agent disk-free)
+expect 'echo "$d" | grep -Eq "^[0-9]+ [1-9][0-9]* [0-9]+$"' "disk-free answered ('$d')"
+
 # The pool's qgroup lookup must resolve and answer key=value lines. A fresh pool has quotas
 # off (Incus enables them lazily), so "available=0" is a valid answer: what is tested is the
 # lookup and the reply shape, not the flag.

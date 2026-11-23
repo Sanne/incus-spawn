@@ -60,6 +60,24 @@ if [ -b /dev/vdc ]; then
     # Expand btrfs to fill the device (the host image may have been grown by 'isx vm resize')
     btrfs filesystem resize max /var/lib/incus 2>/dev/null || true
     echo "incus-spawn: data disk mounted ($(ts)s)"
+    # A reserve, so Incus can still start once the rest of the disk is full (#2555): Incus keeps
+    # its database here, beside the pool, and cannot start without room to write it. The file is
+    # preallocated, never written, so the host's sparse data.img does not grow for it. A boot with
+    # under 2 GiB free deletes it before incusd starts; one with 6 GiB free makes it again.
+    # isx-agent's disk-free verb reports it (RESERVE there; keep the two in step).
+    RESERVE=/var/lib/incus/.isx-reserve
+    avail_mib=$(df -Pk /var/lib/incus | awk 'NR == 2 { print int($4 / 1024) }')
+    if [ -f "$RESERVE" ]; then
+        if [ "${avail_mib:-0}" -lt 2048 ]; then
+            # rcS runs under set -e: an unlink a full disk refuses must not stop the boot before incusd
+            rm -f "$RESERVE" || echo "incus-spawn: could not delete the data disk's reserve"
+            # Freed only once the transaction commits, and the mount commits every 300 s
+            btrfs filesystem sync /var/lib/incus 2>/dev/null || sync
+            echo "incus-spawn: data disk full (${avail_mib} MiB free), released its reserve so Incus can start"
+        fi
+    elif [ "${avail_mib:-0}" -ge 6144 ]; then
+        fallocate -l 1G "$RESERVE" 2>/dev/null || rm -f "$RESERVE" || true
+    fi
 fi
 
 #-- Disable IPv6 (QEMU user-mode NAT is IPv4-only) --#

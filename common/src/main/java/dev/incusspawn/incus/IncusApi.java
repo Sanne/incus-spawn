@@ -10,6 +10,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.TerminalStreams;
+import dev.incusspawn.vm.VmDisk;
 import dev.incusspawn.vm.VmManager;
 
 import java.io.ByteArrayOutputStream;
@@ -204,6 +205,11 @@ class IncusApi {
      * connection, wedging the whole API until the forwarder's {@code socat -T} reaps it (#774).
      */
     static String diagnoseVsock(Path vsockSocket) {
+        return diagnoseVsock(vsockSocket, VmDisk::read);
+    }
+
+    /** {@link #diagnoseVsock(Path)}, with the data disk as the VM's agent reports it. */
+    static String diagnoseVsock(Path vsockSocket, java.util.function.Supplier<java.util.Optional<VmDisk>> disk) {
         var probe = new UnixSocketTransport(vsockSocket.toString(), PROBE_TIMEOUT_SECONDS);
         try {
             probe.request("GET", "/1.0", "application/json", Map.of(), new byte[0],
@@ -215,8 +221,12 @@ class IncusApi {
                     + "\nThe VM may still be booting. Wait a few seconds and retry,"
                     + " or run 'isx vm restart'.";
         } catch (IOException e) {
-            return "vsock socket exists at " + vsockSocket
-                    + " but the Incus API did not answer: " + e.getMessage()
+            var answer = "vsock socket exists at " + vsockSocket
+                    + " but the Incus API did not answer: " + e.getMessage();
+            // A full disk stops Incus, and only the agent, on a port of its own, can still say so (#2555)
+            var full = disk.get().filter(VmDisk::isFull);
+            if (full.isPresent()) return answer + "\n" + String.join("\n", full.get().explanation());
+            return answer
                     + "\nThe VM may still be booting. Wait a few seconds and retry,"
                     + " or run 'isx doctor' if it persists.";
         }

@@ -142,6 +142,15 @@ public final class VmAgentClient {
     }
 
     /**
+     * The data disk's {@code "<free> <total> <reserve>"} bytes ({@link VmDisk#parse}, #2555). It
+     * answers while Incus does not, which is what a full disk does to Incus. An agent that predates
+     * the verb answers {@code error: unknown verb}, which parses as unavailable.
+     */
+    public static Optional<String> diskFree() {
+        return send("disk-free");
+    }
+
+    /**
      * The pool's qgroup accounting status as {@code key=value} lines read from sysfs inside the VM
      * ({@code enabled}, {@code inconsistent}, {@code mode}, {@code drop_subtree_threshold}), for
      * {@code BtrfsUsage.parseStatus}. An agent that predates the verb answers {@code error: unknown
