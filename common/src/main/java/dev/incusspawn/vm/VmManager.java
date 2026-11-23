@@ -315,7 +315,8 @@ public final class VmManager {
      */
     public static Path findLauncher() {
         var candidates = new ArrayList<String>();
-        ProcessHandle.current().info().command().ifPresent(candidates::add);  // java's, on a JVM: no isx-vm there
+        var self = ProcessHandle.current().info().command();
+        self.ifPresent(candidates::add);  // java's, on a JVM: no isx-vm there
         var onPath = dev.incusspawn.proxy.ProxyService.resolveIsxPath();
         if (onPath != null) candidates.add(onPath);
         for (var isx : candidates) {
@@ -328,9 +329,59 @@ public final class VmManager {
         if (Files.isExecutable(local)) return local;
         var found = HostPath.find(LAUNCHER);
         if (found != null) return Path.of(found);
-        throw new VmException(LAUNCHER + " not found beside isx or on the PATH. It ships with isx:"
-                + " reinstall isx (brew reinstall the Sanne/tap formula you installed), or build it with launcher/build-isx-vm.sh.");
+        boolean onJvm = self.map(c -> Path.of(c).getFileName().toString().equals("java")).orElse(false);
+        var isx = onJvm ? onPath : self.orElse(onPath);
+        String realIsx = null;
+        if (isx != null) {
+            try {
+                realIsx = Path.of(isx).toRealPath().toString();
+            } catch (IOException e) {
+                realIsx = isx;
+            }
+        }
+        throw new VmException(launcherMissing(realIsx, Environment.localBinIsx().getParent(), onJvm, BuildInfo.instance()));
     }
+
+    /** The release asset {@code isx-vm} ships as, the only macOS arch released (#1693). */
+    static final String LAUNCHER_ASSET = "isx-vm-macos-aarch64";
+
+    /**
+     * Why no VM can start without {@code isx-vm}, and how to install it the way this isx was
+     * installed (#2552): Homebrew's formula ships it, {@code install.sh} builds it on a Mac, and a
+     * JBang install (the JVM, from neither) downloads it from its release. {@code realIsx} is the
+     * running isx's real path, or the one on the PATH on a JVM; null when neither is known.
+     */
+    static String launcherMissing(String realIsx, Path localBin, boolean onJvm, BuildInfo build) {
+        var headline = LAUNCHER + ", the program that runs the VM, was not found beside isx or on the PATH.";
+        if (realIsx != null) {
+            var cellar = HOMEBREW_CELLAR.matcher(realIsx);
+            if (cellar.find()) {
+                return headline + "\nReinstall isx with Homebrew, which installs " + LAUNCHER + " beside it:"
+                        + "\n  brew reinstall Sanne/tap/" + cellar.group(1);
+            }
+            if (Path.of(realIsx).getParent() != null && Path.of(realIsx).getParent().equals(localBin)) {
+                return headline + "\nRun ./install.sh again from your incus-spawn checkout: on a Mac it builds "
+                        + LAUNCHER + " and installs it beside isx.";
+            }
+        }
+        if (build.isDev()) {
+            return headline + "\nBuild it in your incus-spawn checkout with launcher/build-isx-vm.sh,"
+                    + " and copy the file it prints to " + localBin.resolve(LAUNCHER) + ".";
+        }
+        var release = "https://github.com/Sanne/incus-spawn/releases/download/v" + build.version();
+        return headline + "\n" + (onJvm ? "This isx runs on a JVM, so its install (such as JBang's) did not include "
+                        + LAUNCHER + "." : "This install did not include " + LAUNCHER + ".")
+                + "\nDownload it from release v" + build.version() + ", check it against the release's SHA256SUMS,"
+                + " and install it in " + localBin + ", where isx looks for it:"
+                // One && chain: a failed download or check, an empty one included, installs nothing
+                + "\n  cd \"$(mktemp -d)\" &&"
+                + "\n  curl -fL -O " + release + "/" + LAUNCHER_ASSET + " -O " + release + "/SHA256SUMS &&"
+                + "\n  grep ' " + LAUNCHER_ASSET + "$' SHA256SUMS | shasum -a 256 -c &&"
+                + "\n  mkdir -p \"" + localBin + "\" && install -m 755 " + LAUNCHER_ASSET + " \"" + localBin.resolve(LAUNCHER) + "\"";
+    }
+
+    /** A Homebrew install's real path, {@code <prefix>/Cellar/<formula>/<version>/bin/isx}. */
+    private static final java.util.regex.Pattern HOMEBREW_CELLAR = java.util.regex.Pattern.compile("/Cellar/([^/]+)/[^/]+/bin/[^/]+$");
 
     // --- VM lifecycle lock ---
 
@@ -497,6 +548,14 @@ public final class VmManager {
     private enum StartResult { LAUNCHED, ALREADY_RUNNING, FAILED }
 
     private static StartResult startLocked() {
+        return startLocked(false);
+    }
+
+    /**
+     * @param replacesLegacy the VM this start replaces ran under vfkit: macOS asks again for the
+     *                       new program, though the old one left a log behind (#2552)
+     */
+    private static StartResult startLocked(boolean replacesLegacy) {
         requireMacOs();
         if (isRunning()) {
             BuildOutput.note("VM already running (pid=" + readPid() + ").");
@@ -535,9 +594,10 @@ public final class VmManager {
         int cpus = detectCpus();
         int memoryMiB = detectMemoryMiB();
 
-        if (!Files.exists(Environment.vmLogFile())) {
+        if (!Files.exists(Environment.vmLogFile()) || replacesLegacy) {
             // The launcher shares the home read-only at the hypervisor, and the appliance mounts it
             // read-only too (rcS).
+            if (replacesLegacy) BuildOutput.note(LAUNCHER + " now runs the VM in place of " + LEGACY_HYPERVISOR + ".");
             BuildOutput.note("macOS may ask to allow access to your home folder and the local network.");
             BuildOutput.note("Both are safe to approve.");
             BuildOutput.note("isx's Linux VM mounts your home folder read-only, to share host paths you configure.");
@@ -571,12 +631,17 @@ public final class VmManager {
      */
     public static boolean restart() {
         try (var ignored = acquireVmLock()) {
+            boolean fromLegacy = false;
             if (!runningOrAdopted()) {
                 BuildOutput.note("VM not running — starting.");
             } else {
+                // Before the stop: a VM stopped for a launcher that is not installed stays down,
+                // which is a JBang install's first restart after the move from vfkit (#2552).
+                findLauncher();
+                fromLegacy = runsUnderLegacyHypervisor();
                 stopLocked();
             }
-            if (startLocked() != StartResult.LAUNCHED) return false;
+            if (startLocked(fromLegacy) != StartResult.LAUNCHED) return false;
             return awaitReady();
         } catch (VmException e) {
             BuildOutput.error(e.getMessage());

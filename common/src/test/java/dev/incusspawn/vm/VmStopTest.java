@@ -95,6 +95,26 @@ class VmStopTest {
         } catch (IOException ignored) {}
     }
 
+    /**
+     * A restart looks for the launcher before it stops the VM (#2552): a JBang install moving from
+     * vfkit has no isx-vm, and the stop used to come first, so the VM ended up down.
+     */
+    @Test
+    void aRestartWithNoLauncherInstalledLeavesTheVmRunning() {
+        try {
+            VmManager.findLauncher();
+            org.junit.jupiter.api.Assumptions.abort("an isx-vm is installed on this host");
+        } catch (VmException expected) {
+            // what a host without isx-vm says, which this test is about
+        }
+        var restarted = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var out = dev.incusspawn.util.RecordingOutput.during(() -> restarted.set(VmManager.restart()));
+        assertFalse(restarted.get());
+        assertTrue(vm.isAlive(), "the VM must not be stopped for a launcher that is not there");
+        var errors = out.events(dev.incusspawn.util.RecordingOutput.Kind.ERROR);
+        assertTrue(errors.stream().anyMatch(e -> e.msg().contains("isx-vm, the program that runs the VM")), errors.toString());
+    }
+
     @Test
     void aGuestThatDoesNotShutDownIsReportedAsSignalled() {
         // No agent and no control socket to ask: the launcher gets SIGTERM (#881)
