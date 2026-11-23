@@ -122,7 +122,8 @@ class RawOutputGateTest {
             "cli/src/main/java/dev/incusspawn/command/Prompts.java", "its terminal() asks only when stdin and stdout are a terminal",
             "cli/src/main/java/dev/incusspawn/command/GitRemoteHelperCommand.java", "a git remote helper: stdin and stdout are git's protocol, stderr what git shows",
             "cli/src/main/java/dev/incusspawn/command/SshProxyCommand.java", "an ssh ProxyCommand: stdin and stdout are the connection, stderr what ssh shows",
-            "cli/src/main/java/dev/incusspawn/command/ExecCommand.java", "isx exec: the guest command's stdout, stderr and stdin are isx's own");
+            "cli/src/main/java/dev/incusspawn/command/ExecCommand.java", "isx exec: the guest command's stdout, stderr and stdin are isx's own",
+            "cli/src/main/java/dev/incusspawn/command/SetupTokenCapture.java", "relays 'claude setup-token''s screen byte for byte while it reads the token");
 
     @Test
     void onlyTheNamedPassthroughsTakeTheTerminalsStreams() throws IOException {
@@ -148,7 +149,8 @@ class RawOutputGateTest {
             Map.entry("common/src/main/java/dev/incusspawn/util/TerminalProgress.java", "asks stty for the terminal's size, on stdin alone"),
             Map.entry("common/src/main/java/dev/incusspawn/tool/YamlToolAction.java", "runs a tool's command once BuildOutput.releaseTerminal() hands it over"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/ProxyStartCommand.java", "the proxy in the foreground, its log on the terminal"),
-            Map.entry("cli/src/main/java/dev/incusspawn/command/CredentialSetup.java", "'claude setup-token', whose prompts reach the user"),
+            Map.entry("cli/src/main/java/dev/incusspawn/command/CredentialSetup.java", "'claude setup-token', whose prompts reach the user, where script(1) is missing"),
+            Map.entry("cli/src/main/java/dev/incusspawn/command/SetupTokenCapture.java", "the keyboard for 'claude setup-token' under script(1), and stty to restore the terminal"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/DoctorCommand.java", "an interactive remediation the user chose"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/InitCommand.java", "host setup commands, shown as they run, and stdin for a sudo prompt"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/GroupContinuation.java", "the whole command run again under sg, on this process's streams (#2167)"),

@@ -110,9 +110,13 @@ class InitTranscriptsTest {
             return gitHub;
         }
 
+        /** What isx reads from 'claude setup-token''s screen: none unless a branch sets it. */
+        List<String> screenTokens = List.of();
+
         @Override
-        void runClaudeSetupToken() {
-            BuildOutput.step("⟪'claude setup-token' takes the terminal here: it opens the browser and prints a token⟫");
+        List<String> runClaudeSetupToken() {
+            BuildOutput.step("⟪'claude setup-token' runs here: it opens the browser and prints a token⟫");
+            return screenTokens;
         }
 
         @Override
@@ -255,9 +259,9 @@ class InitTranscriptsTest {
 
         // The path Sanne ran: Claude Code with a subscription, a GitHub account of the agent's own
         b.add(new Branch("01-claude-subscription-agent-github", "Claude Code signed in with a subscription; the agent's own GitHub account",
-                i -> { i.found = sub; i.login = "jdoe"; }, claudeHere,
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("")));
-        b.add(new Branch("02-claude-subscription-own-github", "Claude Code with a subscription; your own GitHub account, from gh",
+                i -> { i.found = sub; i.login = "jdoe"; }, h -> { h.commands.add("claude"); h.screenTokens = List.of(OAUTH_TOKEN); },
+                new ScriptedPrompts().line("", "", "1").secret(GITHUB_TOKEN).line("")));
+        b.add(new Branch("02-claude-subscription-own-github", "Claude Code with a subscription; the token not read from the screen, so pasted; your own GitHub account, from gh",
                 i -> { i.found = sub; i.login = "jdoe"; },
                 h -> { h.commands.add("claude"); h.ghLoggedIn = true; h.ghToken = gho;
                     h.gitHub = new CredentialSetup.GitHubUser("jdoe", 1234567, "jane@example.org"); },
