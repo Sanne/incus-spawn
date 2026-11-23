@@ -63,16 +63,21 @@ class InitFirstRunAccountsTest {
         return fail("'" + text + "' is not in:\n" + String.join("\n", lines));
     }
 
-    /** Pi is asked about Claude: the step says why first, and how to spend another provider's account. */
+    /**
+     * Pi is asked about Claude: the step says why first, and where another provider is set up,
+     * with no template syntax before a template was explained (#2528).
+     */
     @Test
-    void anAgentWithNoAccountOfItsOwnIsToldWhoseItSpends() {
+    void anAgentWithNoAccountOfItsOwnIsToldWhoseItUses() {
         for (var agent : List.of("pi", "opencode")) {
             IsolatedHome.configFile().toFile().delete();
-            var lines = ask(agent, ScriptedPrompts.lines(""), new Init());
+            var lines = ask(agent, ScriptedPrompts.lines("4"), new Init());
 
-            var whose = at(lines, "has no account of its own: by default it spends a claude account.");
-            assertTrue(whose < at(lines, "How should instances authenticate with Claude?"), String.join("\n", lines));
-            assertTrue(at(lines, "'- " + agent + ": {provider: openai}'") > whose, String.join("\n", lines));
+            var whose = at(lines, "works with several providers, and isx sets it up");
+            assertTrue(at(lines, "with a Claude account first.") == whose + 1, String.join("\n", lines));
+            assertTrue(whose < at(lines, "Which kind of Claude account do you have?"), String.join("\n", lines));
+            assertTrue(at(lines, "https://isx.run/docs/agents#") > whose, String.join("\n", lines));
+            assertEquals(0, count(lines, "{provider:"), String.join("\n", lines));
         }
     }
 
@@ -80,13 +85,17 @@ class InitFirstRunAccountsTest {
     @Test
     void anAgentSpendingGitHubIsAskedForItOnceWhenSkipped() {
         var init = new Init();
-        var lines = ask("copilot", ScriptedPrompts.lines(""), init);
+        // With no gh login, None for now is the second option
+        var lines = ask("copilot", ScriptedPrompts.lines("2"), init);
 
-        assertEquals(1, count(lines, "Which GitHub account should the agent use?"), String.join("\n", lines));
-        assertEquals(1, count(lines, "has no account of its own: it spends a github account."), String.join("\n", lines));
-        assertEquals(0, count(lines, "GitHub Account"), String.join("\n", lines));
+        assertEquals(1, count(lines, "As which GitHub account should the agent act?"), String.join("\n", lines));
         // Said here, since the GitHub step's own header, which says it, is never shown on this path
-        assertTrue(at(lines, "also the name on the agent's commits") < at(lines, "Which GitHub account"), String.join("\n", lines));
+        assertTrue(at(lines, "GitHub Copilot CLI signs in with a GitHub account, and the") < at(lines, "As which GitHub account"),
+                String.join("\n", lines));
+        assertEquals(0, count(lines, "GitHub Account"), String.join("\n", lines));
+        // The counter matches the run: the agent, then its account, which is the GitHub question (#2528)
+        assertEquals(1, count(lines, "[2/2]"), String.join("\n", lines));
+        assertEquals(0, count(lines, "[3/"), String.join("\n", lines));
         assertEquals(0, count(lines, "set up already"), String.join("\n", lines));
         assertTrue(init.answers.noCredential());
         assertTrue(init.answers.noGitHub());
@@ -97,12 +106,15 @@ class InitFirstRunAccountsTest {
     /** The kind of account is a list like every other, naming the credential rather than "a credential". */
     @Test
     void theKindOfAccountIsChosenFromANamedList() {
-        var lines = ask("antigravity", new ScriptedPrompts().line("").secret(""), new Init());
+        // The key, then Enter at it, which goes back to the kinds (#2528); end of input ends there
+        var lines = ask("antigravity", new ScriptedPrompts().line("1").secret(""), new Init());
 
-        var question = at(lines, "Which kind of gemini account is this? Choose one:");
-        assertTrue(at(lines, "has no account of its own: it spends a gemini account.") < question, String.join("\n", lines));
-        assertTrue(at(lines, "1. Gemini API key") > question, String.join("\n", lines));
-        assertTrue(at(lines, "2. Google account") > question, String.join("\n", lines));
+        var question = at(lines, "Which kind of Gemini account do you have? Choose one:");
+        assertTrue(at(lines, "Antigravity CLI uses a Gemini account.") < question, String.join("\n", lines));
+        assertTrue(at(lines, "1. A Gemini API key") > question, String.join("\n", lines));
+        assertTrue(at(lines, "2. A Google account") > question, String.join("\n", lines));
+        assertTrue(at(lines, "3. None for now") > question, String.join("\n", lines));
+        assertEquals(2, count(lines, "Which kind of Gemini account do you have?"), String.join("\n", lines));
         assertEquals(0, count(lines, "A credential entered here"), String.join("\n", lines));
     }
 
@@ -111,8 +123,8 @@ class InitFirstRunAccountsTest {
     void aSkippedKeyIsNotSaidToBeSaved() {
         var lines = ask("bob", new ScriptedPrompts().secret("").line(""), new Init());
 
-        assertEquals(0, count(lines, "credentials saved"), String.join("\n", lines));
-        assertEquals(1, count(lines, "Saved without a credential. Configure later with 'isx account add bob'."),
-                String.join("\n", lines));
+        assertEquals(0, count(lines, "Saved on"), String.join("\n", lines));
+        assertEquals(1, count(lines, "Saved your answer to \"Accept IBM license terms\""), String.join("\n", lines));
+        assertEquals(1, count(lines, "Add one later with 'isx account add bob'."), String.join("\n", lines));
     }
 }

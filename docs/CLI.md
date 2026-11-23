@@ -28,11 +28,11 @@ isx init --plan [--format=table|plain|json]
 The first run at a terminal ends with a built template for your agent, and asks only what that needs.
 It asks its questions first, so the long work then runs while nobody has to watch:
 
-1. Which coding agent to set up.
+1. Which coding agent you prefer.
    One found on this host is chosen by Enter, and "None for now" is a choice too.
-2. The account that agent spends, which you may skip.
-3. A GitHub account for the agent, which you may skip too.
-4. When you skip GitHub, whether the agent may commit under your own Git name and email.
+2. The account that agent uses, which you may skip.
+3. As which GitHub account the agent acts: one of its own, your own, or none for now.
+4. With no GitHub account, whether the agent may commit under your own Git name and email.
    Enter is No.
 5. On Linux, your sudo password.
 
@@ -41,9 +41,9 @@ Init then sets up the host and installs the services.
 It writes `~/.config/incus-spawn/images/tpl-agent.yaml` for your agent, and builds it.
 With no agent it writes nothing and builds `tpl-minimal`.
 
-At the end it asks whether to open your first agent.
+At the end it asks whether to run the command that opens your first agent.
 After a skipped account it does not ask, and the closing message says how to add one.
-It also lists each step it left for later, with the command that runs it.
+It also names `isx init`, whose menu lists each step it left for later.
 
 A Claude Code subscription found on this host is never copied.
 Init runs `claude setup-token` to get a token of isx's own, and you paste the token it prints.

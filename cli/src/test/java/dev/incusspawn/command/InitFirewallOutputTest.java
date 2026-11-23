@@ -88,7 +88,7 @@ class InitFirewallOutputTest {
      */
     @Test
     void eachFirewallChangeIsALiveStepThatEndsBeforeItsWarning() {
-        var masquerade = "Enabling masquerading (NAT) for container internet access";
+        var masquerade = "Enabling NAT, so instances reach the internet";
         var init = new FakeInit();
         var done = RecordingOutput.during(() -> init.host().configureFirewalld()).events();
         int at = done.indexOf(new RecordingOutput.Event(RecordingOutput.Kind.STEP_START, masquerade));

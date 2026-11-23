@@ -644,7 +644,7 @@ public class CertificateAuthority {
     }
 
     private static CertificateAuthority generate() throws Exception {
-        BuildOutput.stepStart("Generating MITM CA certificate");
+        BuildOutput.stepStart("Creating the isx proxy's certificate");
         try {
             var ca = generateUnreported();
             BuildOutput.stepDone();

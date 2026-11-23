@@ -81,7 +81,8 @@ public final class SshKeyManager {
             Files.setPosixFilePermissions(Environment.sshPubKeyFile(),
                     PosixFilePermissions.fromString("rw-r--r--"));
 
-            BuildOutput.note("SSH key pair generated at " + Environment.sshDir());
+            // The path is for a log, not for the person setting up (#2528)
+            dev.incusspawn.ClientLog.debug("SSH key pair generated at " + Environment.sshDir());
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException("Failed to generate SSH key pair: " + e.getMessage(), e);
         }

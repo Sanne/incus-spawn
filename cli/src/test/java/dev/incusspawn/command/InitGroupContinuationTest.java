@@ -122,7 +122,7 @@ class InitGroupContinuationTest {
                 "configureMitmProxy", "setupSshKeyPair"), init.hostSteps);
         assertTrue(init.ran.isEmpty());
         assertFalse(frames.contains("User Namespace Mappings"));
-        assertTrue(frames.contains("1  Credential Setup"));
+        assertTrue(frames.contains("  Credential Setup "));
         assertTrue(frames.contains("[6/6]"));
     }
 

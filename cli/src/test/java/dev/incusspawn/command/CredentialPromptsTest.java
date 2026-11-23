@@ -119,8 +119,8 @@ class CredentialPromptsTest {
     void geminiUsesTheHostCredentialMenuAndPreservesNamedAccounts() {
         var setup = new CredentialSetup();
         var tool = new ToolDefLoader().allToolSetups().get("gemini-cli");
-        // Gemini first asks which kind of account this is: Enter keeps the API key (#2443)
-        var first = new ScriptedPrompts().line("").secret("gemini-test-default");
+        // Gemini first asks which kind of account this is (#2443), with no default (#2528)
+        var first = new ScriptedPrompts().line("1").secret("gemini-test-default");
         setup.setupGenericToolCredentials("gemini-cli", tool, new SpawnConfig(), first);
         first.assertFullyConsumed();
         var second = new ScriptedPrompts().line("a", "work", "1").secret("gemini-test-work");
@@ -153,11 +153,11 @@ class CredentialPromptsTest {
         assertEquals("", saved("gemini.accounts.default.apiKey"));
         assertEquals("default", saved("gemini.default"));
         assertTrue(prompts.conversation().stream().anyMatch(l -> l.contains("Google account")), prompts.conversation().toString());
-        assertTrue(printed.contains("prints a Google sign-in link in that terminal"), printed);
+        assertTrue(printed.contains("The first time Antigravity CLI starts, it prints a"), printed);
         assertTrue(dev.incusspawn.config.AccountResolver.usableAccountNames(SpawnConfig.load(), "gemini").contains("default"));
 
         // A second, keyed account beside it, and the Google one keeps its type
-        var second = new ScriptedPrompts().line("a", "work", "").secret("gemini-test-work");
+        var second = new ScriptedPrompts().line("a", "work", "1").secret("gemini-test-work");
         setup.setupGenericToolCredentials("gemini-cli", tool, SpawnConfig.load(), second);
         second.assertFullyConsumed();
         assertEquals("gemini-test-work", saved("gemini.accounts.work.apiKey"));
@@ -235,7 +235,7 @@ class CredentialPromptsTest {
                 """);
         var printed = reported(() -> new CredentialSetup().setupGenericToolCredentials("solo",
                 new ToolDefLoader().find("solo"), new SpawnConfig(), new ScriptedPrompts().secret("")));
-        assertTrue(printed.contains("Skipped. Configure later with 'isx account add soloCloud'."), printed);
+        assertTrue(printed.contains("No credential added.\nAdd one later with 'isx account add soloCloud'."), printed);
     }
 
     /**
@@ -458,7 +458,7 @@ class CredentialPromptsTest {
         for (var shown : List.of("tool ", "key ", "help ", "region ", "consent ", "zone ")) {
             assertTrue(out.contains(shown + "a ]0;pwned  2J fake: prompt gnp.exe"), shown + " in:\n" + out);
         }
-        assertTrue(out.contains("tool a ]0;pwned  2J fake: prompt gnp.exe credentials saved."), out);
+        assertTrue(out.contains("saved on " + dev.incusspawn.Platform.thisComputer()), out);
         out.codePoints().filter(c -> c != '\n').forEach(c -> assertFalse(
                 Character.isISOControl(c) || c >= 0x2028 && c <= 0x202E || c >= 0x2066 && c <= 0x2069,
                 () -> "U+%04X printed raw:%n%s".formatted(c, out)));

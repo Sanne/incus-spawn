@@ -98,7 +98,7 @@ class MissingAccountsAskTest {
         acme();
         assertEquals(List.of("GitHub personal access token", "OpenAI API key", "Acme API key"), credentials(missing()));
         var prompts = new ScriptedPrompts()
-                .line("y", "n").secret(PAT).line("")   // GitHub: yes, no browser, the PAT, no more accounts
+                .line("y").secret(PAT).line("")        // GitHub: yes, the PAT, no more accounts
                 .line("n")                              // Codex: skipped
                 .line("y").secret("acme-secret");       // Acme: yes, its key
 

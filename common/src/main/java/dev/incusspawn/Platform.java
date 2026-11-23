@@ -54,6 +54,14 @@ public final class Platform {
     }
 
     /**
+     * The computer isx is installed on, as text a person reads: "this Mac", else "this computer",
+     * never "host" (#2528).
+     */
+    public static String thisComputer() {
+        return isMacOS() ? "this Mac" : "this computer";
+    }
+
+    /**
      * Best-effort desktop notification. Fire-and-forget: failures are silently ignored.
      * Uses {@code osascript} on macOS, {@code notify-send} on Linux.
      */

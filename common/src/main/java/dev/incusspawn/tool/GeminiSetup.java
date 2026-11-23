@@ -76,12 +76,18 @@ public class GeminiSetup implements ToolSetup {
 
     /** How a {@code type: google} account signs in: in an instance, through the proxy. */
     static final HostedSignIn GOOGLE_SIGN_IN = new HostedSignIn(GoogleAccounts.TYPE,
-            "Google account: an AI Pro or Ultra plan, for Antigravity CLI",
-            List.of("No credential is entered here. The first time you start agy in an instance on this",
-                    "account (from isx shell), it prints a Google sign-in link in that terminal: open it on",
-                    "this machine, sign in, and paste the code it gives back into agy. The proxy keeps the",
-                    "session on this host, and the instance holds only a placeholder. Gemini CLI, Pi and",
-                    "opencode still need an API key account."));
+            "Google account",
+            // Only agy spends it: Gemini CLI, Pi and opencode need a key account (#2443)
+            "With a Google AI Pro or Ultra plan.\nYou sign in when Antigravity CLI first starts.\nOnly Antigravity CLI can use it.",
+            "From Google AI Studio.",
+            // Short lines, at the width of init's frame (#2528); no word for what agy runs in,
+            // since the first run and 'isx account add' name it differently
+            List.of("The first time Antigravity CLI starts, it prints a",
+                    "Google sign-in link. Open it, sign in, and paste the",
+                    "code it shows back into Antigravity CLI. isx keeps the",
+                    "sign-in, and the agent never gets it."),
+            "Google account chosen",
+            List.of("antigravity"));
     static final String CONFIG_PATH = "/home/agentuser/.gemini/settings.json";
     /**
      * Gemini CLI reads no system-wide context file, and {@code ~/.gemini/GEMINI.md} is the
@@ -124,8 +130,7 @@ public class GeminiSetup implements ToolSetup {
         apiKey.setConfigPath(API_KEY);
         apiKey.setDescription("Gemini API key");
         apiKey.setSecret(true);
-        apiKey.setHelp(List.of("Create a Gemini API key at https://aistudio.google.com/apikey.",
-                "The key stays on this host; the proxy supplies it to Gemini requests."));
+        apiKey.setHelp(List.of("Create a key at https://aistudio.google.com/apikey."));
 
         var auth = new ToolDef.AuthDef();
         auth.setDomains(List.of("generativelanguage.googleapis.com"));

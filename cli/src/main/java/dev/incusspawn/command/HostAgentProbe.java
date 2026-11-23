@@ -94,22 +94,6 @@ public final class HostAgentProbe {
             return HostAgentProbe.title(agent);
         }
 
-        /**
-         * What init says on finding the agent, in plain words and with no model or path:
-         * {@code Claude Code is on this host, signed in with a subscription.}
-         */
-        public String found() {
-            if (!signedIn) return title() + " is on this host, with no sign-in found.";
-            var account = switch (kind) {
-                case SUBSCRIPTION -> "a subscription";
-                case API_KEY -> "an API key";
-                case CLOUD -> "a cloud provider";
-                case UNKNOWN -> "an account of a kind isx cannot tell";
-            };
-            return OutputFormat.oneLine(title() + " is on this host, signed in with " + account
-                    + (kind != Kind.CLOUD || provider == null ? "" : " (" + provider + ")") + ".");
-        }
-
         /** What was found, in a few words: {@code signed in with a subscription, model opus (~/.claude.json)}. */
         public String summary() {
             var parts = new ArrayList<String>();

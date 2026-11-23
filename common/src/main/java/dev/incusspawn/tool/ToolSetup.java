@@ -141,11 +141,16 @@ public interface ToolSetup {
      * {@code isx init} offers it beside the credential the proxy definition declares and saves
      * an account of {@code type}.
      *
-     * @param type  the account's {@code type:} value
-     * @param label what the choice is called in {@code isx init}
-     * @param help  what to tell the user once the account is saved: how the sign-in happens
+     * @param type           the account's {@code type:} value
+     * @param label          what the choice is called in {@code isx init}: "Google account"
+     * @param description    the lines under that choice: what it needs and when the sign-in happens
+     * @param keyDescription the line under the other choice, the credential the tool declares
+     * @param help           what to tell the user once the kind is chosen: how the sign-in happens
+     * @param outcome        the one line that says what was saved
+     * @param tools          the tools that can sign in this way, the only ones a first run offers it to
      */
-    record HostedSignIn(String type, String label, java.util.List<String> help) {}
+    record HostedSignIn(String type, String label, String description, String keyDescription,
+                        java.util.List<String> help, String outcome, java.util.List<String> tools) {}
 
     /**
      * What a person has to do the first time this agent starts in an instance, beyond opening it:

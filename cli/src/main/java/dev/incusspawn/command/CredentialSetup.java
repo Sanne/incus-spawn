@@ -98,6 +98,35 @@ class CredentialSetup {
         return Environment.strippedEnv(name);
     }
 
+    /** A credential namespace as a person names its accounts: {@code claude} is "Claude". */
+    static String accountName(String namespace) {
+        return switch (namespace) {
+            case "claude" -> "Claude";
+            case "openai" -> "OpenAI";
+            case "gemini" -> "Gemini";
+            case "github" -> "GitHub";
+            case "bob" -> "IBM Bob";
+            default -> OutputFormat.oneLine(namespace);
+        };
+    }
+
+    /** Whether this is init's first run, which leaves some questions to later (#2528). */
+    boolean firstRun;
+
+    /** The tool name of the agent the first run set up, or null: an account kind only another agent can use is not offered (#2528). */
+    String agent;
+
+    /** Whether the first run chose no agent: what acts on GitHub is then isx machines, never "the agent" (#2528). */
+    boolean noAgent;
+
+    /**
+     * What the agent runs in, as this step names it: "isx machines" in the first run, which
+     * introduces that word, and "instances", as the rest of isx says, everywhere else (#2528).
+     */
+    String machines() {
+        return firstRun ? "isx machines" : "instances";
+    }
+
     boolean hostHasCommand(String command) {
         return commandExists(command);
     }
@@ -109,8 +138,16 @@ class CredentialSetup {
     private static final String ADD_API_KEY_LATER = "No API key added. Add one later with 'isx account add "
             + SpawnConfig.ClaudeConfig.NAMESPACE + "'.";
 
-    private static final String CLAUDE_SKIPPED = "Skipped Claude setup. Configure later with 'isx account add "
-            + SpawnConfig.ClaudeConfig.NAMESPACE + "'.";
+    private static final String CLAUDE_SKIPPED = "No Claude account yet: 'isx account add "
+            + SpawnConfig.ClaudeConfig.NAMESPACE + "' adds one.";
+
+    /**
+     * What a skipped Claude step says: "no account yet" only when there is none, never after a
+     * skip that leaves saved accounts as they were.
+     */
+    private static String claudeSkipped(SpawnConfig config) {
+        return config.getClaude().allAccounts().isEmpty() ? CLAUDE_SKIPPED : "No Claude account added.";
+    }
 
     private static final List<String> KNOWN_TOOL_ORDER = List.of("claude", "gh", "bob", "codex");
 
@@ -252,31 +289,33 @@ class CredentialSetup {
             var choice = readInput(prompts.ask("Choice (Enter to keep as-is): "));
             switch (choice) {
                 case "s" -> { signInChatGptInBrowser(config, target); return; }
-                case "k" -> { askAndSaveApiKey(config, target, prompts); return; }
+                case "k" -> { askAndSaveApiKey(config, target, prompts, false); return; }
                 default -> { return; }
             }
         }
 
-        // The question first, so the numbers read as alternatives, and what both ChatGPT
-        // options share said once after them. The layout is by hand until Prompts has a
-        // menu of its own (#2492)
-        prompts.say("");
-        prompts.say("How should instances authenticate with OpenAI? Choose one:");
-        prompts.say("");
-        prompts.say("  1. ChatGPT account, browser on this machine");
-        prompts.say("     (ChatGPT and Enterprise plans, SSO included)");
-        prompts.say("  2. ChatGPT account, one-time code entered on any device");
-        prompts.say("     (not yet tested against the real service)");
-        prompts.say("  3. OpenAI API key (platform.openai.com, billed credits)");
-        prompts.say("");
-        prompts.say("Either ChatGPT option keeps the session on this host.");
-        prompts.say("");
-        var choice = readInput(prompts.ask("Choice (Enter to leave OpenAI unconfigured): "));
-        switch (choice) {
-            case "1" -> signInChatGptInBrowser(config, target);
-            case "2" -> signInChatGptWithDeviceCode(config, target);
-            case "3" -> askAndSaveApiKey(config, target, prompts);
-            default -> BuildOutput.step("Skipped. Configure later with 'isx account add openai'.");
+        // Each option says what it is, and "None for now" is one of them: Enter asks again (#2528)
+        while (true) {
+            var answer = prompts.choose("Which kind of OpenAI account do you have?", List.of(
+                    "ChatGPT, signed in with a browser on " + Platform.thisComputer() + "\nFor a Plus, Pro, Business or Enterprise plan.\nEnterprise single sign-on works too.",
+                    "ChatGPT, signed in with a code on another device\nWith a browser on a phone or another computer.",
+                    "An OpenAI API key\nFrom platform.openai.com, billed by use.",
+                    "None for now\nAdd one later with 'isx account add openai'."), null, null);
+            var choice = answer == null ? "4" : answer.strip();
+            switch (choice) {
+                case "1" -> signInChatGptInBrowser(config, target);
+                case "2" -> signInChatGptWithDeviceCode(config, target);
+                case "3" -> {
+                    // Enter at the key goes back to the kinds of account
+                    if (!askAndSaveApiKey(config, target, prompts, true)) continue;
+                }
+                case "4" -> BuildOutput.note(hasAccountsToPreserve(config, "openai")
+                        ? "No OpenAI account added." : "No OpenAI account for now.");
+                default -> {
+                    continue;
+                }
+            }
+            return;
         }
     }
 
@@ -287,18 +326,18 @@ class CredentialSetup {
      */
     private void signInChatGptInBrowser(SpawnConfig config, AccountTarget target) {
         var signIn = chatGptSignIn();
-        BuildOutput.step("Sign in with ChatGPT");
         dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
         try {
             tokens = signIn.signInWithBrowser(url -> {
                 // A report between questions, so through BuildOutput rather than the prompts'
                 // conversation (#1703); the address plain, on its own line, so nothing stands
                 // between a terminal's link detection and the URL
-                BuildOutput.step("Open this address in a browser on this machine, then finish the sign-in there:");
+                BuildOutput.step("Sign in at this address, in a browser on " + Platform.thisComputer() + ":");
                 BuildOutput.step(url);
             });
         } catch (Exception e) {
-            BuildOutput.error("the ChatGPT sign-in did not finish: " + e.getMessage());
+            BuildOutput.warn("The ChatGPT sign-in did not finish: " + e.getMessage(),
+                    "Sign in later with 'isx account add openai'.");
             return;
         }
         saveChatGptSession(config, target, tokens);
@@ -311,23 +350,24 @@ class CredentialSetup {
         try {
             device = signIn.requestDeviceCode();
         } catch (Exception e) {
-            BuildOutput.error("could not reach OpenAI's auth server: " + e.getMessage());
+            BuildOutput.warn("isx could not reach OpenAI's sign-in server: " + e.getMessage(),
+                    "Sign in later with 'isx account add openai'.");
             return;
         }
-        BuildOutput.step("Sign in with ChatGPT");
         // A report between questions, so through BuildOutput rather than the prompts'
         // conversation (#1703). The address is printed plain, on its own line: no bolding
         // stands between a terminal's link detection and the URL. Any device serves, for the
         // one-time code carries the sign-in -- "on this machine" would send a headless host's
         // user nowhere, and this path exists for exactly them.
-        BuildOutput.step("Open this address on any device:");
+        BuildOutput.step("On any device, open this address:");
         BuildOutput.step(device.verificationUrl());
-        BuildOutput.step("and enter this one-time code: " + styled(BOLD, device.userCode()));
+        BuildOutput.step("Then enter this code there: " + styled(BOLD, device.userCode()));
         dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
         try {
             tokens = signIn.awaitAuthorization(device, null);
         } catch (Exception e) {
-            BuildOutput.error("the ChatGPT sign-in did not finish: " + e.getMessage());
+            BuildOutput.warn("The ChatGPT sign-in did not finish: " + e.getMessage(),
+                    "Sign in later with 'isx account add openai'.");
             return;
         }
         saveChatGptSession(config, target, tokens);
@@ -355,17 +395,30 @@ class CredentialSetup {
         }
         config.save();
         endChatGptSessions(replaced);
-        BuildOutput.step("ChatGPT session saved as account '" + target.name() + "'.");
+        BuildOutput.ok("Signed in to ChatGPT");
+        BuildOutput.stepNote("The sign-in is saved on " + Platform.thisComputer() + ".");
     }
 
-    /** Asks for the platform API key and records it as the account's credential. */
-    private void askAndSaveApiKey(SpawnConfig config, AccountTarget target, Prompts prompts) {
-        BuildOutput.step("Create a key at https://platform.openai.com/api-keys (shown once).");
-        var key = askSecret(prompts, "OpenAI API key (or press Enter to skip): ");
+    /**
+     * Asks for the platform API key and records it as the account's credential: false when the
+     * person pressed Enter at the key with {@code canGoBack}, to go back to the kinds of account.
+     */
+    private boolean askAndSaveApiKey(SpawnConfig config, AccountTarget target, Prompts prompts, boolean canGoBack) {
+        BuildOutput.gap();
+        BuildOutput.step("Create a key at " + TerminalLink.link("https://platform.openai.com/api-keys") + ".");
+        BuildOutput.step("OpenAI shows it only once.");
+        BuildOutput.gap();
+        // Nothing checks this key, so the receipt is what says the paste arrived
+        var answer = prompts.askSecret(canGoBack ? "Paste the API key, or Enter to go back: " : "Paste the API key, or Enter to skip: ");
+        var key = readSecret(answer);
         if (key.isBlank()) {
-            BuildOutput.step("Skipped. Configure later with 'isx account add openai'.");
-            return;
+            if (canGoBack && answer != null) return false;
+            // "No account yet" only when there is none: the ChatGPT account being switched stays as it was
+            BuildOutput.step(hasAccountsToPreserve(config, "openai") ? "No API key added."
+                    : "No OpenAI account yet: 'isx account add openai' adds one.");
+            return true;
         }
+        prompts.say(styled(DIM, describeReceivedSecret(key)));
         // Which ChatGPT sessions this key ends, read before the save changes the config; they
         // end only after the save succeeded, or a failed save leaves config.yaml naming
         // ChatGPT accounts whose sessions are already gone
@@ -387,7 +440,8 @@ class CredentialSetup {
         }
         config.save();
         endChatGptSessions(leaving);
-        BuildOutput.step("OpenAI credentials saved.");
+        BuildOutput.ok("API key saved on " + Platform.thisComputer());
+        return true;
     }
 
     /**
@@ -426,72 +480,16 @@ class CredentialSetup {
         }
     }
 
+    /**
+     * The Claude account step, shared by the first run, {@code isx account add claude} and
+     * {@code isx init credentials}: a credential found in the environment first, then the
+     * accounts already saved, then which kind of account to set up (#2528).
+     */
     void setupClaudeAuth(SpawnConfig config, Prompts prompts) {
         var target = config.getClaude().hasAuth()
                 ? new AccountTarget(config.getClaude().accountName(), false)
                 : AccountTarget.FRESH;
-
-        // Detect existing env vars
-        var envVertex = env("CLAUDE_CODE_USE_VERTEX");
-        var envApiKey = env("ANTHROPIC_API_KEY");
-        var envOauthToken = env("CLAUDE_CODE_OAUTH_TOKEN");
-
-        if ("1".equals(envVertex)) {
-            var region = env("CLOUD_ML_REGION");
-            var projectId = env("ANTHROPIC_VERTEX_PROJECT_ID");
-            BuildOutput.step("Detected Vertex AI configuration from environment:");
-            prompts.say("Region:  " + (region.isBlank() ? "(not set)" : region));
-            prompts.say("Project: " + (projectId.isBlank() ? "(not set)" : projectId));
-
-            if (region.isBlank() || projectId.isBlank()) {
-                BuildOutput.step("CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID must both be set for verification.");
-                BuildOutput.step("Continuing with manual setup");
-            } else {
-                var result = verifying("Verifying Vertex AI configuration", () -> verifyVertexConfig(region, projectId));
-                if (result.verified()) {
-                    BuildOutput.ok(result.message());
-                    if (askYesNo(prompts, envAccountPrompt(config, target, "Use this configuration?"), true)) {
-                        saveVertexConfig(config, target, region, projectId);
-                        BuildOutput.step("Claude auth configuration saved.");
-                        return;
-                    }
-                    BuildOutput.step("Skipping environment config, continuing with manual setup");
-                } else {
-                    if (askYesNo(prompts, "Save anyway? Press Enter to configure manually.", false)) {
-                        saveVertexConfig(config, target, region, projectId);
-                        BuildOutput.step("Claude auth configuration saved (unverified).");
-                        return;
-                    }
-                }
-            }
-        } else if (!envOauthToken.isBlank()) {
-            BuildOutput.step("Detected CLAUDE_CODE_OAUTH_TOKEN from environment.");
-            var oauthResult = verifying("Verifying OAuth token", () -> verifyOauthToken(envOauthToken));
-            if (oauthResult.verified()) {
-                BuildOutput.ok(oauthResult.message());
-                if (askYesNo(prompts, envAccountPrompt(config, target, "Use this token?"), true)) {
-                    saveOauthConfig(config, prompts, target, envOauthToken, true);
-                    return;
-                }
-                BuildOutput.step("Skipping environment token, continuing with manual setup");
-            } else {
-                BuildOutput.step("Continuing with manual setup");
-            }
-        } else if (!envApiKey.isBlank()) {
-            BuildOutput.step("Detected ANTHROPIC_API_KEY from environment.");
-            var result = verifying("Verifying API key", () -> verifyAnthropicApiKey(envApiKey));
-            if (result.verified()) {
-                BuildOutput.ok(result.message());
-                if (askYesNo(prompts, envAccountPrompt(config, target, "Use this key?"), true)) {
-                    saveDirectConfig(config, target, envApiKey);
-                    BuildOutput.step("Claude auth configuration saved.");
-                    return;
-                }
-                BuildOutput.step("Skipping environment key, continuing with manual setup");
-            } else {
-                BuildOutput.step("Continuing with manual setup");
-            }
-        }
+        if (useClaudeFromEnvironment(config, prompts, target)) return;
 
         // Offer to keep, extend or re-point the configured accounts on re-run.
         // allAccounts() rather than hasAuth(): even when every account is incomplete, the
@@ -501,68 +499,164 @@ class CredentialSetup {
             if (managed.isEmpty()) return;
             target = managed.get();
         }
+        chooseClaudeAccountKind(config, prompts, target);
+    }
 
-        var authChoice = readInput(prompts.choose("How should instances authenticate with Claude?", List.of(
-                "Anthropic API key",
-                "Claude Pro, Max or Team subscription (OAuth token)",
-                "Google Cloud Vertex AI"), null, "leave Claude unconfigured"));
-
-        if (authChoice.equals("3")) {
-            while (true) {
-                var region = readInput(prompts.ask("CLOUD_ML_REGION (or press Enter to skip): "));
-                if (region.isBlank()) {
-                    BuildOutput.step(CLAUDE_SKIPPED);
-                    return;
+    /** Which kind of Claude account, until one is set up or the person chooses none: Enter asks again. */
+    private void chooseClaudeAccountKind(SpawnConfig config, Prompts prompts, AccountTarget target) {
+        while (true) {
+            var answer = prompts.choose("Which kind of Claude account do you have?", List.of(
+                    "An Anthropic API key\nFrom the Claude Console, billed by use.",
+                    "A Claude subscription (Pro, Max or Team)\nClaude Code makes a token for it.",
+                    "Google Cloud Vertex AI\nBilled to your Google Cloud project.",
+                    "None for now\nAdd one later with 'isx account add claude'."), null, null);
+            // End of input is no answer at all: nothing is set up
+            var choice = answer == null ? "4" : answer.strip();
+            var outcome = switch (choice) {
+                case "1" -> setupClaudeApiKey(config, prompts, target, null);
+                case "2" -> claudeToken(config, prompts, target, false);
+                case "3" -> setupClaudeVertex(config, prompts, target);
+                case "4" -> {
+                    BuildOutput.step(claudeSkipped(config));
+                    yield Outcome.DONE;
                 }
-                var projectId = readInput(prompts.ask("ANTHROPIC_VERTEX_PROJECT_ID: "));
-                if (projectId.isBlank()) {
-                    BuildOutput.step(CLAUDE_SKIPPED);
-                    return;
-                }
+                default -> Outcome.BACK;
+            };
+            if (outcome == Outcome.DONE) return;
+        }
+    }
 
-                var result = verifying("Verifying Vertex AI configuration", () -> verifyVertexConfig(region, projectId));
-                if (result.verified()) {
-                    BuildOutput.ok(result.message());
+    /** How a part of a credential step ended: done (saved or skipped), or back to the question before it. */
+    enum Outcome { DONE, BACK }
+
+    /**
+     * A Claude credential found in this computer's environment, offered before anything is
+     * asked: true when it was saved and the step is over.
+     */
+    private boolean useClaudeFromEnvironment(SpawnConfig config, Prompts prompts, AccountTarget target) {
+        var envVertex = env("CLAUDE_CODE_USE_VERTEX");
+        var envApiKey = env("ANTHROPIC_API_KEY");
+        var envOauthToken = env("CLAUDE_CODE_OAUTH_TOKEN");
+        var here = Platform.thisComputer();
+        if ("1".equals(envVertex)) {
+            var region = env("CLOUD_ML_REGION");
+            var projectId = env("ANTHROPIC_VERTEX_PROJECT_ID");
+            Lines.step("Found Vertex AI settings in the environment of " + here + ".");
+            if (region.isBlank() || projectId.isBlank()) {
+                Lines.step((region.isBlank() && projectId.isBlank() ? "CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID are"
+                        : (region.isBlank() ? "CLOUD_ML_REGION" : "ANTHROPIC_VERTEX_PROJECT_ID") + " is")
+                        + " not set, so isx cannot use them.");
+                return false;
+            }
+            prompts.say("Project: " + OutputFormat.oneLine(projectId) + ", region: " + OutputFormat.oneLine(region));
+            var result = verifyVertexConfig(region, projectId);
+            if (result.verified()) {
+                if (!askYesNo(prompts, envAccountPrompt(config, target, "Use them for " + machines() + "?"), true)) return false;
+                saveVertexConfig(config, target, region, projectId);
+                BuildOutput.ok("Vertex AI settings verified and saved on " + here);
+                return true;
+            }
+            // Only settings that could not be checked may be saved unverified (#2528)
+            if (result.reached()) {
+                Lines.step("They did not verify, so isx does not use them. " + result.message());
+                return false;
+            }
+            Lines.step(couldNotCheck("them", result.message()));
+            if (!askYesNo(prompts, "Save them unverified?", false)) return false;
+            saveVertexConfig(config, target, region, projectId);
+            BuildOutput.ok("Vertex AI settings saved on " + here + ", unverified");
+            BuildOutput.stepNote("If they fail, 'isx account add claude' replaces them.");
+            return true;
+        }
+        if (!envOauthToken.isBlank()) {
+            BuildOutput.step("Found a Claude token in CLAUDE_CODE_OAUTH_TOKEN.");
+            var result = verifyOauthToken(envOauthToken);
+            if (!result.verified()) {
+                // As for Vertex AI: only a check that could not run may keep it, unverified (#2528)
+                if (result.reached()) {
+                    Lines.step("It did not verify, so isx does not use it. " + result.message());
+                    return false;
+                }
+                Lines.step(couldNotCheck("it", result.message()));
+                if (!askYesNo(prompts, envAccountPrompt(config, target, "Save it unverified, and check it later?"), false)) return false;
+                saveOauthConfig(config, prompts, target, envOauthToken, false);
+                return true;
+            }
+            if (!askYesNo(prompts, envAccountPrompt(config, target, "Use it for " + machines() + "?"), true)) return false;
+            saveOauthConfig(config, prompts, target, envOauthToken, true);
+            return true;
+        }
+        if (!envApiKey.isBlank()) {
+            BuildOutput.step("Found an Anthropic API key in ANTHROPIC_API_KEY.");
+            var result = verifyAnthropicApiKey(envApiKey);
+            if (!result.verified()) {
+                if (result.reached()) {
+                    Lines.step("It did not verify, so isx does not use it. " + result.message());
+                    return false;
+                }
+                Lines.step(couldNotCheck("it", result.message()));
+                if (!askYesNo(prompts, envAccountPrompt(config, target, "Save it unverified, and check it later?"), false)) return false;
+                saveDirectConfig(config, target, envApiKey);
+                BuildOutput.ok("API key saved on " + here + ", unverified");
+                BuildOutput.stepNote("If it fails, 'isx account add claude' replaces it.");
+                return true;
+            }
+            if (!askYesNo(prompts, envAccountPrompt(config, target, "Use it for " + machines() + "?"), true)) return false;
+            saveDirectConfig(config, target, envApiKey);
+            BuildOutput.ok("API key verified and saved on " + here);
+            return true;
+        }
+        return false;
+    }
+
+    /** Vertex AI's project and region, until they verify or are saved anyway: BACK when the person goes back. */
+    private Outcome setupClaudeVertex(SpawnConfig config, Prompts prompts, AccountTarget target) {
+        var here = Platform.thisComputer();
+        BuildOutput.gap();
+        BuildOutput.step("Vertex AI needs your Google Cloud project and a region");
+        BuildOutput.step("where Claude is enabled. isx signs each request with");
+        BuildOutput.step("gcloud on " + here + ", so sign in to gcloud first.");
+        BuildOutput.gap();
+        while (true) {
+            var projectId = readInput(prompts.ask("Project ID, or Enter to go back: "));
+            if (projectId.isBlank()) return Outcome.BACK;
+            var region = readInput(prompts.ask("Region (such as us-east5): "));
+            if (region.isBlank()) return Outcome.BACK;
+            var result = verifyVertexConfig(region, projectId);
+            if (result.verified()) {
+                saveVertexConfig(config, target, region, projectId);
+                BuildOutput.ok("Vertex AI settings verified and saved on " + here);
+                return Outcome.DONE;
+            }
+            switch (askVerificationFailureAction(prompts, "The settings", result.message(), result.reached())) {
+                case SKIP -> {
+                    BuildOutput.step(claudeSkipped(config));
+                    return Outcome.DONE;
+                }
+                case SAVE_UNVERIFIED -> {
                     saveVertexConfig(config, target, region, projectId);
-                    BuildOutput.step("Claude auth configuration saved.");
-                    break;
-                } else {
-                    switch (askVerificationFailureAction(prompts)) {
-                        case SKIP -> {
-                            BuildOutput.step(CLAUDE_SKIPPED);
-                            break;
-                        }
-                        case SAVE_UNVERIFIED -> {
-                            saveVertexConfig(config, target, region, projectId);
-                            BuildOutput.step("Claude auth configuration saved (unverified).");
-                            break;
-                        }
-                        case RETRY -> {
-                            continue;
-                        }
-                    }
-                    break;
+                    BuildOutput.ok("Vertex AI settings saved on " + here + ", unverified");
+                    BuildOutput.stepNote("If they fail, 'isx account add claude' replaces them.");
+                    return Outcome.DONE;
+                }
+                case RETRY -> {
+                    // asked again
                 }
             }
-        } else if (authChoice.equals("2")) {
-            setupClaudeOauth(config, prompts, target);
-        } else if (authChoice.equals("1")) {
-            if (!setupClaudeApiKey(config, prompts, target)) BuildOutput.step(CLAUDE_SKIPPED);
-        } else {
-            BuildOutput.step(CLAUDE_SKIPPED);
         }
     }
 
     /**
-     * The first run's Claude step when Claude Code on this host is signed in with a subscription
-     * (#2412): the question of which kind of account is answered by what was found, and the token
-     * comes from {@code claude setup-token}, never from the host's own sign-in, which is not copied.
+     * The first run's Claude step when Claude Code on this computer is signed in with a
+     * subscription (#2412): the kind of account is answered by what was found, and the token
+     * comes from {@code claude setup-token}, never from the computer's own sign-in, which is
+     * not copied.
      *
-     * <p>The person still pastes the token the command prints. Reading it without the paste would
-     * mean reading the command's output while it keeps the terminal, which takes a pseudo-terminal
-     * this process cannot open, or a {@code script} log that would hold the token on disk.
-     * Anything else to go on (a credential in the environment, accounts already saved) takes the
-     * full step instead, which reads and keeps those.
+     * <p>The person still pastes the token the command prints (#2543). Reading it without the
+     * paste would mean reading the command's output while it keeps the terminal, which takes a
+     * pseudo-terminal this process cannot open, or a {@code script} log that would hold the
+     * token on disk. Anything else to go on (a credential in the environment, accounts already
+     * saved) takes the full step instead, which reads and keeps those.
      */
     void setupClaudeSubscription(SpawnConfig config, Prompts prompts) {
         var fromEnvironment = "1".equals(env("CLAUDE_CODE_USE_VERTEX")) || !env("ANTHROPIC_API_KEY").isBlank()
@@ -571,33 +665,122 @@ class CredentialSetup {
             setupClaudeAuth(config, prompts);
             return;
         }
-        BuildOutput.step("isx needs a token of its own, made by 'claude setup-token'.");
-        BuildOutput.step("It never copies your Claude Code sign-in.");
-        BuildOutput.gap();
-        setupClaudeOauth(config, prompts, AccountTarget.FRESH);
+        Lines.step("Claude Code on " + Platform.thisComputer() + " is signed in with a subscription.");
+        Lines.step("isx uses a separate token for " + machines() + ".");
+        if (claudeToken(config, prompts, AccountTarget.FRESH, true) == Outcome.BACK) {
+            chooseClaudeAccountKind(config, prompts, AccountTarget.FRESH);
+        }
     }
 
-    /** Asks for an Anthropic API key until one verifies or is saved anyway: false when the user skips. */
-    private boolean setupClaudeApiKey(SpawnConfig config, Prompts prompts, AccountTarget target) {
+    /**
+     * A subscription's token, made by {@code claude setup-token}: run here when Claude Code is
+     * installed, else on another computer. With {@code offerOther}, {@code o} chooses another
+     * kind of account: BACK, as going back from the paste does where the step was chosen.
+     */
+    private Outcome claudeToken(SpawnConfig config, Prompts prompts, AccountTarget target, boolean offerOther) {
+        var installed = hostHasCommand("claude");
         while (true) {
-            var key = askSecret(prompts, "ANTHROPIC_API_KEY (or press Enter to skip): ");
-            if (key.isBlank()) return false;
-
-            var result = verifying("Verifying API key", () -> verifyAnthropicApiKey(key));
-            if (result.verified()) {
-                BuildOutput.ok(result.message());
-                saveDirectConfig(config, target, key);
-                BuildOutput.step("Claude auth configuration saved.");
-                return true;
+            BuildOutput.gap();
+            if (installed) {
+                BuildOutput.step("To make the token:");
+                prompts.say("  1. 'claude setup-token' runs and opens your browser");
+                prompts.say("  2. You approve, and it prints a token");
+                prompts.say("  3. You paste the token here");
+                BuildOutput.gap();
+                prompts.say("Make the token now?");
+                prompts.say("  Y  run 'claude setup-token' here");
+                prompts.say("  n  I run it myself and paste the token");
+                if (offerOther) prompts.say("  o  another kind of account (API key, Vertex AI)");
+                prompts.say("  s  skip this account for now");
+                var answer = prompts.ask("Choice [Y]: ");
+                var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
+                switch (choice) {
+                    case "", "y", "yes" -> runClaudeSetupToken();
+                    case "n", "no" -> { }
+                    case "s" -> {
+                        BuildOutput.step(claudeSkipped(config));
+                        return Outcome.DONE;
+                    }
+                    case "o" -> {
+                        if (offerOther) return Outcome.BACK;
+                        continue;
+                    }
+                    default -> {
+                        continue;
+                    }
+                }
+            } else {
+                BuildOutput.step("Claude Code is not installed on " + Platform.thisComputer() + ", so make");
+                BuildOutput.step("the token on a computer that has it");
+                BuildOutput.step("(" + TerminalLink.link("https://claude.com/claude-code") + "):");
+                prompts.say("  1. Run 'claude setup-token'. It opens your browser.");
+                prompts.say("  2. Approve, and it prints a token.");
+                prompts.say("  3. Paste the token here.");
             }
-            switch (askVerificationFailureAction(prompts)) {
+            BuildOutput.gap();
+            var outcome = pasteClaudeToken(config, prompts, target);
+            // Back from a token made here returns to its menu; with no menu, to the kinds of account
+            if (outcome == Outcome.DONE || !installed) return outcome;
+        }
+    }
+
+    /** Takes the token until it verifies, is saved anyway or skipped: BACK on Enter. */
+    private Outcome pasteClaudeToken(SpawnConfig config, Prompts prompts, AccountTarget target) {
+        while (true) {
+            var token = readSecret(prompts.askSecret("Paste the token, or Enter to go back: "));
+            if (token.isBlank()) return Outcome.BACK;
+            var result = verifyOauthToken(token);
+            if (result.verified()) {
+                saveOauthConfig(config, prompts, target, token, true);
+                return Outcome.DONE;
+            }
+            switch (askVerificationFailureAction(prompts, "The token", result.message(), result.reached())) {
                 case SKIP -> {
-                    return false;
+                    BuildOutput.step(claudeSkipped(config));
+                    return Outcome.DONE;
+                }
+                case SAVE_UNVERIFIED -> {
+                    saveOauthConfig(config, prompts, target, token, false);
+                    return Outcome.DONE;
+                }
+                case RETRY -> {
+                    // asked again
+                }
+            }
+        }
+    }
+
+    /**
+     * Asks for an Anthropic API key until one verifies or is saved anyway: BACK when the person
+     * goes back. {@code skipped} is what a skip says, or null for the Claude step's own words.
+     */
+    private Outcome setupClaudeApiKey(SpawnConfig config, Prompts prompts, AccountTarget target, String skipped) {
+        var here = Platform.thisComputer();
+        BuildOutput.gap();
+        BuildOutput.step("Create a key in the Claude Console (Settings > API keys):");
+        BuildOutput.step(TerminalLink.link(AiHelpClient.API_KEYS_URL));
+        BuildOutput.gap();
+        while (true) {
+            // With nothing to go back to (the AI Help offer), Enter skips
+            var key = readSecret(prompts.askSecret(skipped != null ? "Paste the API key, or Enter to skip: "
+                    : "Paste the API key, or Enter to go back: "));
+            if (key.isBlank()) return Outcome.BACK;
+            var result = verifyAnthropicApiKey(key);
+            if (result.verified()) {
+                saveDirectConfig(config, target, key);
+                BuildOutput.ok("API key verified and saved on " + here);
+                return Outcome.DONE;
+            }
+            switch (askVerificationFailureAction(prompts, "The key", result.message(), result.reached())) {
+                case SKIP -> {
+                    BuildOutput.step(skipped != null ? skipped : claudeSkipped(config));
+                    return Outcome.DONE;
                 }
                 case SAVE_UNVERIFIED -> {
                     saveDirectConfig(config, target, key);
-                    BuildOutput.step("Claude auth configuration saved (unverified).");
-                    return true;
+                    BuildOutput.ok("API key saved on " + here + ", unverified");
+                    BuildOutput.stepNote("If it fails, 'isx account add claude' replaces it.");
+                    return Outcome.DONE;
                 }
                 case RETRY -> {
                     // ask again
@@ -748,45 +931,58 @@ class CredentialSetup {
         }
     }
 
-    record AuthResult(boolean verified, String message) {}
-
     /**
-     * Verify under a live step: a ✓ when it verified, for the caller to report its message, or a
-     * ✗ with the message under it as a step, which keeps the hyperlink a message can hold.
+     * A check's answer: whether the credential verified, why not, and whether the check reached
+     * the service at all. Only a check that could not run may be saved unverified (#2528):
+     * a credential the service rejected would fail the same way in every isx machine.
      */
-    private static AuthResult verifying(String label, java.util.function.Supplier<AuthResult> verify) {
-        BuildOutput.stepStart(label);
-        AuthResult result;
-        try {
-            result = verify.get();
-        } catch (RuntimeException e) {
-            BuildOutput.abandonStep();
-            throw e;
+    record AuthResult(boolean verified, String message, boolean reached) {
+        AuthResult(boolean verified, String message) {
+            this(verified, message, true);
         }
-        if (result.verified()) BuildOutput.stepDone();
-        else {
-            BuildOutput.stepBreak();
-            BuildOutput.step(result.message());
+
+        /** The check could not reach the service, or could not run. */
+        static AuthResult unchecked(String message) {
+            return new AuthResult(false, message, false);
         }
-        return result;
     }
 
     enum VerificationFailureAction { RETRY, SKIP, SAVE_UNVERIFIED }
 
-    private static VerificationFailureAction askVerificationFailureAction(Prompts prompts) {
+    /**
+     * Why a check of {@code what} ("the token") could not run: {@code why} alone when it already
+     * says isx could not do something, never "isx could not check it: isx could not reach ...".
+     */
+    static String couldNotCheck(String what, String why) {
+        return why.startsWith("isx could not") ? why : "isx could not check " + what + ": " + why;
+    }
+
+    /**
+     * After {@code what} (as "The token") did not verify, for {@code why}: try again or skip it,
+     * with the same {@code s} as the step's own menu. When the check could not run at all
+     * ({@code reached} false), saving it unverified is offered too (#1441, #2528).
+     */
+    static VerificationFailureAction askVerificationFailureAction(Prompts prompts, String what, String why, boolean reached) {
+        Lines.step(reached ? what + " did not verify. " + why
+                : couldNotCheck(what.substring(0, 1).toLowerCase(java.util.Locale.ROOT) + what.substring(1), why));
+        BuildOutput.gap();
+        prompts.say("What now?");
+        prompts.say("  Y  try again");
+        if (!reached) prompts.say("  u  save it unverified, and check it later");
+        prompts.say("  s  skip this account for now");
         while (true) {
-            var action = parseVerificationFailureAction(prompts.ask("Try again? (Y/n/s to save anyway): "));
+            var action = parseVerificationFailureAction(prompts.ask("Choice [Y]: "), !reached);
             if (action != null) return action;
-            prompts.say("Please answer y, n, or s.");
+            prompts.say(reached ? "Please answer y or s." : "Please answer y, u or s.");
         }
     }
 
-    static VerificationFailureAction parseVerificationFailureAction(String answer) {
+    static VerificationFailureAction parseVerificationFailureAction(String answer, boolean saveOffered) {
         if (answer == null) return VerificationFailureAction.SKIP;
         return switch (answer.strip().toLowerCase(java.util.Locale.ROOT)) {
             case "", "y" -> VerificationFailureAction.RETRY;
-            case "n" -> VerificationFailureAction.SKIP;
-            case "s" -> VerificationFailureAction.SAVE_UNVERIFIED;
+            case "s" -> VerificationFailureAction.SKIP;
+            case "u" -> saveOffered ? VerificationFailureAction.SAVE_UNVERIFIED : null;
             default -> null;
         };
     }
@@ -943,12 +1139,13 @@ class CredentialSetup {
     private void saveOauthConfig(SpawnConfig config, Prompts prompts, AccountTarget target, String oauthToken,
                                  boolean verified) {
         saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofOauth(oauthToken));
-        if (verified) {
-            BuildOutput.ok("Claude auth configuration saved");
-        } else {
-            BuildOutput.step("Claude auth configuration saved (unverified).");
-        }
-        offerApiKeyForAiHelp(config, prompts);
+        var here = Platform.thisComputer();
+        BuildOutput.ok(verified ? "Token verified and saved on " + here : "Token saved on " + here + ", unverified");
+        if (!verified) BuildOutput.stepNote("If it fails, 'isx account add claude' replaces it.");
+        // What 'claude setup-token' advises is for a token used by hand: isx answers it (#2528)
+        BuildOutput.stepNote("You do not need to store or export it. isx keeps it.");
+        // The first run leaves it to the first use of 'isx ask' (#2541)
+        if (!firstRun) offerApiKeyForAiHelp(config, prompts);
     }
 
     private void saveVertexConfig(SpawnConfig config, AccountTarget target, String region, String projectId) {
@@ -986,7 +1183,7 @@ class CredentialSetup {
             BuildOutput.step(ADD_API_KEY_LATER);
             return;
         }
-        if (!setupClaudeApiKey(config, prompts, new AccountTarget(name, false))) {
+        if (setupClaudeApiKey(config, prompts, new AccountTarget(name, false), ADD_API_KEY_LATER) == Outcome.BACK) {
             BuildOutput.step(ADD_API_KEY_LATER);
         }
     }
@@ -1018,66 +1215,17 @@ class CredentialSetup {
 
             return switch (response.statusCode()) {
                 case 400 -> new AuthResult(true, label + " verified.");
-                case 401 -> new AuthResult(false, label + " rejected (HTTP 401). It may be expired or invalid."
+                case 401 -> new AuthResult(false, "Anthropic rejected it (HTTP 401): it may be expired or mistyped."
                         + apiErrorSuffix(response.body()));
                 case 403 -> new AuthResult(true, label + " accepted (HTTP 403). It may have restricted permissions.");
-                default -> new AuthResult(false, "Unexpected response (HTTP " + response.statusCode() + "). The "
-                        + label.toLowerCase() + " may be invalid." + apiErrorSuffix(response.body()));
+                // Overloaded, rate-limited or failing: the service did not judge the credential
+                case 429, 500, 502, 503, 504, 529 -> AuthResult.unchecked("Anthropic answered HTTP " + response.statusCode()
+                        + ", so it could not check the " + label.toLowerCase(java.util.Locale.ROOT) + "." + apiErrorSuffix(response.body()));
+                default -> new AuthResult(false, "Anthropic answered HTTP " + response.statusCode() + ", so the "
+                        + label.toLowerCase(java.util.Locale.ROOT) + " may be invalid." + apiErrorSuffix(response.body()));
             };
         } catch (Exception e) {
-            return new AuthResult(false, "Could not reach api.anthropic.com: " + e.getMessage());
-        }
-    }
-
-    private void setupClaudeOauth(SpawnConfig config, Prompts prompts, AccountTarget target) {
-        if (hostHasCommand("claude")) {
-            BuildOutput.step("Claude Code is installed here, so it can make the token for you.");
-            BuildOutput.gap();
-            if (askYesNo(prompts, "Run 'claude setup-token' now?", true)) {
-                runClaudeSetupToken();
-            } else {
-                BuildOutput.step("Run it yourself when you are ready, then paste the token it prints.");
-            }
-        } else {
-            BuildOutput.step("A subscription signs Claude Code in with an OAuth token. To get one:");
-            prompts.say("1. Install Claude Code: " + TerminalLink.link("https://claude.com/claude-code"));
-            prompts.say("2. Sign in with the subscription account: run " + styled(BOLD, "claude")
-                    + ", then " + styled(BOLD, "/login"));
-            prompts.say("3. Run " + styled(BOLD, "claude setup-token"));
-            prompts.say("4. Copy the token it prints (it starts with '"
-                    + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX + "')");
-            BuildOutput.step("Do this on any machine where Claude Code is installed, then paste the token here.");
-        }
-        BuildOutput.gap();
-
-        while (true) {
-            var token = askSecret(prompts, "Paste your OAuth token (or press Enter to skip): ");
-            if (token.isBlank()) {
-                BuildOutput.step(CLAUDE_SKIPPED);
-                break;
-            }
-
-            var result = verifying("Verifying OAuth token", () -> verifyOauthToken(token));
-            if (result.verified()) {
-                BuildOutput.ok(result.message());
-                saveOauthConfig(config, prompts, target, token, true);
-                break;
-            } else {
-                switch (askVerificationFailureAction(prompts)) {
-                    case SKIP -> {
-                        BuildOutput.step(CLAUDE_SKIPPED);
-                        break;
-                    }
-                    case SAVE_UNVERIFIED -> {
-                        saveOauthConfig(config, prompts, target, token, false);
-                        break;
-                    }
-                    case RETRY -> {
-                        continue;
-                    }
-                }
-                break;
-            }
+            return AuthResult.unchecked("isx could not reach api.anthropic.com: " + e.getMessage());
         }
     }
 
@@ -1089,22 +1237,20 @@ class CredentialSetup {
             var process = pb.start();
             if (!process.waitFor(120, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                BuildOutput.warn("'claude setup-token' timed out after 2 minutes.");
+                BuildOutput.warn("'claude setup-token' did not finish within 2 minutes, so isx stopped it.");
             } else if (process.exitValue() != 0) {
-                BuildOutput.warn("'claude setup-token' exited with code " + process.exitValue() + ".");
-            } else {
-                BuildOutput.step("Token generation complete.");
+                BuildOutput.warn("'claude setup-token' failed (exit code " + process.exitValue() + ").");
             }
         } catch (Exception e) {
-            BuildOutput.warn("Failed to run 'claude setup-token': " + BaseCommand.failure(e));
+            BuildOutput.warn("Could not run 'claude setup-token': " + BaseCommand.failure(e));
         }
     }
 
     AuthResult verifyVertexConfig(String region, String projectId) {
         if (!commandExists("gcloud")) {
-            return new AuthResult(false,
-                    "gcloud CLI not found. Install it from " + TerminalLink.link("https://cloud.google.com/sdk/docs/install") + "."
-                    + " Then run: gcloud auth login");
+            return AuthResult.unchecked(
+                    "gcloud is not installed on " + Platform.thisComputer() + ". Install it from "
+                    + TerminalLink.link("https://cloud.google.com/sdk/docs/install") + ", then run 'gcloud auth login'.");
         }
 
         String accessToken;
@@ -1113,19 +1259,19 @@ class CredentialSetup {
             var process = pb.start();
             if (!process.waitFor(15, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                return new AuthResult(false, "gcloud timed out. Check your gcloud configuration.");
+                return AuthResult.unchecked("gcloud did not answer within 15 seconds. Check its configuration.");
             }
             var stdout = new String(process.getInputStream().readAllBytes()).strip();
             var stderr = new String(process.getErrorStream().readAllBytes()).strip();
             if (process.exitValue() != 0 || stdout.isBlank()) {
                 var detail = !stderr.isBlank() ? stderr : stdout;
-                return new AuthResult(false,
-                        "gcloud auth failed" + (detail.isBlank() ? "" : " (" + OutputFormat.oneLine(detail) + ")")
-                        + ". Run: gcloud auth login");
+                return AuthResult.unchecked(
+                        "gcloud is not signed in" + (detail.isBlank() ? "" : " (" + OutputFormat.oneLine(detail) + ")")
+                        + ". Run 'gcloud auth login'.");
             }
             accessToken = stdout;
         } catch (Exception e) {
-            return new AuthResult(false, "Failed to run gcloud: " + e.getMessage());
+            return AuthResult.unchecked("isx could not run gcloud: " + e.getMessage());
         }
 
         try {
@@ -1151,18 +1297,21 @@ class CredentialSetup {
                 case 403 -> new AuthResult(false,
                         "Vertex AI access denied (HTTP 403). Check that the Vertex AI API is enabled"
                         + " for project '" + projectId + "' and your account has the required permissions.");
+                // Rate-limited or failing: Vertex AI did not judge the settings
+                case 429, 500, 502, 503, 504 -> AuthResult.unchecked(
+                        "Vertex AI answered HTTP " + response.statusCode() + ", so it could not check them.");
                 default -> new AuthResult(false,
                         "Unexpected Vertex AI response (HTTP " + response.statusCode() + ").");
             };
         } catch (Exception e) {
-            return new AuthResult(false, "Could not reach Vertex AI endpoint: " + e.getMessage());
+            return AuthResult.unchecked("isx could not reach Vertex AI: " + e.getMessage());
         }
     }
 
     /**
      * GitHub's fine-grained PAT creation form, pre-filled through its template-URL query
      * parameters with the permissions the agent needs: read/write on Contents, Issues and Pull
-     * requests, and read on Email addresses so {@link #checkGitHubEmail} can find the commit
+     * requests, and read on Email addresses so {@link #primaryGitHubEmail} can find the commit
      * identity. GitHub's permission picker hides anything not yet added, so without the
      * pre-fill the email permission is easy to miss. Resource owner, repository access and
      * expiration are left for the user to choose on the page.
@@ -1172,20 +1321,8 @@ class CredentialSetup {
             + "&contents=write&issues=write&pull_requests=write&emails=read";
 
     /**
-     * Last-resort fallback: reuse the host's authenticated 'gh' CLI token. This is deliberately
-     * discouraged — the 'gh' login is almost always your personal identity, so the agent would act
-     * as you with your (usually broad) scopes, defeating the point of an isolated environment. It is
-     * offered only when the user skips the dedicated-PAT prompt, and defaults to No. Returns true if
-     * a token was verified and saved.
-     */
-    /**
-     * Outcome of the optional 'gh' CLI token fallback.
-     * <ul>
-     *   <li>{@code SAVED} — a token was verified and persisted; GitHub setup is done.
-     *   <li>{@code NOT_OFFERED} — gh is unavailable or the user declined reuse; no attempt made.
-     *   <li>{@code FAILED} — reuse was attempted but the token could not be read or verified, so
-     *       the caller should fall back to manual PAT entry (as the failure message promises).
-     * </ul>
+     * The fallback of {@code isx account add github} when no token is pasted: the account the
+     * computer's {@code gh} is signed in to, usually the person's own, so it defaults to No.
      */
     private enum GhTokenOutcome { SAVED, NOT_OFFERED, FAILED }
 
@@ -1193,33 +1330,31 @@ class CredentialSetup {
         if (!ghCliLoggedIn()) {
             return GhTokenOutcome.NOT_OFFERED;
         }
-
-        BuildOutput.step("An authenticated 'gh' CLI is available on this host.");
-        BuildOutput.step(styled(DIM, "Not recommended: that login is almost certainly your personal identity,"
-                + " so the agent would act as you with whatever scopes 'gh' holds. Prefer a dedicated"
-                + " agent account and a fine-grained PAT (above)."));
-        if (!askYesNo(prompts, "Reuse your personal 'gh' token anyway?", false)) {
+        BuildOutput.step("gh on " + Platform.thisComputer() + " is signed in to GitHub, usually as you.");
+        BuildOutput.step("With that account, the agent acts on GitHub as you,");
+        BuildOutput.step("with all of your access.");
+        if (!askYesNo(prompts, "Use the account gh is signed in to?", false)) {
             return GhTokenOutcome.NOT_OFFERED;
         }
-        return useGhToken(config, prompts, account);
+        return useGhToken(config, prompts, account, false);
     }
 
-    /** Reads, verifies and saves the host's 'gh' token into {@code account}, the person having asked for it. */
-    private GhTokenOutcome useGhToken(SpawnConfig config, Prompts prompts, AccountTarget account) {
+    /** Reads, verifies and saves the computer's 'gh' token into {@code account}, the person having asked for it. */
+    /** {@code fromOptions}: the first run's three options follow a failure, else the token prompt does. */
+    private GhTokenOutcome useGhToken(SpawnConfig config, Prompts prompts, AccountTarget account, boolean fromOptions) {
         var token = readGhAuthToken();
         if (token == null || token.isBlank()) {
-            BuildOutput.warn("Could not read a token from 'gh auth token' — continuing with manual setup.");
+            BuildOutput.warn("isx could not read gh's token: 'gh auth token' printed none.");
             return GhTokenOutcome.FAILED;
         }
         var result = verifyGitHubToken(token, prompts);
         if (result == null) {
-            BuildOutput.step("The 'gh' token failed verification — continuing with manual setup.");
+            BuildOutput.warn("isx could not use your gh sign-in");
+            Lines.step((gitHubReached ? "GitHub rejected the token gh is signed in with." : gitHubFailure())
+                    + " Sign in again with 'gh auth login', or " + (fromOptions ? "choose another option." : "paste a token."));
             return GhTokenOutcome.FAILED;
         }
-        if (result.email == null) {
-            BuildOutput.warn("No email accessible — git commits will have no author email.");
-        }
-        saveGitHubToken(config, account, token, result.email);
+        saveGitHubToken(config, account, token, result, true);
         return GhTokenOutcome.SAVED;
     }
 
@@ -1236,26 +1371,29 @@ class CredentialSetup {
     }
 
     /**
-     * Persist a verified GitHub token (and email, if any) and print the matching "saved" line.
+     * Persist a GitHub token (and email, if any) and say what was saved: whether it verified, and
+     * as which account the agent acts.
      *
      * <p>{@code target} is passed rather than parked on the instance: the Claude flow's
      * equivalent mutable field is how a credential wipe shipped once already (#741), because a
      * code path that returns early leaves a stale target for a later write to act on. An
      * argument cannot go stale.
      */
-    private void saveGitHubToken(SpawnConfig config, AccountTarget target, String token, String email) {
+    private void saveGitHubToken(SpawnConfig config, AccountTarget target, String token, GitHubVerifyResult result,
+                                 boolean verified) {
         var values = new java.util.LinkedHashMap<String, String>();
         values.put("token", token);
+        var email = result == null ? null : result.email();
         if (email != null) values.put("email", email);
         saveAccount(config, GhSetup.NAMESPACE,
                 dev.incusspawn.config.AccountResolver.shapeOf(config, GhSetup.NAMESPACE), target, values);
         config.save();
-        if (email != null) {
-            BuildOutput.ok("GitHub configuration saved");
-        } else {
-            // Not a clean success: the warning above says commits will have no author email
-            BuildOutput.step("GitHub configuration saved (without email).");
+        var here = Platform.thisComputer();
+        BuildOutput.ok(verified ? "Token verified and saved on " + here : "Token saved on " + here + ", unverified");
+        if (result != null && result.login() != null) {
+            BuildOutput.stepNote((noAgent ? "isx machines act" : "The agent acts") + " on GitHub as " + OutputFormat.oneLine(result.login()) + ".");
         }
+        if (!verified) BuildOutput.stepNote("If it fails, 'isx account add github' replaces it.");
     }
 
     /**
@@ -1315,29 +1453,36 @@ class CredentialSetup {
         }
     }
 
-    /** Prints step-by-step instructions for creating a fine-grained PAT and offers to open the page. */
+    /**
+     * How to make a token of the agent's own account (#2528): signed in as that account, which a
+     * browser signed in as the person is not, so isx prints the page rather than opening it.
+     */
     private void printGitHubPatGuide(Prompts prompts) {
-        BuildOutput.step("To create a fine-grained PAT (ideally signed in as the agent's account, not your personal one):");
-        prompts.say("1. Open the pre-filled token page: " + styled(BOLD, TerminalLink.link(GH_PAT_NEW_URL)));
-        BuildOutput.stepNote("It already grants what isx needs:");
-        BuildOutput.stepNote("Contents, Issues, Pull requests  read and write");
-        BuildOutput.stepNote("Email addresses                  read (stamps your git commit identity)");
-        prompts.say("2. Check " + styled(BOLD, "Resource owner") + " is the agent's account, set an expiration,"
-                + " and under " + styled(BOLD, "Repository access") + " choose the repos to grant.");
-        prompts.say("3. Click " + styled(BOLD, "Generate token")
-                + " and copy the value (starts with 'github_pat_').");
-        BuildOutput.step(styled(DIM, "Adding a permission by hand: under Permissions, click 'Add permissions' and search for it."));
-        BuildOutput.step(styled(DIM, "Avoid admin, org, and delete permissions unless you need them."));
-
-        BuildOutput.step("Already have a token? Answer 'n' and paste it at the next prompt.");
-        if (askYesNo(prompts, "Open the pre-filled token page in your browser now?", true)) {
-            if (openUrl(GH_PAT_NEW_URL)) {
-                BuildOutput.step("Opened your browser — finish there, then paste the token below.");
-            } else {
-                BuildOutput.warn("Could not open a browser — visit the URL above manually.");
-            }
-        }
+        BuildOutput.gap();
+        var account = noAgent ? "the separate" : "the agent's";
+        BuildOutput.step("You need a token from " + account + " GitHub account.");
+        BuildOutput.gap();
+        prompts.say("  1. Sign in to GitHub as " + account + " account, in a");
+        prompts.say("     private window or another browser profile.");
+        prompts.say("     No such account yet? Create one first:");
+        prompts.say("     " + TerminalLink.link("https://github.com/signup"));
+        prompts.say("  2. Open the isx token page there. Its permissions are");
+        prompts.say("     filled in: contents, issues and pull requests (read");
+        prompts.say("     and write), email address (read).");
+        prompts.say("  3. Under \"Repository access\", pick the repositories.");
+        prompts.say("     A new account does not own any yet, so its list is");
+        prompts.say("     empty.");
+        prompts.say("  4. Set an expiry date, click \"Generate token\" and copy");
+        prompts.say("     the token. It starts with github_pat_.");
+        BuildOutput.gap();
+        BuildOutput.step("The isx token page:");
+        BuildOutput.step(BuildOutput.ansi() ? TerminalLink.link(GH_PAT_NEW_URL, GH_PAT_PAGE) : GH_PAT_PAGE);
+        BuildOutput.step("No link to click? Type u at the prompt for its address.");
+        BuildOutput.gap();
     }
+
+    /** The token page's address without its query, short enough to show; the link holds the whole of it. */
+    static final String GH_PAT_PAGE = "github.com/settings/personal-access-tokens/new";
 
     /**
      * Account menu for any credential namespace, driven entirely by the namespace name.
@@ -1762,18 +1907,19 @@ class CredentialSetup {
         // Enter (or EOF) moves on.
         warnUnreadKeys(config, GhSetup.NAMESPACE);
         var account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
-        while (account.isPresent() && collectGitHubToken(config, prompts, account.get())) {
+        while (account.isPresent() && collectGitHubToken(config, prompts, account.get(), false) == GitHubOutcome.SAVED) {
             account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
         }
     }
 
     /**
-     * The first run's GitHub step (#2412): an account for the agent, which the person may skip.
-     * The host's {@code gh} login is one of the choices, named by its {@code login}, and taken only
-     * when the person types its number: Enter skips, and never picks it.
-     * A namespace that already holds accounts, usable or not, gets the full step, which keeps them.
+     * The first run's GitHub step (#2412, #2528): as which account the agent acts, each option
+     * saying what it gives and what it costs. The computer's {@code gh} login is one of them,
+     * named by its {@code login}, and "None for now" another: there is no default, so Enter asks
+     * again. A namespace that already holds accounts, usable or not, gets the full step, which
+     * keeps them.
      *
-     * @param login the host's {@code gh} login, or null when there is none
+     * @param login the computer's {@code gh} login, or null when there is none
      * @return whether an account was saved
      */
     boolean offerGitHubForAgent(SpawnConfig config, Prompts prompts, String login) {
@@ -1781,127 +1927,122 @@ class CredentialSetup {
             setupGitHubAuth(config, prompts);
             return !dev.incusspawn.config.AccountResolver.usableAccountNames(config, GhSetup.NAMESPACE).isEmpty();
         }
-        var options = new ArrayList<String>(List.of(
-                "A token of the agent's own account (recommended)\n(a dedicated account, such as yourname-ai-bot, with a fine-grained token)"));
-        if (login != null) {
-            var shown = OutputFormat.oneLine(login);
-            options.add("Your gh login, " + shown + "\n(the agent would act with " + shown + "'s own access to GitHub)");
-        }
+        var none = login == null ? "2" : "3";
         while (true) {
-            var choice = readInput(prompts.choose("Which GitHub account should the agent use?", options, null, "skip GitHub for now"));
-            if (choice.equals("1")) return collectGitHubToken(config, prompts, AccountTarget.FRESH);
-            if (choice.equals("2") && login != null) {
-                // A failure says it continues with manual setup, which is the agent's own token
-                if (useGhToken(config, prompts, AccountTarget.FRESH) == GhTokenOutcome.SAVED) return true;
-                return collectGitHubToken(config, prompts, AccountTarget.FRESH);
+            BuildOutput.gap();
+            if (noAgent) {
+                prompts.say("As which GitHub account should isx machines act?");
+                prompts.say("");
+                prompts.say("  1. A separate account");
+                prompts.say("     What isx machines write or do on GitHub appears");
+                prompts.say("     under it, not under your name. Needs a second GitHub");
+                prompts.say("     account and a token for it.");
+            } else {
+                prompts.say("As which GitHub account should the agent act?");
+                prompts.say("");
+                prompts.say("  1. An account of the agent's own (recommended)");
+                prompts.say("     Others can tell the agent's work from yours, and you");
+                prompts.say("     decide what it can reach. Needs a second GitHub");
+                prompts.say("     account and a token for it.");
             }
-            if (choice.isEmpty()) {
-                BuildOutput.step("Skipped GitHub. Add an account later with 'isx account add github'.");
+            if (login != null) {
+                prompts.say("  2. Your own account, " + OutputFormat.oneLine(login));
+                prompts.say(noAgent ? "     Quickest. What isx machines write or do on GitHub"
+                        : "     Quickest. Whatever the agent writes or does on GitHub");
+                prompts.say("     appears as yours, with all of your access.");
+            }
+            prompts.say("  " + none + ". None for now");
+            prompts.say(noAgent ? "     isx machines cannot push, comment or open anything on"
+                    : "     The agent cannot push, comment or open anything on");
+            prompts.say("     GitHub. Add an account later with");
+            prompts.say("     'isx account add github'.");
+            if (login == null) {
+                prompts.say("");
+                prompts.say("To use your own account, sign in with 'gh auth login'");
+                prompts.say("first, then run 'isx account add github'.");
+            }
+            prompts.say("");
+            var answer = prompts.ask("Choice: ");
+            // End of input is no answer at all: no account
+            var choice = answer == null ? none : answer.strip();
+            if (choice.equals("1")) {
+                var outcome = collectGitHubToken(config, prompts, AccountTarget.FRESH, true);
+                if (outcome == GitHubOutcome.BACK) continue;
+                return outcome == GitHubOutcome.SAVED;
+            }
+            if (choice.equals("2") && login != null) {
+                if (useGhToken(config, prompts, AccountTarget.FRESH, true) == GhTokenOutcome.SAVED) return true;
+                // The failure said why: the options again
+                continue;
+            }
+            if (choice.equals(none)) {
+                BuildOutput.note("No GitHub account for now.");
                 return false;
             }
-            // A typo is asked again, never taken as a skip
+            // Enter or a typo is asked again, never taken as a choice
         }
     }
 
-    /** Walks the user through one token for {@code account}; returns true once one is saved. */
-    private boolean collectGitHubToken(SpawnConfig config, Prompts prompts, AccountTarget account) {
-        // Prioritize a dedicated agent identity: walk the user through minting a fine-grained PAT.
-        printGitHubPatGuide(prompts);
+    /** How the token part of the GitHub step ended. */
+    enum GitHubOutcome { SAVED, SKIPPED, BACK }
 
+    /**
+     * Walks the person through one token for {@code account}. With {@code canGoBack} (the first
+     * run's options), Enter goes back to them; without, Enter offers the account {@code gh} is
+     * signed in to, then skips.
+     */
+    private GitHubOutcome collectGitHubToken(SpawnConfig config, Prompts prompts, AccountTarget account, boolean canGoBack) {
+        printGitHubPatGuide(prompts);
         while (true) {
-            var token = askSecret(prompts, "GitHub PAT for the agent (or press Enter to skip): ");
+            var token = readSecret(prompts.askSecret(canGoBack ? "Paste the token, or Enter to go back: "
+                    : "Paste the token, or Enter to skip: "));
+            if (token.equalsIgnoreCase("u")) {
+                // The whole address, for a terminal whose links cannot be clicked: on a line of its own
+                BuildOutput.step(GH_PAT_NEW_URL);
+                continue;
+            }
             if (token.isBlank()) {
-                // Last resort only: reuse the host's personal 'gh' login. Discouraged — it makes the
-                // agent act as you — so it is offered here (default No), never as the primary path.
+                if (canGoBack) return GitHubOutcome.BACK;
                 var outcome = offerGhCliToken(config, prompts, account);
-                if (outcome == GhTokenOutcome.SAVED) {
-                    return true;
-                }
-                if (outcome == GhTokenOutcome.FAILED) {
-                    // The gh fallback promised to "continue with manual setup" — re-prompt for a PAT.
-                    continue;
-                }
+                if (outcome == GhTokenOutcome.SAVED) return GitHubOutcome.SAVED;
+                // The fallback said why it failed: a token is asked for again
+                if (outcome == GhTokenOutcome.FAILED) continue;
                 reportGitHubSkipped(config);
-                return false;
+                return GitHubOutcome.SKIPPED;
             }
 
             var result = verifyPastedGitHubToken(token, prompts);
             if (result == null) {
                 // As for Claude: a check that failed for want of a network need not cost the token (#1441)
-                switch (askVerificationFailureAction(prompts)) {
+                switch (askVerificationFailureAction(prompts, "The token", gitHubFailure(), gitHubReached)) {
                     case SKIP -> {
                         reportGitHubSkipped(config);
-                        return false;
+                        return GitHubOutcome.SKIPPED;
                     }
                     case SAVE_UNVERIFIED -> {
-                        saveAccount(config, GhSetup.NAMESPACE,
-                                dev.incusspawn.config.AccountResolver.shapeOf(config, GhSetup.NAMESPACE),
-                                account, Map.of("token", token));
-                        config.save();
-                        BuildOutput.step("GitHub configuration saved (unverified, without email).");
-                        return true;
+                        saveGitHubToken(config, account, token, null, false);
+                        return GitHubOutcome.SAVED;
                     }
                     case RETRY -> {
                         continue;
                     }
                 }
             }
-
-            if (result.email == null) {
-                var replacement = offerTokenWithEmail(token, prompts);
-                if (replacement != null) {
-                    token = replacement.token();
-                    result = replacement.result();
-                }
-            }
             // Same target for every save in this flow, so a re-minted PAT lands in the account
             // the user picked rather than back in the flat field.
-            saveGitHubToken(config, account, token, result.email);
-            return true;
-        }
-    }
-
-    private record VerifiedToken(String token, GitHubVerifyResult result) {}
-
-    /**
-     * For a token that verified but cannot see an email: explains how to grant it, and takes a
-     * replacement. A mistyped or half-pasted replacement must not end the step, so this asks
-     * again until one verifies or the user settles for the original.
-     *
-     * @return the replacement, or null to keep the original token without an email
-     */
-    private VerifiedToken offerTokenWithEmail(String token, Prompts prompts) {
-        BuildOutput.warn("No email accessible — git commits will have no author email.");
-        BuildOutput.step("To fix this, either:");
-        prompts.say("• Edit your PAT at " + TerminalLink.link(patSettingsUrl(token)) + ":");
-        BuildOutput.stepNote("under Permissions, click 'Add permissions', search for 'Email addresses'"
-                + " and set it to Read-only (for a classic token, add the 'user:email' scope).");
-        prompts.say("• Or make your email public at " + TerminalLink.link("https://github.com/settings/profile"));
-        while (true) {
-            var newToken = askSecret(prompts, "Enter new PAT with email permission, or press Enter to keep the one above"
-                    + " (without email): ");
-            if (newToken.isBlank()) return null;
-
-            var newResult = verifyPastedGitHubToken(newToken, prompts);
-            if (newResult == null) {
-                BuildOutput.step("That token failed verification — try again, or press Enter to keep the one above.");
-                continue;
-            }
-            if (newResult.email == null) {
-                BuildOutput.step("(still without email)");
-            }
-            return new VerifiedToken(newToken, newResult);
+            saveGitHubToken(config, account, token, result, true);
+            return GitHubOutcome.SAVED;
         }
     }
 
     /**
-     * A skip leaves every saved account as it was, so "skipped setup" is only true when there
-     * are none -- not after adding a first account this run, nor on a re-run that has some.
+     * A skip leaves every saved account as it was, so "no account added" is only said when there
+     * are none: not after adding a first account this run, nor on a re-run that has some.
      */
     private static void reportGitHubSkipped(SpawnConfig config) {
         BuildOutput.step(hasAccountsToPreserve(config, GhSetup.NAMESPACE)
                 ? "No token added for this account."
-                : "Skipped GitHub setup. You can configure it later with 'isx account add " + GhSetup.NAMESPACE + "'.");
+                : "No GitHub account yet: 'isx account add " + GhSetup.NAMESPACE + "' adds one.");
     }
 
     /**
@@ -1924,60 +2065,122 @@ class CredentialSetup {
         for (var prefix : GITHUB_TOKEN_PREFIXES) {
             int at = token.indexOf(prefix);
             if (at > 0) {
-                return Optional.of("Note: " + at + (at == 1 ? " character comes" : " characters come")
-                        + " before '" + prefix + "' — something was typed before the paste.");
+                return Optional.of(at + (at == 1 ? " character comes" : " characters come")
+                        + " before '" + prefix + "': something was typed before the paste.");
             }
         }
-        return Optional.of("Note: token does not start with 'github_pat_' (fine-grained) or 'ghp_' (classic).");
+        return Optional.of("The token does not start with 'github_pat_' or 'ghp_', as GitHub's tokens do.");
     }
 
+    /** The account a token verified as, and the email its commits carry, or null for none. */
     record GitHubVerifyResult(String login, String email) {}
+
+    /** What GitHub says of a token's account: its login and number, and its primary verified email or null. */
+    record GitHubUser(String login, long id, String email) {}
 
     record EmailParseResult(java.util.List<String> verified, String primary) {}
 
-    /** @param prompts picks between several verified emails, when the account has them */
+    /** Why the last token did not verify, as a sentence; null when no check has failed. */
+    private String gitHubFailure;
+    /** Whether the last failed check reached GitHub, which then rejected the token. */
+    boolean gitHubReached = true;
+
+    private String gitHubFailure() {
+        return gitHubFailure != null ? gitHubFailure : "GitHub did not accept it.";
+    }
+
+    /**
+     * Checks {@code token} with GitHub and asks which email the agent's commits carry: null,
+     * with {@link #gitHubFailure} saying why, when it did not verify.
+     */
     GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts) {
-        BuildOutput.stepStart("Testing GitHub token");
+        GitHubUser user;
         try {
-            var client = getHttpClient();
-            var request = HttpRequest.newBuilder()
-                    .uri(URI.create("https://api.github.com/user"))
-                    .header("Authorization", "token " + token)
-                    .header("Accept", "application/vnd.github+json")
-                    .GET().build();
-            var response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
-            if (response.statusCode() != 200) {
-                BuildOutput.stepFail("Authentication failed (HTTP " + response.statusCode() + ").");
-                return null;
-            }
-            BuildOutput.stepDone();
-
-            var json = Jjq.parseForeign(response.body(), "GitHub's user");
-            var login = json.pathText("login", null);
-            var email = json.pathText("email", null);
-            if (email == null) {
-                email = checkGitHubEmail(client, token, prompts);
-            }
-
-            if (login != null) {
-                if (email != null) {
-                    BuildOutput.ok("Token verified. Authenticated as: " + login + " <" + email + ">");
-                } else {
-                    BuildOutput.ok("Token verified. Authenticated as: " + login);
-                }
-            } else {
-                BuildOutput.step("Token verified (could not determine username).");
-            }
-
-            return new GitHubVerifyResult(login, email);
+            user = fetchGitHubUser(token);
         } catch (Exception e) {
-            BuildOutput.abandonStep();
-            BuildOutput.warn("Could not test token: " + BaseCommand.failure(e));
+            gitHubReached = e instanceof GitHubRejected;
+            gitHubFailure = gitHubReached ? e.getMessage() : "isx could not reach GitHub: " + BaseCommand.failure(e);
             return null;
+        }
+        return new GitHubVerifyResult(user.login(), chooseCommitEmail(user, prompts, noAgent));
+    }
+
+    /** GitHub's answer for a token it does not accept, said for a person. */
+    static final class GitHubRejected extends java.io.IOException {
+        GitHubRejected(String message) { super(message); }
+    }
+
+    /** Reads the token's account from GitHub; tests answer it instead. */
+    GitHubUser fetchGitHubUser(String token) throws Exception {
+        var client = getHttpClient();
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create("https://api.github.com/user"))
+                .header("Authorization", "token " + token)
+                .header("Accept", "application/vnd.github+json")
+                .GET().build();
+        var response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        // GitHub answers a rate limit with 403 and x-ratelimit-remaining: 0 as well as with 429
+        var rateLimited = response.statusCode() == 403
+                && (response.headers().firstValue("x-ratelimit-remaining").map("0"::equals).orElse(false)
+                    || response.headers().firstValue("retry-after").isPresent());
+        if (response.statusCode() == 429 || rateLimited || response.statusCode() >= 500) {
+            // GitHub did not judge the token: unreached, so it may be saved unverified
+            throw new java.io.IOException("GitHub answered HTTP " + response.statusCode());
+        }
+        if (response.statusCode() != 200) {
+            throw new GitHubRejected("GitHub rejected it (HTTP " + response.statusCode() + "): it may be expired or mistyped.");
+        }
+        var json = Jjq.parseForeign(response.body(), "GitHub's user");
+        var login = json.pathText("login", null);
+        var id = json.path("id").asLong(0);
+        // The primary address, which the email question names; the public one only when the list is unreadable
+        var email = primaryGitHubEmail(client, token);
+        if (email == null) email = json.pathText("email", null);
+        return new GitHubUser(login, id, email);
+    }
+
+    /**
+     * Which email the agent's commits carry (#2528): GitHub's private address for the account,
+     * which keeps the real one out of public history, or the account's primary address. Asked
+     * only when there are both; Enter and end of input take the private one.
+     */
+    static String chooseCommitEmail(GitHubUser user, Prompts prompts) {
+        return chooseCommitEmail(user, prompts, false);
+    }
+
+    /** {@link #chooseCommitEmail}, naming isx machines rather than the agent when {@code noAgent}. */
+    static String chooseCommitEmail(GitHubUser user, Prompts prompts, boolean noAgent) {
+        var noreply = user.id() > 0 && user.login() != null
+                ? user.id() + "+" + user.login() + "@users.noreply.github.com" : null;
+        var real = user.email() == null || user.email().endsWith("@users.noreply.github.com") ? null : user.email();
+        if (noreply == null || real == null) {
+            // No question to ask: what the commits carry is said once
+            if (noreply != null) {
+                Lines.step((noAgent ? "Commits in isx machines carry" : "The agent's commits carry")
+                        + " GitHub's private address for " + OutputFormat.oneLine(user.login()) + ".");
+            }
+            return noreply != null ? noreply : user.email();
+        }
+        BuildOutput.gap();
+        prompts.say(noAgent ? "Which email should commits in isx machines carry?" : "Which email should the agent's commits carry?");
+        prompts.say("");
+        prompts.say("  1. " + OutputFormat.oneLine(noreply));
+        prompts.say("     GitHub's private address. Keeps the real one out of");
+        prompts.say("     public history. (recommended)");
+        prompts.say("  2. " + OutputFormat.oneLine(real));
+        prompts.say("     The account's primary address.");
+        prompts.say("");
+        while (true) {
+            var answer = prompts.ask("Choice [1]: ");
+            var choice = answer == null ? "" : answer.strip();
+            if (choice.isEmpty() || choice.equals("1")) return noreply;
+            if (choice.equals("2")) return real;
+            prompts.say("Please answer 1 or 2.");
         }
     }
 
-    private String checkGitHubEmail(java.net.http.HttpClient client, String token, Prompts prompts) {
+    /** The account's primary verified email from GitHub's list, or null when the token cannot read it. */
+    private String primaryGitHubEmail(java.net.http.HttpClient client, String token) {
         try {
             var request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.github.com/user/emails"))
@@ -1985,49 +2188,14 @@ class CredentialSetup {
                     .header("Accept", "application/vnd.github+json")
                     .GET().build();
             var response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
-            if (response.statusCode() != 200) {
-                return null;
-            }
-
+            if (response.statusCode() != 200) return null;
             var parsed = parseGitHubEmails(response.body());
-            if (parsed == null) {
-                return null;
-            }
-            return chooseEmail(parsed, prompts);
+            if (parsed == null) return null;
+            if (parsed.primary() != null) return parsed.primary();
+            return parsed.verified().stream().filter(e -> !e.endsWith("@users.noreply.github.com")).findFirst().orElse(null);
         } catch (Exception e) {
             return null;
         }
-    }
-
-    /**
-     * The address git commits will carry, when the token can see several verified ones.
-     * Enter, EOF and anything out of range take the first entry, which
-     * {@link #parseGitHubEmails} makes the noreply address whenever there is one -- so the
-     * default never publishes a real address that a private one could have covered.
-     */
-    static String chooseEmail(EmailParseResult parsed, Prompts prompts) {
-        if (parsed.verified.size() == 1) {
-            return parsed.verified.get(0);
-        }
-
-        BuildOutput.step("Multiple verified emails found:");
-        for (int i = 0; i < parsed.verified.size(); i++) {
-            var label = parsed.verified.get(i);
-            if (label.endsWith("@users.noreply.github.com")) label += " (private, recommended)";
-            else if (label.equals(parsed.primary)) label += " (primary)";
-            prompts.say((i + 1) + ". " + label);
-        }
-        var choice = readInput(prompts.ask("Select email for git commits [1]: "));
-        if (choice.isEmpty()) {
-            return parsed.verified.get(0);
-        }
-        try {
-            int idx = Integer.parseInt(choice) - 1;
-            if (idx >= 0 && idx < parsed.verified.size()) {
-                return parsed.verified.get(idx);
-            }
-        } catch (NumberFormatException ignored) {}
-        return parsed.verified.get(0);
     }
 
     static EmailParseResult parseGitHubEmails(byte[] json) {
@@ -2059,13 +2227,6 @@ class CredentialSetup {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private static String patSettingsUrl(String token) {
-        if (token.startsWith("github_pat_")) {
-            return "https://github.com/settings/personal-access-tokens";
-        }
-        return "https://github.com/settings/tokens";
     }
 
     void printCurrentPaths(java.util.List<String> paths) {
@@ -2133,122 +2294,163 @@ class CredentialSetup {
         // "replace all" replaces rather than offering to keep.
         var targetExists = target != null && !target.replaceOthers() && dev.incusspawn.config.AccountResolver
                 .accountNames(configTree, namespace, shape).contains(target.name());
+        // A namespace whose accounts may hold no credential here (a Google sign-in the proxy keeps
+        // on the host, #2443) asks which kind this account is before asking for anything, with
+        // "None for now" beside the kinds, and Enter at the key goes back to it (#2528)
+        var hosted = tool.hostedSignIn();
+        var menu = hosted != null && target != null;
+        var here = Platform.thisComputer();
         var accountValues = new LinkedHashMap<String, String>();
         var sharedValues = new LinkedHashMap<String, String>();
         // Lists entered anew, by full path: their old items go once the new ones are saved
         var replacedLists = new ArrayList<String>();
-        // A namespace whose accounts may hold no credential here (a Google sign-in the proxy keeps
-        // on the host, #2443) asks which kind this account is before asking for anything
-        var hosted = tool.hostedSignIn();
-        if (hosted != null && target != null && chooseHostedSignIn(namespace, proxyDef, hosted, prompts)) {
-            accountValues.put("type", hosted.type());
-            for (var line : hosted.help()) BuildOutput.step(line);
-            if (saveAccount(config, namespace, shape, target, accountValues)) {
-                // A keyed account moved to the hosted kind keeps no secret it no longer spends
-                if (targetExists) {
-                    for (var configDef : proxyDef.getConfiguration().values()) {
-                        var path = configDef.isSecret() || configDef.hasSecretField()
-                                ? proxyDef.accountConfigPath(configDef, target.name()) : "";
-                        if (!path.isBlank()) config.removeConfigPath(path);
-                    }
-                }
-                config.save();
-                BuildOutput.step(desc + " account saved; it signs in from an instance.");
-            }
-            return;
-        }
-        // A secret asked for and left blank, with none entered or there before: no credential was set up
         var secretSkipped = false;
         var secretHeld = false;
-        for (var entry : proxyDef.getConfiguration().entrySet()) {
-            var configKey = entry.getKey();
-            var configDef = entry.getValue();
-            if (!configDef.getValue().isBlank()) continue;
-            if (configDef.getConfigPath().isBlank()) continue;
+        choice:
+        while (true) {
+            accountValues.clear();
+            sharedValues.clear();
+            replacedLists.clear();
+            secretSkipped = false;
+            secretHeld = false;
+            if (menu) {
+                var kind = chooseAccountKind(toolName, namespace, proxyDef, hosted, prompts);
+                if (kind == AccountKind.NONE) {
+                    // The accounts already saved, the one chosen to edit included, stay as they were
+                    BuildOutput.note("No " + accountName(namespace) + " account "
+                            + (hasAccountsToPreserve(config, namespace) ? "added." : "for now."));
+                    return;
+                }
+                if (kind == AccountKind.HOSTED) {
+                    accountValues.put("type", hosted.type());
+                    BuildOutput.gap();
+                    for (var line : hosted.help()) BuildOutput.step(line);
+                    if (saveAccount(config, namespace, shape, target, accountValues)) {
+                        // A keyed account moved to the hosted kind keeps no secret it no longer spends
+                        if (targetExists) {
+                            for (var configDef : proxyDef.getConfiguration().values()) {
+                                var path = configDef.isSecret() || configDef.hasSecretField()
+                                        ? proxyDef.accountConfigPath(configDef, target.name()) : "";
+                                if (!path.isBlank()) config.removeConfigPath(path);
+                            }
+                        }
+                        config.save();
+                        BuildOutput.ok(OutputFormat.oneLine(hosted.outcome()));
+                    }
+                    return;
+                }
+            }
+            var first = true;
+            for (var entry : proxyDef.getConfiguration().entrySet()) {
+                var configKey = entry.getKey();
+                var configDef = entry.getValue();
+                if (!configDef.getValue().isBlank()) continue;
+                if (configDef.getConfigPath().isBlank()) continue;
 
-            // Definition text, so one line each, like describeTool.
-            var description = OutputFormat.oneLine(configDef.getDescription());
-            var label = description.isBlank() ? OutputFormat.oneLine(configKey) : description;
+                // Definition text, so one line each, like describeTool.
+                var description = OutputFormat.oneLine(configDef.getDescription());
+                var label = description.isBlank() ? OutputFormat.oneLine(configKey) : description;
 
-            // Per account: what the shape says an identity holds. Everything else -- a licence
-            // consent -- belongs to the namespace, and every account inherits it.
-            var fullPath = proxyDef.fullConfigPath(configDef);
-            var key = target != null && fullPath.startsWith(namespace + ".")
-                    ? fullPath.substring(namespace.length() + 1) : "";
-            var perAccount = !key.isEmpty() && shape.flatKeys().contains(key);
-            if (configDef.isList()) {
-                var listPath = perAccount
-                        ? namespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY + "." + target.name() + "." + key
-                        : fullPath;
-                var current = targetExists || !perAccount ? itemsAt(configTree, listPath) : Map.<String, String>of();
-                var labels = current.keySet().stream().map(k -> k.substring(0, k.indexOf('.'))).distinct().toList();
-                if (!labels.isEmpty()) {
-                    BuildOutput.step(label + ": " + OutputFormat.oneLine(String.join(", ", labels)));
+                // Per account: what the shape says an identity holds. Everything else -- a licence
+                // consent -- belongs to the namespace, and every account inherits it.
+                var fullPath = proxyDef.fullConfigPath(configDef);
+                var key = target != null && fullPath.startsWith(namespace + ".")
+                        ? fullPath.substring(namespace.length() + 1) : "";
+                var perAccount = !key.isEmpty() && shape.flatKeys().contains(key);
+                if (configDef.isList()) {
+                    // A list is a question of its own: the intro below is for a first question that is a key
+                    first = false;
+                    var listPath = perAccount
+                            ? namespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY + "." + target.name() + "." + key
+                            : fullPath;
+                    var current = targetExists || !perAccount ? itemsAt(configTree, listPath) : Map.<String, String>of();
+                    var labels = current.keySet().stream().map(k -> k.substring(0, k.indexOf('.'))).distinct().toList();
+                    if (!labels.isEmpty()) {
+                        // Kept whatever is answered, as a key is: only items entered anew replace them
+                        secretHeld |= configDef.hasSecretField();
+                        BuildOutput.step(label + ": " + OutputFormat.oneLine(String.join(", ", labels)));
+                        if (askYesNo(prompts, "Keep current?", true, true)) {
+                            // Kept items still travel with a "replace" into the new layout
+                            if (perAccount) current.forEach((k, v) -> accountValues.put(key + "." + k, v));
+                            continue;
+                        }
+                    }
+                    BuildOutput.gap();
+                    for (var helpLine : configDef.getHelp()) BuildOutput.step(OutputFormat.oneLine(helpLine));
+                    if (configDef.getHelp().isEmpty() && !description.isBlank()) BuildOutput.step(label);
+                    var items = askListItems(configDef, prompts);
+                    if (items.isEmpty()) continue;
+                    replacedLists.add(listPath);
+                    items.forEach((k, v) -> {
+                        if (perAccount) accountValues.put(key + "." + k, v);
+                        else sharedValues.put(fullPath + "." + k, v);
+                    });
+                    continue;
+                }
+                String existing;
+                if (perAccount) {
+                    existing = targetExists
+                            ? dev.incusspawn.config.AccountResolver.value(configTree, namespace, target.name(), key)
+                            : "";
+                } else {
+                    existing = ToolProxyResolver.navigateConfigPath(configTree, fullPath);
+                }
+                boolean hasExisting = configDef.isConfirm() ? "true".equals(existing) : !existing.isBlank();
+                if (hasExisting) {
+                    // Kept whatever is answered: a replacement left blank does not clear it
+                    secretHeld |= configDef.isSecret();
+                    BuildOutput.step(label + ": " + maskSecret(existing));
                     if (askYesNo(prompts, "Keep current?", true, true)) {
-                        // Kept items still travel with a "replace" into the new layout
-                        if (perAccount) current.forEach((k, v) -> accountValues.put(key + "." + k, v));
+                        // A kept value still has to travel with a "replace" into the new layout.
+                        if (perAccount) accountValues.put(key, existing);
                         continue;
                     }
                 }
-                for (var helpLine : configDef.getHelp()) BuildOutput.step(OutputFormat.oneLine(helpLine));
-                if (configDef.getHelp().isEmpty() && !description.isBlank()) BuildOutput.step(label);
-                var items = askListItems(configDef, prompts);
-                if (items.isEmpty()) continue;
-                replacedLists.add(listPath);
-                items.forEach((k, v) -> {
-                    if (perAccount) accountValues.put(key + "." + k, v);
-                    else sharedValues.put(fullPath + "." + k, v);
-                });
-                continue;
-            }
-            String existing;
-            if (perAccount) {
-                existing = targetExists
-                        ? dev.incusspawn.config.AccountResolver.value(configTree, namespace, target.name(), key)
-                        : "";
-            } else {
-                existing = ToolProxyResolver.navigateConfigPath(configTree, fullPath);
-            }
-            boolean hasExisting = configDef.isConfirm() ? "true".equals(existing) : !existing.isBlank();
-            if (hasExisting) {
-                // Kept whatever is answered: a replacement left blank does not clear it
-                secretHeld |= configDef.isSecret();
-                BuildOutput.step(label + ": " + maskSecret(existing));
-                if (askYesNo(prompts, "Keep current?", true, true)) {
-                    // A kept value still has to travel with a "replace" into the new layout.
-                    if (perAccount) accountValues.put(key, existing);
-                    continue;
+
+                // Each question a block of its own; with no menu before it, the first says what it is for
+                BuildOutput.gap();
+                if (first && !menu && configDef.isSecret()) {
+                    Lines.step(OutputFormat.oneLine(ExampleTemplate.title(tool)) + " uses "
+                            + ("AEIOUaeiou".indexOf(label.charAt(0)) >= 0 ? "an " : "a ") + label + ".");
                 }
-            }
+                first = false;
+                for (var helpLine : configDef.getHelp()) {
+                    BuildOutput.step(OutputFormat.oneLine(helpLine));
+                }
+                if (configDef.getHelp().isEmpty() && !description.isBlank() && !configDef.isSecret()) {
+                    BuildOutput.step(label);
+                }
+                // The paste apart from the help above it, as the Claude step's is
+                if (configDef.isSecret() && !configDef.getHelp().isEmpty()) BuildOutput.gap();
 
-            for (var helpLine : configDef.getHelp()) {
-                BuildOutput.step(OutputFormat.oneLine(helpLine));
-            }
-            if (configDef.getHelp().isEmpty() && !description.isBlank()) {
-                BuildOutput.step(label);
-            }
-
-            String value;
-            if (configDef.isConfirm()) {
-                value = askYesNo(prompts, label + "?", false, true) ? "true" : "false";
-            } else {
-                var question = label + " (or press Enter to skip): ";
-                if (configDef.isSecret()) {
-                    value = askSecret(prompts, question);
+                String value;
+                if (configDef.isConfirm()) {
+                    value = askYesNo(prompts, label + "?", false, true) ? "true" : "false";
                 } else {
-                    value = readInput(prompts.ask(question));
+                    var question = (configDef.isSecret() ? "Paste the " + label : label)
+                            + (menu && configDef.isSecret() ? ", or Enter to go back: " : ", or Enter to skip: ");
+                    if (configDef.isSecret()) {
+                        var answer = prompts.askSecret(question);
+                        // Enter goes back to the kinds of account; end of input skips, as every prompt's does
+                        if (menu && answer != null && readSecret(answer).isEmpty()) continue choice;
+                        value = readSecret(answer);
+                        if (!value.isEmpty()) prompts.say(styled(DIM, describeReceivedSecret(value)));
+                    } else {
+                        value = readInput(prompts.ask(question));
+                    }
+                }
+                if (configDef.isSecret()) {
+                    secretSkipped |= value.isBlank();
+                    secretHeld |= !value.isBlank();
+                }
+                if (value.isBlank()) continue;
+                if (perAccount) {
+                    accountValues.put(key, value);
+                } else {
+                    sharedValues.put(fullPath, value);
                 }
             }
-            if (configDef.isSecret()) {
-                secretSkipped |= value.isBlank();
-                secretHeld |= !value.isBlank();
-            }
-            if (value.isBlank()) continue;
-            if (perAccount) {
-                accountValues.put(key, value);
-            } else {
-                sharedValues.put(fullPath, value);
-            }
+            break;
         }
 
         boolean savedAny = false;
@@ -2271,14 +2473,37 @@ class CredentialSetup {
         }
 
         if (savedAny) config.save();
+        // A list whose items hold a secret is the credential too (AccountShape.declaredBy)
+        var secret = proxyDef.getConfiguration().values().stream().filter(c -> c.isSecret() || c.hasSecretField())
+                .map(c -> OutputFormat.oneLine(c.getDescription())).filter(d -> !d.isBlank()).findFirst().orElse("Credential");
         if (savedAny && (secretHeld || !secretSkipped)) {
-            BuildOutput.step(desc + " credentials saved.");
+            BuildOutput.ok(secret + " saved on " + here);
+            return;
+        }
+        if (!savedAny && secretHeld) {
+            // A credential kept as it was is still there: never "add one later"
+            BuildOutput.step("No credential changed.");
+            return;
+        }
+        // Read only when it is said: loading every tool definition is not free
+        var later = "Add one later with '" + CredentialCheck.stepCommand(toolName, new dev.incusspawn.tool.ToolDefLoader().allToolSetups())
+                + "'.";
+        if (savedAny) {
+            // What was saved without its credential is said by name, never reported as nothing
+            var answered = proxyDef.getConfiguration().values().stream().filter(c -> !c.isSecret())
+                    .filter(c -> sharedValues.containsKey(proxyDef.fullConfigPath(c)))
+                    .map(c -> "\"" + OutputFormat.oneLine(c.getDescription()) + "\"").toList();
+            Lines.step(answered.isEmpty() ? "Saved your answers, with no " + secret + "."
+                    : "Saved your answer to " + String.join(" and ", answered) + ", with no " + secret + ".");
+            Lines.step(later);
         } else {
-            // What was saved without its credential is said, never reported as nothing
-            BuildOutput.step((savedAny ? "Saved without a credential." : "Skipped.") + " Configure later with '"
-                    + CredentialCheck.stepCommand(toolName, new dev.incusspawn.tool.ToolDefLoader().allToolSetups()) + "'.");
+            BuildOutput.step("No credential added.");
+            Lines.step(later);
         }
     }
+
+    /** Which kind of account a namespace with a hosted sign-in sets up, or none for now. */
+    enum AccountKind { KEY, HOSTED, NONE }
 
     /**
      * A list's items asked one at a time ({@link ToolDef.ConfigEntry#isList}): a label, then each
@@ -2336,21 +2561,33 @@ class CredentialSetup {
     }
 
     /**
-     * Whether the account being written is {@code hosted}'s kind rather than the credential the
-     * tool's proxy definition declares. Enter keeps the credential, the common case.
+     * The kinds of account, each with a line on what it is, and "None for now": Enter asks again
+     * (#2528). The hosted kind is offered only to a tool that can sign in that way: a first run
+     * for Gemini CLI never offers Antigravity CLI's Google sign-in.
      */
-    private boolean chooseHostedSignIn(String namespace, ToolDef.ProxyDef proxyDef, ToolSetup.HostedSignIn hosted, Prompts prompts) {
+    private AccountKind chooseAccountKind(String toolName, String namespace, ToolDef.ProxyDef proxyDef,
+                                          ToolSetup.HostedSignIn hosted, Prompts prompts) {
         // What the other kind of account holds, by the name its own prompt gives it
         var credential = proxyDef.getConfiguration().values().stream().filter(ToolDef.ConfigEntry::isSecret)
                 .map(c -> OutputFormat.oneLine(c.getDescription())).filter(d -> !d.isBlank()).findFirst()
-                .orElse("A credential entered here");
-        var options = List.of(credential, OutputFormat.oneLine(hosted.label()));
+                .orElse("credential");
+        var offered = !firstRun || agent == null || hosted.tools().contains(agent);
+        var options = new ArrayList<String>();
+        options.add(("AEIOUaeiou".indexOf(credential.charAt(0)) >= 0 ? "An " : "A ") + credential
+                + "\n" + OutputFormat.oneLine(hosted.keyDescription()));
+        if (offered) options.add("A " + OutputFormat.oneLine(hosted.label()) + "\n" + hosted.description());
+        options.add("None for now\nAdd one later with 'isx account add " + OutputFormat.oneLine(namespace) + "'.");
         while (true) {
-            var choice = readInput(prompts.choose("Which kind of " + OutputFormat.oneLine(namespace) + " account is this?", options, null, "choose 1")).strip();
-            switch (choice) {
-                case "", "1" -> { return false; }
-                case "2" -> { return true; }
-                default -> prompts.say("Please answer 1 or 2.");
+            var answer = prompts.choose("Which kind of " + accountName(namespace) + " account do you have?", options, null, null);
+            // End of input is no answer at all: nothing is set up
+            if (answer == null) return AccountKind.NONE;
+            switch (answer.strip()) {
+                case "1" -> { return AccountKind.KEY; }
+                case "2" -> { return offered ? AccountKind.HOSTED : AccountKind.NONE; }
+                case "3" -> {
+                    if (offered) return AccountKind.NONE;
+                }
+                default -> { }
             }
         }
     }

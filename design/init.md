@@ -14,9 +14,10 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
 
 `runFirstRun` takes these steps, in order:
 
-1. It prints what the run will do and starts the downloads of `tpl-minimal`'s build in the background (`BackgroundDownloads`, `BuildDownloads.plan` with nothing counted as built).
+1. It prints a map of the run in its banner (`printFirstRunIntro`): what the person answers, what isx then does, and what they get, and starts the downloads of `tpl-minimal`'s build in the background (`BackgroundDownloads`, `BuildDownloads.plan` with nothing counted as built).
+   The questions it lists are those this run asks: an account already set up is left out.
 2. It asks for the preferred agent (`askAgent`).
-   One the person already prefers, else one `HostAgentProbe` found signed in, else one found installed, is offered and chosen by Enter, with `n` for none and `other` for the list.
+   One the person already prefers, else one `HostAgentProbe` found signed in, else one found installed, is offered and chosen by Enter, with `o` for the list and `n` for no agent; the prompt says what each letter does.
    With none found the list is shown, and Enter chooses nothing: it shows the list again, so isx never picks a vendor for the person.
    "None for now" is a choice, and stores nothing.
    The answer starts the agent's own pinned downloads, less those already started.
@@ -24,10 +25,10 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    Which one is not named in init: `agentGaps` runs `CredentialCheck.missingByCredential` over the example template for the agent, as a build of it would, and each gap runs the credential step `isx account add` runs for it.
    So Pi and opencode reach the Claude step through the credential their tool declares, and a new agent needs nothing here.
    A step that is not the agent's own is introduced by one line saying so (`InitCommand.sayWhoseAccount`), since its questions name another product: Pi is asked about Claude.
-   For an agent with a `provider` parameter the line also says how to spend another provider's account.
+   For an agent with a `provider` parameter it also says to choose "None for now" for another provider, and links the agent's page, which shows how.
    When the account is GitHub's (Copilot), the step is the GitHub question of the next step, which is then not asked a second time.
    A namespace that already has a usable account is not asked again.
-4. It offers a GitHub account (`CredentialSetup.offerGitHubForAgent`), and after a skip asks the Git identity question of design/accounts.md "A Git identity no account supplies".
+4. It asks as which GitHub account the agent acts (`CredentialSetup.offerGitHubForAgent`), and after "None for now" asks the Git identity question of design/accounts.md "A Git identity no account supplies".
 5. On Linux it asks for sudo, and installs the dependencies.
 6. It runs the plumbing as one block (`firstRunPlumbing`): today's steps that ask nothing, the Git remote helper and DNS among them, then the services.
    DNS is inside the block, since no step before it adds a search path, whose tools' domains it writes.
@@ -36,7 +37,7 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    A definition already named `tpl-agent`, in the person's directory or a search path, is built as it is and nothing is written, since a second one would make the build refuse both.
    Only trusted definitions decide the first template: a project's `.incus-spawn/` in the working directory is a cloned repository's.
    When a build there would read a project's template or tool for a layer of the chain, init builds and opens nothing, and says to build from a directory with no `.incus-spawn/` of its own.
-8. It prints the completion message, then asks `Open your first agent now?`, which branches `my-first` (or the first free `my-first-<n>`) from the template.
+8. It prints the completion message, then asks `Run 'isx branch my-first --from tpl-agent' now?`, which branches `my-first` (or the first free `my-first-<n>`) from the template.
 
 **Every question comes before the long work.**
 The plumbing and the build take minutes, and a question in the middle waits for a person who has left.
@@ -52,14 +53,16 @@ A first run whose proxy is not a running service builds nothing either, since a 
 The completion message then names the build command.
 
 **The completion message is what the person does next, in order** (#2528).
-It says what is ready, then lists what is left as numbered steps, one command to a line, in the order that works: start the services, build the template, add the agent's account, open the agent (`InitCommand.firstRunNextSteps`).
-It reads `Setup complete!` only when opening the agent is all that is left, and a build that failed is named.
+The box holds the result and the next command: the template built, which is where "template" is explained, and the command that opens the agent in a new isx machine (`InitCommand.firstRunNextSteps`).
+When more is left, it lists it as numbered steps, one command to a line, in the order that works: start the services, build the template, add the agent's account, open the agent.
+Its title reads "Setup complete" only when opening the agent is all that is left, and otherwise counts the steps left; a build that failed is named.
 An agent that needs something of the person at its first start says so under its step (`ToolSetup.firstStartNote`): Antigravity CLI on a Google account signs in from the instance.
-Then come the commands to return to the machine, list every machine and edit the template, and the templates guide.
-No line is wider than the box, which `InitFirstRunTest#noLineOfTheClosingMessageIsWiderThanItsBox` holds on every path.
+Under the box come the commands for later: return to the machine, list the machines, edit the template, the templates guide and `isx init`.
+Its last line says that isx's commands and docs call an isx machine an "instance".
+No line is wider than the box, which `InitFirstRunTest#everyLineOfTheClosingBoxEndsAtItsBorderAsTheTerminalDrawsIt` holds with escapes on: a link is an OSC 8 string, whose URL the terminal does not draw, and padding counted it until #2528.
 
 **A run that stops half way says how to go on.**
-A setup step that fails ends the run with its error, after a line saying that the agent and the accounts set up are saved and that `isx init`, run again, asks only what was skipped.
+A setup step that fails ends the run with its error, after a line saying that the agent and the accounts set up are saved and that `isx init`, run again, keeps the agent on Enter and asks only for the accounts skipped.
 
 **The agent opens only when the person says so.**
 An agent takes the whole terminal, so opening one unasked would hide the completion message, which comes first.
@@ -73,17 +76,42 @@ The completion message says the agent has no account yet, with the command that 
 The first `isx branch` at a terminal asks for it (#2405).
 
 A Claude Code subscription found on the host answers which kind of account to set up (`CredentialSetup.setupClaudeSubscription`): it is re-issued with `claude setup-token`, never copied, since the proxy and the host's Claude Code would otherwise share one refresh token.
-The person pastes the token the command prints.
+The step says what will happen before it asks: the command runs and opens the browser, the person approves, then pastes the token.
+Its answers are `Y` (run it here), `n` (run it by hand), `o` (another kind of account) and `s` (skip), and Enter at the paste goes back to them.
+The person pastes the token the command prints, until #2543 takes it without the paste.
 Reading it without the paste would mean reading the command's output while it keeps the terminal, which needs a pseudo-terminal the JVM cannot open, or a `script(1)` log that would hold the token on disk; the plan allowed the paste to stay in that case.
 A credential in the environment, or accounts already saved, take the full step instead, which reads and keeps those.
 
 ## A GitHub account in the first run
 
-The step says what the account is for: the agent's access to GitHub, and the name on its commits.
-The host's `gh` login is one of its choices, agreed on 2026-11-20, named by its login and saying that the agent would act with that account's own access.
-It is taken only when the person types its number: Enter skips GitHub and never takes it.
-A token of the agent's own account is the first choice, with the guide `isx account add github` shows.
+The step is about identity: as which account the agent deals with other people on GitHub.
+It has three options, each saying what it gives and what it costs: an account of the agent's own (recommended), the person's own account through the host's `gh` login, and "None for now".
+There is no default, so Enter asks again, and the `gh` login is taken only when the person types its number.
+With no signed-in `gh`, the second option is absent, and a line says how to get it.
+The agent's own account gets a guide that starts from being signed in as that account, which a browser signed in as the person is not.
+So isx prints the pre-filled token page as a link and never opens it; `u` at the token prompt prints its whole address, for a terminal whose links cannot be clicked.
+Enter at that prompt goes back to the three options.
+A token that verified asks which email the agent's commits carry: GitHub's private address, `<id>+<login>@users.noreply.github.com`, or the account's primary one, Enter taking the private one.
+With no primary address to read, the private one is taken without asking, so a token without the email permission no longer asks for another token.
 A namespace that already holds accounts, usable or not, gets the full step, which keeps them.
+
+## The first run's words (#2528)
+
+Sanne reviewed the first run screen by screen on a Mac, and the text it prints follows nine rules agreed then (#2528, #2542).
+What an agent runs in is an "isx machine", the computer is "this Mac" or "this computer" (`Platform.thisComputer`), and the closing message bridges to "instance" once.
+That word is the first run's alone: a credential step shared with `isx account add` says "instance" outside it (`CredentialSetup.machines`), and nothing else in isx was renamed.
+What is asked comes before why, a step that starts something says what will happen first, and each answer says what it does.
+A step header shows its number once, as `[2/3]`.
+The count is the run's own: before the agent is chosen it counts the questions for the agent offered first, and with none to offer it shows the fewest a run asks, as `[1/2+]` (`InitCommand.questionsFor`).
+After the choice it counts again, so a Copilot run, whose account step is the GitHub question, reads `[2/2]`, and the intro's "You answer" row lists the same questions.
+With no agent chosen, the GitHub step and the Git identity question speak of isx machines, never of "the agent" (`CredentialSetup.noAgent`).
+A check that fails is answered with one letter per meaning across the step: `Y` tries again and `s` skips, as in the step's own menu.
+Saving unverified (`u`) is offered only when the check could not run or reach the service (`CredentialSetup.AuthResult.reached`), since a credential the service rejected fails the same way in every isx machine.
+A namespace with a hosted sign-in (Gemini's Google account) offers its kinds as the Claude step does, each with a line under it and "None for now", and offers the hosted kind only to the agents that can use it (`ToolSetup.HostedSignIn.tools`): a first run for Gemini CLI never offers Antigravity CLI's Google sign-in.
+No line under a step header, its indent included, is wider than 62 columns (.claude/rules/interface-text.md "A line fits its frame"): text built from names breaks through `Lines.wrap`.
+`InitTranscriptsTest` renders every branch of the first run through the terminal's own output, escapes on, and reduces it to what a terminal draws; it writes one transcript per branch to `cli/target/init-transcripts/` and fails a line wider than the frame, or a word of the rule file's "Never" column before the closing message's line.
+The transcripts are how a branch nobody walks at a terminal is read and reviewed.
+Only the host is the test's: what is found, what a check answers, and markers where the plumbing, the build and the branch run.
 
 ## The continuation under `sg` asks nothing
 
@@ -103,5 +131,5 @@ The first run gets shorter, and isx does not get smaller.
 - `isx init --all` asks every step in turn, those left out included, on a first run or a later one.
   They are asked with the first run's questions, before the plumbing, so DNS still follows the search paths.
 - The flags that answer init's questions stay; in a first run, a step whose answer flag is given runs with that answer.
-- The completion message lists each deferred step in one line, with its command.
+- The completion message names `isx init`, whose menu lists each deferred step.
 - `InitFirstRunTest#everyStepIsInTheFirstRunOrInTheMenu` holds that every step `isx init --plan` lists, on Linux and on macOS, is in the first run or in the menu, so a step cannot be dropped from both.

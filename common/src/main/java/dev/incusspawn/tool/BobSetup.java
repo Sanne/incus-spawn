@@ -47,9 +47,8 @@ public class BobSetup implements ToolSetup {
         license.setType("confirm");
         license.setDescription("Accept IBM license terms");
         license.setHelp(List.of(
-                "IBM Bob Shell requires acceptance of the IBM license agreement.",
-                "The license is presented on first launch of Bob Shell.",
-                "Pre-accepting here skips that prompt inside containers."));
+                "Bob Shell asks you to accept IBM's license at first start.",
+                "Accept it here, and Bob Shell does not ask you again."));
 
         var auth = new ToolDef.AuthDef();
         auth.setDomains(List.of("bob.ibm.com", "*.bob.ibm.com",

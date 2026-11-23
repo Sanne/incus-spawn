@@ -213,6 +213,28 @@ class HostSetup {
         return InitPlan.Assessment.of(List.of(installChange("Install " + String.join(", ", missing), cmd)));
     }
 
+    /** The first run's hints, shown only when a step asks (#2528): its words, at the frame's width. */
+    static final String[] INCUS_FIRST_RUN = {
+            "Incus runs isx machines: full Linux systems, each one",
+            "isolated from this computer. This step installs Incus,",
+            "starts its service and adds you to the incus-admin group."};
+    static final String[] SUBID_FIRST_RUN = {
+            "The users inside isx machines map to users that have no",
+            "rights on this computer. This step writes those mappings",
+            "to /etc/subuid and /etc/subgid."};
+    static final String[] STORAGE_FIRST_RUN = {
+            "isx machines need a network and a place on disk. With a",
+            "btrfs pool, each new isx machine is a copy made instantly",
+            "that shares the files it has not changed."};
+    static final String[] FIREWALL_FIRST_RUN = {
+            "isx machines reach the internet through this computer.",
+            "This step lets the firewall pass their traffic and DNS."};
+    static final String[] MITM_FIRST_RUN = {
+            "The isx proxy adds your credentials to the HTTPS requests",
+            "of isx machines, so isx machines never hold them. This",
+            "step sends that traffic to the proxy and makes its",
+            "certificate."};
+
     static final String[] INCUS_HINT = {
             "Incus provides full Linux system containers — lightweight",
             "VMs with near-native performance. This step installs the",
@@ -583,7 +605,7 @@ class HostSetup {
             if (!BuildOutput.liveStep("Adding incusbr0 to the trusted firewall zone (sudo required)",
                     () -> runHostQuiet(FWD_TRUST_BRIDGE) == 0)) {
                 BuildOutput.warn("Failed to add incusbr0 to trusted zone.",
-                        "Containers may not have network/DNS access. You can fix this manually:",
+                        "Until it is, " + init.machines() + " may not reach the network or DNS. Fix it by hand with:",
                         "sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent",
                         "sudo firewall-cmd --zone=trusted --add-masquerade --permanent",
                         "sudo firewall-cmd --reload");
@@ -592,7 +614,7 @@ class HostSetup {
         }
         boolean ok = true;
         if (!hasMasquerade) {
-            ok &= BuildOutput.liveStep("Enabling masquerading (NAT) for container internet access",
+            ok &= BuildOutput.liveStep("Enabling NAT, so " + init.machines() + " reach the internet",
                     () -> ran(FWD_MASQUERADE));
         }
         if (!hasForwardIn || !hasForwardOut) {
@@ -670,8 +692,8 @@ class HostSetup {
         BuildOutput.step("Firewall configured: incusbr0 trusted with masquerading (UFW).");
     }
 
-    private static void warnFirewallIncomplete() {
-        warnIncomplete("Firewall only partly configured; containers may lack network/DNS access.");
+    private void warnFirewallIncomplete() {
+        warnIncomplete("The firewall is only partly set up, so " + init.machines() + " may not reach the network or DNS.");
     }
 
     private static void warnIncomplete(String consequence) {
@@ -791,7 +813,8 @@ class HostSetup {
             } else if (runHostQuiet("sudo", "sysctl", "-p", sysctlConf) != 0) {
                 BuildOutput.warn("Wrote " + sysctlConf + " but could not apply it now; it applies after a reboot.");
             } else {
-                BuildOutput.step("Configured host sysctls (inotify, perf_event_paranoid).");
+                BuildOutput.step("Raised the file-watch limits.");
+                BuildOutput.step("Let " + init.machines() + " use perf.");
             }
             Files.deleteIfExists(tempFile);
         } catch (IOException e) {
@@ -997,15 +1020,16 @@ class HostSetup {
 
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {
-            BuildOutput.step("MITM CA certificate already exists.");
+            BuildOutput.step("The isx proxy's certificate is ready.");
         } else {
             CertificateAuthority.loadOrCreate();
         }
         if (!redirected) {
-            warnIncomplete("The PREROUTING redirect was not fully configured; containers' HTTPS may not reach the proxy.");
+            warnIncomplete("isx could not send all HTTPS of " + init.machines() + " to the proxy, so the proxy may not add"
+                    + " your credentials to it.");
             return;
         }
-        BuildOutput.step("MITM proxy configured.");
+        BuildOutput.ok("The isx proxy is set up");
     }
 
     /** Whether every command updating the PREROUTING redirect, stale-rule removals included, succeeded. */
@@ -1334,9 +1358,9 @@ class HostSetup {
                         yield writeSubidFile(path, replaceSubidLine(content, result.conflictingEntry(), entry));
                     }
                     // The entries were just shown with the question
-                    BuildOutput.warn("Left " + path + " as it is: containers may not start correctly.");
+                    BuildOutput.warn("Left " + path + " as it is, so " + init.machines() + " may not start correctly.");
                 } else {
-                    BuildOutput.warn("Left " + path + " as it is: containers may not start correctly.",
+                    BuildOutput.warn("Left " + path + " as it is, so " + init.machines() + " may not start correctly.",
                             "It holds " + result.conflictingEntry() + "; incus-spawn expects: " + entry);
                 }
                 yield false;
@@ -1824,13 +1848,15 @@ class HostSetup {
             if (create.exitCode() == 0) {
                 BuildOutput.stepDone();
                 if (created.subvolume()) {
-                    BuildOutput.step("Created btrfs storage pool 'cow' as a subvolume of the host filesystem.");
+                    // At the frame's width under the plumbing block's group, two columns deeper than a step
+                    for (var line : Lines.wrap("Created btrfs storage pool 'cow' as a subvolume of the filesystem of "
+                            + dev.incusspawn.Platform.thisComputer() + ".", Lines.WIDTH - 2)) BuildOutput.step(line);
                     BuildOutput.step("It has no size cap of its own: it shares that filesystem's free space.");
                 } else {
                     BuildOutput.step("Created btrfs storage pool 'cow' (100 GiB, thin-provisioned).");
                     BuildOutput.step("Resize with: sudo incus storage set cow size=200GiB");
                 }
-                BuildOutput.step("All new instances will use it automatically.");
+                BuildOutput.step("New " + init.machines() + " use it automatically.");
             } else {
                 BuildOutput.abandonStep();
                 // The banner prints its lines as given, and the explanation can quote what the command printed
