@@ -119,6 +119,9 @@ class CredentialSetup {
     /** Whether the first run chose no agent: what acts on GitHub is then isx machines, never "the agent" (#2528). */
     boolean noAgent;
 
+    /** Whether the GitHub account is for GitHub Copilot CLI, which needs more of the token than isx does (#2537). */
+    boolean forCopilot;
+
     /**
      * What the agent runs in, as this step names it: "isx machines" in the first run, which
      * introduces that word, and "instances", as the rest of isx says, everywhere else (#2528).
@@ -1323,6 +1326,7 @@ class CredentialSetup {
             return GhTokenOutcome.FAILED;
         }
         saveGitHubToken(config, account, token, result, true);
+        if (forCopilot) warnIfCopilotCannotUse(token);
         return GhTokenOutcome.SAVED;
     }
 
@@ -1422,6 +1426,35 @@ class CredentialSetup {
     }
 
     /**
+     * Says when Copilot CLI will not run on the gh login's token, read from its prefix: a
+     * browser sign-in's OAuth token ({@code gho_}) works, a classic PAT ({@code ghp_}) is ignored
+     * by Copilot CLI, and a fine-grained one needs the Copilot Requests permission. The token is
+     * still saved, since the {@code gh} tool can use it either way.
+     */
+    static void warnIfCopilotCannotUse(String token) {
+        if (token.startsWith("ghp_")) {
+            BuildOutput.warn("Copilot CLI does not take this gh login's token: it is a classic token.",
+                    "Replace it with 'isx account add github': with gh's token once gh signs in through the browser"
+                            + " ('gh auth login --web'), or with a fine-grained token that has the 'Copilot Requests' permission.");
+        } else if (token.startsWith("github_pat_")) {
+            BuildOutput.warn("Copilot CLI runs on this gh login's token only if it has the 'Copilot Requests' permission.",
+                    "Add it to the token on GitHub, under Permissions.");
+        }
+    }
+
+    /**
+     * Says when Copilot CLI will not run on a pasted token: a classic one ({@code ghp_}), which the
+     * guide does not ask for but a person may paste. A fine-grained one's missing permission the
+     * guide named already. The token is still saved, since the {@code gh} tool can use it.
+     */
+    static void warnIfCopilotCannotUsePasted(String token) {
+        if (token.startsWith("ghp_")) {
+            BuildOutput.warn("Copilot CLI does not take this token: it is a classic token.",
+                    "Give the agent a fine-grained token with the 'Copilot Requests' permission ('isx account add github').");
+        }
+    }
+
+    /**
      * How to make a token of the agent's own account (#2528): signed in as that account, which a
      * browser signed in as the person is not, so isx prints the page rather than opening it.
      */
@@ -1437,6 +1470,11 @@ class CredentialSetup {
         prompts.say("  2. Open the isx token page there. Its permissions are");
         prompts.say("     filled in: contents, issues and pull requests (read");
         prompts.say("     and write), email address (read).");
+        if (forCopilot) {
+            prompts.say("     Copilot CLI also needs \"Copilot Requests\", which");
+            prompts.say("     the page does not add: under Permissions, click");
+            prompts.say("     \"Add permissions\" and add it.");
+        }
         prompts.say("  3. Under \"Repository access\", pick the repositories.");
         prompts.say("     A new account does not own any yet, so its list is");
         prompts.say("     empty.");
@@ -1918,6 +1956,7 @@ class CredentialSetup {
                 prompts.say(noAgent ? "     Quickest. What isx machines write or do on GitHub"
                         : "     Quickest. Whatever the agent writes or does on GitHub");
                 prompts.say("     appears as yours, with all of your access.");
+                if (forCopilot) prompts.say("     Copilot CLI does not take a classic token from gh.");
             }
             prompts.say("  " + none + ". None for now");
             prompts.say(noAgent ? "     isx machines cannot push, comment or open anything on"
@@ -1989,6 +2028,7 @@ class CredentialSetup {
                     }
                     case SAVE_UNVERIFIED -> {
                         saveGitHubToken(config, account, token, null, false);
+                        if (forCopilot) warnIfCopilotCannotUsePasted(token);
                         return GitHubOutcome.SAVED;
                     }
                     case RETRY -> {
@@ -1999,6 +2039,7 @@ class CredentialSetup {
             // Same target for every save in this flow, so a re-minted PAT lands in the account
             // the user picked rather than back in the flat field.
             saveGitHubToken(config, account, token, result, true);
+            if (forCopilot) warnIfCopilotCannotUsePasted(token);
             return GitHubOutcome.SAVED;
         }
     }

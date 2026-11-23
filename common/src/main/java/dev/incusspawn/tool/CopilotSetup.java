@@ -15,6 +15,9 @@ import java.util.Map;
 
 public class CopilotSetup implements ToolSetup {
 
+    /** The tool's name, as templates list it. */
+    public static final String NAME = "copilot";
+
     private static final String PLACEHOLDER_TOKEN = "gho_placeholder";
 
     static final NpmGlobalInstall.PlatformSplitCli NPM_CLI = new NpmGlobalInstall.PlatformSplitCli(
@@ -25,7 +28,7 @@ public class CopilotSetup implements ToolSetup {
 
     @Override
     public String name() {
-        return "copilot";
+        return NAME;
     }
 
     @Override
