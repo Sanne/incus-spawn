@@ -215,6 +215,8 @@ The two service steps ask whether to install in that walk, so they keep their he
 A run with no terminal or in a machine format keeps the walk above, and a host with the marker gets the menu.
 The continuation under `sg` asks nothing: the answers that store nothing travel in `ANSWERS_ENV` (`FirstRunAnswers`).
 A new step goes in the first run or in `DEFERRED`; `InitFirstRunTest#everyStepIsInTheFirstRunOrInTheMenu` fails a step in `planSteps` that is in neither.
+Its closing message (`firstRunNextSteps`, #2528) numbers what is left in the order it is done, one command to a line, and no line may be wider than the box (`InitFirstRunTest#noLineOfTheClosingMessageIsWiderThanItsBox`).
+A new agent that needs something of the person at its first start returns it from `ToolSetup.firstStartNote`, and `InitFirstRunAccountsTest` runs the account step of the agents that spend another tool's account.
 *Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded.
 When a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.
 A step that runs several commands runs each through `ran()`, which names the one that failed, and combines the results (`ok &= ran(...)`, never short-circuiting, so the remaining rules are still applied) before choosing between its success line and a warning (#1102: the firewall and PREROUTING steps).
