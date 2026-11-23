@@ -235,7 +235,8 @@
           "command": {"type": ["array", "null"], "items": {"type": "string"}, "description": "The command that starts a stdio server, and its arguments."},
           "env": {"type": ["object", "null"], "additionalProperties": {"type": "string"}, "description": "Environment variables for a stdio server."},
           "url": {"type": "string", "description": "The HTTPS address of a remote server."},
-          "bearer-token-env": {"type": "string", "description": "The variable an agent reads the bearer token from when it connects. One of the tool's own proxy placeholders."}
+          "bearer-token-env": {"type": "string", "description": "The variable an agent reads the bearer token from when it connects. One of the tool's own proxy placeholders."},
+          "for-each": {"type": "string", "description": "A proxy.configuration list to register this url server once for, per item the proxy serves. The name holds ${<list>.label}, and the url's host is the ${<list>.<field>} a for-each auth entry over the same list serves."}
         }
       }
     },
@@ -261,7 +262,20 @@
               "secret": {"type": "boolean", "default": false, "description": "Whether the value is a credential: read without echo, redacted in support bundles."},
               "config-path": {"type": "string", "description": "Where the value is stored in config.yaml, under the namespace's selected account when relative."},
               "value": {"type": ["string", "number", "boolean"], "description": "A hardcoded literal, which isx init does not prompt for."},
-              "help": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Lines printed before the prompt in place of the description."}
+              "help": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Lines printed before the prompt in place of the description."},
+              "for-each": {
+                "type": ["object", "null"],
+                "description": "Makes this entry a list: in config.yaml, a map from each item's label to its fields. Auth and mcp entries naming the list in for-each repeat per item, reading ${<list>.label} and ${<list>.<field>}.",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {"type": "string", "description": "The prompt's text for this field of an item."},
+                    "secret": {"type": "boolean", "default": false, "description": "Whether the field is a credential: read without echo, redacted in support bundles, never a domain or part of an MCP server."},
+                    "config-path": {"type": "string", "description": "The item's key holding the field, the field's own name when unset."}
+                  }
+                }
+              }
             }
           }
         },
@@ -279,7 +293,8 @@
               "password": {"type": "string", "description": "For basic: a literal or a ${configKey} reference."},
               "token": {"type": "string", "description": "For bearer: a literal or a ${configKey} reference."},
               "name": {"type": "string", "description": "For header: the header's name."},
-              "value": {"type": "string", "description": "For header: the value, with ${configKey} substitution."}
+              "value": {"type": "string", "description": "For header: the value, with ${configKey} substitution."},
+              "for-each": {"type": "string", "description": "A proxy.configuration list to repeat this entry for, once per item, reading ${<list>.<field>}. Each domain is one field of an item alone, checked like any configured domain."}
             }
           }
         },

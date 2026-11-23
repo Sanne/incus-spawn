@@ -51,6 +51,16 @@ public final class SecretRegistry {
             var proxy = entry.getValue().proxy();
             if (proxy == null) continue;
             for (var configEntry : proxy.getConfiguration().values()) {
+                if (configEntry == null) continue;
+                // A list's secret field, as the list's path and the field's leaf: the redactor
+                // takes a declared leaf anywhere under its namespace, so every item's is covered
+                configEntry.getForEach().forEach((key, field) -> {
+                    if (field == null || !field.isSecret()) return;
+                    var path = proxy.fullConfigPath(configEntry) + "." + field.fieldPath(key);
+                    if (isNavigable(path)) {
+                        result.add(new SecretLocation(path, entry.getKey(), field.getDescription()));
+                    }
+                });
                 if (!configEntry.isSecret() || configEntry.isConfirm()) continue;
                 var path = proxy.fullConfigPath(configEntry);
                 // Dropping a malformed one here keeps one bad tool definition from failing the

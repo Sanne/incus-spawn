@@ -106,10 +106,23 @@ public final class ToolProxyResolver {
             }
 
             var allConfigValues = resolveConfiguration(proxyDef, configTree, toolSetups, accountsByNamespace);
+            // Per list, which item each host was given to: no host carries two items' credentials
+            var itemHosts = new java.util.HashMap<String, Map<String, String>>();
 
             for (var authEntry : proxyDef.getAuth()) {
                 if (authEntry.getDomains().isEmpty()) continue;
                 if (authEntry.getType() == null) continue;
+                if (authEntry.getForEach() != null) {
+                    if (taken == null) taken = takenDomains(toolSetups);
+                    var servedElsewhere = taken.or(served -> claimedByOther(configuredBy, toolName, served));
+                    for (var resolved : resolveEach(toolName, proxyDef, authEntry, allConfigValues,
+                            configTree, toolSetups, accountsByNamespace, servedElsewhere,
+                            itemHosts.computeIfAbsent(authEntry.getForEach(), k -> new java.util.HashMap<>()))) {
+                        configuredBy.putIfAbsent(resolved.domain(), toolName);
+                        result.add(resolved);
+                    }
+                    continue;
+                }
 
                 boolean isAnthropic = "anthropic".equals(authEntry.getType());
                 var referencedKeys = extractReferencedKeys(authEntry);
@@ -131,6 +144,176 @@ public final class ToolProxyResolver {
             }
         }
         return result;
+    }
+
+    /** The key a list item's label is referenced by: {@code ${<list>.label}}. */
+    public static final String LABEL_FIELD = "label";
+
+    /** What a list item's label may be: a name an MCP server may take after its tool's prefix, and no config path's separator. */
+    private static final Pattern ITEM_LABEL = Pattern.compile("[a-z0-9][a-z0-9_-]{0,47}");
+
+    /** Whether {@code label} may name a list item ({@link #ITEM_LABEL}). */
+    public static boolean isItemLabel(String label) {
+        return label != null && ITEM_LABEL.matcher(label).matches();
+    }
+
+    /**
+     * One item of a list entry ({@link ToolDef.ConfigEntry#isList}): its label, and its label and
+     * fields keyed as a definition references them ({@code servers.label}, {@code servers.host}).
+     */
+    public record ListItem(String label, Map<String, String> values) {}
+
+    /**
+     * The items {@code listKey}'s list holds for the account selection, in file order: the
+     * account's own list when it has one, else the flat one. An item whose label is not a plain
+     * lowercase name is dropped with a warning, since an MCP server is named after it and a config
+     * path cannot hold a dot in it. A field the item leaves blank is absent from its values.
+     */
+    public static List<ListItem> listItems(String toolName, ToolDef.ProxyDef proxyDef, String listKey,
+                                           JqValue configTree, Map<String, ToolSetup> toolSetups,
+                                           Map<String, String> accountsByNamespace) {
+        var list = proxyDef.getConfiguration().get(listKey);
+        if (list == null || !list.isList()) return List.of();
+        var node = listNode(proxyDef, list, configTree, toolSetups, accountsByNamespace);
+        if (!(node instanceof io.hyperfoil.tools.jjq.value.JqObject items)) return List.of();
+        var result = new ArrayList<ListItem>();
+        for (var label : items.keys()) {
+            if (!ITEM_LABEL.matcher(label).matches()) {
+                // Never the label itself: a key typed by hand may be a pasted credential
+                dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
+                        + "': a " + listKey + " item's label is not a lowercase name of letters, digits,"
+                        + " '-' and '_' -- skipping it"));
+                continue;
+            }
+            var item = items.getField(label);
+            if (!(item instanceof io.hyperfoil.tools.jjq.value.JqObject)) continue;
+            var values = new LinkedHashMap<String, String>();
+            values.put(listKey + "." + LABEL_FIELD, label);
+            list.getForEach().forEach((field, def) -> {
+                if (def == null) return;
+                var value = AccountResolver.navigate(item, def.fieldPath(field)).strip();
+                if (!value.isEmpty()) values.put(listKey + "." + field, value);
+            });
+            result.add(new ListItem(label, Map.copyOf(values)));
+        }
+        return result;
+    }
+
+    /** The node a list entry resolves to: the selected account's, else the flat one, else null. */
+    private static JqValue listNode(ToolDef.ProxyDef proxyDef, ToolDef.ConfigEntry list, JqValue configTree,
+                                    Map<String, ToolSetup> toolSetups, Map<String, String> accountsByNamespace) {
+        var accountName = accountFor(proxyDef, list, configTree, toolSetups, accountsByNamespace);
+        // The parent instance holds the credentials, and this host has no list of its servers
+        if (AccountResolver.INHERIT.equals(accountName)) return null;
+        if (!accountName.isBlank()) {
+            var node = nodeAt(configTree, proxyDef.accountConfigPath(list, accountName));
+            if (node != null) return node;
+        }
+        return nodeAt(configTree, proxyDef.fullConfigPath(list));
+    }
+
+    /** The object at dotted {@code path}, or null when there is none or it holds no item. */
+    private static JqValue nodeAt(JqValue tree, String path) {
+        if (path.isBlank()) return null;
+        var node = tree;
+        for (var segment : path.split("\\.")) {
+            if (!(node instanceof io.hyperfoil.tools.jjq.value.JqObject object) || !object.keys().contains(segment)) return null;
+            node = object.getField(segment);
+        }
+        return node instanceof io.hyperfoil.tools.jjq.value.JqObject object && object.size() > 0 ? node : null;
+    }
+
+    /**
+     * The field of a list entry {@code ref} names ({@code servers.host}), or null when it names
+     * none: a plain key, a list's label, or an unknown name.
+     */
+    public static ToolDef.ListField listField(ToolDef.ProxyDef proxyDef, String ref) {
+        var dot = ref.indexOf('.');
+        if (dot <= 0) return null;
+        var list = proxyDef.getConfiguration().get(ref.substring(0, dot));
+        return list == null || !list.isList() ? null : list.getForEach().get(ref.substring(dot + 1));
+    }
+
+    /** Whether {@code ref} names {@code listKey}'s label or one of its fields. */
+    public static boolean isListRef(ToolDef.ProxyDef proxyDef, String listKey, String ref) {
+        if (!ref.startsWith(listKey + ".")) return false;
+        var list = proxyDef.getConfiguration().get(listKey);
+        if (list == null || !list.isList()) return false;
+        var field = ref.substring(listKey.length() + 1);
+        return LABEL_FIELD.equals(field) || list.getForEach().containsKey(field);
+    }
+
+    /**
+     * {@code auth} repeated for each item of its {@code for-each} list: each entry carries the
+     * tool's values and that item's alone, so its credential is the item's and its domain the
+     * item's host, checked like every configured domain. A host another item of the list already
+     * took is dropped, so a host never carries two items' credentials.
+     *
+     * @param itemHosts the hosts given out for this list so far, each with the label it went to
+     */
+    private static List<ResolvedToolProxy> resolveEach(String toolName, ToolDef.ProxyDef proxyDef,
+            ToolDef.AuthDef auth, Map<String, String> toolValues, JqValue configTree,
+            Map<String, ToolSetup> toolSetups, Map<String, String> accountsByNamespace,
+            java.util.function.Predicate<String> servedElsewhere, Map<String, String> itemHosts) {
+        var result = new ArrayList<ResolvedToolProxy>();
+        var listKey = auth.getForEach();
+        var referenced = new ArrayList<>(extractReferencedKeys(auth));
+        referenced.addAll(extractDomainKeys(auth));
+        var spends = namespacesOf(proxyDef, auth);
+        for (var item : listItems(toolName, proxyDef, listKey, configTree, toolSetups, accountsByNamespace)) {
+            var values = new LinkedHashMap<>(toolValues);
+            values.putAll(item.values());
+            var missing = referenced.stream().filter(key -> !values.containsKey(key)).distinct().toList();
+            if (!missing.isEmpty()) {
+                dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
+                        + "': " + listKey + " item '" + item.label() + "' has no " + String.join(", ", missing)
+                        + " -- skipping it"));
+                continue;
+            }
+            var label = item.label();
+            // A lone reference would split a comma: an item names one host, never several
+            if (extractDomainKeys(auth).stream().anyMatch(key -> values.get(key).contains(","))) {
+                dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
+                        + "': " + listKey + " item '" + label + "' names more than one host -- skipping it"));
+                continue;
+            }
+            java.util.function.Predicate<String> taken = servedElsewhere.or(host -> {
+                var owner = itemHosts.get(host);
+                return owner != null && !owner.equals(label);
+            });
+            for (var domain : resolveDomains(toolName, auth.getDomains(), domainValues(proxyDef, values), taken)) {
+                itemHosts.putIfAbsent(domain, label);
+                result.add(new ResolvedToolProxy(toolName, domain, auth, Map.copyOf(values), spends));
+            }
+        }
+        return result;
+    }
+
+    /**
+     * The items of {@code listKey} the proxy serves for {@code toolName} at the host
+     * {@code hostRef} names, from {@code resolved}: what an {@code mcp:} entry repeated over the
+     * list is registered for, so an agent is never given a server whose host the proxy dropped.
+     * Each item's values are its label and non-secret fields, the host as the proxy serves it.
+     */
+    public static List<ListItem> servedItems(ToolDef.ProxyDef proxyDef, String toolName, String listKey,
+                                             String hostRef, Collection<ResolvedToolProxy> resolved) {
+        var byLabel = new LinkedHashMap<String, ListItem>();
+        for (var entry : resolved) {
+            var auth = entry.auth();
+            if (!entry.toolName().equals(toolName) || auth == null || !listKey.equals(auth.getForEach())) continue;
+            if (!auth.getDomains().equals(List.of("${" + hostRef + "}"))) continue;
+            var label = entry.configValues().get(listKey + "." + LABEL_FIELD);
+            if (label == null || byLabel.containsKey(label)) continue;
+            var values = new LinkedHashMap<String, String>();
+            entry.configValues().forEach((key, value) -> {
+                if (!isListRef(proxyDef, listKey, key)) return;
+                var field = listField(proxyDef, key);
+                if (field == null || !field.isSecret()) values.put(key, value);
+            });
+            values.put(hostRef, entry.domain());
+            byLabel.put(label, new ListItem(label, Map.copyOf(values)));
+        }
+        return List.copyOf(byLabel.values());
     }
 
     /**
@@ -286,7 +469,7 @@ public final class ToolProxyResolver {
             var proxyDef = tool.proxy();
             if (proxyDef == null || tool.placeholders().isEmpty()) return;
             for (var auth : proxyDef.getAuth()) {
-                if (auth.getType() == null) continue;
+                if (auth.getType() == null || auth.getForEach() != null) continue;
                 var spends = namespacesOf(proxyDef, auth);
                 for (var domain : auth.getDomains()) {
                     if (!domain.isBlank() && !isConfiguredDomain(domain)) {
@@ -308,10 +491,20 @@ public final class ToolProxyResolver {
         // Anthropic's carrier varies with the guest's mode, independently of this host's.
         if ("anthropic".equals(auth.getType())) keys = List.copyOf(proxy.getConfiguration().keySet());
         for (var key : keys) {
-            var config = proxy.getConfiguration().get(key);
+            var config = entryFor(proxy, key);
             if (config != null) namespaces.add(proxy.namespaceOf(config));
         }
         return namespaces;
+    }
+
+    /** The configuration entry {@code ref} reads: its own, or for a list's label or field, the list's. */
+    private static ToolDef.ConfigEntry entryFor(ToolDef.ProxyDef proxy, String ref) {
+        var entry = proxy.getConfiguration().get(ref);
+        if (entry != null) return entry;
+        var dot = ref.indexOf('.');
+        if (dot <= 0) return null;
+        var list = proxy.getConfiguration().get(ref.substring(0, dot));
+        return list != null && isListRef(proxy, ref.substring(0, dot), ref) ? list : null;
     }
 
     /** A configuration entry of {@code toolName} that resolves to nothing, in {@code namespace} or {@code ""}. */
@@ -339,7 +532,9 @@ public final class ToolProxyResolver {
                 // Map.of() means "no pin", so each entry resolves against its namespace's
                 // default -- a namespace on the accounts layout is not reported as missing
                 // its credential just because the flat field is empty.
-                var value = resolveConfigValue(proxyDef, configDef, configTree, toolSetups, Map.of());
+                var value = configDef.isList()
+                        ? (listItems(toolName, proxyDef, configKey, configTree, toolSetups, Map.of()).isEmpty() ? "" : "items")
+                        : resolveConfigValue(proxyDef, configDef, configTree, toolSetups, Map.of());
                 if ((value == null || value.isBlank())
                         && !heldOutsideConfig(proxyDef, configKey, configTree, toolSetups, Map.of())) {
                     result.add(new UnresolvedToolProxy(toolName, configKey, proxyDef.namespaceOf(configDef)));
@@ -395,8 +590,14 @@ public final class ToolProxyResolver {
                 if (auth.getDomains().isEmpty()) continue;
                 if (auth.getType() == null || "anthropic".equals(auth.getType())) continue;
                 var keys = new ArrayList<>(extractReferencedKeys(auth));
-                // An entry with no static domain does not serve anything until one of its configured domains is set
-                if (auth.getDomains().stream().noneMatch(domain -> {
+                if (auth.getForEach() != null) {
+                    // A list serves once the proxy serves one of its items, its host kept; else the list is missing
+                    var listKey = auth.getForEach();
+                    var anyItem = resolve(configTree, toolSetups, accountsByNamespace).stream()
+                            .anyMatch(r -> r.toolName().equals(toolName) && r.auth() == auth);
+                    keys.removeIf(key -> isListRef(proxyDef, listKey, key));
+                    if (!anyItem) keys.add(listKey);
+                } else if (auth.getDomains().stream().noneMatch(domain -> {
                     var refs = new ArrayList<String>();
                     extractRefs(domain, refs);
                     return refs.stream().allMatch(resolved::containsKey);
@@ -621,13 +822,21 @@ public final class ToolProxyResolver {
      */
     private static Map<String, String> domainValues(ToolDef.ProxyDef proxyDef, Map<String, String> values) {
         var configuration = proxyDef.getConfiguration();
-        if (configuration.values().stream().noneMatch(ToolDef.ConfigEntry::isSecret)) return values;
+        if (configuration.values().stream().noneMatch(entry -> entry != null && (entry.isSecret() || entry.hasSecretField()))) return values;
         var result = new LinkedHashMap<String, String>();
         values.forEach((key, value) -> {
             var entry = configuration.get(key);
-            if (entry != null && !entry.isSecret()) result.put(key, value);
+            if (entry != null ? !entry.isSecret() && !entry.isList() : isPublicListRef(proxyDef, key)) result.put(key, value);
         });
         return result;
+    }
+
+    /** Whether {@code ref} names a list's label or one of its fields that is no secret. */
+    private static boolean isPublicListRef(ToolDef.ProxyDef proxyDef, String ref) {
+        var dot = ref.indexOf('.');
+        if (dot <= 0 || !isListRef(proxyDef, ref.substring(0, dot), ref)) return false;
+        var field = listField(proxyDef, ref);
+        return field == null || !field.isSecret();
     }
 
     /** Whether a raw {@code domains:} entry names a configuration key ({@code ${key}}). */
@@ -697,8 +906,8 @@ public final class ToolProxyResolver {
                             + "': a configured domain of entry '" + domain + "' is not a host name -- skipping it"));
                 } else if (taken.test(name)) {
                     dev.incusspawn.Warnings.warn(dev.incusspawn.util.OutputFormat.oneLine("tool '" + toolName
-                            + "': configured domain '" + name + "' is already served by isx or another tool"
-                            + " -- skipping it, so its credential is not sent there"));
+                            + "': configured domain '" + name + "' is already served by isx, another tool"
+                            + " or another item of its list -- skipping it, so its credential is not sent there"));
                 } else {
                     result.add(name);
                 }

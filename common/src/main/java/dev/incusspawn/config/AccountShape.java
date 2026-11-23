@@ -99,6 +99,16 @@ public interface AccountShape {
      * namespace; everything not named here is shared by every account.
      */
     static AccountShape declared(List<String> credentialKeys, List<String> accountKeys) {
+        return declared(credentialKeys, accountKeys, java.util.Set.of());
+    }
+
+    /**
+     * As above, where each of {@code listKeys} holds a list of items rather than one value
+     * ({@link ToolDef.ConfigEntry#isList}): such a credential is present while its list holds an
+     * item, and the account it moves into keeps the whole list.
+     */
+    static AccountShape declared(List<String> credentialKeys, List<String> accountKeys, java.util.Set<String> listKeys) {
+        var lists = java.util.Set.copyOf(listKeys);
         var credential = List.copyOf(credentialKeys);
         var perAccount = new ArrayList<>(accountKeys);
         credential.forEach(key -> { if (!perAccount.contains(key)) perAccount.add(0, key); });
@@ -106,13 +116,20 @@ public interface AccountShape {
         return new AccountShape() {
             @Override
             public boolean hasFlatCredential(JqValue namespace) {
-                return credential.stream().anyMatch(key -> !AccountResolver.navigate(namespace, key).isBlank());
+                return credential.stream().anyMatch(key -> lists.contains(key)
+                        ? listAt(namespace, key) != null
+                        : !AccountResolver.navigate(namespace, key).isBlank());
             }
 
             @Override
             public JqValue flatAccount(JqValue namespace) {
                 var builder = JqObject.builder(keys.size());
                 for (var key : keys) {
+                    if (lists.contains(key)) {
+                        var list = listAt(namespace, key);
+                        if (list != null) builder.put(key, list);
+                        continue;
+                    }
                     var value = AccountResolver.navigate(namespace, key);
                     if (!value.isBlank()) set(builder, key, value);
                 }
@@ -139,16 +156,30 @@ public interface AccountShape {
         var namespace = proxy.getConfigNamespace();
         var credential = new ArrayList<String>();
         var perAccount = new ArrayList<String>();
+        var lists = new java.util.HashSet<String>();
         for (var entry : proxy.getConfiguration().values()) {
             if (entry.isConfirm() || !entry.getValue().isBlank()) continue;
             if (!namespace.equals(proxy.namespaceOf(entry))) continue;
             var path = proxy.fullConfigPath(entry);
             if (path.length() <= namespace.length() + 1) continue;
             var key = path.substring(namespace.length() + 1);
-            if (entry.isSecret() && !credential.contains(key)) credential.add(key);
+            // A list whose items hold a secret is a credential: one with an item is configured
+            var secret = entry.isSecret() || entry.hasSecretField();
+            if (entry.isList()) lists.add(key);
+            if (secret && !credential.contains(key)) credential.add(key);
             if (!perAccount.contains(key)) perAccount.add(key);
         }
-        return declared(credential, perAccount);
+        return declared(credential, perAccount, lists);
+    }
+
+    /** The non-empty object at dotted {@code key} under {@code namespace}, or null. */
+    private static JqValue listAt(JqValue namespace, String key) {
+        var node = namespace;
+        for (var segment : key.split("\\.")) {
+            if (!(node instanceof JqObject object) || !object.keys().contains(segment)) return null;
+            node = object.getField(segment);
+        }
+        return node instanceof JqObject object && object.size() > 0 ? node : null;
     }
 
     /** Set a dotted key on a builder, creating intermediate objects. Keys collide by replacement. */

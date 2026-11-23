@@ -131,8 +131,11 @@ public class ToolDef extends FingerprintCache {
                 .part("skills", skills)
                 .part("resources", resources);
         if (proxy != null) {
-            walk.values("proxy.configuration", proxy.getConfiguration())
-                    .each("proxy.auth", proxy.getAuth())
+            walk.values("proxy.configuration", proxy.getConfiguration());
+            proxy.getConfiguration().forEach((key, entry) -> {
+                if (entry != null) walk.values("proxy.configuration." + key + ".for-each", entry.getForEach());
+            });
+            walk.each("proxy.auth", proxy.getAuth())
                     .each("proxy.placeholders", proxy.getPlaceholders());
         }
         return walk.warnings();
@@ -182,6 +185,9 @@ public class ToolDef extends FingerprintCache {
         private String url;
         @JqName("bearer-token-env")
         private String bearerTokenEnv;
+        /** A {@code proxy.configuration} list this entry is registered once for each item of ({@link ConfigEntry#getForEach}). */
+        @JqName("for-each")
+        private String forEach;
 
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
@@ -195,6 +201,8 @@ public class ToolDef extends FingerprintCache {
         public void setUrl(String url) { this.url = url; }
         public String getBearerTokenEnv() { return bearerTokenEnv; }
         public void setBearerTokenEnv(String bearerTokenEnv) { this.bearerTokenEnv = bearerTokenEnv; }
+        public String getForEach() { return forEach; }
+        public void setForEach(String forEach) { this.forEach = forEach == null || forEach.isBlank() ? null : forEach; }
     }
 
     /**
@@ -462,6 +470,15 @@ public class ToolDef extends FingerprintCache {
         private String configPath = "";
         private String value = "";
         private List<String> help = List.of();
+        /**
+         * The fields of each item when this entry is a list: a map in {@code config.yaml} from an
+         * item's label to its fields, each read at the field's {@code config-path} (its key when
+         * unset). An auth or {@code mcp:} entry that names this entry in {@code for-each} is
+         * repeated once per item, its {@code ${<entry>.<field>}} and {@code ${<entry>.label}}
+         * references taking that item's values.
+         */
+        @JqName("for-each")
+        private Map<String, ListField> forEach = Map.of();
 
         public String getType() { return type; }
         public void setType(String type) { this.type = type != null ? type : "string"; }
@@ -475,8 +492,34 @@ public class ToolDef extends FingerprintCache {
         public void setValue(String value) { this.value = value != null ? value : ""; }
         public List<String> getHelp() { return help; }
         public void setHelp(List<String> help) { this.help = items(help); }
+        public Map<String, ListField> getForEach() { return forEach; }
+        public void setForEach(Map<String, ListField> forEach) { this.forEach = forEach != null ? forEach : Map.of(); }
+        /** Whether this entry is a list of items, each with the fields of {@link #getForEach}. */
+        public boolean isList() { return !forEach.isEmpty(); }
         public boolean isSelfResolving() { return !configPath.isBlank() || !this.value.isBlank(); }
         public boolean isConfirm() { return "confirm".equals(type); }
+        /** Whether a field of this list's items is a secret. */
+        public boolean hasSecretField() {
+            return forEach.values().stream().anyMatch(field -> field != null && field.isSecret());
+        }
+    }
+
+    /** One field of each item of a list entry ({@link ConfigEntry#getForEach}): one value an item holds. */
+    @JqMapped
+    public static class ListField extends MappedDefinition {
+        private String description = "";
+        private boolean secret = false;
+        @JqName("config-path")
+        private String configPath = "";
+
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description != null ? description : ""; }
+        public boolean isSecret() { return secret; }
+        public void setSecret(boolean secret) { this.secret = secret; }
+        public String getConfigPath() { return configPath; }
+        public void setConfigPath(String configPath) { this.configPath = configPath != null ? configPath : ""; }
+        /** Where an item holds this field: its {@code config-path}, else {@code key}. */
+        public String fieldPath(String key) { return configPath.isBlank() ? key : configPath; }
     }
 
     /**
@@ -512,6 +555,9 @@ public class ToolDef extends FingerprintCache {
         private String token;      // for bearer: literal or ${configKey} template
         private String name;       // for header: the header name
         private String value;      // for header: template with ${configKey} substitution
+        /** A {@code proxy.configuration} list this entry is repeated for, once per item ({@link ConfigEntry#getForEach}). */
+        @JqName("for-each")
+        private String forEach;
 
         public List<String> getDomains() { return domains; }
         public void setDomains(List<String> domains) { this.domains = items(domains); }
@@ -531,6 +577,8 @@ public class ToolDef extends FingerprintCache {
         public void setName(String name) { this.name = name; }
         public String getValue() { return value; }
         public void setValue(String value) { this.value = value; }
+        public String getForEach() { return forEach; }
+        public void setForEach(String forEach) { this.forEach = forEach == null || forEach.isBlank() ? null : forEach; }
     }
 
     public boolean hasBuildSteps() {
@@ -580,9 +628,15 @@ public class ToolDef extends FingerprintCache {
         }
         if (proxy != null) {
             proxy.configuration.entrySet().stream().sorted(Map.Entry.comparingByKey())
-                    .forEach(e -> sb.append("config=").append(e.getKey())
-                            .append(':').append(e.getValue().configPath)
-                            .append(':').append(e.getValue().value).append('\n'));
+                    .forEach(e -> {
+                        sb.append("config=").append(e.getKey())
+                                .append(':').append(e.getValue().configPath)
+                                .append(':').append(e.getValue().value);
+                        // A list's fields decide what each repeated entry reads
+                        new TreeMap<>(e.getValue().forEach).forEach((k, f) -> sb.append(":field=").append(k)
+                                .append(':').append(f == null ? "" : f.configPath).append(':').append(f != null && f.secret));
+                        sb.append('\n');
+                    });
             for (var ae : proxy.auth) {
                 sb.append("auth=");
                 ae.domains.stream().sorted().forEach(d -> sb.append(d).append(','));
@@ -596,6 +650,7 @@ public class ToolDef extends FingerprintCache {
                 if (ae.password != null) sb.append(",pass=").append(ae.password);
                 if (ae.name != null) sb.append(",name=").append(ae.name);
                 if (ae.value != null) sb.append(",value=").append(ae.value);
+                if (ae.forEach != null) sb.append(",for-each=").append(ae.forEach);
                 sb.append('\n');
             }
         }
@@ -613,6 +668,7 @@ public class ToolDef extends FingerprintCache {
             sb.append("mcp=").append(m.name).append(',').append(m.description).append(',')
                     .append(String.join("\u0000", m.command)).append(',').append(m.url).append(',')
                     .append(m.bearerTokenEnv).append(',');
+            if (m.forEach != null) sb.append("for-each=").append(m.forEach).append(',');
             new TreeMap<>(m.env).forEach((k, v) -> sb.append(k).append('=').append(v).append(';'));
             sb.append('\n');
         }

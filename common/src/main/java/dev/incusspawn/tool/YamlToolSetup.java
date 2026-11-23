@@ -58,7 +58,12 @@ public class YamlToolSetup implements ToolSetup {
 
     @Override
     public java.util.List<McpServer> mcpServers(java.util.Map<String, String> resolvedParams) {
-        return def.getMcp().stream().map(e -> McpServer.of(e, resolvedParams)).toList();
+        return def.getMcp().stream().filter(e -> e.getForEach() == null).map(e -> McpServer.of(e, resolvedParams)).toList();
+    }
+
+    @Override
+    public java.util.List<ToolDef.McpEntry> mcpForEach() {
+        return def.getMcp().stream().filter(e -> e.getForEach() != null).toList();
     }
 
     @Override
