@@ -131,6 +131,7 @@ public class ProjectCommand extends BaseCommand {
                 }
 
                 if (BuildCommand.reportStrandedStorage(incus, imageName, buildName)) return 1;
+                if (BuildCommand.reportPoolTooFull(incus, "create", imageName)) return 1;
                 // What a create that died before its swap left behind
                 incus.deleteIfExists(buildName);
                 try {

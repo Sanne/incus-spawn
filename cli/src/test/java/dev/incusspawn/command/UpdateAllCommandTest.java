@@ -252,6 +252,19 @@ class UpdateAllCommandTest {
         assertFalse(incus.exists(COPY));
     }
 
+    /** #2555: an update writes as a build does, so a pool that is critical refuses it before the copy. */
+    @Test
+    void anUpdateIsRefusedOnACriticalPool() {
+        long gib = 1024L * 1024 * 1024;
+        var incus = incus();
+        daemon.poolSpace("default", 57 * gib, 60 * gib);
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> assertEquals(1, update(incus)));
+        assertFalse(incus.exists(COPY), "nothing is copied for a refused update");
+        assertTrue(recorded.events(dev.incusspawn.util.RecordingOutput.Kind.ERROR).stream()
+                .anyMatch(e -> e.msg().startsWith("Cannot update " + NAME + ": the storage pool 'default' has 3.0 GiB free")),
+                recorded::toString);
+    }
+
     /** One step that fails discards the whole update: the template stays as it was built. */
     @Test
     void anUpdateWithAFailedStepLeavesTheTemplateAsItWas() {

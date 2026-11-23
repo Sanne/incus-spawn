@@ -268,10 +268,11 @@ On a Linux subvolume pool the full disk is the host's own.
 
 So what writes to the pool checks its space first (`PoolSpace`), with one request to the pool's `/resources`.
 A build, which writes gigabytes, is refused once the pool is critical (`PoolUsage.isCritical`: at least 90% used and under 5 GiB free; `BuildCommand.reportPoolTooFull`), and wherever a branch is refused.
+`isx project create` and the template updates of `TemplateUpdate` (`isx update-all`, `isx project update`) write as a build does, so they are refused the same way (`BuildCommand.reportPoolTooFull`, beside `reportStrandedStorage`).
 A branch is a CoW snapshot and costs almost nothing at once, so it is only warned at critical, and refused once the pool is exhausted (`PoolUsage.isExhausted`: under 2 GiB free, whatever the percentage).
 That refusal is part of `BranchFlow.preflight`, so `isx branch`, the TUI and `isx mcp`'s `create_instance` all get it before anything is created, and `isx mcp` answers it as `refused`.
 The branch reads the space of its source's pool, which is the copy's whenever the source is on a CoW pool.
-The read is one more request on the branch path, well under a millisecond, which `BranchPoolSpaceTest` pins.
+The read is one more request on the branch path, which `BranchPoolSpaceTest` pins; its latency has not been traced with `bench/trace-branch.sh`.
 A pool whose usage cannot be read lets everything through, and Incus decides.
 What this gives up: a running instance can still fill the pool after its branch, since nothing bounds the pool as a whole (see "The cap and #414" above for why no pool quota is set).
 
