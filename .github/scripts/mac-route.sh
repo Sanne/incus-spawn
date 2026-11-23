@@ -85,11 +85,22 @@ runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/mac-heartbeat.yml/runs
           | map(tostring) | join(",")' 2>/dev/null) || runs=""
 IFS=, read -r completed queued <<< "$runs"
 
+# The workflows with a job that can run on the Mini: every one whose runs-on is self-hosted, names isx-mac or takes the mac-route output, which
+# MacRunnerWorkflowTest holds equal to this list, so a new routed workflow fails it until added here.
+MINI_WORKFLOWS="test-integration.yml mac-heartbeat.yml"
+
 # The other runs' jobs queued for the Mini or running on it, heartbeats included; "" when any read fails.
+# Only runs of those workflows are listed: no other can hold the Mini, and every call counts against
+# the repository's hourly token budget.
 mini_jobs() {
-    local ids id n total=0
-    ids=$( { gh api "repos/$GITHUB_REPOSITORY/actions/runs?status=in_progress&per_page=50" --jq '.workflow_runs[].id' &&
-             gh api "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=50" --jq '.workflow_runs[].id'; } 2>/dev/null) || return 0
+    local ids="" id n workflow status total=0
+    for workflow in $MINI_WORKFLOWS; do
+        for status in in_progress queued; do
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?status=$status&per_page=50" \
+                --jq '.workflow_runs[].id' 2>/dev/null) || return 0
+            ids="$ids $id"
+        done
+    done
     for id in $ids; do
         [ "$id" != "${GITHUB_RUN_ID:-}" ] || continue
         n=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" \
