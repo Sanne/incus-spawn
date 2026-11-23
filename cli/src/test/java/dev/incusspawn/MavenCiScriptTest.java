@@ -94,9 +94,11 @@ class MavenCiScriptTest {
                     seen++;
                     var where = file.getFileName() + " " + name;
                     var with = cache.get().path("with");
-                    assertTrue(with.pathText("key", "").matches("(macos-)?maven-" + name + "-\\$\\{\\{ hashFiles.*"),
+                    // A fallback twin runs its job's steps on GitHub's runner when the Mac runner gave it up (#2298)
+                    var own = name.endsWith("-fallback") ? name.substring(0, name.length() - "-fallback".length()) : name;
+                    assertTrue(with.pathText("key", "").matches("(macos-)?maven-" + own + "-\\$\\{\\{ hashFiles.*"),
                             where + ": its key is not its own: " + with.pathText("key", ""));
-                    assertTrue(with.pathText("restore-keys", "").lines().anyMatch(k -> k.matches("(macos-)?maven-" + name + "-")),
+                    assertTrue(with.pathText("restore-keys", "").lines().anyMatch(k -> k.matches("(macos-)?maven-" + own + "-")),
                             where + ": no restore key of its own");
                     var id = cache.get().pathText("id", "");
                     assertFalse(id.isEmpty(), where + ": the cache step has no id");

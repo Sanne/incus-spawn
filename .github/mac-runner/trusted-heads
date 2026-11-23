@@ -1,0 +1,6 @@
+# Head repositories whose pull requests may run on the project's Mac runner (#2298).
+# One owner/name per line. The Mini's job-started hook keeps its own copy and never reads this one,
+# which a pull request can change; keep the two the same.
+Sanne/incus-spawn
+# The bot's fork, where the workers' branches live; its only collaborator is the bot.
+Sanne-ai-bot/incus-spawn

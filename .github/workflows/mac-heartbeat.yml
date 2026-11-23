@@ -1,0 +1,33 @@
+name: Mac runner heartbeat
+# mac-route.sh counts only runs of this title: with the switch off, the job is skipped, and a run
+# whose jobs were all skipped can still conclude as a success.
+run-name: ${{ vars.MAC_RUNNER_ENABLED == 'true' && 'Mac runner heartbeat' || 'Mac runner heartbeat (off)' }}
+
+# The project's Mac Mini runs test-integration.yml's macOS jobs for trusted code while it is up and
+# free (#2298). This run is how mac-route.sh knows: a heartbeat completed within 25 minutes, with
+# none waiting more than 5 for the runner, sends the jobs to the Mini; anything else sends them to
+# GitHub's macos-15. Fork pull requests get no secret, so the route reads these runs through the
+# public API instead of asking about the runner itself.
+#
+# It runs only while the repository variable MAC_RUNNER_ENABLED is 'true'. Clearing it is the off
+# switch: the heartbeat goes stale, and every macOS job runs on GitHub's runners again.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+# One run at a time and one waiting: a waiting run is how the route sees the Mini busy or gone.
+concurrency:
+  group: mac-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    if: vars.MAC_RUNNER_ENABLED == 'true' && github.repository == 'Sanne/incus-spawn'
+    runs-on: [self-hosted, macOS, ARM64, isx-mac]
+    timeout-minutes: 2
+    steps:
+      - name: The Mac runner is up
+        run: echo "The Mac runner is up"
