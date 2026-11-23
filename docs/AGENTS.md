@@ -486,8 +486,12 @@ A child template can set any of them again without reinstalling Bob.
 
 ## GitHub Copilot CLI
 
-GitHub Copilot CLI signs in with the same GitHub personal access token as the `gh` tool; no separate credential is needed.
-Add it to a template with `tools: [copilot]`:
+GitHub Copilot CLI signs in with the same GitHub token as the `gh` tool; no separate credential is needed.
+
+A fine-grained token also needs the Copilot Requests permission, which the pre-filled token page of `isx init` and `isx account add github` does not add.
+Copilot CLI ignores a classic token, so a `gh` login's token works when `gh` signed in through the browser, and not when it was given a classic token.
+
+Add Copilot CLI to a template with `tools: [copilot]`:
 
 ```yaml
 name: tpl-copilot-dev

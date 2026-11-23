@@ -861,6 +861,156 @@ class InitFirstRunTest {
         IsolatedHome.assertNothingSaved();
     }
 
+    /** For Copilot CLI, the gh-login option says which of gh's tokens it takes (#2537). */
+    @Test
+    void forCopilotTheGhLoginSaysWhichTokenCopilotTakes() throws Exception {
+        var setup = new CredentialSetup();
+        setup.forCopilot = true;
+        var prompts = ScriptedPrompts.lines("3");
+
+        RecordingOutput.during(() -> assertFalse(setup.offerGitHubForAgent(SpawnConfig.load(), prompts, "jdoe")));
+
+        var said = said(prompts);
+        assertTrue(said.contains("Copilot CLI does not take a classic token from gh."), said);
+        IsolatedHome.assertNothingSaved();
+    }
+
+    /** For Copilot CLI, the token guide says the token page does not add Copilot Requests (#2537). */
+    @Test
+    void forCopilotTheTokenGuideNamesCopilotRequests() throws Exception {
+        var setup = new CredentialSetup();
+        setup.forCopilot = true;
+        // The agent's own token, Enter goes back to the options, then None for now
+        var prompts = ScriptedPrompts.lines("1").secret("").line("2");
+
+        RecordingOutput.during(() -> assertFalse(setup.offerGitHubForAgent(SpawnConfig.load(), prompts, null)));
+
+        var said = said(prompts);
+        assertTrue(said.contains("Copilot CLI also needs \"Copilot Requests\""), said);
+        IsolatedHome.assertNothingSaved();
+    }
+
+    /** Another agent's token guide does not mention Copilot. */
+    @Test
+    void theTokenGuideNamesNoCopilotPermissionForAnotherAgent() throws Exception {
+        var setup = new CredentialSetup();
+        var prompts = ScriptedPrompts.lines("1").secret("").line("2");
+
+        var output = RecordingOutput.during(() -> assertFalse(setup.offerGitHubForAgent(SpawnConfig.load(), prompts, null)));
+
+        var said = said(prompts);
+        assertFalse(said.contains("Copilot"), said);
+        assertTrue(output.events().stream().noneMatch(e -> e.text().contains("Copilot")), output.events()::toString);
+        IsolatedHome.assertNothingSaved();
+    }
+
+    /** The gh login's token is read by its prefix: a classic one is named as not taken by Copilot CLI. */
+    @Test
+    void forCopilotAClassicGhTokenIsSavedWithAWarning() throws Exception {
+        var output = choosingGhLoginFor("ghp_" + "a".repeat(36));
+
+        var warns = output.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warns.size(), warns::toString);
+        assertTrue(warns.get(0).msg().contains("it is a classic token"), warns::toString);
+    }
+
+    @Test
+    void forCopilotAFineGrainedGhTokenNamesCopilotRequests() throws Exception {
+        var output = choosingGhLoginFor("github_pat_" + "a".repeat(30));
+
+        var warns = output.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warns.size(), warns::toString);
+        assertTrue(warns.get(0).msg().contains("'Copilot Requests' permission"), warns::toString);
+    }
+
+    @Test
+    void forCopilotABrowserSignInsTokenIsSavedWithoutAWarning() throws Exception {
+        var output = choosingGhLoginFor("gho_" + "a".repeat(36));
+
+        assertEquals(List.of(), output.events(RecordingOutput.Kind.WARN));
+    }
+
+    /** A pasted classic token is saved, and named as not taken by Copilot CLI. */
+    @Test
+    void forCopilotAPastedClassicTokenIsSavedWithAWarning() throws Exception {
+        var setup = new CredentialSetup() {
+            @Override
+            GitHubVerifyResult verifyGitHubToken(String t, Prompts p) {
+                return new GitHubVerifyResult("jdoe-bot", "bot@example.com");
+            }
+        };
+        setup.forCopilot = true;
+        var prompts = ScriptedPrompts.lines("1").secret("ghp_" + "a".repeat(36));
+
+        var output = RecordingOutput.during(() -> assertTrue(setup.offerGitHubForAgent(SpawnConfig.load(), prompts, null)));
+
+        var warns = output.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warns.size(), warns::toString);
+        assertTrue(warns.get(0).msg().contains("it is a classic token"), warns::toString);
+        assertEquals("ghp_" + "a".repeat(36), savedGitHubToken());
+    }
+
+    /**
+     * The agent's GitHub account step follows the agent the build installs: a kept tpl-agent
+     * listing Copilot CLI gets its guidance though another agent was chosen, and the reverse not.
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"copilot, claude, true", "claude, copilot, false"})
+    void theAgentsGitHubStepFollowsTheTemplatesAgent(String kept, String chosen, boolean copilot) throws Exception {
+        var asked = new ArrayList<Boolean>();
+        var init = new InitCommand() {
+            @Override Prompts prompts() { return ScriptedPrompts.lines(); }
+            @Override String ghLogin() { return null; }
+
+            @Override
+            Map<CredentialCheck.Missing, List<String>> agentGaps() {
+                return Map.of(new CredentialCheck.Missing("GitHub token", "isx account add github"), List.of("tpl-agent"));
+            }
+        };
+        init.credentials = new CredentialSetup() {
+            @Override
+            boolean offerGitHubForAgent(SpawnConfig config, Prompts prompts, String login) {
+                asked.add(forCopilot);
+                return false;
+            }
+        };
+        var agents = init.codingAgentTools();
+        init.chosenAgent = agents.stream().filter(a -> a.name().equals(chosen)).findFirst().orElseThrow();
+        Files.createDirectories(ExampleTemplate.file().getParent());
+        Files.writeString(ExampleTemplate.file(),
+                ExampleTemplate.text(agents.stream().filter(a -> a.name().equals(kept)).findFirst().orElseThrow()));
+
+        RecordingOutput.during(init::setUpAgentCredential);
+
+        assertEquals(List.of(copilot), asked);
+    }
+
+    /** Chooses the gh login, holding {@code token}, for Copilot CLI; the token is saved. */
+    private static RecordingOutput choosingGhLoginFor(String token) throws Exception {
+        var setup = new CredentialSetup() {
+            @Override
+            String readGhAuthToken() {
+                return token;
+            }
+
+            @Override
+            GitHubVerifyResult verifyGitHubToken(String t, Prompts p) {
+                return new GitHubVerifyResult("jdoe", "jdoe@example.com");
+            }
+        };
+        setup.forCopilot = true;
+        var prompts = ScriptedPrompts.lines("2");
+        var output = RecordingOutput.during(() -> assertTrue(setup.offerGitHubForAgent(SpawnConfig.load(), prompts, "jdoe")));
+        prompts.assertFullyConsumed();
+        assertEquals(token, savedGitHubToken());
+        return output;
+    }
+
+    /** The token config.yaml holds for the GitHub account the first run saved. */
+    private static String savedGitHubToken() {
+        return dev.incusspawn.config.AccountResolver.navigate(SpawnConfig.load().tree(), "github.accounts.default.token");
+    }
+
     /** Every coding agent's first template has an account the first run can name. */
     @Test
     void everyAgentsFirstTemplateIsKnownToTheCredentialCheck() {

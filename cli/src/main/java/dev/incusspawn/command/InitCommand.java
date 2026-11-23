@@ -1798,6 +1798,8 @@ public class InitCommand extends BaseCommand {
     boolean offerGitHub() {
         var prompts = consoleOrExplain();
         credentials.noAgent = firstRun && chosenAgent == null;
+        // The agent the build installs decides the Copilot guidance, not the one chosen
+        credentials.forCopilot = isCopilot(templateAgent());
         return prompts != null && credentials.offerGitHubForAgent(firstRunConfig(), prompts, ghLogin());
     }
 
@@ -2688,7 +2690,15 @@ public class InitCommand extends BaseCommand {
 
     private void setupGitHubAuth() {
         var prompts = consoleOrExplain();
-        if (prompts != null) credentials.setupGitHubAuth(credentialConfig(), prompts);
+        if (prompts == null) return;
+        // The menu has no template to build: the preferred agent decides
+        credentials.forCopilot = isCopilot(preferredAgentTool());
+        credentials.setupGitHubAuth(credentialConfig(), prompts);
+    }
+
+    /** Whether {@code agent} is GitHub Copilot CLI, which spends the GitHub account's token. */
+    static boolean isCopilot(ToolSetup agent) {
+        return agent != null && agent.name().equals(dev.incusspawn.tool.CopilotSetup.NAME);
     }
 
     private void setupCodexAuth() {
