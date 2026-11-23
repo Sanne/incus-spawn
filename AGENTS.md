@@ -29,6 +29,7 @@ Modules: `common` (shared code), `cli` (the `isx` binary), `proxy` (the `isx-pro
 - Docs go in the same change as the code: `CLAUDE.md`, the `.claude/rules/` file and the `design/` page of the area.
 - Markdown is one sentence per line, with short sentences (`DocsOneSentencePerLineTest`).
   `README.md` and `docs/*.md` also keep to the budgets in `.claude/rules/writing.md`.
+- Every text a person reads follows `.claude/rules/writing.md`, and the text isx prints (prompts, output, warnings, errors, the TUI) also follows `.claude/rules/interface-text.md`.
 - A divergence from stock Fedora is listed in `docs/FEDORA.md` in the same change.
 - Never print to stdout or stderr directly; all output goes through `BuildOutput` (`RawOutputGateTest`).
 - A regular expression is a `static final Pattern` (`PatternConstantGateTest`).
@@ -56,7 +57,8 @@ Other agents read the one for the area they touch.
 | Terminal output and tool setup output | `.claude/rules/terminal-output.md` |
 | Tools, environment, agent setup | `.claude/rules/tools-env.md` |
 | The TUI | `.claude/rules/tui.md` |
-| Writing docs | `.claude/rules/writing.md` |
+| Writing for a person: docs, PR descriptions, every text | `.claude/rules/writing.md` |
+| Wording prompts, output, warnings and the TUI | `.claude/rules/interface-text.md` |
 
 ## Skills
 

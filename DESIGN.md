@@ -148,6 +148,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The main screen's tabs
   - Terminals the TUI cannot assume
   - The overview of what each instance did
+  - Interface text has rules of its own
 - [The TUI's visual language](design/visual-language.md)
   - What the rules are for
   - Colour
