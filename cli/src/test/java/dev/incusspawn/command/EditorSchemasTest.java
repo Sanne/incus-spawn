@@ -114,6 +114,7 @@ class EditorSchemasTest {
                         .collect(java.util.stream.Collectors.toSet()),
                 enumOf(config.path("maven-repositories").path("items").path("properties").path("confirm")));
         assertEquals(privateSet(MavenMirrors.class, "KEYS"), keysOf(config.path("maven-mirrors").path("items")));
+        assertEquals(privateSet(dev.incusspawn.config.ConfirmedCache.class, "KEYS"), keysOf(config.path("confirmed-cache")));
         assertEquals(privateSet(HostRoutes.class, "KEYS"), keysOf(config.path("host-routes").path("additionalProperties")));
         assertEquals(privateSet(Drivers.class, "KEYS"), keysOf(config.path("drivers").path("additionalProperties")));
         assertEquals(privateSet(McpConfig.class, "HOST_TOOL_KEYS"),
