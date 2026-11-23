@@ -66,6 +66,15 @@ class AgentGitIdentityTest {
     }
 
     @Test
+    void aGitHubAccountTheTemplateDoesNotUseIsNotSaidToBeMissing() {
+        var without = AgentGitIdentity.report(null, null, false, false);
+        assertTrue(without.contains("there is no GitHub account"), without);
+        var with = AgentGitIdentity.report(null, null, false, true);
+        assertTrue(with.contains("your GitHub account gave it none"), with);
+        assertFalse(with.contains("no GitHub account"), with);
+    }
+
+    @Test
     void noIdentityIsSaidAsNone() {
         assertNull(AgentGitIdentity.parse("git\n"));
         assertNull(AgentGitIdentity.parse("git\nfile:/etc/gitconfig\tJane\n"));
@@ -118,10 +127,10 @@ class AgentGitIdentityTest {
         var out = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertEquals(0, process.waitFor(), out);
         assertTrue(AgentGitIdentity.keptTemplatesOwn(out), out);
-        var report = AgentGitIdentity.report(null, JANE, true);
+        var report = AgentGitIdentity.report(null, JANE, true, false);
         assertTrue(report.contains("was not written"), report);
         // Written, but emptied by another file: not said to be the template's
-        assertFalse(AgentGitIdentity.report(null, JANE, false).contains("was not written"));
+        assertFalse(AgentGitIdentity.report(null, JANE, false, false).contains("was not written"));
     }
 
     /** The identity is the guest's text, and reaches the host's terminal on one line. */
