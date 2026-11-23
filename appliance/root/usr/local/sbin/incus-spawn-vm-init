@@ -38,6 +38,20 @@ for f in /etc/subuid /etc/subgid; do
     fi
 done
 
+# Allowlisted control agent on its own vsock port, so the host can introspect/recover the
+# forwarder independently of the (possibly wedged) Incus tunnel. Each connection runs the
+# fixed-verb isx-agent — not an arbitrary guest-exec channel.
+# Started before the wait for Incus (#2555): on a full data disk incusd cannot start, and the host
+# then needs the agent to learn why (disk-free) and to shut the VM down cleanly (shutdown).
+AGENT_VSOCK_PORT=$(parse_cmdline "isx.agent_vsock")
+if [ -n "$AGENT_VSOCK_PORT" ]; then
+    # -T 30: agent verbs are sub-second, so any connection idle for 30s is stuck; reap it.
+    # Bounds a hypothetical future blocking verb (the agent itself never lingers today).
+    # backlog=128 for the same reason as the forwarder (see isx-start-vsock-forwarder).
+    socat -T 30 VSOCK-LISTEN:"$AGENT_VSOCK_PORT",reuseaddr,fork,backlog=128 EXEC:/usr/local/sbin/isx-agent &
+    echo "incus-spawn-vm-init: control agent on vsock port $AGENT_VSOCK_PORT"
+fi
+
 # Wait for Incus daemon
 if ! incus admin waitready --timeout 30; then
     echo "incus-spawn-vm-init: ERROR: Incus daemon not ready after 30s" >&2
@@ -114,18 +128,6 @@ if [ -n "$TEST_SILENT_PORT" ]; then
     socat -u UNIX-LISTEN:/run/isx-test-silent.sock,fork,backlog=128 OPEN:/dev/null &
     /usr/local/sbin/isx-start-vsock-forwarder "$TEST_SILENT_PORT" /run/isx-test-silent.sock &
     echo "incus-spawn-vm-init: test-only silent endpoint on vsock port $TEST_SILENT_PORT"
-fi
-
-# Allowlisted control agent on its own vsock port, so the host can introspect/recover the
-# forwarder independently of the (possibly wedged) Incus tunnel. Each connection runs the
-# fixed-verb isx-agent — not an arbitrary guest-exec channel.
-AGENT_VSOCK_PORT=$(parse_cmdline "isx.agent_vsock")
-if [ -n "$AGENT_VSOCK_PORT" ]; then
-    # -T 30: agent verbs are sub-second, so any connection idle for 30s is stuck; reap it.
-    # Bounds a hypothetical future blocking verb (the agent itself never lingers today).
-    # backlog=128 for the same reason as the forwarder (see isx-start-vsock-forwarder).
-    socat -T 30 VSOCK-LISTEN:"$AGENT_VSOCK_PORT",reuseaddr,fork,backlog=128 EXEC:/usr/local/sbin/isx-agent &
-    echo "incus-spawn-vm-init: control agent on vsock port $AGENT_VSOCK_PORT"
 fi
 
 # Symlink isx binary from shared directory if available
