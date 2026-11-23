@@ -1264,6 +1264,11 @@ public class InitCommand extends BaseCommand {
                 runPlumbing(firstRunPlumbing(macOs, servicesInstalled), !macOs && continued ? 1 : 0);
             } catch (WaitingOnPerson waiting) {
                 return handOver(waiting.changes);
+            } catch (Exception e) {
+                // The failure is reported by the command; what to do about a run that stopped half way is said here
+                BuildOutput.step("Setup stopped before it finished. Your answers are saved: once the failure below"
+                        + " is fixed, run 'isx init' again, and it carries on from them.");
+                throw e;
             }
             return finishFirstRun(macOs, servicesInstalled.get(), continued);
         } finally {
