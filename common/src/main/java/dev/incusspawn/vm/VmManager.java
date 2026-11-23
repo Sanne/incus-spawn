@@ -153,7 +153,11 @@ public final class VmManager {
     private static final int INCUS_VSOCK_PORT = 8443;
 
     private static final String LATEST_KNOWN_RELEASE = "0.2.2";
-    private static volatile String resolvedApplianceVersion;
+    /** Resolved once per process; package-private so a test names the version instead of asking GitHub. */
+    static volatile String resolvedApplianceVersion;
+
+    /** Where the appliance's release assets are. Not final: a test points it at a name that does not resolve. */
+    static String releaseDownloads = "https://github.com/Sanne/incus-spawn/releases/download";
 
     // --- Resource detection ---
 
@@ -638,6 +642,7 @@ public final class VmManager {
                 // Before the stop: a VM stopped for a launcher that is not installed stays down,
                 // which is a JBang install's first restart after the move from vfkit (#2552).
                 findLauncher();
+                downloadPendingAppliance();
                 fromLegacy = runsUnderLegacyHypervisor();
                 stopLocked();
             }
@@ -646,6 +651,23 @@ public final class VmManager {
         } catch (VmException e) {
             BuildOutput.error(e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * The appliance a restart is about to boot, downloaded while the old VM still runs (#2552):
+     * the kernel and disk image of a new release are two downloads, and a stop that came first
+     * left the VM down for both, and down for good when one failed. A failed download fails the
+     * restart before the stop; the running VM boots from memory, so replacing its files is safe.
+     */
+    private static void downloadPendingAppliance() {
+        if (!Files.exists(Environment.vmDiskImage()) || diskIsCurrent(applianceVersion(), readVersionFile())) return;
+        try {
+            downloadArtifacts();
+        } catch (IOException e) {
+            throw new VmException("Could not download appliance " + applianceVersion() + ": " + e.getMessage()
+                    + "\nThe VM was not stopped. Run 'isx vm restart' again once github.com can be reached."
+                    + "\nMeanwhile 'isx vm stop' then 'isx vm start' boots the current appliance again.");
         }
     }
 
@@ -1279,26 +1301,31 @@ public final class VmManager {
         try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
 
         if (Files.exists(Environment.vmDiskImage())) {
+            String diskVersion;
             try {
-                if (Files.exists(versionFile)) {
-                    var diskVersion = Files.readString(versionFile).strip();
-                    if (diskIsCurrent(currentVersion, diskVersion)) return;
-                    BuildOutput.step("Replacing appliance root disk ("
-                            + diskVersion + " → " + currentVersion + ")");
-                } else {
-                    BuildOutput.step("Replacing appliance root disk (untracked → "
-                            + currentVersion + ")");
-                }
+                diskVersion = Files.exists(versionFile) ? Files.readString(versionFile).strip() : "untracked";
+            } catch (IOException e) {
+                return;
+            }
+            if (diskIsCurrent(currentVersion, diskVersion)) return;
+            // Downloaded before the old disk goes: a failed download keeps it, and the old
+            // disk.img.gz is never extracted under the new version's stamp (#2552).
+            // A failed download boots the disk it would have replaced, beside the kernel it came
+            // with: an offline dev build, whose version falls back to an old release, still starts.
+            try {
+                downloadArtifacts();
+            } catch (IOException e) {
+                BuildOutput.warn("Could not download appliance " + currentVersion + ": " + e.getMessage(),
+                        "The VM starts on its current appliance. Run 'isx vm restart' once github.com can be reached.");
+                return;
+            }
+            // Only once the download succeeded, so a failed one does not first claim the replacement
+            BuildOutput.step("Replacing appliance root disk (" + diskVersion + " → " + currentVersion + ")");
+            try {
                 Files.delete(Environment.vmDiskImage());
                 Files.deleteIfExists(versionFile);
             } catch (IOException e) {
                 return;
-            }
-            try {
-                downloadArtifacts();
-            } catch (IOException e) {
-                BuildOutput.warn("could not re-download appliance artifacts: "
-                        + e.getMessage());
             }
         }
 
@@ -1525,7 +1552,7 @@ public final class VmManager {
     public static void downloadArtifacts() throws IOException {
         var version = applianceVersion();
         var arch = normalizeArch();
-        var baseUrl = "https://github.com/Sanne/incus-spawn/releases/download/v" + version;
+        var baseUrl = releaseDownloads + "/v" + version;
 
         Files.createDirectories(Environment.applianceDir());
 
@@ -1536,20 +1563,27 @@ public final class VmManager {
                 versionMatch = Files.readString(versionFile).strip().equals(version);
             } catch (IOException ignored) {}
         }
-        if (!versionMatch) {
-            Files.deleteIfExists(Environment.applianceKernel());
-            Files.deleteIfExists(Environment.applianceDiskImage());
-        }
-
+        // Another version's files are downloaded beside the current ones and moved into place only
+        // once both arrived: a download that fails leaves the last working pair in place, and the
+        // version file still names it (#2552).
         var cache = new DownloadCache();
-
-        if (!Files.exists(Environment.applianceKernel())) {
-            downloadKernel(cache, baseUrl, arch);
-        }
-
-        if (!Files.exists(Environment.applianceDiskImage())) {
-            downloadStep(cache, "Downloading disk image (" + arch + ")",
-                    baseUrl + "/disk-" + arch + ".img.gz", Environment.applianceDiskImage());
+        var kernel = Environment.applianceKernel();
+        var image = Environment.applianceDiskImage();
+        var nextKernel = kernel.resolveSibling(kernel.getFileName() + ".next");
+        var nextImage = image.resolveSibling(image.getFileName() + ".next");
+        boolean newKernel = !versionMatch || !Files.exists(kernel);
+        boolean newImage = !versionMatch || !Files.exists(image);
+        try {
+            if (newKernel) downloadKernel(cache, baseUrl, arch, nextKernel);
+            if (newImage) {
+                downloadStep(cache, "Downloading disk image (" + arch + ")",
+                        baseUrl + "/disk-" + arch + ".img.gz", nextImage);
+            }
+            if (newKernel) Files.move(nextKernel, kernel, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            if (newImage) Files.move(nextImage, image, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } finally {
+            Files.deleteIfExists(nextKernel);
+            Files.deleteIfExists(nextImage);
         }
 
         Files.writeString(versionFile, version);
@@ -1568,15 +1602,15 @@ public final class VmManager {
      * point at one of those; fall back to the old name instead of failing, and report the
      * compressed attempt's failure if neither is there.
      */
-    private static void downloadKernel(DownloadCache cache, String baseUrl, String arch)
+    private static void downloadKernel(DownloadCache cache, String baseUrl, String arch, java.nio.file.Path dest)
             throws IOException {
         try {
             downloadStep(cache, "Downloading vmlinuz (" + arch + ")",
-                    baseUrl + "/vmlinuz-" + arch + ".gz", Environment.applianceKernel(), true);
+                    baseUrl + "/vmlinuz-" + arch + ".gz", dest, true);
         } catch (IOException compressed) {
             try {
                 downloadStep(cache, "Downloading vmlinuz (" + arch + ", uncompressed)",
-                        baseUrl + "/vmlinuz-" + arch, Environment.applianceKernel(), false);
+                        baseUrl + "/vmlinuz-" + arch, dest, false);
             } catch (IOException legacy) {
                 compressed.addSuppressed(legacy);
                 throw compressed;
@@ -1620,7 +1654,15 @@ public final class VmManager {
                     throw e;
                 }
             } else {
-                Files.copy(cached, dest, StandardCopyOption.REPLACE_EXISTING);
+                // Through a temp file too: it replaces the previous version's copy (#2552)
+                var tmp = dest.resolveSibling(dest.getFileName() + ".part");
+                try {
+                    Files.copy(cached, tmp, StandardCopyOption.REPLACE_EXISTING);
+                    Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException | RuntimeException e) {
+                    try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+                    throw e;
+                }
             }
         } catch (IOException | RuntimeException e) {
             BuildOutput.stepBreak();

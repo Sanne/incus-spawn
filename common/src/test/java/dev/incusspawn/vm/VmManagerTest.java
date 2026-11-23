@@ -201,6 +201,47 @@ class VmManagerTest {
         assertTrue(ex.getMessage().contains("disk.img.gz"));
     }
 
+    /**
+     * A new release's appliance that cannot be downloaded leaves the old one to boot (#2552):
+     * the root disk, its stamp, the kernel and the compressed image all stay, and the old image
+     * is never extracted under the new version's stamp.
+     */
+    @Test
+    void aFailedApplianceDownloadKeepsTheOldDisk() throws IOException {
+        // The appliance files below are written where ISX_APPLIANCE_DIR points, outside the test's home
+        assumeTrue(System.getenv("ISX_APPLIANCE_DIR") == null || System.getenv("ISX_APPLIANCE_DIR").isBlank(),
+                "ISX_APPLIANCE_DIR names a real appliance directory");
+        var version = VmManager.resolvedApplianceVersion;
+        var downloads = VmManager.releaseDownloads;
+        VmManager.resolvedApplianceVersion = "0.6.0";
+        // A loopback host, which DownloadCache refuses before it connects: no DNS lookup, no network
+        VmManager.releaseDownloads = "https://127.0.0.1/download";
+        try {
+            Files.createDirectories(Environment.vmStateDir());
+            Files.createDirectories(Environment.applianceDir());
+            Files.writeString(Environment.vmDiskImage(), "old root disk");
+            Files.writeString(Environment.vmDiskVersion(), "0.5.3");
+            Files.writeString(Environment.applianceDir().resolve("version"), "0.5.3");
+            Files.writeString(Environment.applianceKernel(), "old kernel");
+            Files.writeString(Environment.applianceDiskImage(), "old image");
+
+            var out = RecordingOutput.during(VmManager::ensureDisk);
+
+            var warnings = out.events(RecordingOutput.Kind.WARN);
+            assertTrue(warnings.stream().anyMatch(w -> w.msg().contains("Could not download appliance 0.6.0")), warnings.toString());
+            assertTrue(out.events(RecordingOutput.Kind.STEP).stream().noneMatch(e -> e.msg().contains("Replacing appliance root disk")),
+                    "a failed download must not claim the disk is replaced: " + out.events());
+            assertEquals("old root disk", Files.readString(Environment.vmDiskImage()));
+            assertEquals("0.5.3", Files.readString(Environment.vmDiskVersion()));
+            assertEquals("0.5.3", Files.readString(Environment.applianceDir().resolve("version")));
+            assertEquals("old kernel", Files.readString(Environment.applianceKernel()));
+            assertEquals("old image", Files.readString(Environment.applianceDiskImage()));
+        } finally {
+            VmManager.resolvedApplianceVersion = version;
+            VmManager.releaseDownloads = downloads;
+        }
+    }
+
     @Test
     void swapSizeDefaultIs12G() {
         if (System.getenv("ISX_VM_SWAP") == null) {
