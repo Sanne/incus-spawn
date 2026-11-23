@@ -177,6 +177,14 @@ public class ClaudeSetup implements ToolSetup {
         model.setReconfigurable(true);
         params.put("model", model);
 
+        var effort = new ToolDef.ParameterDef();
+        effort.setType("string");
+        effort.setDescription("Reasoning effort for the model (low, medium, high, xhigh); needs model. max is session-only, so it is not accepted");
+        effort.setPattern("^(low|medium|high|xhigh)$");
+        effort.setOptional(true);
+        effort.setReconfigurable(true);
+        params.put("effort", effort);
+
         var advisorModel = new ToolDef.ParameterDef();
         advisorModel.setType("string");
         advisorModel.setDescription("Advisor model Claude Code consults (e.g. opus, or a Claude model ID such as " + ModelIds.get("example-claude-opus") + ")");
@@ -634,6 +642,19 @@ public class ClaudeSetup implements ToolSetup {
 
         putIfPresent(root, params, "model", "model");
         putIfPresent(root, params, "advisor-model", "advisorModel");
+        var effort = params.get("effort");
+        if (effort != null) {
+            // The per-model form is what /effort writes; the top-level effortLevel is ignored by
+            // Opus 5.5 and later models.
+            var model = params.get("model");
+            if (model == null) {
+                throw new IllegalStateException("The claude tool's effort parameter needs a model, "
+                        + "because Claude Code keeps it per model: set model too");
+            }
+            root.put("modelSettings", JqObject.builder(1)
+                    .put(model, JqObject.builder(1).put("effortLevel", effort).build())
+                    .build());
+        }
         putIfPresent(root, params, "theme", "theme");
         putIfPresent(root, params, "editor-mode", "editorMode");
         putIfPresent(root, params, "output-style", "outputStyle");
