@@ -265,8 +265,15 @@ class ToolProxyResolverTest {
     @Test
     void resolveDomainsPrefixSuffixAroundReference() {
         var result = ToolProxyResolver.resolveDomains(
-                List.of("*.${base}"), Map.of("base", "example.com"));
-        assertEquals(List.of("*.example.com"), result);
+                List.of("mcp.${base}"), Map.of("base", "example.com"));
+        assertEquals(List.of("mcp.example.com"), result);
+    }
+
+    @Test
+    void aConfiguredDomainIsNeverAWildcard() {
+        assertEquals(List.of(), ToolProxyResolver.resolveDomains(List.of("*.${base}"), Map.of("base", "example.com")),
+                "not even when the definition writes the '*.'");
+        assertEquals(List.of(), ToolProxyResolver.resolveDomains(List.of("${d}"), Map.of("d", "*.example.com")));
     }
 
     @Test
@@ -304,26 +311,11 @@ class ToolProxyResolverTest {
     }
 
     @Test
-    void aConfiguredWildcardNeverCoversADomainAlreadyServed() {
-        var gemini = new ToolDef.ProxyDef();
-        var auth = authDef("header");
-        auth.setDomains(List.of("generativelanguage.googleapis.com"));
-        gemini.setAuth(List.of(auth));
-        var taken = ToolProxyResolver.takenDomains(Map.of("gemini", new ProxyOnly(gemini)));
-        assertEquals(List.of(), ToolProxyResolver.resolveDomains("t", List.of("*.${d}"),
-                Map.of("d", "googleapis.com"), taken), "*.googleapis.com would cover Gemini's domain");
-        assertEquals(List.of(), ToolProxyResolver.resolveDomains("t", List.of("*.${d}"),
-                Map.of("d", "isx.internal"), taken));
-        assertEquals(List.of("*.example.com"), ToolProxyResolver.resolveDomains("t", List.of("*.${d}"),
-                Map.of("d", "example.com"), taken));
-    }
-
-    @Test
     void aCommaInAValueWithTextAroundItIsNoHostName() {
         assertEquals(List.of(), ToolProxyResolver.resolveDomains(List.of("${sub}.example.com"),
                 Map.of("sub", "evil.org,dev")), "never 'evil.org', outside the definition's suffix");
-        assertEquals(List.of("*.a.com", "*.b.com"),
-                ToolProxyResolver.resolveDomains(List.of("*.${d}"), Map.of("d", "a.com, b.com")));
+        assertEquals(List.of("a.com", "b.com"),
+                ToolProxyResolver.resolveDomains(List.of("${d}"), Map.of("d", "a.com, b.com")));
     }
 
     @Test

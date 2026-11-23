@@ -212,6 +212,11 @@ public class ToolDefValidator {
                 }
 
                 for (var domain : ae.getDomains()) {
+                    if (ToolProxyResolver.isConfiguredDomain(domain) && domain.contains("*")) {
+                        errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "': configured domain '" + domain + "' is a wildcard -- a configured domain"
+                                + " names its hosts exactly, so write each one in config.yaml");
+                    }
                     if (ToolProxyResolver.isConfiguredDomain(domain)) continue;
                     var bare = domain.startsWith("*.") ? domain.substring(2) : domain;
                     if (ProxyConfig.builtinInterceptedDomains().contains(bare)) {

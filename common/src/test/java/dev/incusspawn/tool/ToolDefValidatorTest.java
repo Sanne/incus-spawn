@@ -457,13 +457,15 @@ class ToolDefValidatorTest {
                         - "${instances}"
                         - "${key}.example.com"
                         - "${nowhere}"
+                        - "*.${instances}"
                       type: bearer
                       token: "${key}"
                 """);
         var errors = ToolDefValidator.validate(file).errors();
         assertTrue(errors.stream().anyMatch(e -> e.contains("${nowhere}") && e.contains("not defined")), errors.toString());
         assertTrue(errors.stream().anyMatch(e -> e.contains("secret '${key}'")), errors.toString());
-        assertEquals(2, errors.size(), "a defined, non-secret reference is fine: " + errors);
+        assertTrue(errors.stream().anyMatch(e -> e.contains("'*.${instances}' is a wildcard")), errors.toString());
+        assertEquals(3, errors.size(), "a defined, non-secret reference is fine: " + errors);
     }
 
     @Test

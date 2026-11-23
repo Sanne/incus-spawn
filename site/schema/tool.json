@@ -272,7 +272,7 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "domains": {"type": ["array", "null"], "items": {"type": "string"}, "description": "The domains the rule applies to. An entry may be a ${configKey} reference, resolved from config.yaml; when the entry is the reference alone, a comma separated value names several domains. A value that is not a plain host name (an IP address or a wildcard included), or one isx or another tool already serves, is skipped."},
+              "domains": {"type": ["array", "null"], "items": {"type": "string"}, "description": "The domains the rule applies to. An entry may be a ${configKey} reference, resolved from config.yaml; when the entry is the reference alone, a comma separated value names several domains. A configured entry is never a wildcard, and a value that is not a plain host name (an IP address included), or one isx or another tool already serves, is skipped."},
               "paths": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Restrict the rule to these request paths."},
               "type": {"enum": ["basic", "bearer", "header"], "description": "bearer sends Authorization: Bearer <token>, basic sends Authorization: Basic with username and password, header sends the header name with value."},
               "username": {"type": "string", "description": "For basic: a literal or a ${configKey} reference."},
