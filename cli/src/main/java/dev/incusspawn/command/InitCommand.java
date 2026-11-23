@@ -1170,7 +1170,8 @@ public class InitCommand extends BaseCommand {
     void offerAgentGitIdentity() {
         SpawnConfig config;
         try {
-            // Strict: load() reads a broken config.yaml as empty, and saving that would drop every account in it
+            // Strict: load() reads a broken config.yaml as empty, and saving that would drop every account in it.
+            // Not loadToChange: the offer is optional and comes last, so a broken file skips it rather than failing init.
             config = SpawnConfig.loadStrict();
         } catch (IOException e) {
             BuildOutput.warn("Did not offer agents a Git identity: " + dev.incusspawn.config.YamlErrors.friendly("config.yaml", e),
@@ -2391,9 +2392,10 @@ public class InitCommand extends BaseCommand {
     }
 
     private void setupMacOsCa() {
+        // Checked before the bridge is made, so a config.yaml that does not parse stops the step before it changes anything
+        var config = SpawnConfig.loadToChange("run 'isx init' again");
         incus.createBridgeIfMissing("incusbr0", VmManager.gatewayIp());
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-        var config = SpawnConfig.loadToChange("run 'isx init' again");
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
         if (CertificateAuthority.exists()) {
@@ -2515,8 +2517,6 @@ public class InitCommand extends BaseCommand {
 
     /** {@code isx doctor}'s remedy for a bridge subnet conflict (#1203); see {@link #moveBridgeOff}. */
     static void moveBridgeOffSubnetConflict(IncusClient incus) {
-        // The move ends by saving the new gateway: a config.yaml that does not parse stops it before anything moves
-        SpawnConfig.loadToChange("run 'isx doctor' again");
         var init = new InitCommand();
         init.incus = incus;
         init.moveBridgeOff(BridgeSubnetCheck.detect(incus));
@@ -2546,6 +2546,9 @@ public class InitCommand extends BaseCommand {
             throw new IllegalStateException("no firewall is running for the proxy's redirect to follow the"
                     + " bridge; nothing was changed. Run 'isx init', which sets one up and moves the bridge");
         }
+        // The move ends by saving the new gateway: a config.yaml that does not parse stops it before
+        // anything moves, and the one read here is the one saved, so a later edit cannot strand the redirect
+        var config = SpawnConfig.loadToChange("run 'isx doctor' again");
         if (!sudoValidated()) {
             throw new IllegalStateException("sudo authentication failed; nothing was changed");
         }
@@ -2560,7 +2563,7 @@ public class InitCommand extends BaseCommand {
             // The redirect still follows the bridge; the stale check below fails the remedy
             BuildOutput.warn("Could not migrate instances: " + failure(e));
         }
-        if (!followBridgeMove(subnet.substring(0, subnet.indexOf('/')), firewall)) {
+        if (!followBridgeMove(subnet.substring(0, subnet.indexOf('/')), firewall, config)) {
             throw new IllegalStateException("the bridge moved, but its firewall redirect was not updated"
                     + " (see above); run 'isx init' to finish it");
         }
@@ -2592,8 +2595,8 @@ public class InitCommand extends BaseCommand {
         return FirewallDetector.detect();
     }
 
-    boolean followBridgeMove(String gatewayIp, DetectionResult firewall) {
-        return host.followBridgeMove(gatewayIp, firewall);
+    boolean followBridgeMove(String gatewayIp, DetectionResult firewall, SpawnConfig config) {
+        return host.followBridgeMove(gatewayIp, firewall, config);
     }
 
     void setupSshKeyPair() {
@@ -2627,7 +2630,8 @@ public class InitCommand extends BaseCommand {
      * before it asks for a secret, rather than losing every account to the save (#2523).
      */
     private static SpawnConfig credentialConfig() {
-        return SpawnConfig.loadToChange("try again");
+        // isx init, isx account add and a build's question all run it, so no one command is named
+        return SpawnConfig.loadToChange("add the account again");
     }
 
     private void setupClaudeAuth() {
@@ -2947,15 +2951,18 @@ public class InitCommand extends BaseCommand {
     private static final String TEMPLATES_URL = "https://github.com/" + TEMPLATES_UPSTREAM;
 
     private void setupSearchPaths() {
+        // Every branch ends by saving config.yaml: one that does not parse stops the step before it asks, forks or clones
+        var again = "run 'isx init search-paths' again";
+        var paths = SpawnConfig.loadToChange(again).getSearchPaths();
         if (forkTemplates) {
-            forkAndCloneTemplates();
-        } else if (searchPathAnswers == null && !hasExistingTemplatesSearchPath(SpawnConfig.load().getSearchPaths())) {
+            forkAndCloneTemplates(paths);
+        } else if (searchPathAnswers == null && !hasExistingTemplatesSearchPath(paths)) {
             offerTemplatesRepo();
         }
 
         // --fork-templates answered the step once the templates it cloned are among the paths
         var answers = searchPathAnswers == null && forkTemplates
-                && hasExistingTemplatesSearchPath(SpawnConfig.load().getSearchPaths()) ? List.<String>of() : searchPathAnswers;
+                && hasExistingTemplatesSearchPath(SpawnConfig.loadToChange(again).getSearchPaths()) ? List.<String>of() : searchPathAnswers;
         setupPathList(
                 SpawnConfig::getSearchPaths,
                 SpawnConfig::setSearchPaths,
@@ -2972,8 +2979,8 @@ public class InitCommand extends BaseCommand {
      * {@code --fork-templates}: what the offer does on a yes, asking nothing. The clone goes to the
      * default path, which the offer only confirms; it needs a logged-in {@code gh}, or it says why not.
      */
-    private void forkAndCloneTemplates() {
-        if (hasExistingTemplatesSearchPath(SpawnConfig.load().getSearchPaths())) {
+    private void forkAndCloneTemplates(List<String> searchPaths) {
+        if (hasExistingTemplatesSearchPath(searchPaths)) {
             BuildOutput.step("A templates repository is already among the search paths.");
             return;
         }
