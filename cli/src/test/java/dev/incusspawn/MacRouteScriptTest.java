@@ -119,6 +119,18 @@ class MacRouteScriptTest {
     }
 
     @Test
+    void theRouteListsRunsOnlyOfTheWorkflowsThatCanUseTheMini(@TempDir Path dir) throws Exception {
+        route(dir, "echo \"$(( $(date +%s) - 60 ))\"", "111", "0");
+        var listed = Files.readAllLines(dir.resolve("calls")).stream()
+                .filter(c -> c.contains("status=")).toList();
+        assertEquals(List.of(
+                "repos/Sanne/incus-spawn/actions/workflows/test-integration.yml/runs?status=in_progress&per_page=50",
+                "repos/Sanne/incus-spawn/actions/workflows/test-integration.yml/runs?status=queued&per_page=50",
+                "repos/Sanne/incus-spawn/actions/workflows/mac-heartbeat.yml/runs?status=in_progress&per_page=50",
+                "repos/Sanne/incus-spawn/actions/workflows/mac-heartbeat.yml/runs?status=queued&per_page=50"), listed);
+    }
+
+    @Test
     void theRouteCountsOnlyTitledSuccessfulAndWaitingHeartbeats(@TempDir Path dir) throws Exception {
         assumeTrue(onPath("jq"), "jq applies the route's --jq filter as gh would");
         var now = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS); // GitHub writes whole seconds, all fromdate reads
@@ -179,11 +191,12 @@ class MacRouteScriptTest {
      */
     private static String route(Path dir, String gh, String runIds, String miniJobs) throws Exception {
         var bin = Files.createDirectories(dir.resolve("bin"));
-        Files.writeString(bin.resolve("gh"), "#!/bin/bash\ncase \"$2\" in\n*mac-heartbeat*) " + gh
-                + " ;;\n*/jobs*) echo " + miniJobs + " ;;\n*) echo " + runIds + " ;;\nesac\n");
+        Files.writeString(bin.resolve("gh"), "#!/bin/bash\necho \"$2\" >> '" + dir.resolve("calls") + "'\ncase \"$2\" in\n*/jobs*) echo " + miniJobs
+                + " ;;\n*status=*) echo " + runIds + " ;;\n*mac-heartbeat*) " + gh + " ;;\nesac\n");
         bin.resolve("gh").toFile().setExecutable(true);
         var output = dir.resolve("output");
         Files.deleteIfExists(output);
+        Files.deleteIfExists(dir.resolve("calls"));
         var builder = new ProcessBuilder("bash", "--norc", "--noprofile", SCRIPT.toString()).redirectErrorStream(true);
         builder.environment().put("PATH", bin + ":" + System.getenv("PATH"));
         builder.environment().put("GITHUB_OUTPUT", output.toString());

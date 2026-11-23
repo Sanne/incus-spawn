@@ -56,6 +56,24 @@ class MacRunnerWorkflowTest {
                 + String.join("\n", offenders));
     }
 
+    /** A workflow with a job that can hold the Mini must be one mac-route.sh lists runs of when it asks if the Mini is free. */
+    @Test
+    void macRouteListsExactlyTheWorkflowsWithAJobForTheMini() throws IOException {
+        var users = new java.util.TreeSet<String>();
+        for (var file : workflows()) {
+            for (var job : jobs(file).values()) {
+                var runsOn = runsOn(job);
+                if (runsOn.contains("self-hosted") || runsOn.contains("isx-mac") || runsOn.contains("mac-route")) {
+                    users.add(file.getFileName().toString());
+                }
+            }
+        }
+        var m = Pattern.compile("(?m)^MINI_WORKFLOWS=\"([^\"]*)\"").matcher(Files.readString(Path.of("../.github/scripts/mac-route.sh")));
+        assertTrue(m.find(), "mac-route.sh declares MINI_WORKFLOWS");
+        assertEquals(users, new java.util.TreeSet<>(List.of(m.group(1).split(" "))),
+                "mac-route.sh lists runs of exactly the workflows with a job that can run on the Mini");
+    }
+
     @Test
     void theHeartbeatRunsNoCodeOfAPullRequest() throws IOException {
         var file = WORKFLOWS.resolve("mac-heartbeat.yml");

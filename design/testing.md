@@ -271,6 +271,11 @@ The runner's own status needs a token with administration rights, which the bot'
 `mac-heartbeat.yml` runs on the Mini every 10 minutes, and the route reads its runs through the public API with the run's read-only token.
 A heartbeat completed within 25 minutes, with none waiting more than 5 minutes for the runner, means up.
 No job of another run queued for the Mini or running on it, read through the same API, means free: it has one runner, so a second PR's jobs would wait behind the first's where `macos-15` runs them at once.
+The route lists runs only of the workflows with a job that can use the Mini (`test-integration.yml` and `mac-heartbeat.yml`, `MINI_WORKFLOWS`), each in progress and queued, and fetches the jobs of those runs alone.
+A repository-wide listing read every workflow's runs, about eight per push, so the first 50 of a status held mostly runs that cannot use the Mini.
+A workflow with more than 50 runs of one status still shows only the first 50, and `waiting` and `pending` runs are not listed.
+`MacRunnerWorkflowTest` holds the list equal to the workflows whose jobs run on the Mini, so a newly routed workflow fails it until it is added.
+Two routes at the same moment can both pick the Mini, and its single runner then runs the second run's jobs after the first's.
 A Mini off or gone leaves a heartbeat waiting or none recent, and the jobs go to `macos-15`.
 GitHub never falls back from a self-hosted label by itself: a job sent to an offline runner waits up to a day, which is why the route asks first.
 That leaves one gap: a Mini that goes down in the minutes after the route chose it leaves that run's macOS jobs waiting until it is back, or until a push cancels the run.

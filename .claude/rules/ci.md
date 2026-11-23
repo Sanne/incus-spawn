@@ -33,7 +33,7 @@ Key jobs:
 
 - **`unit-tests`**: `mvn package` (no Incus required), with zsh and sqlite3 installed so `ZshCompletionTest` and `AgentReadersTest`'s opencode read run rather than skip
 - **`mac-route`**: picks where the two macOS jobs run, the project's Mac Mini or `macos-15` (#2298, design/testing.md "The Mac Mini runs the trusted macOS jobs").
-  `.github/scripts/mac-route.sh` picks the Mini only for trusted code (a push, schedule or dispatch, or a pull request whose head is in `.github/mac-runner/trusted-heads`, not opened by Dependabot) while `mac-heartbeat.yml` shows the Mini up and no job of another run is queued for it or running on it, both read through the public API with the run's read-only token.
+  `.github/scripts/mac-route.sh` picks the Mini only for trusted code (a push, schedule or dispatch, or a pull request whose head is in `.github/mac-runner/trusted-heads`, not opened by Dependabot) while `mac-heartbeat.yml` shows the Mini up and no job of another run is queued for it or running on it (listing only the runs of `MINI_WORKFLOWS`, the workflows with a job for the Mini), both read through the public API with the run's read-only token.
   The Mini's own job-started hook refuses untrusted code, since a PR's copy of the workflow decides its `runs-on`; the route is not the protection.
   Each routed job's first step, `gate`, reads the turn that hook recorded, and every later step runs only when it passed.
   A job the agent runner held the Mini against gives itself up, and its `-fallback` twin runs the same steps on `macos-15`.
