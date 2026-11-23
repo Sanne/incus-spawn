@@ -21,7 +21,7 @@ This page says what each kind is, where isx sits, and for each of the other tool
 | Dev containers | workload | packages, if the image allows | a Docker container | an iptables firewall inside the container |
 | Docker Sandboxes | workstation | everything, with sudo | its own microVM | its own kernel |
 | A VM you manage | workstation | everything | a VM | its own kernel |
-| isx | workstation | everything, as root | a branch of a template: a system container or a VM | a kernel namespace, or its own kernel with `--vm` |
+| isx | workstation | everything, as root | a branch of a template: a system container or a VM | a kernel namespace, or its own kernel in a VM |
 
 isx is the third kind, a sandboxed workstation.
 
@@ -42,7 +42,7 @@ An isx instance is a complete system, because it is built for a different job th
 
 An application container, the kind Docker and Podman run by default, is built for shipping applications: a minimal filesystem, one process, fast startup.
 
-An isx instance is a workstation: a full [Incus](https://linuxcontainers.org/incus/) system container, or a KVM virtual machine with `--vm`.
+An isx instance is a workstation: a full [Incus](https://linuxcontainers.org/incus/) system container, or a KVM virtual machine when its template has `type: vm`.
 It has its own init system and real networking.
 Tools such as `ping`, `strace` and nested Podman or Docker work in it as on a workstation.
 On Linux it can also pass through GUI and audio.
@@ -56,7 +56,7 @@ An agent on an isx branch installs a tracer, starts a service or writes a tool o
 The agent works as it would on a developer workstation, because the instance is one.
 If it wrecks the instance, you destroy it and branch again: the new branch is instant and starts from the clean template.
 
-For the strongest isolation, a KVM virtual machine (`--vm`) adds a separate kernel and hardware-level separation.
+For the strongest isolation, a KVM virtual machine (a template with `type: vm`) adds a separate kernel and hardware-level separation.
 The sections below compare this choice with the other sandboxes for agents.
 
 ## A sandboxed process
@@ -190,7 +190,7 @@ The tools differ in how a system is created, what it costs while it runs, and ho
   Both can put that system in a VM.
 - **Design choice.**
   What a sandbox is: in Docker it is always its own microVM, built from an image.
-  In isx it is a branch of a template, as a system container by default, or a VM (`--vm`) when you want the strongest isolation.
+  In isx it is a branch of a template, as a system container by default, or a VM (a template with `type: vm`) when you want the strongest isolation.
 - **What follows.**
   A Docker sandbox runs on Docker's own VMM with its own kernel, disk image and Docker store, and holds the memory it is given whether or not the agent is using it.
   A saved template is an image the next sandbox is built from.
@@ -227,7 +227,7 @@ Claude Code's docs recommend one for untrusted code.
   SSH and editor access are yours to set up.
   The VM holds its full memory allocation while it runs.
 - **Where isx differs.**
-  `isx branch --vm` creates such a VM and adds the rest of isx: templates that declare the tools, a branch per task and the credential proxy.
+  Branching a VM template creates such a VM and adds the rest of isx: templates that declare the tools, a branch per task and the credential proxy.
   isx also offers a container instead of a VM, the pragmatic choice when a separate kernel is not worth its overhead.
 - **Connected to your tools.**
   Each branch is already connected to your tools: an `isx://` git remote to fetch its work, and SSH keys and VS Code Remote or JetBrains Gateway access from the first start.
