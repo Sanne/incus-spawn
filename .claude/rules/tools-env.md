@@ -98,6 +98,7 @@ Root's record `/var/lib/isx/mcp-servers` (`<agent> <server>` lines) lets a later
 A build with no agent does not read the record: a copied rootfs never loses a tool, so only a child built from a parent image older than a definition that dropped its agent keeps that agent's entries, until the stale parent is rebuilt.
 A stdio command not on agentuser's login PATH fails the build, and so do two tools declaring one server name.
 `ToolDefValidator.invalidMcpServers` refuses, where definitions load, an entry that is neither form, a URL that is not HTTPS, a name outside `McpServer.NAME` or the reserved `isx`, an `env` key `SecretRedactor.looksSecret` names, a `bearer-token-env` that is not one of the tool's own exported `proxy.placeholders`, and a bearer URL whose host is none of its `proxy.auth` domains.
+A `for-each` entry instead names its item by `${<list>.label}` and its host by the lone `${<list>.<field>}` domain of a `for-each` auth entry over the same list (`forEachProblem`); `McpServerRegistration.servedItems` expands it from the proxy's resolution, so no server is registered for a host the proxy dropped.
 A credential travels only as that proof, which each agent reads when it connects and the proxy checks before it injects.
 `${isx_repo_paths}` in an entry's `command` or `env` becomes the chain's repository paths, comma-separated, and an empty variable is not set; `jasolo`'s `git_roots` defaults to it, so it scans the template's clones unconfigured.
 The entries are part of `contentFingerprint()`.
