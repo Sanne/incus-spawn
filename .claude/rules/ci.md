@@ -32,9 +32,19 @@ On a push, root jobs are gated so feature-branch pushes only run on forks (not u
 Key jobs:
 
 - **`unit-tests`**: `mvn package` (no Incus required), with zsh and sqlite3 installed so `ZshCompletionTest` and `AgentReadersTest`'s opencode read run rather than skip
-- **`unit-tests-macos`**: `mvn test` on `macos-15` (a standard arm64 runner), so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970). arm64 only, by decision (#974); the reasoning is in design/testing.md "Testing".
+- **`mac-route`**: picks where the two macOS jobs run, the project's Mac Mini or `macos-15` (#2298, design/testing.md "The Mac Mini runs the trusted macOS jobs").
+  `.github/scripts/mac-route.sh` picks the Mini only for trusted code (a push, schedule or dispatch, or a pull request whose head is in `.github/mac-runner/trusted-heads`, not opened by Dependabot) while `mac-heartbeat.yml` shows the Mini up and no job of another run is queued for it or running on it, both read through the public API with the run's read-only token.
+  The Mini's own job-started hook refuses untrusted code, since a PR's copy of the workflow decides its `runs-on`; the route is not the protection.
+  Each routed job's first step, `gate`, reads the turn that hook recorded, and every later step runs only when it passed.
+  A job the agent runner held the Mini against gives itself up, and its `-fallback` twin runs the same steps on `macos-15`.
+  A rerun of failed jobs keeps the first attempt's route, the Mini included, whatever the heartbeat says; "Re-run all jobs" routes again (docs/dev/MAC-CI-SETUP.md).
+  `MacRouteScriptTest` holds the routing and `MacRunnerWorkflowTest` the rest: only routed jobs and the heartbeat reach the Mini, each routed job has a twin with its steps word for word, the gate guards every step, and only GitHub's runners change the System keychain.
+- **`mac-heartbeat.yml`**: a run on the Mini every 10 minutes while the repository variable `MAC_RUNNER_ENABLED` is `true`, titled `Mac runner heartbeat` only then; clearing the variable sends every macOS job to `macos-15`.
+  It checks nothing out and runs no action, on `schedule` and `workflow_dispatch` alone.
+- **`unit-tests-macos`**: `mvn test` on the Mac Mini or `macos-15` (a standard arm64 runner), as `mac-route` picks, so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970).
+  It is arm64 only, by decision (#974); the reasoning is in design/testing.md "Testing".
   Its Git tests are paced by process starts there: `GitPreparationTest` runs its tests concurrently and `releasesFixture` is built once per JVM, which keep the job inside its 20-minute timeout (#1839).
-  It sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`, which enables `KeychainTrustMacTest`: it adds CAs to the runner's System keychain, which only a discarded runner may do (#1467).
+  On GitHub's runners alone it sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`, which enables `KeychainTrustMacTest`: it adds CAs to the runner's System keychain, which only a discarded runner may do (#1467), so the Mini never runs it and `macos-keychain-trust.yml` runs it too (#2298).
   Test failures are counted from the surefire reports after the run, so a failure in `common` does not skip `cli` and `proxy` (`-fae` would: they depend on it), and the reports are uploaded when it fails, since few contributors have a Mac to reproduce on
 - **GraalVM version**: every `setup-graalvm` step, `release.yml`'s matrix, `install.sh`'s `GRAALVM_BASE` and its macOS `GRAALVM_LINE`, and both modules' `quarkus.native.builder-image` name one Oracle GraalVM line (`InstallScriptGraalVmTest`, design/native-image.md "One GraalVM line").
   The `graalvm` tool in `incus-spawn-templates` moves in a companion PR, and a version change needs a `workflow_dispatch` run of `release.yml` before merging.
@@ -52,6 +62,7 @@ Key jobs:
   It makes the macOS-role test build from `uber-jar-smoke`'s jars (`scripts/macos-role-build.sh`) and runs `appliance/test-macos-role.sh` with the x86_64 appliance under KVM -- see below.
   It uploads only its logs, on failure; `PlatformRoleBuildGuardTest` keeps it the only job that makes the test build
 - **`macos-keychain-trust.yml`** (`native-keychain-smoke`, `macos-15`): builds the native CLI and proxy on macOS weekly, by hand and on a PR touching `MacKeychainTrust`, `SystemTrust`, `DeniedChainTrustManager`, the proxy's `Upstream` or what the smoke goes through, and runs `.github/scripts/macos-keychain-smoke.sh`, which `release.yml` also runs on each macOS CLI: a CA trusted in the System keychain must appear in `isx doctor --format=json`, and one denied there must not (#1467).
+  It then runs `KeychainTrustMacTest`, which the Mini never runs (#2298), and a change to that test triggers it too.
   Given the proxy too, it points `api.github.com` at a local server in `/etc/hosts` and fakes the VM's lease, and both native binaries must accept a chain through a root's copy cross-signed by a trusted root, then refuse it once that root's self-signed certificate is denied, in a handshake the server sees aborted (#1631)
 - **`build-native-cli`**: builds the CLI native image, uploads artifact
 - **`build-native-proxy`**: builds the proxy native image, uploads artifact
@@ -62,7 +73,7 @@ Key jobs:
   Each runs `swift test` on the launcher's package (`launcher/`), whose tests drive the relay over socket pairs, then builds `isx-vsock-bridge` with the Swift runtime linked in and uploads it for its arch's `integration-tests` leg and, on x86_64, the `macos-role` job.
   The bridge is the relay in front of `AF_VSOCK`: it needs only the C and C++ runtime libraries a runner already has.
   The container is pinned by the digest of its multi-arch index, and the upstream watch does not track it, so a newer Swift is a bump by hand.
-- **`launcher-macos`** (`macos-15`): the same package's tests with the runner's Xcode toolchain, so the relay's Darwin half (its threads, `SO_NOSIGPIPE`, how a closed listener ends `accept`) is compiled and tested on every PR.
+- **`launcher-macos`** (the Mac Mini or `macos-15`, as `mac-route` picks): the same package's tests with the runner's Xcode toolchain, so the relay's Darwin half (its threads, `SO_NOSIGPIPE`, how a closed listener ends `accept`) is compiled and tested on every PR.
   It then builds `isx-vm`, the launcher, with `launcher/build-isx-vm.sh`, which signs it ad hoc and fails unless the signature carries `com.apple.security.virtualization` and nothing else, and checks that the binary starts and refuses an option it does not know.
   It also runs `appliance/test-agent-call.sh`, as each `integration-tests` leg does before its tunnel checks: the agent client of `test-tunnel.sh` and `measure-tunnel.sh` (`appliance/agent-call.pl`) must not shut its write side down before the agent answered, which the relay would not carry.
   The test needs no appliance (its agent is a stand-in on a Unix socket), and on macOS it runs under the bash and perl those scripts get on a Mac.
@@ -136,6 +147,8 @@ The script also installs `virtiofsd`, which Fedora's `incus` package does not pu
 Nested inside an isx instance it also works around what a user namespace refuses (Incus's bridge firewall rules, the unmapped subordinate-ID range, the iptables redirect); the skill says what it cannot fix there.
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
+The exception is a routed macOS job on the Mac Mini, which is not thrown away (#2298): the runner user's `~/.m2`, the Swift and Xcode caches and the hook's turn files in `~/.isx-ci/gate` stay between jobs.
+A job that changes state other jobs or the agent runner read, such as the System keychain (`KeychainTrustMacTest`), is not run there.
 
 **Every GitHub Action is pinned to a commit, with its release tag beside it** (#2210, design/upstream.md "The github-action source type").
 A `uses:` of a repository's action is `owner/repo[/path]@<40 hex> # vX.Y.Z`, never a tag, which can be moved to other code.
@@ -177,8 +190,8 @@ Both arches boot under QEMU; this is worth stating precisely, because the runner
 | `test-integration.yml` → `integration-tests (x86_64)` (`ubuntu-26.04`) | boots it under `qemu-system-x86_64` with KVM and vsock; full tunnel checks, backstop, native `isx`; then again in `remote` proxy mode on a tap network for the DNAT data path |
 | `test-integration.yml` → `integration-tests (aarch64)` (`ubuntu-24.04-arm`) | boots it under `qemu-system-aarch64` with **TCG** (the arm64 runners expose no `/dev/kvm`) and vsock; smoke test, tunnel checks and the `remote` proxy data path, but not the backstop (a fixed 3-minute wait that is arch-independent) or native `isx` (CI builds no arm64 CLI). vhost-vsock works under TCG, and the appliance reaches `ISX READY` in about 20s |
 | `build-appliance.yml` → `build_x86_64`, `build_aarch64` (`ubuntu-26.04`, `ubuntu-24.04-arm`) | builds, checks size and embedded version, caches, uploads. Never boots it |
-| `test-integration.yml` → `unit-tests-macos` (`macos-15`) | nothing: runs `mvn test` on the host, the macOS half of the Java code only |
-| `test-integration.yml` → `launcher-macos` (`macos-15`) | nothing: runs the launcher relay's tests over socket pairs, the Darwin half of the Swift code only, and builds and signs `isx-vm` without starting a machine |
+| `test-integration.yml` → `unit-tests-macos` (the Mac Mini or `macos-15`) | nothing: runs `mvn test` on the host, the macOS half of the Java code only |
+| `test-integration.yml` → `launcher-macos` (the Mac Mini or `macos-15`) | nothing: runs the launcher relay's tests over socket pairs, the Darwin half of the Swift code only, and builds and signs `isx-vm` without starting a machine |
 | `release.yml` native matrix (`macos-15`) | builds the native CLI/proxy for macOS 15 on Apple Silicon (Intel Macs are not shipped since Quarkus 4, #1693; `IntelMacNotShippedTest`) and builds and signs `isx-vm` (`launcher/build-isx-vm.sh`), and smoke-tests the *binaries* -- `--version`, `--help`, completions, `templates list`, `isx-vm`'s signature and its refusal of an unknown option; the release job then checks each one's recorded minimum macOS. Never starts a VM, and runs on `v*` tags and `workflow_dispatch` |
 
 **Runner labels are pinned, and retired ones are caught by a test.**
@@ -197,6 +210,7 @@ When GitHub announces the next retirement, raise its bound and move the labels t
 Every hosted macOS runner, the paid `-large`/`-xlarge` ones included, is itself a macOS VM, and Virtualization.framework offers nested virtualization only to *Linux* guests.
 A probe on `macos-14`, `macos-15`, `macos-26` and `macos-15-intel` failed with `VZErrorDomain` "Virtualization is not available on this hardware" (Intel: "failed to start") before the guest ran any code, and third-party per-minute macOS runners are VMs too (#774).
 Testing the launcher with a machine needs a **bare-metal** Mac, as a self-hosted runner that gates releases (tags / `workflow_dispatch` behind a protected environment, never PRs).
+The Mac Mini that runs `unit-tests-macos` and `launcher-macos` for trusted PRs (#2298) starts no machine in them, so it does not change this.
 Until one exists, the manual pre-release run of `appliance/test-boot.sh` and `appliance/test-with-isx.sh` on a Mac is the gate. #791 is the Mac verification plan and the brief for that runner.
 
 **What the vsock-bridged boot covers.**
@@ -279,6 +293,7 @@ Each Maven job keeps a cache of its own, `maven-<job>-<hash of the poms>` (`maco
 After an exact hit the script builds offline, so a Maven Central 429 cannot fail the job; without one it builds online, and the job saves what it downloaded.
 If an offline build fails for a missing artifact it warns that the cache was incomplete and builds again online, and any other failure (a test) is returned as it is.
 Online, the resolver retries 429 as well as 503, up to 8 times with pauses of up to 60 s (the defaults retry 503 alone, 3 times).
+A `-fallback` twin of a routed macOS job uses its job's key, since it runs the same steps when the Mac Mini gave them up (#2298).
 A job restores only its own caches, never another job's, so its cache holds what it needs and no copy of the others' (each would be a superset of them all, against the repository's cache quota).
 `MavenCiScriptTest` holds the script and that every Maven cache step is its job's own and its build goes through the script.
 `release.yml` keeps no Maven cache and does not use the script.

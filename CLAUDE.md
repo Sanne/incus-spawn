@@ -78,6 +78,14 @@ Every GitHub Action is pinned to a commit with its release tag beside it (`owner
 Every AI model ID isx sends or suggests is declared in `common/src/main/resources/models.yaml` and read through `ModelIds`, never written in a source file (`ModelIdsGateTest`); the `models` item reads it and opens an issue for a deprecated, retired or superseded ID (#2227).
 The mechanics and the threat model are in design/upstream.md, the CI jobs in `.claude/rules/ci.md`, and what Sanne sets up by hand in [docs/dev/UPSTREAM-SETUP.md](docs/dev/UPSTREAM-SETUP.md).
 
+**The project's Mac Mini runs the macOS jobs of trusted code** (#2298).
+`mac-route` sends `unit-tests-macos` and `launcher-macos` to it for this repository's own events and for PRs from this repository or the bot's fork (`.github/mac-runner/trusted-heads`), while `mac-heartbeat.yml` shows it up and free; everything else runs on `macos-15`.
+The Mini's job-started hook, not the route, keeps other code off it, since a PR's workflow names its own `runs-on`.
+It is shared with the agent runner through one lock: a job the agent holds it against gives itself up to its `-fallback` twin on `macos-15`.
+It is not thrown away after a job: `~/.m2`, the Swift and Xcode caches and the hook's turn files stay there between jobs.
+So `unit-tests-macos` runs there but skips `KeychainTrustMacTest`, which changes the System keychain, and `macos-keychain-trust.yml` runs that test on GitHub's runner.
+The setup is [docs/dev/MAC-CI-SETUP.md](docs/dev/MAC-CI-SETUP.md); the rationale is design/testing.md "The Mac Mini runs the trusted macOS jobs".
+
 **Latency on the branch/start/shell path is never noise.**
 A container starts in well under a second, so a few milliseconds or a handful of redundant Incus round trips are a real share of the wait.
 A read costs well under a millisecond, on Linux and over the macOS vsock tunnel alike (docs/dev/PERFORMANCE-NOTES.md "CLI latency on macOS"); a settings write costs about 10 ms: 6-10 ms on macOS, 11-13 ms on Linux btrfs.
