@@ -100,6 +100,11 @@ public class SpawnConfig extends UndeclaredKeys {
     @JqName("maven-mirrors")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object mavenMirrors;
+    // Domains whose downloads the proxy caches, each serve confirmed by upstream's 304
+    // (ConfirmedCache, #2518). Raw like host-routes, so a mistyped section loads and is written back as it was.
+    @JqName("confirmed-cache")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object confirmedCache;
     // What an external tool that drives isx may do to its instances (Drivers, #1720). Raw like
     // host-routes, so a mistyped section loads and is written back as it was.
     @JqName("drivers")
@@ -721,6 +726,9 @@ public class SpawnConfig extends UndeclaredKeys {
     /** The {@code maven-mirrors:} section; it names no mirror when there is none. */
     public MavenMirrors mavenMirrors() { return MavenMirrors.of(mavenMirrors); }
 
+    /** The {@code confirmed-cache:} key; it caches nothing when there is none. */
+    public ConfirmedCache confirmedCache() { return ConfirmedCache.of(confirmedCache); }
+
     /** The {@code drivers:} section; it grants nothing when there is none. */
     public Drivers drivers() { return Drivers.of(drivers); }
 
@@ -888,6 +896,7 @@ public class SpawnConfig extends UndeclaredKeys {
         this.exposedHostPorts = other.exposedHostPorts;
         this.mavenRepositories = other.mavenRepositories;
         this.mavenMirrors = other.mavenMirrors;
+        this.confirmedCache = other.confirmedCache;
         this.drivers = other.drivers;
         this.gitIdentity = other.gitIdentity;
         this.hostCa = other.hostCa;
