@@ -70,6 +70,8 @@ final class TemplateUpdate {
             return Result.REFUSED;
         }
         if (BuildCommand.reportStrandedStorage(incus, template, copy)) return Result.REFUSED;
+        // An update runs dnf and the template's steps in a copy, writing as a build does (#2555)
+        if (BuildCommand.reportPoolTooFull(incus, "update", template)) return Result.REFUSED;
         var building = TemplateLock.building(template);
         if (building.isEmpty()) {
             BuildOutput.stepFail("Another isx is building or updating " + template + "; update it once that is done.");

@@ -982,9 +982,18 @@ public class BuildCommand extends BaseCommand {
      * stops Incus, so the failed build could not even be deleted. True once it has said why.
      */
     static boolean reportPoolTooFull(IncusClient incus, String canonicalName) {
+        return reportPoolTooFull(incus, "build", canonicalName);
+    }
+
+    /**
+     * {@link #reportPoolTooFull(IncusClient, String)} for whatever else writes a template as a build
+     * does: {@code isx project create} and the updates of {@code TemplateUpdate}. {@code verb}
+     * names it in the error ("update").
+     */
+    static boolean reportPoolTooFull(IncusClient incus, String verb, String template) {
         var refusal = PoolSpace.check(incus, incus.findCowPool(), PoolSpace.Need.BUILD);
         if (refusal == null) return false;
-        BuildOutput.error("Cannot build " + shown(canonicalName) + ": " + refusal);
+        BuildOutput.error("Cannot " + verb + " " + shown(template) + ": " + refusal);
         return true;
     }
 
