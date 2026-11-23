@@ -23,6 +23,9 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
 3. It sets up the account the agent spends (`setUpAgentCredential`).
    Which one is not named in init: `agentGaps` runs `CredentialCheck.missingByCredential` over the example template for the agent, as a build of it would, and each gap runs the credential step `isx account add` runs for it.
    So Pi and opencode reach the Claude step through the credential their tool declares, and a new agent needs nothing here.
+   A step that is not the agent's own is introduced by one line saying so (`InitCommand.sayWhoseAccount`), since its questions name another product: Pi is asked about Claude.
+   For an agent with a `provider` parameter the line also says how to spend another provider's account.
+   When the account is GitHub's (Copilot), the step is the GitHub question of the next step, which is then not asked a second time.
    A namespace that already has a usable account is not asked again.
 4. It offers a GitHub account (`CredentialSetup.offerGitHubForAgent`), and after a skip asks the Git identity question of design/accounts.md "A Git identity no account supplies".
 5. On Linux it asks for sudo, and installs the dependencies.
@@ -47,6 +50,16 @@ Under `--all` they are installed without a question too, as `--all` is a first r
 An init `requireInit` started for another command writes the template and builds nothing, since that command carries on with its own work.
 A first run whose proxy is not a running service builds nothing either, since a build needs the proxy.
 The completion message then names the build command.
+
+**The completion message is what the person does next, in order** (#2528).
+It says what is ready, then lists what is left as numbered steps, one command to a line, in the order that works: start the services, build the template, add the agent's account, open the agent (`InitCommand.firstRunNextSteps`).
+It reads `Setup complete!` only when opening the agent is all that is left, and a build that failed is named.
+An agent that needs something of the person at its first start says so under its step (`ToolSetup.firstStartNote`): Antigravity CLI on a Google account signs in from the instance.
+Then come the commands to return to the machine, list every machine and edit the template, and the templates guide.
+No line is wider than the box, which `InitFirstRunTest#noLineOfTheClosingMessageIsWiderThanItsBox` holds on every path.
+
+**A run that stops half way says how to go on.**
+A setup step that fails ends the run with its error, after a line saying that the answers are saved and that `isx init`, run again, carries on from them.
 
 **The agent opens only when the person says so.**
 An agent takes the whole terminal, so opening one unasked would hide the completion message, which comes first.
