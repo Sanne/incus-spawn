@@ -99,7 +99,7 @@ tools:
   - claude
 default-action: claude
 ```
-
+When you give init a GitHub account, it also lists `gh` after the agent, so the machine gets that account's access to GitHub and commits under its name.
 ```shell
 # Branch it: an instant copy-on-write machine of its own, with Claude Code open inside
 isx branch my-first --from tpl-agent
