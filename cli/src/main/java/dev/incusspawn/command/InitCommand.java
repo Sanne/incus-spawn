@@ -1392,11 +1392,16 @@ public class InitCommand extends BaseCommand {
             // Read again: the agent's own account may be GitHub's (Copilot), set up just now
             var gitHubNow = dev.incusspawn.config.AccountResolver.usableAccountNames(SpawnConfig.load(),
                     dev.incusspawn.tool.GhSetup.NAMESPACE).isEmpty();
-            if (needsGitHub && !gitHubNow) totalSteps--;
+            // Asked already when GitHub's is the account the agent spends (Copilot): never twice
+            if (needsGitHub && (!gitHubNow || gitHubAsked)) totalSteps--;
             if (needsGitHub && gitHubNow) {
-                var saved = new AtomicBoolean();
-                begin(gitHubStep(saved));
-                noGitHub = !saved.get();
+                if (!gitHubAsked) {
+                    var saved = new AtomicBoolean();
+                    begin(gitHubStep(saved));
+                    noGitHub = !saved.get();
+                } else {
+                    noGitHub = true;
+                }
                 if (noGitHub) {
                     offerAgentGitIdentity();
                     noIdentity = SpawnConfig.load().gitIdentity() == null;
@@ -1526,12 +1531,18 @@ public class InitCommand extends BaseCommand {
      */
     void setUpAgentCredential() throws Exception {
         var tools = trustedToolLoader().allToolSetups();
+        var agent = templateAgent();
         var ran = new java.util.HashSet<String>();
         for (var gap : agentGaps().keySet()) {
             var step = CredentialCheck.stepTool(gap, tools);
             if (step != null && !ran.add(step)) continue;
+            if (step != null && !step.equals(agent.name())) sayWhoseAccount(agent, tools.get(step), step);
             if (step == null) {
                 BuildOutput.note(OutputFormat.oneLine(gap.credential()) + ": " + CredentialCheck.remedy(List.of(gap)));
+            } else if (step.equals("gh")) {
+                // The first run's GitHub question, which then is not asked a second time
+                gitHubAsked = true;
+                offerGitHub();
             } else if (step.equals("claude") && claudeSubscriptionFound()) {
                 var prompts = consoleOrExplain();
                 if (prompts != null) credentials.setupClaudeSubscription(firstRunConfig(), prompts);
@@ -1541,6 +1552,29 @@ public class InitCommand extends BaseCommand {
                 credentialStep(step, tools.get(step)).run().run();
             }
         }
+    }
+
+    /** Whether the GitHub question was asked as the agent's own account, so it is not asked again. */
+    private boolean gitHubAsked;
+
+    /**
+     * Before the step of an account that is not the agent's own: whose it is, since the questions
+     * that follow name another product (Pi is asked about Claude), and for an agent with a
+     * {@code provider}, how to spend another provider's account instead.
+     */
+    private static void sayWhoseAccount(ToolSetup agent, ToolSetup owner, String step) {
+        var title = ExampleTemplate.title(agent);
+        var proxy = owner == null ? null : owner.proxy();
+        var namespace = proxy == null || proxy.getConfigNamespace().isBlank() ? step : proxy.getConfigNamespace();
+        var provider = agent.parameters().containsKey("provider");
+        BuildOutput.step(title + " has no account of its own: " + (provider ? "by default " : "") + "it spends a "
+                + OutputFormat.oneLine(namespace) + " account.");
+        if (provider) {
+            BuildOutput.step("For another provider, skip this step. Then set it in the template");
+            BuildOutput.step("(isx templates edit " + ExampleTemplate.NAME + "), as '- " + agent.name() + ": {provider: openai}', and");
+            BuildOutput.step("add that provider's account (isx account add openai).");
+        }
+        BuildOutput.gap();
     }
 
     /**

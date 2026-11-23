@@ -1788,8 +1788,7 @@ class CredentialSetup {
             options.add("Your gh login, " + shown + "\n(the agent would act with " + shown + "'s own access to GitHub)");
         }
         while (true) {
-            var choice = readInput(prompts.choose("Which GitHub account should the agent use? It is the agent's access to GitHub"
-                    + " and the name on its commits.", options, null, "skip GitHub for now"));
+            var choice = readInput(prompts.choose("Which GitHub account should the agent use?", options, null, "skip GitHub for now"));
             if (choice.equals("1")) return collectGitHubToken(config, prompts, AccountTarget.FRESH);
             if (choice.equals("2") && login != null) {
                 // A failure says it continues with manual setup, which is the agent's own token
@@ -2141,7 +2140,7 @@ class CredentialSetup {
         // A namespace whose accounts may hold no credential here (a Google sign-in the proxy keeps
         // on the host, #2443) asks which kind this account is before asking for anything
         var hosted = tool.hostedSignIn();
-        if (hosted != null && target != null && chooseHostedSignIn(desc, hosted, prompts)) {
+        if (hosted != null && target != null && chooseHostedSignIn(namespace, proxyDef, hosted, prompts)) {
             accountValues.put("type", hosted.type());
             for (var line : hosted.help()) BuildOutput.step(line);
             if (saveAccount(config, namespace, shape, target, accountValues)) {
@@ -2158,11 +2157,16 @@ class CredentialSetup {
             }
             return;
         }
+        // A secret asked for and left blank, with none entered or kept: the step was skipped
+        var secretSkipped = false;
+        var secretHeld = false;
         for (var entry : proxyDef.getConfiguration().entrySet()) {
             var configKey = entry.getKey();
             var configDef = entry.getValue();
             if (!configDef.getValue().isBlank()) continue;
             if (configDef.getConfigPath().isBlank()) continue;
+            // A consent is not asked for a credential the person just declined to give
+            if (configDef.isConfirm() && secretSkipped && !secretHeld) continue;
 
             // Definition text, so one line each, like describeTool.
             var description = OutputFormat.oneLine(configDef.getDescription());
@@ -2213,6 +2217,7 @@ class CredentialSetup {
                 if (askYesNo(prompts, "Keep current?", true, true)) {
                     // A kept value still has to travel with a "replace" into the new layout.
                     if (perAccount) accountValues.put(key, existing);
+                    secretHeld |= configDef.isSecret();
                     continue;
                 }
             }
@@ -2234,6 +2239,10 @@ class CredentialSetup {
                 } else {
                     value = readInput(prompts.ask(question));
                 }
+            }
+            if (configDef.isSecret()) {
+                secretSkipped |= value.isBlank();
+                secretHeld |= !value.isBlank();
             }
             if (value.isBlank()) continue;
             if (perAccount) {
@@ -2262,8 +2271,8 @@ class CredentialSetup {
             savedAny = true;
         }
 
-        if (savedAny) {
-            config.save();
+        if (savedAny) config.save();
+        if (savedAny && (secretHeld || !secretSkipped)) {
             BuildOutput.step(desc + " credentials saved.");
         } else {
             BuildOutput.step("Skipped. Configure later with '"
@@ -2330,12 +2339,14 @@ class CredentialSetup {
      * Whether the account being written is {@code hosted}'s kind rather than the credential the
      * tool's proxy definition declares. Enter keeps the credential, the common case.
      */
-    private boolean chooseHostedSignIn(String desc, ToolSetup.HostedSignIn hosted, Prompts prompts) {
-        BuildOutput.step(desc + " accounts are one of:");
-        prompts.say("1. A credential entered here (the default)");
-        prompts.say("2. " + hosted.label());
+    private boolean chooseHostedSignIn(String namespace, ToolDef.ProxyDef proxyDef, ToolSetup.HostedSignIn hosted, Prompts prompts) {
+        // What the other kind of account holds, by the name its own prompt gives it
+        var credential = proxyDef.getConfiguration().values().stream().filter(ToolDef.ConfigEntry::isSecret)
+                .map(c -> OutputFormat.oneLine(c.getDescription())).filter(d -> !d.isBlank()).findFirst()
+                .orElse("A credential entered here");
+        var options = List.of(credential, OutputFormat.oneLine(hosted.label()));
         while (true) {
-            var choice = readInput(prompts.ask("Choice (Enter for 1): ")).strip();
+            var choice = readInput(prompts.choose("Which kind of " + OutputFormat.oneLine(namespace) + " account is this?", options, null, "choose 1")).strip();
             switch (choice) {
                 case "", "1" -> { return false; }
                 case "2" -> { return true; }
