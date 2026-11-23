@@ -191,6 +191,10 @@ class CredentialSetup {
             if (configDef.isConfirm()) continue;
             if (configDef.getConfigPath().isBlank()) continue;
             anyChecked = true;
+            if (configDef.isList()) {
+                if (ToolProxyResolver.listItems(toolName, proxyDef, entry.getKey(), configTree, allTools, Map.of()).isEmpty()) return false;
+                continue;
+            }
             if (configuredValue(proxyDef, configDef, configTree, allTools).isBlank()) return false;
         }
         // If no config-path entries were checked, all config is hardcoded — tool is configured
@@ -2131,6 +2135,8 @@ class CredentialSetup {
                 .accountNames(configTree, namespace, shape).contains(target.name());
         var accountValues = new LinkedHashMap<String, String>();
         var sharedValues = new LinkedHashMap<String, String>();
+        // Lists entered anew, by full path: their old items go once the new ones are saved
+        var replacedLists = new ArrayList<String>();
         // A namespace whose accounts may hold no credential here (a Google sign-in the proxy keeps
         // on the host, #2443) asks which kind this account is before asking for anything
         var hosted = tool.hostedSignIn();
@@ -2141,7 +2147,8 @@ class CredentialSetup {
                 // A keyed account moved to the hosted kind keeps no secret it no longer spends
                 if (targetExists) {
                     for (var configDef : proxyDef.getConfiguration().values()) {
-                        var path = configDef.isSecret() ? proxyDef.accountConfigPath(configDef, target.name()) : "";
+                        var path = configDef.isSecret() || configDef.hasSecretField()
+                                ? proxyDef.accountConfigPath(configDef, target.name()) : "";
                         if (!path.isBlank()) config.removeConfigPath(path);
                     }
                 }
@@ -2166,6 +2173,31 @@ class CredentialSetup {
             var key = target != null && fullPath.startsWith(namespace + ".")
                     ? fullPath.substring(namespace.length() + 1) : "";
             var perAccount = !key.isEmpty() && shape.flatKeys().contains(key);
+            if (configDef.isList()) {
+                var listPath = perAccount
+                        ? namespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY + "." + target.name() + "." + key
+                        : fullPath;
+                var current = targetExists || !perAccount ? itemsAt(configTree, listPath) : Map.<String, String>of();
+                var labels = current.keySet().stream().map(k -> k.substring(0, k.indexOf('.'))).distinct().toList();
+                if (!labels.isEmpty()) {
+                    BuildOutput.step(label + ": " + OutputFormat.oneLine(String.join(", ", labels)));
+                    if (askYesNo(prompts, "Keep current?", true, true)) {
+                        // Kept items still travel with a "replace" into the new layout
+                        if (perAccount) current.forEach((k, v) -> accountValues.put(key + "." + k, v));
+                        continue;
+                    }
+                }
+                for (var helpLine : configDef.getHelp()) BuildOutput.step(OutputFormat.oneLine(helpLine));
+                if (configDef.getHelp().isEmpty() && !description.isBlank()) BuildOutput.step(label);
+                var items = askListItems(configDef, prompts);
+                if (items.isEmpty()) continue;
+                replacedLists.add(listPath);
+                items.forEach((k, v) -> {
+                    if (perAccount) accountValues.put(key + "." + k, v);
+                    else sharedValues.put(fullPath + "." + k, v);
+                });
+                continue;
+            }
             String existing;
             if (perAccount) {
                 existing = targetExists
@@ -2211,6 +2243,8 @@ class CredentialSetup {
         }
 
         boolean savedAny = false;
+        // Only a list entered anew is cleared, and only an account's own when it is the one written
+        for (var listPath : replacedLists) config.removeConfigPath(listPath);
         if (target != null && !accountValues.isEmpty()) {
             savedAny = saveAccount(config, namespace, shape, target, accountValues);
             if (!savedAny) BuildOutput.step("No credential entered, so no account was changed.");
@@ -2234,6 +2268,61 @@ class CredentialSetup {
             BuildOutput.step("Skipped. Configure later with '"
                     + CredentialCheck.stepCommand(toolName, new dev.incusspawn.tool.ToolDefLoader().allToolSetups()) + "'.");
         }
+    }
+
+    /**
+     * A list's items asked one at a time ({@link ToolDef.ConfigEntry#isList}): a label, then each
+     * field, a secret one through {@link #askSecret}, until Enter at a label or No to adding
+     * another. Keys are relative to the list: {@code <label>.<field path>}.
+     */
+    Map<String, String> askListItems(ToolDef.ConfigEntry list, Prompts prompts) {
+        var values = new LinkedHashMap<String, String>();
+        var labels = new java.util.HashSet<String>();
+        while (true) {
+            var itemLabel = readInput(prompts.ask("Name for this entry, lowercase (or press Enter to finish): ")).strip();
+            if (itemLabel.isEmpty()) break;
+            if (!ToolProxyResolver.isItemLabel(itemLabel) || !labels.add(itemLabel)) {
+                prompts.say("Use a new name of lowercase letters, digits, '-' and '_', starting with a letter or digit.");
+                continue;
+            }
+            var before = values.size();
+            for (var field : list.getForEach().entrySet()) {
+                var fieldDef = field.getValue();
+                var fieldLabel = fieldDef.getDescription().isBlank()
+                        ? OutputFormat.oneLine(field.getKey()) : OutputFormat.oneLine(fieldDef.getDescription());
+                var question = fieldLabel + ": ";
+                var value = fieldDef.isSecret() ? askSecret(prompts, question) : readInput(prompts.ask(question)).strip();
+                if (!value.isBlank()) values.put(itemLabel + "." + fieldDef.fieldPath(field.getKey()), value);
+            }
+            if (values.size() == before) {
+                prompts.say("Nothing entered for " + itemLabel + ", so it is not saved.");
+                labels.remove(itemLabel);
+            }
+            if (!askYesNo(prompts, "Add another?", false, true)) break;
+        }
+        return values;
+    }
+
+    /** A list's items at dotted {@code path}, as {@code <label>.<field>} to value; empty when it holds none. */
+    private static Map<String, String> itemsAt(io.hyperfoil.tools.jjq.value.JqValue tree, String path) {
+        var node = tree;
+        for (var segment : path.split("\\.")) {
+            if (!(node instanceof io.hyperfoil.tools.jjq.value.JqObject object) || !object.keys().contains(segment)) return Map.of();
+            node = object.getField(segment);
+        }
+        var result = new LinkedHashMap<String, String>();
+        if (node instanceof io.hyperfoil.tools.jjq.value.JqObject items) {
+            items.forEach((itemLabel, item) -> {
+                if (item instanceof io.hyperfoil.tools.jjq.value.JqObject fields) {
+                    fields.forEach((field, value) -> {
+                        if (!value.isContainer() && !value.isNull() && !value.asText().isBlank()) {
+                            result.put(itemLabel + "." + field, value.asText());
+                        }
+                    });
+                }
+            });
+        }
+        return result;
     }
 
     /**

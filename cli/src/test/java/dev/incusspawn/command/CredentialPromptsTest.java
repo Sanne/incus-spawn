@@ -497,4 +497,71 @@ class CredentialPromptsTest {
         assertEquals(home + "/templates", clonePath("path", "~/templates"));
         assertEquals("/default", clonePath("path", ""));
     }
+
+    private static dev.incusspawn.tool.ToolSetup servers() throws Exception {
+        return new dev.incusspawn.tool.YamlToolSetup(dev.incusspawn.tool.ToolDef.loadFromStream(
+                new java.io.ByteArrayInputStream(SERVERS.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+    }
+
+    private static final String SERVERS = """
+                name: develocity
+                proxy:
+                  config-namespace: develocity
+                  configuration:
+                    servers:
+                      config-path: servers
+                      description: "Develocity servers"
+                      for-each:
+                        host: { description: "Server host" }
+                        access-key: { config-path: accessKey, description: "Access key", secret: true }
+                  auth:
+                    - for-each: servers
+                      domains: ["${servers.host}"]
+                      type: bearer
+                      token: "${servers.access-key}"
+                """;
+
+    @Test
+    void eachServerIsAskedForInTurnAndSavedInTheAccount() throws Exception {
+        var prompts = new ScriptedPrompts()
+                .line("quarkus", "ge.quarkus.io").secret("key-quarkus")
+                .line("y", "Not A Label", "commonhaus", "develocity.commonhaus.dev").secret("key-commonhaus")
+                .line("n");
+        new CredentialSetup().setupGenericToolCredentials("develocity", servers(), new SpawnConfig(), prompts);
+        prompts.assertFullyConsumed();
+
+        assertEquals("ge.quarkus.io", saved("develocity.accounts.default.servers.quarkus.host"));
+        assertEquals("key-quarkus", saved("develocity.accounts.default.servers.quarkus.accessKey"));
+        assertEquals("develocity.commonhaus.dev", saved("develocity.accounts.default.servers.commonhaus.host"));
+        assertEquals("key-commonhaus", saved("develocity.accounts.default.servers.commonhaus.accessKey"));
+        assertEquals("", saved("develocity.servers.quarkus.host"));
+    }
+
+    @Test
+    void noServerEnteredSavesNothing() throws Exception {
+        var prompts = new ScriptedPrompts().line("");
+        new CredentialSetup().setupGenericToolCredentials("develocity", servers(), new SpawnConfig(), prompts);
+        prompts.assertFullyConsumed();
+        assertEquals("", saved("develocity.default"));
+    }
+
+    @Test
+    void replacingAFlatListLeavesOnlyTheNewServers() throws Exception {
+        // On disk, as an installed tool is: the account menu reads the namespace's shape from it
+        var tools = Files.createDirectories(configFile().getParent().resolve("tools"));
+        Files.writeString(tools.resolve("develocity.yaml"), SERVERS);
+        var config = seed("""
+                develocity:
+                  servers:
+                    old: { host: old.example.test, accessKey: key-old }
+                """);
+        var prompts = new ScriptedPrompts().line("r", "quarkus", "ge.quarkus.io").secret("key-quarkus").line("n");
+        new CredentialSetup().setupGenericToolCredentials("develocity", servers(), config, prompts);
+        prompts.assertFullyConsumed();
+
+        assertEquals("ge.quarkus.io", saved("develocity.accounts.default.servers.quarkus.host"));
+        assertEquals("", saved("develocity.accounts.default.servers.old.host"));
+        assertEquals("", saved("develocity.servers.old.host"));
+        assertFalse(SpawnConfig.load().tree().toJsonString().contains("key-old"), SpawnConfig.load().tree().toJsonString());
+    }
 }

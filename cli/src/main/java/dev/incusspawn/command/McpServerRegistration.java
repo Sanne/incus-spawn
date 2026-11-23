@@ -45,7 +45,7 @@ final class McpServerRegistration {
         var tools = new LinkedHashMap<String, ResolvedTool>();
         for (var tool : allTools) tools.put(tool.name(), tool);
 
-        var servers = servers(tools.values(), repoPaths(imageDef, defs));
+        var servers = servers(tools.values(), repoPaths(imageDef, defs), servedItems(imageDef, defs));
         var clients = tools.values().stream().map(t -> t.setup().mcpClient())
                 .filter(java.util.Objects::nonNull).toList();
         if (clients.isEmpty()) {
@@ -98,11 +98,66 @@ final class McpServerRegistration {
     /** A server, with the tool that declared it. */
     record Declared(String tool, McpServer server) {}
 
-    /** Every tool's servers, as registered; two tools declaring one name fail the build. */
+    /**
+     * The items a tool's {@code for-each} server is registered for: a tool's name and its entry
+     * to each served item's label and non-secret fields.
+     */
+    interface ServedItems {
+        List<Map<String, String>> of(String tool, dev.incusspawn.tool.ToolDef.McpEntry entry);
+
+        ServedItems NONE = (tool, entry) -> List.of();
+    }
+
+    /**
+     * What the proxy serves for this template's accounts, read from the host's {@code config.yaml}
+     * only when a tool repeats a server: the items whose host the proxy injects the item's
+     * credential at ({@link dev.incusspawn.proxy.ToolProxyResolver#servedItems}). The build takes
+     * them from the proxy's own resolution, so an agent is never given a host the proxy dropped,
+     * where its proof would go unchecked. They are the template's: an instance whose account or
+     * list changes since keeps them until the template is rebuilt.
+     */
+    static ServedItems servedItems(ImageDef imageDef, Map<String, ImageDef> defs) {
+        return new ServedItems() {
+            private List<dev.incusspawn.proxy.ResolvedToolProxy> resolved;
+            private Map<String, dev.incusspawn.tool.ToolSetup> setups;
+
+            @Override
+            public List<Map<String, String>> of(String tool, dev.incusspawn.tool.ToolDef.McpEntry entry) {
+                if (resolved == null) {
+                    var config = dev.incusspawn.config.SpawnConfig.load();
+                    setups = dev.incusspawn.proxy.ToolProxyResolver.proxyToolSetups(config);
+                    try {
+                        resolved = dev.incusspawn.proxy.ToolProxyResolver.resolve(config.tree(), setups,
+                                ImageDef.resolveAccounts(imageDef, defs));
+                    } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
+                        BuildOutput.warn("No repeated MCP server is registered", e.getMessage());
+                        resolved = List.of();
+                    }
+                }
+                var setup = setups.get(tool);
+                var hostRef = McpServer.hostRef(entry.getUrl());
+                if (setup == null || setup.proxy() == null || hostRef == null) return List.of();
+                return dev.incusspawn.proxy.ToolProxyResolver.servedItems(setup.proxy(), tool, entry.getForEach(),
+                        hostRef, resolved).stream().map(dev.incusspawn.proxy.ToolProxyResolver.ListItem::values).toList();
+            }
+        };
+    }
+
+    /** As {@link #servers(Iterable, String, ServedItems)}, for tools that repeat no server. */
     static List<Declared> servers(Iterable<ResolvedTool> tools, String repoPaths) {
+        return servers(tools, repoPaths, ServedItems.NONE);
+    }
+
+    /** Every tool's servers, as registered; two tools declaring one name fail the build. */
+    static List<Declared> servers(Iterable<ResolvedTool> tools, String repoPaths, ServedItems served) {
         var byName = new LinkedHashMap<String, Declared>();
         for (var tool : tools) {
-            for (var server : tool.setup().mcpServers(tool.parameters())) {
+            var declared = new ArrayList<>(tool.setup().mcpServers(tool.parameters()));
+            for (var entry : tool.setup().mcpForEach()) {
+                declared.addAll(McpServer.forEach(entry, tool.parameters(), served.of(tool.name(), entry),
+                        why -> BuildOutput.warn(OutputFormat.oneLine(why))));
+            }
+            for (var server : declared) {
                 var previous = byName.putIfAbsent(server.name(), new Declared(tool.name(), server.expandRepos(repoPaths)));
                 if (previous != null) {
                     throw new IncusException(OutputFormat.oneLine("MCP server '" + server.name() + "' is declared by both the "
