@@ -77,6 +77,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** Each pool's config, as the listing and a pool PATCH see it. */
     private final Map<String, Map<String, String>> poolConfigs = new LinkedHashMap<>();
     private boolean poolListingFails;
+    /** Each pool's {@code space} as its {@code /resources} answers it, {used, total}; unset is a 404. */
+    private final Map<String, long[]> poolSpace = new LinkedHashMap<>();
     private final java.util.Set<String> customVolumes = new java.util.LinkedHashSet<>();
     private RawResponse customVolumeFailure;
     private String subvolumeListing;
@@ -234,6 +236,12 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     public synchronized Map<String, String> poolConfigOf(String name) {
         return Map.copyOf(poolConfigs.getOrDefault(name, Map.of()));
+    }
+
+    /** What {@code pool}'s {@code /resources} reports of its space; without it the request is a 404. */
+    public synchronized FakeIncusDaemon poolSpace(String name, long used, long total) {
+        poolSpace.put(name, new long[] {used, total});
+        return this;
     }
 
     /** Answer the pool listing with a 500 from now on, as a daemon that cannot say would. */
@@ -743,6 +751,11 @@ public final class FakeIncusDaemon implements IncusTransport {
             (pools.isEmpty() ? Map.of("default", "btrfs") : pools).keySet()
                     .forEach(name -> list.add(JqString.of("/1.0/storage-pools/" + name)));
             return sync(JqArray.of(list));
+        }
+        if (path.startsWith("/1.0/storage-pools/") && path.endsWith("/resources") && method.equals("GET")) {
+            var space = poolSpace.get(path.substring("/1.0/storage-pools/".length(), path.length() - "/resources".length()));
+            if (space == null) return notFound();
+            return sync(JqObject.ofEntries("space", JqObject.ofEntries("used", space[0], "total", space[1])));
         }
         if (path.startsWith("/1.0/storage-pools?") && method.equals("GET")) {
             if (poolListingFails) return error(500, "pool listing failed");

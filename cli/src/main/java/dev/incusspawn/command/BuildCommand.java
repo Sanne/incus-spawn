@@ -15,6 +15,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.CommandLog;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.PoolSpace;
 import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusException;
@@ -875,6 +876,7 @@ public class BuildCommand extends BaseCommand {
         if (reportNoVmSupport(incus, canonicalName, effectiveMachineType(imageDef), vmByOption)) {
             throw new BuildFailedException(canonicalName);
         }
+        if (reportPoolTooFull(incus, canonicalName)) throw new BuildFailedException(canonicalName);
 
         if (!batchConfirmed && incus.exists(canonicalName)) {
             if (!yes) {
@@ -972,6 +974,17 @@ public class BuildCommand extends BaseCommand {
         problems.forEach(p -> details.add("- " + shown(p)));
         details.add("Run 'isx doctor' to inspect the storage pool.");
         BuildOutput.error("Cannot build " + shown(canonicalName) + ":", details.toArray(String[]::new));
+        return true;
+    }
+
+    /**
+     * Refuses a build on a pool too short to hold one (#2555): it writes gigabytes, and a full disk
+     * stops Incus, so the failed build could not even be deleted. True once it has said why.
+     */
+    static boolean reportPoolTooFull(IncusClient incus, String canonicalName) {
+        var refusal = PoolSpace.check(incus, incus.findCowPool(), PoolSpace.Need.BUILD);
+        if (refusal == null) return false;
+        BuildOutput.error("Cannot build " + shown(canonicalName) + ": " + refusal);
         return true;
     }
 

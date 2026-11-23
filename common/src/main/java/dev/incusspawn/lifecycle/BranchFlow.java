@@ -19,6 +19,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.PoolSpace;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProofToken;
@@ -418,6 +419,11 @@ public final class BranchFlow {
         if (incus.exists(req.name())) {
             throw new BranchException("an instance named '" + req.name() + "' already exists.");
         }
+        // A branch's first writes would fill a pool this short, and a full disk stops Incus (#2555).
+        // The source's pool is the copy's whenever it is CoW, which is every branch worth the read
+        refusal = PoolSpace.check(incus, IncusClient.rootDiskPoolFromDevices(sourceInstance.path("expanded_devices")),
+                PoolSpace.Need.BRANCH);
+        if (refusal != null) throw new BranchException(refusal);
 
         // Resolve and validate the account selection before anything is created: a typo
         // should be reported now, not as a failed API call inside the container later.
