@@ -194,4 +194,62 @@ class McpServerRegistrationTest {
         verify(incus, atLeast(0)).execInContainer(eq("test"), eq("agentuser"), captor.capture());
         return captor.getAllValues().stream().filter(s -> !s.startsWith("for c in")).toList();
     }
+
+    /**
+     * A tool repeating its server over {@code config.yaml}'s list registers one server per item
+     * the proxy serves, with no item's key in any agent's config, and none for a host the proxy
+     * dropped, where the agent would send its proof unchecked.
+     */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(IsolatedHome.class)
+    void aRepeatedServerIsRegisteredForEachServedItemAlone() throws Exception {
+        var yaml = """
+                name: develocity
+                env:
+                  - name: DEVELOCITY_TOKEN
+                    value: develocity-placeholder
+                proxy:
+                  config-namespace: develocity
+                  placeholders:
+                    - env: DEVELOCITY_TOKEN
+                      prefix: develocity-
+                  configuration:
+                    servers:
+                      config-path: servers
+                      description: "Develocity servers"
+                      for-each:
+                        host: { description: "Server host" }
+                        access-key: { config-path: accessKey, description: "Access key", secret: true }
+                  auth:
+                    - for-each: servers
+                      domains: ["${servers.host}"]
+                      paths: [/mcp]
+                      type: bearer
+                      token: "${servers.access-key}"
+                mcp:
+                  - for-each: servers
+                    name: "develocity-${servers.label}"
+                    url: "https://${servers.host}/mcp"
+                    bearer-token-env: DEVELOCITY_TOKEN
+                """;
+        var tools = java.nio.file.Files.createDirectories(IsolatedHome.configFile().getParent().resolve("tools"));
+        java.nio.file.Files.writeString(tools.resolve("develocity.yaml"), yaml);
+        IsolatedHome.seed("""
+                develocity:
+                  servers:
+                    quarkus: { host: ge.quarkus.io, accessKey: key-quarkus }
+                    commonhaus: { host: develocity.commonhaus.dev, accessKey: key-commonhaus }
+                    taken: { host: registry.npmjs.org, accessKey: key-taken }
+                """);
+        var incus = incus(null, "");
+        McpServerRegistration.register(new Container(incus, "test"), new ImageDef(), Map.of(), List.of(
+                new BuildTools.ResolvedTool("develocity", yamlTool(yaml), Map.of()),
+                new BuildTools.ResolvedTool("claude", new ClaudeSetup(), Map.of())));
+
+        var script = asAgent(incus).getFirst();
+        assertTrue(script.contains("'develocity-quarkus'") && script.contains("https://ge.quarkus.io/mcp"), script);
+        assertTrue(script.contains("'develocity-commonhaus'") && script.contains("https://develocity.commonhaus.dev/mcp"), script);
+        assertFalse(script.contains("develocity-taken") || script.contains("registry.npmjs.org"), script);
+        assertFalse(script.contains("key-"), "no item's key reaches an agent: " + script);
+    }
 }
