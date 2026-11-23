@@ -7,6 +7,9 @@ paths:
   - "cli/src/main/java/dev/incusspawn/tui/**"
   # Tool descriptions and refusals: a model reads them, and a person sees them quoted.
   - "cli/src/main/java/dev/incusspawn/mcp/**"
+  # The `isx doctor --explain` notes and the `isx update-base` errors.
+  - "cli/src/main/java/dev/incusspawn/ai/**"
+  - "cli/src/main/java/dev/incusspawn/baseimage/**"
   - "common/src/main/java/dev/incusspawn/lifecycle/**"
   - "common/src/main/java/dev/incusspawn/tool/**"
   - "common/src/main/java/dev/incusspawn/incus/**"
@@ -23,6 +26,12 @@ paths:
   # The descriptions of built-in tools and templates.
   - "common/src/main/resources/tools/**"
   - "common/src/main/resources/images/**"
+  # Scripts isx installs in the guest, which print advice there.
+  - "common/src/main/resources/isx-trust"
+  - "common/src/main/resources/git-remote-isx"
+  # The install scripts, which a person runs before isx exists.
+  - "get-isx.sh"
+  - "install.sh"
 ---
 
 # Writing interface text: prompts, output, warnings, the TUI
@@ -46,7 +55,7 @@ A message that reads well in its source file can repeat the line before it, or u
 The examples are from the review of the first run of `isx init` (#2528), which asked for each change shown; until that work lands, the code still prints the old text.
 
 **What is asked comes before why, and each answer says what it does.**
-`Use Claude Code? (Y/n/other)` let `n` choose no agent at all, where a person meant "another one".
+`Set up isx for Claude Code, so templates that include it can run it? (Y/n/other)` let `n` choose no agent at all, where a person meant "another one".
 The review asked for `Use Claude Code? (Y = yes, o = choose another, n = no agent)`.
 What the text says an answer does is what it does: an intro that ends "Press Enter to skip it for now" must not be followed by a question whose default runs a program.
 
@@ -80,7 +89,7 @@ A text never switches between two words for one thing.
 "Token generation complete.", "Received 108 characters", "Verifying OAuth token", "OAuth token verified." and "Claude auth configuration saved" were five lines for one outcome.
 They should be one line, `BuildOutput.ok("Token verified and saved on this Mac")`, which prints `✓ Token verified and saved on this Mac`, and nothing else.
 An `ok` label takes no period and no `✓` of its own: `TerminalOutput` adds the mark, and `StepLabelGateTest` fails a label that ends in a period.
-When a program isx runs gives advice meant for someone using its output by hand, such as "Store this token securely", isx answers it in that line's detail: "You do not need to store or export it. isx keeps it."
+When a program isx runs gives advice meant for someone using its output by hand, such as "Store this token securely", isx answers it in a `BuildOutput.stepNote` under the `ok` line: "You do not need to store or export it. isx keeps it."
 
 **A warning says what it means for the person and what to do, and is printed only where it applies.**
 A person who chose "your own account" for GitHub, and with it their Git identity, was then warned during the build that agents "have no Git identity to commit under".
@@ -88,15 +97,26 @@ Before adding a warning, check each path that reaches it: a warning that contrad
 
 **Name the actor, and negate the verb, never the noun.**
 Write "does not own any", not "owns none" (`writing.md` "Negate the verb").
+This is the fault that keeps coming back: one review found "No machine ever holds it" and "A new account owns none yet", both by an author who knew the rule.
 Do not deny something nobody asked about.
 
 **Name what the person will see, in that screen's own labels.**
 A pointer to a TUI tab, a key or a button uses the label the person will read there.
+A step that sends the person to a web page uses that page's labels: "Repository access", "All repositories", "Generate token", not "choose the repos to grant".
+
+**A sentence changes what the person does or expects.**
+If they would act the same without it, cut it.
+Ask this of every line.
+
+**Do not explain a word with itself.**
+"The token reaches what the agent's account can reach" tells the person nothing.
+Going vague to avoid recommending a workflow is still going vague: state the facts and leave the choice, as in "A new account does not own any repositories yet, so its list is empty."
 
 **A line fits its frame.**
 A line wider than the terminal wraps, loses its indent and breaks the block it belongs to.
-The first run's frame is 62 columns, the width of its step boxes.
-Break text under a step header into lines that fit it, and keep a TUI label within its pane.
+The first run's frame is its step box: `InitCommand.BOX_WIDTH`, 62 columns between the borders, so a box is 64 columns wide.
+A line under a step header, its indent included, is at most 62 columns.
+A TUI label stays within its pane.
 
 **A step header shows its number once.**
 `[2/3]` in the header's corner, without a leading `2` before the title.
@@ -110,6 +130,8 @@ Two gates read interface text's string literals for its form alone: `StepLabelGa
 No test reads what a text says.
 `DocsShapeTest` exists because the prose rules alone did not hold for the docs, and these rules will not hold alone either.
 The gate that is worth having reads generated transcripts of the main flows, not Java string literals, since a message is assembled from several of them.
-It checks what is mechanical: the line width, the words a flow must not use (the first run's "Never" column above) and a step number shown once.
+It checks what is mechanical: the line width, the words a flow must not use (the first run's "Never" column above, before the closing message's line) and a step number shown once.
+It also flags a negated noun ("none", "nothing", "nobody", and "no" before a noun), with a marked exception for each use that is meant, such as the option label "None for now".
+It does not flag what `writing.md` "Negate the verb" keeps: "has no", "needs no", "there is no", "nothing" as the subject, "costs nothing" and "does nothing".
 Terms used before they are introduced need a reviewer.
 Until that gate exists, a review checks every rule here.
