@@ -35,8 +35,9 @@ public final class BuildOutput {
     /** Red cross that marks a failed step. */
     public static final String CROSS = RED + "✗" + RESET;
 
+    /** A control sequence (colour, cursor, erase), or an operating system command such as a link's OSC 8. */
     private static final java.util.regex.Pattern ANSI_PATTERN =
-            java.util.regex.Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
+            java.util.regex.Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]|\u001B\\][^\u0007\u001B]*(?:\u0007|\u001B\\\\)");
     /**
      * What a terminal acts on within a control sequence or escape and carries on with it: a C0
      * control, which it acts on as outside one, and DEL, which it ignores. CAN, SUB and ESC end it.
@@ -82,7 +83,10 @@ public final class BuildOutput {
         return ansi() ? style + text + RESET : text;
     }
 
-    /** Strip ANSI escape sequences (colour, cursor, erase) from a string. */
+    /**
+     * Strip ANSI escape sequences (colour, cursor, erase) and operating system commands from a
+     * string: what is left is what a terminal draws, so a hyperlink counts as its label alone.
+     */
     public static String stripAnsi(String s) {
         return ANSI_PATTERN.matcher(s).replaceAll("");
     }

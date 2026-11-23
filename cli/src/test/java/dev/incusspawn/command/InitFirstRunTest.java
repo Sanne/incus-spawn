@@ -332,6 +332,52 @@ class InitFirstRunTest {
         }
     }
 
+    /**
+     * A framed line that holds a link, as a terminal draws it (#2528): with escapes on, a link is
+     * an OSC 8 string whose URL the terminal does not draw, so the line must still be padded to
+     * the border. Before the fix the padding counted the escape's bytes, and the line Sanne saw
+     * ended short of its border.
+     */
+    @Test
+    void aFramedLineHoldingALinkEndsAtTheBorderAsTheTerminalDrawsIt() {
+        String line;
+        try (var ansi = dev.incusspawn.util.ForcedAnsi.on()) {
+            line = InitCommand.boxLine("     " + dev.incusspawn.util.TerminalLink.link("https://isx.run/docs/templates#adding-your-own"));
+        }
+        assertTrue(line.contains("\u001B]8;;"), "the line holds no link: " + line);
+        var drawn = drawn(line);
+        assertEquals(InitCommand.BOX_WIDTH + 2, drawn.length(), "not at the border: '" + drawn + "'");
+        assertTrue(drawn.endsWith("│"), "not at the border: '" + drawn + "'");
+    }
+
+    /** Every framed line of the closing box, drawn with escapes on, ends at the border. */
+    @Test
+    void everyLineOfTheClosingBoxEndsAtItsBorderAsTheTerminalDrawsIt() throws Exception {
+        var init = new FirstRunInit();
+        init.found = List.of(CLAUDE_SUBSCRIPTION);
+        init.credentialGiven = true;
+        init.gitHubGiven = true;
+        init.prompts = ScriptedPrompts.lines("", "n");
+        RecordingOutput.during(init::askFirstRunQuestions);
+
+        List<String> frame;
+        try (var ansi = dev.incusspawn.util.ForcedAnsi.on()) {
+            frame = RecordingOutput.during(() -> init.finishFirstRun(false, true, false)).frameLines();
+        }
+        var framed = frame.stream().map(InitFirstRunTest::drawn).filter(l -> l.startsWith("│")).toList();
+        assertFalse(framed.isEmpty());
+        for (var line : framed) {
+            assertEquals(InitCommand.BOX_WIDTH + 2, line.length(), "not at the border: '" + line + "'");
+            assertTrue(line.endsWith("│"), "not at the border: '" + line + "'");
+        }
+    }
+
+    /** What a terminal draws of {@code line}: no colour, and of an OSC 8 link only its label. */
+    static String drawn(String line) {
+        return line.replaceAll("\u001B\\]8;;[^\u001B\u0007]*(\u001B\\\\|\u0007)", "")
+                .replaceAll("\u001B\\[[0-9;?]*[A-Za-z]", "");
+    }
+
     private static SpawnConfig seedGoogle() {
         try {
             return IsolatedHome.seed("""

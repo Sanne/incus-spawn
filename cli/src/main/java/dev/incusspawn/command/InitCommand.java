@@ -156,7 +156,8 @@ public class InitCommand extends BaseCommand {
         return s + " ".repeat(width - vlen);
     }
 
-    private static String boxLine(String content) {
+    /** {@code content} between the frame's borders, padded to what the terminal draws of it. */
+    static String boxLine(String content) {
         return styled(CYAN, "│") + pad(content, BOX_WIDTH) + styled(CYAN, "│");
     }
 
