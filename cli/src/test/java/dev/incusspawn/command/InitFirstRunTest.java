@@ -360,6 +360,27 @@ class InitFirstRunTest {
         assertEquals(List.of(), new dev.incusspawn.tool.AntigravitySetup().firstStartNote(new SpawnConfig()));
     }
 
+    /** A step of the plumbing that fails: the run says the answers are kept and what to run once it is fixed. */
+    @Test
+    void aFailedStepSaysWhatToRunOnceItIsFixed() throws Exception {
+        var init = new FirstRunInit() {
+            @Override InitStep dnsStep() {
+                return new InitStep("dns", "DNS Configuration", new String[0], () -> { throw new IllegalStateException("no resolver"); }, null);
+            }
+        };
+        init.continued = true;
+        init.handedOver = new InitCommand.FirstRunAnswers(true, false, false, false);
+        init.prompts = ScriptedPrompts.lines();
+
+        var recorded = RecordingOutput.during(() ->
+                assertEquals("no resolver", assertThrows(IllegalStateException.class, () -> init.runFirstRun(false)).getMessage()));
+
+        var said = String.join("\n", recorded.lines());
+        assertTrue(said.contains("Your answers are saved"), said);
+        assertTrue(said.contains("run 'isx init' again"), said);
+        assertEquals(List.of(), init.built);
+    }
+
     /** A build that failed is named, the run exits 1, and the agent is not offered. */
     @Test
     void aFailedBuildIsNamedAndNothingIsOpened() throws Exception {
