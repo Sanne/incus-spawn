@@ -31,6 +31,9 @@ class ExampleTemplateTest {
             var result = TemplateValidator.validate(text, ExampleTemplate.file(), known);
             assertFalse(result.hasErrors(), agent.name() + ": " + result.errors());
             assertFalse(result.hasWarnings(), agent.name() + ": " + result.warnings());
+            var withGh = TemplateValidator.validate(ExampleTemplate.text(agent, true), ExampleTemplate.file(), known);
+            assertFalse(withGh.hasErrors(), agent.name() + " with gh: " + withGh.errors());
+            assertFalse(withGh.hasWarnings(), agent.name() + " with gh: " + withGh.warnings());
         }
     }
 
@@ -38,10 +41,21 @@ class ExampleTemplateTest {
     void anExistingFileIsLeftUntouched() throws Exception {
         var claude = AgentCommand.agents(RuntimeConstants.CDI_TOOLS).stream().filter(a -> a.name().equals("claude")).findFirst().orElseThrow();
         var file = ExampleTemplate.file();
-        assertTrue(ExampleTemplate.write(file, claude));
+        assertTrue(ExampleTemplate.write(file, claude, false));
         assertEquals(ExampleTemplate.text(claude), Files.readString(file));
         Files.writeString(file, "name: tpl-agent\n# mine\n");
-        assertFalse(ExampleTemplate.write(file, claude));
+        assertFalse(ExampleTemplate.write(file, claude, false));
         assertEquals("name: tpl-agent\n# mine\n", Files.readString(file));
+    }
+
+    @Test
+    void theGhToolIsListedOnlyWithAGitHubAccount() throws Exception {
+        var claude = AgentCommand.agents(RuntimeConstants.CDI_TOOLS).stream().filter(a -> a.name().equals("claude")).findFirst().orElseThrow();
+        var with = ImageDef.parseYaml(ExampleTemplate.text(claude, true));
+        assertEquals(java.util.List.of("claude", "gh"), with.getTools().stream().map(t -> t.getName()).toList());
+        var result = TemplateValidator.validate(ExampleTemplate.text(claude, true), ExampleTemplate.file(), ImageDef.loadBuiltins());
+        assertFalse(result.hasErrors(), result.errors().toString());
+        var without = ImageDef.parseYaml(ExampleTemplate.text(claude, false));
+        assertEquals(java.util.List.of("claude"), without.getTools().stream().map(t -> t.getName()).toList());
     }
 }

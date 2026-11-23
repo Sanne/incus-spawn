@@ -1,6 +1,9 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.tool.GhSetup;
 import dev.incusspawn.tool.ToolSetup;
 
 import java.io.IOException;
@@ -31,6 +34,15 @@ final class ExampleTemplate {
      * {@code default-action} is the agent's own action, left out for an agent that has none.
      */
     static String text(ToolSetup agent) {
+        return text(agent, false);
+    }
+
+    /**
+     * As {@link #text(ToolSetup)}, with the {@code gh} tool after the agent when {@code withGitHub}
+     * (#2535): it installs gh signed in to the account, injects the account's token through the proxy
+     * and sets the account's Git name and email.
+     */
+    static String text(ToolSetup agent, boolean withGitHub) {
         var name = agent.name();
         var title = title(agent);
         var action = agent.actions().isEmpty() ? "" : "default-action: " + name + "\n";
@@ -43,7 +55,7 @@ final class ExampleTemplate {
                 parent: tpl-minimal
                 tools:
                   - %1$s
-                %4$s
+                %5$s%4$s
                 # Packages to install with dnf (https://isx.run/docs/templates#image-schema-fields):
                 # packages:
                 #   - ripgrep
@@ -56,7 +68,7 @@ final class ExampleTemplate {
 
                 # A first template needs no other field. 'isx templates new' writes every one,
                 # with a note each (https://isx.run/docs/templates#image-schema-fields).
-                """.formatted(name, title, NAME, action);
+                """.formatted(name, title, NAME, action, withGitHub ? "  - gh\n" : "");
     }
 
     /**
@@ -73,15 +85,21 @@ final class ExampleTemplate {
         return dash < 0 ? description : description.substring(0, dash);
     }
 
+    /** Whether {@code config} holds a GitHub account a template's {@code gh} tool can use. */
+    static boolean hasGitHubAccount(SpawnConfig config) {
+        return !AccountResolver.usableAccountNames(config, GhSetup.NAMESPACE).isEmpty();
+    }
+
     /**
-     * Writes {@link #text} for {@code agent} to {@code file}, never over a file already there.
+     * Writes {@link #text(ToolSetup, boolean)} for {@code agent} to {@code file}, never over a file already there.
      *
+     * @param withGitHub whether to list the {@code gh} tool after the agent, for a saved GitHub account
      * @return whether it was written: false when {@code file} exists
      */
-    static boolean write(Path file, ToolSetup agent) throws IOException {
+    static boolean write(Path file, ToolSetup agent, boolean withGitHub) throws IOException {
         Files.createDirectories(file.getParent());
         try {
-            Files.writeString(file, text(agent), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            Files.writeString(file, text(agent, withGitHub), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             return true;
         } catch (FileAlreadyExistsException e) {
             return false;
