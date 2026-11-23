@@ -209,6 +209,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
 - [Testing](design/testing.md)
   - Waiting for another thread or process
   - Site previews: built without secrets, deployed without PR code
+  - The Mac Mini runs the trusted macOS jobs
 - [Doctor, support bundles and secret scanning](design/doctor.md)
   - Doctor: a finding that is neither healthy nor broken
   - Doctor and build remediations act through isx, never name an `incus` command

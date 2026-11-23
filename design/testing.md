@@ -215,7 +215,8 @@ Arch ships the newest Incus, ufw and iptables-nft and has dropped `sg` (#700), s
 A KVM guest, not the runner itself, because a broken host firewall would cut the runner off from GitHub mid-job, while in a guest the failure stays reportable.
 Not Incus VMs from images.linuxcontainers.org, whose outages already moved `fresh-daemon-init` off them (#1558), and whose images come pre-wired unlike a host a user installs.
 Not containers with nested Incus either: their kernel, nftables and AppArmor are the runner's, and the firewall is what is under test.
-Not a self-hosted runner: on a public repository it would run fork PRs' code, so it could not gate a PR.
+Not a self-hosted runner: they change the host they run on, so only a runner thrown away after the job may run them, and on a public repository a self-hosted one would also run fork PRs' code.
+The project's Mac Mini takes only trusted code, and no job that changes the machine for later jobs or for the agent runner ("The Mac Mini runs the trusted macOS jobs" below).
 They run on every PR, beside the native job, since host-setup code is spread across packages no path filter could name.
 Reverting #1936's line-anchored `COMMIT` lookup fails both `-ufw` legs at "ufw still loads after isx init", and `arch` not at all, which is why it is a separate leg.
 The Arch leg found at once that isx init needed `which`, which Arch's base system does not ship; host commands are now found on the `PATH` in-process (`HostPath.find`).
@@ -250,3 +251,51 @@ It deploys only for a PR whose author is `OWNER`, `MEMBER` or `COLLABORATOR`, fr
 That gives up previews for outside contributors: their HTML would be served on the project's `pages.dev` address and linked from a comment on the repository, which is a phishing page under the project's name.
 Such a PR can still be checked by building it locally (`site/build.sh`).
 `PreviewWorkflowTest` holds these invariants.
+
+## The Mac Mini runs the trusted macOS jobs
+
+GitHub's hosted macOS arm64 runners often have no capacity, so `unit-tests-macos` and `launcher-macos` waited 15 to 20 minutes, failed as "not acquired" and were run again (#1954, #2298).
+The project's Mac Mini, which is also the agents' Mac runner, now runs both for trusted code while it is up and free, and GitHub's `macos-15` runs them otherwise.
+A same-repository or bot PR gets its macOS checks as soon as the Mini is free, and a fork PR sees no change.
+
+**Trusted means the repository's own events and two head repositories.**
+`mac-route` (`.github/scripts/mac-route.sh`) picks the Mini for a push, schedule or dispatch of this repository, and for a pull request whose head is in `.github/mac-runner/trusted-heads`, unless Dependabot opened it.
+The list holds this repository and the bot's fork, where every worker branch lives ("Site previews" above); the fork's only collaborator is the bot, which can already push here, so the list trusts nobody new.
+The route is a convenience, not the protection.
+A pull request's own copy of the workflow decides its `runs-on`, so a fork could name the Mini's labels and drop the route.
+The Mini's job-started hook refuses such a job before any step runs, from the run's event payload and its own copy of the list, never the PR's (isx-workflow, `MAC-SETUP.md`).
+GitHub's part is a read-only token and no secret for a fork's run, and the repository's approval of every outside contributor's run.
+
+**Up and free is read from a heartbeat, because a fork's run gets no secret.**
+The runner's own status needs a token with administration rights, which the bot's PRs, coming from a fork, would not get.
+`mac-heartbeat.yml` runs on the Mini every 10 minutes, and the route reads its runs through the public API with the run's read-only token.
+A heartbeat completed within 25 minutes, with none waiting more than 5 minutes for the runner, means up.
+No job of another run queued for the Mini or running on it, read through the same API, means free: it has one runner, so a second PR's jobs would wait behind the first's where `macos-15` runs them at once.
+A Mini off or gone leaves a heartbeat waiting or none recent, and the jobs go to `macos-15`.
+GitHub never falls back from a self-hosted label by itself: a job sent to an offline runner waits up to a day, which is why the route asks first.
+That leaves one gap: a Mini that goes down in the minutes after the route chose it leaves that run's macOS jobs waiting until it is back, or until a push cancels the run.
+The heartbeat runs only while the repository variable `MAC_RUNNER_ENABLED` is `true`, and it is titled otherwise when off, since a run whose only job was skipped can still conclude as a success.
+Clearing the variable sends every new run's jobs to `macos-15` within 25 minutes, with no PR.
+A rerun of failed jobs does not route again: it keeps the first attempt's `mac-route` output, so a routed job goes back to the Mini whatever the heartbeat or the variable say, and waits up to a day if the Mini is down.
+"Re-run all jobs" runs `mac-route` again and puts it on `macos-15` when the Mini is not up and free.
+
+**The Mini is shared with the agent runner, and the agent keeps its priority.**
+Both take one lock before working; the Mini's job-started hook takes it for a job and records the job's turn, and its job-completed hook gives it back.
+A routed job's first step reads that turn.
+A job the agent runner holds the Mini against runs no other step, and its `-fallback` twin runs the same steps on `macos-15`.
+An agent tick that finds a job holding the lock reserves the next turn, so the jobs after it fall back until the agent has had its turn.
+That keeps benchmarks on the Mini in a quiet window without a mechanism of their own.
+The twins cost a copy of each job's steps; `MacRunnerWorkflowTest` holds them word for word.
+Only `upstream-verify` and `kernel-mac-verified` are required checks, so a routed job that gave itself up shows green with a notice naming its twin.
+
+**The Mini keeps what a job leaves, so no job that changes the machine runs there.**
+It is not thrown away after a job: the runner user's `~/.m2`, the Swift and Xcode caches and the hook's turn files in `~/.isx-ci/gate` stay between jobs.
+`KeychainTrustMacTest` changes the System keychain's trust settings, which every user of the machine reads, so it runs only on GitHub's runners (#1467).
+`unit-tests-macos` sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN` only there, and `macos-keychain-trust.yml` runs the test as well, on GitHub's runner, weekly and on a change to the Keychain code or the test.
+That gives up the test on every PR whose job ran on the Mini, which Sanne accepted.
+The jobs run as a standard macOS user of their own, which cannot read the agents' or Sanne's logins, keychains or homes; the hook refuses to run while either home is readable to it.
+Any local user can connect to loopback, so that user still reaches the agent runner's isx proxy.
+There it gets the host-only, read-only `/health`, `/activity` and `/credential-proofs`, and no credential injection, which the proxy gives only a proven instance.
+That is accepted for trusted code.
+The Mini is to stay on macOS 15, the version of `macos-15`, so a routed job tests what the hosted one does; the gate step prints the version in every routed job's log, so a run on another one shows.
+`release.yml` and `native-keychain-smoke` stay on GitHub's runners, so no shipped binary is built on a machine an agent also uses.
