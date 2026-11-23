@@ -7,7 +7,13 @@ incus-spawn is distributed via an APT repository for Ubuntu and Debian users, ho
 
 ```bash
 curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
-echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.io/isx-apt-releases stable main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
+sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://sanne.github.io/isx-apt-releases
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/incus-spawn.gpg
+EOF
 sudo apt update && sudo apt install incus-spawn
 ```
 
@@ -19,11 +25,31 @@ To track development/pre-release builds, use the `dev` suite instead of `stable`
 
 ```bash
 curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
-echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.io/isx-apt-releases dev main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
+sudo tee /etc/apt/sources.list.d/incus-spawn.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://sanne.github.io/isx-apt-releases
+Suites: dev
+Components: main
+Signed-By: /usr/share/keyrings/incus-spawn.gpg
+EOF
 sudo apt update && sudo apt install incus-spawn
 ```
 
-To switch between channels, edit `/etc/apt/sources.list.d/incus-spawn.list` and change `stable` to `dev` (or vice versa), then `sudo apt update && sudo apt upgrade`.
+To switch between channels, edit `/etc/apt/sources.list.d/incus-spawn.sources` and change `Suites: stable` to `Suites: dev` (or vice versa), then `sudo apt update && sudo apt upgrade`.
+
+## Moving from incus-spawn.list
+
+Older instructions wrote the repository as a one-line `/etc/apt/sources.list.d/incus-spawn.list`.
+Ubuntu's release upgrade disables third-party repositories, and it cannot convert that file to the deb822 format, so it leaves `incus-spawn.list.disabled` behind and `apt upgrade` stops updating isx.
+deb822 `.sources` files work since apt 1.1 (Ubuntu 16.04, Debian 9).
+To move, write the `.sources` file as in the install block above, with `Suites: dev` if you track the dev channel, then remove the old file:
+
+```bash
+sudo rm -f /etc/apt/sources.list.d/incus-spawn.list /etc/apt/sources.list.d/incus-spawn.list.disabled
+sudo apt update && sudo apt upgrade
+```
+
+The user-facing version of this note is the FAQ entry "Why did isx stop updating after I upgraded Ubuntu?" in [docs/FAQ.md](../FAQ.md).
 
 The stable and dev pools are fully isolated — a dev release never overwrites stable debs.
 
