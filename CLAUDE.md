@@ -366,11 +366,13 @@ A tool that fetches a pinned file declares it in `ToolSetup.pinnedDownloads`, so
 
 **A tool's auth domains may come from `config.yaml`** (#1419): a `${configKey}` in `domains:` resolves like a credential field, a comma separated value naming several domains when the entry is the reference alone.
 Every consumer, the proof check included, reads the resolved names, and a name that is not a plain host name (an IP address included), that isx or another tool already serves or configured first, a wildcard (even one the definition writes) or a `secret: true` value is dropped with a warning (design/proxy.md "A tool's domains can come from config.yaml").
+A tool that gives each server its own key declares a `proxy.configuration` list with `for-each:` fields (`ToolDef.ListField`), a map from label to fields in `config.yaml`, and an auth or `mcp:` entry with `for-each:` repeats per item, reading `${<list>.label}` and `${<list>.<field>}`.
+Each item's entry carries only its own values, a host another item took is dropped, and the build registers a repeated MCP server only for an item the proxy serves (`ToolProxyResolver.servedItems`), so a key and a proof reach only that item's host (design/proxy.md "One entry per server: `for-each` lists").
 
 **Tools declare MCP servers once, and every agent in the image gets them (#2206).**
 A tool's `mcp:` entries are a stdio `command` or an HTTPS `url`, with nothing specific to one agent; an agent takes them by implementing `ToolSetup.mcpClient()` (`McpClients`: Claude Code, Codex, Pi, opencode, and Gemini CLI, Antigravity CLI, Copilot and Bob by a merge into their JSON config; Antigravity CLI takes a bearer-token server as a stdio bridge, `McpStdioBridge`, that reads the variable as agy started it).
 `McpServerRegistration` registers the whole chain's servers with every such agent once per build, after every tool and every layer's clones, so tool order and the layer that installed an agent decide nothing; a new tool declares its server there rather than calling an agent's CLI from `run_as_user`, which only the Claude-only `headroom` and `idea-backend`'s loopback server still do.
-A credential reaches a server only as `bearer-token-env`, a variable each agent reads when it connects, and the loader requires it to be one of the tool's own `proxy.placeholders`, sent to one of its `proxy.auth` domains.
+A credential reaches a server only as `bearer-token-env`, a variable each agent reads when it connects, and the loader requires it to be one of the tool's own `proxy.placeholders`, sent to one of its `proxy.auth` domains, or for a `for-each` server, to the host a `for-each` auth entry over the same list serves.
 `${isx_repo_paths}` names the template's clones (design/mcp.md "Tools declare MCP servers for every agent", `.claude/rules/tools-env.md`).
 
 **Tools declare the memory they need (#2355).**

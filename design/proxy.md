@@ -1260,8 +1260,30 @@ A name that fails is dropped with a warning, and the entry's static domains are 
 An entry with no static domain does not serve any request until one of its domains resolves, so `missingSecrets` counts its domain keys as needed and `isx branch` names the gap.
 A nested isx whose account is `inherit` does not intercept configured domains (`inheritable()` skips them): the value lives in the parent's host `config.yaml`, which the nested proxy cannot read.
 
-Given up: one credential per entry, so every configured server shares it; a tool needing one key per server declares one entry, and one config key, per server.
-Not covered: an MCP server's `url:` cannot take a configured domain, so a tool registering one still names its server in the definition.
+Given up for the single `${key}`: one credential per entry, so every server its value names shares it.
+
+### One entry per server: `for-each` lists
+A tool that gives each server its own key, and registers each as an MCP server, declares a list instead: a `proxy.configuration` entry with `for-each:` fields, read from `config.yaml` as a map from each server's label to its fields (`ToolDef.ListField`).
+An auth entry or an `mcp:` entry naming the list in `for-each:` is repeated for each item, its `${<list>.label}` and `${<list>.<field>}` references taking that item's values.
+The reference prefix is the list's own key (`${servers.host}`), so no word is singularized and a reference names its list exactly.
+Labels key the map, never hosts: config paths are dotted (`AccountResolver.navigate`), so a host could not be a key, and the label names the MCP server (`develocity-<label>`).
+
+Each item is resolved apart (`ToolProxyResolver.resolveEach`): its `ResolvedToolProxy` carries the tool's values and that item's alone, so `substituteRefs` can only put that item's key on that item's host.
+Its domain must be one non-secret field alone, and goes through every check above; an item lacking a field the entry reads, or with a label that is not a lowercase name, is skipped with a warning.
+A host another item of the same list already took is dropped, so no host carries two items' keys and the first-wins routing never chooses between them.
+All items prove the one namespace: the proof says which tool the request is for, and the host picks the key, so one placeholder serves every server.
+
+The build takes the MCP servers from the proxy's own resolution, never from the list (`McpServerRegistration.servedItems`, `ToolProxyResolver.servedItems`).
+A server is registered only for an item the proxy serves at the `${<list>.<field>}` its `url:` names, which a `for-each` auth entry over the same list must serve as its lone domain (`ToolDefValidator.forEachProblem`, a load refusal).
+So a host the proxy dropped (one another tool serves) gets no server, where the agent would have sent its proof to a host the proxy does not check it for.
+Only an item's label and non-secret fields reach a server's name, description and url, and a server still holding a reference is not registered.
+
+The list resolves through the account path like any entry (`<ns>.accounts.<name>.<list>`, else the flat one), and `AccountShape` treats a list holding an item as the credential, keeping the whole list when a flat namespace moves into `accounts:`.
+`SecretRegistry` declares each secret field as `<list path>.<field>`, which the redactor's walk under the namespace applies to every item and account.
+`isx init` asks for items in a loop, and `missingSecrets` and `findUnresolved` name an empty list.
+Given up: the registrations follow the account and list the template was built with, so a server added to `config.yaml` reaches agents at the next build, and one removed keeps its registration until then, its calls going out without a key.
+Switching an instance's account changes which keys are sent, not which servers are registered.
+A nested isx on `inherit` resolves no list, so it neither intercepts the hosts nor registers servers for them.
 
 ## Upstream rate limits are counted per domain (#2303)
 A registry that answers 429 to the host's address makes a build inside an instance slow or failing, behind isx's proxy, so the user reasonably suspects isx.

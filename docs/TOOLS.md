@@ -406,6 +406,44 @@ The proxy skips a configured domain in these cases, so a mistyped value never se
 Until the value is set, `isx branch` names it as missing.
 A nested isx whose account is `inherit` does not intercept configured domains, since the value lives in the host's `config.yaml`.
 
+##### One entry per server, each with its own key
+
+When each server has its own key, declare a list in `configuration:` with `for-each:` fields.
+In `config.yaml` the user names each server with a short label and gives its fields.
+An auth entry with `for-each:` is repeated for every server, so each key is sent to its own host alone.
+
+```yaml
+  configuration:
+    servers:
+      config-path: servers
+      description: "Develocity servers"
+      for-each:
+        host: { description: "Server host" }
+        access-key: { config-path: accessKey, description: "Access key", secret: true }
+  auth:
+    - for-each: servers
+      domains: ["${servers.host}"]
+      paths: [/mcp]
+      type: bearer
+      token: "${servers.access-key}"
+```
+
+```yaml
+# config.yaml
+develocity:
+  servers:
+    quarkus: { host: ge.quarkus.io, accessKey: "..." }
+    commonhaus: { host: develocity.commonhaus.dev, accessKey: "..." }
+```
+
+`${servers.label}` is the server's label, and `${servers.<field>}` one of its fields.
+Each domain of a repeated entry must be one field alone, and every host gets the checks above.
+A host another server of the list already has is skipped, so no host carries two keys.
+A label is lowercase letters, digits, `-` and `_`.
+
+The list may also sit in a named account, as `develocity.accounts.<name>.servers`.
+`isx init` asks for one server after another, and `isx branch` names an empty list as missing.
+
 ##### Path-scoped injection
 
 An auth entry can restrict credential injection to specific request paths with `paths:`.
@@ -773,6 +811,12 @@ A variable whose value ends up empty is not set.
 An HTTP server gets its credential from `bearer-token-env`, the variable each agent reads when it connects, as `Authorization: Bearer`.
 It must be one of the tool's own `proxy.placeholders`, and the URL's host one of its `proxy.auth` domains, as in `atlassian-mcp`.
 So the proxy checks the proof before it adds the credential.
+
+An HTTP server can also be repeated for each server of a list, with `for-each:` as in "One entry per server" above.
+Its name holds `${servers.label}`, and its URL starts with `https://${servers.host}`, a field a repeated auth entry serves.
+
+The build registers one server for each host the proxy serves, so a skipped host gets no server.
+A server added to `config.yaml` reaches an agent at the next template build.
 
 A tool whose `env` names a credential is refused, so no credential is written into any agent's config.
 The name `isx` is reserved for isx's own server.
