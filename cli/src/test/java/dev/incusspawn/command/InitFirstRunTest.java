@@ -376,7 +376,7 @@ class InitFirstRunTest {
                 assertEquals("no resolver", assertThrows(IllegalStateException.class, () -> init.runFirstRun(false)).getMessage()));
 
         var said = String.join("\n", recorded.lines());
-        assertTrue(said.contains("Your answers are saved"), said);
+        assertTrue(said.contains("The agent and accounts you set up are saved"), said);
         assertTrue(said.contains("run 'isx init' again"), said);
         assertEquals(List.of(), init.built);
     }

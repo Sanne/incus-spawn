@@ -1266,8 +1266,8 @@ public class InitCommand extends BaseCommand {
                 return handOver(waiting.changes);
             } catch (Exception e) {
                 // The failure is reported by the command; what to do about a run that stopped half way is said here
-                BuildOutput.step("Setup stopped before it finished. Your answers are saved: once the failure below"
-                        + " is fixed, run 'isx init' again, and it carries on from them.");
+                BuildOutput.step("Setup stopped before it finished. The agent and accounts you set up are saved: once the"
+                        + " failure below is fixed, run 'isx init' again, and it asks only what you skipped.");
                 throw e;
             }
             return finishFirstRun(macOs, servicesInstalled.get(), continued);
@@ -1411,7 +1411,8 @@ public class InitCommand extends BaseCommand {
                     offerAgentGitIdentity();
                     noIdentity = SpawnConfig.load().gitIdentity() == null;
                 }
-            } else if (!all) {
+            } else if (!all && !gitHubAsked) {
+                // Not after the agent's own step, which asked for it and said it was saved
                 BuildOutput.note("A GitHub account is set up already.");
             }
             if (all) {
@@ -1547,6 +1548,7 @@ public class InitCommand extends BaseCommand {
             } else if (step.equals("gh")) {
                 // The first run's GitHub question, which then is not asked a second time
                 gitHubAsked = true;
+                BuildOutput.step("The account is also the name on the agent's commits.");
                 offerGitHub();
             } else if (step.equals("claude") && claudeSubscriptionFound()) {
                 var prompts = consoleOrExplain();
@@ -1571,10 +1573,14 @@ public class InitCommand extends BaseCommand {
         var title = ExampleTemplate.title(agent);
         var proxy = owner == null ? null : owner.proxy();
         var namespace = proxy == null || proxy.getConfigNamespace().isBlank() ? step : proxy.getConfigNamespace();
-        var provider = agent.parameters().containsKey("provider");
-        BuildOutput.step(title + " has no account of its own: " + (provider ? "by default " : "") + "it spends a "
-                + OutputFormat.oneLine(namespace) + " account.");
-        if (provider) {
+        // Another tool of a kept template (gh beside Claude Code) lacks its own account, not the agent's
+        if (!agent.credentialNamespaces().contains(namespace)) return;
+        // Only the account the agent spends with no provider set is its default: a kept template may name another
+        var byDefault = agent.parameters().containsKey("provider") && agent.credentialNamespaces(Map.of()).contains(namespace);
+        var shown = OutputFormat.oneLine(namespace);
+        BuildOutput.step(title + " has no account of its own: " + (byDefault ? "by default " : "") + "it spends "
+                + ("aeiou".indexOf(shown.charAt(0)) >= 0 ? "an " : "a ") + shown + " account.");
+        if (byDefault) {
             BuildOutput.step("For another provider, skip this step. Then set it in the template");
             BuildOutput.step("(isx templates edit " + ExampleTemplate.NAME + "), as '- " + agent.name() + ": {provider: openai}', and");
             BuildOutput.step("add that provider's account (isx account add openai).");
@@ -1705,7 +1711,12 @@ public class InitCommand extends BaseCommand {
         if (project != null) {
             // In this directory the commands would read the project's definitions, as the warning says
             var open = lines.indexOf(lines.stream().filter(l -> l.contains("isx branch " + instance)).findFirst().orElse(null));
-            if (open >= 0) lines.add(open + 1, "     (from a directory with no .incus-spawn/ of its own)");
+            if (open >= 0) {
+                // Under the command, at its indent, which is deeper when the steps are numbered
+                var command = lines.get(open);
+                lines.add(open + 1, command.substring(0, command.indexOf("isx branch"))
+                        + "(from a directory with no .incus-spawn/ of its own)");
+            }
         }
         if (continued) lines.addAll(GROUP_PENDING);
         printCompletionBox(false, lines.toArray(String[]::new));
