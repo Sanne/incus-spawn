@@ -293,6 +293,11 @@ public final class AccountSelection {
         return differs(baked, wanted) && canRebake(setup);
     }
 
+    private static boolean isUnstampedPin(ToolSetup setup, String baked, String pin) {
+        return canRebake(setup) && setup.rederivesWhenUnstamped()
+                && (baked == null || baked.isBlank()) && pin != null && !pin.isBlank();
+    }
+
     private static boolean differs(String baked, String wanted) {
         return baked != null && !baked.isBlank() && wanted != null && !wanted.isBlank() && !baked.equals(wanted);
     }
@@ -399,14 +404,20 @@ public final class AccountSelection {
         // but wait for an address it never gets (BranchFlow skips it for the same reason).
         if (NetworkMode.isAirgapped(metadata)) return nothing;
         var baked = IncusClient.configByPrefix(metadata, Metadata.ACCOUNT_IDENTITY_PREFIX);
-        if (baked.isEmpty() && verified) return nothing;
         var selection = fromConfig(instanceConfig);
+        // An instance with no stamp at all is only worth reading further when it was pinned
+        // (a pin is what a move is made by), the one case of an unstamped re-derive below
+        if (baked.isEmpty() && verified && selection.isEmpty()) return nothing;
         var setups = knownSetups != null ? knownSetups : rederivableSetups();
         bakedIdentities(config, effectiveSelection(selection, setups), setups)
                 .forEach((namespace, identity) -> {
                     var setup = setups.get(namespace);
                     Map<String, String> target;
                     if (needsRederive(setup, baked.get(namespace), identity)) target = stale;
+                    // A template built before its tool stamped what it bakes, or by an isx that
+                    // lost the stamp (an unpinned build's null account): a move cannot be
+                    // seen against nothing, so an explicit pin re-derives, once, and stamps
+                    else if (isUnstampedPin(setup, baked.get(namespace), selection.get(namespace))) target = stale;
                     else if (!verified && canRebake(setup)) target = unverified;
                     else return;
                     target.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));

@@ -71,6 +71,26 @@ class AntigravityAccountModeTest {
         assertEquals(Map.of("gemini", "api-key"), AccountSelection.bakedIdentities(config, Map.of("gemini", "key")));
     }
 
+    /** A template that pins no gemini account used the configured default, and stamps the mode that gives. */
+    @Test
+    void aBuildThatPinsNoAccountStampsTheDefaultsMode() throws Exception {
+        var config = Jjq.spawnConfig("""
+                gemini:
+                  accounts:
+                    default:
+                      apiKey: "gemini-k1"
+                    agy-key:
+                      type: google
+                  default: default
+                """);
+        var unpinned = new java.util.HashMap<String, String>();
+        unpinned.put("gemini", null);
+        assertEquals(Map.of("gemini", "api-key"), AccountSelection.bakedIdentities(config, unpinned));
+        var setups = AccountSelection.namespaceSetups(config);
+        assertEquals(Map.of("gemini", "api-key"),
+                AccountSelection.bakedIdentities(config, AccountSelection.effectiveSelection(Map.of(), setups), setups));
+    }
+
     /** The reported case: built on an API key account, then {@code isx account set <name> gemini=home}. */
     @Test
     void aMoveToAGoogleAccountIsRederivedNotRefused() throws Exception {
@@ -81,6 +101,36 @@ class AntigravityAccountModeTest {
                 Metadata.accountKey("gemini"), "home"));
         assertEquals(Map.of("gemini", "home"), AccountSelection.staleIdentities(config, daemon.client(), NAME));
         assertEquals("", AccountSelection.incompatibilityReason(config, daemon.client(), NAME, Map.of("gemini", "home")));
+    }
+
+    /** A template built before the stamp was kept (or by the unpinned-build bug) has nothing to compare a move against. */
+    @Test
+    void anExplicitPinOnAnUnstampedTemplateIsRederivedOnce() throws Exception {
+        var config = config();
+        var pinned = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.ACCOUNT_IDENTITY_VERIFIED, "true",
+                Metadata.accountKey("gemini"), "home"));
+        assertEquals(Map.of("gemini", "home"), AccountSelection.staleIdentities(config, pinned.client(), NAME));
+        // Once stamped, the same pin is nothing to do
+        var stamped = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.ACCOUNT_IDENTITY_VERIFIED, "true",
+                Metadata.accountIdentityKey("gemini"), "google",
+                Metadata.accountKey("gemini"), "home"));
+        assertEquals(Map.of(), AccountSelection.staleIdentities(config, stamped.client(), NAME));
+    }
+
+    /** The branch path must stay free: no pin and no stamp is what every other template's branch is. */
+    @Test
+    void anUnpinnedUnstampedInstanceCostsNothing() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true"));
+        assertEquals(Map.of(), AccountSelection.staleIdentities(config(), daemon.client(), NAME));
+    }
+
+    /** A tool that cannot say what its old templates hold is never re-derived on a guess: gh's stamp may be absent and right. */
+    @Test
+    void onlyAToolThatOptsInIsRederivedWithoutAStamp() {
+        assertTrue(new GeminiSetup().rederivesWhenUnstamped());
+        assertFalse(new dev.incusspawn.tool.GhSetup().rederivesWhenUnstamped());
     }
 
     @Test

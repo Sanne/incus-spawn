@@ -165,6 +165,10 @@ public class GeminiSetup implements ToolSetup {
     @Override
     public boolean canRebakeForAccount() { return true; }
 
+    /** agy's mode is rewritten whole and only where agy is, so a template with no stamp is safe to re-derive. */
+    @Override
+    public boolean rederivesWhenUnstamped() { return true; }
+
     /**
      * Antigravity CLI's mode, where the instance has agy; nothing in an image without it. An agy
      * already running keeps the mode it started in, and the Google mode's login script runs only

@@ -548,6 +548,12 @@ So the plan is decided against those (`AccountSelection.rederivableSetups`) and 
 An instance with nothing to do -- verified and current, `<none>` while there is still no token, or an older one while no account is configured, which is never marked and so would pay on every use -- does not read anything from disk.
 That repairs templates already built without an identity, and their branches, without a rebuild.
 
+A verified template can still lack a stamp for a tool whose state is rewritten whole, Antigravity CLI's mode stamped under `gemini`.
+A build that pinned no account once passed a null account and stamped nothing, so a branch moved to a Google account saw nothing to compare and kept agy in its API key mode.
+`GeminiSetup.bakedAccountIdentity` now resolves a null account to the namespace's default, as gh does.
+For the templates already built that way, a tool that opts in with `ToolSetup.rederivesWhenUnstamped` is re-derived once when an instance carries an explicit pin and no stamp (`AccountSelection.identityReconcile`), then stamped.
+Only an explicit pin triggers it, so a branch with no pin pays nothing; gh does not opt in, since its stamp may be absent and its identity right.
+
 The guest is asked before waiting for the instance's address, which only re-deriving needs, so an older instance that has its identity is marked without that wait.
 The marker goes on the instance, not its template, so until an older template is rebuilt every new branch of it pays the exec and the write on its first use.
 Marking the template from a branch's answer was rejected.
