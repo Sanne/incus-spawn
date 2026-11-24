@@ -270,6 +270,7 @@ So what writes to the pool checks its space first (`PoolSpace`), with one reques
 A build, which writes gigabytes, is refused once the pool is critical (`PoolUsage.isCritical`: at least 90% used and under 5 GiB free; `BuildCommand.reportPoolTooFull`), and wherever a branch is refused.
 `isx project create` and the template updates of `TemplateUpdate` (`isx update-all`, `isx project update`) write as a build does, so they are refused the same way (`BuildCommand.reportPoolTooFull`).
 Each checks only after it has deleted what an earlier run left under its temporary name, `<template>-rebuilding`.
+`isx build` with no such leftover checks before it asks `Rebuild?` or for a missing account's secret, so nobody answers a prompt for a build that is then refused (#2405), and the pool is read once either way (`BuildCommandTest#aCriticalPoolRefusesTheBuildBeforeItsPrompts`).
 A run killed once it filled the pool would otherwise refuse every retry for the space its own leftover holds, behind an instance the person never made (`UpdateAllCommandTest#aLeftoverCopyIsDeletedBeforeThePoolIsJudged`).
 On an appliance before `btrfs-settle` the leftover's space may not yet show as free at that read, and the refusal then says to wait.
 A branch is a CoW snapshot and costs almost nothing at once, so it is only warned at critical, and refused once the pool is exhausted (`PoolUsage.isExhausted`: under 2 GiB free, whatever the percentage).
@@ -295,7 +296,9 @@ That is far below the branch's 2 GiB, since Incus runs well with 1 or 2 GiB free
 `awaitReady` and `IncusApi.diagnoseVsock` say the same after their own failure.
 The message names `isx vm restart` when a reserve is there to release, and `isx vm resize <size>` in every case, then `isx destroy` and `isx clean pool`.
 It and the refusals on macOS say that freed space can take up to about five minutes to show, and that a full disk stops Incus.
-On Linux they say neither, since a loop pool holds no Incus database and a host commits every 30 s by default.
+On Linux the refusal and the warning say a full disk stops Incus for a subvolume pool, which fills the host's own filesystem and `/var/lib/incus` with it, and not for a loop-file pool (`PoolSpace.isLoopFile`).
+That takes a pool listing, made only for a pool already short, so a branch with room pays no second request.
+No Linux message names five minutes, since a host commits every 30 s by default.
 The 2555-vm box measured 4.5 to 7 minutes after a delete on v0.5.3, whose deletes wait for the data disk's `commit=300`, and a VM restart did not shorten it.
 An appliance with the agent's `btrfs-settle` commits after a delete, and the space showed within a second of isx's delete on a pool with quotas on (docs/dev/PERFORMANCE-NOTES.md "The appliance's data disk when it fills, on Linux").
 A plain `incus delete` on a pool with quotas off is not settled, and its space had not shown after 14 minutes.

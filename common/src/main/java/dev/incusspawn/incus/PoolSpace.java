@@ -36,27 +36,55 @@ public final class PoolSpace {
         } catch (RuntimeException e) {
             return null;
         }
-        return check(usage, pool, need, Platform.isMacOS());
+        var macOS = Platform.isMacOS();
+        // Asked only for a pool already short, so a branch with room pays no second request
+        return check(usage, pool, need, macOS, () -> macOS || sharesIncusDisk(incus, pool));
     }
 
-    /** {@link #check(IncusClient, String, Need)} on a usage already read. */
-    static String check(IncusClient.PoolUsage usage, String pool, Need need, boolean macOS) {
+    /**
+     * {@link #check(IncusClient, String, Need)} on a usage already read. {@code stopsIncus} says
+     * whether filling this pool fills the disk Incus keeps its database on; it is asked only when
+     * the pool is short.
+     */
+    static String check(IncusClient.PoolUsage usage, String pool, Need need, boolean macOS,
+                        java.util.function.BooleanSupplier stopsIncus) {
         if (usage == null) return null;
         // A build is refused wherever a branch is, and also once the pool is critical
         var refused = usage.isExhausted() || (need == Need.BUILD && usage.isCritical());
+        if (!refused && !usage.isCritical()) return null;
+        var consequence = stopsIncus.getAsBoolean() ? "a full disk stops Incus" : null;
         if (refused) {
-            // Only the macOS VM's disk holds Incus's database beside the pool for certain, and only its
-            // deletes were measured to show minutes later (#2555): a Linux loop pool holds neither
+            // Only the macOS VM's deletes were measured to show minutes later (#2555); a Linux host
+            // commits every 30 s by default
             return "the storage pool '" + pool + "' has " + free(usage) + ", too little to "
                     + (need == Need.BUILD ? "build in" : "branch into")
-                    + (macOS ? ", and a full disk stops Incus" : "") + ". " + remedy(macOS) + "."
+                    + (consequence != null ? ", and " + consequence : "") + ". " + remedy(macOS) + "."
                     + (macOS ? " The space a delete frees can take up to about five minutes to show as free." : "");
         }
-        if (usage.isCritical()) {
-            BuildOutput.warn("The storage pool '" + pool + "' has only " + free(usage) + ".",
-                    remedy(macOS) + (macOS ? ", before it fills: a full disk stops Incus." : ", before it fills."));
-        }
+        BuildOutput.warn("The storage pool '" + pool + "' has only " + free(usage) + ".",
+                remedy(macOS) + (consequence != null ? ", before it fills: " + consequence + "." : ", before it fills."));
         return null;
+    }
+
+    /**
+     * Whether a Linux pool shares its disk with Incus's database: a subvolume pool is on the host's
+     * own filesystem, which holds {@code /var/lib/incus}, and only a loop-file pool keeps the two
+     * apart. One pool listing; a pool that cannot be read is taken to share it.
+     */
+    private static boolean sharesIncusDisk(IncusClient incus, String pool) {
+        try {
+            var info = incus.listPoolInfo().get(pool);
+            return info == null || !isLoopFile(info.config());
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    /** A pool backed by a loop file, which Incus names {@code disks/<pool>.img} for every driver. */
+    public static boolean isLoopFile(java.util.Map<String, String> config) {
+        // A subvolume or device source never ends so
+        var source = config.getOrDefault("source", "");
+        return source.startsWith("/") && source.endsWith(".img");
     }
 
     /** What frees or adds space, as an instruction. */
