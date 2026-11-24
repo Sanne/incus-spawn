@@ -32,7 +32,7 @@ import java.util.Map;
 
 @CommandDefinition(
         name = "branch",
-        description = "Create a new instance from an existing one",
+        description = "Create an instance from a template or another instance",
         generateHelp = true
 )
 public class BranchCommand extends BaseCommand {
@@ -40,7 +40,7 @@ public class BranchCommand extends BaseCommand {
     @Argument(description = "Name for the new instance", required = true)
     String name;
 
-    @Option(name = "from", completer = Completers.Source.class, description = "Source instance to branch from (auto-detected from cwd if omitted)")
+    @Option(name = "from", completer = Completers.Source.class, description = "Template or instance to copy (default: the template this project's incus-spawn.yaml names)")
     String source;
 
     @Option(name = "gui", description = "Enable GUI passthrough (Wayland + GPU + audio); "
@@ -74,7 +74,7 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "disk", description = "Disk size limit (default: adaptive)")
     String diskLimit;
 
-    @Option(name = "no-start", description = "Don't start the instance after creation", hasValue = false)
+    @Option(name = "no-start", description = "Create the instance without starting it", hasValue = false)
     boolean noStart;
 
     @Option(name = "shell", description = "Open a plain shell instead of running the default action", hasValue = false)
@@ -140,7 +140,7 @@ public class BranchCommand extends BaseCommand {
         if (noStart) return CommandResult.SUCCESS;
         if (!IncusClient.hasTerminal()) {
             // The branch is done; only the shell needs a terminal (#1027).
-            BuildOutput.step("No terminal, so no shell opened. From a terminal: isx shell " + name);
+            BuildOutput.step("isx did not open a shell, since this is not a terminal. From a terminal: isx shell " + name);
             return CommandResult.SUCCESS;
         }
 
@@ -225,7 +225,7 @@ public class BranchCommand extends BaseCommand {
             SshKeyManager.ensureKeyPairExists();
             return true;
         } catch (RuntimeException e) {
-            BuildOutput.warn("no SSH fields in the output: " + e.getMessage());
+            BuildOutput.warn("isx could not make its SSH key, so the ssh_ fields are null: " + e.getMessage());
             return false;
         }
     }
@@ -348,11 +348,13 @@ public class BranchCommand extends BaseCommand {
     /** {@code named}, the source given or {@linkplain #detectSource detected}, if it exists. */
     private String resolveSource(String named) {
         if (!incus.exists(named)) {
-            BuildOutput.error((source != null ? "source instance" : "auto-detected source")
-                    + " '" + named + "' does not exist.");
+            BuildOutput.error(source != null
+                    ? "no template or instance named '" + OutputFormat.oneLine(named) + "' found to branch from."
+                    : "this project's incus-spawn.yaml names '" + OutputFormat.oneLine(named) + "', which is not built.",
+                    source != null ? "Run 'isx list' to see available instances and templates." : "'isx project create " + OutputFormat.oneLine(named) + "' builds it.");
             return null;
         }
-        if (source == null) BuildOutput.step("Auto-detected source: " + named);
+        if (source == null) BuildOutput.step("Branching from " + named + ", which this project's incus-spawn.yaml names");
         return named;
     }
 

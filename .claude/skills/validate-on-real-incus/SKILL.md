@@ -83,8 +83,8 @@ What it cannot fix:
 
 ## 3. Exercise the change
 
-A branch that starts tries to attach a shell; without a TTY it says "No terminal, so no shell
-opened" and exits, so `isx branch` is safe to script. Use `--no-start` and `incus start` when the
+A branch that starts tries to attach a shell; without a TTY it says "isx did not open a shell,
+since this is not a terminal" and exits, so `isx branch` is safe to script. Use `--no-start` and `incus start` when the
 change is about what happens on a later start rather than at branch time. Cover every path the
 change touches, typically:
 

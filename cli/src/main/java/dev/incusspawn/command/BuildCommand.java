@@ -1476,7 +1476,7 @@ public class BuildCommand extends BaseCommand {
         try (var parentHeld = TemplateLock.reading(parentSource, BuildOutput.bound())) {
             var copyPlan = incus.planCopy(parentSource);
             if (!copyPlan.cow()) {
-                BuildOutput.warn("Deriving will be a full copy, not a CoW clone: "
+                BuildOutput.warn("Deriving will be a full copy, not a copy-on-write clone: "
                         + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
             }
             BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'");
