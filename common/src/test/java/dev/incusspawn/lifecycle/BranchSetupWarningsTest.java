@@ -205,7 +205,7 @@ class BranchSetupWarningsTest {
             assertEquals(List.of("/dev/kvm not found on the host.\n"
                     + "Ensure your CPU supports hardware virtualization (VT-x/AMD-V) and load the kvm module:\n"
                     + "sudo modprobe kvm_intel  (or kvm_amd)\n"
-                    + "Continuing without KVM — VMs inside this branch will not work."), warnings);
+                    + "Continuing without KVM, so VMs inside this instance will not start."), warnings);
         } finally {
             BranchFlow.hostPathExists = original;
         }

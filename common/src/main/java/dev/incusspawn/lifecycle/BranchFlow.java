@@ -32,6 +32,7 @@ import dev.incusspawn.tool.MemoryNeed;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -521,8 +522,8 @@ public final class BranchFlow {
 
         var copyPlan = incus.planCopy(sourceInstance);
         if (!copyPlan.cow()) {
-            BuildOutput.warn("This branch will be a full copy, not a CoW clone: "
-                    + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
+            BuildOutput.warn("'" + name + "' will take as much disk as '" + source + "': isx makes a full copy, since the "
+                    + copyPlan.fullCopyReason() + ".", "'isx doctor' gives the details.");
         }
         // The branch's own secret, its hash stamped by the copy request: no extra write, and no
         // moment in which the new instance carries the hash of its source's. The ChatGPT session
@@ -588,7 +589,7 @@ public final class BranchFlow {
             copyConfig.put(Metadata.AIRGAP_MASKED, masks.stamp());
             copyDevices.putAll(masks.devices());
         }
-        BuildOutput.stepStart("Copying from template");
+        BuildOutput.stepStart("Copying " + OutputFormat.oneLine(source));
         incus.copy(source, name, copyPlan, copyConfig, copyDevices);
         BuildOutput.stepDone();
         try {
@@ -687,7 +688,7 @@ public final class BranchFlow {
         // Inherited KVM passthrough was already dropped by configureBranch when not enabled.
         if (enableKvm) {
             var whyNot = KvmPassthrough.configureKvm(incus, name, hostPathExists);
-            if (whyNot != null) whyNot.warn(BuildOutput.bound(), "Continuing without KVM — VMs inside this branch will not work.");
+            if (whyNot != null) whyNot.warn(BuildOutput.bound(), "Continuing without KVM, so VMs inside this instance will not start.");
         }
 
         // Before the --no-start return: the inbox is plain device config, so it is there

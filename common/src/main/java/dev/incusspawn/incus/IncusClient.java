@@ -1007,7 +1007,7 @@ public class IncusClient {
         public String fullCopyReason() {
             if (cow) return null;
             if (sourcePool == null) return "source has no root disk pool";
-            return "source is on '" + sourcePool + "' (" + sourceDriver + "), not a CoW pool";
+            return "source is on '" + sourcePool + "' (" + sourceDriver + "), not a copy-on-write pool";
         }
     }
 
