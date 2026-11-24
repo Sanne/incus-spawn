@@ -179,7 +179,7 @@ class HostSetup {
         var missing = missingDependencies(has);
         var cmd = dependencyCommand(has, missing);
         if (missing.isEmpty() || cmd == null) return;
-        var label = "Installing dependencies: " + String.join(", ", missing);
+        var label = "Installing what isx needs: " + String.join(", ", missing);
         install(label, cmd);
     }
 
@@ -307,9 +307,9 @@ class HostSetup {
                 }
             }
 
-            install("Installing Incus via " + installCmd[0] + " (sudo required)", installCommand(init::hostHasCommand, "incus"));
-            BuildOutput.liveStep("Enabling the incus service", () -> runHost("sudo", "systemctl", "enable", "--now", "incus") == 0);
-            BuildOutput.liveStep("Adding user to the incus-admin group",
+            install("Installing Incus", installCommand(init::hostHasCommand, "incus"));
+            BuildOutput.liveStep("Starting Incus", () -> runHost("sudo", "systemctl", "enable", "--now", "incus") == 0);
+            BuildOutput.liveStep("Adding you to the incus-admin group",
                     () -> runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0);
             BuildOutput.step("You may need to log out and back in for group membership to take effect, or run:");
             BuildOutput.stepNote("newgrp incus-admin");
@@ -318,7 +318,7 @@ class HostSetup {
             var serviceActive = runHost("systemctl", "is-active", "--quiet", "incus");
             if (serviceActive != 0) {
                 BuildOutput.step("Incus service is not running.");
-                if (!BuildOutput.liveStep("Enabling and starting the Incus service (sudo required)",
+                if (!BuildOutput.liveStep("Starting Incus",
                         () -> runHost("sudo", "systemctl", "enable", "--now", "incus") == 0)) {
                     BuildOutput.error("Failed to start the Incus service.",
                             "Run 'sudo systemctl enable --now incus' manually, then re-run 'isx init'.");
@@ -336,7 +336,7 @@ class HostSetup {
             var groups = new String(process.getInputStream().readAllBytes()).strip();
             process.waitFor();
             if (!groups.contains("incus-admin")) {
-                if (BuildOutput.liveStep("Adding user to the incus-admin group",
+                if (BuildOutput.liveStep("Adding you to the incus-admin group",
                         () -> runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0)) {
                     BuildOutput.stepNote("Active after the next login.");
                 }
@@ -602,7 +602,7 @@ class HostSetup {
         }
 
         if (!hasInterface) {
-            if (!BuildOutput.liveStep("Adding incusbr0 to the trusted firewall zone (sudo required)",
+            if (!BuildOutput.liveStep("Letting " + init.machines() + " through the firewall",
                     () -> runHostQuiet(FWD_TRUST_BRIDGE) == 0)) {
                 BuildOutput.warn("Failed to add incusbr0 to trusted zone.",
                         "Until it is, " + init.machines() + " may not reach the network or DNS. Fix it by hand with:",
@@ -618,7 +618,7 @@ class HostSetup {
                     () -> ran(FWD_MASQUERADE));
         }
         if (!hasForwardIn || !hasForwardOut) {
-            ok &= BuildOutput.liveStep("Adding FORWARD rules for Incus bridge (Docker coexistence)", () -> {
+            ok &= BuildOutput.liveStep("Keeping Docker's firewall rules from blocking " + init.machines(), () -> {
                 // Both rules, even when the first fails: the step reports what it did
                 boolean added = true;
                 if (!hasForwardIn) {
@@ -1023,6 +1023,7 @@ class HostSetup {
             BuildOutput.step("The isx proxy's certificate is ready.");
         } else {
             CertificateAuthority.loadOrCreate();
+            init.reportCertificateCreated();
         }
         if (!redirected) {
             warnIncomplete("isx could not send all HTTPS of " + init.machines() + " to the proxy, so the proxy may not add"
@@ -1049,8 +1050,7 @@ class HostSetup {
                         () -> ran(fwdRedirect("--remove-rule", staleIp)));
             }
             // Every command runs, even after one failed (&, not &&): the step reports what it did
-            ok &= BuildOutput.liveStep("Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
-                    + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0)",
+            ok &= BuildOutput.liveStep("Sending the HTTPS of " + init.machines() + " to the proxy",
                     () -> ran(fwdRedirect("--add-rule", gatewayIp))
                             & ran(fwdRedirect("--remove-rule", null))
                             & ran(FWD_RELOAD));
@@ -1202,8 +1202,7 @@ class HostSetup {
                     ProxyConfig.CONTAINER_FACING_PORT, ProxyConfig.DEFAULT_MITM_PORT);
             var content = UfwCheck.insertNatBlock(beforeRules, natBlock);
             // The reload runs even when the write failed (&, not &&)
-            return BuildOutput.liveStep("Adding PREROUTING redirect (" + gatewayIp + ":443 -> "
-                    + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0) to UFW before.rules",
+            return BuildOutput.liveStep("Sending the HTTPS of " + init.machines() + " to the proxy",
                     () -> writeBeforeRules(content) & ran("sudo", "ufw", "reload"));
         }
         return true;
@@ -1283,7 +1282,7 @@ class HostSetup {
             for (var entry : SUBID_ENTRIES) changed |= ensureSubidEntry(path, entry[0], entry[1]);
         }
         if (changed) {
-            BuildOutput.liveStep("Restarting Incus to apply idmap changes", () -> runHost("sudo", "systemctl", "restart", "incus") == 0);
+            BuildOutput.liveStep("Restarting Incus with user IDs for " + init.machines(), () -> runHost("sudo", "systemctl", "restart", "incus") == 0);
         }
         BuildOutput.step("subuid/subgid configured.");
     }
@@ -1370,6 +1369,11 @@ class HostSetup {
 
     private boolean writeSubidFile(String path, String content) {
         var tmpPath = path + ".isx-tmp";
+        // Its sudo runs inside sh, so an expired sudo asks first, with the terminal released (#2528)
+        if (InitCommand.hostOutputToLog && !InitCommand.sudoReady("sudo", "true")) {
+            BuildOutput.warn("Failed to write " + path);
+            return false;
+        }
         int exitCode = runHost("sh", "-c",
                 "printf '%s' '" + content.replace("'", "'\\''") + "' | sudo tee " + tmpPath + " > /dev/null"
                         + " && sudo chmod --reference=" + path + " " + tmpPath
@@ -1902,7 +1906,7 @@ class HostSetup {
     }
 
     void checkBridgeSubnet() {
-        BuildOutput.stepStart("Checking bridge subnet for VPN conflicts");
+        BuildOutput.stepStart("Checking the network of " + init.machines() + " against VPN routes");
         try {
             var result = BridgeSubnetCheck.detectAndFix(init.incus, init.hostRoutes());
             BuildOutput.stepDone();

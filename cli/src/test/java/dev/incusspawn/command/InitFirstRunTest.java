@@ -309,7 +309,7 @@ class InitFirstRunTest {
         assertNotEquals("Setup complete", message.title());
         assertTrue(box.contains("tpl-agent did not build."), box);
         assertEquals("4 steps left", message.title());
-        var order = List.of("1. Start the proxy:", "isx proxy start", "it keeps its terminal",
+        var order = List.of("1. Start the proxy:", "isx proxy start", "the proxy keeps this terminal",
                 "2. Fix the error above, then build tpl-agent:", "isx build tpl-agent",
                 "3. Add Antigravity CLI's account:", "isx account add gemini",
                 "4. Open Antigravity CLI in a new isx machine:", "isx branch my-first-12 --from tpl-agent",

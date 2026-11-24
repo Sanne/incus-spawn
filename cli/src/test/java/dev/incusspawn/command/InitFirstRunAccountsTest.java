@@ -124,7 +124,7 @@ class InitFirstRunAccountsTest {
         var lines = ask("bob", new ScriptedPrompts().secret("").line(""), new Init());
 
         assertEquals(0, count(lines, "Saved on"), String.join("\n", lines));
-        assertEquals(1, count(lines, "Saved your answer to \"Accept IBM license terms\""), String.join("\n", lines));
+        assertEquals(1, count(lines, "Your answer to \"Accept IBM license terms\" is saved."), String.join("\n", lines));
         assertEquals(1, count(lines, "Add one later with 'isx account add bob'."), String.join("\n", lines));
     }
 }

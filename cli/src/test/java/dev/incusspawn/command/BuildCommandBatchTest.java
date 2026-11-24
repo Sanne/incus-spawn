@@ -509,11 +509,13 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-agent"));
 
         assertEquals(List.of("tpl-agent"), built);
-        var missing = "Missing credential: GitHub personal access token. "
-                + "'isx branch' will refuse tpl-dev and tpl-agent until it is configured with 'isx account add github'.";
+        var missing = "tpl-dev and tpl-agent lack a credential: 'isx branch' refuses them. "
+                + "Needed: GitHub personal access token. 'isx account add github' adds it.";
         // Once, and before the build
-        assertEquals(List.of(missing), warnings.stream().filter(w -> w.contains("GitHub personal access token")).toList());
-        assertTrue(warningsBeforeBuild.contains(missing), warningsBeforeBuild::toString);
+        assertEquals(List.of(missing), oneLine(warnings).filter(w -> w.contains("GitHub personal access token")).toList());
+        assertTrue(oneLine(warningsBeforeBuild).toList().contains(missing), warningsBeforeBuild::toString);
+        // Wrapped to init's frame, which a first run's build prints inside (#2528)
+        assertTrue(warnings.stream().flatMap(String::lines).allMatch(l -> l.length() <= Lines.WIDTH - 2), warnings::toString);
     }
 
     @Test
@@ -526,7 +528,7 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-dev"));
 
         assertEquals(List.of("tpl-dev"), built);
-        assertTrue(warnings.stream().noneMatch(w -> w.contains("Missing credential")), warnings::toString);
+        assertTrue(warnings.stream().noneMatch(w -> w.contains("a credential:")), warnings::toString);
     }
 
     /** A build at a terminal, without {@code --yes}, whose missing accounts are asked for through {@code prompts}. */
@@ -567,9 +569,9 @@ class BuildCommandBatchTest {
         prompts.assertFullyConsumed();
         assertEquals(List.of("tpl-dev"), built);
         assertEquals("acme-secret", IsolatedHome.saved("acmeCloud.accounts.default.apiKey"));
-        assertEquals(List.of("Missing credential: GitHub personal access token. "
-                        + "'isx branch' will refuse tpl-dev until it is configured with 'isx account add github'."),
-                warningsBeforeBuild.stream().filter(w -> w.startsWith("Missing credential")).toList());
+        assertEquals(List.of("tpl-dev lacks a credential: 'isx branch' refuses it. "
+                        + "Needed: GitHub personal access token. 'isx account add github' adds it."),
+                oneLine(warningsBeforeBuild).filter(w -> w.contains("lacks a credential")).toList());
     }
 
     /**
@@ -597,9 +599,9 @@ class BuildCommandBatchTest {
         accounts.assertFullyConsumed();
         assertEquals("acme-secret", IsolatedHome.saved("acmeCloud.accounts.default.apiKey"));
         assertFalse(built.isEmpty());
-        assertEquals(List.of("Missing credential: GitHub personal access token. "
-                        + "'isx branch' will refuse tpl-dev until it is configured with 'isx account add github'."),
-                warningsBeforeBuild.stream().filter(w -> w.startsWith("Missing credential")).toList());
+        assertEquals(List.of("tpl-dev lacks a credential: 'isx branch' refuses it. "
+                        + "Needed: GitHub personal access token. 'isx account add github' adds it."),
+                oneLine(warningsBeforeBuild).filter(w -> w.contains("lacks a credential")).toList());
     }
 
     /** A caller that has just asked turns the question off: the build warns as without a terminal. */
@@ -615,7 +617,7 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-dev"));
 
         assertEquals(0, asked);
-        assertEquals(2, warnings.stream().filter(w -> w.startsWith("Missing credential")).count(), warnings::toString);
+        assertEquals(2, warnings.stream().filter(w -> w.contains("a credential: 'isx branch' refuses")).count(), warnings::toString);
     }
 
     /** {@code --yes} is a build nobody watches: nothing is asked. */
@@ -631,7 +633,7 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-dev"));
 
         assertEquals(0, asked);
-        assertEquals(2, warnings.stream().filter(w -> w.startsWith("Missing credential")).count(), warnings::toString);
+        assertEquals(2, warnings.stream().filter(w -> w.contains("a credential: 'isx branch' refuses")).count(), warnings::toString);
     }
 
     /**
@@ -906,5 +908,10 @@ class BuildCommandBatchTest {
             if (!pair.get(1).isEmpty()) def.setParent(pair.get(1));
             extraDefs.put(def.getName(), def);
         }
+    }
+
+    /** Each warning with its wrapped lines joined again by a space. */
+    private static java.util.stream.Stream<String> oneLine(List<String> warnings) {
+        return warnings.stream().map(w -> w.replace("\n", " "));
     }
 }

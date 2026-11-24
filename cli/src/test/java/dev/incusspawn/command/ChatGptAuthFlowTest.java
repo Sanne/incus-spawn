@@ -357,4 +357,118 @@ class ChatGptAuthFlowTest {
 
         assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
     }
+
+    /** A one-time code expires by itself: the step offers another try, with a new code (#2528). */
+    @Test
+    void anExpiredCodeIsTriedAgainWithANewCode() {
+        var codes = new java.util.concurrent.atomic.AtomicInteger();
+        var init = new FakeInit() {
+            @Override
+            dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
+                return new ChatGptSignIn("http://127.0.0.1:1") {
+                    @Override
+                    public DeviceCode requestDeviceCode() {
+                        var n = codes.incrementAndGet();
+                        return new DeviceCode("dev-" + n, "CODE-000" + n, 1, "https://auth.openai.com/codex/device");
+                    }
+
+                    @Override
+                    public ChatGptSessionStore.Tokens awaitAuthorization(DeviceCode device,
+                            java.util.function.Consumer<String> note) throws java.io.IOException {
+                        if (device.userCode().endsWith("1")) throw new java.io.IOException("the code expired");
+                        return new ChatGptSessionStore.Tokens("id-token", "access-token", "rt-real", "acct-ent");
+                    }
+                };
+            }
+        };
+
+        var out = run(init, new SpawnConfig(), new ScriptedPrompts().line("2", ""));
+
+        assertEquals(2, codes.get(), "a second try asks for a new code");
+        assertTrue(String.join("\n", out.lines()).contains("CODE-0002"), String.join("\n", out.lines()));
+        assertEquals("chatgpt", saved("openai.accounts.default.type"), "the second try signed in");
+    }
+
+    @Test
+    void anExpiredCodeCanBeSkipped() {
+        var init = new FakeInit() {
+            @Override
+            dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
+                return new ChatGptSignIn("http://127.0.0.1:1") {
+                    @Override
+                    public DeviceCode requestDeviceCode() {
+                        return new DeviceCode("dev-1", "ABCD-EFGH", 1, "https://auth.openai.com/codex/device");
+                    }
+
+                    @Override
+                    public ChatGptSessionStore.Tokens awaitAuthorization(DeviceCode device,
+                            java.util.function.Consumer<String> note) throws java.io.IOException {
+                        throw new java.io.IOException("the code expired");
+                    }
+                };
+            }
+        };
+
+        var out = run(init, new SpawnConfig(), new ScriptedPrompts().line("2", "s"));
+
+        assertTrue(String.join("\n", out.lines()).contains("Skipped. 'isx account add openai' adds one later."), String.join("\n", out.lines()));
+        assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
+    }
+
+    /** A sign-in whose one-time code always expires, or is interrupted. */
+    private static FakeInit failingCodes(java.util.concurrent.atomic.AtomicInteger codes, boolean interrupted) {
+        return new FakeInit() {
+            @Override
+            dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
+                return new ChatGptSignIn("http://127.0.0.1:1") {
+                    @Override
+                    public DeviceCode requestDeviceCode() {
+                        codes.incrementAndGet();
+                        return new DeviceCode("dev-1", "ABCD-EFGH", 1, "https://auth.openai.com/codex/device");
+                    }
+
+                    @Override
+                    public ChatGptSessionStore.Tokens awaitAuthorization(DeviceCode device,
+                            java.util.function.Consumer<String> note) throws java.io.IOException, InterruptedException {
+                        if (interrupted) throw new InterruptedException();
+                        throw new java.io.IOException("the code expired");
+                    }
+                };
+            }
+        };
+    }
+
+    /** A person who has accounts is not told to add one when a code expires (#2528). */
+    @Test
+    void aSkippedCodeSaysTheAccountsThereStay() throws Exception {
+        var config = seed("""
+                openai:
+                  accounts:
+                    default:
+                      apiKey: "sk-kept"
+                """);
+        var codes = new java.util.concurrent.atomic.AtomicInteger();
+
+        var out = run(failingCodes(codes, false), config, new ScriptedPrompts().line("a", "work", "2", "s"));
+
+        var said = String.join("\n", out.lines());
+        assertTrue(said.contains("Your OpenAI accounts stay as they were."), said);
+        assertFalse(said.contains("adds one later"), said);
+        assertEquals("sk-kept", saved("openai.accounts.default.apiKey"));
+    }
+
+    /** An interrupt ends the step: no new code is asked for, and no question is asked. */
+    @Test
+    void anInterruptIsNotAnsweredWithANewCode() {
+        var codes = new java.util.concurrent.atomic.AtomicInteger();
+        try {
+            var out = run(failingCodes(codes, true), new SpawnConfig(), new ScriptedPrompts().line("2"));
+
+            assertEquals(1, codes.get(), "one code, never a second");
+            assertTrue(Thread.currentThread().isInterrupted(), "the interrupt is kept for the caller");
+            assertTrue(String.join("\n", out.lines()).contains("Skipped."), String.join("\n", out.lines()));
+        } finally {
+            Thread.interrupted();
+        }
+    }
 }

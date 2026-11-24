@@ -264,7 +264,9 @@ public class InitCommand extends BaseCommand {
             step.run().run();
             return;
         }
-        if (plumbingBlock == null) plumbingBlock = BuildOutput.group("Setting up " + dev.incusspawn.Platform.thisComputer(), "");
+        // A continuation under sg carries on the block its parent opened, under the parent's header (#2528)
+        if (plumbingBlock == null) plumbingBlock = BuildOutput.group(allPlumbing && continuedInGroup() ? ""
+                : "Setting up " + dev.incusspawn.Platform.thisComputer(), "");
         unannounced = step;
         try {
             step.run().run();
@@ -1276,13 +1278,13 @@ public class InitCommand extends BaseCommand {
                 }
                 if (!macOs && !noSudo) {
                     // The one sudo prompt the intro promised, said before it asks (#2528)
-                    BuildOutput.step("isx asks for your sudo password now, to install packages,");
-                    BuildOutput.step("set up the firewall and the user namespace mappings.");
+                    BuildOutput.gap();
+                    BuildOutput.step("isx asks for your sudo password now. It installs packages,");
+                    BuildOutput.step("and sets up the firewall and the user IDs of isx machines.");
                     if (runHost("sudo", "-v") != 0) {
                         BuildOutput.error("sudo authentication failed.", "Please ensure you have sudo access and try again.");
                         return CommandResult.valueOf(1);
                     }
-                    dependencies().run().run();
                 }
             }
             var servicesInstalled = new AtomicBoolean();
@@ -1292,7 +1294,10 @@ public class InitCommand extends BaseCommand {
             firstRunConfig();
             try {
                 // A continuation starts after Incus Installation, which its parent ran
-                runPlumbing(firstRunPlumbing(macOs, servicesInstalled), !macOs && continued ? 1 : 0);
+                // The dependencies open the block of setup, which a continuation enters after Incus Installation
+                var steps = firstRunPlumbing(macOs, servicesInstalled);
+                if (!macOs && !noSudo && !continued) steps.addFirst(dependencies());
+                runPlumbing(steps, !macOs && continued ? 1 : 0);
                 // The paths and settings the steps wrote are in the log, not on the screen (#2528)
                 var log = Environment.clientLogFile().toString();
                 var home = System.getProperty("user.home");
@@ -1603,7 +1608,7 @@ public class InitCommand extends BaseCommand {
         var suggested = suggestedAgent();
         chosenAgent = suggested == null ? chooseAgent(prompts, agents) : confirmAgent(prompts, agents, suggested, found);
         if (chosenAgent == null) {
-            BuildOutput.step("No agent for now.");
+            BuildOutput.step("Skipped the agent for now.");
             BuildOutput.step("Your first isx machine is a plain Linux system.");
             return;
         }
@@ -1670,8 +1675,15 @@ public class InitCommand extends BaseCommand {
             // Trusted only, as the first template is: a project's tpl-agent never asks for an account here
             var defs = new LinkedHashMap<>(trustedTemplates());
             defs.putIfAbsent(ExampleTemplate.NAME, firstTemplate(defs, chosenAgent, config));
-            return CredentialCheck.missingByCredential(config, List.of(ExampleTemplate.NAME), defs,
-                    ToolDefLoader.withoutProjectTools(config.getSearchPaths()));
+            var loader = ToolDefLoader.withoutProjectTools(config.getSearchPaths());
+            var gaps = new LinkedHashMap<>(CredentialCheck.missingByCredential(config, List.of(ExampleTemplate.NAME), defs, loader));
+            // GitHub's account is the GitHub step's, with a header of its own, unless it is the only
+            // account the agent spends (Copilot): a tpl-agent an earlier run wrote can list gh (#2528)
+            if (chosenAgent != null && !chosenAgent.credentialNamespaces().contains(dev.incusspawn.tool.GhSetup.NAMESPACE)) {
+                var tools = loader.allToolSetups();
+                gaps.keySet().removeIf(g -> "gh".equals(CredentialCheck.stepTool(g, tools)));
+            }
+            return gaps;
         } catch (IOException e) {
             throw new java.io.UncheckedIOException(e);
         }
@@ -1825,10 +1837,19 @@ public class InitCommand extends BaseCommand {
     /** Runs {@code steps} from the {@code done}th in the one block of plumbing, since none asks. */
     void runPlumbing(List<InitStep> steps, int done) throws Exception {
         allPlumbing = true;
-        try {
-            for (var step : steps.subList(done, steps.size())) begin(step);
+        // One line per outcome on the screen, the details and the host commands' output in the log (#2528)
+        hostOutputToLog = true;
+        // The proxy service's lifecycle lines stay in its log, not between the steps
+        var quiet = dev.incusspawn.proxy.ProxyLog.setSuppressStderr(true);
+        try (var details = BuildOutput.bind(dev.incusspawn.util.Output.detailsLogged(BuildOutput.current(), ClientLog::debug))) {
+            try {
+                for (var step : steps.subList(done, steps.size())) begin(step);
+            } finally {
+                closePlumbingBlock();
+            }
         } finally {
-            closePlumbingBlock();
+            dev.incusspawn.proxy.ProxyLog.setSuppressStderr(quiet);
+            hostOutputToLog = false;
             allPlumbing = false;
         }
     }
@@ -1960,8 +1981,11 @@ public class InitCommand extends BaseCommand {
         if (chosenAgent == null) return "tpl-minimal";
         if (trustedTemplates().containsKey(ExampleTemplate.NAME)) {
             var agent = templateAgent();
-            BuildOutput.note("Kept your own " + ExampleTemplate.NAME + " as it is" + (agent == chosenAgent ? "."
-                    : "; it installs " + ExampleTemplate.title(agent) + ", not " + ExampleTemplate.title(chosenAgent) + "."));
+            // Said only when it changes what the person gets: one that installs the agent chosen goes unsaid (#2528)
+            if (agent != chosenAgent) {
+                BuildOutput.note("Kept your own " + ExampleTemplate.NAME + " as it is; it installs "
+                        + ExampleTemplate.title(agent) + ", not " + ExampleTemplate.title(chosenAgent) + ".");
+            }
         } else {
             // The closing box says what it is and how to change it (#2528); it lists gh with a GitHub account (#2535)
             ExampleTemplate.write(ExampleTemplate.file(), chosenAgent, ExampleTemplate.hasGitHubAccount(SpawnConfig.load()));
@@ -1974,7 +1998,13 @@ public class InitCommand extends BaseCommand {
         var build = new BuildCommand();
         build.names = List.of(template);
         build.askForAccounts = false;
-        return build.doExecute().getResultValue();
+        // As the block of setup: one line per outcome, the details in the log (#2528)
+        var quiet = dev.incusspawn.proxy.ProxyLog.setSuppressStderr(true);
+        try (var details = BuildOutput.bind(dev.incusspawn.util.Output.detailsLogged(BuildOutput.current(), ClientLog::debug))) {
+            return build.doExecute().getResultValue();
+        } finally {
+            dev.incusspawn.proxy.ProxyLog.setSuppressStderr(quiet);
+        }
     }
 
     /** Branches the first instance of {@code template}, which opens its agent; tests record it instead. */
@@ -2019,7 +2049,7 @@ public class InitCommand extends BaseCommand {
             // The first run's own words for what the short label of the other boxes says
             var label = c.services() == Services.START_VM_AND_PROXY ? "Start the VM and the proxy" : c.services().label;
             var start = new ArrayList<>(List.of(label + ":", c.services().command));
-            if (c.services().holdsTerminal()) start.add("(it keeps its terminal: use another for the rest)");
+            if (c.services().holdsTerminal()) start.add("(the proxy keeps this terminal: open another one)");
             steps.add(start);
         }
         if (!c.built()) {
@@ -2034,8 +2064,13 @@ public class InitCommand extends BaseCommand {
 
         var ready = steps.size() == 1;
         var box = new ArrayList<String>();
-        if (c.buildFailed()) box.add("   " + c.template() + " did not build.");
-        if (c.built()) {
+        if (!c.built()) {
+            // Where "template" is explained, built or not (#2528)
+            var what = c.template() + (c.buildFailed() ? " did not build. It is" : " is") + " a template that makes "
+                    + (plain ? "plain isx\u00a0machines." : "isx\u00a0machines with " + c.agent() + ".");
+            // "isx machine" is never broken across two lines: the vocabulary's one name
+            for (var line : Lines.wrap(what, BOX_WIDTH - 6)) box.add("   " + line.replace('\u00a0', ' '));
+        } else {
             // Where "template" is explained (#2528)
             box.add("   " + c.template() + " is built: a template that makes "
                     + (plain ? "plain" : "isx machines"));
@@ -2404,12 +2439,22 @@ public class InitCommand extends BaseCommand {
             BuildOutput.step("The isx proxy's certificate is ready.");
         } else {
             CertificateAuthority.loadOrCreate();
-            // What it is for, once, where it is made (#2528)
-            for (var line : Lines.wrap("The proxy uses it to open the HTTPS requests that " + machines()
-                    + " send to your accounts' services, and adds your credentials."
-                    + " This Mac's own traffic does not go through the proxy.", Lines.WIDTH - 2)) {
-                BuildOutput.step(styled(DIM, line));
-            }
+            reportCertificateCreated();
+        }
+    }
+
+    /**
+     * The certificate's one outcome line, and what it is for, once, where it is made (#2528): under
+     * the line, in the block of setup, two levels in.
+     */
+    void reportCertificateCreated() {
+        BuildOutput.ok("Certificate created for the isx proxy");
+        var computer = dev.incusspawn.Platform.thisComputer();
+        for (var line : Lines.wrap("The proxy uses it to open the HTTPS requests that " + machines()
+                + " send to your accounts' services, and adds your credentials. "
+                + Character.toUpperCase(computer.charAt(0)) + computer.substring(1)
+                + "'s own traffic does not go through the proxy.", Lines.WIDTH - 4)) {
+            BuildOutput.stepNote(line);
         }
     }
 
@@ -2554,7 +2599,8 @@ public class InitCommand extends BaseCommand {
             throw new IllegalStateException("sudo authentication failed; nothing was changed");
         }
         incus.networkConfigSet(BridgeAddress.BRIDGE, "ipv4.address", subnet);
-        BuildOutput.step("Moved the bridge from " + conflict.oldSubnet() + " to " + subnet + ".");
+        // A change to this computer, so an outcome the first run's block shows (#2528)
+        BuildOutput.ok("Moved the bridge from " + conflict.oldSubnet() + " to " + subnet);
         try {
             var migrated = migrateInstances();
             if (migrated > 0) {
@@ -3646,8 +3692,18 @@ public class InitCommand extends BaseCommand {
         return InitPlan.Assessment.of(changes).noting(note);
     }
 
+    /**
+     * Whether {@link #runHost} keeps a command's output in the log: in a first run's block of
+     * setup, whose screen shows one line per outcome (#2528).
+     */
+    static volatile boolean hostOutputToLog;
+
+    /** The lines of a failed command's output a first run shows under its step, the rest in the log. */
+    static final int FAILED_OUTPUT_LINES = 10;
+
     static int runHost(String... command) {
         dev.incusspawn.util.Privilege.check(command);
+        if (hostOutputToLog) return runHostLogged(command);
         // The command writes to the terminal itself, and sudo may ask for a password there
         BuildOutput.releaseTerminal();
         try {
@@ -3657,6 +3713,57 @@ public class InitCommand extends BaseCommand {
         } catch (IOException | InterruptedException e) {
             BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + failure(e));
             return 1;
+        }
+    }
+
+    /**
+     * {@code command} with its output in the log, not on the screen. Its input is empty, so a
+     * package manager's question fails the step rather than wait, unseen, behind its spinner;
+     * sudo asks on the tty, and a sudo whose credentials expired asks for the password first,
+     * with the terminal released, so its prompt is never hidden. A failed command's last lines are step notes,
+     * which the first run's output shows before the warning that follows.
+     */
+    private static int runHostLogged(String... command) {
+        if (!sudoReady(command)) return 1;
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            var exit = process.waitFor();
+            ClientLog.debug("$ " + String.join(" ", command) + " (exit " + exit + ")");
+            var lines = output.lines().map(String::strip).filter(l -> !l.isEmpty()).toList();
+            lines.forEach(ClientLog::debug);
+            if (exit != 0) {
+                for (var line : lines.subList(Math.max(0, lines.size() - FAILED_OUTPUT_LINES), lines.size())) {
+                    BuildOutput.stepNote(BuildOutput.guestText(line));
+                }
+            }
+            return exit;
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + failure(e));
+            return 1;
+        }
+    }
+
+    /**
+     * Whether {@code command} can run without asking for a password where a live step would draw
+     * over the prompt: it is not a sudo, or sudo's credentials are still cached, or the person gave
+     * the password again, asked with the terminal released.
+     */
+    static boolean sudoReady(String... command) {
+        if (command.length == 0 || !"sudo".equals(command[0]) || runHostCapturingExit("sudo", "-n", "true") == 0) return true;
+        BuildOutput.releaseTerminal();
+        try {
+            var pb = new ProcessBuilder("sudo", "-v");
+            pb.inheritIO();
+            return StdoutOnStderr.run(pb) == 0;
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            BuildOutput.warn("Failed to run: sudo -v: " + failure(e));
+            return false;
         }
     }
 
@@ -3692,12 +3799,19 @@ public class InitCommand extends BaseCommand {
      */
     int runHostQuiet(String... command) {
         dev.incusspawn.util.Privilege.check(command);
-        // sudo may ask for a password on the tty, which a live step line would be drawn over
-        if (command.length > 0 && command[0].equals("sudo")) BuildOutput.releaseTerminal();
+        // sudo may ask for a password on the tty, which a live step line would be drawn over;
+        // in the first run's block it asks only when its credentials expired, so the line stays
+        if (hostOutputToLog) {
+            if (!sudoReady(command)) return 1;
+        } else if (command.length > 0 && command[0].equals("sudo")) {
+            BuildOutput.releaseTerminal();
+        }
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
-            pb.redirectInput(ProcessBuilder.Redirect.INHERIT);
+            // In the first run's block its output is not on the screen, so neither may a question be
+            pb.redirectInput(hostOutputToLog ? ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))
+                    : ProcessBuilder.Redirect.INHERIT);
             var process = pb.start();
             var output = new String(process.getInputStream().readAllBytes());
             var exitCode = process.waitFor();

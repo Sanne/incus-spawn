@@ -342,7 +342,7 @@ public final class ProxyService {
         // The path is for a log, not for the person setting up (#2528)
         dev.incusspawn.ClientLog.debug("Service file written to " + Environment.proxyServiceFile());
         // Whether it took is asked below, of the service itself
-        BuildOutput.stepStart("Enabling and starting proxy service");
+        BuildOutput.stepStart("Starting the isx proxy service");
         if (runQuiet("systemctl", "--user", "daemon-reload")
                 & runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME)) BuildOutput.stepDone();
         else BuildOutput.stepBreak();
@@ -351,7 +351,7 @@ public final class ProxyService {
             // isx init --no-sudo: the person's script enabled it (#2074)
             BuildOutput.note("Lingering is the root script's step, so the proxy keeps running after you log out once it ran.");
         } else {
-            BuildOutput.stepStart("Enabling lingering for user (sudo required)");
+            BuildOutput.stepStart("Keeping the proxy running after you log out");
             if (runQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"))) BuildOutput.stepDone();
             else BuildOutput.stepFail("The proxy stops when you log out. Run: sudo loginctl enable-linger "
                     + System.getProperty("user.name"));
