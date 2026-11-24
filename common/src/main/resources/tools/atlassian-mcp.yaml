@@ -22,15 +22,17 @@ proxy:
       description: "Atlassian personal API token"
       secret: true
       help:
-        - "1. An org admin must enable API token auth at:"
-        - "   admin.atlassian.com > Rovo > Rovo MCP server > Authentication"
+        - "1. An admin of your Atlassian organization must allow API"
+        - "   tokens: admin.atlassian.com > Rovo > Rovo MCP server >"
+        - "   Authentication."
         - ""
         - "2. Create a token at:"
         - "   https://id.atlassian.com/manage-profile/security/api-tokens?autofillToken&expiryDays=max&appId=mcp-v2"
-        - "   Select scopes on the creation page. Recommended:"
-        - "     Read-only:  read:jira, search:jira, read:confluence, search:confluence"
-        - "     Add writes: write:jira, write:confluence"
-        - "   Full scope reference:"
+        - "   Pick its scopes on that page. To read, pick:"
+        - "     read:jira, search:jira, read:confluence,"
+        - "     search:confluence"
+        - "   To write as well, add write:jira and write:confluence."
+        - "   Every scope is described at:"
         - "     https://support.atlassian.com/atlassian-ai-gateway/docs/supported-tools/"
   auth:
     - domains:

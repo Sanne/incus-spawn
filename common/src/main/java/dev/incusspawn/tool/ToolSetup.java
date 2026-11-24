@@ -26,7 +26,7 @@ public interface ToolSetup {
     /** Short name for display during build (e.g. "podman", "gh", "claude"). */
     String name();
 
-    /** Human-readable description shown in menus (e.g. "GitHub — PAT for git operations"). */
+    /** Human-readable description shown in menus (e.g. "GitHub — a token for Git and gh"). */
     default String description() { return ""; }
 
     /**

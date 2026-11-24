@@ -163,7 +163,7 @@ class CredentialSetup {
         }
 
         if (toolsWithProxy.isEmpty()) {
-            BuildOutput.step("No tools with proxy credentials found.");
+            BuildOutput.step("There is no tool that takes a credential.");
             return List.of();
         }
 
@@ -174,18 +174,20 @@ class CredentialSetup {
                         })
                 .thenComparing(Map.Entry::getKey));
 
-        BuildOutput.step("Which credentials do you want to configure?");
-        for (int i = 0; i < toolsWithProxy.size(); i++) {
-            var entry = toolsWithProxy.get(i);
+        var options = new ArrayList<String>();
+        for (var entry : toolsWithProxy) {
             var toolName = entry.getKey();
             var tool = entry.getValue();
+            // The tool's description on a line of its own, under its name, as the other menus lay out an option
+            var title = OutputFormat.oneLine(ExampleTemplate.title(tool));
             var desc = describeTool(toolName, tool);
-            var tag = isToolConfigured(toolName, tool, config, configTree, allTools) ? " [configured]" : "";
-            prompts.say((i + 1) + ". " + desc + tag);
+            var about = desc.startsWith(title + " — ") ? desc.substring(title.length() + 3) : "";
+            var tag = isToolConfigured(toolName, tool, config, configTree, allTools) ? " (set up already)" : "";
+            options.add(title + tag + (about.isBlank() ? "" : "\n" + Character.toUpperCase(about.charAt(0)) + about.substring(1)));
         }
-        var input = readInput(prompts.ask("Enter numbers separated by commas, 'all', or press Enter to skip: "));
+        var input = readInput(prompts.chooseSeveral("Which credentials should isx set up?", options, "skip"));
         if (input.isBlank()) {
-            BuildOutput.step("Skipped credential setup.");
+            BuildOutput.note("Skipped. 'isx account add' adds one later.");
             return List.of();
         }
 
@@ -844,8 +846,9 @@ class CredentialSetup {
             case OAUTH -> " (" + maskSecret(account.getOauthToken()) + ")";
             case VERTEX -> "";
         };
-        var tag = isDefault ? "  [default]" : !account.isComplete() ? "  [incomplete]" : "";
-        return (isDefault ? "* " : "  ") + name + "  —  " + account.describe() + secret + tag;
+        // Laid out as the other credentials' account lists are
+        var tag = isDefault ? "  (default)" : !account.isComplete() ? "  (incomplete)" : "";
+        return "- " + name + ": " + account.describe() + secret + tag;
     }
 
     /**
@@ -863,7 +866,7 @@ class CredentialSetup {
             accounts.forEach((name, account) ->
                     prompts.say(describeClaudeAccount(name, account, name.equals(defaultName))));
             if (claude.accountFor(SpawnConfig.ClaudeAccount::servesDirectApi) == null) {
-                prompts.say("(none of these can answer 'isx ask' — add an API key, which Max and Team plans include credits for, or Vertex)");
+                prompts.say("'isx ask' cannot use any of these accounts. It needs an API key, which Max and Team plans include credits for, or Vertex AI.");
             }
             // 'd' and 'x' are reachable as raw keystrokes even when not listed, so the same
             // fact gates both the menu and the handlers -- state it once.
@@ -905,7 +908,7 @@ class CredentialSetup {
                         if (accounts.containsKey(name)) {
                             var account = accounts.get(name);
                             if (!account.isComplete()) {
-                                BuildOutput.step("Account '" + name + "' is incomplete — fix it before making it the default.");
+                                BuildOutput.step("Did not make '" + name + "' the default: it is incomplete.");
                             } else {
                                 changeDefaultAccount(config, SpawnConfig.ClaudeConfig.NAMESPACE, name,
                                         () -> config.getClaude().setDefaultAccount(name), prompts);
@@ -922,7 +925,7 @@ class CredentialSetup {
                         if (accounts.containsKey(name)) {
                             var account = accounts.get(name);
                             if (account.isComplete() && claude.effectiveAccounts().size() <= 1) {
-                                BuildOutput.step("Cannot remove '" + name + "' — it is the only working account.");
+                                BuildOutput.step("Did not remove '" + name + "': it is the only account that works.");
                             } else if (confirmLosingAccounts(config, SpawnConfig.ClaudeConfig.NAMESPACE,
                                     List.of(name), prompts)) {
                                 var moving = runningFollowersIfDefault(config, SpawnConfig.ClaudeConfig.NAMESPACE, name);
@@ -948,7 +951,7 @@ class CredentialSetup {
 
     /** Prompts for a new account name, rejecting duplicates and anything YAML-hostile. */
     private static String askAccountName(Prompts prompts, java.util.Set<String> taken) {
-        return askAccountName(prompts, taken, "Name for this account (e.g. personal, work — Enter to cancel): ");
+        return askAccountName(prompts, taken, "New account's name, such as work (Enter to cancel): ");
     }
 
     static String askAccountName(Prompts prompts, java.util.Set<String> taken, String prompt) {
@@ -1623,9 +1626,11 @@ class CredentialSetup {
             // be replaced -- whether it is a flat one from an older isx or accounts.default.
             if (accounts.size() == 1) {
                 var only = accounts.get(0);
-                BuildOutput.step(label + ": configured.");
-                prompts.say("r. Replace it");
-                prompts.say("a. Add a second account (keeps the current one)");
+                // A block of its own: after a token is saved, the step comes back here
+                BuildOutput.gap();
+                BuildOutput.step("One " + label + " account is set up: " + OutputFormat.oneLine(only) + ".");
+                prompts.say("r. Replace its credential");
+                prompts.say("a. Add a second account, and keep this one");
                 var choice = readInput(prompts.ask("Choice (Enter to keep as-is): ")).toLowerCase(java.util.Locale.ROOT);
                 switch (choice) {
                     case "" -> { return Optional.empty(); }
@@ -1638,6 +1643,7 @@ class CredentialSetup {
                 }
             }
 
+            BuildOutput.gap();
             BuildOutput.step(label + " accounts:");
             for (var name : accounts) {
                 prompts.say("- " + name + (name.equals(defaultName) ? "  (default)" : ""));
@@ -2385,7 +2391,6 @@ class CredentialSetup {
     }
 
     void setupGenericToolCredentials(String toolName, ToolSetup tool, SpawnConfig config, Prompts prompts) {
-        var desc = describeTool(toolName, tool);
         var proxyDef = tool.proxy();
         if (proxyDef == null) return;
 
@@ -2400,7 +2405,7 @@ class CredentialSetup {
             if (!hasAccountsToPreserve(config, namespace)) {
                 target = AccountTarget.FRESH;
             } else {
-                var chosen = chooseAccountTarget(config, namespace, desc, prompts);
+                var chosen = chooseAccountTarget(config, namespace, accountName(namespace), prompts);
                 if (chosen.isEmpty()) return;
                 target = chosen.get();
             }
@@ -2540,9 +2545,7 @@ class CredentialSetup {
                 for (var helpLine : configDef.getHelp()) {
                     BuildOutput.step(OutputFormat.oneLine(helpLine));
                 }
-                if (configDef.getHelp().isEmpty() && !description.isBlank() && !configDef.isSecret()) {
-                    BuildOutput.step(label);
-                }
+                // The question names the label, so it is not said on a line of its own before it
                 // The paste apart from the help above it, as the Claude step's is
                 if (configDef.isSecret() && !configDef.getHelp().isEmpty()) BuildOutput.gap();
 

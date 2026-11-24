@@ -120,7 +120,7 @@ class AccountAddTest {
         var run = add("nope", new ScriptedPrompts());
 
         assertEquals(1, run.exit());
-        assertTrue(run.err().contains("no credential named 'nope'"), run.err());
+        assertTrue(run.err().contains("'isx account add' does not know 'nope'"), run.err());
         assertTrue(run.err().contains("acmeCloud (acme)"), run.err());
         assertTrue(run.err().contains("github (gh)"), run.err());
         assertTrue(run.err().contains("claude"), run.err());
@@ -151,7 +151,19 @@ class AccountAddTest {
         var run = add("copilot", new ScriptedPrompts());
 
         assertEquals(1, run.exit());
-        assertTrue(run.err().contains("no credential named 'copilot'"), run.err());
+        assertTrue(run.err().contains("copilot has no credential of its own."), run.err());
+        assertTrue(run.err().contains("It uses github's: run 'isx account add github'."), run.err());
+    }
+
+    /** A tool that spends several others' credentials names every one, not only the first. */
+    @Test
+    void aToolThatBorrowsSeveralCredentialsNamesThemAll() throws Exception {
+        var run = add("pi", new ScriptedPrompts());
+
+        assertEquals(1, run.exit());
+        var err = run.err().replaceAll("\\s+", " ");
+        assertTrue(err.contains("pi has no credential of its own."), err);
+        assertTrue(err.contains("It uses the credentials of claude, openai and gemini"), err);
     }
 
     @Test
