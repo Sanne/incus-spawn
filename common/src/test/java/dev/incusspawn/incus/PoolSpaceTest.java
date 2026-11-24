@@ -20,6 +20,7 @@ class PoolSpaceTest {
         assertNotNull(refusal);
         assertTrue(refusal.contains("too little to build in"), refusal);
         assertFalse(refusal.contains("vm resize"), "Linux has no VM to grow: " + refusal);
+        assertFalse(refusal.contains("stops Incus"), "a Linux loop pool does not hold Incus's database: " + refusal);
         assertNull(PoolSpace.check(free(6, 60), "cow", PoolSpace.Need.BUILD, false));
     }
 
@@ -40,6 +41,8 @@ class PoolSpaceTest {
         var refusal = PoolSpace.check(free(1.9, 60), "cow", PoolSpace.Need.BRANCH, true);
         assertNotNull(refusal);
         assertTrue(refusal.contains("isx vm resize <size>"), refusal);
+        assertTrue(refusal.contains("a full disk stops Incus"), refusal);
+        assertTrue(refusal.contains("about five minutes"), refusal);
     }
 
     @Test
