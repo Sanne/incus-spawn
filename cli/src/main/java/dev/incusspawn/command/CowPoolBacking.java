@@ -188,9 +188,7 @@ final class CowPoolBacking {
 
     /** Whether a pool with this config is a loop file Incus manages: its source is {@code disks/<pool>.img}. */
     static boolean isLoopFile(Map<String, String> config) {
-        // Incus names it disks/<pool>.img for every driver; a subvolume or device source never ends so
-        var source = config.getOrDefault("source", "");
-        return source.startsWith("/") && source.endsWith(".img");
+        return dev.incusspawn.incus.PoolSpace.isLoopFile(config);
     }
 
     /**
