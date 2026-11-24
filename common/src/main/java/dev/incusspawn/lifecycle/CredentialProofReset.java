@@ -29,6 +29,7 @@ public final class CredentialProofReset {
     public static void reset(IncusClient incus, String name, Confirmation confirmation) {
         try (var ignored = CredentialProof.lock(name)) {
             var instance = incus.instanceMetadataOrThrow(name);
+            if (instance == null) throw new IllegalArgumentException("no instance named '" + name + "' found.");
             var config = instance.path("config");
             if (!Metadata.TYPE_CLONE.equals(config.pathText(Metadata.TYPE, ""))) {
                 throw new IllegalArgumentException("Proof reset requires a branched isx instance, not a template or build");

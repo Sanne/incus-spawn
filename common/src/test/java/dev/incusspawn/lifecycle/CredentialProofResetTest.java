@@ -49,6 +49,12 @@ class CredentialProofResetTest {
         verify(incus).shellExec(eq("box"), anyMap(), any(String[].class));
     }
 
+    @Test void aMissingInstanceIsNamedAsMissing() {
+        var error = assertThrows(IllegalArgumentException.class, () -> CredentialProofReset.reset(
+                new FakeIncusDaemon().client(), "gone", (name, generation, hash) -> true));
+        assertEquals("no instance named 'gone' found.", error.getMessage());
+    }
+
     @Test void anUnavailableOrOldProxyNeverProducesSuccessfulRevocation() {
         var daemon = instance("Stopped");
         var oldId = daemon.instance("box").path("config").path(Metadata.INSTANCE_PROOF_ID).asText();
