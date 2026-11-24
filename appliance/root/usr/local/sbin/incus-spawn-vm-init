@@ -55,6 +55,9 @@ fi
 # Wait for Incus daemon
 if ! incus admin waitready --timeout 30; then
     echo "incus-spawn-vm-init: ERROR: Incus daemon not ready after 30s" >&2
+    # No forwarder starts on this boot now, so let the host's forwarder-restart start one if
+    # incusd comes up later (#2555)
+    : > /run/isx-forwarder-started
     exit 1
 fi
 
@@ -115,10 +118,8 @@ fi
 # socket instead of TCP to the VM subnet (bypasses VPN socket filters).
 VSOCK_INCUS_PORT=$(parse_cmdline "isx.vsock_incus")
 if [ -n "$VSOCK_INCUS_PORT" ]; then
+    # It writes /run/isx-forwarder-started, which lets isx-agent's forwarder-restart run (#2555)
     /usr/local/sbin/isx-start-vsock-forwarder "$VSOCK_INCUS_PORT" &
-    # The agent answers from before the wait for Incus (#2555), so forwarder-restart refuses until this
-    # exists: a restart in that window would start a forwarder that the line above then starts again
-    : > /run/isx-forwarder-started
     echo "incus-spawn-vm-init: vsock forwarder on port $VSOCK_INCUS_PORT"
 fi
 
