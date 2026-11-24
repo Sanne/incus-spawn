@@ -1937,14 +1937,17 @@ class HostSetup {
      * After {@code isx doctor} moved the bridge so its gateway is {@code gatewayIp} (#1203): redo
      * only what names the bridge's address -- the gateway {@code config.yaml} caches and the
      * PREROUTING redirect -- on {@code firewall}, the one already running, chosen as init chooses it.
-     * Installing or enabling a firewall stays init's. {@code config} is config.yaml as read before
-     * the move, so a file that stopped parsing during it cannot strand the redirect. Whether the
-     * redirect was written.
+     * Installing or enabling a firewall stays init's. The redirect comes first, so a config.yaml
+     * that stopped parsing during the migration cannot strand it; the gateway is then saved to the
+     * file as it is now, so an account added from another terminal meanwhile is kept (#2523).
+     * Whether the redirect was written.
      */
-    boolean followBridgeMove(String gatewayIp, DetectionResult firewall, SpawnConfig config) {
+    boolean followBridgeMove(String gatewayIp, DetectionResult firewall) {
+        var redirected = redirectToMovedGateway(gatewayIp, firewall, UfwCheck::readBeforeRules);
+        var config = SpawnConfig.loadToChange("run 'isx doctor' again");
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
-        return redirectToMovedGateway(gatewayIp, firewall, UfwCheck::readBeforeRules);
+        return redirected;
     }
 
     /**
