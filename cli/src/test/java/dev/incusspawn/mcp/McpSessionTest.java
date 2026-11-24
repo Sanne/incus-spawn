@@ -325,6 +325,16 @@ class McpSessionTest {
     }
 
     @Test
+    void aBusyRefusalSaysWhatIsBeingDoneToTheInstance() {
+        assertEquals("'box' is being stopped by an isx command, the TUI or an agent's isx mcp. Try again when it is done.",
+                McpSession.busy("box", Metadata.OP_STOPPING).getMessage());
+        assertEquals("'box' is being destroyed by an isx command, the TUI or an agent's isx mcp. Try again when it is done.",
+                McpSession.busy("box", Metadata.OP_DELETING).getMessage());
+        assertEquals("'box' is busy (moving): an isx command, the TUI or an agent's isx mcp is changing it. Try again when it is done.",
+                McpSession.busy("box", "moving").getMessage(), "an operation it does not know is named as recorded");
+    }
+
+    @Test
     void anAdoptionTheSweepIsStillStoppingIsHeldButBusyAndARepeatStartsIt() {
         // The sweep marked it and read the old holder before this adoption stamped; its stop
         // outlasts the wait for the mark. Reported adopted, it would be stopped under us.

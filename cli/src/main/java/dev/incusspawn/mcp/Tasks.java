@@ -2,6 +2,7 @@ package dev.incusspawn.mcp;
 
 import dev.incusspawn.incus.ExecScript;
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.util.Report;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -506,7 +507,7 @@ final class Tasks {
             var ordered = new LinkedHashMap<String, String>();
             watched.forEach(t -> ordered.put(t.id(), states.getOrDefault(t.id(), "done")));
             if (ordered.containsValue("done") || System.nanoTime() >= deadline || ctx.cancelled()) return ordered;
-            ctx.progress(watched.size() + " task(s) still running");
+            ctx.progress(Report.count(watched.size(), "task") + " still running");
             Thread.sleep(2000);
         }
     }
@@ -616,7 +617,7 @@ final class Tasks {
         var busy = mine + others;
         var max = config.get().maxConcurrentTasks();
         if (busy >= max) {
-            throw new ToolError(ToolError.Code.LIMIT, busy + " task(s) are running (" + mine + " in this session, " + others
+            throw new ToolError(ToolError.Code.LIMIT, Report.count(busy, "task") + (busy == 1 ? " is" : " are") + " running (" + mine + " in this session, " + others
                     + " in other sessions or orphaned instances" + (others > 0 ? ": " + elsewhere.entrySet().stream()
                     .map(e -> e.getKey() + " " + e.getValue()).collect(Collectors.joining(", ")) : "")
                     + "), the most max-concurrent-tasks in mcp.yaml allows (" + max + "). Wait for one to finish, or "

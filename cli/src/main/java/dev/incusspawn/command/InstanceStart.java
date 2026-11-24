@@ -21,7 +21,7 @@ import java.time.Duration;
  * then prepares the instance itself rather than taking {@code Running} for ready: an instance is
  * running before its start has delivered the proofs. Preparing a ready instance costs little.
  */
-final class InstanceStart {
+public final class InstanceStart {
 
     /** How long a start waits for another isx process holding the instance. */
     static final Duration WAIT = Duration.ofMinutes(2);
@@ -44,7 +44,7 @@ final class InstanceStart {
      * {@code isx mcp} session, while it starts, stops, restarts or destroys the instance, or the
      * TUI clears a mark an interrupted one left.
      */
-    static final String BUSY_ADVICE = "That process (an isx command, the TUI or an agent's isx mcp) is changing its state,"
+    public static final String BUSY_ADVICE = "That process (an isx command, the TUI or an agent's isx mcp) is changing its state,"
             + " for example starting or stopping it. Try again when it is done.";
 
     private InstanceStart() {}

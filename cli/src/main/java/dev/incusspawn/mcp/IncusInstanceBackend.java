@@ -6,6 +6,7 @@ import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.command.InstancePrep;
+import dev.incusspawn.command.InstanceStart;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
@@ -207,10 +208,18 @@ final class IncusInstanceBackend implements InstanceBackend {
         }
     }
 
+    /**
+     * Another isx process holds {@code name}'s lock: the same words as {@code isx start} and
+     * {@code isx destroy} use for it.
+     */
+    private static ToolError inUse(String name) {
+        return new ToolError(ToolError.Code.BUSY, "'" + name + "' is in use by another isx process. " + InstanceStart.BUSY_ADVICE);
+    }
+
     @Override
     public void destroy(String name) {
         var lock = locks.tryAcquire(name, Metadata.OP_DELETING);
-        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process; try again.");
+        if (lock.isEmpty()) throw inUse(name);
         try (var held = lock.get()) {
             InstanceDestroyer.deleteHeld(incus, name);
         }
@@ -219,7 +228,7 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public boolean destroyIfHeldBy(String name, String session, boolean onlyIfStopped) {
         var lock = locks.tryAcquire(name, Metadata.OP_DELETING);
-        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process.");
+        if (lock.isEmpty()) throw inUse(name);
         try (var held = lock.get()) {
             return InstanceDestroyer.deleteHeldIf(incus, name,
                     instance -> session.equals(instance.path("config").path(Metadata.MCP_SESSION).asText(null))
@@ -233,7 +242,7 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public boolean stopIfHeldBy(String name, String session, Map<String, String> stamps) {
         var lock = locks.tryAcquire(name, Metadata.OP_STOPPING);
-        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process.");
+        if (lock.isEmpty()) throw inUse(name);
         try (var held = lock.get()) {
             // Under the mark, so an adoption stamping meanwhile is seen here or sees the mark.
             return InstanceDestroyer.stopMarkedIf(incus, name,
@@ -279,7 +288,7 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public void stop(String name) {
         var lock = locks.tryAcquire(name, Metadata.OP_STOPPING);
-        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process; try again.");
+        if (lock.isEmpty()) throw inUse(name);
         try (var held = lock.get()) {
             incus.setPendingOperation(name, Metadata.OP_STOPPING);
             try {
@@ -295,7 +304,7 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public void start(String name) {
         var lock = locks.tryAcquire(name, Metadata.OP_STARTING);
-        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process; try again.");
+        if (lock.isEmpty()) throw inUse(name);
         try (var held = lock.get()) {
             InstancePrep.prepare(incus, name, dev.incusspawn.util.BuildOutput.bound());
         } catch (InstancePrep.Refused | IncusException e) {
