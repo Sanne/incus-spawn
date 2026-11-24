@@ -292,7 +292,9 @@ When the disk is full (under 512 MiB free, `VmDisk.isFull`), `recoverReachabilit
 That is far below the branch's 2 GiB, since Incus runs well with 1 or 2 GiB free, and a forwarder wedged there still needs its restart.
 `awaitReady` and `IncusApi.diagnoseVsock` say the same after their own failure.
 The message names `isx vm restart` when a reserve is there to release, and `isx vm resize <size>` in every case, then `isx destroy` and `isx clean pool`.
-It and the branch's refusal say that freed space can take up to about five minutes to show: the 2555-vm box measured 4.5 to 7 minutes after a delete on v0.5.3, whose deletes wait for the data disk's `commit=300`, and a VM restart did not shorten it.
+It and the refusals on macOS say that freed space can take up to about five minutes to show, and that a full disk stops Incus.
+On Linux they say neither, since a loop pool holds no Incus database and a host commits every 30 s by default.
+The 2555-vm box measured 4.5 to 7 minutes after a delete on v0.5.3, whose deletes wait for the data disk's `commit=300`, and a VM restart did not shorten it.
 An appliance with the agent's `btrfs-settle` commits after a delete, which should show the space sooner; the vm handoff measures it.
 An appliance from before the verb answers `error: unknown verb`, and isx then says what it said before.
 

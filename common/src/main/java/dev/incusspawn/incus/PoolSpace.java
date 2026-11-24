@@ -45,15 +45,16 @@ public final class PoolSpace {
         // A build is refused wherever a branch is, and also once the pool is critical
         var refused = usage.isExhausted() || (need == Need.BUILD && usage.isCritical());
         if (refused) {
+            // Only the macOS VM's disk holds Incus's database beside the pool for certain, and only its
+            // deletes were measured to show minutes later (#2555): a Linux loop pool holds neither
             return "the storage pool '" + pool + "' has " + free(usage) + ", too little to "
                     + (need == Need.BUILD ? "build in" : "branch into")
-                    + ", and a full disk stops Incus. " + remedy(macOS) + "."
-                    // A delete's space shows once btrfs commits it, minutes later on an older appliance (#2555)
-                    + " The space a delete frees can take up to about five minutes to show as free.";
+                    + (macOS ? ", and a full disk stops Incus" : "") + ". " + remedy(macOS) + "."
+                    + (macOS ? " The space a delete frees can take up to about five minutes to show as free." : "");
         }
         if (usage.isCritical()) {
             BuildOutput.warn("The storage pool '" + pool + "' has only " + free(usage) + ".",
-                    remedy(macOS) + ", before it fills: a full disk stops Incus.");
+                    remedy(macOS) + (macOS ? ", before it fills: a full disk stops Incus." : ", before it fills."));
         }
         return null;
     }

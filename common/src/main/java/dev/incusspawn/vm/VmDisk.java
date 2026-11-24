@@ -74,7 +74,8 @@ public record VmDisk(long freeBytes, long totalBytes, long reserveBytes) {
         lines.add("The VM's disk is full, so Incus cannot run: "
                 + String.format(Locale.ROOT, "%.1f GiB free of %.1f GiB", freeBytes / GIB, totalBytes / GIB) + ".");
         var grow = "grow the disk with 'isx vm resize <size>', larger than its "
-                + String.format(Locale.ROOT, "%.0fG", totalBytes / GIB)
+                // Rounded up: btrfs reports a little under the device, and a size at or below it is refused
+                + String.format(Locale.ROOT, "%.0fG", Math.ceil(totalBytes / GIB))
                 + ": it restarts the VM, and Incus starts with the room.";
         if (reserveBytes > 0) {
             lines.add("Run 'isx vm restart': the VM releases the "
