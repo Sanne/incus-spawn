@@ -348,13 +348,7 @@ final class McpSession {
      * what is being done to it, and when to call again.
      */
     static ToolError busy(String name, String op) {
-        var done = switch (op) {
-            case Metadata.OP_STARTING -> "started";
-            case Metadata.OP_STOPPING -> "stopped";
-            case Metadata.OP_RESTARTING -> "restarted";
-            case Metadata.OP_DELETING -> "destroyed";
-            default -> null;
-        };
+        var done = Metadata.opDone(op);
         var who = "an isx command, the TUI or an agent's isx mcp";
         return new ToolError(ToolError.Code.BUSY, "'" + name + "' is "
                 + (done == null ? "busy (" + op + "): " + who + " is changing it." : "being " + done + " by " + who + ".")

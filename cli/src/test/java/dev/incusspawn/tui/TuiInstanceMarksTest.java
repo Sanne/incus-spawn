@@ -348,7 +348,7 @@ class TuiInstanceMarksTest {
         startSession(tui);
         // A new session starts on the templates table.
         press(tui, TAB, KeyEvent.ofKey(KeyCode.F8));
-        assertEquals("Operation in progress for gamma", tui.statusMessage);
+        assertEquals(Tui.busy("gamma", Metadata.OP_RESTARTING), tui.statusMessage);
         assertEquals(Tui.Mode.BROWSE, tui.mode());
         assertEquals(List.of("alpha", "gamma"), List.copyOf(tui.markedInstances()));
     }

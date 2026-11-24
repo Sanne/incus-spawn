@@ -329,6 +329,20 @@ public final class Metadata {
     public static final String OP_RESTARTING = "restarting";
     public static final String OP_DELETING = "deleting";
 
+    /**
+     * What an operation mark ({@code OP_*}) does to an instance, as "is being ..." words it, or null for
+     * a mark no {@code OP_*} names; the TUI and {@code isx mcp} refuse a busy instance in these words.
+     */
+    public static String opDone(String op) {
+        return switch (op) {
+            case OP_STARTING -> "started";
+            case OP_STOPPING -> "stopped";
+            case OP_RESTARTING -> "restarted";
+            case OP_DELETING -> "destroyed";
+            default -> null;
+        };
+    }
+
     private Metadata() {}
 
     /** Whether an instance's config grants it {@link #MCP_CALLER}: a well-formed grant id does. */
