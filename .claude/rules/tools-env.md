@@ -37,7 +37,7 @@ paths:
   `OpencodeSetup` is not a `PlatformSplitCli`: after its `--ignore-scripts` install it runs `opencode-ai`'s `postinstall.mjs` (`LINK_SCRIPT`), which replaces the stub launcher with the platform binary and fails when it cannot.
   The script runs the binary, so it gets a scratch `HOME` and `TMPDIR`: a root-owned `/tmp/opencode` would lock agentuser's opencode out.
 
-`ClaudeSetup` (`claude`) accepts Claude Code's model aliases (`opus`, `sonnet`, `haiku`, `fable`, `best`, `opusplan`, `opus[1m]`, `sonnet[1m]`) as well as `claude-*` IDs in `model`, and writes `effort` under `modelSettings.<model>.effortLevel` in `~/.claude/settings.json` (#2534, #2548).
+`ClaudeSetup` (`claude`) accepts Claude Code's model aliases (`opus`, `sonnet`, `haiku`, `fable`, `best`, `opusplan`, `opus[1m]`, `sonnet[1m]`, `fable[1m]`) as well as `claude-*` IDs in `model`, and writes `effort` under `modelSettings.<model>.effortLevel` in `~/.claude/settings.json` (#2534, #2548).
 Claude Code resolves an alias key there to the model that alias selects on the active provider, while a canonical entry `/effort` saves later takes precedence.
 
 `OpencodeSetup` (`opencode`) writes `~/.config/opencode/opencode.json` in opencode 1.x's forms: `permission`, `autoupdate: false`, `share: disabled`, `instructions: ["/AGENTS.md"]` and a pinned `model` (`anthropic/claude-sonnet-5-5` by default), and a `small_model` only from the separate `small-model` parameter, never from `model` (#2220).

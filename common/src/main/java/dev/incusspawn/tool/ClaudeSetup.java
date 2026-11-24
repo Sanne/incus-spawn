@@ -173,7 +173,7 @@ public class ClaudeSetup implements ToolSetup {
         model.setDescription("Claude model ID or alias (e.g. opus, sonnet, haiku, fable, or "
                 + ModelIds.get("example-claude-opus") + ", " + ModelIds.get("example-claude-sonnet")
                 + ", " + ModelIds.get("example-claude-haiku") + ")");
-        model.setPattern("^(opus(\\[1m\\])?|sonnet(\\[1m\\])?|haiku|fable|best|opusplan|claude-[a-z0-9][-a-z0-9.@]*(\\[1m\\])?)$");
+        model.setPattern("^((opus|sonnet|fable)(\\[1m\\])?|haiku|best|opusplan|claude-[a-z0-9][-a-z0-9.]*(@[0-9]+)?(\\[1m\\])?)$");
         model.setOptional(true);
         model.setReconfigurable(true);
         params.put("model", model);
@@ -189,7 +189,7 @@ public class ClaudeSetup implements ToolSetup {
         var advisorModel = new ToolDef.ParameterDef();
         advisorModel.setType("string");
         advisorModel.setDescription("Advisor model Claude Code consults (e.g. opus, or a Claude model ID such as " + ModelIds.get("example-claude-opus") + ")");
-        advisorModel.setPattern("^(opus|sonnet|haiku|fable|claude-[a-z0-9][-a-z0-9.@]*)$");
+        advisorModel.setPattern("^(opus|sonnet|haiku|fable|claude-[a-z0-9][-a-z0-9.]*(@[0-9]+)?)$");
         advisorModel.setOptional(true);
         advisorModel.setReconfigurable(true);
         params.put("advisor-model", advisorModel);
