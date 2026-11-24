@@ -283,7 +283,9 @@ So on macOS the disk can still fill, and two more pieces make that recoverable.
 The appliance keeps a reserve on the data disk: `/var/lib/incus/.isx-reserve`, 1 GiB made with `fallocate` and never written (appliance/DESIGN.md, boot step 6).
 A boot with under 2 GiB free deletes it before `incusd` starts and commits the delete, so Incus starts with room for its database, and `isx destroy` and `isx clean pool` work again.
 A boot with 6 GiB free makes it again, so a reserve is never made and freed on alternate boots.
-A preallocated extent is never written, so the Mac's sparse `data.img` is not expected to grow for it; that has not yet been measured on a Mac.
+A preallocated extent is never written, so the sparse `data.img` does not grow for the reserve's 1 GiB.
+On Linux in QEMU it grew 15 MiB over a first boot that made the filesystem and the reserve (docs/dev/PERFORMANCE-NOTES.md "The appliance's data disk when it fills, on Linux").
+This has not yet been measured on a Mac.
 The reserve is freed only at boot, never while the VM runs, so a person must restart the VM: Incus is already down by then, and a restart stops nothing that still works.
 
 When Incus does not answer, isx asks the VM's control agent about the disk (`disk-free`, `VmDisk`), since the agent answers on a vsock port of its own while Incus is down.
@@ -295,7 +297,8 @@ The message names `isx vm restart` when a reserve is there to release, and `isx 
 It and the refusals on macOS say that freed space can take up to about five minutes to show, and that a full disk stops Incus.
 On Linux they say neither, since a loop pool holds no Incus database and a host commits every 30 s by default.
 The 2555-vm box measured 4.5 to 7 minutes after a delete on v0.5.3, whose deletes wait for the data disk's `commit=300`, and a VM restart did not shorten it.
-An appliance with the agent's `btrfs-settle` commits after a delete, which should show the space sooner; the vm handoff measures it.
+An appliance with the agent's `btrfs-settle` commits after a delete, and the space showed within a second of isx's delete on a pool with quotas on (docs/dev/PERFORMANCE-NOTES.md "The appliance's data disk when it fills, on Linux").
+A plain `incus delete` on a pool with quotas off is not settled, and its space had not shown after 14 minutes.
 An appliance from before the verb answers `error: unknown verb`, and isx then says what it said before.
 
 ### Orphaned subvolumes and dangling records

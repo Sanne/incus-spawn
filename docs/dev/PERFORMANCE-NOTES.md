@@ -1457,3 +1457,21 @@ Five reads in one JVM, the last three after warm-up:
 Booking calls to runs keeps every model call of the read in memory until the end, and costs about 65 ms, 17%, on the largest log the proxy keeps.
 It is paid only by the overview's on-demand read, never by `isx list`.
 Not done: adding a name's calls to its unbooked total before its first task line, which would depend on the files' order across a rollover.
+
+## The appliance's data disk when it fills, on Linux (issue #2555)
+
+Measured 2026-11-24 on a Linux box (Fedora 45, x86_64), booting this branch's appliance in QEMU/KVM with a fresh 8 GiB sparse raw `data.img` as `/dev/vdc` and the plain `incus` client over the vsock tunnel.
+
+| What | Measured |
+|---|---|
+| Host blocks of `data.img` before the first boot, and after it with the 1 GiB reserve made, VM stopped cleanly | 0 KiB, then 15,060 KiB |
+| Freed space showing in `disk-free` after `incus delete` of a container holding 6.4 GiB, on a pool with quotas off, nothing else asked | none after 840 s |
+| The same space after the agent's `btrfs-settle cow`, asked at 840 s | within 3 s |
+| Freed space after isx's own sequence (`btrfs-skip-drop-accounting`, the delete, `btrfs-settle`), 2.9 GiB on a pool with quotas on | within 1 s |
+| Boot to `ISX READY` on a full disk, the reserve released before `incusd` | 4.9 s |
+| An agent `shutdown` after a boot Incus could not survive, to QEMU's exit | 3 s |
+
+The 15 MiB covers a first boot that also made the filesystem, so the reserve's own share was not isolated; `fallocate` writes no data, so it is expected to be near nothing.
+isx settles a delete only on a pool with quotas on (`PoolAccounting.HOST`), so a plain `incus delete` on a pool with quotas off waits for btrfs to free it on its own.
+Here it had not after 14 minutes, well past two of the data disk's 300 s commits, and why was not found.
+Incus turns quotas on once an instance on the pool has a root `size`, which a VM build and a `--disk` give; a pool of containers with no size was not checked here, and there isx's deletes would wait as `incus delete` did.
