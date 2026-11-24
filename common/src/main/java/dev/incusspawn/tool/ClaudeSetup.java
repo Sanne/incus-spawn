@@ -170,9 +170,10 @@ public class ClaudeSetup implements ToolSetup {
 
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("Claude model ID (e.g. " + ModelIds.get("example-claude-opus") + ", " + ModelIds.get("example-claude-sonnet")
+        model.setDescription("Claude model ID or alias (e.g. opus, sonnet, haiku, fable, or "
+                + ModelIds.get("example-claude-opus") + ", " + ModelIds.get("example-claude-sonnet")
                 + ", " + ModelIds.get("example-claude-haiku") + ")");
-        model.setPattern("^claude-[a-z0-9][-a-z0-9.]*$");
+        model.setPattern("^(opus(\\[1m\\])?|sonnet(\\[1m\\])?|haiku|fable|best|opusplan|claude-[a-z0-9][-a-z0-9.@]*(\\[1m\\])?)$");
         model.setOptional(true);
         model.setReconfigurable(true);
         params.put("model", model);
@@ -188,7 +189,7 @@ public class ClaudeSetup implements ToolSetup {
         var advisorModel = new ToolDef.ParameterDef();
         advisorModel.setType("string");
         advisorModel.setDescription("Advisor model Claude Code consults (e.g. opus, or a Claude model ID such as " + ModelIds.get("example-claude-opus") + ")");
-        advisorModel.setPattern("^(opus|sonnet|haiku|claude-[a-z0-9][-a-z0-9.]*)$");
+        advisorModel.setPattern("^(opus|sonnet|haiku|fable|claude-[a-z0-9][-a-z0-9.@]*)$");
         advisorModel.setOptional(true);
         advisorModel.setReconfigurable(true);
         params.put("advisor-model", advisorModel);
@@ -645,7 +646,9 @@ public class ClaudeSetup implements ToolSetup {
         var effort = params.get("effort");
         if (effort != null) {
             // The per-model form is what /effort writes; the top-level effortLevel is ignored by
-            // Opus 5.5 and later models.
+            // Opus 5.5 and later models. Claude Code resolves an alias key here to the model that
+            // alias selects on the active provider, while a canonical entry /effort saves later
+            // still wins over it.
             var model = params.get("model");
             if (model == null) {
                 throw new IllegalStateException("The claude tool's effort parameter needs a model, "

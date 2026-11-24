@@ -68,19 +68,21 @@ class PiSetupTest {
     void installWritesSettingsJsonWithDefaults() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        var params = ParameterResolver.resolve(new PiSetup().parameters(), Map.of());
+        assertTrue(params.errors().isEmpty(), () -> String.join("; ", params.errors()));
 
-        new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
+        new PiSetup().install(new Container(incus, CONTAINER), params.resolvedValues());
 
         verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), argThat(arg ->
+                        arg.contains("/home/agentuser/.pi/agent/settings.json") &&
                         arg.contains("enableInstallTelemetry") &&
                         arg.contains("quietStartup") &&
                         arg.contains("defaultProvider") &&
                         arg.contains("anthropic") &&
                         arg.contains("defaultModel") &&
                         arg.contains("claude-sonnet-5-5") &&
-                        arg.contains("defaultThinkingLevel") &&
-                        arg.contains("medium")));
+                        !arg.contains("defaultThinkingLevel")));
     }
 
     @Test
@@ -119,15 +121,37 @@ class PiSetupTest {
 
     @Test
     void effortIsWrittenAsTheThinkingLevel() {
-        var incus = mock(IncusClient.class);
-        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        var params = ParameterResolver.resolve(new PiSetup().parameters(), Map.of("effort", "high"));
-        assertTrue(params.errors().isEmpty(), () -> String.join("; ", params.errors()));
+        var defs = new PiSetup().parameters();
+        for (var input : java.util.List.<Map<String, String>>of(
+                Map.of(),
+                Map.of("provider", "openai"),
+                Map.of("effort", "high"),
+                Map.of("provider", "openai", "effort", "low"))) {
+            var incus = mock(IncusClient.class);
+            when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+            var params = ParameterResolver.resolve(defs, input);
+            assertTrue(params.errors().isEmpty(), () -> input + ": " + String.join("; ", params.errors()));
 
-        new PiSetup().reconfigure(new Container(incus, CONTAINER), params.resolvedValues());
+            new PiSetup().reconfigure(new Container(incus, CONTAINER), params.resolvedValues());
 
-        verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
-                arg.contains("\"defaultThinkingLevel\": \"high\"")));
+            var parsed = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(writtenPiSettings(incus));
+            if (input.containsKey("effort")) {
+                assertEquals(input.get("effort"), parsed.path("defaultThinkingLevel").asText(), input.toString());
+            } else {
+                assertTrue(parsed.path("defaultThinkingLevel").isMissingNode(), input.toString());
+            }
+        }
+    }
+
+    private static String writtenPiSettings(IncusClient incus) {
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), captor.capture());
+        var redirect = "cat > '/home/agentuser/.pi/agent/settings.json' << '";
+        var write = captor.getAllValues().stream().filter(cmd -> cmd.contains(redirect)).findFirst().orElseThrow();
+        var start = write.indexOf(redirect) + redirect.length();
+        var marker = write.substring(start, write.indexOf('\'', start));
+        var body = write.substring(write.indexOf('\n') + 1);
+        return body.substring(0, body.lastIndexOf(marker));
     }
 
     /** A gateway's model ID, which holds slashes, reaches Pi's settings as the template wrote it. */
@@ -397,10 +421,13 @@ class PiSetupTest {
 
         assertTrue(params.containsKey("provider"), "Should declare provider parameter");
         assertTrue(params.containsKey("model"), "Should declare model parameter");
+        assertTrue(params.containsKey("effort"), "Should declare effort parameter");
         assertEquals("anthropic", params.get("provider").getDefault());
         assertNull(params.get("model").getDefault(), "model has no declared default: Pi picks one per provider");
+        assertNull(params.get("effort").getDefault(), "effort has no declared default: Pi picks its own");
         assertTrue(params.get("provider").isReconfigurable());
         assertTrue(params.get("model").isReconfigurable());
+        assertTrue(params.get("effort").isReconfigurable());
     }
 
     @Test
