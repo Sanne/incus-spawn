@@ -61,9 +61,19 @@ class ChatGptAuthFlowTest {
     static class FakeInit extends CredentialSetup {
         final FakeSignIn signIn = new FakeSignIn();
 
+        /** What each check of a pasted API key answers, in turn; the last repeats. */
+        java.util.List<AuthResult> checks = java.util.List.of(new AuthResult(true, "Verified."));
+        final java.util.List<dev.incusspawn.tool.SecretCheck.Request> checked = new java.util.ArrayList<>();
+
         @Override
         dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
             return signIn;
+        }
+
+        @Override
+        AuthResult checkSecret(dev.incusspawn.tool.SecretCheck.Request check) {
+            checked.add(check);
+            return checks.get(Math.min(checked.size(), checks.size()) - 1);
         }
     }
 
@@ -176,6 +186,46 @@ class ChatGptAuthFlowTest {
 
         assertEquals(API_KEY, saved("openai.accounts.default.apiKey"));
         assertNull(new ChatGptSessionStore().read("default"), "no session was signed in");
+    }
+
+    /** A pasted key is checked with OpenAI before it is saved, a rejected one asked for again (#2566). */
+    @Test
+    void aRejectedApiKeyIsAskedForAgainAndOnlyTheVerifiedOneSaved() {
+        var init = new FakeInit();
+        init.checks = java.util.List.of(new CredentialSetup.AuthResult(false, "api.openai.com rejected it (HTTP 401)."),
+                new CredentialSetup.AuthResult(true, "Verified."));
+        var output = run(init, new SpawnConfig(), new ScriptedPrompts().line("3").secret("sk-mistyped")
+                .line("").secret(API_KEY));
+
+        assertEquals(API_KEY, saved("openai.accounts.default.apiKey"));
+        assertEquals(2, init.checked.size());
+        assertEquals("https://api.openai.com/v1/models", init.checked.getFirst().uri().toString());
+        assertEquals("Bearer sk-mistyped", init.checked.getFirst().value());
+        var said = String.join("\n", output.lines());
+        assertTrue(said.contains("The key did not verify. api.openai.com rejected it"), said);
+        assertTrue(said.contains("API key verified and saved on " + dev.incusspawn.Platform.thisComputer()), said);
+    }
+
+    /** A key the service rejected is never saved: try again or skip are the choices. */
+    @Test
+    void aRejectedApiKeyThatIsSkippedIsNotSaved() {
+        var init = new FakeInit();
+        init.checks = java.util.List.of(new CredentialSetup.AuthResult(false, "api.openai.com rejected it (HTTP 401)."));
+        run(init, new SpawnConfig(), new ScriptedPrompts().line("3").secret("sk-mistyped").line("s"));
+
+        assertEquals("", saved("openai.accounts.default.apiKey"));
+    }
+
+    /** A key isx could not check may be saved unverified, and says so. */
+    @Test
+    void aKeyThatCouldNotBeCheckedIsSavedUnverifiedOnRequest() {
+        var init = new FakeInit();
+        init.checks = java.util.List.of(CredentialSetup.AuthResult.unchecked("isx could not reach api.openai.com: timeout"));
+        var output = run(init, new SpawnConfig(), new ScriptedPrompts().line("3").secret(API_KEY).line("u"));
+
+        assertEquals(API_KEY, saved("openai.accounts.default.apiKey"));
+        var said = String.join("\n", output.lines());
+        assertTrue(said.contains("API key saved on " + dev.incusspawn.Platform.thisComputer() + ", unverified"), said);
     }
 
     @Test
@@ -291,7 +341,7 @@ class ChatGptAuthFlowTest {
         var warned = String.join("\n", output.warnings());
         assertTrue(warned.contains("'sso'"), "the warning names the session left behind: " + warned);
         var said = String.join("\n", output.lines());
-        assertTrue(said.contains("API key saved on " + dev.incusspawn.Platform.thisComputer()),
+        assertTrue(said.contains("API key verified and saved on " + dev.incusspawn.Platform.thisComputer()),
                 "the step finishes rather than aborting after the save: " + said);
     }
 

@@ -18,6 +18,7 @@ import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.tool.SecretCheck;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
@@ -441,14 +442,37 @@ class CredentialSetup {
         BuildOutput.step("Create a key at " + TerminalLink.link("https://platform.openai.com/api-keys") + ".");
         BuildOutput.step("OpenAI shows it only once.");
         BuildOutput.gap();
-        var answer = prompts.askSecret(canGoBack ? "Paste the API key, or Enter to go back: " : "Paste the API key, or Enter to skip: ");
-        var key = readSecret(answer);
-        if (key.isBlank()) {
-            if (canGoBack && answer != null) return false;
-            // "No account yet" only when there is none: the ChatGPT account being switched stays as it was
-            BuildOutput.step(hasAccountsToPreserve(config, "openai") ? "Skipped the API key."
-                    : "Skipped. 'isx account add openai' adds one later.");
-            return true;
+        // "No account yet" only when there is none: the ChatGPT account being switched stays as it was
+        var skipped = hasAccountsToPreserve(config, "openai") ? "Skipped the API key."
+                : "Skipped. 'isx account add openai' adds one later.";
+        String key;
+        boolean verified;
+        while (true) {
+            var answer = prompts.askSecret(canGoBack ? "Paste the API key, or Enter to go back: " : "Paste the API key, or Enter to skip: ");
+            key = readSecret(answer);
+            if (key.isBlank()) {
+                if (canGoBack && answer != null) return false;
+                BuildOutput.step(skipped);
+                return true;
+            }
+            // Checked as Codex's proxy entry declares (#2566)
+            var request = SecretCheck.request("codex", new dev.incusspawn.tool.CodexSetup().proxy(), "api-key",
+                    Map.of("api-key", key));
+            var result = request.isPresent() ? checkSecret(request.get())
+                    : AuthResult.unchecked("isx has no check for it.");
+            if (result.verified()) {
+                verified = true;
+                break;
+            }
+            var action = askVerificationFailureAction(prompts, "The key", result.message(), result.reached());
+            if (action == VerificationFailureAction.SKIP) {
+                BuildOutput.step(skipped);
+                return true;
+            }
+            if (action == VerificationFailureAction.SAVE_UNVERIFIED) {
+                verified = false;
+                break;
+            }
         }
         // Which ChatGPT sessions this key ends, read before the save changes the config; they
         // end only after the save succeeded, or a failed save leaves config.yaml naming
@@ -471,9 +495,12 @@ class CredentialSetup {
         }
         config.save();
         endChatGptSessions(leaving);
-        // Nothing checks an OpenAI key, so the one outcome line says so, and what to do (#2528)
-        BuildOutput.ok("API key saved on " + Platform.thisComputer() + ", not checked");
-        BuildOutput.stepNote("If it fails, 'isx account add openai' replaces it.");
+        if (verified) {
+            BuildOutput.ok("API key verified and saved on " + Platform.thisComputer());
+        } else {
+            BuildOutput.ok("API key saved on " + Platform.thisComputer() + ", unverified");
+            BuildOutput.stepNote("If it fails, 'isx account add openai' replaces it.");
+        }
         return true;
     }
 
@@ -1103,6 +1130,16 @@ class CredentialSetup {
     private static final Pattern WHITESPACE_RUN = Pattern.compile("\\s+");
 
     /**
+     * What a 400 says when it is about the key: Google's {@code API_KEY_INVALID} or
+     * {@code API_KEY_EXPIRED}, or "invalid", "not valid" or "expired" said of a key or token in the
+     * same sentence. Never "invalid" alone: Google's "Request contains an invalid argument." is
+     * not about the key.
+     */
+    private static final Pattern KEY_REJECTED = Pattern.compile("(?i)API_KEY_INVALID|API_KEY_EXPIRED"
+            + "|\\b(?:key|token)\\b[^.\"]{0,40}?\\b(?:invalid|not valid|expired)\\b"
+            + "|\\b(?:invalid|expired)\\b[^.\"]{0,20}?\\b(?:key|token)\\b");
+
+    /**
      * " API said: ..." from an Anthropic error body, or "" when it carries no usable
      * message. Remote input: a malformed or oversized body must yield nothing rather
      * than throwing or flooding the terminal.
@@ -1241,6 +1278,65 @@ class CredentialSetup {
         } catch (Exception e) {
             return AuthResult.unchecked("isx could not reach api.anthropic.com: " + e.getMessage());
         }
+    }
+
+    /**
+     * A tool's declared check of a pasted secret ({@link SecretCheck}): one {@code GET}, the one
+     * network call, which tests replace. A 2xx answer verifies it and a 401 rejects it, as OpenAI
+     * answers a bad key; a 400 rejects it only when its body says the key is invalid, as Gemini's
+     * does. A 403 does not settle it: OpenAI answers one to a working key with narrower
+     * permissions, Gemini to a key whose project cannot use the API. So a 403, like any other
+     * answer, did not judge the key, and it may be saved unverified.
+     */
+    AuthResult checkSecret(SecretCheck.Request check) {
+        var host = check.host();
+        HttpRequest request;
+        try {
+            request = HttpRequest.newBuilder()
+                    .uri(check.uri())
+                    .header(check.header(), check.value())
+                    .timeout(Duration.ofSeconds(10))
+                    .GET()
+                    .build();
+        } catch (IllegalArgumentException e) {
+            // A pasted curly quote or line break: no request, and no service, could take this key
+            return new AuthResult(false, "It holds a character a request header cannot carry, such as a curly quote.");
+        }
+        try {
+            // The client follows no redirect, so the key goes to the declared host alone
+            var response = getHttpClient().send(request, HttpResponse.BodyHandlers.ofByteArray());
+            return judgeCheck(host, response.statusCode(), response.body());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return AuthResult.unchecked("isx could not reach " + OutputFormat.oneLine(host) + ": interrupted");
+        } catch (Exception e) {
+            // A refused connection may carry no message: its kind says what happened
+            var why = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return AuthResult.unchecked("isx could not reach " + OutputFormat.oneLine(host) + ": " + OutputFormat.oneLine(why));
+        }
+    }
+
+    /** What {@code host}'s answer to a check says of the key ({@link #checkSecret}). */
+    static AuthResult judgeCheck(String host, int status, byte[] body) {
+        if (status >= 200 && status < 300) return new AuthResult(true, "Verified.");
+        return switch (status) {
+            case 403 -> AuthResult.unchecked(OutputFormat.oneLine(host) + " refused it (HTTP 403): the key may"
+                    + " lack a permission the check needs, or not be allowed to use this service." + apiErrorSuffix(body));
+            // A 400 is about the key only when it says so: Gemini also answers one to a good key
+            // from a location it does not serve
+            case 400 -> KEY_REJECTED.matcher(new String(body, java.nio.charset.StandardCharsets.UTF_8)).find()
+                    ? rejected(host, status, body)
+                    : AuthResult.unchecked(OutputFormat.oneLine(host) + " answered HTTP 400, so it could not check the key."
+                            + apiErrorSuffix(body));
+            case 401 -> rejected(host, status, body);
+            default -> AuthResult.unchecked(OutputFormat.oneLine(host) + " answered HTTP " + status
+                    + ", so it could not check the key." + apiErrorSuffix(body));
+        };
+    }
+
+    private static AuthResult rejected(String host, int status, byte[] body) {
+        return new AuthResult(false, OutputFormat.oneLine(host) + " rejected it (HTTP " + status
+                + "): it may be expired or mistyped." + apiErrorSuffix(body));
     }
 
     /**
@@ -2425,14 +2521,29 @@ class CredentialSetup {
         var secretHeld = false;
         // A secret typed or pasted in this step, not one kept
         var secretEntered = false;
+        // How the secrets entered were checked (#2566): one a check verified, one the tool declares
+        // no check for (a list's items included), one saved unverified
+        var secretVerified = false;
+        var secretUnchecked = false;
+        var secretUnverified = false;
+        // The answers so far by configuration key, kept ones included: what a check's auth entry reads
+        var answers = new LinkedHashMap<String, String>();
+        // A key is checked only as the definition the proxy serves declares it: never one a cloned
+        // repository's .incus-spawn/tools/ ships, which could name its own host for the check (#2566)
+        var trusted = toolsOf(config).get(toolName);
+        var checkProxy = trusted == null ? null : trusted.proxy();
         choice:
         while (true) {
             accountValues.clear();
             sharedValues.clear();
             replacedLists.clear();
+            answers.clear();
             secretSkipped = false;
             secretHeld = false;
             secretEntered = false;
+            secretVerified = false;
+            secretUnchecked = false;
+            secretUnverified = false;
             if (menu) {
                 var kind = chooseAccountKind(toolName, namespace, proxyDef, hosted, prompts);
                 if (kind == AccountKind.NONE) {
@@ -2461,6 +2572,11 @@ class CredentialSetup {
                 }
             }
             var first = true;
+            // A literal value is one an auth entry reads as the proxy does, so a check reads it too
+            // Read from the trusted definition, as the check itself is: never a project's literal
+            if (checkProxy != null) checkProxy.getConfiguration().forEach((k, c) -> {
+                if (!c.getValue().isBlank()) answers.put(k, c.getValue());
+            });
             for (var entry : proxyDef.getConfiguration().entrySet()) {
                 var configKey = entry.getKey();
                 var configDef = entry.getValue();
@@ -2501,6 +2617,8 @@ class CredentialSetup {
                     var items = askListItems(configDef, prompts);
                     if (items.isEmpty()) continue;
                     secretEntered |= configDef.hasSecretField();
+                    // No check reads a list's items
+                    secretUnchecked |= configDef.hasSecretField();
                     replacedLists.add(listPath);
                     items.forEach((k, v) -> {
                         if (perAccount) accountValues.put(key + "." + k, v);
@@ -2524,6 +2642,7 @@ class CredentialSetup {
                     if (askYesNo(prompts, "Keep current?", true, true)) {
                         // A kept value still has to travel with a "replace" into the new layout.
                         if (perAccount) accountValues.put(key, existing);
+                        answers.put(configKey, existing);
                         continue;
                     }
                 }
@@ -2553,10 +2672,43 @@ class CredentialSetup {
                     var question = (configDef.isSecret() ? "Paste the " + label : label)
                             + (menu && configDef.isSecret() ? ", or Enter to go back: " : ", or Enter to skip: ");
                     if (configDef.isSecret()) {
-                        var answer = prompts.askSecret(question);
-                        // Enter goes back to the kinds of account; end of input skips, as every prompt's does
-                        if (menu && answer != null && readSecret(answer).isEmpty()) continue choice;
-                        value = readSecret(answer);
+                        while (true) {
+                            var answer = prompts.askSecret(question);
+                            // Enter goes back to the kinds of account; end of input skips, as every prompt's does
+                            if (menu && answer != null && readSecret(answer).isEmpty()) continue choice;
+                            value = readSecret(answer);
+                            if (value.isBlank()) break;
+                            // Checked as the tool declares, before anything is saved (#2566)
+                            var withValue = new LinkedHashMap<>(answers);
+                            withValue.put(configKey, value);
+                            var check = checkProxy == null ? java.util.Optional.<SecretCheck.Request>empty()
+                                    : SecretCheck.request(toolName, checkProxy, configKey, withValue);
+                            if (check.isEmpty()) {
+                                secretUnchecked = true;
+                                break;
+                            }
+                            var result = checkSecret(check.get());
+                            if (result.verified()) {
+                                secretVerified = true;
+                                break;
+                            }
+                            var action = askVerificationFailureAction(prompts, "The key", result.message(), result.reached());
+                            if (action == VerificationFailureAction.SKIP) {
+                                // "skip this account": nothing of the step is saved, as the other steps' skip saves nothing
+                                if (!namespace.isBlank() && hasAccountsToPreserve(config, namespace)) {
+                                    BuildOutput.step("Your " + accountName(namespace) + " accounts stay as they were.");
+                                } else {
+                                    Lines.step("Skipped the " + label + ".");
+                                    Lines.step("Add one later with '" + CredentialCheck.stepCommand(toolName,
+                                            new dev.incusspawn.tool.ToolDefLoader().allToolSetups()) + "'.");
+                                }
+                                return;
+                            }
+                            if (action == VerificationFailureAction.SAVE_UNVERIFIED) {
+                                secretUnverified = true;
+                                break;
+                            }
+                        }
                     } else {
                         value = readInput(prompts.ask(question));
                     }
@@ -2567,6 +2719,7 @@ class CredentialSetup {
                     secretEntered |= !value.isBlank();
                 }
                 if (value.isBlank()) continue;
+                answers.put(configKey, value);
                 if (perAccount) {
                     accountValues.put(key, value);
                 } else {
@@ -2608,8 +2761,13 @@ class CredentialSetup {
                 : "Your answers to " + OutputFormat.andList(answered) + " are saved.";
         // A key kept as it was is not newly saved, so never "not checked" (#2528)
         if (savedAny && (secretEntered || (!secretHeld && !secretSkipped))) {
-            // Nothing checks a tool's credential, so the one outcome line says so, and what to do (#2528)
-            BuildOutput.ok(secret + " saved on " + here + ", not checked");
+            // The one outcome line says how the key was checked, and what to do when it was not (#2528, #2566)
+            // "verified" only when a check passed, "unverified" only when the person chose to save a key a check could not judge
+            if (secretVerified && !secretUnchecked && !secretUnverified) {
+                BuildOutput.ok(secret + " verified and saved on " + here);
+                return;
+            }
+            BuildOutput.ok(secret + " saved on " + here + (secretUnverified && !secretUnchecked ? ", unverified" : ", not checked"));
             BuildOutput.stepNote("If it fails, '" + CredentialCheck.stepCommand(toolName,
                     new dev.incusspawn.tool.ToolDefLoader().allToolSetups()) + "' replaces it.");
             return;

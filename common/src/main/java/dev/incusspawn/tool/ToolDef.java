@@ -479,6 +479,11 @@ public class ToolDef extends FingerprintCache {
          */
         @JqName("for-each")
         private Map<String, ListField> forEach = Map.of();
+        /**
+         * How {@code isx init} checks a secret pasted for this entry, or why it cannot
+         * ({@link SecretCheck}): null when the definition says neither.
+         */
+        private CheckDef check;
 
         public String getType() { return type; }
         public void setType(String type) { this.type = type != null ? type : "string"; }
@@ -494,6 +499,8 @@ public class ToolDef extends FingerprintCache {
         public void setHelp(List<String> help) { this.help = items(help); }
         public Map<String, ListField> getForEach() { return forEach; }
         public void setForEach(Map<String, ListField> forEach) { this.forEach = forEach != null ? forEach : Map.of(); }
+        public CheckDef getCheck() { return check; }
+        public void setCheck(CheckDef check) { this.check = check; }
         /** Whether this entry is a list of items, each with the fields of {@link #getForEach}. */
         public boolean isList() { return !forEach.isEmpty(); }
         public boolean isSelfResolving() { return !configPath.isBlank() || !this.value.isBlank(); }
@@ -502,6 +509,22 @@ public class ToolDef extends FingerprintCache {
         public boolean hasSecretField() {
             return forEach.values().stream().anyMatch(field -> field != null && field.isSecret());
         }
+    }
+
+    /**
+     * How a pasted secret is checked ({@link ConfigEntry#getCheck}): a {@code url} isx sends a
+     * {@code GET} to, authenticated as the tool's auth entry for that host injects the secret, or
+     * {@code none}, which says why nothing can check it.
+     */
+    @JqMapped
+    public static class CheckDef extends MappedDefinition {
+        private String url = "";
+        private String none = "";
+
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url != null ? url.strip() : ""; }
+        public String getNone() { return none; }
+        public void setNone(String none) { this.none = none != null ? none.strip() : ""; }
     }
 
     /** One field of each item of a list entry ({@link ConfigEntry#getForEach}): one value an item holds. */

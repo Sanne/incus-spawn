@@ -146,6 +146,9 @@ A `ProxyDef` has shared `configuration:` (a map of `ConfigEntry` entries) and a 
 When `paths:` is set, the credential is injected only for requests whose path equals a listed prefix or starts with one followed by `/`; query strings are stripped before matching.
 Two tools can claim the same domain with non-overlapping `paths:` scopes; an unscoped collision still warns and uses first-wins.
 `ConfigEntry` has `config-path` (dot-path into config.yaml, e.g. `"github.token"`), `value` (hardcoded literal), `secret` (boolean), `type` ("string" or "confirm" for y/n prompts like license acceptance), and `description`.
+A secret's `check:` (`ToolDef.CheckDef`, #2566) is how `isx init` checks a pasted key: `url`, one `GET` sent with the header the tool's own auth entry for that literal host injects (`SecretCheck`, `CredentialSetup.checkSecret`), or `none` with why nothing can.
+`SecretCheckTest` requires one on every built-in secret a generic or Codex step asks for, and `ToolDefValidator` refuses a url whose host is not such a domain.
+The check is read from the definition the proxy uses (`CredentialSetup.toolsOf`, without the project's `.incus-spawn/tools/`), never from the one the step was handed, so a cloned repository cannot name where a pasted key goes.
 Resolution: `value` > `config-path`.
 User-defined tools use arbitrary config paths (e.g. `"myTool.apiKey"`) which are stored via `SpawnConfig.setConfigByPath()` and round-tripped through `@JsonAnySetter`/`@JsonAnyGetter`.
 Auth fields use `${configKey}` template references resolved against the shared configuration map -- literals like `"x-access-token"` are passed through unchanged.

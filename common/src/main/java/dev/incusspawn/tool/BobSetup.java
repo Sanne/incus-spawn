@@ -35,6 +35,8 @@ public class BobSetup implements ToolSetup {
         apiKey.setConfigPath("apiKey");
         apiKey.setDescription("IBM Bob API key");
         apiKey.setSecret(true);
+        // Bob's API is not documented: no request is known to answer for the key alone
+        apiKey.setCheck(SecretCheck.none("IBM documents no request that checks an API key"));
         apiKey.setHelp(List.of(
                 "To create an API key:",
                 "  1. Go to https://bob.ibm.com/admin/apikeys",

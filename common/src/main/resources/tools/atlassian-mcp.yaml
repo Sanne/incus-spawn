@@ -21,6 +21,8 @@ proxy:
       config-path: "apiToken"
       description: "Atlassian personal API token"
       secret: true
+      check:
+        none: "The token is scoped to one Atlassian site, which isx is not told"
       help:
         - "1. An org admin must enable API token auth at:"
         - "   admin.atlassian.com > Rovo > Rovo MCP server > Authentication"

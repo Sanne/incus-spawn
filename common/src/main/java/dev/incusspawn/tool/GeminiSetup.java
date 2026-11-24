@@ -130,6 +130,7 @@ public class GeminiSetup implements ToolSetup {
         apiKey.setConfigPath(API_KEY);
         apiKey.setDescription("Gemini API key");
         apiKey.setSecret(true);
+        apiKey.setCheck(SecretCheck.url("https://generativelanguage.googleapis.com/v1beta/models"));
         apiKey.setHelp(List.of("Create a key at https://aistudio.google.com/apikey."));
 
         var auth = new ToolDef.AuthDef();
