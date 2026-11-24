@@ -15,7 +15,9 @@ import io.hyperfoil.tools.jjq.value.JqString;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -237,7 +239,19 @@ public class GeminiSetup implements ToolSetup {
         model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
         model.setOptional(true);
         model.setReconfigurable(true);
-        return Map.of("model", model);
+
+        var effort = new ToolDef.ParameterDef();
+        effort.setType("string");
+        effort.setDescription("Thinking level for the model (minimal, low, medium, high, xhigh); which exist depends on the"
+                + " model, and the Gemini API refuses one the model lacks. Needs model");
+        effort.setPattern("^(minimal|low|medium|high|xhigh)$");
+        effort.setOptional(true);
+        effort.setReconfigurable(true);
+
+        var params = new LinkedHashMap<String, ToolDef.ParameterDef>();
+        params.put("model", model);
+        params.put("effort", effort);
+        return params;
     }
 
     @Override
@@ -331,7 +345,7 @@ public class GeminiSetup implements ToolSetup {
         // As with Claude and Codex, let upstream choose its default model unless explicitly pinned.
         var model = resolvedParams.get("model");
         var modelSetting = model == null ? "" : "  \"model\": {\"name\": \"" + model + "\"},\n";
-        return "{\n" + modelSetting + """
+        return "{\n" + modelSetting + thinkingLevel(model, resolvedParams.get("effort")) + """
                   "general": {
                     "enableAutoUpdate": false,
                     "enableAutoUpdateNotification": false
@@ -347,5 +361,21 @@ public class GeminiSetup implements ToolSetup {
                   "telemetry": {"enabled": false}
                 }
                 """;
+    }
+
+    /**
+     * The effort as the selected model's thinking level: an override matched on the model, added
+     * to Gemini CLI's own, so it reaches requests for that model alone. Its helper requests run
+     * other models with a thinking budget, which a level beside it would contradict.
+     */
+    private static String thinkingLevel(String model, String effort) {
+        if (effort == null) return "";
+        if (model == null) {
+            throw new IllegalStateException("The gemini-cli tool's effort parameter needs a model, because isx sets"
+                    + " it for one model: set model too");
+        }
+        return "  \"modelConfigs\": {\"customOverrides\": [{\"match\": {\"model\": \"" + model + "\"},"
+                + " \"modelConfig\": {\"generateContentConfig\": {\"thinkingConfig\": {\"thinkingLevel\": \""
+                + effort.toUpperCase(Locale.ROOT) + "\"}}}}]},\n";
     }
 }

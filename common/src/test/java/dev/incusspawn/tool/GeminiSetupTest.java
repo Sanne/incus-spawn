@@ -3,6 +3,7 @@ package dev.incusspawn.tool;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import io.hyperfoil.tools.jjq.value.JqBoolean;
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,38 @@ class GeminiSetupTest {
         assertFalse(GeminiSetup.settingsJson(Map.of()).contains("\"model\""));
         assertTrue(GeminiSetup.settingsJson(Map.of("model", "gemini-4-argon"))
                 .contains("\"name\": \"gemini-4-argon\""));
+    }
+
+    @Test
+    void effortIsTheThinkingLevelOfTheSelectedModel() {
+        assertFalse(GeminiSetup.settingsJson(Map.of("model", "gemini-4-argon")).contains("modelConfigs"));
+        var settings = JqValues.parseStrict(GeminiSetup.settingsJson(Map.of("model", "gemini-4-argon", "effort", "xhigh")));
+        var overrides = (JqArray) settings.getField("modelConfigs").getField("customOverrides");
+        assertEquals(1, overrides.size());
+        var override = overrides.first();
+        assertEquals("gemini-4-argon", override.getField("match").pathText("model", null));
+        // The API's enum names are upper case
+        assertEquals("XHIGH", override.getField("modelConfig").getField("generateContentConfig")
+                .getField("thinkingConfig").pathText("thinkingLevel", null));
+    }
+
+    @Test
+    void effortWithoutAModelFailsTheBuild() {
+        var e = assertThrows(IllegalStateException.class,
+                () -> GeminiSetup.settingsJson(Map.of("effort", "high")));
+        assertTrue(e.getMessage().contains("needs a model"), e.getMessage());
+    }
+
+    @Test
+    void effortTakesOnlyAThinkingLevel() {
+        var parameters = new GeminiSetup().parameters();
+        assertTrue(parameters.get("effort").isReconfigurable());
+        for (var value : new String[]{"minimal", "low", "medium", "high", "xhigh"}) {
+            assertFalse(ParameterResolver.resolve(parameters, Map.of("effort", value)).hasErrors(), value);
+        }
+        for (var value : new String[]{"max", "none", "HIGH", "high\""}) {
+            assertTrue(ParameterResolver.resolve(parameters, Map.of("effort", value)).hasErrors(), value);
+        }
     }
 
     @Test
