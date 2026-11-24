@@ -68,16 +68,28 @@ public final class PoolSpace {
 
     /**
      * Whether a Linux pool shares its disk with Incus's database: a subvolume pool is on the host's
-     * own filesystem, which holds {@code /var/lib/incus}, and only a loop-file pool keeps the two
-     * apart. One pool listing; a pool that cannot be read is taken to share it.
+     * own filesystem, which holds {@code /var/lib/incus}, while a loop-file pool and one on a device,
+     * a zpool or a volume group of its own keep the two apart. One pool listing; a pool that cannot
+     * be read is taken to share it.
      */
     private static boolean sharesIncusDisk(IncusClient incus, String pool) {
         try {
             var info = incus.listPoolInfo().get(pool);
-            return info == null || !isLoopFile(info.config());
+            return info == null || sharesHostDisk(info.config());
         } catch (RuntimeException e) {
             return true;
         }
+    }
+
+    /**
+     * Whether a pool with this config is a directory of the host's own filesystem: no source, or an
+     * absolute path that is neither a loop file nor a device. A zfs dataset or an LVM volume group
+     * names no path, and is a disk of its own.
+     */
+    static boolean sharesHostDisk(java.util.Map<String, String> config) {
+        var source = config.getOrDefault("source", "");
+        if (source.isEmpty()) return true;
+        return source.startsWith("/") && !isLoopFile(config) && !source.startsWith("/dev/");
     }
 
     /** A pool backed by a loop file, which Incus names {@code disks/<pool>.img} for every driver. */

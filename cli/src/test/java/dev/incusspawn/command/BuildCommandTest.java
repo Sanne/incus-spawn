@@ -614,7 +614,7 @@ class BuildCommandTest {
                         () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)), stranded.toString());
 
                 verify(cmd, never()).buildInto(any(), any(), anyString());
-                verify(incus, never()).deleteIfExists(anyString());
+                verify(incus, never()).delete(anyString(), anyBoolean());
             });
         }
     }
@@ -2998,7 +2998,7 @@ class BuildCommandTest {
             assertTrue(out.contains("Cannot build tpl-isx-vm: it is a VM template, and this Incus cannot run VMs"), out);
             assertTrue(out.contains("Use a container template instead."), out);
             verify(cmd, never()).buildInto(any(), any(), anyString());
-            verify(incus, never()).deleteIfExists(anyString());
+            verify(incus, never()).delete(anyString(), anyBoolean());
         });
     }
 
@@ -3061,7 +3061,7 @@ class BuildCommandTest {
                     recorded::toString);
             verify(cmd, never()).askPendingAccounts();
             verify(cmd, never()).buildInto(any(), any(), anyString());
-            verify(incus, never()).deleteIfExists(anyString());
+            verify(incus, never()).delete(anyString(), anyBoolean());
         });
     }
 
@@ -3077,7 +3077,7 @@ class BuildCommandTest {
             var deleted = new java.util.concurrent.atomic.AtomicBoolean();
             when(incus.scanSubvolumes()).thenReturn(Optional.empty());
             when(incus.exists("tpl-isx-rebuilding")).thenAnswer(inv -> !deleted.get());
-            doAnswer(inv -> { deleted.set(true); return null; }).when(incus).deleteIfExists("tpl-isx-rebuilding");
+            doAnswer(inv -> { deleted.set(true); return null; }).when(incus).delete("tpl-isx-rebuilding", true);
             when(incus.findCowPool()).thenReturn("cow");
             // The leftover's space comes back with its delete
             when(incus.getPoolUsageBytes("cow")).thenAnswer(inv ->

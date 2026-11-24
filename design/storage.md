@@ -296,7 +296,7 @@ That is far below the branch's 2 GiB, since Incus runs well with 1 or 2 GiB free
 `awaitReady` and `IncusApi.diagnoseVsock` say the same after their own failure.
 The message names `isx vm restart` when a reserve is there to release, and `isx vm resize <size>` in every case, then `isx destroy` and `isx clean pool`.
 It and the refusals on macOS say that freed space can take up to about five minutes to show, and that a full disk stops Incus.
-On Linux the refusal and the warning say a full disk stops Incus for a subvolume pool, which fills the host's own filesystem and `/var/lib/incus` with it, and not for a loop-file pool (`PoolSpace.isLoopFile`).
+On Linux the refusal and the warning say a full disk stops Incus for a subvolume pool, which fills the host's own filesystem and `/var/lib/incus` with it, and not for a loop-file pool or one on a device, a zpool or a volume group of its own (`PoolSpace.sharesHostDisk`).
 That takes a pool listing, made only for a pool already short, so a branch with room pays no second request.
 No Linux message names five minutes, since a host commits every 30 s by default.
 The 2555-vm box measured 4.5 to 7 minutes after a delete on v0.5.3, whose deletes wait for the data disk's `commit=300`, and a VM restart did not shorten it.

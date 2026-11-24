@@ -79,6 +79,17 @@ class PoolSpaceTest {
     }
 
     @Test
+    void onlyAPoolOnTheHostsOwnFilesystemSharesItsDisk() {
+        assertTrue(PoolSpace.sharesHostDisk(java.util.Map.of()));
+        assertTrue(PoolSpace.sharesHostDisk(java.util.Map.of("source", "/var/lib/incus/storage-pools/cow")));
+        assertFalse(PoolSpace.sharesHostDisk(java.util.Map.of("source", "/var/lib/incus/disks/cow.img")));
+        assertFalse(PoolSpace.sharesHostDisk(java.util.Map.of("source", "/dev/sdb1")));
+        // A zfs dataset and an LVM volume group are disks of their own
+        assertFalse(PoolSpace.sharesHostDisk(java.util.Map.of("source", "tank/incus")));
+        assertFalse(PoolSpace.sharesHostDisk(java.util.Map.of("source", "incus-vg")));
+    }
+
+    @Test
     void onlyALoopFileSourceIsALoopFile() {
         assertTrue(PoolSpace.isLoopFile(java.util.Map.of("source", "/var/lib/incus/disks/cow.img")));
         assertFalse(PoolSpace.isLoopFile(java.util.Map.of("source", "/var/lib/incus/storage-pools/cow")));

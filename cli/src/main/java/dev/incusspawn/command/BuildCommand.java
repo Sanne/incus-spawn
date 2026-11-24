@@ -879,7 +879,8 @@ public class BuildCommand extends BaseCommand {
         // Before Rebuild? and the account prompts, so nobody answers them for a build that is refused
         // (#2555, #2405). With a leftover under tempName the check waits for its delete in buildHeld:
         // its space would otherwise refuse the build that frees it
-        if (!incus.exists(tempName) && reportPoolTooFull(incus, canonicalName)) {
+        boolean poolJudged = !incus.exists(tempName);
+        if (poolJudged && reportPoolTooFull(incus, canonicalName)) {
             throw new BuildFailedException(canonicalName);
         }
 
@@ -902,18 +903,23 @@ public class BuildCommand extends BaseCommand {
             throw new BuildFailedException(canonicalName);
         }
         try (var held = building.get()) {
-            buildHeld(imageDef, defs, canonicalName, tempName);
+            buildHeld(imageDef, defs, canonicalName, tempName, poolJudged);
         }
     }
 
-    /** {@link #buildSingleImage} once this process alone works under {@code tempName} ({@link TemplateLock#building}). */
-    private void buildHeld(ImageDef imageDef, Map<String, ImageDef> defs, String canonicalName, String tempName) {
+    /**
+     * {@link #buildSingleImage} once this process alone works under {@code tempName} ({@link TemplateLock#building}).
+     * {@code poolJudged} says whether it already judged the pool, finding no leftover under {@code tempName}.
+     */
+    private void buildHeld(ImageDef imageDef, Map<String, ImageDef> defs, String canonicalName, String tempName,
+                           boolean poolJudged) {
         // What a build killed before its swap left behind. The pool is judged after its delete, or
         // a build killed once it filled the pool would refuse every retry (#2555); without one,
-        // buildSingleImage judged it before its prompts
-        if (incus.exists(tempName)) {
-            incus.deleteIfExists(tempName);
-            if (reportPoolTooFull(incus, canonicalName)) throw new BuildFailedException(canonicalName);
+        // buildSingleImage judged it before its prompts. One it saw that is gone by now is judged here all the same.
+        boolean leftover = incus.exists(tempName);
+        if (leftover) incus.delete(tempName, true);
+        if ((leftover || !poolJudged) && reportPoolTooFull(incus, canonicalName)) {
+            throw new BuildFailedException(canonicalName);
         }
         var build = new ActiveBuild(tempName, canonicalName, effectiveMachineType(imageDef));
         activeBuild = build;
