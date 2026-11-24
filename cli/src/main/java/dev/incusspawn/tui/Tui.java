@@ -36,6 +36,7 @@ import dev.incusspawn.mcp.TaskJoin;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.Report;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyLog;
@@ -673,7 +674,7 @@ public class Tui {
                             statusMessage = buildStatusMessage(pendingBuildArgs, exitCode == 0, buildStart);
                             if (exitCode != 0) pendingAction = PendingAction.BUILD_TEMPLATE;
                         } catch (Exception e) {
-                            statusMessage = "Build failed: " + e.getMessage();
+                            statusMessage = "Failed to build: " + e.getMessage();
                             pendingAction = PendingAction.BUILD_TEMPLATE;
                         }
                     }
@@ -700,7 +701,7 @@ public class Tui {
                             if (editCmd.doExecute().getResultValue() != 0) {
                                 statusMessage = "Editing template " + pendingActionTarget.name() + " did not end with a valid file";
                             }
-                        } catch (Exception e) { statusMessage = "Edit failed: " + e.getMessage(); }
+                        } catch (Exception e) { statusMessage = "Failed to edit the template: " + e.getMessage(); }
                     }
                     case EXECUTE_ACTION -> {
                         // As isx run reports it: a failure is an error, which the log keeps too
@@ -820,7 +821,7 @@ public class Tui {
                     tui.quit();
                     return true;
                 }
-                setStatusMessage("Proxy restart failed. Try: isx proxy start");
+                setStatusMessage("Failed to restart the proxy. Try: isx proxy start");
             }
             boolean repaint = needsRepaint.getAndSet(false);
             repaint |= tickLiveRefresh(tableState);
@@ -935,12 +936,12 @@ public class Tui {
                 cleanScan = CleanCommand.scanPool(incus);
             } catch (Exception e) {
                 progressMessage = null;
-                statusMessage = "Clean failed: " + e.getMessage();
+                statusMessage = "Failed to clean the pool: " + e.getMessage();
                 return true;
             }
             progressMessage = null;
             if (cleanScan == null) {
-                statusMessage = "No CoW storage pool found.";
+                statusMessage = "No copy-on-write storage pool found.";
             } else {
                 clean = new CleanModal(modal, theme, cleanScan);
                 mode = Mode.CLEAN_CONFIRM;
@@ -1024,7 +1025,7 @@ public class Tui {
 
         // Block all actions if there's a pending operation
         if (isBusy(template)) {
-            statusMessage = "Operation in progress for " + template.name();
+            statusMessage = busy(template);
             return true;
         }
 
@@ -1062,7 +1063,7 @@ public class Tui {
         // F8 or Delete: Destroy template
         if (isDestroyKey(key)) {
             if ("not built".equals(template.buildStatus())) {
-                statusMessage = "Template is not built.";
+                statusMessage = "Template " + template.name() + " is not built, so there is nothing to destroy.";
                 return true;
             }
             if (vanished(template.name())) return true;
@@ -1135,7 +1136,7 @@ public class Tui {
         }
         // Block actions that mutate the selected instance if there's a pending operation
         if (isBusy(selected)) {
-            statusMessage = "Operation in progress for " + selected.name();
+            statusMessage = busy(selected);
             return true;
         }
         if (isInstanceActionKey(key, selected) && vanished(selected.name())) return true;
@@ -1239,7 +1240,7 @@ public class Tui {
         var marked = templates.stream().filter(t -> markedTemplates.contains(t.name())).toList();
         var busy = marked.stream().filter(this::isBusy).findFirst();
         if (busy.isPresent()) {
-            statusMessage = "Operation in progress for " + busy.get().name();
+            statusMessage = busy(busy.get());
             return;
         }
         var built = marked.stream().filter(TemplateInfo::isBuilt).map(TemplateInfo::name).toList();
@@ -1258,7 +1259,7 @@ public class Tui {
                 .filter(this::isBusy)
                 .findFirst();
         if (busy.isPresent()) {
-            statusMessage = "Operation in progress for " + busy.get().name();
+            statusMessage = busy(busy.get());
             return;
         }
         if (marked.stream().anyMatch(e -> vanished(e.name()))) return;
@@ -1288,7 +1289,7 @@ public class Tui {
         var targets = markedInstanceEntries().stream().filter(e -> names.contains(e.name()) && isRunning(e)).toList();
         var busy = targets.stream().filter(this::isBusy).findFirst();
         if (busy.isPresent()) {
-            statusMessage = "Operation in progress for " + busy.get().name();
+            statusMessage = busy(busy.get());
             return true;
         }
         // The user confirmed a longer list: say which of it is left out, on the status line until the
@@ -1622,7 +1623,7 @@ public class Tui {
             } else if ("--all-instances".equals(target)) {
                 destroyBatch(entries.stream().map(InstanceInfo::name).toList(), DeleteConfirm.Kind.INSTANCE);
             } else if (!vanished(target)) {
-                execInBackground("Deleting " + target, "Deleted " + target, target, "Destroyed " + target,
+                execInBackground("Destroying " + target, "Destroyed " + target, target, "Destroyed " + target,
                         Metadata.OP_DELETING,
                         () -> {
                             incus.delete(target, true);
@@ -1642,15 +1643,16 @@ public class Tui {
     private void destroyBatch(List<String> names, DeleteConfirm.Kind what) {
         int count = names.size();
         var kind = what.noun;
-        backgroundTasks.submit("Deleting " + count + " " + kind + "(s)",
-                "Deleted " + count + " " + kind + "(s)", null, () -> {
+        backgroundTasks.submit("Destroying " + Report.count(count, kind),
+                "Destroyed " + Report.count(count, kind), null, () -> {
             int destroyed = 0;
-            int skipped = 0;
+            int busyHere = 0;
+            int lockedElsewhere = 0;
             // One settle of the pool's accounting at the end, not one per instance (#2061)
             try (var batch = incus.deleteBatch()) {
                 for (var name : names) {
                     if (!backgroundTasks.tryClaim(name)) {
-                        skipped++;
+                        busyHere++;
                         continue;
                     }
                     Optional<InstanceLockManager.LockHandle> lockOpt;
@@ -1658,12 +1660,12 @@ public class Tui {
                         lockOpt = lockManager.tryAcquire(name, Metadata.OP_DELETING);
                     } catch (java.io.UncheckedIOException e) {
                         backgroundTasks.releaseClaim(name);
-                        setStatusMessage("Lock error for " + name + ": " + e.getCause().getMessage());
+                        setStatusMessage("Failed to take the lock of " + name + ": " + e.getCause().getMessage());
                         break;
                     }
                     if (lockOpt.isEmpty()) {
                         backgroundTasks.releaseClaim(name);
-                        skipped++;
+                        lockedElsewhere++;
                         continue;
                     }
                     try (var lock = lockOpt.get()) {
@@ -1687,11 +1689,26 @@ public class Tui {
                 }
             }
             if (destroyed > 0) InstanceDestroyer.refreshProxy();
-            String msg = "Destroyed " + destroyed + " " + kind + "(s)";
-            if (skipped > 0) msg += " (" + skipped + " skipped, locked)";
-            if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
+            var msg = destroyBatchSummary(kind, destroyed, busyHere, lockedElsewhere);
+            if (msg != null) setStatusMessage(msg);
             refreshDataAfterBackground();
         });
+    }
+
+    /**
+     * What a batch destroy did, or null when it neither destroyed nor skipped anything: a name this
+     * TUI's own task still holds is busy here, one whose lock another process holds is in use there.
+     * The skip leads when nothing was destroyed.
+     */
+    static String destroyBatchSummary(String kind, int destroyed, int busyHere, int lockedElsewhere) {
+        var skips = new java.util.ArrayList<String>();
+        if (busyHere > 0) skips.add(Report.count(busyHere, kind) + " busy with another change");
+        if (lockedElsewhere > 0) skips.add(Report.count(lockedElsewhere, kind) + " in use by another isx process");
+        if (skips.isEmpty()) return destroyed > 0 ? "Destroyed " + Report.count(destroyed, kind) : null;
+        var skipped = "skipped " + String.join(" and ", skips);
+        return destroyed > 0
+                ? "Destroyed " + Report.count(destroyed, kind) + "; " + skipped
+                : "S" + skipped.substring(1);
     }
 
     private void openBuildMenu(TemplateInfo template) {
@@ -1726,7 +1743,7 @@ public class Tui {
                 .filter(this::isBusy)
                 .findFirst();
         if (busy.isPresent()) {
-            statusMessage = "Operation in progress for " + busy.get().name();
+            statusMessage = busy(busy.get());
             mode = Mode.BROWSE;
             return;
         }
@@ -1774,7 +1791,7 @@ public class Tui {
             cleanResult = clean.clean(incus);
         } catch (Exception e) {
             progressMessage = null;
-            statusMessage = "Clean failed: " + e.getMessage();
+            statusMessage = "Failed to clean the pool: " + e.getMessage();
             mode = Mode.BROWSE;
             return true;
         }
@@ -2085,7 +2102,7 @@ public class Tui {
                 var selected = selectedEntry(instanceTableState);
                 if (selected == null || vanished(selected.name())) yield true;
                 if (isBusy(selected)) {
-                    statusMessage = "Operation in progress for " + selected.name();
+                    statusMessage = busy(selected);
                     yield true;
                 }
                 openAccountsModal(selected.name(), Mode.INSTANCE_DETAIL);
@@ -2095,7 +2112,7 @@ public class Tui {
                 var selected = selectedEntry(instanceTableState);
                 if (selected == null || vanished(selected.name())) yield true;
                 if (isBusy(selected)) {
-                    statusMessage = "Operation in progress for " + selected.name();
+                    statusMessage = busy(selected);
                     yield true;
                 }
                 if (joinTask(selected)) {
@@ -2217,7 +2234,7 @@ public class Tui {
         var instance = (allEntries != null ? allEntries : entries).stream()
                 .filter(e -> e.name().equals(target.instanceName())).findFirst().orElse(null);
         if (instance != null && isBusy(instance)) {
-            statusMessage = "Operation in progress for " + instance.name();
+            statusMessage = busy(instance);
             return false;
         }
         if (showProxyErrorIfNeeded(target)) return false;
@@ -2401,7 +2418,7 @@ public class Tui {
             rows = AccountsModal.rowsFor(config, dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader),
                     dev.incusspawn.config.AccountSelection.read(incus, instance));
         } catch (RuntimeException e) {
-            statusMessage = "Couldn't read credential accounts: " + e.getMessage();
+            statusMessage = "Failed to read the credential accounts: " + e.getMessage();
             return;
         }
         if (rows.isEmpty()) {
@@ -2443,7 +2460,7 @@ public class Tui {
         }
         closeAccountsModal();
         if (!backgroundTasks.tryClaim(instance)) {
-            statusMessage = "Operation already in progress for " + instance;
+            statusMessage = busy(instance);
             return true;
         }
         var described = describeAccountChanges(changes);
@@ -2456,7 +2473,7 @@ public class Tui {
                         change.restarts().forEach(restart -> drawing.warn(restart));
                         setStatusMessage(instance + ": " + described);
                     } catch (RuntimeException e) {
-                        setStatusMessage("Couldn't change accounts of " + instance + ": " + e.getMessage());
+                        setStatusMessage("Failed to change the accounts of " + instance + ": " + e.getMessage());
                         throw e;
                     } finally {
                         backgroundTasks.releaseClaim(instance);
@@ -2673,6 +2690,29 @@ public class Tui {
         return template != null && !template.pendingOp().isEmpty();
     }
 
+    /** The status line for {@code name} while a change to it is under way. */
+    static String busy(String name) {
+        return busy(name, "");
+    }
+
+    private static String busy(InstanceInfo instance) {
+        return busy(instance.name(), instance.pendingOp());
+    }
+
+    private static String busy(TemplateInfo template) {
+        return busy(template.name(), template.pendingOp());
+    }
+
+    /**
+     * {@code name} is refused while an operation is under way: what is being done to it when its mark
+     * ({@code op}, a {@code Metadata.OP_*}) says, as {@code isx mcp} words it, else that it is busy.
+     */
+    static String busy(String name, String op) {
+        var done = Metadata.opDone(op);
+        return name + (done == null ? " is busy with another change." : " is being " + done + ".")
+                + " Try again when it is done.";
+    }
+
     /** Whether an operation on {@code template} is under way, here or in another isx, so it must not be built now. */
     private boolean isBusy(TemplateInfo template) {
         return hasPendingOp(template) || backgroundTasks.hasRunningTask(template.name());
@@ -2693,7 +2733,7 @@ public class Tui {
                                   String targetName, String successMessage, String pendingOp,
                                   Runnable action) {
         if (!backgroundTasks.tryClaim(targetName)) {
-            statusMessage = "Operation already in progress for " + targetName;
+            statusMessage = busy(targetName);
             return;
         }
 
@@ -2703,15 +2743,15 @@ public class Tui {
                 lockOpt = lockManager.tryAcquire(targetName, pendingOp);
             } catch (java.io.UncheckedIOException e) {
                 backgroundTasks.releaseClaim(targetName);
-                setStatusMessage("Lock error for " + targetName + ": " + e.getCause().getMessage());
+                setStatusMessage("Failed to take the lock of " + targetName + ": " + e.getCause().getMessage());
                 refreshDataAfterBackground();
                 throw e;
             }
             if (lockOpt.isEmpty()) {
                 backgroundTasks.releaseClaim(targetName);
-                setStatusMessage("Instance " + targetName + " is locked by another process");
+                setStatusMessage(targetName + " is in use by another isx process. Try again when it is done.");
                 refreshDataAfterBackground();
-                throw new IllegalStateException("Locked by another process");
+                throw new IllegalStateException("In use by another isx process");
             }
 
             try (var lock = lockOpt.get()) {
@@ -2753,9 +2793,9 @@ public class Tui {
     }
 
     private static String validateInstanceName(String name) {
-        if (name.length() > 63) return "Name too long (max 63 characters)";
+        if (name.length() > 63) return "Invalid name: longer than 63 characters";
         if (!INSTANCE_NAME.matcher(name).matches())
-            return "Invalid name: must start with a letter, only alphanumeric and hyphens allowed";
+            return "Invalid name: start it with a letter, and use only letters, digits and hyphens";
         return null;
     }
 
@@ -3095,7 +3135,7 @@ public class Tui {
             // just one status line until a refresh succeeds again.
             lastDataLoadMs = System.currentTimeMillis();
             if (!liveRefreshErrorShown) {
-                statusMessage = "Couldn't refresh from Incus: " + snapshot.error().getMessage();
+                statusMessage = "Failed to refresh from Incus: " + snapshot.error().getMessage();
                 liveRefreshErrorShown = true;
             }
             return;
@@ -3376,7 +3416,7 @@ public class Tui {
                 ProxyConfig.writeBridgeDns(incus, config);
                 setStatusMessage("Bridge DNS overrides updated");
             } catch (Exception e) {
-                setStatusMessage("DNS update failed: " + e.getMessage());
+                setStatusMessage("Failed to update the bridge DNS overrides: " + e.getMessage());
                 dnsVerified = false;
             }
         }, "dns-auto-heal");
@@ -3413,7 +3453,7 @@ public class Tui {
                         // The restart was refused, not failed: it would only start a proxy that refuses to (#1048).
                         setStatusMessage("Proxy not restarted: run 'isx init' first.");
                     } else {
-                        setStatusMessage("Proxy restart failed. Check: isx proxy status");
+                        setStatusMessage("Failed to restart the proxy. Check: isx proxy status");
                     }
                 } finally {
                     proxyRestartInProgress = false;
@@ -3480,8 +3520,8 @@ public class Tui {
         try {
             var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
             if (diagnostic != null) {
-                statusMessage = "Bridge subnet conflict detected — run "
-                        + (Platform.isLinux() ? "'isx doctor'" : "'isx init'") + " to fix";
+                statusMessage = "⚠ The Incus bridge's subnet overlaps a network of this host: run "
+                        + (Platform.isLinux() ? "'isx doctor'" : "'isx init'") + " to fix it";
             }
         } catch (Exception ignored) {
         }

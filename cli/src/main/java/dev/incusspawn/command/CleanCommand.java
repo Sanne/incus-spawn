@@ -713,7 +713,7 @@ public class CleanCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             var pool = incus.findCowPool();
             if (pool == null) {
-                BuildOutput.step("No CoW storage pool found.");
+                BuildOutput.step("No copy-on-write storage pool found.");
                 return CommandResult.SUCCESS;
             }
 

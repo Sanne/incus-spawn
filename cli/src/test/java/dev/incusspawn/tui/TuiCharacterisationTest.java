@@ -560,7 +560,7 @@ class TuiCharacterisationTest {
         assertTrue(tui.backgroundTasks.tryClaim("mcp-box"), "a stop or destroy started meanwhile");
         press(tui, ENTER);
         assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
-        assertEquals("Operation in progress for mcp-box", tui.statusMessage);
+        assertEquals(Tui.busy("mcp-box"), tui.statusMessage);
     }
 
     @Test

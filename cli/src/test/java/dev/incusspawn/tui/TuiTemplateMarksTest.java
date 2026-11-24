@@ -159,7 +159,7 @@ class TuiTemplateMarksTest {
                 Metadata.PENDING_OP, Metadata.OP_DELETING));
         startSession(tui, defs());
         press(tui, DOWN, DOWN, KeyEvent.ofKey(KeyCode.F5), KeyEvent.ofChar('1'));
-        assertEquals("Operation in progress for tpl-minimal", tui.statusMessage, "with parents rebuilds it");
+        assertEquals(Tui.busy("tpl-minimal", Metadata.OP_DELETING), tui.statusMessage, "with parents rebuilds it");
         assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
         // Alone, the marked leaves leave their parent be.
         press(tui, KeyEvent.ofKey(KeyCode.F5), KeyEvent.ofChar('2'));
@@ -174,7 +174,7 @@ class TuiTemplateMarksTest {
         startSession(tui, defs());
         // On tpl-a, nothing marked: rebuild it, then with parents.
         press(tui, DOWN, KeyEvent.ofKey(KeyCode.F5), KeyEvent.ofChar('2'));
-        assertEquals("Operation in progress for tpl-minimal", tui.statusMessage);
+        assertEquals(Tui.busy("tpl-minimal", Metadata.OP_DELETING), tui.statusMessage);
         assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
     }
 
@@ -199,7 +199,7 @@ class TuiTemplateMarksTest {
         startSession(tui, defs());
         // After the marks' two options: "Rebuild tpl-minimal".
         press(tui, KeyEvent.ofKey(KeyCode.F5), KeyEvent.ofChar('3'));
-        assertEquals("Operation in progress for tpl-minimal", tui.statusMessage);
+        assertEquals(Tui.busy("tpl-minimal", Metadata.OP_DELETING), tui.statusMessage);
         assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
     }
 
@@ -218,7 +218,7 @@ class TuiTemplateMarksTest {
                 Metadata.PENDING_OP, Metadata.OP_DELETING));
         startSession(tui, defs());
         press(tui, DOWN, DOWN, KeyEvent.ofKey(KeyCode.F5), KeyEvent.ofChar('1'));
-        assertEquals("Operation in progress for tpl-a", tui.statusMessage);
+        assertEquals(Tui.busy("tpl-a", Metadata.OP_DELETING), tui.statusMessage);
         assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
         assertEquals(List.of("tpl-a", "tpl-b"), List.copyOf(tui.markedTemplates()));
     }
