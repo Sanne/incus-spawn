@@ -199,6 +199,15 @@ public interface Output {
         return new CopyingOutput(terminal, log, false);
     }
 
+    /**
+     * {@code terminal}'s outcomes, warnings and questions, with each step line, note and list
+     * written to {@code log} instead, and shown on {@code terminal} only before a warning, an
+     * error or a question that follows it: for the first run's block of setup (#2528).
+     */
+    static Output detailsLogged(Output terminal, Consumer<String> log) {
+        return new DetailsLoggedOutput(terminal, log);
+    }
+
     /** {@code msg} and its {@code details} as one message, each line made safe; null when {@code msg} is blank. */
     static String message(String msg, String... details) {
         var text = BuildOutput.warningText(msg);

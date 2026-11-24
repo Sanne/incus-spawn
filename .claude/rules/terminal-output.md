@@ -40,7 +40,7 @@ A label is a bare phrase in source, with no `...` and no period: `TerminalOutput
 **The seam (#1703).**
 `BuildOutput` is the one way out: its static methods hand every message to the bound `Output`, a `TerminalOutput` unless the owner of the terminal bound another with `BuildOutput.bind`.
 Only owners bind: the TUI binds `Output.diagnosticsTo(warningLog::add)` while it draws or reloads, and `Output.copying(terminal, drawing)` around every action it lends the terminal to.
-`PreTuiOutput` binds `Output.holding`, `isx mcp` binds `TerminalOutput.stderrOnly()` (`StdioGuard`), and the proxy binds `Output.logTo(ProxyLog::info, ProxyLog::trace, ProxyLog::warn)`: progress as info, notes (a request's debug line) on stderr alone, warnings as warnings.
+`PreTuiOutput` binds `Output.holding`, the first run of `isx init` binds `Output.detailsLogged` around its block of setup and its build (#2528: details to the client log, shown before a warning or a question that follows them), `isx mcp` binds `TerminalOutput.stderrOnly()` (`StdioGuard`), and the proxy binds `Output.logTo(ProxyLog::info, ProxyLog::trace, ProxyLog::warn)`: progress as info, notes (a request's debug line) on stderr alone, warnings as warnings.
 An output that is not a terminal drops progress and notes, and still receives every diagnostic: `error`, `warnAside`, `stepWarn` and `warnBanner` default to `warn`, and `stepFail` reports through `stepWarn`.
 Bindings nest, and closing one out of order throws.
 Shared code takes an `Output` from its caller (`InstanceLifecycle.startForUse(..., out)`, `ensureReady(..., out)`, `StaticIpAllocator.claim`): the CLI passes `BuildOutput.bound()`, the TUI its `drawing` log from code it runs while it draws, background threads included.

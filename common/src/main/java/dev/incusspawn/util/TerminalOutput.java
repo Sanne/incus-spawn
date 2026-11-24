@@ -103,10 +103,13 @@ public final class TerminalOutput implements Output {
 
     @Override
     public Group group(String title, String detail) {
-        var sb = new StringBuilder(indent()).append(styled(CYAN, "▸ ")).append(styled(BOLD, title));
-        if (detail != null && !detail.isEmpty()) sb.append("  ").append(styled(DIM, detail));
-        blankLine();
-        out.get().println(sb);
+        // An empty title carries on a group another process opened: its lines indented, with no header of its own
+        if (!title.isEmpty()) {
+            var sb = new StringBuilder(indent()).append(styled(CYAN, "▸ ")).append(styled(BOLD, title));
+            if (detail != null && !detail.isEmpty()) sb.append("  ").append(styled(DIM, detail));
+            blankLine();
+            out.get().println(sb);
+        }
         int previousDepth = depth;
         depth = previousDepth + 1;
         var closed = new AtomicBoolean();
