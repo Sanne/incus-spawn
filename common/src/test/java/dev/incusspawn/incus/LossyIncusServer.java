@@ -107,6 +107,8 @@ final class LossyIncusServer implements AutoCloseable {
      * closing both, unless it {@link #runsForever}.
      */
     volatile boolean interactive = false;
+    /** When non-null on an interactive exec, control stays open until this latch opens (or 5 s). */
+    volatile CountDownLatch interactiveCloseGate = null;
     /**
      * PINGs answered per fd before the link goes silent: later client PINGs still arrive and are
      * counted, but no PONG comes back. A test that wants a silent link pinged a number of times
@@ -420,11 +422,15 @@ final class LossyIncusServer implements AutoCloseable {
         if (runsForever) return; // only a signal, if anything, ends it
         try {
             if (runMillis > 0) Thread.sleep(runMillis);
-            awaitPings(runsUntilPinged);
             if (interactive) { // the shell exited: Incus closes control, and the client hangs up fd "0"
+                if (!stdout.isEmpty()) execFds.get("0").send(0x2, stdout.getBytes(StandardCharsets.UTF_8));
+                awaitPings(runsUntilPinged);
+                var gate = interactiveCloseGate;
+                if (gate != null) gate.await(PING_WAIT_MS, TimeUnit.MILLISECONDS);
                 execFds.get("control").closeWithFrame();
                 return;
             }
+            awaitPings(runsUntilPinged);
             execFds.get("1").send(0x2, stdout.getBytes(StandardCharsets.UTF_8));
             execFds.get("2").send(0x2, stderr.getBytes(StandardCharsets.UTF_8));
             if (sendCloseFrames) {

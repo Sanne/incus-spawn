@@ -94,9 +94,10 @@ final class InteractiveShell {
             var statusBar = ShellMenu.enabled() ? new ShellStatusBar(container, TerminalStreams.out()) : null;
             if (statusBar != null) statusBar.setMenuActions(menu.actions(), menu.context());
 
+            var clearScreen = clearsScreen(prep);
             reconnecting(() -> {
                 var size = IncusApi.terminalSize();
-                return incus.http().execPty(container, shellArgs, 0, 0, null, env, size[0], size[1], statusBar);
+                return incus.http().execPty(container, shellArgs, 0, 0, null, env, size[0], size[1], statusBar, clearScreen);
             }, InteractiveShell::pause, () -> System.nanoTime() / 1_000_000);
         } finally {
             if (inTmux && savedWindowName != null) {
@@ -111,6 +112,16 @@ final class InteractiveShell {
             }
             BuildOutput.windowTitle("");
         }
+    }
+
+    /**
+     * Whether the session clears the visible terminal before the guest draws (#2569).
+     * Actions such as Claude Code render inline from the cursor's row, so without zmx or a status
+     * bar to clear the screen first, {@code isx branch}'s own output stays above them in the top
+     * half of the display. Plain shells keep the output above their prompt, as before.
+     */
+    static boolean clearsScreen(ShellPrep prep) {
+        return prep.shellCommand() != null;
     }
 
     /**

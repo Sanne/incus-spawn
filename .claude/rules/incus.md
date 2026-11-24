@@ -99,6 +99,7 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
   `IncusClient.interactiveShell()` throws `NoTerminalForShellException` (an `IncusException`) unless `IncusClient.hasTerminal()` (stdin and stdout a terminal), and `execPty` opens `/dev/tty` *before* posting the exec, so neither case starts a guest process.
   The reconnect loop (`MAX_RECONNECT_ATTEMPTS`, 1-2-4-8-10s backoff) never retries `NoTerminalForShellException`: before #1027 the failed `/dev/tty` open read as a lost connection and looped for ~76s.
   Callers that can do without the shell (`isx branch`) check `hasTerminal()` first and skip it.
+  An action session (`InteractiveShell.clearsScreen`, `prep.shellCommand() != null`) clears the visible display (`ESC[2J ESC[H`, never `3J` or alternate screen) in `execPty` once connected and raw, unless `ShellStatusBar` already clears or host `TERM` is blank/`dumb` (#2569).
 - **Keep-alive connection cache.**
   Short request-path calls (`get`/`post`/`/wait`) reuse a warm connection via `requestPooled` -> `ConnectionPool`/`KeepAliveConnection` instead of reconnecting per call; the exec WebSocket fds are per-operation and not pooled.
 - **One strict HTTP parser.**

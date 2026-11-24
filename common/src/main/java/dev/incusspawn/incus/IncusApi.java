@@ -860,6 +860,14 @@ class IncusApi {
     /** As {@link #EVENTS_SILENCE_LIMIT_MS}: silence past three answered pings means the link is gone. */
     static final long EXEC_SILENCE_LIMIT_MS = 50_000;
 
+    /** Erase the visible display and move the cursor home (never 3J, which wipes scrollback). */
+    static final byte[] CLEAR_SCREEN = "\033[2J\033[H".getBytes(StandardCharsets.US_ASCII); // raw ANSI: clears the terminal before an action takes it
+
+    /** Whether the host's {@code TERM} understands CSI screen clear: anything other than {@code dumb}. */
+    static boolean canClearScreen(String term) {
+        return term != null && !term.isEmpty() && !"dumb".equals(term);
+    }
+
     /**
      * Interactive PTY exec — bridges System.in/out to the container PTY.
      * Sets the local terminal to raw mode for the duration.
@@ -869,12 +877,18 @@ class IncusApi {
     boolean execPty(String instance, List<String> command,
                     Integer uid, Integer gid, String cwd, Map<String, String> env,
                     int width, int height) {
-        return execPty(instance, command, uid, gid, cwd, env, width, height, null);
+        return execPty(instance, command, uid, gid, cwd, env, width, height, null, false);
     }
 
     boolean execPty(String instance, List<String> command,
                     Integer uid, Integer gid, String cwd, Map<String, String> env,
                     int width, int height, ShellStatusBar statusBar) {
+        return execPty(instance, command, uid, gid, cwd, env, width, height, statusBar, false);
+    }
+
+    boolean execPty(String instance, List<String> command,
+                    Integer uid, Integer gid, String cwd, Map<String, String> env,
+                    int width, int height, ShellStatusBar statusBar, boolean clearScreen) {
         // Open a dedicated fd for stdin reading so we can close it to
         // cleanly stop the stdinThread when the PTY session ends.
         // Using System.in would leave the thread blocked on read()
@@ -891,7 +905,8 @@ class IncusApi {
             throw new NoTerminalForShellException(instance);
         }
         try {
-            return execPty(instance, command, uid, gid, cwd, env, width, height, statusBar, stdinChannel);
+            return execPty(instance, command, uid, gid, cwd, env, width, height, statusBar,
+                    clearScreen, stdinChannel, TerminalStreams.out(), System.getenv("TERM"));
         } finally {
             try { stdinChannel.close(); } catch (IOException ignored) {}
         }
@@ -902,6 +917,15 @@ class IncusApi {
                     Integer uid, Integer gid, String cwd, Map<String, String> env,
                     int width, int height, ShellStatusBar statusBar,
                     java.nio.channels.FileChannel stdinChannel) {
+        return execPty(instance, command, uid, gid, cwd, env, width, height, statusBar,
+                false, stdinChannel, TerminalStreams.out(), System.getenv("TERM"));
+    }
+
+    /** Test seam with explicit screen-clear, output stream and host {@code TERM}. */
+    boolean execPty(String instance, List<String> command,
+                    Integer uid, Integer gid, String cwd, Map<String, String> env,
+                    int width, int height, ShellStatusBar statusBar, boolean clearScreen,
+                    java.nio.channels.FileChannel stdinChannel, OutputStream stdout, String term) {
         var effectiveHeight = statusBar != null ? statusBar.effectiveHeight(height) : height;
         var exec = postExec(instance, command, uid, gid, cwd, env, true, width, effectiveHeight);
 
@@ -999,11 +1023,15 @@ class IncusApi {
                 setRawTerminal();
                 if (statusBar != null) {
                     statusBar.setup(width, height);
+                } else if (clearScreen && canClearScreen(term)) {
+                    try {
+                        stdout.write(CLEAR_SCREEN);
+                        stdout.flush();
+                    } catch (IOException ignored) {}
                 }
                 try {
                     // Main: WebSocket → the terminal's stdout (exits when watcher closes the connection).
                     byte[] payload;
-                    var stdout = TerminalStreams.out();
                     while ((payload = ws.readPayload()) != null) {
                         if (statusBar != null) {
                             statusBar.writeOutput(payload, 0, payload.length);
