@@ -4,6 +4,7 @@ import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.McpScope;
 import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.Report;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -237,7 +238,7 @@ final class McpSession {
             var mine = owned.values().stream().filter(o -> !o.kept()).count();
             var others = elsewhere.stream().filter(n -> !owned.containsKey(n)).count();
             if (mine + others >= max) {
-                throw new ToolError(ToolError.Code.LIMIT, "you already have " + (mine + others) + " instance(s) ("
+                throw new ToolError(ToolError.Code.LIMIT, "you already have " + Report.count(mine + others, "instance") + " ("
                         + mine + " in this session, " + others + " held by other sessions or orphaned), "
                         + "the most max-instances in mcp.yaml allows (" + max + "). Destroy one with "
                         + "destroy_instance first; list_instances shows them all.");
@@ -331,7 +332,7 @@ final class McpSession {
         var holder = SessionId.parse(listed.get(Metadata.MCP_SESSION));
         if (holder.isPresent() && holder.get().equals(id) && holds(name)) {
             var busy = Metadata.pendingOp(listed);
-            if (!busy.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is busy (" + busy + "); try again shortly.");
+            if (!busy.isEmpty()) throw busy(name, busy);
             return false;
         }
         if (holder.isPresent() && !holder.get().equals(id) && alive.test(holder.get()) && !Orphans.releasedByHolder(listed)) {
@@ -340,6 +341,24 @@ final class McpSession {
                     + "), and may still be making. Take it with adopt_instance, with force only if that session is stuck.");
         }
         return true;
+    }
+
+    /**
+     * {@code name} carries the mark of an operation under way ({@code op}, a {@code Metadata.OP_*}):
+     * what is being done to it, and when to call again.
+     */
+    static ToolError busy(String name, String op) {
+        var done = switch (op) {
+            case Metadata.OP_STARTING -> "started";
+            case Metadata.OP_STOPPING -> "stopped";
+            case Metadata.OP_RESTARTING -> "restarted";
+            case Metadata.OP_DELETING -> "destroyed";
+            default -> null;
+        };
+        var who = "an isx command, the TUI or an agent's isx mcp";
+        return new ToolError(ToolError.Code.BUSY, "'" + name + "' is "
+                + (done == null ? "busy (" + op + "): " + who + " is changing it." : "being " + done + " by " + who + ".")
+                + " Try again when it is done.");
     }
 
     /** A call under {@code key} while one with the same key is still under way in this session. */
@@ -414,7 +433,7 @@ final class McpSession {
             throw new ToolError(ToolError.Code.NOT_HELD, "'" + name + "' is no longer held by this session: another session adopted it.");
         }
         var busy = Metadata.pendingOp(metadata);
-        if (!busy.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is busy (" + busy + "); try again shortly.");
+        if (!busy.isEmpty()) throw busy(name, busy);
         return metadata;
     }
 
@@ -468,7 +487,7 @@ final class McpSession {
             throw new ToolError(ToolError.Code.REFUSED, "'" + name + "' was kept: it belongs to the user now, not to agents.");
         }
         var busy = Metadata.pendingOp(metadata);
-        if (!busy.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is busy (" + busy + "); try again shortly.");
+        if (!busy.isEmpty()) throw busy(name, busy);
         var holder = SessionId.parse(session);
         if (!force && holder.isPresent() && !holder.get().equals(id) && alive.test(holder.get())
                 && !Orphans.releasedByHolder(metadata)) {
