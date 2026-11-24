@@ -1940,11 +1940,18 @@ class HostSetup {
      * Installing or enabling a firewall stays init's. The redirect comes first, so a config.yaml
      * that stopped parsing during the migration cannot strand it; the gateway is then saved to the
      * file as it is now, so an account added from another terminal meanwhile is kept (#2523).
-     * Whether the redirect was written.
+     * Whether the redirect was written. Either failing names {@code isx init}, since the bridge has
+     * moved already: {@code isx doctor} then finds no conflict and would never save the gateway.
      */
     boolean followBridgeMove(String gatewayIp, DetectionResult firewall) {
-        var redirected = redirectToMovedGateway(gatewayIp, firewall, UfwCheck::readBeforeRules);
-        var config = SpawnConfig.loadToChange("run 'isx doctor' again");
+        boolean redirected;
+        try {
+            redirected = redirectToMovedGateway(gatewayIp, firewall, UfwCheck::readBeforeRules);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("the bridge moved, but its firewall redirect was not updated: "
+                    + BaseCommand.failure(e) + "; run 'isx init' to finish the move", e);
+        }
+        var config = SpawnConfig.loadToChange("run 'isx init' to finish the move");
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
         return redirected;

@@ -30,6 +30,9 @@ class MoveBridgeOffTest {
         DetectionResult firewall = new DetectionResult.UseFirewalld(false);
         boolean redirected = true;
         List<String> stale = List.of();
+        /** Runs the real redirect and gateway save, on host commands that only succeed. */
+        boolean realRedirect;
+        Runnable duringMigration = () -> {};
 
         Steps() {
             incus = mock(IncusClient.class);
@@ -38,9 +41,14 @@ class MoveBridgeOffTest {
         }
 
         @Override boolean sudoValidated() { done.add("sudo"); return sudo; }
-        @Override int migrateInstances() { done.add("migrate"); return 1; }
+        @Override int migrateInstances() { done.add("migrate"); duringMigration.run(); return 1; }
+        @Override String captureOutput(String... command) { return ""; }
+        @Override int runHostQuiet(String... command) { return 0; }
         @Override DetectionResult runningFirewall() { return firewall; }
-        @Override boolean followBridgeMove(String gatewayIp, DetectionResult fw) { done.add("redirect " + gatewayIp); return redirected; }
+        @Override boolean followBridgeMove(String gatewayIp, DetectionResult fw) {
+            done.add("redirect " + gatewayIp);
+            return realRedirect ? super.followBridgeMove(gatewayIp, fw) : redirected;
+        }
         @Override List<String> staleInstances() { return stale; }
     }
 
@@ -55,6 +63,25 @@ class MoveBridgeOffTest {
         assertTrue(e.getMessage().contains("run 'isx doctor' again"), e.getMessage());
         assertEquals(List.of(), steps.done);
         IsolatedHome.assertUnchanged(broken);
+    }
+
+    /** The gateway is saved to config.yaml as it is after the migration, so an account added during it is kept (#2523). */
+    @Test
+    void anAccountAddedDuringTheMigrationIsKept() throws Exception {
+        IsolatedHome.seed("incus-bridge-gateway: 10.166.11.1\n");
+        var steps = new Steps();
+        steps.realRedirect = true;
+        // Another terminal's isx account add, while the instances migrate
+        steps.duringMigration = () -> {
+            try {
+                IsolatedHome.seed("incus-bridge-gateway: 10.166.11.1\nclaude:\n  accounts:\n    work: {apiKey: x}\n");
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+        capture(() -> steps.moveBridgeOff(CONFLICT));
+        assertEquals("172.20.0.1", dev.incusspawn.config.SpawnConfig.load().getIncusBridgeGateway());
+        assertEquals("x", IsolatedHome.saved("claude.accounts.work.apiKey"));
     }
 
     @Test

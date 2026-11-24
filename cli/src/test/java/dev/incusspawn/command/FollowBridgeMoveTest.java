@@ -105,18 +105,6 @@ class FollowBridgeMoveTest {
                 init.commands.toString());
     }
 
-    /** The gateway is saved to config.yaml as it is after the move, so an account added meanwhile is kept (#2523). */
-    @Test
-    void theGatewayIsSavedWithoutUndoingAChangeMadeDuringTheMove() throws Exception {
-        IsolatedHome.seed("incus-bridge-gateway: " + OLD_GATEWAY + "\n");
-        var init = new RecordingInit();
-        // Another terminal's isx account add, while the instances migrated
-        IsolatedHome.seed("incus-bridge-gateway: " + OLD_GATEWAY + "\nclaude:\n  accounts:\n    work: {apiKey: x}\n");
-        capture(() -> init.host().followBridgeMove(NEW_GATEWAY, NONE));
-        assertEquals(NEW_GATEWAY, dev.incusspawn.config.SpawnConfig.load().getIncusBridgeGateway());
-        assertEquals("x", IsolatedHome.saved("claude.accounts.work.apiKey"));
-    }
-
     /** A config.yaml that stopped parsing during the move still gets the redirect, then stops the step and is left as it is. */
     @Test
     void aFileBrokenDuringTheMoveStillGetsItsRedirect() throws Exception {
@@ -125,7 +113,7 @@ class FollowBridgeMoveTest {
         java.nio.file.Files.writeString(IsolatedHome.configFile(), broken);
         var init = new RecordingInit();
         var e = assertThrows(IllegalStateException.class, () -> capture(() -> init.host().followBridgeMove(NEW_GATEWAY, FIREWALLD)));
-        assertTrue(e.getMessage().contains("run 'isx doctor' again"), e.getMessage());
+        assertTrue(e.getMessage().contains("run 'isx init' to finish the move"), e.getMessage());
         assertFalse(init.commands.isEmpty(), "the redirect is written before the save");
         IsolatedHome.assertUnchanged(broken);
     }
