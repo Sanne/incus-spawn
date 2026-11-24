@@ -101,6 +101,9 @@ case "$verb" in
         # socat then terminates this agent, and the guest is left with no forwarder at all.
         # Catch the signals rather than ignore them: an ignored signal stays ignored across
         # exec, so the new forwarder would outlive the next restart's pkill.
+        # The agent starts before vm-init's wait for Incus (#2555), and vm-init starts the forwarder
+        # only after it: a restart before then would leave two forwarders on one port.
+        if [ ! -e /run/isx-forwarder-started ]; then echo "error: forwarder not started yet"; exit 0; fi
         trap : HUP TERM PIPE
         pkill -f "$FORWARDER_MATCH" 2>/dev/null || true
         sleep 1

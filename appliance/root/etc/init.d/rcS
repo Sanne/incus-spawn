@@ -70,10 +70,13 @@ if [ -b /dev/vdc ]; then
     if [ -f "$RESERVE" ]; then
         if [ "${avail_mib:-0}" -lt 2048 ]; then
             # rcS runs under set -e: an unlink a full disk refuses must not stop the boot before incusd
-            rm -f "$RESERVE" || echo "incus-spawn: could not delete the data disk's reserve"
-            # Freed only once the transaction commits, and the mount commits every 300 s
-            btrfs filesystem sync /var/lib/incus 2>/dev/null || sync
-            echo "incus-spawn: data disk full (${avail_mib} MiB free), released its reserve so Incus can start"
+            if rm -f "$RESERVE"; then
+                # Freed only once the transaction commits, and the mount commits every 300 s
+                btrfs filesystem sync /var/lib/incus 2>/dev/null || sync
+                echo "incus-spawn: data disk full (${avail_mib} MiB free), released its reserve so Incus can start"
+            else
+                echo "incus-spawn: data disk full (${avail_mib} MiB free), and its reserve could not be deleted"
+            fi
         fi
     elif [ "${avail_mib:-0}" -ge 6144 ]; then
         fallocate -l 1G "$RESERVE" 2>/dev/null || rm -f "$RESERVE" || true

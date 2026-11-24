@@ -61,7 +61,6 @@ public record VmDisk(long freeBytes, long totalBytes, long reserveBytes) {
         return true;
     }
 
-    /** Why Incus cannot run on this disk, then what brings it back, one instruction a line. */
     /**
      * The freed space shows only once btrfs commits the delete: about five minutes later on an
      * appliance before the agent's btrfs-settle (#2555, measured 4.5 to 7 min on v0.5.3).
@@ -69,6 +68,7 @@ public record VmDisk(long freeBytes, long totalBytes, long reserveBytes) {
     static final String FREE_SPACE = "Then free space with 'isx destroy <name>' and 'isx clean pool'."
             + " The space can take up to about five minutes to show as free.";
 
+    /** Why Incus cannot run on this disk, then what brings it back, one instruction a line. */
     public java.util.List<String> explanation() {
         var lines = new java.util.ArrayList<String>();
         lines.add("The VM's disk is full, so Incus cannot run: "
