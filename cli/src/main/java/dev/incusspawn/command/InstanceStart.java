@@ -4,6 +4,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tui.InstanceLockManager;
 import dev.incusspawn.util.Output;
+import dev.incusspawn.util.OutputFormat;
 
 import java.time.Duration;
 
@@ -38,7 +39,22 @@ final class InstanceStart {
         };
     }
 
+    /**
+     * What to do when another isx process holds an instance's lock: a command, the TUI or an
+     * {@code isx mcp} session, while it starts, stops, restarts or destroys the instance, or the
+     * TUI clears a mark an interrupted one left.
+     */
+    static final String BUSY_ADVICE = "That process (an isx command, the TUI or an agent's isx mcp) is changing its state,"
+            + " for example starting or stopping it. Try again when it is done.";
+
     private InstanceStart() {}
+
+    /** {@code 2 minutes}, {@code 30 seconds}: how long a wait was, in the unit a person reads it in. */
+    static String span(Duration wait) {
+        var minutes = wait.toSeconds() >= 60 && wait.toSeconds() % 60 == 0;
+        var n = minutes ? wait.toMinutes() : wait.toSeconds();
+        return n + (minutes ? " minute" : " second") + (n == 1 ? "" : "s");
+    }
 
     /**
      * Prepare {@code name} for use under its lock, waiting up to {@code wait} for another holder,
@@ -69,8 +85,8 @@ final class InstanceStart {
                     return lock.get();
                 }
                 if (System.nanoTime() >= deadline) {
-                    throw new InstancePrep.Refused("'" + name + "' stayed locked by another isx process for "
-                            + wait.toSeconds() + " seconds; try again.", false);
+                    throw new InstancePrep.Refused("'" + OutputFormat.oneLine(name) + "' is still in use by another isx process after "
+                            + span(wait) + ".\n" + BUSY_ADVICE, false);
                 }
                 if (!said) {
                     out.stepStart("Waiting for another isx process using " + name);

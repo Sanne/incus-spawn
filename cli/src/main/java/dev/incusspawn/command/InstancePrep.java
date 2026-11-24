@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import io.hyperfoil.tools.jjq.value.JqValue;
+import dev.incusspawn.Platform;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
@@ -88,8 +89,9 @@ public class InstancePrep {
         // Validate parent template before any side effects
         var parent = incus.configGet(name, Metadata.PARENT);
         if (parent == null || parent.isEmpty()) {
-            throw new Refused("instance '" + name + "' has no parent template.\n"
-                    + "This does not appear to be an incus-spawn managed instance.", false);
+            // macOS has no incus client on the host: its Incus runs in isx's VM
+            throw new Refused("'" + name + "' does not record a parent template, so isx cannot prepare it."
+                    + (Platform.isMacOS() ? "" : "\n'incus shell " + name + "' opens a shell in it without isx's preparation."), false);
         }
 
         // Prefer PROFILE (always the leaf template name) for chain resolution;

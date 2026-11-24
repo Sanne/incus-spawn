@@ -58,7 +58,7 @@ class CompletersTest {
         var bytes = new ByteArrayOutputStream();
         Completers.answer(IncusSpawn.IncusSpawnLinuxCommand.class, List.of("sh"),
                 new PrintStream(bytes, true, StandardCharsets.UTF_8));
-        assertEquals("shell\tOpen a shell in an existing clone", bytes.toString(StandardCharsets.UTF_8).strip());
+        assertEquals("shell\tOpen a shell in an instance, starting it if it is stopped", bytes.toString(StandardCharsets.UTF_8).strip());
     }
 
     @Test
