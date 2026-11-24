@@ -87,6 +87,16 @@ public class OpencodeSetup implements ToolSetup {
         small.setOptional(true);
         small.setReconfigurable(true);
         params.put("small-model", small);
+
+        var effort = new ToolDef.ParameterDef();
+        effort.setType("string");
+        effort.setDescription("Reasoning effort, as the variant opencode's build and plan agents start with (none, minimal, low,"
+                + " medium, high, xhigh, max); which exist depends on the model, and opencode ignores one the model lacks."
+                + " Needs model, unless the provider is " + DEFAULT_PROVIDER);
+        effort.setPattern("^(none|minimal|low|medium|high|xhigh|max)$");
+        effort.setOptional(true);
+        effort.setReconfigurable(true);
+        params.put("effort", effort);
         return params;
     }
 
@@ -244,16 +254,33 @@ public class OpencodeSetup implements ToolSetup {
         var modelLine = model == null ? "" : "  \"model\": \"" + provider + "/" + model + "\",\n";
         var small = resolvedParams.get("small-model");
         var smallLine = small == null ? "" : "  \"small_model\": \"" + provider + "/" + small + "\",\n";
+        var agentLine = agentLine(provider, model, resolvedParams.get("effort"));
         var providerLine = credentialFor(resolvedParams) != Credential.ANTHROPIC ? ""
                 : "  \"provider\": {\"anthropic\": {\"options\": {\"apiKey\": \"{env:" + ANTHROPIC_KEY.env() + "}\"}}},\n";
         return """
                 {
                   "$schema": "https://opencode.ai/config.json",
-                %s%s%s  "autoupdate": false,
+                %s%s%s%s  "autoupdate": false,
                   "share": "disabled",
                   "instructions": ["%s"],
                   "permission": {"read": "allow", "external_directory": "allow", "doom_loop": "allow"}
                 }
-                """.formatted(modelLine, smallLine, providerLine, CONTEXT_PATH);
+                """.formatted(modelLine, smallLine, agentLine, providerLine, CONTEXT_PATH);
+    }
+
+    /**
+     * The effort as the default variant of opencode's two primary agents. opencode applies an
+     * agent's variant only while that agent runs its own model, so each names the model too: a
+     * model picked in a session starts at that model's default, as Claude Code's per-model
+     * effort does. The root {@code model} keeps no variant.
+     */
+    private static String agentLine(String provider, String model, String effort) {
+        if (effort == null) return "";
+        if (model == null) {
+            throw new IllegalStateException("The opencode tool's effort parameter needs a model, because opencode"
+                    + " applies it to one model: set model too");
+        }
+        var agent = "{\"model\": \"" + provider + "/" + model + "\", \"variant\": \"" + effort + "\"}";
+        return "  \"agent\": {\"build\": " + agent + ", \"plan\": " + agent + "},\n";
     }
 }
