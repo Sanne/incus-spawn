@@ -135,15 +135,15 @@ class CredentialSetup {
         return Platform.openUrl(url);
     }
 
-    private static final String CLAUDE_SKIPPED = "No Claude account yet: 'isx account add "
-            + SpawnConfig.ClaudeConfig.NAMESPACE + "' adds one.";
+    private static final String CLAUDE_SKIPPED = "Skipped. 'isx account add "
+            + SpawnConfig.ClaudeConfig.NAMESPACE + "' adds one later.";
 
     /**
      * What a skipped Claude step says: "no account yet" only when there is none, never after a
      * skip that leaves saved accounts as they were.
      */
     private static String claudeSkipped(SpawnConfig config) {
-        return config.getClaude().allAccounts().isEmpty() ? CLAUDE_SKIPPED : "No Claude account added.";
+        return config.getClaude().allAccounts().isEmpty() ? CLAUDE_SKIPPED : "Your Claude accounts stay as they were.";
     }
 
     private static final List<String> KNOWN_TOOL_ORDER = List.of("claude", "gh", "bob", "codex");
@@ -301,13 +301,13 @@ class CredentialSetup {
             var choice = answer == null ? "4" : answer.strip();
             switch (choice) {
                 case "1" -> signInChatGptInBrowser(config, target);
-                case "2" -> signInChatGptWithDeviceCode(config, target);
+                case "2" -> signInChatGptWithDeviceCode(config, target, prompts);
                 case "3" -> {
                     // Enter at the key goes back to the kinds of account
                     if (!askAndSaveApiKey(config, target, prompts, true)) continue;
                 }
                 case "4" -> BuildOutput.note(hasAccountsToPreserve(config, "openai")
-                        ? "No OpenAI account added." : "No OpenAI account for now.");
+                        ? "Your OpenAI accounts stay as they were." : "Skipped the OpenAI account for now.");
                 default -> {
                     continue;
                 }
@@ -340,34 +340,67 @@ class CredentialSetup {
         saveChatGptSession(config, target, tokens);
     }
 
-    /** Signs a ChatGPT session in by the one-time code, for a host whose browser is elsewhere. */
-    private void signInChatGptWithDeviceCode(SpawnConfig config, AccountTarget target) {
+    /**
+     * Signs a ChatGPT session in by the one-time code, for a host whose browser is elsewhere. A
+     * code expires by itself, so a sign-in that did not finish offers another try, with a new
+     * code, or skipping, as a failed Claude or GitHub check does (#2528).
+     */
+    private void signInChatGptWithDeviceCode(SpawnConfig config, AccountTarget target, Prompts prompts) {
         var signIn = chatGptSignIn();
-        dev.incusspawn.proxy.ChatGptSignIn.DeviceCode device;
-        try {
-            device = signIn.requestDeviceCode();
-        } catch (Exception e) {
-            BuildOutput.warn("isx could not reach OpenAI's sign-in server: " + e.getMessage(),
-                    "Sign in later with 'isx account add openai'.");
-            return;
+        while (true) {
+            dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens = null;
+            try {
+                var device = signIn.requestDeviceCode();
+                // A report between questions, so through BuildOutput rather than the prompts'
+                // conversation (#1703). The address is printed plain, on its own line: no bolding
+                // stands between a terminal's link detection and the URL. Any device serves, for the
+                // one-time code carries the sign-in -- "on this machine" would send a headless host's
+                // user nowhere, and this path exists for exactly them.
+                BuildOutput.step("On any device, open this address:");
+                BuildOutput.step(device.verificationUrl());
+                BuildOutput.step("Then enter this code there: " + styled(BOLD, device.userCode()));
+                try {
+                    tokens = signIn.awaitAuthorization(device, null);
+                } catch (InterruptedException e) {
+                    // An interrupt ends the step: it is never answered with a new code
+                    Thread.currentThread().interrupt();
+                    BuildOutput.warn("The ChatGPT sign-in was interrupted.");
+                } catch (Exception e) {
+                    BuildOutput.warn("The ChatGPT sign-in did not finish: " + e.getMessage());
+                }
+            } catch (Exception e) {
+                BuildOutput.warn("isx could not reach OpenAI's sign-in server: " + e.getMessage());
+            }
+            if (tokens != null) {
+                saveChatGptSession(config, target, tokens);
+                return;
+            }
+            if (Thread.currentThread().isInterrupted() || !tryAgain(prompts, "try again, with a new code")) {
+                // A person who has accounts is not told to add one, as option 4 says (#2528)
+                BuildOutput.step(hasAccountsToPreserve(config, "openai") ? "Your OpenAI accounts stay as they were."
+                        : "Skipped. 'isx account add openai' adds one later.");
+                return;
+            }
         }
-        // A report between questions, so through BuildOutput rather than the prompts'
-        // conversation (#1703). The address is printed plain, on its own line: no bolding
-        // stands between a terminal's link detection and the URL. Any device serves, for the
-        // one-time code carries the sign-in -- "on this machine" would send a headless host's
-        // user nowhere, and this path exists for exactly them.
-        BuildOutput.step("On any device, open this address:");
-        BuildOutput.step(device.verificationUrl());
-        BuildOutput.step("Then enter this code there: " + styled(BOLD, device.userCode()));
-        dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
-        try {
-            tokens = signIn.awaitAuthorization(device, null);
-        } catch (Exception e) {
-            BuildOutput.warn("The ChatGPT sign-in did not finish: " + e.getMessage(),
-                    "Sign in later with 'isx account add openai'.");
-            return;
+    }
+
+    /** After a sign-in that did not finish: whether to try again ({@code Y}, the default) or skip ({@code s}). */
+    private static boolean tryAgain(Prompts prompts, String again) {
+        // Apart from the warning above it, as the Claude and GitHub retries are
+        BuildOutput.gap();
+        prompts.say("What now?");
+        prompts.say("  Y  " + again);
+        prompts.say("  s  skip this account for now");
+        while (true) {
+            var answer = prompts.ask("Choice [Y]: ");
+            // End of input skips, as every prompt's does
+            if (answer == null) return false;
+            switch (answer.strip().toLowerCase(java.util.Locale.ROOT)) {
+                case "", "y" -> { return true; }
+                case "s" -> { return false; }
+                default -> prompts.say("Please answer y or s.");
+            }
         }
-        saveChatGptSession(config, target, tokens);
     }
 
     /**
@@ -405,17 +438,15 @@ class CredentialSetup {
         BuildOutput.step("Create a key at " + TerminalLink.link("https://platform.openai.com/api-keys") + ".");
         BuildOutput.step("OpenAI shows it only once.");
         BuildOutput.gap();
-        // Nothing checks this key, so the receipt is what says the paste arrived
         var answer = prompts.askSecret(canGoBack ? "Paste the API key, or Enter to go back: " : "Paste the API key, or Enter to skip: ");
         var key = readSecret(answer);
         if (key.isBlank()) {
             if (canGoBack && answer != null) return false;
             // "No account yet" only when there is none: the ChatGPT account being switched stays as it was
-            BuildOutput.step(hasAccountsToPreserve(config, "openai") ? "No API key added."
-                    : "No OpenAI account yet: 'isx account add openai' adds one.");
+            BuildOutput.step(hasAccountsToPreserve(config, "openai") ? "Skipped the API key."
+                    : "Skipped. 'isx account add openai' adds one later.");
             return true;
         }
-        prompts.say(styled(DIM, describeReceivedSecret(key)));
         // Which ChatGPT sessions this key ends, read before the save changes the config; they
         // end only after the save succeeded, or a failed save leaves config.yaml naming
         // ChatGPT accounts whose sessions are already gone
@@ -437,7 +468,9 @@ class CredentialSetup {
         }
         config.save();
         endChatGptSessions(leaving);
-        BuildOutput.ok("API key saved on " + Platform.thisComputer());
+        // Nothing checks an OpenAI key, so the one outcome line says so, and what to do (#2528)
+        BuildOutput.ok("API key saved on " + Platform.thisComputer() + ", not checked");
+        BuildOutput.stepNote("If it fails, 'isx account add openai' replaces it.");
         return true;
     }
 
@@ -567,6 +600,7 @@ class CredentialSetup {
         }
         if (!envOauthToken.isBlank()) {
             BuildOutput.step("Found a Claude token in CLAUDE_CODE_OAUTH_TOKEN.");
+            warnOfShape(envOauthToken, false);
             var result = verifyOauthToken(envOauthToken);
             if (!result.verified()) {
                 // As for Vertex AI: only a check that could not run may keep it, unverified (#2528)
@@ -731,6 +765,7 @@ class CredentialSetup {
         while (true) {
             var token = readSecret(prompts.askSecret(prompt));
             if (token.isBlank()) return Outcome.BACK;
+            warnOfShape(token, true);
             var result = verifyOauthToken(token);
             if (result.verified()) {
                 saveOauthConfig(config, target, token, true);
@@ -999,27 +1034,15 @@ class CredentialSetup {
     }
 
     /**
-     * Asks {@code question} for a secret, read unechoed, and confirms what arrived. {@code readPassword()} echoes nothing, so
-     * without this a paste that never landed looks exactly like one that did, and a truncated
-     * one only shows up as a rejection from the remote API. The line shows the length and the
-     * same masked form init already prints for a configured credential -- never more.
-     *
-     * <p>Dimmed and worded "received" rather than green: it says the input arrived, not that
-     * the credential works; verification still speaks for that.
+     * Asks {@code question} for a secret, read unechoed and stripped. The receipt that once
+     * followed a paste ("Received N characters") is gone: it was a second outcome line beside
+     * the one that says the credential was saved, and Sanne chose one (#2528).
      */
     static String askSecret(Prompts prompts, String question) {
         var secret = readSecret(prompts.askSecret(question));
-        if (!secret.isEmpty()) {
-            prompts.say(styled(DIM, describeReceivedSecret(secret)));
-        }
         return secret;
     }
 
-    static String describeReceivedSecret(String secret) {
-        var n = secret.length();
-        return "\u2713 Received " + n + (n == 1 ? " character" : " characters")
-                + " (" + maskSecret(secret) + ")";
-    }
 
     /**
      * The plaintext counterpart to {@link #readSecret(char[])}: strips, and answers EOF with
@@ -1049,14 +1072,29 @@ class CredentialSetup {
             return Optional.empty();
         }
         if (!token.startsWith(SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX)) {
-            return Optional.of("Note: token does not start with '" + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX
-                    + "' (unexpected format for 'claude setup-token' output).");
+            return Optional.of("The token does not start with '" + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX
+                    + "', as one from 'claude setup-token' does.");
         }
         if (token.length() < OAUTH_TOKEN_MIN_PLAUSIBLE_LENGTH) {
-            return Optional.of("Note: token is " + token.length() + " characters, shorter than expected."
-                    + " If your terminal wrapped the token, the paste may have been cut short.");
+            return Optional.of("The token is " + token.length() + " characters, shorter than one from"
+                    + " 'claude setup-token'. If your terminal wrapped it, the paste may be cut short.");
         }
         return Optional.empty();
+    }
+
+    /**
+     * Warns of a token's shape before it is checked, at the width of the frame. Its length only
+     * when it was {@code pasted}: a token read from the environment was never pasted, so a short
+     * one is not a paste cut short (#2528); its prefix whatever its source, so an API key in
+     * {@code CLAUDE_CODE_OAUTH_TOKEN} is named.
+     */
+    private static void warnOfShape(String token, boolean pasted) {
+        var shape = oauthTokenShapeWarning(token);
+        if (!pasted && token != null && token.startsWith(SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX)) shape = Optional.empty();
+        shape.ifPresent(warning -> {
+            var lines = Lines.wrap(warning, Lines.WIDTH - 2);
+            BuildOutput.warn(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
+        });
     }
 
     private static final Pattern WHITESPACE_RUN = Pattern.compile("\\s+");
@@ -1169,11 +1207,11 @@ class CredentialSetup {
     }
 
     AuthResult verifyOauthToken(String token) {
-        oauthTokenShapeWarning(token).ifPresent(BuildOutput::warn);
         return verifyAnthropicCredential("Authorization", "Bearer " + token, "OAuth token");
     }
 
-    private AuthResult verifyAnthropicCredential(String headerName, String headerValue, String label) {
+    /** Anthropic's answer to {@code headerName: headerValue}; the one network call, which tests replace. */
+    AuthResult verifyAnthropicCredential(String headerName, String headerValue, String label) {
         try {
             var client = getHttpClient();
             var request = HttpRequest.newBuilder()
@@ -2014,7 +2052,7 @@ class CredentialSetup {
                 continue;
             }
             if (choice.equals(none)) {
-                BuildOutput.note("No GitHub account for now.");
+                BuildOutput.note("Skipped the GitHub account for now.");
                 return false;
             }
             // Enter or a typo is asked again, never taken as a choice
@@ -2079,8 +2117,8 @@ class CredentialSetup {
      */
     private static void reportGitHubSkipped(SpawnConfig config) {
         BuildOutput.step(hasAccountsToPreserve(config, GhSetup.NAMESPACE)
-                ? "No token added for this account."
-                : "No GitHub account yet: 'isx account add " + GhSetup.NAMESPACE + "' adds one.");
+                ? "Skipped the token. This account stays as it was."
+                : "Skipped. 'isx account add " + GhSetup.NAMESPACE + "' adds one later.");
     }
 
     /**
@@ -2344,6 +2382,8 @@ class CredentialSetup {
         var replacedLists = new ArrayList<String>();
         var secretSkipped = false;
         var secretHeld = false;
+        // A secret typed or pasted in this step, not one kept
+        var secretEntered = false;
         choice:
         while (true) {
             accountValues.clear();
@@ -2351,6 +2391,7 @@ class CredentialSetup {
             replacedLists.clear();
             secretSkipped = false;
             secretHeld = false;
+            secretEntered = false;
             if (menu) {
                 var kind = chooseAccountKind(toolName, namespace, proxyDef, hosted, prompts);
                 if (kind == AccountKind.NONE) {
@@ -2418,6 +2459,7 @@ class CredentialSetup {
                     if (configDef.getHelp().isEmpty() && !description.isBlank()) BuildOutput.step(label);
                     var items = askListItems(configDef, prompts);
                     if (items.isEmpty()) continue;
+                    secretEntered |= configDef.hasSecretField();
                     replacedLists.add(listPath);
                     items.forEach((k, v) -> {
                         if (perAccount) accountValues.put(key + "." + k, v);
@@ -2450,6 +2492,8 @@ class CredentialSetup {
                 if (first && !menu && configDef.isSecret()) {
                     Lines.step(OutputFormat.oneLine(ExampleTemplate.title(tool)) + " uses "
                             + ("AEIOUaeiou".indexOf(label.charAt(0)) >= 0 ? "an " : "a ") + label + ".");
+                    // What it is for apart from how to make one, as the other steps lay it out (#2528)
+                    if (!configDef.getHelp().isEmpty()) BuildOutput.gap();
                 }
                 first = false;
                 for (var helpLine : configDef.getHelp()) {
@@ -2472,7 +2516,6 @@ class CredentialSetup {
                         // Enter goes back to the kinds of account; end of input skips, as every prompt's does
                         if (menu && answer != null && readSecret(answer).isEmpty()) continue choice;
                         value = readSecret(answer);
-                        if (!value.isEmpty()) prompts.say(styled(DIM, describeReceivedSecret(value)));
                     } else {
                         value = readInput(prompts.ask(question));
                     }
@@ -2480,6 +2523,7 @@ class CredentialSetup {
                 if (configDef.isSecret()) {
                     secretSkipped |= value.isBlank();
                     secretHeld |= !value.isBlank();
+                    secretEntered |= !value.isBlank();
                 }
                 if (value.isBlank()) continue;
                 if (perAccount) {
@@ -2496,7 +2540,7 @@ class CredentialSetup {
         for (var listPath : replacedLists) config.removeConfigPath(listPath);
         if (target != null && !accountValues.isEmpty()) {
             savedAny = saveAccount(config, namespace, shape, target, accountValues);
-            if (!savedAny) BuildOutput.step("No credential entered, so no account was changed.");
+            // Nothing saved is said once, by the report below (#2528)
             // A hosted account given a credential is one no longer: its type would make the
             // credential unread (a 'type: google' account spends no key, #2443)
             var typePath = namespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY + "." + target.name() + ".type";
@@ -2514,30 +2558,34 @@ class CredentialSetup {
         // A list whose items hold a secret is the credential too (AccountShape.declaredBy)
         var secret = proxyDef.getConfiguration().values().stream().filter(c -> c.isSecret() || c.hasSecretField())
                 .map(c -> OutputFormat.oneLine(c.getDescription())).filter(d -> !d.isBlank()).findFirst().orElse("Credential");
-        if (savedAny && (secretHeld || !secretSkipped)) {
-            BuildOutput.ok(secret + " saved on " + here);
+        // What was saved without a new credential is said by name, never reported as nothing
+        var answered = proxyDef.getConfiguration().values().stream().filter(c -> !c.isSecret())
+                .filter(c -> sharedValues.containsKey(proxyDef.fullConfigPath(c)))
+                .map(c -> "\"" + OutputFormat.oneLine(c.getDescription()) + "\"").toList();
+        var answersSaved = answered.isEmpty() ? "Your other answers are saved."
+                : answered.size() == 1 ? "Your answer to " + answered.getFirst() + " is saved."
+                : "Your answers to " + OutputFormat.andList(answered) + " are saved.";
+        // A key kept as it was is not newly saved, so never "not checked" (#2528)
+        if (savedAny && (secretEntered || (!secretHeld && !secretSkipped))) {
+            // Nothing checks a tool's credential, so the one outcome line says so, and what to do (#2528)
+            BuildOutput.ok(secret + " saved on " + here + ", not checked");
+            BuildOutput.stepNote("If it fails, '" + CredentialCheck.stepCommand(toolName,
+                    new dev.incusspawn.tool.ToolDefLoader().allToolSetups()) + "' replaces it.");
             return;
         }
-        if (!savedAny && secretHeld) {
+        if (secretHeld) {
             // A credential kept as it was is still there: never "add one later"
-            BuildOutput.step("No credential changed.");
+            BuildOutput.step("Your credential stays as it was.");
+            if (savedAny) Lines.step(answersSaved);
             return;
         }
+        var skipped = "Credential".equals(secret) ? "credential" : secret;
         // Read only when it is said: loading every tool definition is not free
         var later = "Add one later with '" + CredentialCheck.stepCommand(toolName, new dev.incusspawn.tool.ToolDefLoader().allToolSetups())
                 + "'.";
-        if (savedAny) {
-            // What was saved without its credential is said by name, never reported as nothing
-            var answered = proxyDef.getConfiguration().values().stream().filter(c -> !c.isSecret())
-                    .filter(c -> sharedValues.containsKey(proxyDef.fullConfigPath(c)))
-                    .map(c -> "\"" + OutputFormat.oneLine(c.getDescription()) + "\"").toList();
-            Lines.step(answered.isEmpty() ? "Saved your answers, with no " + secret + "."
-                    : "Saved your answer to " + String.join(" and ", answered) + ", with no " + secret + ".");
-            Lines.step(later);
-        } else {
-            BuildOutput.step("No credential added.");
-            Lines.step(later);
-        }
+        Lines.step("Skipped the " + skipped + ".");
+        Lines.step(later);
+        if (savedAny) Lines.step(answersSaved);
     }
 
     /** Which kind of account a namespace with a hosted sign-in sets up, or none for now. */

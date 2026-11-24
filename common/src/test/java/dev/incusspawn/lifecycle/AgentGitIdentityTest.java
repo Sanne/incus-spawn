@@ -21,6 +21,31 @@ class AgentGitIdentityTest {
     @TempDir
     Path dir;
 
+    /** A build container whose Git has no identity: the script prints only {@code git}. */
+    private static dev.incusspawn.incus.Container withoutIdentity() {
+        return new dev.incusspawn.incus.Container(null, "b") {
+            @Override public dev.incusspawn.incus.IncusClient.ExecResult sh(String script) {
+                return new dev.incusspawn.incus.IncusClient.ExecResult(0, "git\n", "");
+            }
+        };
+    }
+
+    @Test
+    void aTemplateWithNoAgentSaysNothingOfAgentsIdentity() {
+        // tpl-minimal, built first for tpl-agent, told a person who had just chosen a GitHub account
+        // that its agents had no identity (#2528)
+        var out = new dev.incusspawn.util.RecordingOutput();
+        AgentGitIdentity.applyAndReport(withoutIdentity(), null, AgentGitIdentity.GitHub.NOT_INSTALLED, false, out);
+        assertEquals(java.util.List.of(), out.events());
+    }
+
+    @Test
+    void aTemplateWithAnAgentSaysItHasNoIdentity() {
+        var out = new dev.incusspawn.util.RecordingOutput();
+        AgentGitIdentity.applyAndReport(withoutIdentity(), null, AgentGitIdentity.GitHub.NOT_INSTALLED, true, out);
+        assertTrue(out.events().getFirst().msg().contains("no Git identity"), out.events().toString());
+    }
+
     @Test
     void theFallbackIsUsedWhereNoAccountGaveAnIdentity() throws Exception {
         var effective = run(JANE);

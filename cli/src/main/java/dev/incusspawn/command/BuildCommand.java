@@ -65,6 +65,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static dev.incusspawn.command.BuildTools.computeToolFingerprints;
 import static dev.incusspawn.command.BuildProgress.dnfCommand;
@@ -1518,7 +1519,7 @@ public class BuildCommand extends BaseCommand {
                 BuildOutput.warn("Deriving will be a full copy, not a copy-on-write clone: "
                         + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
             }
-            BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'");
+            BuildOutput.stepStart("Starting from " + parentCanonical);
             copyFromParent(parentSource, buildName, copyPlan);
         }
         if (machineType == MachineType.CONTAINER) {
@@ -1746,7 +1747,7 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
             prepareContainerForPackageInstall(container);
 
-            BuildOutput.stepStart("Restarting container");
+            BuildOutput.stepStart("Restarting the build");
             incus.stop(buildName);
             incus.deviceAdd(buildName, "tun", "unix-char",
                     "source=/dev/net/tun", "path=/dev/net/tun", "mode=0666");
@@ -2376,8 +2377,22 @@ public class BuildCommand extends BaseCommand {
                 : AgentGitIdentity.GitHub.NOT_INSTALLED;
         // In /etc/gitconfig, which the account's ~/.gitconfig overrides, so it changes nothing
         // the stamps above decided (#2410)
-        AgentGitIdentity.applyAndReport(container, config.gitIdentity(), gitHub, BuildOutput.bound());
+        var agents = installsCodingAgent(imageDef, defs, toolDefLoader.allToolSetups());
+        AgentGitIdentity.applyAndReport(container, config.gitIdentity(), gitHub, agents, BuildOutput.bound());
         return stamps;
+    }
+
+    /**
+     * Whether {@code imageDef}'s chain installs a coding agent, with what each tool requires: a
+     * tool that requires an agent installs it (headroom, claude). tpl-minimal, built first for
+     * tpl-agent, installs none, so it says nothing of agents' Git identity (#2528).
+     */
+    static boolean installsCodingAgent(ImageDef imageDef, Map<String, ImageDef> defs, Map<String, dev.incusspawn.tool.ToolSetup> tools) {
+        var installed = new java.util.LinkedHashSet<String>();
+        ImageDef.chain(imageDef, defs).stream()
+                .flatMap(layer -> layer.getTools().stream())
+                .forEach(ref -> dev.incusspawn.tool.ToolSetup.addWithRequires(ref.getName(), tools, installed));
+        return installed.stream().map(tools::get).anyMatch(setup -> setup != null && setup.codingAgent());
     }
 
     /** Containers only: a VM's build has no step between its start and the mirror wait. */
@@ -2555,6 +2570,7 @@ public class BuildCommand extends BaseCommand {
      */
     boolean askForAccounts = true;
 
+
     /** Who asks for the accounts a build lacks: init's credential steps, at a terminal; overridden by tests. */
     InitCommand accountSetup() {
         return new InitCommand();
@@ -2572,8 +2588,13 @@ public class BuildCommand extends BaseCommand {
             missing = missingCredentials(templates, defs);
             if (missing == null) return;
         }
-        missing.forEach((credential, names) -> BuildOutput.warn(unbranchable(credential, OutputFormat.andList(names)),
-                credential.notes().toArray(String[]::new)));
+        missing.forEach((credential, names) -> {
+            // Wrapped to init's frame, which a first run's build prints inside (#2528)
+            var lines = new ArrayList<String>();
+            Stream.concat(unbranchable(credential, names).stream(), credential.notes().stream())
+                    .forEach(line -> lines.addAll(Lines.wrap(line, Lines.WIDTH - 2)));
+            BuildOutput.warn(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
+        });
     }
 
     /** Each credential {@code templates} lack, with the templates that need it; null when it cannot be told. */
@@ -2600,10 +2621,16 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    /** What {@code isx branch} will refuse {@code refused} for while {@code credential} is not configured (#1438). */
-    static String unbranchable(CredentialCheck.Missing credential, String refused) {
-        return "Missing credential: " + credential.credential() + ". 'isx branch' will refuse " + refused
-                + " until it is configured with '" + credential.command() + "'.";
+    /**
+     * That {@code isx branch} refuses {@code refused} while {@code credential} is not configured,
+     * and the command that configures it: one sentence a line, not yet wrapped (#1438, #2528).
+     */
+    static List<String> unbranchable(CredentialCheck.Missing credential, List<String> refused) {
+        var one = refused.size() == 1;
+        return List.of(OutputFormat.andList(refused) + (one ? " lacks" : " lack") + " a credential: 'isx branch' refuses "
+                        + (one ? "it." : "them."),
+                "Needed: " + credential.credential() + ".",
+                "'" + credential.command() + "' adds it.");
     }
 
     /**
@@ -2723,7 +2750,7 @@ public class BuildCommand extends BaseCommand {
         BuildAccounts.revoke(incus, buildName);
         ProxyService.signalAccountRefresh();
         BuildAccounts.clearGuestProofs(new Container(incus, buildName));
-        BuildOutput.stepStart("Stopping image");
+        BuildOutput.stepStart("Stopping the build");
         incus.stop(buildName);
         BuildOutput.stepDone();
         if (started.address() != null) InstanceNetwork.releaseBuildAddressOrWarn(incus, buildName, BuildOutput.bound());

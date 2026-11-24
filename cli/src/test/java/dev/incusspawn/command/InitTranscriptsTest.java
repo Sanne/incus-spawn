@@ -84,15 +84,10 @@ class InitTranscriptsTest {
         @Override boolean ghCliLoggedIn() { return ghLoggedIn; }
         @Override String readGhAuthToken() { return ghToken; }
 
+        // Only the network call: the checks around it, a token's shape warning included, are the real ones
         @Override
-        AuthResult verifyAnthropicApiKey(String key) {
-            return anthropicAccepts ? new AuthResult(true, "API key verified.")
-                    : new AuthResult(false, "Anthropic rejected it (HTTP 401): it may be expired or mistyped.");
-        }
-
-        @Override
-        AuthResult verifyOauthToken(String token) {
-            return anthropicAccepts ? new AuthResult(true, "OAuth token verified.")
+        AuthResult verifyAnthropicCredential(String headerName, String headerValue, String label) {
+            return anthropicAccepts ? new AuthResult(true, label + " verified.")
                     : new AuthResult(false, "Anthropic rejected it (HTTP 401): it may be expired or mistyped.");
         }
 
@@ -296,9 +291,9 @@ class InitTranscriptsTest {
         b.add(new Branch("12-codex-chatgpt-browser", "Codex chosen; ChatGPT in the browser",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "1", "2", "")));
-        b.add(new Branch("13-codex-chatgpt-code-fails", "Codex chosen; ChatGPT with a one-time code, which expires",
+        b.add(new Branch("13-codex-chatgpt-code-fails", "Codex chosen; ChatGPT with a one-time code, which expires; tried again, then skipped",
                 i -> { }, h -> h.chatGptSignsIn = false,
-                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "2", "2", "")));
+                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "2", "", "s", "2", "")));
         b.add(new Branch("14-codex-none-for-now", "Codex chosen; None for now",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "4", "2", "")));
@@ -383,6 +378,22 @@ class InitTranscriptsTest {
         b.add(new Branch("36-in-a-project-directory", "Claude Code; run in a directory whose .incus-spawn/ overrides the claude tool",
                 i -> { i.found = sub; i.inAProject = true; }, claudeHere,
                 new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("")));
+        // Seen on a real run (#2528): a token from the environment was never pasted, so no note about a paste
+        b.add(new Branch("37-claude-env-short-token", "CLAUDE_CODE_OAUTH_TOKEN in the environment, shorter than one from setup-token",
+                i -> i.found = sub, h -> { h.commands.add("claude"); h.env.put("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN.substring(0, 49)); },
+                new ScriptedPrompts().line("", "", "2", "")));
+        // Seen on a real run (#2528): a tpl-agent an earlier run wrote lists gh, and no GitHub account is saved
+        b.add(new Branch("38-earlier-tpl-agent-lists-gh", "A tpl-agent.yaml from an earlier run that lists gh; a subscription token; GitHub None for now",
+                i -> { i.found = sub; seedTemplate("""
+                        name: tpl-agent
+                        description: Claude Code on a minimal Fedora machine
+                        parent: tpl-minimal
+                        tools:
+                          - claude
+                          - gh
+                        default-action: claude
+                        """); },
+                claudeHere, new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("2", "")));
         b.add(new Branch("30-linux-no-sudo", "Linux with --no-sudo; no agent; GitHub None for now",
                 i -> i.noSudo = true, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.none()), "2", ""),
@@ -429,6 +440,41 @@ class InitTranscriptsTest {
         Files.writeString(OUT.resolve("never-words.txt"), String.join("\n", words) + "\n");
         assertEquals(List.of(), words, "a word outside the first run's vocabulary (.claude/rules/interface-text.md)");
         assertEquals(List.of(), tooWide, "wider than the frame (rule 8 of the review on #2528)");
+    }
+
+    /** The branch named {@code name}, run alone from a fresh home. */
+    static String transcriptOf(String name) throws Exception {
+        IsolatedHome.configFile().toFile().delete();
+        Files.deleteIfExists(ExampleTemplate.file());
+        return transcript(branches().stream().filter(b -> b.name().equals(name)).findFirst().orElseThrow());
+    }
+
+    @Test
+    void aTokenFromTheEnvironmentIsNeverSaidToBeAPasteCutShort() throws Exception {
+        var text = transcriptOf("37-claude-env-short-token");
+        assertFalse(text.contains("paste"), text);
+        assertTrue(text.contains("Token verified and saved"), text);
+    }
+
+    @Test
+    void aGitHubAccountAnEarlierTemplateListsIsAskedInItsOwnStep() throws Exception {
+        var text = transcriptOf("38-earlier-tpl-agent-lists-gh");
+        assertTrue(text.contains("You answer   your coding agent, its account, GitHub"), text);
+        assertTrue(text.contains("Claude Code Account                                   [2/3]"), text);
+        assertTrue(text.contains("GitHub Account                                        [3/3]"), text);
+        // GitHub's account is not the agent's: the closing box does not ask for it as Claude Code's
+        assertFalse(text.contains("Add Claude Code's account"), text);
+    }
+
+    /** {@code yaml} as the person's own tpl-agent.yaml, as an earlier run writes it. */
+    static void seedTemplate(String yaml) {
+        try {
+            var dir = dev.incusspawn.config.ImageDef.userImagesDir();
+            java.nio.file.Files.createDirectories(dir);
+            java.nio.file.Files.writeString(dir.resolve("tpl-agent.yaml"), yaml);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 
     static void seed(String yaml) {

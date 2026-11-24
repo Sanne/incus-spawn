@@ -510,7 +510,7 @@ public class TemplatesCommand extends BaseCommand {
                     .keySet().stream()
                     .map(missing -> {
                         var said = new ArrayList<String>();
-                        said.add(BuildCommand.unbranchable(missing, "this template"));
+                        said.addAll(BuildCommand.unbranchable(missing, List.of("This template")));
                         said.addAll(missing.notes());
                         return TemplateFinding.warning("tools", String.join(" ", said));
                     })

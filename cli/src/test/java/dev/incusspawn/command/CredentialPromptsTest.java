@@ -235,7 +235,7 @@ class CredentialPromptsTest {
                 """);
         var printed = reported(() -> new CredentialSetup().setupGenericToolCredentials("solo",
                 new ToolDefLoader().find("solo"), new SpawnConfig(), new ScriptedPrompts().secret("")));
-        assertTrue(printed.contains("No credential added.\nAdd one later with 'isx account add soloCloud'."), printed);
+        assertTrue(printed.contains("Add one later with 'isx account add soloCloud'."), printed);
     }
 
     /**
@@ -264,6 +264,20 @@ class CredentialPromptsTest {
     void enterOnReRunLeavesEverythingAsItIs() throws Exception {
         configure(seed(KEY_AND_REGION), ScriptedPrompts.lines(""));
         assertUnchanged(KEY_AND_REGION);
+    }
+
+    /** A key kept while another answer changes is not newly saved, so never said to be unchecked (#2528). */
+    @Test
+    void aKeptKeyIsNotSaidToBeSavedOrUnchecked() throws Exception {
+        var config = seed(TWO_ACCOUNTS);
+        var prompts = new ScriptedPrompts().line("e", "work", "", "n", "eu-west", "");
+        var printed = reported(() -> new CredentialSetup().setupGenericToolCredentials("acme", acme(), config, prompts));
+        prompts.assertFullyConsumed();
+
+        assertEquals("acme-work-secret", saved("acme.accounts.work.apiKey"));
+        assertEquals("eu-west", saved("acme.accounts.work.region"));
+        assertFalse(printed.contains("not checked"), printed);
+        assertTrue(printed.contains("Your credential stays as it was."), printed);
     }
 
     /** EOF at "keep current?" keeps it: running out of input must never clear a credential. */

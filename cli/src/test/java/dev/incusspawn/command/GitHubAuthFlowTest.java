@@ -143,7 +143,7 @@ class GitHubAuthFlowTest {
 
     /**
      * The token is asked for through the prompts that read it (#1703): the question and the
-     * receipt are the conversation a test sees, and the question is a secret's, never echoed.
+     * answer are the conversation a test sees, and the question is a secret's, never echoed.
      */
     @Test
     void theTokenIsAskedForThroughThePromptsThatReadIt() {
@@ -344,7 +344,7 @@ class GitHubAuthFlowTest {
         var out = reported(() -> run(new FakeInit().acceptAgentPat(),
                 declineBrowser().secret(AGENT_PAT).line("a", "work").secret("")));
 
-        assertTrue(out.contains("No token added for this account."), out);
+        assertTrue(out.contains("Skipped the token. This account stays as it was."), out);
         assertFalse(out.contains("Skipped GitHub setup"), out);
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
     }
@@ -353,7 +353,7 @@ class GitHubAuthFlowTest {
     void skippingTheOnlyAccountSaysSetupWasSkipped() {
         var out = reported(() -> run(new FakeInit(), declineBrowser().secret("")));
 
-        assertTrue(out.contains("No GitHub account yet"), out);
+        assertTrue(out.contains("adds one later"), out);
     }
 
     /**

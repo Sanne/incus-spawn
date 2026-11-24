@@ -70,13 +70,16 @@ public final class AgentGitIdentity {
     /**
      * Writes {@code identity} as the fallback (or, when null, removes a fallback isx wrote before),
      * then says in the build's output whom the agent commits as and why. One exec, as root;
-     * nothing at all when the image has no Git. A failed write fails the build.
+     * nothing said when the image has no Git, or when {@code agents} says it installs no coding
+     * agent. A failed write fails the build.
      */
-    public static void applyAndReport(Container container, GitIdentity identity, GitHub gitHub, Output out) {
+    public static void applyAndReport(Container container, GitIdentity identity, GitHub gitHub, boolean agents, Output out) {
         var result = container.sh(script(identity));
         // Never a template that silently commits under another identity than config.yaml names
         result.assertSuccess("Could not write the git-identity of config.yaml to " + SYSTEM_FILE);
-        if (result.stdout().isBlank()) return;
+        // A template with no coding agent has no agent to commit: tpl-minimal, built first for
+        // tpl-agent, said its agents had no identity to a person who had just given one (#2528)
+        if (!agents || result.stdout().isBlank()) return;
         var effective = parse(result.stdout());
         if (effective == null) out.note(report(null, identity, keptTemplatesOwn(result.stdout()), gitHub));
         else out.step(report(effective));
