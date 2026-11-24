@@ -27,12 +27,22 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    A step that is not the agent's own is introduced by one line saying so (`InitCommand.sayWhoseAccount`), since its questions name another product: Pi is asked about Claude.
    For an agent with a `provider` parameter it also says to choose "None for now" for another provider, and links the agent's page, which shows how.
    When the account is GitHub's (Copilot), the step is the GitHub question of the next step, which is then not asked a second time.
+   For any other agent, GitHub's account is the next step's alone, even when a `tpl-agent.yaml` an earlier run wrote lists `gh` (`agentGaps`), so that question always has its own header and count.
    A namespace that already has a usable account is not asked again.
 4. It asks as which GitHub account the agent acts (`CredentialSetup.offerGitHubForAgent`), and after "None for now" asks the Git identity question of design/accounts.md "A Git identity no account supplies".
 5. On Linux it asks for sudo, and installs the dependencies.
-6. It runs the plumbing as one block (`firstRunPlumbing`): today's steps that ask nothing, the Git remote helper and DNS among them, then the services.
+6. It runs the plumbing as one block (`firstRunPlumbing`): on Linux the dependencies first, then today's steps that ask nothing, the Git remote helper and DNS among them, then the services.
+   The block shows one line per outcome (#2528): it binds `Output.detailsLogged`, so a step line, a note and a list go to the client log, and are shown only before a warning or a question that follows them.
+   A host command's output goes to the log too (`InitCommand.hostOutputToLog`), with the last lines of a failed one shown under its step.
+   sudo asks again with the terminal released only when its credentials expired, so its prompt is never drawn over.
+   The proxy service's lifecycle lines stay in its own log, and a continuation under `sg` carries on the block under its parent's header.
    DNS is inside the block, since no step before it adds a search path, whose tools' domains it writes.
 7. It writes `tpl-agent.yaml` for the agent (`ExampleTemplate`), or with no agent nothing, and builds it, or `tpl-minimal`.
+   The build shows its live steps, outcomes and warnings, its details in the log, as the block of setup does.
+   It still warns of every account the template lacks, the one the person skipped included, though the completion message names it too: Sanne chose the warning over saying it once (#2528).
+   Its step labels name no container or image ("Starting from tpl-minimal", "Restarting the build", "Stopping the build"), as every build's now do.
+   A `tpl-agent` already there is said to be kept only when it installs another agent than the one chosen.
+   A template with no coding agent in its chain says nothing of agents' Git identity: `tpl-minimal`, built first for `tpl-agent`, told a person who had just chosen their own GitHub account that its agents had no identity (`AgentGitIdentity.applyAndReport`).
    It lists the `gh` tool after the agent only when a usable GitHub account is saved by then, so the first agent uses the account the person gave and a person who skipped it gets no missing-credential warning (#2535).
    A definition already named `tpl-agent`, in the person's directory or a search path, is built as it is and nothing is written, since a second one would make the build refuse both.
    Only trusted definitions decide the first template: a project's `.incus-spawn/` in the working directory is a cloned repository's.
@@ -53,7 +63,7 @@ A first run whose proxy is not a running service builds nothing either, since a 
 The completion message then names the build command.
 
 **The completion message is what the person does next, in order** (#2528).
-The box holds the result and the next command: the template built, which is where "template" is explained, and the command that opens the agent in a new isx machine (`InitCommand.firstRunNextSteps`).
+The box holds the result and the next command: the template, built or not, which is where "template" is explained in every variant of the box, and the command that opens the agent in a new isx machine (`InitCommand.firstRunNextSteps`).
 When more is left, it lists it as numbered steps, one command to a line, in the order that works: start the services, build the template, add the agent's account, open the agent.
 Its title reads "Setup complete" only when opening the agent is all that is left, and otherwise counts the steps left; a build that failed is named.
 An agent that needs something of the person at its first start says so under its step (`ToolSetup.firstStartNote`): Antigravity CLI on a Google account signs in from the instance.
@@ -89,6 +99,7 @@ When `script` is missing (Fedora ships it as `util-linux-script`), the command g
 A reading that did not verify is never saved without the person's answer at that paste.
 Before a run, isx keeps the terminal's settings (`stty -g`) and restores them after a timeout or an interrupt, since a `script` that dies on SIGTERM may leave the terminal raw.
 Masking the token on the screen, so it stays out of the scrollback, is left for later: masking a wrapped token inside another program's drawing is harder than reading it.
+A pasted token whose shape is off is warned of before its check; a token read from `CLAUDE_CODE_OAUTH_TOKEN` was never pasted, so nothing is said of a paste.
 A credential in the environment, or accounts already saved, take the full step instead, which reads and keeps those.
 
 ## A GitHub account in the first run
@@ -115,6 +126,7 @@ The count is the run's own: before the agent is chosen it counts the questions f
 After the choice it counts again, so a Copilot run, whose account step is the GitHub question, reads `[2/2]`, and the intro's "You answer" row lists the same questions.
 With no agent chosen, the GitHub step and the Git identity question speak of isx machines, never of "the agent" (`CredentialSetup.noAgent`).
 A check that fails is answered with one letter per meaning across the step: `Y` tries again and `s` skips, as in the step's own menu.
+A pasted key nothing checks (OpenAI's, a tool's) is reported in one line, `saved on this computer, not checked`, with the command that replaces it; no line confirms the paste apart from it (#2528).
 A ChatGPT sign-in by one-time code that did not finish offers the same `Y` and `s`, and `Y` asks for a new code, since a code expires by itself (`CredentialSetup.signInChatGptWithDeviceCode`).
 Saving unverified (`u`) is offered only when the check could not run or reach the service (`CredentialSetup.AuthResult.reached`), since a credential the service rejected fails the same way in every isx machine.
 A namespace with a hosted sign-in (Gemini's Google account) offers its kinds as the Claude step does, each with a line under it and "None for now", and offers the hosted kind only to the agents that can use it (`ToolSetup.HostedSignIn.tools`): a first run for Gemini CLI never offers Antigravity CLI's Google sign-in.

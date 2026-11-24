@@ -187,7 +187,7 @@ Tests drive flows with `ScriptedPrompts`, which fails if a value scripted as a s
 `@ExtendWith(IsolatedHome.class)` is required for anything that can reach `config.save()`, which otherwise writes `target/test-home/.config/incus-spawn/config.yaml`, shared by the module's tests: surefire points every test JVM's `user.home` there so the developer's real one is never touched (#2426).
 It also gives `CredentialSetup` an empty `FakeIncusDaemon` (`CredentialSetup.replaceIncus`, `IsolatedHome.incus()`), so an account flow never reads the developer's instances, which made it ask questions no test scripted (#1965).
 Secrets are read with `askSecret(prompts)`, never a bare `readPassword()`.
-Nothing is echoed, so it prints a dimmed `✓ Received N characters (<maskSecret>)` line confirming a paste landed -- length and masked form only, which `GitHubAuthFlowTest` checks by asserting the raw token never reaches stdout.
+Nothing is echoed, and nothing confirms the paste on its own line: the step's one outcome line says the credential was saved, verified or `not checked` (#2528); `GitHubAuthFlowTest` asserts the raw token never reaches stdout.
 New prompts in init follow the same shape: take `Prompts`, route any network or host call through an overridable method, and add a flow test asserting what reaches the file on disk.
 A question with several alternatives goes through `Prompts.choose` (#2492): a blank line, a lead-in that says "Choose one", the options indented as a group, one shared note after the list, and a prompt that says what Enter does.
 A step never indents its own menu lines.
