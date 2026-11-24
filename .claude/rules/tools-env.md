@@ -33,8 +33,12 @@ paths:
   Codex 0.162.1 renders the profile name verbatim, so its name carries `Running unconstrained in isx [version] [container]` without a patched binary.
   `/etc/profile.d/isx-zz-codex-footer.sh` refreshes that name from `ISX_VERSION` and `ISX_CONTAINER` at login, preserving other settings and any user-selected permission profile.
   Pi's footer shows the same message through a root-owned extension, `/etc/isx/pi/isx-status.ts`, listed in `~/.pi/agent/settings.json`'s `extensions`; it reads both variables when Pi starts.
+  It writes `defaultThinkingLevel` there only when `effort` is set, so Pi keeps its own default otherwise (#2548).
   `OpencodeSetup` is not a `PlatformSplitCli`: after its `--ignore-scripts` install it runs `opencode-ai`'s `postinstall.mjs` (`LINK_SCRIPT`), which replaces the stub launcher with the platform binary and fails when it cannot.
   The script runs the binary, so it gets a scratch `HOME` and `TMPDIR`: a root-owned `/tmp/opencode` would lock agentuser's opencode out.
+
+`ClaudeSetup` (`claude`) accepts Claude Code's model aliases (`opus`, `sonnet`, `haiku`, `fable`, `best`, `opusplan`, `opus[1m]`, `sonnet[1m]`) as well as `claude-*` IDs in `model`, and writes `effort` under `modelSettings.<model>.effortLevel` in `~/.claude/settings.json` (#2534, #2548).
+Claude Code resolves an alias key there to the model that alias selects on the active provider, while a canonical entry `/effort` saves later takes precedence.
 
 `OpencodeSetup` (`opencode`) writes `~/.config/opencode/opencode.json` in opencode 1.x's forms: `permission`, `autoupdate: false`, `share: disabled`, `instructions: ["/AGENTS.md"]` and a pinned `model` (`anthropic/claude-sonnet-5-5` by default), and a `small_model` only from the separate `small-model` parameter, never from `model` (#2220).
 Its `effort` parameter is written as the `variant` of the `build` and `plan` agents, each naming the template's model, since opencode applies an agent's variant only on its own model; it needs a model, which the `anthropic` default supplies (#2530).

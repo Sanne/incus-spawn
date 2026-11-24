@@ -40,8 +40,9 @@ The key or token stays on the host, and the proxy adds it to Claude Code's reque
 | `attribution-commit` | Claude Code's own default | The trailer Claude Code adds to its commits, such as `Assisted-By: Claude Code <noreply@anthropic.com>` |
 | `attribution-pr` | Claude Code's own default | The text Claude Code adds to its pull requests; an empty string omits it |
 
-Model IDs follow the `claude-*` naming convention: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`.
-`advisor-model` also takes the aliases `opus`, `sonnet` and `haiku`, which `model` does not.
+`model` takes a `claude-*` ID such as `claude-sonnet-5-5`, a family alias (`opus`, `sonnet`, `haiku` or `fable`), or `best`, `opusplan`, `opus[1m]` or `sonnet[1m]`.
+Each family alias follows the current model of that family.
+`advisor-model` takes a `claude-*` ID, `opus`, `sonnet`, `haiku` or `fable`.
 A child template can set any of these parameters again without reinstalling Claude Code.
 
 The build writes `effort` to `~/.claude/settings.json` under `modelSettings` for the selected model, the form `/effort` writes, so `/effort` can still change it in a session.
@@ -156,7 +157,7 @@ Your own extensions in `~/.pi/agent/extensions/` load as usual.
 | --- | --- | --- |
 | `provider` | `anthropic` | The API Pi talks to; also accepts `openai`, `google`, `google-vertex` or `vertex` |
 | `model` | `claude-sonnet-5-5` for `anthropic`, otherwise Pi's own | The model Pi uses |
-| `effort` | `medium` | Thinking level: `off`, `minimal`, `low`, `medium`, `high` or `xhigh` |
+| `effort` | Pi's own default | Thinking level: `off`, `minimal`, `low`, `medium`, `high` or `xhigh` |
 
 The `openai` provider uses your OpenAI key, as shown below.
 A provider isx does not manage needs no credential from isx: Pi signs in to it itself.

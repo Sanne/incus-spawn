@@ -100,7 +100,7 @@ public class PiSetup implements ToolSetup {
 
         var effort = new ToolDef.ParameterDef();
         effort.setType("string");
-        effort.setDescription("Thinking level (off, minimal, low, medium, high, xhigh); omitted, medium");
+        effort.setDescription("Thinking level (off, minimal, low, medium, high, xhigh); omitted, Pi's own default");
         effort.setPattern("^(off|minimal|low|medium|high|xhigh)$");
         effort.setOptional(true);
         effort.setReconfigurable(true);
@@ -308,15 +308,16 @@ public class PiSetup implements ToolSetup {
         var provider = piProvider(provider(resolvedParams));
         var model = defaultModel(provider, resolvedParams.get("model"));
         var modelLine = model == null ? "" : "  \"defaultModel\": \"" + model + "\",\n";
+        var effort = resolvedParams.get("effort");
+        var thinkingLine = effort == null ? "" : "  \"defaultThinkingLevel\": \"" + effort + "\",\n";
         var settingsJson = """
                 {
                   "enableInstallTelemetry": false,
                   "quietStartup": true,
                   "defaultProvider": "%s",
-                %s  "defaultThinkingLevel": "%s",
-                  "extensions": ["%s"]
+                %s%s  "extensions": ["%s"]
                 }
-                """.formatted(provider, modelLine, resolvedParams.getOrDefault("effort", "medium"), STATUS_EXTENSION_PATH);
+                """.formatted(provider, modelLine, thinkingLine, STATUS_EXTENSION_PATH);
         c.sh("mkdir -p /etc/isx/pi /home/agentuser/.pi/agent");
         c.writeFile(STATUS_EXTENSION_PATH, STATUS_EXTENSION);
         c.writeFile("/home/agentuser/.pi/agent/settings.json", settingsJson);
