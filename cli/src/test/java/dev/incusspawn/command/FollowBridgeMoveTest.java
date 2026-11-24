@@ -4,6 +4,7 @@ import dev.incusspawn.incus.FirewallDetector.DetectionResult;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.proxy.ProxyConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@code isx doctor}'s bridge move (#1203) redoes the PREROUTING redirect for the new gateway on
  * the firewall that is running, and removes the old one, which names an address the bridge left.
  */
+@ExtendWith(IsolatedHome.class)
 class FollowBridgeMoveTest {
 
     private static final String OLD_GATEWAY = "10.166.11.1";
@@ -101,6 +103,31 @@ class FollowBridgeMoveTest {
                 init.commands.toString());
         assertTrue(init.commands.stream().anyMatch(c -> c.contains("--add-rule") && c.contains(NEW_GATEWAY)),
                 init.commands.toString());
+    }
+
+    /** The gateway is saved to config.yaml as it is after the move, so an account added meanwhile is kept (#2523). */
+    @Test
+    void theGatewayIsSavedWithoutUndoingAChangeMadeDuringTheMove() throws Exception {
+        IsolatedHome.seed("incus-bridge-gateway: " + OLD_GATEWAY + "\n");
+        var init = new RecordingInit();
+        // Another terminal's isx account add, while the instances migrated
+        IsolatedHome.seed("incus-bridge-gateway: " + OLD_GATEWAY + "\nclaude:\n  accounts:\n    work: {apiKey: x}\n");
+        capture(() -> init.host().followBridgeMove(NEW_GATEWAY, NONE));
+        assertEquals(NEW_GATEWAY, dev.incusspawn.config.SpawnConfig.load().getIncusBridgeGateway());
+        assertEquals("x", IsolatedHome.saved("claude.accounts.work.apiKey"));
+    }
+
+    /** A config.yaml that stopped parsing during the move still gets the redirect, then stops the step and is left as it is. */
+    @Test
+    void aFileBrokenDuringTheMoveStillGetsItsRedirect() throws Exception {
+        var broken = "claude: [unclosed\n";
+        java.nio.file.Files.createDirectories(IsolatedHome.configFile().getParent());
+        java.nio.file.Files.writeString(IsolatedHome.configFile(), broken);
+        var init = new RecordingInit();
+        var e = assertThrows(IllegalStateException.class, () -> capture(() -> init.host().followBridgeMove(NEW_GATEWAY, FIREWALLD)));
+        assertTrue(e.getMessage().contains("run 'isx doctor' again"), e.getMessage());
+        assertFalse(init.commands.isEmpty(), "the redirect is written before the save");
+        IsolatedHome.assertUnchanged(broken);
     }
 
     @Test
