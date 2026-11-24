@@ -44,7 +44,7 @@ public class StopCommand extends BaseCommand {
         var shown = OutputFormat.oneLine(name);
         // Before a lock file is made for the name, as isx destroy checks
         if (!incus.exists(name)) {
-            BuildOutput.error("no instance named '" + shown + "' found.");
+            BuildOutput.error("no instance named '" + shown + "' found.", "Run 'isx list' to see available instances.");
             return CommandResult.valueOf(1);
         }
         try (var held = InstanceStart.lock(locks, name, Metadata.OP_STOPPING, BuildOutput.bound(), wait)) {

@@ -23,12 +23,12 @@ import java.util.function.Function;
 
 @CommandDefinition(
         name = "shell",
-        description = "Open a shell in an existing clone",
+        description = "Open a shell in an instance, starting it if it is stopped",
         generateHelp = true
 )
 public class ShellCommand extends BaseCommand {
 
-    @Argument(index = "0", completer = Completers.Instance.class, description = "Name of the clone to connect to", required = true)
+    @Argument(index = "0", completer = Completers.Instance.class, description = "Name of the instance", required = true)
     String name;
 
     @Option(name = "task", hasValue = false,
@@ -163,7 +163,7 @@ public class ShellCommand extends BaseCommand {
                         Function<TaskJoin.Entry, String> reclaim, Output out) {
         out.step("A person's agent holds " + entry.id() + "'s conversation in " + name + ": " + TaskJoin.holder(entry, now) + ".");
         if (!askYesNo(prompts, "End it with SIGHUP and join " + entry.id() + "? Whatever they typed and did not send is lost.", false)) {
-            out.step("Aborted.");
+            out.step("Did not end it.");
             return false;
         }
         var why = reclaim.apply(entry);

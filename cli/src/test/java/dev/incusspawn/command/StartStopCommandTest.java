@@ -87,7 +87,7 @@ class StartStopCommandTest {
             var refused = assertThrows(InstancePrep.Refused.class, () -> InstanceStart.start(daemon.client(), locks, "dev",
                     dev.incusspawn.util.BuildOutput.bound(), (i, n, o) -> fail("never prepared without the lock"),
                     Duration.ofMillis(300)));
-            assertEquals("'dev' stayed locked by another isx process for 0 seconds; try again.", refused.getMessage());
+            assertEquals("'dev' is still in use by another isx process after 0 seconds.\n" + InstanceStart.BUSY_ADVICE, refused.getMessage());
         });
         assertEquals(List.of("Waiting for another isx process using dev"),
                 recorded.events(RecordingOutput.Kind.STEP_START).stream().map(RecordingOutput.Event::msg).toList(),
@@ -143,7 +143,7 @@ class StartStopCommandTest {
         });
 
         assertEquals("Running", daemon.instance("dev").path("status").asText());
-        assertEquals(List.of("'dev' stayed locked by another isx process for 0 seconds; try again.", "no instance named 'gone' found."),
+        assertEquals(List.of("'dev' is still in use by another isx process after 0 seconds.", "no instance named 'gone' found."),
                 recorded.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList());
     }
 
