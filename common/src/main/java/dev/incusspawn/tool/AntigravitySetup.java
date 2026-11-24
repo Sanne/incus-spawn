@@ -346,8 +346,14 @@ public class AntigravitySetup implements ToolSetup {
      * {@code isx account set} left agy in the old mode.
      */
     static String accountMode(SpawnConfig config, String accountName) {
-        if (accountName == null || accountName.isBlank()) return "";
         try {
+            // No account named is the namespace's configured default, which is what a build
+            // that pins none (the common case) actually used: stamping nothing for it left a
+            // later move to a Google account unseen, and agy in the API key mode.
+            if (accountName == null || accountName.isBlank()) {
+                accountName = dev.incusspawn.config.AccountResolver.effectiveAccount(config, GeminiSetup.NAMESPACE, null);
+                if (accountName == null || accountName.isBlank()) return "";
+            }
             var names = dev.incusspawn.config.AccountResolver.accountNames(config, GeminiSetup.NAMESPACE);
             if (!names.contains(accountName)) return "";
         } catch (RuntimeException e) {

@@ -109,7 +109,12 @@ class AntigravitySetupTest {
         assertEquals(tool.bakedAccountIdentity(config, "work"), tool.bakedAccountIdentity(config, "other"),
                 "two key accounts leave the image the same");
         assertEquals("", tool.bakedAccountIdentity(config, "missing"));
-        assertEquals("", tool.bakedAccountIdentity(config, ""));
+        // No account named is the one the namespace resolves to: a build that pins none used it
+        var configured = dev.incusspawn.config.AccountResolver.effectiveAccount(config, "gemini", null);
+        assertEquals(tool.bakedAccountIdentity(config, configured), tool.bakedAccountIdentity(config, ""));
+        assertEquals(tool.bakedAccountIdentity(config, configured), tool.bakedAccountIdentity(config, null));
+        assertEquals("", tool.bakedAccountIdentity(new dev.incusspawn.config.SpawnConfig(), null),
+                "no gemini account configured at all bakes nothing");
         assertTrue(tool.canRebakeForAccount(), "settings and the login script are read when agy starts");
     }
 

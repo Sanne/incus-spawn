@@ -285,6 +285,14 @@ public interface ToolSetup {
     default boolean canRebakeForAccount() { return false; }
 
     /**
+     * Whether an instance pinned to an account, whose template stamped nothing for this tool's
+     * namespace, is re-derived (once; the stamp is then written). For a tool whose old templates
+     * hold nothing to compare a move against, and whose re-derive is idempotent and cheap where
+     * the tool is absent. Never for one whose guest state may predate stamps and be right (gh).
+     */
+    default boolean rederivesWhenUnstamped() { return false; }
+
+    /**
      * Bring an already-built instance in line with a different account, re-deriving whatever
      * {@link #bakedAccountIdentity} describes. Only called when
      * {@link #canRebakeForAccount()} is true.
