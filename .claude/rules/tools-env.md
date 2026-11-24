@@ -37,6 +37,7 @@ paths:
   The script runs the binary, so it gets a scratch `HOME` and `TMPDIR`: a root-owned `/tmp/opencode` would lock agentuser's opencode out.
 
 `OpencodeSetup` (`opencode`) writes `~/.config/opencode/opencode.json` in opencode 1.x's forms: `permission`, `autoupdate: false`, `share: disabled`, `instructions: ["/AGENTS.md"]` and a pinned `model` (`anthropic/claude-sonnet-5-5` by default), and a `small_model` only from the separate `small-model` parameter, never from `model` (#2220).
+Its `effort` parameter is written as the `variant` of the `build` and `plan` agents, each naming the template's model, since opencode applies an agent's variant only on its own model; it needs a model, which the `anthropic` default supplies (#2530).
 Its `permission` allows only what opencode asks about by default, so the plan agent keeps its edit deny.
 Like Pi it has a `provider` parameter (`anthropic`, `openai`, `google`, or one isx does not manage) and no credential of its own.
 For `anthropic` it reads its own placeholder, `OPENCODE_ANTHROPIC_API_KEY` (claude namespace), through `provider.anthropic.options.apiKey: "{env:...}"`, never `ANTHROPIC_API_KEY`, which would change Claude Code's auth.
@@ -44,6 +45,7 @@ For `anthropic` it reads its own placeholder, `OPENCODE_ANTHROPIC_API_KEY` (clau
 Its action resumes the latest top-level session in its directory, read from `~/.local/share/opencode/opencode.db` with `sqlite3`, as Bob's does.
 
 `GeminiSetup` (`gemini-cli`) installs `@google/gemini-cli` and writes `~/.gemini/settings.json` with optional `model.name`.
+Its `effort` parameter is written as a `modelConfigs.customOverrides` entry matched on that model, setting `thinkingConfig.thinkingLevel` in upper case, so Gemini CLI's helper requests on other models keep their thinking budget; it needs `model` (#2530).
 It disables telemetry, usage statistics, self-updates and notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and inner sandboxing.
 It writes `~/.gemini/policies/isx-auto-approve.toml`, a priority-zero allow-all user policy for default, auto-edit, and YOLO modes.
 The policy also applies to direct and headless launches, excludes plan mode, and permits higher-priority user overrides.

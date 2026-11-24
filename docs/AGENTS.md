@@ -222,11 +222,16 @@ opencode shows no isx footer: it has no place for one.
 | `provider` | `anthropic` | The API opencode talks to; also accepts `openai` and `google` |
 | `model` | `claude-sonnet-5-5` for `anthropic`, otherwise opencode's own | The model opencode uses |
 | `small-model` | opencode's own | The model for small tasks such as session titles; setting `model` does not change it |
+| `effort` | The model's own default | Reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; needs `model`, except with `anthropic` |
 
 The `openai` provider uses your OpenAI key, as [Codex CLI](#codex-cli) does.
 The `google` provider is the Gemini API, and uses your Gemini key, as [Gemini CLI](#gemini-cli) does.
 A provider isx does not manage needs no credential from isx: opencode signs in to it itself.
 A model ID may hold a `/`, as a gateway names its models, such as `zai-org/glm-5-3`.
+
+The build writes `effort` as the variant opencode's build and plan agents start with, which `ctrl+t` still changes in a session.
+Which variants exist depends on the model, and opencode ignores one the model does not have.
+The variant applies while an agent runs the template's model, so a model you pick in a session starts at its own default.
 
 ```yaml
 tools:
@@ -268,8 +273,13 @@ The build removes that notice, including when a child template inherits Gemini, 
 | Parameter | Default | What it does |
 | --- | --- | --- |
 | `model` | Gemini CLI's own default | The model, as a native Gemini model ID |
+| `effort` | The model's own default | Thinking level: `minimal`, `low`, `medium`, `high` or `xhigh`; needs `model` |
 
-A child template can set `model` again without reinstalling the CLI.
+A child template can set `model` and `effort` again without reinstalling the CLI.
+The child's own entry replaces the parent's, so a child that sets `effort` sets `model` beside it.
+
+The build writes `effort` to `~/.gemini/settings.json` as the thinking level of requests to that model.
+Which levels a model takes depends on the model, and the Gemini API refuses a request with one it does not.
 
 ```yaml
 tools:

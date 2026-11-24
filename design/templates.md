@@ -418,6 +418,8 @@ It writes `~/.config/opencode/opencode.json` in the forms opencode 1.x reads (`p
 Its permissions allow what opencode asks about by default (`.env` reads, external directories, the loop guard) rather than `"*": "allow"`, since a global rule comes after the plan agent's own and would give it edits.
 Unpinned, opencode 1.19.5 picks `claude-sonnet-4-6`, so the `anthropic` provider gets `claude-sonnet-5-5` as Pi does, and another provider opencode's own default.
 The `small-model` parameter alone writes `small_model` (the model for session titles), under the same provider; setting `model` does not (#2220).
+The `effort` parameter is written as the variant of the `build` and `plan` agents, each naming the template's model, because opencode applies an agent's variant only while that agent runs its own model (#2530).
+A model picked in a session therefore starts at its own default variant.
 It gives up one thing: a template that pins `model` still has title calls on opencode's own small model, which an account that cannot use it must override.
 The `anthropic` key is read from `OPENCODE_ANTHROPIC_API_KEY` through the settings' `{env:...}` reference, a placeholder of the claude namespace: `ANTHROPIC_API_KEY` would switch Claude Code to API-key auth beside an OAuth account.
 opencode has no status line or footer a plugin can fill, so it shows no isx message.
