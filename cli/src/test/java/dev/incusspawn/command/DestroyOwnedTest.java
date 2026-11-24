@@ -89,7 +89,7 @@ class DestroyOwnedTest {
         assertEquals(1, run(owned(GRANTED, "orca", "rt-2"), daemon, "ws", recorded));
         assertNotNull(daemon.instance("mine"));
         assertNotNull(daemon.instance("ws"));
-        assertEquals(List.of("'ws' is not orca's under the id rt-2, so isx left it."), errors(recorded[0]));
+        assertEquals(List.of("did not destroy 'ws': orca does not own it under the id rt-2."), errors(recorded[0]));
         assertFalse(daemon.instance("ws").path("config").has(Metadata.PENDING_OP), "the deleting mark is taken back");
     }
 
@@ -121,7 +121,7 @@ class DestroyOwnedTest {
         var config = daemon.instance("ws").path("config");
         assertFalse(config.has(Metadata.PENDING_OP), "the deleting mark is taken back: " + config);
         assertEquals("rt-other", config.pathText(Metadata.OWNER_ID, ""));
-        assertEquals(List.of("'ws' is not orca's under the id rt-1, so isx left it."), errors(recorded[0]));
+        assertEquals(List.of("did not destroy 'ws': orca does not own it under the id rt-1."), errors(recorded[0]));
     }
 
     /** Refusing an instance that is not the tool's costs one read, and marks nothing. */

@@ -22,23 +22,31 @@ class DestroyCommandOutputTest {
     /** Each refusal is one error, which the TUI's log and a recorder keep, not a raw "Error:" line on stderr. */
     @Test
     void conflictingArgumentsAreAnError() throws Exception {
-        assertEquals(List.of("specify --all-templates or --all-instances, not both."),
+        assertEquals(List.of("give --all-templates or --all-instances, not both."),
                 destroy(null, true, true));
-        assertEquals(List.of("cannot combine a named target with --all-templates / --all-instances."),
+        assertEquals(List.of("give a name or --all-templates / --all-instances, not both."),
                 destroy("box", true, false));
-        assertEquals(List.of("specify a name, or use --all-templates / --all-instances."),
+        assertEquals(List.of("give the name of what to destroy, or --all-templates / --all-instances."),
                 destroy(null, false, false));
     }
 
     /** A bulk destroy that left something behind, which fails the command, ends on an error. */
     @Test
     void aBulkDestroyThatLeftSomethingBehindEndsOnAnError() {
-        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.SUCCESS, "Destroyed 2 instance(s)")),
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.SUCCESS, "Destroyed 2 instances")),
                 summarized(new DestroyCommand.DestroyResult(2, 0, 0)));
-        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR, "Destroyed 1 instance(s). 1 skipped (locked).")),
-                summarized(new DestroyCommand.DestroyResult(1, 1, 0)));
-        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR, "Destroyed 1 instance(s). 1 skipped (locked). 1 failed.")),
-                summarized(new DestroyCommand.DestroyResult(1, 1, 1)));
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.SUCCESS, "Destroyed 1 instance")),
+                summarized(new DestroyCommand.DestroyResult(1, 0, 0)));
+        var busy = summarized(new DestroyCommand.DestroyResult(1, 1, 0));
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
+                "could not destroy 1 of 2 instances: 1 in use by another isx process.", InstanceStart.BUSY_ADVICE)), busy);
+        var both = summarized(new DestroyCommand.DestroyResult(1, 1, 1));
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
+                "could not destroy 2 of 3 instances: 1 in use by another isx process, 1 failed, as shown above.",
+                InstanceStart.BUSY_ADVICE)), both);
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
+                "could not destroy 1 of 1 instance: 1 failed, as shown above.")),
+                summarized(new DestroyCommand.DestroyResult(0, 0, 1)), "no advice about a busy one when none was");
     }
 
     private static List<RecordingOutput.Event> summarized(DestroyCommand.DestroyResult result) {

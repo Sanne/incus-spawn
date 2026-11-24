@@ -24,24 +24,24 @@ import java.util.List;
 
 @CommandDefinition(
         name = "destroy",
-        description = "Destroy a clone environment",
+        description = "Destroy an instance or a template",
         generateHelp = true
 )
 public class DestroyCommand extends BaseCommand {
 
-    @Argument(completer = Completers.Source.class, description = "Name of the environment to destroy")
+    @Argument(completer = Completers.Source.class, description = "Name of the instance or template to destroy")
     String name;
 
     @Option(name = "all-templates", hasValue = false,
-            description = "Destroy all built templates (reverse order, derived first)")
+            description = "Destroy every built template, each before the template it was built from")
     boolean allTemplates;
 
     @Option(name = "all-instances", hasValue = false,
-            description = "Destroy all instances")
+            description = "Destroy every instance, but not the templates")
     boolean allInstances;
 
     @Option(name = "skip-confirmation", hasValue = false,
-            description = "Skip the confirmation prompt")
+            description = "Destroy without asking first")
     boolean skipConfirmation;
 
     @Option(name = "owner", description = "Destroy the instance only if this external tool owns it (isx branch"
@@ -54,11 +54,11 @@ public class DestroyCommand extends BaseCommand {
     @Override
     protected CommandResult doExecute() throws Exception {
         if (allTemplates && allInstances) {
-            BuildOutput.error("specify --all-templates or --all-instances, not both.");
+            BuildOutput.error("give --all-templates or --all-instances, not both.");
             return CommandResult.valueOf(1);
         }
         if ((allTemplates || allInstances) && name != null && !name.isBlank()) {
-            BuildOutput.error("cannot combine a named target with --all-templates / --all-instances.");
+            BuildOutput.error("give a name or --all-templates / --all-instances, not both.");
             return CommandResult.valueOf(1);
         }
         if ((owner != null || ownerId != null) && (allTemplates || allInstances)) {
@@ -69,7 +69,7 @@ public class DestroyCommand extends BaseCommand {
         if (allInstances) return destroyAllInstances();
 
         if (name == null || name.isBlank()) {
-            BuildOutput.error("specify a name, or use --all-templates / --all-instances.");
+            BuildOutput.error("give the name of what to destroy, or --all-templates / --all-instances.");
             return CommandResult.valueOf(1);
         }
         if (owner != null || ownerId != null) {
@@ -118,7 +118,7 @@ public class DestroyCommand extends BaseCommand {
         var lockOpt = tryAcquireLock(lockManager, target, true);
         if (lockOpt == null) return CommandResult.valueOf(1);
         if (lockOpt.isEmpty()) {
-            BuildOutput.error("'" + shown + "' is locked by another process.");
+            reportBusy(shown);
             return CommandResult.valueOf(1);
         }
         try (var lock = lockOpt.get()) {
@@ -136,7 +136,7 @@ public class DestroyCommand extends BaseCommand {
                 if (incus.instanceMetadataOrThrow(target) != null) throw e;
                 InstanceDestroyer.refreshProxy();
                 if (judged[0]) BuildOutput.warn("Destroyed " + shown + ", but: " + failure(e));
-                BuildOutput.success(shown + (judged[0] ? " is destroyed" : " is already gone"));
+                BuildOutput.success(judged[0] ? "Destroyed " + shown : shown + " is already gone");
                 return CommandResult.SUCCESS;
             }
             if (deleted) {
@@ -159,8 +159,8 @@ public class DestroyCommand extends BaseCommand {
     }
 
     private CommandResult notTheTools(String shown) {
-        BuildOutput.error("'" + shown + "' is not " + owner + "'s"
-                + (ownerId == null ? "" : " under the id " + ownerId) + ", so isx left it.");
+        BuildOutput.error("did not destroy '" + shown + "': " + owner + " does not own it"
+                + (ownerId == null ? "" : " under the id " + ownerId) + ".");
         return CommandResult.valueOf(1);
     }
 
@@ -169,35 +169,33 @@ public class DestroyCommand extends BaseCommand {
         // One read for whether it exists, its type and its owner
         var instance = incus.instanceMetadataOrThrow(target);
         if (instance == null) {
-            BuildOutput.error("no instance named '" + target + "' found.");
+            BuildOutput.error("no instance or template named '" + OutputFormat.oneLine(target) + "' found.",
+                    "Run 'isx list' to see available instances and templates.");
             return CommandResult.valueOf(1);
         }
         // An orchestrator's instance (#1720): deleting it under the tool would break the tool's
         // view of it, so a person is asked, and a script must say --skip-confirmation
         var ownedBy = instance.path("config").pathText(Metadata.OWNER, "");
-        if (!ownedBy.isEmpty() && !confirmDestructive("'" + target + "' is controlled by "
-                + OutputFormat.oneLine(ownedBy) + ". Destroy it anyway?", skipConfirmation, "--skip-confirmation")) {
+        if (!ownedBy.isEmpty() && !confirmDestructive(OutputFormat.oneLine(ownedBy) + " controls '" + target
+                + "' and still expects it. Destroy it anyway?", skipConfirmation, "--skip-confirmation")) {
             return CommandResult.SUCCESS;
         }
 
         var lockOpt = tryAcquireLock(lockManager, target, true);
         if (lockOpt == null) return CommandResult.valueOf(1);
         if (lockOpt.isEmpty()) {
-            BuildOutput.error("'" + target + "' is locked by another process.");
+            reportBusy(OutputFormat.oneLine(target));
             return CommandResult.valueOf(1);
         }
 
         try (var lock = lockOpt.get()) {
-            BuildOutput.header("Destroying " + target);
-
             var type = instance.path("config").pathText(Metadata.TYPE, "");
             if (Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type)) {
-                BuildOutput.note("'" + target + "' is a template (type: " + type + ").");
-                BuildOutput.note("Destroying it means you won't be able to create new branches from it");
-                BuildOutput.note("until you rebuild it. Existing branches are not affected.");
+                BuildOutput.note("'" + target + "' is a template: 'isx branch' cannot copy it again until it is rebuilt.");
+                BuildOutput.note("The instances already branched from it keep working.");
             }
 
-            BuildOutput.stepStart("Removing instance");
+            BuildOutput.stepStart("Destroying " + target);
             InstanceDestroyer.deleteHeld(incus, target);
             InstanceDestroyer.refreshProxy();
             BuildOutput.stepDone();
@@ -227,11 +225,11 @@ public class DestroyCommand extends BaseCommand {
 
     private CommandResult destroyAll(List<String> names, List<String> shown, String kind) throws Exception {
         if (names.isEmpty()) {
-            BuildOutput.step("No " + kind + "s found.");
+            BuildOutput.step("There are no " + kind + "s to destroy.");
             return CommandResult.SUCCESS;
         }
 
-        groupOfSteps("Will destroy " + names.size() + " " + kind + "(s)", shown);
+        groupOfSteps("Will destroy " + count(names.size(), kind), shown);
 
         if (!confirmDestructive("Destroy all listed " + kind + "s?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
 
@@ -244,16 +242,28 @@ public class DestroyCommand extends BaseCommand {
      * left behind, locked or failed, fails the command.
      */
     static CommandResult summarize(DestroyResult result, String kind) {
-        var destroyed = "Destroyed " + result.destroyed + " " + kind + "(s)";
         if (result.skipped == 0 && result.failed == 0) {
-            BuildOutput.success(destroyed);
+            BuildOutput.success("Destroyed " + count(result.destroyed, kind));
             return CommandResult.SUCCESS;
         }
-        var msg = new StringBuilder(destroyed).append('.');
-        if (result.skipped > 0) msg.append(" ").append(result.skipped).append(" skipped (locked).");
-        if (result.failed > 0) msg.append(" ").append(result.failed).append(" failed.");
-        BuildOutput.error(msg.toString());
+        var total = result.destroyed + result.skipped + result.failed;
+        var why = new ArrayList<String>();
+        if (result.skipped > 0) why.add(result.skipped + " in use by another isx process");
+        if (result.failed > 0) why.add(result.failed + " failed, as shown above");
+        BuildOutput.error("could not destroy " + (result.skipped + result.failed) + " of " + count(total, kind)
+                + ": " + String.join(", ", why) + ".",
+                result.skipped > 0 ? new String[] {InstanceStart.BUSY_ADVICE} : new String[0]);
         return CommandResult.valueOf(1);
+    }
+
+    /** {@code 1 instance}, {@code 2 instances}. */
+    static String count(int n, String kind) {
+        return n + " " + kind + (n == 1 ? "" : "s");
+    }
+
+    /** That another isx process holds {@code shown}'s lock, and what to do. */
+    private static void reportBusy(String shown) {
+        BuildOutput.error("'" + shown + "' is in use by another isx process.", InstanceStart.BUSY_ADVICE);
     }
 
     static List<String> listClones(IncusClient incus) {
@@ -335,7 +345,7 @@ public class DestroyCommand extends BaseCommand {
                 }
                 if (lockOpt.isEmpty()) {
                     BuildOutput.stepStart("Destroying " + n);
-                    BuildOutput.stepFail("locked by another process");
+                    BuildOutput.stepFail("in use by another isx process");
                     skipped++;
                     continue;
                 }
