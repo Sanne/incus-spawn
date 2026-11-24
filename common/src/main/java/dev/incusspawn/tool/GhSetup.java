@@ -29,7 +29,7 @@ public class GhSetup implements ToolSetup {
 
     @Override
     public String description() {
-        return "GitHub — PAT for git operations";
+        return "GitHub — a token for Git and gh";
     }
 
     @Override

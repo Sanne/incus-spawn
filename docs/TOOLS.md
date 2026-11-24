@@ -11,7 +11,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | Tool | Description |
 |------|-------------|
 | `claude` | Claude Code: AI coding assistant |
-| `gh` | GitHub: PAT for git operations |
+| `gh` | GitHub: a token for Git and gh |
 | `pi` | Pi: AI coding assistant |
 | `opencode` | opencode: AI coding assistant |
 | `gemini-cli` | Gemini CLI: Google coding assistant (proxied Gemini API key) |

@@ -117,7 +117,7 @@ class MissingAccountsAskTest {
         assertTrue(questions.get(2).contains("Acme Cloud CLI"), questions.get(2));
         // The step's own header, as 'isx account add' shows it, counted among the steps asked for
         var text = dev.incusspawn.util.BuildOutput.stripAnsi(said);
-        assertTrue(text.contains("GitHub Authentication"), text);
+        assertTrue(text.contains("GitHub Account"), text);
         assertTrue(text.contains("[1/3]") && text.contains("[3/3]"), text);
     }
 

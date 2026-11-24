@@ -56,6 +56,8 @@ It runs `compinit -D`, so no test writes the developer's `~/.zcompdump`.
 
 `isx account add [<ns>|<tool>]` is `InitCommand.addCredential`: init's step for that one credential, or with no argument its Credential Setup menu, under the same `[n/N]` headers (#1469).
 Init's credential and host steps read their answers from `InitCommand.prompts()`, which tests override.
+Its steps' headers and hints (`InitCommand.credentialSetup`, `credentialStep`, `credentialHint`) are the ones init's walk and a build's question show; the first run runs the same work under its own headers.
+`AccountAddTranscriptsTest` writes a transcript of each of its paths to `cli/target/account-add-transcripts/` and fails a line wider than the frame or a word those screens do not use (`container`, `box`, `host`, `MITM`, `placeholder`, `PAT`); a new path adds one (#2542).
 Every message naming a missing credential's remedy takes it from `CredentialCheck.Missing.command()`, so it names `isx account add <ns>` only when a step owns that namespace.
 `InitCommand.askForMissing` (#2405) runs the same step for each missing credential a build or branch reports, after a yes or no, resolved by `CredentialCheck.stepTool` from tools no project defines (`InitCommand.trustedToolLoader`, `ToolDefLoader.withoutProjectTools`; `MissingAccountsAskTest.aProjectsOwnToolIsNeverAskedFor` writes a real `.incus-spawn/tools/`), so a cloned repository's tool never becomes a question for a secret.
 It reads `Prompts.terminal()` through `prompts()`, never a piped stdin, and asks each step once, naming every template that needs it.
@@ -190,6 +192,7 @@ Secrets are read with `askSecret(prompts)`, never a bare `readPassword()`.
 Nothing is echoed, and nothing confirms the paste on its own line: the step's one outcome line says the credential was saved, verified or `not checked` (#2528); `GitHubAuthFlowTest` asserts the raw token never reaches stdout.
 New prompts in init follow the same shape: take `Prompts`, route any network or host call through an overridable method, and add a flow test asserting what reaches the file on disk.
 A question with several alternatives goes through `Prompts.choose` (#2492): a blank line, a lead-in that says "Choose one", the options indented as a group, one shared note after the list, and a prompt that says what Enter does.
+A question that takes several answers, such as Credential Setup's, goes through `Prompts.chooseSeveral`, the same layout.
 A step never indents its own menu lines.
 The host-setup confirmations (Incus install, subid, CoW pool) ask through the same `Prompts` (`askYesNo`).
 

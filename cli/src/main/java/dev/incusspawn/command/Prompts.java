@@ -72,8 +72,26 @@ public interface Prompts {
      * @return the answer as typed, {@code null} at EOF
      */
     default String choose(String question, java.util.List<String> options, String note, String enterDoes) {
+        sayOptions(question + " Choose one:", options, note);
+        return ask(enterDoes == null ? "Choice: " : "Choice (Enter to " + enterDoes + "): ");
+    }
+
+    /**
+     * {@link #choose}'s layout for a question that takes several answers: the lead-in says so,
+     * and the prompt asks for numbers separated by commas, or {@code all}.
+     *
+     * @param enterDoes what an empty answer does, as it completes "Enter to ...": e.g. "skip"
+     * @return the answer as typed, {@code null} at EOF
+     */
+    default String chooseSeveral(String question, java.util.List<String> options, String enterDoes) {
+        sayOptions(question + " Choose one or more:", options, null);
+        return ask("Numbers separated by commas, or all (Enter to " + enterDoes + "): ");
+    }
+
+    /** The lead-in, the numbered options and the note of {@link #choose} and {@link #chooseSeveral}. */
+    private void sayOptions(String leadIn, java.util.List<String> options, String note) {
         BuildOutput.gap();
-        say(question + " Choose one:");
+        say(leadIn);
         say("");
         var width = String.valueOf(options.size()).length() + 2;
         for (int i = 0; i < options.size(); i++) {
@@ -87,7 +105,6 @@ public interface Prompts {
             say(note);
         }
         say("");
-        return ask(enterDoes == null ? "Choice: " : "Choice (Enter to " + enterDoes + "): ");
     }
 
     /** {@link #show}s the question and reads its answer without echoing it: {@code null} at EOF. */

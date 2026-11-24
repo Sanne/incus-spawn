@@ -180,7 +180,7 @@ Add new drift consumers through it rather than calling `checkDrift()` alone.
 
 **Dynamic credential menu**: `isx init` builds its credential menu dynamically from tool setups (via `ToolDefLoader.allToolSetups()`).
 Tools with proxy configuration are discovered, filtered by `ToolSetup.hasOwnCredentials()` (default `true`; a tool overrides it to `false` when its `proxy()` configuration borrows another tool's credential rather than declaring its own — `CopilotSetup` does this since its `token` entry points at `github.token` -- so it doesn't get a redundant "configure X" entry that silently edits a different tool's secret), and sorted (known tools first: claude, gh, bob, codex; then alphabetically).
-Each entry shows `ToolSetup.description()` and a `[configured]` tag.
+Each entry, asked through `Prompts.chooseSeveral`, shows the tool's title with what follows the dash of `ToolSetup.description()` on a line under it, and a `(set up already)` tag.
 Known tools dispatch to specialized setup methods (`setupClaudeAuth`, `setupGitHubAuth`); all other tools (including Bob and Codex) use `setupGenericToolCredentials()` which iterates `proxy.getConfiguration()` directly, respects `ConfigEntry.isSecret()` and `ConfigEntry.isConfirm()`, and saves via `SpawnConfig.setConfigByPath()` using the entry's `config-path`.
 
 **Important**: Built-in YAML files are listed in a hardcoded `BUILTIN_FILES` constant (not classpath scanning) because GraalVM native image makes classpath directory listing unreliable.

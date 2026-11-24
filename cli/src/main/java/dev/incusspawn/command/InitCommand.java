@@ -2118,10 +2118,9 @@ public class InitCommand extends BaseCommand {
 
     /** Credential Setup itself: the choice of credentials, whose steps follow it. */
     InitStep credentialSetup() {
-        return new InitStep("credentials", "Credential Setup", new String[]{
-                "Choose which API credentials to configure. Each credential",
-                "stays on your host — containers only hold placeholders, and",
-                "the MITM proxy injects real values transparently."},
+        return new InitStep("credentials", "Credential Setup", Lines.wrap("Choose the credentials your instances may use."
+                + " Each stays on " + Platform.thisComputer() + ": isx adds it to requests as they leave an instance,"
+                + " and never puts it inside one.").toArray(String[]::new),
                 () -> {
                     var tools = new ToolDefLoader().allToolSetups();
                     chosenCredentials = selectCredentials(tools).stream().map(name -> credentialStep(name, tools.get(name))).toList();
@@ -2129,35 +2128,31 @@ public class InitCommand extends BaseCommand {
                 this::planCredentials);
     }
 
-    /** The step that configures {@code toolName}'s credential. */
+    /**
+     * A credential step's hint: {@code point}, what the person sets up, then where the credential
+     * stays, wrapped to the hint bar's width (.claude/rules/interface-text.md "A line fits its frame").
+     */
+    static String[] credentialHint(String point) {
+        return Lines.wrap(point + " It stays on " + Platform.thisComputer() + ": isx adds it to requests"
+                + " as they leave an instance, and never puts it inside one.").toArray(String[]::new);
+    }
+
+    /** The step that configures {@code toolName}'s credential, as {@code isx account add} and init's walk show it. */
     private InitStep credentialStep(String toolName, ToolSetup tool) {
         return switch (toolName) {
-            case "claude" -> new InitStep(toolName, "Claude Code Authentication", new String[]{
-                    "Configures how containers authenticate with the Claude API.",
-                    "You can use an Anthropic API key, a Claude Pro/Max OAuth",
-                    "token, or Google Cloud Vertex AI. The credential stays on",
-                    "your host and is injected at runtime via the MITM proxy —",
-                    "containers never see the real key."}, this::setupClaudeAuth, null);
-            case "gh" -> new InitStep(toolName, "GitHub Authentication", new String[]{
-                    "Sets up a GitHub PAT so containers can open PRs, push",
-                    "code, and manage issues. These containers run autonomous",
-                    "agents, so give them their own identity rather than",
-                    "your personal one — create a dedicated agent account (e.g.",
-                    "yourname-ai-bot) and mint a fine-grained PAT for it, scoped to",
-                    "just the repos and permissions the agent needs. That keeps the",
-                    "agent's actions attributable to it and its blast radius small."}, this::setupGitHubAuth, null);
-            case "codex" -> new InitStep(toolName, "OpenAI Authentication", new String[]{
-                    "Configures how containers authenticate with OpenAI: a",
-                    "ChatGPT session, Enterprise plans included, that stays on",
-                    "your host — isx signs it in through your browser and the",
-                    "proxy serves Codex from it — or an OpenAI API key.",
-                    "Containers never see the real credential."}, this::setupCodexAuth, null);
+            case "claude" -> new InitStep(toolName, "Claude Account", credentialHint(
+                    "The Claude account your instances use: an API key, a subscription (Pro, Max or Team)"
+                            + " or Google Cloud Vertex AI."), this::setupClaudeAuth, null);
+            case "gh" -> new InitStep(toolName, "GitHub Account", credentialHint(
+                    "The GitHub account Git and gh use in your instances."
+                            + " What they commit and open on GitHub carries its name."), this::setupGitHubAuth, null);
+            case "codex" -> new InitStep(toolName, "OpenAI Account", credentialHint(
+                    "The OpenAI account Codex uses in your instances: a ChatGPT plan, signed in"
+                            + " through your browser, or an OpenAI API key."), this::setupCodexAuth, null);
             default -> {
-                var desc = CredentialSetup.describeTool(toolName, tool);
-                yield new InitStep(toolName, desc, new String[]{
-                        "Configures credentials for " + desc + ".",
-                        "Real credentials stay on your host — containers only hold",
-                        "placeholders, and the MITM proxy injects real values."},
+                // Definition text, so one line, as describeTool made it before
+                var title = OutputFormat.oneLine(ExampleTemplate.title(tool));
+                yield new InitStep(toolName, title, credentialHint("The credential " + title + " uses in your instances."),
                         () -> setupGenericToolCredentials(toolName, tool), null);
             }
         };
@@ -2202,8 +2197,29 @@ public class InitCommand extends BaseCommand {
             var tools = new ToolDefLoader().allToolSetups();
             var toolName = CredentialCheck.credentialTool(name, tools);
             if (toolName == null) {
-                BuildOutput.error("no credential named '" + OutputFormat.oneLine(name) + "'.",
-                        "Credentials: " + String.join(", ", credentialNames(tools)) + ".");
+                var shown = OutputFormat.oneLine(name);
+                // A tool that spends others' credentials (copilot spends github's, pi claude's,
+                // openai's and gemini's) names every one of them
+                var owners = tools.containsKey(name) ? tools.get(name).credentialNamespaces().stream()
+                        .filter(ns -> CredentialCheck.credentialTool(ns, tools) != null)
+                        .map(OutputFormat::oneLine).toList() : List.<String>of();
+                if (owners.size() == 1) {
+                    var ns = owners.getFirst();
+                    BuildOutput.error(shown + " has no credential of its own.",
+                            "It uses " + ns + "'s: run 'isx account add " + ns + "'.");
+                } else if (!owners.isEmpty()) {
+                    BuildOutput.error(shown + " has no credential of its own.",
+                            Lines.wrap("It uses the credentials of " + String.join(", ", owners.subList(0, owners.size() - 1))
+                                    + " and " + owners.getLast() + ": run 'isx account add' with the name of each.",
+                                    Lines.WIDTH - 2).toArray(String[]::new));
+                } else {
+                    // Wrapped to the frame under the error's indent, since the list grows with the tools
+                    BuildOutput.error("'isx account add' does not know '" + shown + "'.",
+                            // A no-break space inside each name, so "github (gh)" stays on one line
+                            Lines.wrap("It sets up these credentials: " + String.join(", ", credentialNames(tools).stream()
+                                            .map(n -> n.replace(' ', '\u00A0')).toList()) + ".", Lines.WIDTH - 2).stream()
+                                    .map(l -> l.replace('\u00A0', ' ')).toArray(String[]::new));
+                }
                 return 1;
             }
             steps = List.of(credentialStep(toolName, tools.get(toolName)));
