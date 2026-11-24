@@ -50,7 +50,7 @@ public class PurposeCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
         if (!incus.exists(name)) {
-            BuildOutput.error("no instance named '" + shown + "' found.");
+            BuildOutput.error("no instance named '" + shown + "' found.", "Run 'isx list' to see available instances.");
             return CommandResult.valueOf(1);
         }
         var config = incus.readInstance(name).metadata().path("config");

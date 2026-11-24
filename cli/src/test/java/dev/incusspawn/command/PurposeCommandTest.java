@@ -45,6 +45,10 @@ class PurposeCommandTest {
             assertEquals(1, command("dev", false, "x".repeat(Metadata.PURPOSE_MAX + 1)).purpose(daemon.client()).getResultValue());
             assertEquals(1, command("ghost", false, "x").purpose(daemon.client()).getResultValue());
         });
+        var missing = RecordingOutput.during(() -> command("ghost", false, "x").purpose(daemon.client()));
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
+                "no instance named 'ghost' found.", List.of("Run 'isx list' to see available instances."))),
+                missing.events(RecordingOutput.Kind.ERROR));
         assertEquals("", purposeOf(daemon, "dev"));
     }
 

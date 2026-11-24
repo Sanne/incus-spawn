@@ -59,11 +59,20 @@ public class AccountCommand extends BaseCommand {
         String instance;
 
         @Override protected CommandResult doExecute() {
-            dev.incusspawn.lifecycle.CredentialProofReset.reset(RuntimeServices.incus(), instance);
+            var incus = RuntimeServices.incus();
+            if (!incus.exists(instance)) return noInstance(instance);
+            dev.incusspawn.lifecycle.CredentialProofReset.reset(incus, instance);
             BuildOutput.step("Previous credential proofs for " + instance + " are revoked; the proxy confirmed the reset.");
             BuildOutput.step("Open a new login shell and restart tools and nested services with the new tokens. Existing requests and WebSockets continue.");
             return CommandResult.SUCCESS;
         }
+    }
+
+    /** What every subcommand naming a missing instance says, as {@code isx stop} and {@code isx exec} do. */
+    static CommandResult noInstance(String instance) {
+        BuildOutput.error("no instance named '" + OutputFormat.oneLine(instance) + "' found.",
+                "Run 'isx list' to see available instances.");
+        return CommandResult.valueOf(1);
     }
 
     // Bare, the command is its list, so it takes list's --format.
@@ -382,8 +391,7 @@ public class AccountCommand extends BaseCommand {
             var outputFormat = OutputFormat.parse(format);
             var incus = RuntimeServices.incus();
             if (!incus.exists(instance)) {
-                BuildOutput.error("no instance named '" + instance + "' found.");
-                return CommandResult.valueOf(1);
+                return noInstance(instance);
             }
             var config = SpawnConfig.load();
             var setups = AccountSelection.namespaceSetups(config);
@@ -578,8 +586,7 @@ public class AccountCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             var instance = args.get(0);
             if (!incus.exists(instance)) {
-                BuildOutput.error("no instance named '" + instance + "' found.");
-                return CommandResult.valueOf(1);
+                return noInstance(instance);
             }
 
             var config = SpawnConfig.load();
@@ -631,8 +638,7 @@ public class AccountCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             var instance = args.get(0);
             if (!incus.exists(instance)) {
-                BuildOutput.error("no instance named '" + instance + "' found.");
-                return CommandResult.valueOf(1);
+                return noInstance(instance);
             }
             var namespaces = new LinkedHashSet<String>();
             for (var arg : args.subList(1, args.size())) {

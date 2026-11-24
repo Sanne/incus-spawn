@@ -12,6 +12,17 @@ import static org.junit.jupiter.api.Assertions.*;
 /** The text of {@code isx account show} and {@code list}, which users act on. */
 class AccountCommandRenderTest {
 
+    /** Every subcommand naming a missing instance says what {@code isx stop} says, its name on one line. */
+    @Test
+    void aMissingInstanceIsNamedWithWhereToLook() {
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() ->
+                assertEquals(1, AccountCommand.noInstance("gh\u001bost").getResultValue()));
+        assertEquals(List.of(new dev.incusspawn.util.RecordingOutput.Event(dev.incusspawn.util.RecordingOutput.Kind.ERROR,
+                        "no instance named 'gh ost' found.", "Run 'isx list' to see available instances.")),
+                recorded.events(dev.incusspawn.util.RecordingOutput.Kind.ERROR));
+    }
+
+
     private static final AccountOrigin DEFAULT = null;
     private static final AccountOrigin TEMPLATE = AccountOrigin.template("tpl-acme");
     private static final AccountOrigin INSTANCE = AccountOrigin.EXPLICIT;
