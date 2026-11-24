@@ -70,8 +70,6 @@ final class TemplateUpdate {
             return Result.REFUSED;
         }
         if (BuildCommand.reportStrandedStorage(incus, template, copy)) return Result.REFUSED;
-        // An update runs dnf and the template's steps in a copy, writing as a build does (#2555)
-        if (BuildCommand.reportPoolTooFull(incus, "update", template)) return Result.REFUSED;
         var building = TemplateLock.building(template);
         if (building.isEmpty()) {
             BuildOutput.stepFail("Another isx is building or updating " + template + "; update it once that is done.");
@@ -98,6 +96,9 @@ final class TemplateUpdate {
 
         // What a build or update that died before its swap left behind, as a build deletes it
         incus.deleteIfExists(copy);
+        // An update runs dnf and the template's steps in a copy, writing as a build does (#2555).
+        // After that delete: an update killed once it filled the pool would otherwise refuse every retry
+        if (BuildCommand.reportPoolTooFull(incus, "update", template)) return Result.REFUSED;
         // Null until this update's copy request returned. With the hold degraded, or an isx from
         // before it building, another may work under the name: what it made is not deleted or swapped in.
         String copyCreated = null;

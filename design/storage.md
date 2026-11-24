@@ -268,7 +268,10 @@ On a Linux subvolume pool the full disk is the host's own.
 
 So what writes to the pool checks its space first (`PoolSpace`), with one request to the pool's `/resources`.
 A build, which writes gigabytes, is refused once the pool is critical (`PoolUsage.isCritical`: at least 90% used and under 5 GiB free; `BuildCommand.reportPoolTooFull`), and wherever a branch is refused.
-`isx project create` and the template updates of `TemplateUpdate` (`isx update-all`, `isx project update`) write as a build does, so they are refused the same way (`BuildCommand.reportPoolTooFull`, beside `reportStrandedStorage`).
+`isx project create` and the template updates of `TemplateUpdate` (`isx update-all`, `isx project update`) write as a build does, so they are refused the same way (`BuildCommand.reportPoolTooFull`).
+Each checks only after it has deleted what an earlier run left under its temporary name, `<template>-rebuilding`.
+A run killed once it filled the pool would otherwise refuse every retry for the space its own leftover holds, behind an instance the person never made (`UpdateAllCommandTest#aLeftoverCopyIsDeletedBeforeThePoolIsJudged`).
+On an appliance before `btrfs-settle` the leftover's space may not yet show as free at that read, and the refusal then says to wait.
 A branch is a CoW snapshot and costs almost nothing at once, so it is only warned at critical, and refused once the pool is exhausted (`PoolUsage.isExhausted`: under 2 GiB free, whatever the percentage).
 That refusal is part of `BranchFlow.preflight`, so `isx branch`, the TUI and `isx mcp`'s `create_instance` all get it before anything is created, and `isx mcp` answers it as `refused`.
 The branch reads the space of its source's pool, which is the copy's whenever the source is on a CoW pool.
