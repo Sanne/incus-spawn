@@ -876,6 +876,12 @@ public class BuildCommand extends BaseCommand {
         if (reportNoVmSupport(incus, canonicalName, effectiveMachineType(imageDef), vmByOption)) {
             throw new BuildFailedException(canonicalName);
         }
+        // Before Rebuild? and the account prompts, so nobody answers them for a build that is refused
+        // (#2555, #2405). With a leftover under tempName the check waits for its delete in buildHeld:
+        // its space would otherwise refuse the build that frees it
+        if (!incus.exists(tempName) && reportPoolTooFull(incus, canonicalName)) {
+            throw new BuildFailedException(canonicalName);
+        }
 
         if (!batchConfirmed && incus.exists(canonicalName)) {
             if (!yes) {
@@ -902,9 +908,13 @@ public class BuildCommand extends BaseCommand {
 
     /** {@link #buildSingleImage} once this process alone works under {@code tempName} ({@link TemplateLock#building}). */
     private void buildHeld(ImageDef imageDef, Map<String, ImageDef> defs, String canonicalName, String tempName) {
-        incus.deleteIfExists(tempName);
-        // After that delete: a build killed once it filled the pool would otherwise refuse every retry (#2555)
-        if (reportPoolTooFull(incus, canonicalName)) throw new BuildFailedException(canonicalName);
+        // What a build killed before its swap left behind. The pool is judged after its delete, or
+        // a build killed once it filled the pool would refuse every retry (#2555); without one,
+        // buildSingleImage judged it before its prompts
+        if (incus.exists(tempName)) {
+            incus.deleteIfExists(tempName);
+            if (reportPoolTooFull(incus, canonicalName)) throw new BuildFailedException(canonicalName);
+        }
         var build = new ActiveBuild(tempName, canonicalName, effectiveMachineType(imageDef));
         activeBuild = build;
         buildLog = BuildLog.open(canonicalName, verbose);

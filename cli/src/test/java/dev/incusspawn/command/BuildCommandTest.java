@@ -3034,6 +3034,71 @@ class BuildCommandTest {
         assertFalse(BuildCommand.reportNoVmSupport(incus, "tpl-isx-vm", MachineType.VM, false));
     }
 
+    /**
+     * #2555 review: with no leftover to delete, a full pool refuses the build before it asks to
+     * rebuild or for an account's secret, so nobody answers for a build that does not run (#2405).
+     */
+    @Test
+    void aCriticalPoolRefusesTheBuildBeforeItsPrompts(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            long gib = 1024L * 1024 * 1024;
+            var incus = mock(IncusClient.class);
+            when(incus.scanSubvolumes()).thenReturn(Optional.empty());
+            when(incus.exists("tpl-isx")).thenReturn(true);
+            when(incus.findCowPool()).thenReturn("cow");
+            when(incus.getPoolUsageBytes("cow")).thenReturn(new IncusClient.PoolUsage(57 * gib, 60 * gib));
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-isx");
+
+            var recorded = RecordingOutput.during(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-isx", imageDef))));
+
+            assertTrue(recorded.events(RecordingOutput.Kind.ERROR).stream()
+                    .anyMatch(e -> e.msg().startsWith("Cannot build tpl-isx: the storage pool 'cow' has 3.0 GiB free")),
+                    recorded::toString);
+            verify(cmd, never()).askPendingAccounts();
+            verify(cmd, never()).buildInto(any(), any(), anyString());
+            verify(incus, never()).deleteIfExists(anyString());
+        });
+    }
+
+    /**
+     * #2555 review: a build killed once it filled the pool leaves {@code tpl-isx-rebuilding}. The
+     * retry deletes it before it judges the pool, so the leftover's space does not refuse it.
+     */
+    @Test
+    void aLeftoverBuildIsDeletedBeforeThePoolIsJudged(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            long gib = 1024L * 1024 * 1024;
+            var incus = mock(IncusClient.class);
+            var deleted = new java.util.concurrent.atomic.AtomicBoolean();
+            when(incus.scanSubvolumes()).thenReturn(Optional.empty());
+            when(incus.exists("tpl-isx-rebuilding")).thenAnswer(inv -> !deleted.get());
+            doAnswer(inv -> { deleted.set(true); return null; }).when(incus).deleteIfExists("tpl-isx-rebuilding");
+            when(incus.findCowPool()).thenReturn("cow");
+            // The leftover's space comes back with its delete
+            when(incus.getPoolUsageBytes("cow")).thenAnswer(inv ->
+                    new IncusClient.PoolUsage((deleted.get() ? 40 : 57) * gib, 60 * gib));
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            // Stops the build once it is past the check: nothing after it is under test
+            doThrow(new IllegalStateException("past the pool check")).when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-isx");
+
+            var recorded = RecordingOutput.during(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-isx", imageDef))));
+
+            verify(cmd).buildInto(any(), any(), eq("tpl-isx-rebuilding"));
+            assertTrue(recorded.events(RecordingOutput.Kind.ERROR).stream()
+                    .noneMatch(e -> e.msg().contains("storage pool")), recorded::toString);
+        });
+    }
+
     /** #2555: a build writes gigabytes, so it does not start on a pool that is already critical. */
     @Test
     void aBuildIsRefusedOnACriticalPoolAndGoesAheadWithRoom() {

@@ -93,6 +93,44 @@ class ProjectCommandTest {
         return create.create(incus, config);
     }
 
+    /**
+     * #2555 review: a create killed once it filled the pool leaves its build instance. The retry
+     * deletes it before it judges the pool, so the leftover's space does not refuse the create,
+     * while a pool still critical after the delete does.
+     */
+    @Test
+    void aLeftoverBuildIsDeletedBeforeThePoolIsJudged() {
+        long gib = 1024L * 1024 * 1024;
+        for (var freedByTheDelete : List.of(true, false)) {
+            var daemon = new FakeIncusDaemon().container(PARENT, Map.of(Metadata.TYPE, Metadata.TYPE_BASE))
+                    .container(BUILD, Map.of(Metadata.TYPE, Metadata.TYPE_PROJECT))
+                    .poolSpace("default", 57 * gib, 60 * gib);
+            var incus = spy(daemon.client());
+            doReturn("").when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
+            doReturn(OK).when(incus).shellExec(anyString(), any(String[].class));
+            doReturn(OK).when(incus).execInContainer(anyString(), eq("agentuser"), anyString());
+            doAnswer(inv -> List.of(daemon.instance(inv.getArgument(0)).path("config").path(Metadata.STATIC_IP).asText()))
+                    .when(incus).ipv4Addresses(anyString());
+            var deleted = new java.util.concurrent.atomic.AtomicBoolean();
+            doAnswer(inv -> {
+                var existed = !deleted.get() && daemon.client().exists(BUILD);
+                inv.callRealMethod();
+                if (existed) {
+                    deleted.set(true);
+                    if (freedByTheDelete) daemon.poolSpace("default", 40 * gib, 60 * gib);
+                }
+                return null;
+            }).when(incus).deleteIfExists(BUILD);
+
+            var recorded = RecordingOutput.during(() ->
+                    assertEquals(freedByTheDelete ? 0 : 1, create(incus, config(null))));
+            assertTrue(deleted.get(), "the leftover is deleted either way");
+            var refused = recorded.events(RecordingOutput.Kind.ERROR).stream()
+                    .anyMatch(e -> e.msg().startsWith("Cannot create " + NAME + ": the storage pool 'default'"));
+            assertEquals(!freedByTheDelete, refused, recorded::toString);
+        }
+    }
+
     @Test
     void createSucceedsAndTagsTheTemplate() {
         var incus = parentWhoseGuestAnswers(OK);
