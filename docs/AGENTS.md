@@ -48,7 +48,7 @@ A child template can set any of these parameters again without reinstalling Clau
 The build writes `effort` to `~/.claude/settings.json` under `modelSettings` for the selected model, the form `/effort` writes, so `/effort` can still change it in a session.
 
 `effort` needs `model`, because Claude Code keeps it per model, and a build with `effort` alone fails.
-A child template that sets `model` again carries the inherited `effort` to the new model.
+A child template's entry replaces the parent's parameters and does not carry `effort` over, so a child that sets `model` again must set `effort` again too.
 `max` is not accepted, since Claude Code keeps it for a session only (`--effort max`).
 
 ```yaml
