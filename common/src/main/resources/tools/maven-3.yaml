@@ -1,22 +1,22 @@
 # yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: maven-3
-description: Apache Maven 3.10.1
+description: Apache Maven 3.10.2
 
 packages:
   - bash-completion
 
 downloads:
-  - url: https://archive.apache.org/dist/maven/maven-3/3.10.1/binaries/apache-maven-3.10.1-bin.tar.gz
-    sha256: 810b8348f0a40f9116c202093fae007ebeabf67699bf34d81ee7e272289e085a
+  - url: https://archive.apache.org/dist/maven/maven-3/3.10.2/binaries/apache-maven-3.10.2-bin.tar.gz
+    sha256: 8ba13121794243e604dbca50439f6ae649ce602675a167129556fd502947b249
     extract: /opt
     links:
-      /opt/apache-maven-3.10.1/bin/mvn: /usr/local/bin/mvn
+      /opt/apache-maven-3.10.2/bin/mvn: /usr/local/bin/mvn
   - url: https://raw.github.com/juven/maven-bash-completion/216cd667b6119fe200c98b1ac2d030ac002be197/bash_completion.bash
     sha256: 6efc49869824f844cb489b69920af33f2fccd44e97d90c8b1584677e0ac5f432
     destination_file: /usr/share/bash-completion/completions/mvn
 
 env:
   - name: MAVEN_HOME
-    value: /opt/apache-maven-3.10.1
+    value: /opt/apache-maven-3.10.2
 
 verify: mvn --version
