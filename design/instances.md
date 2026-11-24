@@ -283,6 +283,15 @@ A task join (`TaskJoin.guestCommand`) ends with `exit $rc`, so it does not exit 
 The fallback is now an interactive shell, not a login shell, since the environment around it already comes from a login.
 `InteractiveShellJobControlTest` runs the script on a real terminal (util-linux `script`) and skips where that is missing, as on macOS.
 
+**An action clears the visible screen before its guest draws** (#2569).
+Coding agents such as Claude Code render inline from the cursor's row rather than on the alternate screen.
+Without zmx or the status bar to clear the display first, `isx branch` and its progress lines stayed in the top half of the screen while the agent drew in the bottom half.
+`IncusApi.execPty` now writes `ESC[2J ESC[H` once the session's WebSockets are open and the terminal is raw, whenever `InteractiveShell.clearsScreen` is true (`prep.shellCommand() != null`).
+It skips that write when `ShellStatusBar` is active, because `setup` already clears inside its scroll region, and when the host `TERM` is blank or `dumb`.
+It writes `2J`, never `3J` and never the alternate screen, so scrollback stays intact and the conversation remains visible on exit (#888).
+Plain shells (`isx shell`, `isx branch --shell`) keep prior output above their prompt as before.
+What an action gives up is keeping branch progress lines on screen once the agent starts; TUI branch warnings still reach the warning log, and terminals that push erased rows to scrollback keep the branch output there.
+
 **Shell status bar** (feature-flagged as `shell-status-bar`): `ShellStatusBar` pins a two-line bar at the bottom of the terminal during `isx shell` sessions, showing instance name, template, IP and network mode.
 F12 opens a quick-action menu populated from tool actions with `shell_menu: true` and a `shortcut` -- only `url` actions, because the menu runs them while the session owns the terminal in raw mode, and a `command` action's process would share that tty with the shell (fighting it for keystrokes and writing past the bar).
 Actions run on a virtual thread, so a slow URL launcher never holds up keystrokes, and through `ToolAction.executeWithoutPrompting`, which returns an error where `execute` would ask the user something (VS Code's missing Remote-SSH extension) and by default refuses, so a new action is safe until it says it never prompts.

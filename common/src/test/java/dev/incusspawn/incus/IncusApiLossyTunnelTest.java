@@ -457,6 +457,95 @@ class IncusApiLossyTunnelTest {
         assertTrue(server.pings("control") >= 10, "pinged throughout: " + server.pings("control"));
     }
 
+    /** Runs an interactive session, holding control open until {@code stdout} receives the guest's output. */
+    private String runPty(boolean clearScreen, String term) throws IOException {
+        var api = new IncusApi(new UnixSocketTransport(server.socketPath()), 50);
+        var received = new java.util.concurrent.CountDownLatch(1);
+        server.interactive = true;
+        server.stdout = "claude ready\r\n";
+        server.interactiveCloseGate = received;
+        var out = new java.io.ByteArrayOutputStream() {
+            @Override public synchronized void write(int b) {
+                super.write(b);
+                check();
+            }
+            @Override public synchronized void write(byte[] b, int off, int len) {
+                super.write(b, off, len);
+                check();
+            }
+            private void check() {
+                if (toString(java.nio.charset.StandardCharsets.UTF_8).contains(server.stdout)) {
+                    received.countDown();
+                }
+            }
+        };
+        try (var stdin = java.nio.channels.FileChannel.open(Path.of("/dev/null"))) {
+            assertFalse(api.execPty("c1", List.of("bash"), null, null, null, null, 80, 24,
+                    null, clearScreen, stdin, out, term));
+        }
+        return out.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    @Test
+    @Timeout(10)
+    void actionShellClearsVisibleDisplayBeforeGuestOutput() throws IOException {
+        // #2569: an action (Claude Code) starts on a clean screen from row 1 rather than below
+        // `isx branch` output, without 3J or the alternate screen.
+        var drawn = runPty(true, "xterm-256color");
+        assertEquals("\033[2J\033[Hclaude ready\r\n", drawn);
+    }
+
+    @Test
+    @Timeout(10)
+    void plainShellDoesNotClearDisplay() throws IOException {
+        var drawn = runPty(false, "xterm-256color");
+        assertEquals("claude ready\r\n", drawn);
+    }
+
+    @Test
+    @Timeout(10)
+    void dumbTermNeverReceivesClearEscape() throws IOException {
+        assertEquals("claude ready\r\n", runPty(true, "dumb"));
+    }
+
+    @Test
+    @Timeout(10)
+    void missingOrEmptyTermNeverReceivesClearEscape() {
+        assertFalse(IncusApi.canClearScreen(null));
+        assertFalse(IncusApi.canClearScreen(""));
+        assertFalse(IncusApi.canClearScreen("dumb"));
+        assertTrue(IncusApi.canClearScreen("xterm-256color"));
+    }
+
+    @Test
+    @Timeout(10)
+    void statusBarOwnsClearWhenEnabled() throws IOException {
+        var received = new java.util.concurrent.CountDownLatch(1);
+        var barOut = new java.io.ByteArrayOutputStream() {
+            @Override public synchronized void write(byte[] b, int off, int len) {
+                super.write(b, off, len);
+                if (toString(java.nio.charset.StandardCharsets.UTF_8).contains("claude ready\r\n")) {
+                    received.countDown();
+                }
+            }
+        };
+        var bar = new ShellStatusBar("c1", barOut);
+        var api = new IncusApi(new UnixSocketTransport(server.socketPath()), 50);
+        server.interactive = true;
+        server.stdout = "claude ready\r\n";
+        server.interactiveCloseGate = received;
+        var rawOut = new java.io.ByteArrayOutputStream();
+        try (var stdin = java.nio.channels.FileChannel.open(Path.of("/dev/null"))) {
+            assertFalse(api.execPty("c1", List.of("bash"), null, null, null, null, 80, 24,
+                    bar, true, stdin, rawOut, "xterm-256color"));
+        }
+        assertEquals("", rawOut.toString(java.nio.charset.StandardCharsets.UTF_8),
+                "output goes through the status bar, not raw stdout");
+        var drawn = barOut.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(drawn.contains("\033[2J"), drawn);
+        assertTrue(drawn.contains("claude ready\r\n"), drawn);
+    }
+
     @Test
     @Timeout(10)
     void execFailsLoudlyWhenAnFdHandshakeIsCutOff() {

@@ -135,4 +135,15 @@ class InteractiveShellTest {
         assertEquals(new Event(Kind.NOTE, "Still reconnecting (attempt 10 of 10)"), events.getLast());
         assertEquals(10, events.size());
     }
+
+    /** #2569: actions and shell commands clear the visible display; plain shells leave it alone. */
+    @Test
+    void onlyActionAndCommandSessionsClearTheScreen() {
+        var plain = IncusClient.ShellPrep.fromPrefetched(null, null, null, null, true, "tpl-agent");
+        assertFalse(InteractiveShell.clearsScreen(plain));
+        assertTrue(InteractiveShell.clearsScreen(plain.withActionCommand("claude")));
+        assertTrue(InteractiveShell.clearsScreen(plain.withCommandOnly("claude --resume id")));
+        var shellCmd = IncusClient.ShellPrep.fromPrefetched(null, "claude", null, null, true, "tpl-agent");
+        assertTrue(InteractiveShell.clearsScreen(shellCmd));
+    }
 }
