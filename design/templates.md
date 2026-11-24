@@ -570,7 +570,7 @@ It sets an extension status, the footer's third line, from `ISX_VERSION` and `IS
 The file is root-owned at `/etc/isx/pi/isx-status.ts`, beside the other isx files, and the user settings' `extensions` entry loads it.
 Dropping it into `~/.pi/agent/extensions/` was rejected: that directory is the user's, as `~/.pi/agent/AGENTS.md` is.
 `PiSetup` writes `defaultThinkingLevel` only when the template sets `effort`, so a template without one follows Pi's own default as the other agents do (#2548).
-`ClaudeSetup`'s `model` accepts Claude Code's aliases (`opus`, `sonnet`, `haiku`, `fable`, `best`, `opusplan`, `opus[1m]`, `sonnet[1m]`) alongside `claude-*` IDs, and `effort` keys `modelSettings` in `~/.claude/settings.json` by the configured value (#2534, #2548).
+`ClaudeSetup`'s `model` accepts Claude Code's aliases (`opus`, `sonnet`, `haiku`, `fable`, `best`, `opusplan`, `opus[1m]`, `sonnet[1m]`, `fable[1m]`) alongside `claude-*` IDs, and `effort` keys `modelSettings` in `~/.claude/settings.json` by the configured value (#2534, #2548).
 Probed on Claude Code 2.1.331, an alias key applies to the model that alias selects on the active provider, while a canonical entry saved later by `/effort` takes precedence.
 
 **VM-specific build behavior:**

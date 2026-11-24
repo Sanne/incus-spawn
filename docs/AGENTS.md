@@ -40,7 +40,7 @@ The key or token stays on the host, and the proxy adds it to Claude Code's reque
 | `attribution-commit` | Claude Code's own default | The trailer Claude Code adds to its commits, such as `Assisted-By: Claude Code <noreply@anthropic.com>` |
 | `attribution-pr` | Claude Code's own default | The text Claude Code adds to its pull requests; an empty string omits it |
 
-`model` takes a `claude-*` ID such as `claude-sonnet-5-5`, a family alias (`opus`, `sonnet`, `haiku` or `fable`), or `best`, `opusplan`, `opus[1m]` or `sonnet[1m]`.
+`model` takes a `claude-*` ID such as `claude-sonnet-5-5`, a family alias (`opus`, `sonnet`, `haiku` or `fable`), or `best`, `opusplan`, `opus[1m]`, `sonnet[1m]` or `fable[1m]`.
 Each family alias follows the current model of that family.
 `advisor-model` takes a `claude-*` ID, `opus`, `sonnet`, `haiku` or `fable`.
 A child template can set any of these parameters again without reinstalling Claude Code.

@@ -326,16 +326,24 @@ class ClaudeSetupTest {
     void modelAcceptsClaudeAliasesAndFullIds() {
         var defs = new ClaudeSetup().parameters();
         for (var valid : List.of("opus", "sonnet", "haiku", "fable", "best", "opusplan",
-                "opus[1m]", "sonnet[1m]", "claude-opus-5-5", "claude-sonnet-4-5@20250929", "claude-opus-4-6[1m]")) {
+                "opus[1m]", "sonnet[1m]", "fable[1m]",
+                "claude-opus-5-5", "claude-sonnet-4-5@20250929", "claude-opus-4-6[1m]", "claude-sonnet-4-5@20250929[1m]")) {
             var resolved = ParameterResolver.resolve(defs, Map.of("model", valid));
             assertTrue(resolved.errors().isEmpty(), () -> valid + ": " + String.join("; ", resolved.errors()));
             assertEquals(valid, resolved.resolvedValues().get("model"));
         }
-        var advisor = ParameterResolver.resolve(defs, Map.of("advisor-model", "fable"));
-        assertTrue(advisor.errors().isEmpty(), () -> String.join("; ", advisor.errors()));
-        for (var invalid : List.of("gpt-5", "default", "claude-", "opus[2m]", "a\"b", "a b")) {
+        for (var validAdvisor : List.of("fable", "claude-sonnet-4-5@20250929")) {
+            var advisor = ParameterResolver.resolve(defs, Map.of("advisor-model", validAdvisor));
+            assertTrue(advisor.errors().isEmpty(), () -> validAdvisor + ": " + String.join("; ", advisor.errors()));
+        }
+        for (var invalid : List.of("gpt-5", "default", "claude-", "opus[2m]", "haiku[1m]",
+                "claude-opus@@", "claude-opus@", "claude-opus@abc", "a\"b", "a b")) {
             var resolved = ParameterResolver.resolve(defs, Map.of("model", invalid));
             assertFalse(resolved.errors().isEmpty(), "Should reject model: " + invalid);
+        }
+        for (var invalidAdvisor : List.of("claude-opus@@", "claude-opus@", "claude-opus@abc")) {
+            var advisor = ParameterResolver.resolve(defs, Map.of("advisor-model", invalidAdvisor));
+            assertFalse(advisor.errors().isEmpty(), "Should reject advisor-model: " + invalidAdvisor);
         }
     }
 
