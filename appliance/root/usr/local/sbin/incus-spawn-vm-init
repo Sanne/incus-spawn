@@ -116,6 +116,9 @@ fi
 VSOCK_INCUS_PORT=$(parse_cmdline "isx.vsock_incus")
 if [ -n "$VSOCK_INCUS_PORT" ]; then
     /usr/local/sbin/isx-start-vsock-forwarder "$VSOCK_INCUS_PORT" &
+    # The agent answers from before the wait for Incus (#2555), so forwarder-restart refuses until this
+    # exists: a restart in that window would start a forwarder that the line above then starts again
+    : > /run/isx-forwarder-started
     echo "incus-spawn-vm-init: vsock forwarder on port $VSOCK_INCUS_PORT"
 fi
 

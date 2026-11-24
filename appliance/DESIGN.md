@@ -165,7 +165,7 @@ BusyBox init handles PID 1 responsibilities (zombie reaping, signal forwarding) 
 10. Start `dbus-daemon` (required by Incus)
 11. Start `lxcfs` (required by Incus for /proc virtualization)
 12. Start `incusd`
-13. Run `incus-spawn-vm-init` (bridge, storage pool, iptables), which starts the control agent before it waits for `incusd`, so the agent answers even when Incus cannot start on a full data disk (#2555)
+13. Run `incus-spawn-vm-init` (bridge, storage pool, iptables), which starts the control agent before it waits for `incusd`, so the agent answers even when Incus cannot start on a full data disk (#2555); its `forwarder-restart` answers `error: forwarder not started yet` until vm-init has started the forwarder (`/run/isx-forwarder-started`), so a restart in that window cannot leave two forwarders on one port
 14. Run smoke test if `isx.smoke_test` is on kernel cmdline
 15. Schedule diagnostics dump (30s delay, background)
 16. Echo `=== ISX READY ===` marker
