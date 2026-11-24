@@ -55,9 +55,8 @@ fi
 # Wait for Incus daemon
 if ! incus admin waitready --timeout 30; then
     echo "incus-spawn-vm-init: ERROR: Incus daemon not ready after 30s" >&2
-    # No forwarder starts on this boot now, so let the host's forwarder-restart start one if
-    # incusd comes up later (#2555)
-    : > /run/isx-forwarder-started
+    # No forwarder on this boot, and forwarder-restart refuses one (#2555): the bridge, pool and
+    # the redirect to the proxy below were never set up, so a VM restart is what brings Incus back
     exit 1
 fi
 

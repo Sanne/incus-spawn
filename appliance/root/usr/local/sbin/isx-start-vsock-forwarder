@@ -22,7 +22,8 @@ TARGET="${2:-/var/lib/incus/unix.socket}"
 
 # isx-agent's forwarder-restart refuses until the Incus forwarder has been started once (#2555): the
 # agent answers from before vm-init's wait for Incus, and a restart then would start a second one.
-# Written here, just before the exec, so it never exists while no forwarder is starting.
+# Written here, just before the exec, so it exists only once a forwarder is starting: a boot whose
+# vm-init gave up on Incus never writes it, since nothing after that wait was set up.
 if [ "$TARGET" = /var/lib/incus/unix.socket ]; then : > /run/isx-forwarder-started; fi
 
 exec socat -b 65536 -T 180 VSOCK-LISTEN:"$PORT",reuseaddr,fork,backlog=128 \
