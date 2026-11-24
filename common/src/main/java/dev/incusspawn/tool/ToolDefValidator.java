@@ -155,6 +155,12 @@ public class ToolDefValidator {
                             + def.getName() + "': config-path '" + config.getConfigPath()
                             + "' contains a dot — paths are relative to config-namespace, not absolute"));
                 }
+                // An unsound check could send the key where its proxy entry never does (#2566)
+                var checkProblem = config.getCheck() == null ? null : SecretCheck.problem(proxyDef, ce.getKey());
+                if (checkProblem != null) {
+                    errors.add(OutputFormat.oneLine("configuration '" + ce.getKey() + "' in proxy for '"
+                            + def.getName() + "': " + checkProblem));
+                }
                 if (!config.isSelfResolving() && config.getDescription().isBlank()) {
                     warnings.add("configuration '" + ce.getKey() + "' in proxy for '"
                             + def.getName() + "' has no description (needed for interactive setup)");

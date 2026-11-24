@@ -309,6 +309,29 @@ The `env:` value must start with the declared prefix followed by `placeholder`.
 Tools must read the variable when they run: a build proof is revoked before publication, and an explicit reset replaces an instance's proofs.
 Tools that read an auth file must refresh it from the variable at login or launch.
 
+##### Checking a pasted key
+
+A `secret: true` entry may say how `isx init` checks a pasted key before saving it.
+With `check.url`, isx sends one `GET` there, with the key in the header the tool's auth entry for that host injects.
+Its host must be a literal domain of an auth entry that reads the key, on the default port and under that entry's `paths:`.
+
+```yaml
+    token:
+      config-path: "token"
+      description: "Artifactory API token"
+      secret: true
+      check:
+        url: "https://artifactory.internal.example.com/access/api/v1/tokens"
+```
+
+Pick a URL that answers only a request carrying a valid key, or every key verifies.
+A project's own definition in `.incus-spawn/tools/` never runs a check: isx checks a key only as the definition the proxy uses declares it.
+
+A 2xx answer verifies the key, and a 401 rejects it, as does a 400 that calls the key invalid or expired: you try again or skip it.
+After any other answer, or none, isx also offers to save it unverified.
+When no request can check the key, write `check: { none: "<why>" }`.
+A key with neither is saved as not checked.
+
 ##### Placeholder declarations
 
 The proxy injects a credential only for a namespace with declared placeholders, under these rules.

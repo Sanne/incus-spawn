@@ -15,6 +15,8 @@ proxy:
       config-path: apiKey
       description: "TypeSafe AI API key"
       secret: true
+      check:
+        none: "TypeSafe documents no request that checks an API key"
       help:
         - "To create an API key:"
         - "  1. Go to https://console.typesafe.ai"

@@ -263,6 +263,15 @@
               "config-path": {"type": "string", "description": "Where the value is stored in config.yaml, under the namespace's selected account when relative."},
               "value": {"type": ["string", "number", "boolean"], "description": "A hardcoded literal, which isx init does not prompt for."},
               "help": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Lines printed before the prompt in place of the description."},
+              "check": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "description": "How isx init checks a pasted secret before saving it: a url, or none with why nothing can.",
+                "properties": {
+                  "url": {"type": "string", "description": "An https URL isx sends one GET to, authenticated as this tool's auth entry for its host injects the secret. The host must be a literal domain of an auth entry that reads this entry, on the default port and under that entry's paths. A 2xx answer verifies the key, a 401 rejects it, as does a 400 that calls the key invalid or expired, and after any other answer isx offers to save it unverified."},
+                  "none": {"type": "string", "description": "Why no request can check the secret."}
+                }
+              },
               "for-each": {
                 "type": ["object", "null"],
                 "description": "Makes this entry a list: in config.yaml, a map from each item's label to its fields. Auth and mcp entries naming the list in for-each repeat per item, reading ${<list>.label} and ${<list>.<field>}.",

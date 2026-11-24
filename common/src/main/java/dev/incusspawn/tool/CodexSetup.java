@@ -66,6 +66,7 @@ public class CodexSetup implements ToolSetup {
         apiKey.setConfigPath("apiKey");
         apiKey.setDescription("OpenAI API key");
         apiKey.setSecret(true);
+        apiKey.setCheck(SecretCheck.url("https://api.openai.com/v1/models"));
         apiKey.setHelp(List.of(
                 "To create an API key:",
                 "  1. Go to https://platform.openai.com/api-keys",

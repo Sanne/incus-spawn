@@ -91,6 +91,12 @@ class InitTranscriptsTest {
                     : new AuthResult(false, "Anthropic rejected it (HTTP 401): it may be expired or mistyped.");
         }
 
+        // A tool's declared key check (#2566): accepted, never sent to the real service
+        @Override
+        AuthResult checkSecret(dev.incusspawn.tool.SecretCheck.Request check) {
+            return new AuthResult(true, "Verified.");
+        }
+
         @Override
         AuthResult verifyVertexConfig(String region, String projectId) {
             // As the real check answers with no gcloud on this computer: it could not run

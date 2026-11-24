@@ -126,7 +126,15 @@ The count is the run's own: before the agent is chosen it counts the questions f
 After the choice it counts again, so a Copilot run, whose account step is the GitHub question, reads `[2/2]`, and the intro's "You answer" row lists the same questions.
 With no agent chosen, the GitHub step and the Git identity question speak of isx machines, never of "the agent" (`CredentialSetup.noAgent`).
 A check that fails is answered with one letter per meaning across the step: `Y` tries again and `s` skips, as in the step's own menu.
-A pasted key nothing checks (OpenAI's, a tool's) is reported in one line, `saved on this computer, not checked`, with the command that replaces it; no line confirms the paste apart from it (#2528).
+Every key the first run accepts is checked before it is saved, or its definition says why it cannot be (#2566).
+OpenAI's key is checked with `GET /v1/models`, and a tool's secret with the `check.url` its configuration entry declares (`SecretCheck`), sent with the header its own auth entry for that host injects.
+That host must be a literal domain of such an entry, so a check never sends a key where the proxy does not, and `ToolDefValidator` refuses any other.
+`SecretCheckTest` holds every built-in secret to a check or a `check.none` reason.
+The check always comes from the definition the proxy uses, loaded without the project's `.incus-spawn/tools/` (`CredentialSetup.toolsOf`), since a cloned repository's definition could otherwise name its own host and receive a real key.
+A 2xx verifies a key, a 401 rejects it, and so does a 400 that calls it invalid or expired; any other answer, a 403 included, lets the person save it unverified.
+`s` after a failed check skips the account and saves nothing of the step.
+Claude's and GitHub's steps check their credentials in code; Bob's, Atlassian's and TypeSafe's keys declare `none`, since no documented request checks them.
+A pasted key nothing checks (a user's tool that declares no check, or `none`) is reported in one line, `saved on this computer, not checked`, with the command that replaces it; no line confirms the paste apart from it (#2528).
 A ChatGPT sign-in by one-time code that did not finish offers the same `Y` and `s`, and `Y` asks for a new code, since a code expires by itself (`CredentialSetup.signInChatGptWithDeviceCode`).
 Saving unverified (`u`) is offered only when the check could not run or reach the service (`CredentialSetup.AuthResult.reached`), since a credential the service rejected fails the same way in every isx machine.
 A namespace with a hosted sign-in (Gemini's Google account) offers its kinds as the Claude step does, each with a line under it and "None for now", and offers the hosted kind only to the agents that can use it (`ToolSetup.HostedSignIn.tools`): a first run for Gemini CLI never offers Antigravity CLI's Google sign-in.
