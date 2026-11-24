@@ -1286,8 +1286,9 @@ public class InitCommand extends BaseCommand {
                 }
             }
             var servicesInstalled = new AtomicBoolean();
-            // The plumbing saves config.yaml after a lenient read (the gateway), and a continuation
-            // under sg, or a file edited while sudo and the install ran, was never read strictly here
+            // The plumbing's gateway save stops on a config.yaml that does not parse, but only after earlier
+            // steps ran: check here first, since a continuation under sg, or a file edited while sudo and
+            // the install ran, was never read strictly
             firstRunConfig();
             try {
                 // A continuation starts after Incus Installation, which its parent ran
@@ -1726,8 +1727,6 @@ public class InitCommand extends BaseCommand {
                 var prompts = consoleOrExplain();
                 if (prompts != null) credentials.setupClaudeSubscription(firstRunConfig(), prompts);
             } else {
-                // The full step reads config.yaml leniently before it saves: check it strictly first
-                firstRunConfig();
                 credentialStep(step, tools.get(step)).run().run();
             }
         }
@@ -2393,9 +2392,12 @@ public class InitCommand extends BaseCommand {
 
     private void setupMacOsCa() {
         // Checked before the bridge is made, so a config.yaml that does not parse stops the step before it changes anything
-        var config = SpawnConfig.loadToChange("run 'isx init' again");
+        var again = "run 'isx init' again";
+        SpawnConfig.loadToChange(again);
         incus.createBridgeIfMissing("incusbr0", VmManager.gatewayIp());
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+        // Read again after the Incus calls, so an account added from another terminal meanwhile is kept
+        var config = SpawnConfig.loadToChange(again);
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
         if (CertificateAuthority.exists()) {
