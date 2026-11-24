@@ -99,6 +99,42 @@ class OpencodeSetupTest {
     }
 
     @Test
+    void effortIsTheVariantOfThePrimaryAgentsOnTheirModel() {
+        assertFalse(config(Map.of()).keys().contains("agent"));
+        // opencode applies an agent's variant only while the agent runs its own model
+        var config = config(Map.of("provider", "openai", "model", "gpt-6-luna", "effort", "high"));
+        var agents = (JqObject) config.getField("agent");
+        assertEquals(List.of("build", "plan"), List.copyOf(agents.keys()));
+        for (var agent : List.of("build", "plan")) {
+            var entry = agents.getField(agent);
+            assertEquals("openai/gpt-6-luna", entry.pathText("model", null), agent);
+            assertEquals("high", entry.pathText("variant", null), agent);
+        }
+        // The default provider's model counts as set
+        assertEquals("anthropic/claude-sonnet-5-5",
+                config(Map.of("effort", "max")).getField("agent").getField("build").pathText("model", null));
+    }
+
+    @Test
+    void effortWithoutAModelFailsTheBuild() {
+        var e = assertThrows(IllegalStateException.class,
+                () -> OpencodeSetup.configJson(resolved(Map.of("provider", "openai", "effort", "high"))));
+        assertTrue(e.getMessage().contains("needs a model"), e.getMessage());
+    }
+
+    @Test
+    void effortTakesOnlyAVariantLevel() {
+        var parameters = new OpencodeSetup().parameters();
+        assertTrue(parameters.get("effort").isReconfigurable());
+        for (var value : new String[]{"none", "minimal", "low", "medium", "high", "xhigh", "max"}) {
+            assertFalse(ParameterResolver.resolve(parameters, Map.of("effort", value)).hasErrors(), value);
+        }
+        for (var value : new String[]{"HIGH", "high\"", "turbo"}) {
+            assertTrue(ParameterResolver.resolve(parameters, Map.of("effort", value)).hasErrors(), value);
+        }
+    }
+
+    @Test
     void aProviderIsxDoesNotManageGetsNoCredential() {
         var params = resolved(Map.of("provider", "openrouter", "model", "some-model"));
         assertEquals(List.of(), env(params));
