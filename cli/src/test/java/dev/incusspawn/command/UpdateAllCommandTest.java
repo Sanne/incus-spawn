@@ -265,6 +265,29 @@ class UpdateAllCommandTest {
                 recorded::toString);
     }
 
+    /**
+     * #2555 review: an update killed after it filled the pool leaves its copy. The retry deletes that
+     * copy before it reads the pool, so the space the leftover held does not refuse the retry, behind
+     * an instance the person never made.
+     */
+    @Test
+    void aLeftoverCopyIsDeletedBeforeThePoolIsJudged() {
+        long gib = 1024L * 1024 * 1024;
+        var incus = incus();
+        daemon.instance(COPY, "container", "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
+        daemon.poolSpace("default", 57 * gib, 60 * gib);
+        // Deleting the leftover gives its space back, as Incus does once the delete settles
+        doAnswer(inv -> {
+            var existed = daemon.client().exists(COPY);
+            inv.callRealMethod();
+            if (existed) daemon.poolSpace("default", 40 * gib, 60 * gib);
+            return null;
+        }).when(incus).deleteIfExists(COPY);
+
+        assertEquals(0, update(incus));
+        assertFalse(incus.exists(COPY));
+    }
+
     /** One step that fails discards the whole update: the template stays as it was built. */
     @Test
     void anUpdateWithAFailedStepLeavesTheTemplateAsItWas() {

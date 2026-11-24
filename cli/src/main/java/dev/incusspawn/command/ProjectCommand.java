@@ -131,9 +131,10 @@ public class ProjectCommand extends BaseCommand {
                 }
 
                 if (BuildCommand.reportStrandedStorage(incus, imageName, buildName)) return 1;
-                if (BuildCommand.reportPoolTooFull(incus, "create", imageName)) return 1;
                 // What a create that died before its swap left behind
                 incus.deleteIfExists(buildName);
+                // After that delete: a create killed once it filled the pool would otherwise refuse every retry (#2555)
+                if (BuildCommand.reportPoolTooFull(incus, "create", imageName)) return 1;
                 try {
                     var machineType = incus.machineType(parent);
                     BuildOutput.stepStart("Cloning from " + parent);

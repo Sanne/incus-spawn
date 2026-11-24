@@ -876,7 +876,6 @@ public class BuildCommand extends BaseCommand {
         if (reportNoVmSupport(incus, canonicalName, effectiveMachineType(imageDef), vmByOption)) {
             throw new BuildFailedException(canonicalName);
         }
-        if (reportPoolTooFull(incus, canonicalName)) throw new BuildFailedException(canonicalName);
 
         if (!batchConfirmed && incus.exists(canonicalName)) {
             if (!yes) {
@@ -904,6 +903,8 @@ public class BuildCommand extends BaseCommand {
     /** {@link #buildSingleImage} once this process alone works under {@code tempName} ({@link TemplateLock#building}). */
     private void buildHeld(ImageDef imageDef, Map<String, ImageDef> defs, String canonicalName, String tempName) {
         incus.deleteIfExists(tempName);
+        // After that delete: a build killed once it filled the pool would otherwise refuse every retry (#2555)
+        if (reportPoolTooFull(incus, canonicalName)) throw new BuildFailedException(canonicalName);
         var build = new ActiveBuild(tempName, canonicalName, effectiveMachineType(imageDef));
         activeBuild = build;
         buildLog = BuildLog.open(canonicalName, verbose);
