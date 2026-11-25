@@ -3057,6 +3057,7 @@ public class InitCommand extends BaseCommand {
         if (prompts == null) {
             // No answer to a credential comes from anywhere but a person at a terminal (#2075)
             skipped.add("credentials");
+            skippedWithoutTerminal("'isx account add' sets one up at a terminal.");
             return List.of();
         }
         return credentials.selectCredentials(allTools, credentialConfig(), prompts);
@@ -3116,6 +3117,16 @@ public class InitCommand extends BaseCommand {
             skipped.add(step);
             credentials.printCurrentPaths(getter.apply(config));
         }
+    }
+
+    /**
+     * A question this run could not ask, with no terminal to ask it in, and {@code then}: what
+     * asks it or answers it later, a line each, written to fit the frame whole, since a command
+     * broken across two lines cannot be copied.
+     */
+    static void skippedWithoutTerminal(String... then) {
+        BuildOutput.note("Skipped: this run has no terminal to ask in.");
+        for (var line : then) BuildOutput.note(line);
     }
 
     /** Adds {@code answers} to a path list, as the question would have: each a directory, resolved, once. */
