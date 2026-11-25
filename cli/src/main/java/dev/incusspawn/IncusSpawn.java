@@ -156,14 +156,39 @@ public class IncusSpawn implements QuarkusApplication {
         }
     }
 
-    static CommandResult runTop(boolean versionRequested) {
+    static CommandResult runTop(boolean versionRequested, String format) {
+        // Parsed first: an unknown format is refused whatever else was asked
+        var parsed = dev.incusspawn.util.OutputFormat.parse(format);
+        if (format != null && !versionRequested) {
+            throw new IllegalArgumentException("--format goes with --version: 'isx --version --format=" + format + "'");
+        }
         if (versionRequested) {
             var info = BuildInfo.instance();
             var results = BuildOutput.results();
-            versionLines(info, System::getenv).forEach(results::println);
+            if (parsed == dev.incusspawn.util.OutputFormat.TABLE) versionLines(info, System::getenv).forEach(results::println);
+            else parsed.printOne(results, versionRecord(info));
             return CommandResult.SUCCESS;
         }
         return launchTui() ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+    }
+
+    /**
+     * {@code isx --version --format=plain|json}: the version for a script, which the three lines
+     * people read are not. A contract like every such record: fields are added at the end, never
+     * renamed, removed or reordered. {@code display_version} is the one people read and
+     * {@code version} the one builds are compared by, as {@code isx proxy status} names them.
+     */
+    static java.util.Map<String, Object> versionRecord(BuildInfo info) {
+        var record = new java.util.LinkedHashMap<String, Object>();
+        // First, since it is the one a script wants from 'cut -f1': in a development build
+        // version() is the build's placeholder, 0.0.0-SNAPSHOT
+        record.put("display_version", info.displayVersion());
+        record.put("version", info.version());
+        record.put("commit", info.gitSha());
+        record.put("incus_client", info.incusClient());
+        record.put("incus_server", info.incusServer());
+        record.put("runtime", info.runtime());
+        return record;
     }
 
     // macOS variant: includes the `vm` appliance command group.
@@ -183,9 +208,12 @@ public class IncusSpawn implements QuarkusApplication {
     public static class IncusSpawnCommand extends BaseCommand {
         @Option(shortName = 'V', name = "version", hasValue = false, description = "Display version info")
         boolean versionRequested;
+        @Option(name = "format", completer = dev.incusspawn.command.Completers.Format.class,
+                description = "With --version: table (default), plain or json")
+        String format;
         @Override
         protected CommandResult doExecute() {
-            return runTop(versionRequested);
+            return runTop(versionRequested, format);
         }
     }
 
@@ -207,9 +235,12 @@ public class IncusSpawn implements QuarkusApplication {
     public static class IncusSpawnLinuxCommand extends BaseCommand {
         @Option(shortName = 'V', name = "version", hasValue = false, description = "Display version info")
         boolean versionRequested;
+        @Option(name = "format", completer = dev.incusspawn.command.Completers.Format.class,
+                description = "With --version: table (default), plain or json")
+        String format;
         @Override
         protected CommandResult doExecute() {
-            return runTop(versionRequested);
+            return runTop(versionRequested, format);
         }
     }
 }

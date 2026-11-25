@@ -52,4 +52,53 @@ class IncusSpawnNameTest {
             assertSame(other, IncusSpawn.withLogo(other, name -> null));
         }
     }
+
+    /**
+     * {@code isx --version --format=plain|json} is the version for a script: a record whose
+     * fields keep their names and order, never the logo, on a terminal or off one.
+     */
+    @Test
+    void theVersionRecordIsAContract() {
+        var info = new dev.incusspawn.BuildInfo("1.2.3-SNAPSHOT", "abc1234", "JVM", "1.2.3-dev.1+5");
+        var record = IncusSpawn.versionRecord(info);
+        assertEquals(List.of("display_version", "version", "commit", "incus_client", "incus_server", "runtime"),
+                List.copyOf(record.keySet()));
+        assertEquals("1.2.3-SNAPSHOT", record.get("version"));
+        assertEquals("1.2.3-dev.1+5", record.get("display_version"));
+        assertEquals("abc1234", record.get("commit"));
+        assertEquals("JVM", record.get("runtime"));
+
+        try (var ansi = dev.incusspawn.util.ForcedAnsi.on()) {
+            var bytes = new java.io.ByteArrayOutputStream();
+            dev.incusspawn.util.OutputFormat.PLAIN.printOne(new java.io.PrintStream(bytes, true, java.nio.charset.StandardCharsets.UTF_8), record);
+            var plain = bytes.toString(java.nio.charset.StandardCharsets.UTF_8);
+            // The version people read comes first, for 'cut -f1'
+            assertTrue(plain.startsWith("1.2.3-dev.1+5\t1.2.3-SNAPSHOT\tabc1234\t"), plain);
+            assertEquals(1, plain.lines().count(), plain);
+            assertFalse(plain.contains("\u001b") || plain.contains(dev.incusspawn.tui.Logo.ROWS[0]), plain);
+        }
+    }
+
+    /** The lines people read keep their text; only a terminal adds the logo beside them. */
+    @Test
+    void theVersionLinesArePlainOffATerminal() {
+        var info = new dev.incusspawn.BuildInfo("1.2.3", "abc1234", "JVM", "1.2.3");
+        var lines = IncusSpawn.versionLines(info, name -> null);
+        assertEquals(3, lines.size());
+        assertEquals("isx 1.2.3 (abc1234)", lines.get(0));
+        assertEquals("JVM", lines.get(2));
+
+        try (var ansi = dev.incusspawn.util.ForcedAnsi.on()) {
+            var drawn = IncusSpawn.versionLines(info, name -> null);
+            assertEquals(dev.incusspawn.tui.Logo.ROWS[0] + "    isx 1.2.3 (abc1234)", dev.incusspawn.util.BuildOutput.stripAnsi(drawn.get(0)));
+        }
+    }
+
+    /** {@code --format} is for {@code --version}: alone it would start the TUI with an answer nobody reads. */
+    @Test
+    void formatWithoutVersionIsRefusedAndAnUnknownFormatToo() {
+        var alone = assertThrows(IllegalArgumentException.class, () -> IncusSpawn.runTop(false, "json"));
+        assertTrue(alone.getMessage().contains("--format goes with --version"), alone.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> IncusSpawn.runTop(true, "yaml"));
+    }
 }
