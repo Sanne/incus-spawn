@@ -125,7 +125,7 @@ public class InitCommand extends BaseCommand {
     private static String topBorder() { return styled(CYAN, "╭" + BORDER_H + "╮"); }
     private static String bottomBorder() { return styled(CYAN, "╰" + BORDER_H + "╯"); }
 
-    /** A top border that carries {@code title}: {@code ╭─ isx setup ───╮}. */
+    /** A top border that carries {@code title}: {@code ╭─ Welcome to isx ───╮}. */
     private static String topBorder(String title) {
         return styled(CYAN, "╭─ ") + styled(BOLD, title) + styled(CYAN, " " + "─".repeat(BOX_WIDTH - title.length() - 3) + "╮");
     }
@@ -1355,9 +1355,13 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * What a first run shows before its first question: a map of the run, in the box (#2528).
-     * What the person answers lists only the questions this run asks. A re-run, on a computer
-     * init configured before, keeps its own banner.
+     * What a first run shows before its first question (#2528): a welcome that says what the
+     * person came for and how long it takes at most, then the run as three numbered stages, each a
+     * sentence. An earlier form labelled the rows "You answer", "isx then" and "You get", which
+     * read as orders, and a longer one said more than a first screen needs: what isx installs
+     * and what a template is for are said where they happen. The first stage lists only the
+     * questions this run asks. A re-run, on a computer init configured before, keeps its own
+     * banner.
      */
     void printFirstRunIntro(boolean macOs) {
         // Only a computer where init completed is a re-run: a config.yaml written by 'isx account
@@ -1371,36 +1375,54 @@ public class InitCommand extends BaseCommand {
         // The questions for the agent the run offers first; with none to offer, those of an agent with an account to set up
         var suggested = suggestedAgent();
         var questions = suggested == null ? new Questions(true, false, needsGitHub) : questionsFor(suggested, needsGitHub);
-        var asked = new ArrayList<>(List.of("your coding agent"));
-        if (questions.accountIsGitHub()) asked.add("its GitHub account");
-        else if (questions.account()) asked.add("its account");
-        if (questions.gitHub()) asked.add("GitHub");
         var out = new ArrayList<String>();
         out.add("");
-        out.add(topBorder("isx setup"));
+        out.add(topBorder("Welcome to isx"));
         out.add(boxLine(""));
-        out.add(boxLine(String.format("   %-13s%s", "You answer", String.join(", ", asked))));
-        if (macOs) {
-            out.add(boxLine(String.format("   %-13s%s", "isx then", "sets up this Mac: a Linux VM and the proxy")));
-        } else if (noSudo) {
-            // The root steps ran from the script the --no-sudo run before this one printed
-            out.add(boxLine(String.format("   %-13s%s", "isx then", "sets up the rest of this computer")));
-            out.add(boxLine(String.format("   %-13s%s", "", "(you ran init-privileged.sh as root)")));
-        } else {
-            out.add(boxLine(String.format("   %-13s%s", "isx then", "sets up this computer: Incus and the proxy")));
-            out.add(boxLine(String.format("   %-13s%s", "", "(asks for your sudo password)")));
+        out.add(boxLine(INTRO_INDENT + "Let's get your coding agent running."));
+        out.add(boxLine(INTRO_INDENT + "It won't take more than 5 minutes."));
+        out.add(boxLine(""));
+        var stages = List.of(introQuestions(questions), introSetup(macOs, noSudo),
+                "Your agent is ready to open in an isx machine, its own isolated Linux system.");
+        for (int n = 0; n < stages.size(); n++) {
+            var lines = Lines.wrap(stages.get(n), BOX_WIDTH - 2 * INTRO_INDENT.length() - INTRO_INDENT.length());
+            for (int l = 0; l < lines.size(); l++) {
+                out.add(boxLine(INTRO_INDENT + (l == 0 ? (n + 1) + ". " : INTRO_INDENT) + lines.get(l)));
+            }
         }
-        out.add(boxLine(String.format("   %-13s%s", "", "builds your first template")));
-        out.add(boxLine(String.format("   %-13s%s", "You get", "an isx machine (an isolated Linux system)")));
-        out.add(boxLine(String.format("   %-13s%s", "", "with your agent, ready to open")));
-        out.add(boxLine(""));
-        out.add(boxLine("   " + styled(DIM, "3 to 5 minutes, most of it downloads.")));
         out.add(boxLine(""));
         out.add(bottomBorder());
         // A frame of init's own: laid out here, drawn as given
         BuildOutput.frame(out.toArray(String[]::new));
     }
 
+    /** The intro's margin inside the box, and the width of a stage's number, "1. ". */
+    private static final String INTRO_INDENT = "   ";
+
+    /** The intro's first stage: the questions this run asks, the agent's among them always. */
+    static String introQuestions(Questions questions) {
+        var asked = new ArrayList<>(List.of("your preferred coding agent"));
+        if (questions.accountIsGitHub()) asked.add("its GitHub account");
+        else if (questions.account()) asked.add("its account");
+        if (questions.gitHub()) asked.add("GitHub");
+        if (asked.size() == 1) return "A question about " + asked.getFirst() + ".";
+        return "A few questions about " + String.join(", ", asked.subList(0, asked.size() - 1))
+                + " and " + asked.getLast() + ".";
+    }
+
+    /**
+     * The intro's second stage: isx sets up this computer and builds a template, called an
+     * example since the person changes or replaces it. Of what the setup does, only what the
+     * person must be ready for is said: the sudo password on Linux.
+     */
+    static String introSetup(boolean macOs, boolean noSudo) {
+        String computer;
+        if (macOs) computer = "this Mac";
+        // The root steps ran from the script the --no-sudo run before this one printed
+        else if (noSudo) computer = "the rest of this computer";
+        else computer = "this computer (it asks for your sudo password)";
+        return "isx sets up " + computer + " and builds an example template.";
+    }
 
     /** The preferred agent in config.yaml, as a coding agent's tool, or null. */
     ToolSetup preferredAgentTool() {
@@ -1513,7 +1535,7 @@ public class InitCommand extends BaseCommand {
         if (all || searchPathAnswers != null || forkTemplates) later.add(searchPathsStep());
         if (all || codeDirAnswers != null) later.add(codeDirectoriesStep());
         if (all) later.add(mcpStep());
-        // Counted for the agent offered first, as the intro's "You answer" row is; with none to
+        // Counted for the agent offered first, as the intro's first stage is; with none to
         // offer, the most a run can ask (the agent, its account, GitHub), so the total can only
         // drop at the next header and never reads "+" (#2528)
         var extra = (all ? 1 : 0) + later.size();

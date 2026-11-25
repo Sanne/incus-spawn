@@ -14,7 +14,10 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
 
 `runFirstRun` takes these steps, in order:
 
-1. It prints a map of the run in its banner (`printFirstRunIntro`): what the person answers, what isx then does, and what they get, and starts the downloads of `tpl-minimal`'s build in the background (`BackgroundDownloads`, `BuildDownloads.plan` with nothing counted as built).
+1. It prints a welcome in its banner (`printFirstRunIntro`): two short lines saying what the person came for and that it takes no more than 5 minutes, then the run as three numbered stages (the questions, isx setting up the computer and building an example template, and the agent ready to open in an isx machine).
+   The stages are sentences with isx as the actor: an earlier form labelled its rows "You answer", "isx then" and "You get", which read as orders.
+   It is kept to seven lines of text, so it leaves out what isx installs (the Linux VM, Incus, the proxy) and what a template is for, which the setup block and the closing box say where they happen; on Linux it keeps the sudo password, which the person must be ready for.
+   It starts the downloads of `tpl-minimal`'s build in the background (`BackgroundDownloads`, `BuildDownloads.plan` with nothing counted as built).
    The questions it lists are those this run asks: an account already set up is left out.
 2. It asks for the preferred agent (`askAgent`).
    One the person already prefers, else one `HostAgentProbe` found signed in, else one found installed, is offered and chosen by Enter, with `o` for the list and `n` for no agent; the prompt says what each letter does.
@@ -137,7 +140,7 @@ What is asked comes before why, a step that starts something says what will happ
 A step header shows its number once, as `[2/3]`.
 The count is the run's own: before the agent is chosen it counts the questions for the agent offered first, and with none to offer it shows the most a run asks: the agent, its account and GitHub (`InitCommand.questionsFor`).
 So the total can drop at the next header and never reads `+`; it grows only when the person turns down the agent offered for one with an account to set up.
-After the choice it counts again, so a Copilot run, whose account step is the GitHub question, reads `[2/2]`, and the intro's "You answer" row lists the same questions.
+After the choice it counts again, so a Copilot run, whose account step is the GitHub question, reads `[2/2]`, and the intro's first stage lists the same questions.
 With no agent chosen, the GitHub step and the Git identity question speak of isx machines, never of "the agent" (`CredentialSetup.noAgent`).
 A check that fails is answered with one letter per meaning across the step: `Y` tries again and `s` skips, as in the step's own menu.
 Every key the first run accepts is checked before it is saved, or its definition says why it cannot be (#2566).
