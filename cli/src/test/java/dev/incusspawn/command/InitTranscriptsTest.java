@@ -476,6 +476,34 @@ class InitTranscriptsTest {
         assertTrue(text.contains("Token verified and saved"), text);
     }
 
+    /**
+     * Each header after the first recaps what was answered (#2528): a tick and the answer, or a
+     * hyphen for a question left for later, above the question the header opens.
+     */
+    @Test
+    void aHeaderRecapsTheAnswersSoFar() throws Exception {
+        var text = transcriptOf("01-claude-subscription-agent-github");
+        var first = text.indexOf("Your Coding Agent");
+        var second = text.indexOf("Claude Code Account");
+        var third = text.indexOf("GitHub Account  ");
+        assertTrue(first >= 0 && first < second && second < third, text);
+        assertFalse(text.substring(0, first).contains("Coding agent   "), "the first header has nothing to recap:\n" + text);
+        var agent = "│  \u2713 Coding agent   Claude Code";
+        assertTrue(text.substring(first, second).contains(agent), text);
+        var beforeThird = text.substring(second, third);
+        assertTrue(beforeThird.contains(agent), text);
+        assertTrue(beforeThird.contains("│  \u2713 Its account    Claude subscription"), text);
+        // The questions' own: the closing box and what follows show none
+        assertFalse(text.substring(text.indexOf("Setup complete")).contains("Coding agent   "), text);
+
+        var later = transcriptOf("15-pi");
+        assertTrue(later.contains("│  \u2713 Coding agent   Pi"), later);
+        assertTrue(later.contains("│  - Its account    left for later"), later);
+
+        var none = transcriptOf("21-none-for-now-identity-yes");
+        assertTrue(none.contains("│  - Coding agent   none for now"), none);
+    }
+
     @Test
     void aGitHubAccountAnEarlierTemplateListsIsAskedInItsOwnStep() throws Exception {
         var text = transcriptOf("38-earlier-tpl-agent-lists-gh");

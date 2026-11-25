@@ -1590,6 +1590,7 @@ class CredentialSetup {
                                  boolean verified) {
         var values = new java.util.LinkedHashMap<String, String>();
         values.put("token", token);
+        savedGitHubLogin = result == null ? null : result.login();
         var email = result == null ? null : result.email();
         if (email != null) values.put("email", email);
         saveAccount(config, GhSetup.NAMESPACE,
@@ -2292,6 +2293,9 @@ class CredentialSetup {
             // Enter or a typo is asked again, never taken as a choice
         }
     }
+
+    /** The login of the GitHub account this run last saved, as GitHub named it, or null: for the first run's recap. */
+    String savedGitHubLogin;
 
     /** How the token part of the GitHub step ended. */
     enum GitHubOutcome { SAVED, SKIPPED, BACK }
