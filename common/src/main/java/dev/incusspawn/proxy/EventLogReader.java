@@ -146,19 +146,33 @@ public final class EventLogReader {
     /** The log whose current file is {@code file}: its older files first, {@code .4} to {@code .1}, then it. */
     public static Log read(Path file) {
         var reading = new Reading();
+        readFiles(file, reading, null);
+        return reading.done();
+    }
+
+    /**
+     * Reads every file of the log into {@code reading}, oldest first. With {@code consumed}, the
+     * current file's lines are read only up to its last newline, and {@code consumed[0]} takes how
+     * many bytes that was; it is -1 when the current file could not be read whole that far.
+     */
+    private static void readFiles(Path file, Reading reading, long[] consumed) {
         // Every file is opened before any is read: a rollover renames them, and an open file keeps
         // its lines, so one during the read neither skips a file nor reads one twice
         var opened = new java.util.ArrayList<InputStream>();
+        InputStream current = null;
         InputStream sums = null;
         try {
             for (int i = KEPT; i >= 0; i--) {
                 var path = i == 0 ? file : file.resolveSibling(file.getFileName() + "." + i);
                 try {
-                    opened.add(Files.newInputStream(path));
+                    var in = Files.newInputStream(path);
+                    if (i == 0) current = in;
+                    else opened.add(in);
                 } catch (NoSuchFileException absent) {
                     // Not kept yet
                 } catch (IOException e) {
                     reading.unreadable++;
+                    if (i == 0 && consumed != null) consumed[0] = -1;
                 }
             }
             try {
@@ -172,8 +186,17 @@ public final class EventLogReader {
             // (the documented window), never neither
             if (sums != null) reading.file(sums); // oldest history first
             for (var in : opened) reading.file(in);
+            if (current != null) {
+                if (consumed == null) {
+                    reading.file(current);
+                } else {
+                    long ended = reading.endedLines(current);
+                    if (consumed[0] >= 0) consumed[0] = ended;
+                }
+            }
         } finally {
             if (sums != null) opened.add(sums);
+            if (current != null) opened.add(current);
             for (var in : opened) {
                 try {
                     in.close();
@@ -182,7 +205,115 @@ public final class EventLogReader {
                 }
             }
         }
-        return reading.done();
+    }
+
+    /**
+     * The log read again and again by one reader, as the TUI's Work tab does (#2625): a read parses
+     * only the lines the current file gained since the last one. That holds while the older files
+     * and the sums are the same files, unchanged, and the current file is the same file, grown.
+     * Anything else (a rollover, a fold, a truncation, a file system without file keys, a read that
+     * failed) makes it read the whole log again, as {@link #read(Path)} does. Since a new file can
+     * get a deleted one's inode, and so its file key, the last line read must also still be where
+     * it was.
+     *
+     * <p>A last line not yet ended by its newline is left for the next read, since the proxy may
+     * still be writing it; {@link #read(Path)} counts such a line as unreadable.
+     */
+    public static final class Incremental {
+        private final Path file;
+        /** What was read so far, or null when the next read must be whole. */
+        private Reading reading;
+        private List<Stamp> older;
+        private Object currentKey;
+        private long offset;
+
+        public Incremental(Path file) {
+            this.file = file;
+        }
+
+        /** The log as it is now. */
+        public synchronized Log read() {
+            if (reading != null) {
+                var before = older(file);
+                var current = stamp(file);
+                if (before != null && before.equals(older) && current != null && currentKey.equals(current.key())
+                        && current.size() >= offset && append() && before.equals(older(file))) {
+                    return reading.done();
+                }
+            }
+            return whole();
+        }
+
+        /** Reads the current file's new ended lines into {@link #reading}; false when it is not the file read before. */
+        private boolean append() {
+            try (var channel = Files.newByteChannel(file)) {
+                // The path may have been renamed and replaced since its stamp was taken
+                var opened = stamp(file);
+                if (opened == null || !currentKey.equals(opened.key())) return false;
+                // A file key can be reused: a file deleted and made again may get its inode back, so the
+                // last line read must still end where the next read starts
+                var tail = reading.lastEnded;
+                var found = java.nio.ByteBuffer.allocate(tail.length);
+                channel.position(offset - tail.length);
+                while (found.hasRemaining() && channel.read(found) > 0) {
+                    // read on
+                }
+                if (found.hasRemaining() || !java.util.Arrays.equals(found.array(), tail)) return false;
+                channel.position(offset);
+                long ended = reading.endedLines(java.nio.channels.Channels.newInputStream(channel));
+                if (ended < 0) return false;
+                offset += ended;
+                return true;
+            } catch (IOException | RuntimeException e) {
+                return false;
+            }
+        }
+
+        private Log whole() {
+            reading = null;
+            var before = older(file);
+            var current = stamp(file);
+            var fresh = new Reading();
+            var consumed = new long[1];
+            readFiles(file, fresh, consumed);
+            var after = older(file);
+            var currentAfter = stamp(file);
+            // Kept for the next read only when no file moved under this one
+            if (before != null && before.equals(after) && current != null && current.key() != null
+                    && currentAfter != null && current.key().equals(currentAfter.key()) && consumed[0] >= 0) {
+                reading = fresh;
+                older = before;
+                currentKey = current.key();
+                offset = consumed[0];
+            }
+            return fresh.done();
+        }
+
+        /** A file as a read saw it: its identity, size and modification time; absent when all are null. */
+        private record Stamp(Object key, long size, java.nio.file.attribute.FileTime modified) {
+            static final Stamp ABSENT = new Stamp(null, -1, null);
+        }
+
+        /** The file's stamp, {@link Stamp#ABSENT} when there is none, or null when it has no file key or cannot be read. */
+        private static Stamp stamp(Path path) {
+            try {
+                var attributes = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class);
+                if (attributes.fileKey() == null) return null;
+                return new Stamp(attributes.fileKey(), attributes.size(), attributes.lastModifiedTime());
+            } catch (NoSuchFileException absent) {
+                return Stamp.ABSENT;
+            } catch (IOException | RuntimeException e) {
+                return null;
+            }
+        }
+
+        /** The stamps of the sums and the older files, or null when one cannot be told apart from another. */
+        private static List<Stamp> older(Path file) {
+            var stamps = new java.util.ArrayList<Stamp>();
+            for (int i = KEPT; i >= 1; i--) stamps.add(stamp(file.resolveSibling(file.getFileName() + "." + i)));
+            stamps.add(stamp(EventLogFold.sumsOf(file)));
+            return stamps.contains(null) ? null : stamps;
+        }
     }
 
     /** The older files the proxy keeps beside the current one: {@code EventLog} rolls by this. */
@@ -228,6 +359,51 @@ public final class EventLogReader {
             } catch (IOException | RuntimeException e) {
                 // An unreadable file: what came before in it still counts
                 unreadable++;
+            }
+        }
+
+        /** The bytes of the last line {@link #endedLines} read, its newline included, or none yet. */
+        byte[] lastEnded = new byte[0];
+
+        /**
+         * Reads the lines of {@code stream} that end with a newline, and returns how many bytes
+         * they took, or -1 when the stream failed before its end. A last line without one is left.
+         */
+        long endedLines(InputStream stream) {
+            files = true;
+            var line = new java.io.ByteArrayOutputStream();
+            // The last ended line, kept by swapping buffers rather than copying every line
+            var previous = new java.io.ByteArrayOutputStream();
+            boolean anyEnded = false;
+            var buffer = new byte[1 << 16];
+            long ended = 0, position = 0;
+            try (stream) {
+                int n;
+                while ((n = stream.read(buffer)) > 0) {
+                    int start = 0;
+                    for (int i = 0; i < n; i++) {
+                        if (buffer[i] != '\n') continue;
+                        line.write(buffer, start, i - start);
+                        // Bytes that are not UTF-8 spoil their line alone, as in file()
+                        var text = line.toString(StandardCharsets.UTF_8);
+                        line.write('\n');
+                        var swap = previous;
+                        previous = line;
+                        line = swap;
+                        line.reset();
+                        anyEnded = true;
+                        if (!text.isBlank()) line(text);
+                        start = i + 1;
+                        ended = position + start;
+                    }
+                    line.write(buffer, start, n - start);
+                    position += n;
+                }
+                if (anyEnded) lastEnded = previous.toByteArray();
+                return ended;
+            } catch (IOException | RuntimeException e) {
+                unreadable++;
+                return -1;
             }
         }
 
