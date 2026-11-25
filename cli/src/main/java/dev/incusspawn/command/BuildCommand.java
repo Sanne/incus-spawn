@@ -628,6 +628,10 @@ public class BuildCommand extends BaseCommand {
                 .filter(d -> !parentNames.contains(d.getName()))
                 .filter(d -> !incus.exists(d.getName()))
                 .toList();
+        if (missingLeaves.isEmpty()) {
+            reportNothingMissing(defs, parentNames);
+            return;
+        }
         var toCheck = new ArrayList<String>();
         var seen = new LinkedHashSet<String>();
         for (var leaf : missingLeaves) {
@@ -640,6 +644,24 @@ public class BuildCommand extends BaseCommand {
         // Asked once a build goes ahead: an outdated ancestor that exists asks "Build them?" first
         if (preflightBeforeConfirm(toCheck, defs)) pendingAccountAsk = () -> warnUnbranchable(toCheck, defs);
         build(targets, defs);
+    }
+
+    /**
+     * What {@code --missing} says when it builds nothing: it used to print no line at all. A
+     * parent that is not built is named, since {@code --missing} builds one only for a child.
+     */
+    private void reportNothingMissing(Map<String, ImageDef> defs, Set<String> parentNames) {
+        // Every other template is a leaf, which buildMissing just found built: not asked again
+        var unbuilt = defs.keySet().stream().filter(parentNames::contains).filter(name -> !incus.exists(name)).toList();
+        if (unbuilt.isEmpty()) {
+            BuildOutput.step("Every template is built already.");
+            return;
+        }
+        var them = unbuilt.size() == 1 ? "it" : "them";
+        BuildOutput.step("Every template at the end of a chain is built already.");
+        BuildOutput.note("--missing builds a parent only for a template that is not built, so it leaves "
+                + shown(OutputFormat.andList(unbuilt)) + " unbuilt. 'isx build " + shown(String.join(" ", unbuilt))
+                + "' builds " + them + ".");
     }
 
     /**

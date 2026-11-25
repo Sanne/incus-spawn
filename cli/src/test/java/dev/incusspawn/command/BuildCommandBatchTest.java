@@ -257,6 +257,28 @@ class BuildCommandBatchTest {
 
         assertEquals(List.of(), built);
         assertFalse(daemon.requests().stream().anyMatch(r -> r.contains("/networks")), daemon.requests().toString());
+        // It used to say nothing at all, so a person could not tell it from a build that hung (#2542)
+        assertEquals(List.of("Every template is built already."), said(RecordingOutput.Kind.STEP));
+    }
+
+    /** A parent that is not built, below a child that is, is named: {@code --missing} leaves it unbuilt. */
+    @Test
+    void missingNamesTheParentItLeavesUnbuilt() {
+        builtAt(Map.of(
+                "tpl-base", "2026-10-01T09:00:00",
+                "tpl-isx", "2026-10-01T09:02:00", "tpl-quarkus", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00", "tpl-other-child", "2026-10-01T09:01:00"));
+
+        assertEquals(0, build("--missing"));
+
+        assertEquals(List.of(), built);
+        assertEquals(List.of("Every template at the end of a chain is built already."), said(RecordingOutput.Kind.STEP));
+        assertEquals(List.of("--missing builds a parent only for a template that is not built, so it leaves tpl-layer"
+                + " unbuilt. 'isx build tpl-layer' builds it."), said(RecordingOutput.Kind.NOTE));
+    }
+
+    private List<String> said(RecordingOutput.Kind kind) {
+        return events.stream().filter(e -> e.kind() == kind).map(RecordingOutput.Event::msg).toList();
     }
 
     /**
