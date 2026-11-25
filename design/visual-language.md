@@ -210,7 +210,8 @@ What this gives up is columns that line up between the two panels of the Overvie
 
 **An empty panel says what to do next.**
 With no instance, the panel shows the logo, "No instances yet" and the key that makes one, in its middle.
-The logo is drawn in one other place, the welcome of `isx init`'s first run, from the same rows (`Logo.ROWS`).
+The logo is drawn in three other places, from the same rows (`Logo.ROWS`): the welcome of `isx init`'s first run, `isx --version`, where its three rows stand beside the three lines, and the top of `isx --help`, with the description beside its middle row.
+In `--version` and `--help` it is drawn only for a person at a terminal (`Logo.beside`, on `BuildOutput.ansi()`): a pipe or a command substitution gets the lines as they always were, since output a script reads is a contract.
 There it is outside the TUI, which asks the terminal for its background; a command that prints lines does not ask, since the answer arrives on the stream its prompts read.
 So its gradient runs between two colours halfway between the dark theme's accents and the light theme's (`Logo.FROM`, `Logo.TO`), in 24-bit colour only on proof of it, in the 256-colour palette where `TERM` names it, and otherwise bold in the terminal's own cyan.
 When a search is why the panel is empty, it says "No instance matches the search" and names the key that ends the search, since the pool is not empty.

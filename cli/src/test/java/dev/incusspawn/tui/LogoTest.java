@@ -60,6 +60,36 @@ class LogoTest {
         }
     }
 
+    /**
+     * Beside the logo only for a person at a terminal: what a script reads from a pipe or a
+     * command substitution is the lines as they always were, since that output is a contract.
+     */
+    @Test
+    void theLogoIsBesideTheLinesOnlyOnATerminal() {
+        var lines = java.util.List.of("isx 1.2.3 (abc1234)", "incus client 6, server 6", "Java 25");
+        assertSame(lines, Logo.beside(lines, env(Map.of("COLORTERM", "truecolor"))), "off a terminal the lines are untouched");
+
+        try (var ansi = ForcedAnsi.on()) {
+            var beside = Logo.beside(lines, env(Map.of("TERM", "linux")));
+            assertEquals(3, beside.size());
+            for (int i = 0; i < 3; i++) {
+                assertEquals(Logo.ROWS[i] + "    " + lines.get(i), BuildOutput.stripAnsi(beside.get(i)));
+            }
+        }
+    }
+
+    /** More lines than rows continue in the text's column, and an empty line leaves no trailing space. */
+    @Test
+    void linesBeyondTheLogoKeepTheirColumnAndAnEmptyLineEndsAtTheLogo() {
+        try (var ansi = ForcedAnsi.on()) {
+            var beside = Logo.beside(java.util.List.of("", "a description", "", "a fourth line"), env(Map.of()));
+            assertEquals(Logo.ROWS[0], BuildOutput.stripAnsi(beside.get(0)));
+            assertEquals(Logo.ROWS[1] + "    a description", BuildOutput.stripAnsi(beside.get(1)));
+            assertEquals(Logo.ROWS[2], BuildOutput.stripAnsi(beside.get(2)));
+            assertEquals(" ".repeat(Logo.WIDTH) + "    a fourth line", beside.get(3));
+        }
+    }
+
     /** The gradient runs from one end to the other, and a space between the letters takes no colour. */
     @Test
     void theGradientRunsFromOneEndToTheOther() {

@@ -58,6 +58,30 @@ public final class Logo {
         return rows;
     }
 
+    /** The gap between the logo and the text beside it. */
+    private static final String GAP = "    ";
+
+    /**
+     * {@code lines} with the logo to their left, a row to a line, for a person at a terminal;
+     * {@code lines} as they are anywhere else. So what a script reads from a pipe or a command
+     * substitution, where {@link BuildOutput#ansi()} is false, never holds the logo: output a
+     * script reads is a contract (design/terminal.md "Output for scripts"). Lines beyond the
+     * logo's three rows continue in the text's column.
+     *
+     * @param env reads an environment variable, null or empty when unset
+     */
+    public static List<String> beside(List<String> lines, UnaryOperator<String> env) {
+        if (!BuildOutput.ansi()) return lines;
+        var rows = forTerminal(env);
+        var out = new ArrayList<String>();
+        for (int i = 0; i < Math.max(rows.size(), lines.size()); i++) {
+            var row = i < rows.size() ? rows.get(i) : " ".repeat(WIDTH);
+            var line = i < lines.size() ? lines.get(i) : "";
+            out.add(line.isEmpty() ? row.stripTrailing() : row + GAP + line);
+        }
+        return out;
+    }
+
     /** As the TUI decides it, less the question to the terminal: truecolor only on proof, the palette only where named. */
     static ColorDepth depth(UnaryOperator<String> env) {
         var named = ColorDepth.named(env.apply(ColorDepth.OVERRIDE));
