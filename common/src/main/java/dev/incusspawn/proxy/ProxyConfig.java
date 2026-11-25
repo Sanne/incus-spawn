@@ -392,12 +392,11 @@ public final class ProxyConfig {
     private static boolean clearFirewalldRedirectPersistent() {
         try {
             dev.incusspawn.util.Privilege.check("sudo", "cat", FIREWALLD_DIRECT_XML.toString());
-            BuildOutput.releaseTerminal(); // sudo may prompt on the tty
-            var pb = new ProcessBuilder("sudo", "cat", FIREWALLD_DIRECT_XML.toString());
-            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
-            var process = pb.start();
-            var content = new String(process.getInputStream().readAllBytes());
-            if (process.waitFor() != 0) {
+            // sudo may prompt on the tty: only then is a live step's line frozen (#2595)
+            // Its stderr is kept apart: the content is written back, so a sudo warning must not join it
+            var read = dev.incusspawn.util.SudoPrompt.read(pb -> {}, "sudo", "cat", FIREWALLD_DIRECT_XML.toString());
+            var content = read.output();
+            if (read.exit() != 0) {
                 if (Files.exists(FIREWALLD_DIRECT_XML)) {
                     BuildOutput.warn("could not read " + FIREWALLD_DIRECT_XML
                             + " — persistent redirect rules may remain.");
