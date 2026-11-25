@@ -3,6 +3,7 @@ paths:
   - "common/src/main/java/dev/incusspawn/util/BuildOutput.java"
   - "common/src/main/java/dev/incusspawn/util/Output.java"
   - "common/src/main/java/dev/incusspawn/util/TerminalOutput.java"
+  - "common/src/main/java/dev/incusspawn/util/SudoPrompt.java"
   - "common/src/main/java/dev/incusspawn/util/CopyingOutput.java"
   - "common/src/main/java/dev/incusspawn/util/TerminalProgress.java"
   - "common/src/main/java/dev/incusspawn/util/Report.java"
@@ -173,6 +174,7 @@ Without a terminal the same calls print `label... done.` (`done in 41s.` past 2s
 A step must cover *all* of its work -- e.g. `ToolVerifier` gives each `verify` its own step and reports it only after the command returns, since a slow verify after "done" looks like a hang.
 While a step is live, `System.out`/`System.err` are wrapped so any other write first freezes the line (`… label`) and stops the spinner; `BaseCommand` calls `abandonStep()` after every command so an exception cannot leave the wrap installed.
 Anything that hands the terminal to a child directly (inherited IO, a `sudo` that may prompt on the tty) must call `BuildOutput.releaseTerminal()` first -- the wrap cannot see that output.
+A frozen line stays on the screen, so a `sudo` whose output isx captures freezes it only when sudo asks: `SudoPrompt.run` runs the command under `sudo -n` first, and again with the line frozen only when sudo says a password is required (#2595).
 Host commands run inside a step should capture output rather than inherit it.
 `TerminalProgress`-based blocks (repo clones, host repo refresh: N live lines at once) render at `BuildOutput.indent()` and finish with the same `✓`/`✗` glyphs (`BuildOutput.CHECK`/`CROSS`).
 Off an ANSI terminal `RepoCloner`'s parallel block reports each repository as it ends, from its state (`TerminalProgress.run` with `plainDone`): a step when ready, a warning when it failed.

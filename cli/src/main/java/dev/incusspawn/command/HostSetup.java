@@ -1370,7 +1370,7 @@ class HostSetup {
     private boolean writeSubidFile(String path, String content) {
         var tmpPath = path + ".isx-tmp";
         // Its sudo runs inside sh, so an expired sudo asks first, with the terminal released (#2528)
-        if (InitCommand.hostOutputToLog && !InitCommand.sudoReady("sudo", "true")) {
+        if (InitCommand.hostOutputToLog && !InitCommand.sudoReady()) {
             BuildOutput.warn("Failed to write " + path);
             return false;
         }

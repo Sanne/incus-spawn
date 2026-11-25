@@ -1625,49 +1625,13 @@ public final class ProxyService {
         return previous;
     }
 
-    /**
-     * Runs {@code command} quietly. A sudo is first run so that it cannot ask ({@code sudo -n}):
-     * only when sudo itself says a password is required is the live step's line frozen and the
-     * command run again, free to ask on the terminal. Frozen before every sudo, the line stayed
-     * on the screen as a stale "… label" above the step's own mark (#2528); and asking the
-     * command itself, not {@code sudo -n true}, leaves no case where the two disagree, such as a
-     * sudoers rule for one command or a credential that expires in between.
-     */
+    /** Runs {@code command} quietly, freezing a live step's line only when its sudo asks (#2528, #2595). */
     private static boolean runProcess(String... command) {
-        if (command.length == 0 || !command[0].equals("sudo")) return exitsZero(command, null);
-        var unasked = new ArrayList<>(List.of(command));
-        unasked.add(1, "-n");
-        var said = new StringBuilder();
-        if (exitsZero(unasked.toArray(String[]::new), said)) return true;
-        // The command ran and failed: running it again would only fail again
-        if (!sudoNeedsPassword(said.toString())) return false;
-        BuildOutput.releaseTerminal();
-        return exitsZero(command, null);
-    }
-
-    /**
-     * Whether what {@code sudo -n} printed says that it would have had to ask: its own words,
-     * which {@link #exitsZero} makes sudo say untranslated.
-     */
-    static boolean sudoNeedsPassword(String said) {
-        return said.contains("a password is required");
-    }
-
-    /**
-     * Whether {@code command} exits 0; what it printed goes to {@code said} when given, else
-     * nowhere. Read, its output is in the C locale: sudo translates "a password is required",
-     * and a German or French sudo would otherwise be taken for a command that failed, and never
-     * asked for the password.
-     */
-    private static boolean exitsZero(String[] command, StringBuilder said) {
         try {
-            var pb = new ProcessBuilder(command);
-            if (said != null) pb.environment().put("LC_ALL", "C");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            if (said != null) said.append(output);
-            return process.waitFor() == 0;
+            return dev.incusspawn.util.SudoPrompt.run(pb -> {}, command).exit() == 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         } catch (Exception ignored) {
             return false;
         }

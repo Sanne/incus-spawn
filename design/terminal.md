@@ -66,6 +66,11 @@ While a step animates, `System.out` and `System.err` are wrapped: the first writ
 Its `stepDone` then prints `✓ label` on a fresh line.
 The wrap is restored when the step ends; `BaseCommand` calls `abandonStep()` after every command so a step an exception cut short shows `✗` and stops guarding the streams (the TUI resumes in the same process after a build).
 A child process that writes to the terminal directly — inherited IO, or a `sudo` that may prompt for a password on the tty — bypasses the Java streams, so its caller calls `releaseTerminal()` first (`ProxyService.runQuiet("sudo", …)`).
+A frozen line stays as it was and the step's mark comes on a new line, so a `sudo` whose output isx captures freezes it only when sudo asks (`SudoPrompt.run`, #2595).
+It runs the command under `sudo -n` first, in the C locale, and freezes the line and runs it again only when sudo says a password is required.
+Asking the command itself, not `sudo -n true`, leaves no case where the two disagree, such as a sudoers rule for one command or a credential that expires in between.
+`SudoPrompt.read` keeps stderr apart, for a file isx reads and writes back, so a sudo warning never becomes part of it.
+A child whose output is inherited, such as `InitCommand.runHost`'s outside the first run, still freezes it every time, since the spinner would draw over what it prints.
 Host commands run under a step capture their output instead of inheriting it (`YamlToolSetup.runProcess`).
 
 **Warnings and errors** go to stderr.

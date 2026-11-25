@@ -4130,19 +4130,16 @@ public class InitCommand extends BaseCommand {
     /**
      * {@code command} with its output in the log, not on the screen. Its input is empty, so a
      * package manager's question fails the step rather than wait, unseen, behind its spinner;
-     * sudo asks on the tty, and a sudo whose credentials expired asks for the password first,
-     * with the terminal released, so its prompt is never hidden. A failed command's last lines are step notes,
-     * which the first run's output shows before the warning that follows.
+     * sudo asks on the tty, and only a sudo whose credentials expired asks, with the terminal
+     * released, so its prompt is never hidden (#2595). A failed command's last lines are step
+     * notes, which the first run's output shows before the warning that follows.
      */
     private static int runHostLogged(String... command) {
-        if (!sudoReady(command)) return 1;
         try {
-            var pb = new ProcessBuilder(command);
-            pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            var exit = process.waitFor();
+            var ran = dev.incusspawn.util.SudoPrompt.run(
+                    pb -> pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))), command);
+            var output = ran.output();
+            var exit = ran.exit();
             ClientLog.debug("$ " + String.join(" ", command) + " (exit " + exit + ")");
             var lines = output.lines().map(String::strip).filter(l -> !l.isEmpty()).toList();
             lines.forEach(ClientLog::debug);
@@ -4160,12 +4157,12 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * Whether {@code command} can run without asking for a password where a live step would draw
-     * over the prompt: it is not a sudo, or sudo's credentials are still cached, or the person gave
-     * the password again, asked with the terminal released.
+     * Whether a script that runs sudo can run without asking for a password where a live step
+     * would draw over the prompt: sudo's credentials are still cached, or the person gave the
+     * password again, asked with the terminal released.
      */
-    static boolean sudoReady(String... command) {
-        if (command.length == 0 || !"sudo".equals(command[0]) || runHostCapturingExit("sudo", "-n", "true") == 0) return true;
+    static boolean sudoReady() {
+        if (runHostCapturingExit("sudo", "-n", "true") == 0) return true;
         BuildOutput.releaseTerminal();
         try {
             var pb = new ProcessBuilder("sudo", "-v");
@@ -4210,22 +4207,16 @@ public class InitCommand extends BaseCommand {
      */
     int runHostQuiet(String... command) {
         dev.incusspawn.util.Privilege.check(command);
-        // sudo may ask for a password on the tty, which a live step line would be drawn over;
-        // in the first run's block it asks only when its credentials expired, so the line stays
-        if (hostOutputToLog) {
-            if (!sudoReady(command)) return 1;
-        } else if (command.length > 0 && command[0].equals("sudo")) {
-            BuildOutput.releaseTerminal();
-        }
         try {
-            var pb = new ProcessBuilder(command);
-            pb.redirectErrorStream(true);
-            // In the first run's block its output is not on the screen, so neither may a question be
-            pb.redirectInput(hostOutputToLog ? ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))
-                    : ProcessBuilder.Redirect.INHERIT);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes());
-            var exitCode = process.waitFor();
+            // sudo may ask for a password on the tty, which a live step line would be drawn over:
+            // only then is the line frozen, since a frozen line stays on the screen as a stale
+            // "… label" above the step's mark (#2595). In the first run's block its output is not
+            // on the screen, so neither may a question be
+            var ran = dev.incusspawn.util.SudoPrompt.run(pb -> pb.redirectInput(hostOutputToLog
+                    ? ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))
+                    : ProcessBuilder.Redirect.INHERIT), command);
+            var output = ran.output();
+            var exitCode = ran.exit();
             if (exitCode != 0) {
                 // The host's own text, shown as text: notes, which the caller's report of the failure follows
                 output.lines().map(String::strip).filter(line -> !line.isEmpty())

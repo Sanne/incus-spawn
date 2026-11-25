@@ -270,13 +270,9 @@ public final class UfwCheck {
     public static String readBeforeRules() {
         try {
             dev.incusspawn.util.Privilege.check("sudo", "cat", BEFORE_RULES.toString());
-            BuildOutput.releaseTerminal(); // sudo may prompt on the tty
-            var pb = new ProcessBuilder("sudo", "cat", BEFORE_RULES.toString());
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes());
-            if (process.waitFor() != 0) return "";
-            return output;
+            // sudo may prompt on the tty: only then is a live step's line frozen (#2595)
+            var read = dev.incusspawn.util.SudoPrompt.run(pb -> {}, "sudo", "cat", BEFORE_RULES.toString());
+            return read.exit() == 0 ? read.output() : "";
         } catch (IOException e) {
             return "";
         } catch (InterruptedException e) {
