@@ -59,12 +59,13 @@ public interface Prompts {
 
     /**
      * Asks a question with several choices, laid out one way for every wizard (#2492): a blank
-     * line, the lead-in asking the question and saying to choose one, the options numbered
+     * line, the question as the lead-in, the options numbered
      * and indented as a group (a newline in an option continues it under its text), a note
      * that holds for several options once, and a final prompt that says what Enter does.
      * The lines are said, the prompt is shown, so a test reads the whole conversation.
      *
-     * @param question  what is asked, without "Choose one": that is added
+     * @param question  what is asked, shown as given: a question and a numbered list need no
+     *                  "Choose one" after them (#2528)
      * @param options   one entry per choice, one or two lines each
      * @param note      a line after the list, or {@code null}
      * @param enterDoes what an empty answer does, as it completes "Enter to ...": e.g. "skip";
@@ -72,7 +73,7 @@ public interface Prompts {
      * @return the answer as typed, {@code null} at EOF
      */
     default String choose(String question, java.util.List<String> options, String note, String enterDoes) {
-        sayOptions(question + " Choose one:", options, note);
+        sayOptions(question, options, note);
         return ask(enterDoes == null ? "Choice: " : "Choice (Enter to " + enterDoes + "): ");
     }
 

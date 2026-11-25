@@ -167,7 +167,7 @@ class ChatGptAuthFlowTest {
         run(new FakeInit(), new SpawnConfig(), prompts);
 
         var conversation = prompts.conversation();
-        var question = conversation.indexOf("Which kind of OpenAI account do you have? Choose one:");
+        var question = conversation.indexOf("Which kind of OpenAI account do you have?");
         assertTrue(question >= 0, "the question comes before its options, so they read as alternatives: " + conversation);
         for (var option : List.of("  1. ChatGPT, signed in with a browser on " + dev.incusspawn.Platform.thisComputer(),
                 "  2. ChatGPT, signed in with a code on another device",

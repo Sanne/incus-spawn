@@ -86,10 +86,15 @@ Every other interface text uses the words of the "One word per concept" rule in 
 A text never switches between two words for one thing.
 
 **One outcome, one line, in the person's words.**
-"Token generation complete.", "Received 108 characters", "Verifying OAuth token", "OAuth token verified." and "Claude auth configuration saved" were five lines for one outcome.
+"Token generation complete.", "Verifying OAuth token", "OAuth token verified." and "Claude auth configuration saved" were four lines for one outcome.
 They should be one line, `BuildOutput.ok("Token verified and saved on this Mac")`, which prints `✓ Token verified and saved on this Mac`, and nothing else.
 An `ok` label takes no period and no `✓` of its own: `TerminalOutput` adds the mark, and `StepLabelGateTest` fails a label that ends in a period.
 When a program isx runs gives advice meant for someone using its output by hand, such as "Store this token securely", isx answers it in a `BuildOutput.stepNote` under the `ok` line: "You do not need to store or export it. isx keeps it."
+
+**Input the person cannot see gets a receipt.**
+A pasted secret is not echoed, so `Received 108 characters (sk-ant-oat01-...AwAA)` is the only sign that the paste arrived, and its length and masked ends show whether it is the right one.
+It is not an outcome line, so the rule above does not remove it: the first review of the first run did, and the GitHub step then went from the paste to its next question with nothing said (#2565).
+It is plain, with no tick: a tick is for a credential that was checked.
 
 **A warning says what it means for the person and what to do, and is printed only where it applies.**
 A person who chose "your own account" for GitHub, and with it their Git identity, was then warned during the build that agents "have no Git identity to commit under".

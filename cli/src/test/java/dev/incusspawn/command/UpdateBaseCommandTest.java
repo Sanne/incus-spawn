@@ -419,7 +419,7 @@ class UpdateBaseCommandTest {
         var recorded = RecordingOutput.during(() -> assertEquals(0,
                 new UpdateBaseCommand().askWhatToDo(prompts, RELEASE.tag(), List.of(RELEASE), null).getResultValue()));
         assertEquals(List.of(
-                "What should the base image do? Choose one:",
+                "What should the base image do?",
                 "",
                 "  1. Track the latest release (" + RELEASE.tag() + "), installing the newest of its line on each build",
                 "  2. Pin a specific version",

@@ -47,6 +47,23 @@ class GitHubAuthFlowTest {
         boolean ghLoggedIn;
         String ghToken;
         int ghTokenReads;
+        /** Whether this computer has a clipboard to copy to, never read from the machine a test runs on. */
+        boolean clipboard;
+        /** Whether a copy succeeds. */
+        boolean copies = true;
+        final List<String> copied = new ArrayList<>();
+
+        @Override
+        List<String> clipboardCommand() {
+            return clipboard ? List.of("a-clipboard-command") : null;
+        }
+
+        @Override
+        boolean copyToClipboard(String text) {
+            if (!clipboard || !copies) return false;
+            copied.add(text);
+            return true;
+        }
 
         FakeInit accept(String token, String login, String email) {
             valid.put(token, new GitHubVerifyResult(login, email));
@@ -158,7 +175,7 @@ class GitHubAuthFlowTest {
         var prompts = declineBrowser().secret(AGENT_PAT).line(FINISHED);
         run(new FakeInit().acceptAgentPat(), prompts);
 
-        assertTrue(prompts.questions().contains("Paste the token, or Enter to skip: "), prompts.questions()::toString);
+        assertTrue(prompts.questions().contains("Paste the GitHub token, or Enter to skip: "), prompts.questions()::toString);
         assertTrue(prompts.conversation().stream().noneMatch(line -> line.contains(AGENT_PAT)), "the token was shown");
     }
 
@@ -168,29 +185,113 @@ class GitHubAuthFlowTest {
         assertFalse(out.contains("Received"), out);
     }
 
+    /**
+     * A pasted token is not echoed, so a receipt says it arrived (#2565): its length and masked
+     * ends, with no tick, since nothing is checked yet, and before the line that says it is.
+     */
+    @Test
+    void aPastedTokenGetsAReceiptBeforeItsOutcome() {
+        var init = new FakeInit().acceptAgentPat();
+        var lines = RecordingOutput.during(() -> run(init, declineBrowser().secret(AGENT_PAT).line(FINISHED))).lines();
+
+        var receipt = CredentialSetup.describeReceivedSecret(AGENT_PAT);
+        var at = java.util.stream.IntStream.range(0, lines.size())
+                .filter(i -> lines.get(i).contains(receipt)).findFirst().orElse(-1);
+        assertTrue(at >= 0, () -> "no receipt '" + receipt + "' in:\n" + String.join("\n", lines));
+        var outcome = java.util.stream.IntStream.range(0, lines.size())
+                .filter(i -> lines.get(i).contains("Token verified and saved")).findFirst().orElseThrow();
+        assertTrue(at < outcome, () -> String.join("\n", lines));
+        assertFalse(lines.get(at).contains("\u2713"), "a receipt is no tick: " + lines.get(at));
+        assertTrue(lines.stream().noneMatch(l -> l.contains(AGENT_PAT)), "the token was printed");
+    }
+
+    /** The letters the token prompt takes are answers, not tokens: no receipt for them. */
+    @Test
+    void theLettersOfTheTokenPromptGetNoReceipt() {
+        var init = new FakeInit();
+        init.clipboard = true;
+        var out = reported(() -> run(init, new ScriptedPrompts().secret("c").secret("u").secret("")));
+        assertFalse(out.contains("Received"), out);
+    }
+
     /** What the flow said and asked, in order, a line each: steps, warnings and questions alike. */
     private static String reported(Runnable body) {
         return String.join("\n", RecordingOutput.during(body::run).lines());
     }
 
-    /** The browser is signed in as the person, so isx prints the agent's token page rather than opening it (#2528). */
+    /**
+     * The browser is signed in as the person, so isx neither opens the token page nor prints a
+     * link to it, which a click would open there too: the guide names the page in the step that
+     * uses it, and the address comes on request (#2528).
+     */
     @Test
-    void theTokenPageIsPrintedNeverOpened() {
+    void theTokenPageIsNeitherOpenedNorLinked() {
         var init = new FakeInit();
         var out = reported(() -> run(init, new ScriptedPrompts().secret("")));
 
         assertEquals(List.of(), init.opened);
-        assertTrue(out.contains(CredentialSetup.GH_PAT_PAGE), out);
+        assertTrue(out.contains("In that window, open GitHub's page for a new token."), out);
+        assertFalse(out.contains("personal-access-tokens"), "the address is shown only on request:\n" + out);
         assertNothingSaved();
     }
 
-    /** A terminal whose links cannot be clicked gets the page's whole address on request. */
+    /** The page is named before anything refers to it, and the step says how to get its address. */
+    @Test
+    void theGuideSaysHowToGetTheAddressWhereThePageIsUsed() {
+        var withClipboard = new FakeInit();
+        withClipboard.clipboard = true;
+        var out = reported(() -> run(withClipboard, new ScriptedPrompts().secret("")));
+        assertTrue(out.contains("Type c below to copy the address, or u to show it."), out);
+
+        var without = reported(() -> run(new FakeInit(), new ScriptedPrompts().secret("")));
+        assertTrue(without.contains("Type u below to show the address."), without);
+        assertFalse(without.contains("Type c"), "c is offered only where a copy can work:\n" + without);
+    }
+
+    /** {@code u} prints the page's whole address, to copy by hand. */
     @Test
     void uShowsTheWholeAddress() {
         var out = reported(() -> run(new FakeInit(), new ScriptedPrompts().secret("u").secret("")));
 
         assertTrue(out.contains(CredentialSetup.GH_PAT_NEW_URL), out);
         assertNothingSaved();
+    }
+
+    /** {@code c} copies the whole address, to paste in the window signed in as the agent, and asks again. */
+    @Test
+    void cCopiesTheWholeAddress() {
+        var init = new FakeInit();
+        init.clipboard = true;
+        var out = reported(() -> run(init, new ScriptedPrompts().secret("c").secret("")));
+
+        assertEquals(List.of(CredentialSetup.GH_PAT_NEW_URL), init.copied);
+        assertTrue(out.contains("Copied the address. Paste it in that browser window."), out);
+        assertFalse(out.contains(CredentialSetup.GH_PAT_NEW_URL), "a copied address is not printed as well:\n" + out);
+        assertEquals(List.of(), init.verified, "c is never checked as a token");
+        assertNothingSaved();
+    }
+
+    /** A copy that fails still gives the person the address. */
+    @Test
+    void aCopyThatFailsShowsTheAddress() {
+        var init = new FakeInit();
+        init.clipboard = true;
+        init.copies = false;
+        var out = reported(() -> run(init, new ScriptedPrompts().secret("c").secret("")));
+
+        assertTrue(out.contains("isx could not copy the address. Here it is:"), out);
+        assertTrue(out.contains(CredentialSetup.GH_PAT_NEW_URL), out);
+        assertNothingSaved();
+    }
+
+    /** Over SSH a command here reaches this computer's clipboard, not the one the person pastes from. */
+    @Test
+    void noClipboardIsOfferedOverSsh() {
+        var init = new CredentialSetup() {
+            @Override String env(String name) { return name.equals("SSH_CONNECTION") ? "10.0.0.1 50000 10.0.0.2 22" : "x"; }
+            @Override boolean hostHasCommand(String command) { return true; }
+        };
+        assertNull(init.clipboardCommand());
     }
 
     /**

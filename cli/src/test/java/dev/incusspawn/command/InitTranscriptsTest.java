@@ -207,8 +207,14 @@ class InitTranscriptsTest {
             return 0;
         }
 
+        /** The number the agent list shows for {@code agent} when no agent is found on this computer. */
         int number(String agent) {
-            var agents = codingAgentTools();
+            return number(agent, java.util.Set.of());
+        }
+
+        /** The number the list shows for {@code agent} when the agents named {@code found} are found: those come first. */
+        int number(String agent, java.util.Set<String> found) {
+            var agents = InitCommand.agentsInListOrder(codingAgentTools(), found);
             for (int i = 0; i < agents.size(); i++) if (agents.get(i).name().equals(agent)) return i + 1;
             throw new AssertionError(agent);
         }
@@ -295,7 +301,7 @@ class InitTranscriptsTest {
                 new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "4", "2", "")));
         b.add(new Branch("11-several-agents-found-another-chosen", "Claude Code and Codex found; Codex chosen from the list; an OpenAI API key",
                 i -> i.found = List.of(CLAUDE_SUBSCRIPTION, CODEX_FOUND), claudeHere,
-                new ScriptedPrompts().line("o", String.valueOf(probe.number("codex")), "3").secret(openaiKey).line("2", "")));
+                new ScriptedPrompts().line("o", String.valueOf(probe.number("codex", java.util.Set.of("claude", "codex"))), "3").secret(openaiKey).line("2", "")));
         b.add(new Branch("12-codex-chatgpt-browser", "Codex chosen; ChatGPT in the browser",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "1", "2", "")));

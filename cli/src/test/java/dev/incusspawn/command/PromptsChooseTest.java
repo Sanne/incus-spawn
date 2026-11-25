@@ -18,7 +18,7 @@ class PromptsChooseTest {
                 "Either ChatGPT option keeps the session on this host.", "leave OpenAI unconfigured");
         assertEquals("2", answer);
         assertEquals(List.of(
-                "How should instances authenticate with OpenAI? Choose one:",
+                "How should instances authenticate with OpenAI?",
                 "",
                 "  1. ChatGPT account, browser on this machine",
                 "     (ChatGPT and Enterprise plans, SSO included)",

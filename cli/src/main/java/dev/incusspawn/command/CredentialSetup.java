@@ -461,6 +461,7 @@ class CredentialSetup {
         while (true) {
             var answer = prompts.askSecret(canGoBack ? "Paste the API key, or Enter to go back: " : "Paste the API key, or Enter to skip: ");
             key = readSecret(answer);
+            received(key);
             if (key.isBlank()) {
                 if (canGoBack && answer != null) return false;
                 BuildOutput.step(skipped);
@@ -578,7 +579,7 @@ class CredentialSetup {
         while (true) {
             var answer = prompts.choose("Which kind of Claude account do you have?", List.of(
                     "An Anthropic API key\nFrom the Claude Console, billed by use.",
-                    "A Claude subscription (Pro, Max or Team)\nClaude Code makes a token for it.",
+                    "A Claude subscription (Pro, Max or Team)\nClaude Code creates a token for it.",
                     "Google Cloud Vertex AI\nBilled to your Google Cloud project.",
                     "None for now\nAdd one later with 'isx account add claude'."), null, null);
             // End of input is no answer at all: nothing is set up
@@ -751,15 +752,15 @@ class CredentialSetup {
     private Outcome claudeToken(SpawnConfig config, Prompts prompts, AccountTarget target, boolean offerOther) {
         var installed = hostHasCommand("claude");
         while (true) {
-            var pastePrompt = "Paste the token, or Enter to go back: ";
+            var pastePrompt = "Paste the Claude token, or Enter to go back: ";
             BuildOutput.gap();
             if (installed) {
-                BuildOutput.step("To make the token:");
+                BuildOutput.step("To create the token:");
                 prompts.say("  1. 'claude setup-token' runs and opens your browser");
                 prompts.say("  2. You approve, and it prints a token");
                 prompts.say("  3. isx reads the token. If it cannot, you paste it");
                 BuildOutput.gap();
-                prompts.say("Make the token now?");
+                prompts.say("Create the token now?");
                 prompts.say("  Y  run 'claude setup-token' here");
                 prompts.say("  n  I run it myself and paste the token");
                 if (offerOther) prompts.say("  o  another kind of account (API key, Vertex AI)");
@@ -771,7 +772,7 @@ class CredentialSetup {
                         if (saveTokenRead(config, target, runClaudeSetupToken())) return Outcome.DONE;
                         // The token is on the screen above, wrapped and among Claude Code's own lines
                         BuildOutput.stepNote("The token above starts with '" + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX + "'.");
-                        pastePrompt = "Paste the token above, or Enter to go back: ";
+                        pastePrompt = "Paste the Claude token above, or Enter to go back: ";
                     }
                     case "n", "no" -> { }
                     case "s" -> {
@@ -787,8 +788,8 @@ class CredentialSetup {
                     }
                 }
             } else {
-                BuildOutput.step("Claude Code is not installed on " + Platform.thisComputer() + ", so make");
-                BuildOutput.step("the token on a computer that has it");
+                BuildOutput.step("Claude Code is not installed on " + Platform.thisComputer() + ", so");
+                BuildOutput.step("create the token on a computer that has it");
                 BuildOutput.step("(" + TerminalLink.link("https://claude.com/claude-code") + "):");
                 prompts.say("  1. Run 'claude setup-token'. It opens your browser.");
                 prompts.say("  2. Approve, and it prints a token.");
@@ -804,7 +805,7 @@ class CredentialSetup {
     /** Takes the token until it verifies, is saved anyway or skipped: BACK on Enter. */
     private Outcome pasteClaudeToken(SpawnConfig config, Prompts prompts, AccountTarget target, String prompt) {
         while (true) {
-            var token = readSecret(prompts.askSecret(prompt));
+            var token = askSecret(prompts, prompt);
             if (token.isBlank()) return Outcome.BACK;
             warnOfShape(token, true);
             var result = verifyOauthToken(token);
@@ -840,8 +841,8 @@ class CredentialSetup {
         BuildOutput.gap();
         while (true) {
             // With nothing to go back to (the AI Help offer), Enter skips
-            var key = readSecret(prompts.askSecret(skipped != null ? "Paste the API key, or Enter to skip: "
-                    : "Paste the API key, or Enter to go back: "));
+            var key = askSecret(prompts, skipped != null ? "Paste the API key, or Enter to skip: "
+                    : "Paste the API key, or Enter to go back: ");
             if (key.isBlank()) return Outcome.BACK;
             var result = verifyAnthropicApiKey(key);
             if (result.verified()) {
@@ -1076,13 +1077,31 @@ class CredentialSetup {
     }
 
     /**
-     * Asks {@code question} for a secret, read unechoed and stripped. The receipt that once
-     * followed a paste ("Received N characters") is gone: it was a second outcome line beside
-     * the one that says the credential was saved, and Sanne chose one (#2528).
+     * Asks {@code question} for a secret, read unechoed and stripped, and says it arrived
+     * ({@link #received}).
      */
     static String askSecret(Prompts prompts, String question) {
         var secret = readSecret(prompts.askSecret(question));
+        received(secret);
         return secret;
+    }
+
+    /**
+     * The receipt of a pasted secret, on every one (#2565): what was typed is not echoed, so
+     * this line is the only sign that the paste arrived, and its length and masked ends show
+     * whether it is the right one. It comes before the check, which can take a while, and
+     * before any question asked ahead of the outcome line (the GitHub step's email). It is not
+     * an outcome and has no tick: a tick is for a credential that was checked. Nothing is
+     * said for an empty answer.
+     */
+    static void received(String secret) {
+        if (secret == null || secret.isEmpty()) return;
+        BuildOutput.stepNote(describeReceivedSecret(secret));
+    }
+
+    static String describeReceivedSecret(String secret) {
+        var n = secret.length();
+        return "Received " + n + (n == 1 ? " character" : " characters") + " (" + maskSecret(secret) + ")";
     }
 
 
@@ -1691,8 +1710,10 @@ class CredentialSetup {
     }
 
     /**
-     * How to make a token of the agent's own account (#2528): signed in as that account, which a
-     * browser signed in as the person is not, so isx prints the page rather than opening it.
+     * How to create a token of the agent's own account (#2528): signed in as that account, which
+     * a browser signed in as the person is not. So isx neither opens the page nor prints a link
+     * to click, both of which lead to the person's own account: step 2 names the page where it
+     * is used, and the address is copied or shown at the prompt, to paste in that window.
      */
     private void printGitHubPatGuide(Prompts prompts) {
         BuildOutput.gap();
@@ -1703,28 +1724,71 @@ class CredentialSetup {
         prompts.say("     private window or another browser profile.");
         prompts.say("     No such account yet? Create one first:");
         prompts.say("     " + TerminalLink.link("https://github.com/signup"));
-        prompts.say("  2. Open the isx token page there. Its permissions are");
-        prompts.say("     filled in: contents, issues and pull requests (read");
-        prompts.say("     and write), email address (read).");
+        prompts.say("  2. In that window, open GitHub's page for a new token.");
+        prompts.say("     isx has an address for it that fills in the");
+        prompts.say("     permissions: contents, issues and pull requests");
+        prompts.say("     (read and write), email address (read).");
         if (forCopilot) {
             prompts.say("     Copilot CLI also needs \"Copilot Requests\", which");
-            prompts.say("     the page does not add: under Permissions, click");
+            prompts.say("     the address does not add: under Permissions, click");
             prompts.say("     \"Add permissions\" and add it.");
         }
+        prompts.say(canCopyToClipboard()
+                ? "     Type c below to copy the address, or u to show it."
+                : "     Type u below to show the address.");
         prompts.say("  3. Under \"Repository access\", pick the repositories.");
         prompts.say("     A new account does not own any yet, so its list is");
         prompts.say("     empty.");
         prompts.say("  4. Set an expiry date, click \"Generate token\" and copy");
         prompts.say("     the token. It starts with github_pat_.");
         BuildOutput.gap();
-        BuildOutput.step("The isx token page:");
-        BuildOutput.step(BuildOutput.ansi() ? TerminalLink.link(GH_PAT_NEW_URL, GH_PAT_PAGE) : GH_PAT_PAGE);
-        BuildOutput.step("No link to click? Type u at the prompt for its address.");
-        BuildOutput.gap();
     }
 
-    /** The token page's address without its query, short enough to show; the link holds the whole of it. */
-    static final String GH_PAT_PAGE = "github.com/settings/personal-access-tokens/new";
+    /**
+     * The command that takes text on its stdin for the clipboard of the person's own screen, or
+     * null: none over SSH, where the clipboard a command here reaches is not the one the person
+     * pastes from.
+     */
+    List<String> clipboardCommand() {
+        if (!env("SSH_CONNECTION").isBlank() || !env("SSH_TTY").isBlank()) return null;
+        if (Platform.isMacOS()) return hostHasCommand("pbcopy") ? List.of("pbcopy") : null;
+        if (!env("WAYLAND_DISPLAY").isBlank() && hostHasCommand("wl-copy")) return List.of("wl-copy");
+        if (env("DISPLAY").isBlank()) return null;
+        if (hostHasCommand("xclip")) return List.of("xclip", "-selection", "clipboard");
+        if (hostHasCommand("xsel")) return List.of("xsel", "--clipboard", "--input");
+        return null;
+    }
+
+    /** Whether {@link #copyToClipboard} has a command to try. */
+    boolean canCopyToClipboard() {
+        return clipboardCommand() != null;
+    }
+
+    /** Copies {@code text} to the clipboard: false when there is no command for it or it failed. */
+    boolean copyToClipboard(String text) {
+        var command = clipboardCommand();
+        if (command == null) return false;
+        try {
+            // Nothing of the command's is read: wl-copy and xclip leave a child holding their output open
+            var process = new ProcessBuilder(command)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start();
+            try (var stdin = process.getOutputStream()) {
+                stdin.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0;
+        } catch (java.io.IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
 
     /**
      * Account menu for any credential namespace, driven entirely by the namespace name.
@@ -2246,10 +2310,19 @@ class CredentialSetup {
                                              Supplier<String> ghLogin) {
         printGitHubPatGuide(prompts);
         while (true) {
-            var token = readSecret(prompts.askSecret(canGoBack ? "Paste the token, or Enter to go back: "
-                    : "Paste the token, or Enter to skip: "));
+            var token = readSecret(prompts.askSecret(canGoBack ? "Paste the GitHub token, or Enter to go back: "
+                    : "Paste the GitHub token, or Enter to skip: "));
+            if (token.equalsIgnoreCase("c") && canCopyToClipboard()) {
+                if (copyToClipboard(GH_PAT_NEW_URL)) {
+                    BuildOutput.step("Copied the address. Paste it in that browser window.");
+                } else {
+                    BuildOutput.step("isx could not copy the address. Here it is:");
+                    BuildOutput.step(GH_PAT_NEW_URL);
+                }
+                continue;
+            }
             if (token.equalsIgnoreCase("u")) {
-                // The whole address, for a terminal whose links cannot be clicked: on a line of its own
+                // The whole address, on a line of its own, to copy by hand
                 BuildOutput.step(GH_PAT_NEW_URL);
                 continue;
             }
@@ -2262,6 +2335,8 @@ class CredentialSetup {
                 reportGitHubSkipped(config);
                 return GitHubOutcome.SKIPPED;
             }
+            // Not for c, u or Enter, which are answers to the prompt and no token
+            received(token);
 
             // GitHub logins ignore case
             var result = verifyPastedGitHubToken(token, prompts, login -> !login.equalsIgnoreCase(ghLogin.get())
@@ -2735,6 +2810,7 @@ class CredentialSetup {
                             // Enter goes back to the kinds of account; end of input skips, as every prompt's does
                             if (menu && answer != null && readSecret(answer).isEmpty()) continue choice;
                             value = readSecret(answer);
+                            received(value);
                             if (value.isBlank()) break;
                             // Checked as the tool declares, before anything is saved (#2566)
                             var withValue = new LinkedHashMap<>(answers);
