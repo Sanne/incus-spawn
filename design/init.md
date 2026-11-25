@@ -62,6 +62,10 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    A definition already named `tpl-agent`, in the person's directory or a search path, is built as it is and nothing is written, since a second one would make the build refuse both.
    Only trusted definitions decide the first template: a project's `.incus-spawn/` in the working directory is a cloned repository's.
    When a build there would read a project's template or tool for a layer of the chain, init builds and opens nothing, and says to build from a directory with no `.incus-spawn/` of its own.
+   The first machine it opens is introduced before its prompt when it is a plain shell: it says that the person is now inside `my-first`, an isx machine, and that `exit` leaves it (`ShellFarewell.entering`).
+   An agent draws its own screen, so nothing is said before it.
+   Leaving any shell, here or after `isx branch`, `isx shell` and `isx run`, says that isx leaves the instance running and names `isx shell` and `isx stop` for it (`ShellFarewell.left`): before, the person saw the guest's `logout` and their own prompt.
+   The line says what isx does and reads nothing, so it adds no request to the shell path.
 8. It prints the completion message, then asks `Run 'isx branch my-first --from tpl-agent' now?`, which branches `my-first` (or the first free `my-first-<n>`) from the template.
 
 **Every question comes before the long work.**

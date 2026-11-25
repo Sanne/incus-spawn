@@ -215,7 +215,7 @@ public final class InstanceNetwork {
         var assigned = StaticIpAllocator.claim(incus, bridge, alsoTaken, output, ip -> {
             // A static IP, so no DHCP lease is ever acquired: leases expire across host
             // sleep/wake. See pushStaticNetworkConfig for the guest side.
-            if (pushNetworkConfig) BuildOutput.step("Assigning static IP " + ip + ".");
+            // Not said: the address is isx's own bookkeeping, stamped below, and 'isx list' shows it (#2528)
             update.device(nicDevice, "ipv4.address", ip);
             update.config(Metadata.STATIC_IP, ip);
             // Pushed before the write rather than after, so the push is not the last thing

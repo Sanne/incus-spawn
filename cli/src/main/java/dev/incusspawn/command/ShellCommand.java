@@ -101,6 +101,8 @@ public class ShellCommand extends BaseCommand {
         incus.interactiveShell(name, "agentuser", prep, menu);
         // A session the shell made, as a new one the guest named, now has a socket to link
         ZmxSocketForward.relinkAfterShell(name);
+        // Not after a task's conversation, whose end the guest reports itself
+        if (joined == null) BuildOutput.note(ShellFarewell.left(name));
         // The guest said why on the terminal already; its exit status does not reach the host.
         if (joined != null && TaskJoin.refusedInGuest(incus, name, joined.id(), nonce)) return CommandResult.valueOf(1);
         return CommandResult.SUCCESS;

@@ -10,11 +10,18 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.impl.LazyHelp;
 import org.aesh.command.option.Option;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import dev.incusspawn.tui.Logo;
 import dev.incusspawn.tui.Tui;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.VirtualThreadPollers;
 
 @QuarkusMain
@@ -47,7 +54,7 @@ public class IncusSpawn implements QuarkusApplication {
                 return launchTui() ? 0 : 1;
             }
             if (looksLikeHelpQuestion(args)) {
-                var question = new java.util.ArrayList<>(java.util.List.of(args));
+                var question = new ArrayList<>(List.of(args));
                 question.remove("--help");
                 BuildOutput.error("--help takes no question.",
                         "Did you mean: isx ask " + String.join(" ", question),
@@ -107,19 +114,19 @@ public class IncusSpawn implements QuarkusApplication {
      * does not open with a description above its usage line, {@code help} as it is, so a script
      * reads what it always read.
      */
-    static String withLogo(String help, java.util.function.UnaryOperator<String> env) {
+    static String withLogo(String help, UnaryOperator<String> env) {
         if (!BuildOutput.ansi()) return help;
         var lines = help.lines().toList();
-        if (lines.size() < 2 || !ANSI_ESCAPE.matcher(lines.get(1)).replaceAll("").startsWith("Usage:")) return help;
-        var out = new java.util.ArrayList<>(dev.incusspawn.tui.Logo.beside(java.util.List.of("", lines.getFirst(), ""), env));
+        if (lines.size() < 2 || !BuildOutput.stripAnsi(lines.get(1)).startsWith("Usage:")) return help;
+        var out = new ArrayList<>(Logo.beside(List.of("", lines.getFirst(), ""), env));
         out.add("");
         out.addAll(lines.subList(1, lines.size()));
         return String.join("\n", out);
     }
 
     /** What {@code isx --version} prints: the logo beside its three lines for a person at a terminal, the lines alone anywhere else. */
-    static java.util.List<String> versionLines(BuildInfo info, java.util.function.UnaryOperator<String> env) {
-        return dev.incusspawn.tui.Logo.beside(java.util.List.of(
+    static List<String> versionLines(BuildInfo info, UnaryOperator<String> env) {
+        return Logo.beside(List.of(
                 "isx " + info.displayVersion() + " (" + info.gitSha() + ")",
                 "incus client " + info.incusClient() + ", server " + info.incusServer(),
                 info.runtime()), env);
@@ -158,14 +165,14 @@ public class IncusSpawn implements QuarkusApplication {
 
     static CommandResult runTop(boolean versionRequested, String format) {
         // Parsed first: an unknown format is refused whatever else was asked
-        var parsed = dev.incusspawn.util.OutputFormat.parse(format);
+        var parsed = OutputFormat.parse(format);
         if (format != null && !versionRequested) {
             throw new IllegalArgumentException("--format goes with --version: 'isx --version --format=" + format + "'");
         }
         if (versionRequested) {
             var info = BuildInfo.instance();
             var results = BuildOutput.results();
-            if (parsed == dev.incusspawn.util.OutputFormat.TABLE) versionLines(info, System::getenv).forEach(results::println);
+            if (parsed == OutputFormat.TABLE) versionLines(info, System::getenv).forEach(results::println);
             else parsed.printOne(results, versionRecord(info));
             return CommandResult.SUCCESS;
         }
@@ -178,8 +185,8 @@ public class IncusSpawn implements QuarkusApplication {
      * renamed, removed or reordered. {@code display_version} is the one people read and
      * {@code version} the one builds are compared by, as {@code isx proxy status} names them.
      */
-    static java.util.Map<String, Object> versionRecord(BuildInfo info) {
-        var record = new java.util.LinkedHashMap<String, Object>();
+    static Map<String, Object> versionRecord(BuildInfo info) {
+        var record = new LinkedHashMap<String, Object>();
         // First, since it is the one a script wants from 'cut -f1': in a development build
         // version() is the build's placeholder, 0.0.0-SNAPSHOT
         record.put("display_version", info.displayVersion());

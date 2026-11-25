@@ -341,11 +341,19 @@ public final class ProxyService {
 
         // The path is for a log, not for the person setting up (#2528)
         dev.incusspawn.ClientLog.debug("Service file written to " + Environment.proxyServiceFile());
-        // Whether it took is asked below, of the service itself
+        // The step's own mark says whether the service is running, asked of the service itself:
+        // the commands can succeed for a service that then is not active
         BuildOutput.stepStart("Starting the isx proxy service");
-        if (runQuiet("systemctl", "--user", "daemon-reload")
-                & runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME)) BuildOutput.stepDone();
-        else BuildOutput.stepBreak();
+        runQuiet("systemctl", "--user", "daemon-reload");
+        runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME);
+        var active = isActive();
+        if (active) {
+            BuildOutput.stepDone();
+        } else {
+            BuildOutput.stepBreak();
+            // Why it failed comes right under its mark, before the next step's line (#2528)
+            BuildOutput.error("The isx proxy service did not start.", serviceLogs());
+        }
 
         if (dev.incusspawn.util.Privilege.forbidden()) {
             // isx init --no-sudo: the person's script enabled it (#2074)
@@ -356,19 +364,19 @@ public final class ProxyService {
             else BuildOutput.stepFail("The proxy stops when you log out. Run: sudo loginctl enable-linger "
                     + System.getProperty("user.name"));
         }
+        // Asked last, so the proxy starts while sudo runs and may ask for a password
+        return active && confirmAnswering();
+    }
 
-        if (isActive()) {
-            if (ProxyHealthCheck.awaitHealthy(configuredStartWaitSeconds())) {
-                if (!answeringIsTheService()) return false;
-                BuildOutput.step("Proxy service is running.");
-                return true;
-            }
+    /** Whether the service that is active answers, and is the one answering: says so, or why not. */
+    private static boolean confirmAnswering() {
+        if (!ProxyHealthCheck.awaitHealthy(configuredStartWaitSeconds())) {
             BuildOutput.error("Service started but proxy is not responding.", serviceLogs());
             return false;
-        } else {
-            BuildOutput.error("Service did not start.", serviceLogs());
-            return false;
         }
+        if (!answeringIsTheService()) return false;
+        BuildOutput.step("Proxy service is running.");
+        return true;
     }
 
     /**
@@ -950,7 +958,11 @@ public final class ProxyService {
             var process = pb.start();
             var output = new String(process.getInputStream().readAllBytes()).strip();
             process.waitFor();
-            if (!output.isBlank()) {
+            // journalctl's own words for an empty journal say nothing of why
+            if (output.isBlank() || output.equals("-- No entries --")) {
+                lines.add("systemd has no log of it. This command says why:");
+                lines.add("systemctl --user status " + SERVICE_NAME);
+            } else {
                 lines.add("Recent logs:");
                 output.lines().forEach(lines::add);
                 if (output.contains("status=127")) {
@@ -967,8 +979,6 @@ public final class ProxyService {
                             + " service was installed with.");
                     lines.add("Alternatively, reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
                 }
-            } else {
-                lines.add("Check logs with: journalctl --user -u " + SERVICE_NAME);
             }
         } catch (Exception ignored) {
             lines.add("Check logs with: journalctl --user -u " + SERVICE_NAME);
@@ -1607,9 +1617,25 @@ public final class ProxyService {
         return previous;
     }
 
+    /** Whether sudo has no cached credential and would ask for a password: {@code sudo -n true} fails. */
+    private static boolean sudoWouldAsk() {
+        try {
+            var process = new ProcessBuilder("sudo", "-n", "true")
+                    .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+            return process.waitFor() != 0;
+        } catch (IOException e) {
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return true;
+        }
+    }
+
     private static boolean runProcess(String... command) {
-        // sudo may ask for a password on the tty, which a live step line would be drawn over.
-        if (command.length > 0 && command[0].equals("sudo")) BuildOutput.releaseTerminal();
+        // sudo may ask for a password on the tty, which a live step line would be drawn over. Only
+        // then is the line frozen: frozen for a sudo that asks nothing, it stayed on the screen
+        // as a stale "… label" above the step's own mark (#2528).
+        if (command.length > 0 && command[0].equals("sudo") && sudoWouldAsk()) BuildOutput.releaseTerminal();
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);

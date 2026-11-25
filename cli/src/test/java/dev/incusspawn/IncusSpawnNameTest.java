@@ -1,5 +1,12 @@
 package dev.incusspawn;
 
+import dev.incusspawn.tui.Logo;
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.ForcedAnsi;
+import dev.incusspawn.util.OutputFormat;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import org.aesh.command.impl.LazyHelp;
 import org.junit.jupiter.api.Test;
 
@@ -37,12 +44,12 @@ class IncusSpawnNameTest {
         var help = IncusSpawn.filterHiddenCommands(LazyHelp.render(IncusSpawn.IncusSpawnLinuxCommand.class, new String[] {"--help"}));
         assertSame(help, IncusSpawn.withLogo(help, name -> null), "off a terminal the help is untouched");
 
-        try (var ansi = dev.incusspawn.util.ForcedAnsi.on()) {
-            var drawn = dev.incusspawn.util.BuildOutput.stripAnsi(IncusSpawn.withLogo(help, name -> null)).lines().toList();
-            var plain = dev.incusspawn.util.BuildOutput.stripAnsi(help).lines().toList();
-            assertEquals(dev.incusspawn.tui.Logo.ROWS[0], drawn.get(0));
-            assertEquals(dev.incusspawn.tui.Logo.ROWS[1] + "    " + plain.get(0), drawn.get(1));
-            assertEquals(dev.incusspawn.tui.Logo.ROWS[2], drawn.get(2));
+        try (var ansi = ForcedAnsi.on()) {
+            var drawn = BuildOutput.stripAnsi(IncusSpawn.withLogo(help, name -> null)).lines().toList();
+            var plain = BuildOutput.stripAnsi(help).lines().toList();
+            assertEquals(Logo.ROWS[0], drawn.get(0));
+            assertEquals(Logo.ROWS[1] + "    " + plain.get(0), drawn.get(1));
+            assertEquals(Logo.ROWS[2], drawn.get(2));
             assertEquals("", drawn.get(3));
             // Nothing of the help is lost: the usage line and everything after it follow
             assertEquals(plain.subList(1, plain.size()), drawn.subList(4, drawn.size()));
@@ -59,7 +66,7 @@ class IncusSpawnNameTest {
      */
     @Test
     void theVersionRecordIsAContract() {
-        var info = new dev.incusspawn.BuildInfo("1.2.3-SNAPSHOT", "abc1234", "JVM", "1.2.3-dev.1+5");
+        var info = new BuildInfo("1.2.3-SNAPSHOT", "abc1234", "JVM", "1.2.3-dev.1+5");
         var record = IncusSpawn.versionRecord(info);
         assertEquals(List.of("display_version", "version", "commit", "incus_client", "incus_server", "runtime"),
                 List.copyOf(record.keySet()));
@@ -68,29 +75,29 @@ class IncusSpawnNameTest {
         assertEquals("abc1234", record.get("commit"));
         assertEquals("JVM", record.get("runtime"));
 
-        try (var ansi = dev.incusspawn.util.ForcedAnsi.on()) {
-            var bytes = new java.io.ByteArrayOutputStream();
-            dev.incusspawn.util.OutputFormat.PLAIN.printOne(new java.io.PrintStream(bytes, true, java.nio.charset.StandardCharsets.UTF_8), record);
-            var plain = bytes.toString(java.nio.charset.StandardCharsets.UTF_8);
+        try (var ansi = ForcedAnsi.on()) {
+            var bytes = new ByteArrayOutputStream();
+            OutputFormat.PLAIN.printOne(new PrintStream(bytes, true, StandardCharsets.UTF_8), record);
+            var plain = bytes.toString(StandardCharsets.UTF_8);
             // The version people read comes first, for 'cut -f1'
             assertTrue(plain.startsWith("1.2.3-dev.1+5\t1.2.3-SNAPSHOT\tabc1234\t"), plain);
             assertEquals(1, plain.lines().count(), plain);
-            assertFalse(plain.contains("\u001b") || plain.contains(dev.incusspawn.tui.Logo.ROWS[0]), plain);
+            assertFalse(plain.contains("\u001b") || plain.contains(Logo.ROWS[0]), plain);
         }
     }
 
     /** The lines people read keep their text; only a terminal adds the logo beside them. */
     @Test
     void theVersionLinesArePlainOffATerminal() {
-        var info = new dev.incusspawn.BuildInfo("1.2.3", "abc1234", "JVM", "1.2.3");
+        var info = new BuildInfo("1.2.3", "abc1234", "JVM", "1.2.3");
         var lines = IncusSpawn.versionLines(info, name -> null);
         assertEquals(3, lines.size());
         assertEquals("isx 1.2.3 (abc1234)", lines.get(0));
         assertEquals("JVM", lines.get(2));
 
-        try (var ansi = dev.incusspawn.util.ForcedAnsi.on()) {
+        try (var ansi = ForcedAnsi.on()) {
             var drawn = IncusSpawn.versionLines(info, name -> null);
-            assertEquals(dev.incusspawn.tui.Logo.ROWS[0] + "    isx 1.2.3 (abc1234)", dev.incusspawn.util.BuildOutput.stripAnsi(drawn.get(0)));
+            assertEquals(Logo.ROWS[0] + "    isx 1.2.3 (abc1234)", BuildOutput.stripAnsi(drawn.get(0)));
         }
     }
 

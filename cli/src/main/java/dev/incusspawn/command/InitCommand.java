@@ -1417,10 +1417,9 @@ public class InitCommand extends BaseCommand {
         out.add(topBorder());
         out.add(boxLine(""));
         // The logo beside the welcome: three rows, three lines, so it costs the box one line
-        var logo = logoRows();
-        var welcome = List.of("Welcome to isx.", "Let's get your coding agent running.", "It won't take more than 5 minutes.");
-        for (int row = 0; row < logo.size(); row++) {
-            out.add(boxLine(INTRO_INDENT + logo.get(row) + "    " + welcome.get(row)));
+        for (var line : dev.incusspawn.tui.Logo.rowsBeside(List.of("Welcome to isx.", "Let's get your coding agent running.",
+                "It won't take more than 5 minutes."), System::getenv)) {
+            out.add(boxLine(INTRO_INDENT + line));
         }
         out.add(boxLine(""));
         var stages = List.of(introQuestions(questions), introSetup(macOs, noSudo),
@@ -1466,11 +1465,6 @@ public class InitCommand extends BaseCommand {
 
     /** What a person types at {@link #BEGIN_PROMPT} to say no, where Ctrl+C is what the prompt names. */
     private static final java.util.Set<String> LEAVE = java.util.Set.of("n", "no", "q", "quit", "exit");
-
-    /** The logo's rows as this terminal draws them ({@link dev.incusspawn.tui.Logo#forTerminal}); tests give the environment. */
-    List<String> logoRows() {
-        return dev.incusspawn.tui.Logo.forTerminal(System::getenv);
-    }
 
     /** The intro's margin inside the box, and the width of a stage's number, "1. ". */
     private static final String INTRO_INDENT = "   ";
@@ -2168,15 +2162,12 @@ public class InitCommand extends BaseCommand {
      * GitHub as this account" named no account yet, and "its name" could be the agent's.
      */
     InitStep gitHubStep(AtomicBoolean saved) {
-        return new InitStep("github", "GitHub Account", chosenAgent == null ? new String[]{
-                "Everything done on GitHub from an isx machine is published",
-                "under one account's name: commits, pull requests, issues,",
-                "comments. With a separate account, other people can tell",
-                "that work from yours."} : new String[]{
-                "Everything the agent does on GitHub is published under one",
-                "account's name: commits, pull requests, issues, comments.",
-                "With an account of its own, other people can tell what the",
-                "agent wrote from what you wrote."},
+        return new InitStep("github", "GitHub Account", Lines.wrap(chosenAgent == null
+                ? "Everything done on GitHub from an isx machine is published under one account's name: commits,"
+                        + " pull requests, issues, comments. With a separate account, other people can tell that work from yours."
+                : "Everything the agent does on GitHub is published under one account's name: commits, pull requests,"
+                        + " issues, comments. With an account of its own, other people can tell what the agent wrote"
+                        + " from what you wrote.").toArray(String[]::new),
                 () -> saved.set(offerGitHub()), null);
     }
 
@@ -2358,6 +2349,7 @@ public class InitCommand extends BaseCommand {
         var branch = new BranchCommand();
         branch.name = instance;
         branch.source = template;
+        branch.firstRun = true;
         return branch.doExecute().getResultValue();
     }
 

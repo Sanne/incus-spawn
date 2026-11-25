@@ -30,7 +30,7 @@ public final class RecordingOutput implements Output {
 
     /** What kind of message an event is: one per method of {@link Output} that reports. */
     public enum Kind {
-        WARN, ERROR, WARN_ASIDE, STEP_WARN, WARN_BANNER, STEP_FAIL, NOTE,
+        WARN, ERROR, WARN_ASIDE, STEP_WARN, WARN_BANNER, STEP_FAIL, NOTE, FAILURE_DETAIL,
         HEADER, BUILD_HEADER, BRANCH_HEADER, SECTION, GROUP, GROUP_END,
         STEP, STEP_NOTE, OK, SUCCESS, LIST, RESULT, FRAME, GAP, PROMPT, WINDOW_TITLE,
         STEP_START, STEP_PROGRESS, STEP_DONE, STEP_BREAK, RELEASE_TERMINAL, ABANDON_STEP
@@ -143,6 +143,7 @@ public final class RecordingOutput implements Output {
     @Override public void warnBanner(String title, String... lines) { record(Kind.WARN_BANNER, title, lines); }
     @Override public void stepFail(String msg) { record(Kind.STEP_FAIL, msg); }
     @Override public void note(String msg) { record(Kind.NOTE, msg); }
+    @Override public void failureDetail(String msg) { record(Kind.FAILURE_DETAIL, msg); }
     @Override public void header(String msg, String detail) { record(Kind.HEADER, msg, optional(detail)); }
     @Override public void buildHeader(String name, int index, int total) {
         // A terminal shows the name as one line of text (TerminalOutput.buildHeader)

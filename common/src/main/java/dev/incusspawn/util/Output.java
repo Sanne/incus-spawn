@@ -87,6 +87,15 @@ public interface Output {
 
     default void stepNote(String msg) {}
 
+    /**
+     * A line of diagnostics gathered after a failure, such as a container's status or its LXC
+     * log: a {@link #note} wherever a person reads the whole report. An output that shows
+     * outcomes and logs details ({@link #detailsLogged}) sends it to the log alone and never
+     * replays it before the warning that follows, since it is what a person hands on, not what
+     * they act on (#2528).
+     */
+    default void failureDetail(String msg) { note(msg); }
+
     default void ok(String msg) {}
 
     default void success(String msg) {}

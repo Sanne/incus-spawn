@@ -618,6 +618,11 @@ public final class BuildOutput {
         return Arrays.stream(String.valueOf(text).split("\n", -1)).map(OutputFormat::oneLine).collect(Collectors.joining("\n"));
     }
 
+    /** A line of diagnostics gathered after a failure ({@link Output#failureDetail}): a note, or the log alone in a first run. */
+    public static void failureDetail(String msg) {
+        bound.failureDetail(msg);
+    }
+
     /**
      * Print an indented dim note (informational, not a warning) to stderr, beside the warnings.
      * Blank messages are skipped. A note is one line (advice over several lines is several
