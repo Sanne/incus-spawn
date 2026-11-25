@@ -93,6 +93,31 @@ public class OverviewCommand extends BaseCommand {
             return new Reading(log, guests, pulls, merges);
         }
 
+        /** This reading with another event log, as the TUI's refresh reads it (#2625). */
+        public Reading withLog(EventLogReader.Log read) {
+            return new Reading(read, guests, pulls, merged);
+        }
+
+        /** This reading with GitHub's newer answer. */
+        public Reading withPulls(Map<String, Map<EventLogReader.PullRequest, PullRequestStates.State>> states) {
+            return new Reading(log, guests, states, merged);
+        }
+
+        /** This reading with these instances' newer reads, each replacing what an earlier read said. */
+        public Reading withGuests(Map<String, GuestRead> reads) {
+            var all = new java.util.HashMap<>(guests);
+            all.putAll(reads);
+            return new Reading(log, Map.copyOf(all), pulls, merged);
+        }
+
+        /** This reading with the instance's merged summary, or without one when {@code merge} is null. */
+        public Reading withMerge(String name, SessionMerge.Merged merge) {
+            var all = new java.util.HashMap<>(merged);
+            if (merge == null) all.remove(name);
+            else all.put(name, merge);
+            return new Reading(log, guests, pulls, Map.copyOf(all));
+        }
+
         /**
          * Its work state; one the read did not cover (it appeared or started since) is not read
          * when stopped and unknown when running, never shown as stopped.

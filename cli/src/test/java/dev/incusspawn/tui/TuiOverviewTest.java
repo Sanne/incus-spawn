@@ -43,6 +43,8 @@ class TuiOverviewTest {
         if (runner != null) runner.close();
     }
 
+    private Path file;
+
     private Tui tui(int width) throws Exception {
         runner = TuiRunner.create(Tui.runnerConfig().backend(new HeadlessBackend(width, 24))
                 .shutdownHook(false).noTick().build());
@@ -61,7 +63,7 @@ class TuiOverviewTest {
                                 + dev.incusspawn.command.PiSessions.HEADER + "\ntotal 0\nend\n"
                                 + dev.incusspawn.command.AntigravitySessions.HEADER + "\ntotal 0\nend\n"
                                 + dev.incusspawn.command.OpencodeSessions.HEADER + "\ntotal 0\nend\n");
-        var file = dir.resolve("events.jsonl");
+        file = dir.resolve("events.jsonl");
         Files.writeString(file, String.join("\n",
                 "{\"t\":\"2026-11-01T12:00:00Z\",\"kind\":\"model\",\"instance\":\"ws\",\"incarnation\":\"" + WS + "\","
                         + "\"input_tokens\":40000,\"output_tokens\":2000}",
@@ -193,5 +195,84 @@ class TuiOverviewTest {
         assertEquals(1, reads.size());
         press(tui, KeyEvent.ofChar('o'), KeyEvent.ofChar('r'));
         assertEquals(1, reads.size(), "not without the overview");
+    }
+
+    private static String row(String screen, String name) {
+        return screen.lines().filter(l -> l.contains(" " + name + " ")).findFirst().orElseThrow();
+    }
+
+    @Test
+    void aStoppedRowIsShownAtOnceAndARunningOneWaitsForItsGuest() throws Exception {
+        var tui = tui(120);
+        for (int i = 0; i < 3; i++) press(tui, KeyEvent.ofKey(KeyCode.RIGHT));
+        var before = screen(tui, 120);
+        assertTrue(row(before, "ws").contains("not read"), "a stopped instance is not read, so nothing waits: " + before);
+        assertTrue(row(before, "mine").contains("\u2026"), before);
+        assertTrue(before.contains("reading the proxy's event log and 0/1 instance"), before);
+    }
+
+    @Test
+    void aGuestIsShownWhileTheEventLogIsStillBeingRead() throws Exception {
+        var tui = tui(120);
+        var logHeld = new java.util.concurrent.CountDownLatch(1);
+        tui.eventLogReader = () -> {
+            try {
+                logHeld.await();
+            } catch (InterruptedException e) {
+                throw new IllegalStateException(e);
+            }
+            return EventLogReader.read(file);
+        };
+        for (int i = 0; i < 3; i++) press(tui, KeyEvent.ofKey(KeyCode.RIGHT));
+        var reading = new Thread(reads.removeFirst());
+        reading.start();
+        try {
+            String shown = screen(tui, 120);
+            for (int i = 0; i < 500 && !row(shown, "mine").contains("2 unpushed"); i++) {
+                Thread.sleep(10);
+                shown = screen(tui, 120);
+            }
+            assertTrue(row(shown, "mine").contains("2 unpushed"), "the guest's row does not wait for the log: " + shown);
+            assertTrue(shown.contains("reading the proxy's event log"), shown);
+            assertFalse(shown.contains("0/1 instance"), "the title counts the guest read: " + shown);
+        } finally {
+            logHeld.countDown();
+            reading.join(10_000);
+        }
+        var read = screen(tui, 120);
+        assertTrue(row(read, "ws").contains("42.0k"), read);
+        assertTrue(row(read, "mine").contains("Ported the parser"), read);
+    }
+
+    @Test
+    void comingBackToTheWorkTabKeepsTheLastReadUntilItIsReadAgain() throws Exception {
+        var tui = tui(120);
+        for (int i = 0; i < 3; i++) press(tui, KeyEvent.ofKey(KeyCode.RIGHT));
+        readsFinish();
+        press(tui, KeyEvent.ofKey(KeyCode.LEFT));
+        press(tui, KeyEvent.ofKey(KeyCode.RIGHT));
+        assertEquals(1, reads.size(), "entering the tab again reads again");
+        var refreshing = screen(tui, 120);
+        assertTrue(row(refreshing, "mine").contains("2 unpushed") && row(refreshing, "mine").contains("Ported the parser"),
+                "the last read stays: " + refreshing);
+        assertTrue(row(refreshing, "ws").contains("42.0k"), refreshing);
+        assertTrue(refreshing.contains("Work since Nov 1, reading 0/1 instance"), refreshing);
+        readsFinish();
+        assertFalse(screen(tui, 120).contains("reading 0/1"));
+    }
+
+    @Test
+    void aReadThatEndsAfterALaterOneStartedChangesNothing() throws Exception {
+        var tui = tui(120);
+        for (int i = 0; i < 3; i++) press(tui, KeyEvent.ofKey(KeyCode.RIGHT));
+        press(tui, KeyEvent.ofChar('r'));
+        assertEquals(2, reads.size());
+        reads.get(1).run();
+        Files.writeString(file, "{\"t\":\"2026-11-01T12:00:00Z\",\"kind\":\"model\",\"instance\":\"ws\",\"incarnation\":\""
+                + WS + "\",\"input_tokens\":5,\"output_tokens\":0}\n");
+        reads.get(0).run();
+        reads.clear();
+        var shown = screen(tui, 120);
+        assertTrue(row(shown, "ws").contains("42.0k"), "the earlier read's log is dropped: " + shown);
     }
 }

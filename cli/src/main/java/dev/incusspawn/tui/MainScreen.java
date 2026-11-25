@@ -681,7 +681,8 @@ final class MainScreen {
             var row = instanceRows.get(instance);
             var cells = new ArrayList<>(List.of(row.cells().get(0), row.cells().get(1)));
             cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.lastUsedCell(instance)));
-            cells.add(dev.tamboui.widgets.table.Cell.from(reading == null ? "\u2026" : reading.workOf(instance).cell()));
+            boolean awaits = reading == null || tui.overviewAwaits(instance);
+            cells.add(dev.tamboui.widgets.table.Cell.from(awaits ? "\u2026" : reading.workOf(instance).cell()));
             if (log == null) {
                 for (int c = active ? 0 : 1; c < 3; c++) cells.add(dev.tamboui.widgets.table.Cell.from("\u2026"));
             } else {
@@ -690,8 +691,12 @@ final class MainScreen {
                 if (active) cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.activeCell(effort, zone)));
                 cells.add(dev.tamboui.widgets.table.Cell.from(githubLine(github.get(i), githubWidth)));
             }
-            if (done) cells.add(dev.tamboui.widgets.table.Cell.from(
-                    reading == null ? "\u2026" : OverviewCommand.doneCell(reading.summaryOf(instance), 120)));
+            if (done) {
+                var summary = awaits ? null : reading.summaryOf(instance);
+                // Only the event log can say an instance with no session was not untouched
+                cells.add(dev.tamboui.widgets.table.Cell.from(summary == null || log == null && "untouched".equals(summary.from())
+                        ? "\u2026" : OverviewCommand.doneCell(summary, 120)));
+            }
             if (purpose) cells.add(row.cells().get(8));
             var overviewRow = Row.from(cells).style(row.style());
             every.add(overviewRow);
@@ -731,13 +736,21 @@ final class MainScreen {
         return Line.from(spans);
     }
 
+    /** How far the latest refresh has read the running guests, after {@code lead} ({@code , reading 3/12 instances}), or nothing once it has. */
+    private String readingCount(String lead) {
+        int left = tui.overviewPending.size();
+        int of = tui.overviewReadingOf;
+        if (left == 0 || of == 0) return "";
+        return lead + (of - left) + "/" + of + (of == 1 ? " instance" : " instances");
+    }
+
     /** The overview's title: what its counts cover, read from the event log. */
     private String overviewTitle() {
         var log = tui.overviewLog;
         var name = tui.view == Tui.View.WORK ? " Work" : " Instances: overview";
         var back = tui.view == Tui.View.WORK ? " " : " (o: back) ";
-        if (log == null) return name + ", reading the proxy's event log" + back;
-        var reading = tui.overviewReading == null ? ", reading the instances" : "";
+        if (log == null) return name + ", reading the proxy's event log" + readingCount(" and ") + back;
+        var reading = readingCount(", reading ");
         if (!log.files() || log.since() == null) return name + ", the proxy's event log is empty" + reading + back;
         var lost = log.droppedLines() + log.unreadableLines();
         return name + " since "

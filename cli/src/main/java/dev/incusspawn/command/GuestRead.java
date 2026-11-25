@@ -8,7 +8,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 /**
  * What the overview reads inside one running guest (#2241), in one exec: the clones' work state
@@ -38,7 +37,7 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
         return sb.append("exit $w\n").toString();
     }
 
-    static final GuestRead NOT_READ = new GuestRead(WorkState.NOT_READ, AgentSessions.NOT_READ);
+    public static final GuestRead NOT_READ = new GuestRead(WorkState.NOT_READ, AgentSessions.NOT_READ);
 
     static GuestRead unknown(String why) {
         return new GuestRead(WorkState.unknown(why), AgentSessions.unknown(why));
@@ -92,18 +91,33 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
      * whose reads all time out (10 s and the 3 s kill grace, four waves).
      */
     public static Map<String, GuestRead> readAll(IncusClient incus, List<InstanceInfo> instances) {
+        var done = new java.util.concurrent.ConcurrentHashMap<String, GuestRead>();
+        readEach(incus, instances, done::put);
         var reads = new LinkedHashMap<String, GuestRead>();
-        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
-            var futures = new LinkedHashMap<String, Future<GuestRead>>();
-            for (var instance : instances) futures.put(instance.name(), pool.submit(() -> read(incus, instance)));
-            futures.forEach((name, future) -> {
-                try {
-                    reads.put(name, future.get());
-                } catch (Exception e) {
-                    reads.put(name, unknown("it did not answer: " + e.getMessage()));
-                }
-            });
-        }
+        for (var instance : instances) reads.put(instance.name(), done.getOrDefault(instance.name(), unknown("it did not answer")));
         return reads;
+    }
+
+    /**
+     * As {@link #readAll}, but each instance's read is handed to {@code read} as soon as it ends,
+     * on the thread that made it, so the TUI shows a fast guest without waiting for a slow one
+     * (#2625). The reads are started in the order of {@code instances}, so the first ones take the
+     * first slots. Returns once every read was handed on.
+     */
+    public static void readEach(IncusClient incus, List<InstanceInfo> instances,
+                                java.util.function.BiConsumer<String, GuestRead> read) {
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (var instance : instances) {
+                pool.submit(() -> {
+                    GuestRead guest;
+                    try {
+                        guest = read(incus, instance);
+                    } catch (RuntimeException e) {
+                        guest = unknown("it did not answer: " + e.getMessage());
+                    }
+                    read.accept(instance.name(), guest);
+                });
+            }
+        }
     }
 }

@@ -408,13 +408,20 @@ public class Tui {
      * disk. The rows, the marks and F8 stay the table's own.
      */
     boolean overview;
-    /** The event log the overview last read, or null until a read has finished. */
+    /** The event log the overview last read, or null until a read has finished; a refresh keeps it until the next is read. */
     volatile dev.incusspawn.proxy.EventLogReader.Log overviewLog;
     /**
-     * The work states read in the guests and GitHub's answer, for the rows the read was started
-     * for, or null until both are in: they come after the log, which shows first.
+     * The work states read in the guests, GitHub's answer and the merged summaries, each updated
+     * as it arrives (#2625), or null before the first read started. A refresh keeps the last
+     * read's values until each is read again.
      */
     volatile dev.incusspawn.command.OverviewCommand.Reading overviewReading;
+    /** The running instances whose read of the latest refresh has not ended, by name. */
+    volatile java.util.Set<String> overviewPending = java.util.Set.of();
+    /** How many running instances the latest refresh reads: the title's {@code reading 3/12 instances}. */
+    volatile int overviewReadingOf;
+    /** The pull requests GitHub answered merged in this session, not asked about again. */
+    final dev.incusspawn.command.PullRequestStates.Settled overviewSettled = new dev.incusspawn.command.PullRequestStates.Settled();
     /** GitHub, asked whether the pull requests were merged; tests answer for it. */
     dev.incusspawn.command.PullRequestStates.GitHub overviewGitHub = dev.incusspawn.command.PullRequestStates.api();
     /** The host's config, for each instance's GitHub account; tests give their own. */
@@ -429,7 +436,16 @@ public class Tui {
         return overview || view == View.WORK;
     }
     /** Reads the event log; tests give their own. */
-    java.util.function.Supplier<dev.incusspawn.proxy.EventLogReader.Log> eventLogReader = dev.incusspawn.proxy.EventLogReader::read;
+    java.util.function.Supplier<dev.incusspawn.proxy.EventLogReader.Log> eventLogReader = new java.util.function.Supplier<>() {
+        /** Kept for the session, so a refresh parses only what the log gained (#2625). */
+        private dev.incusspawn.proxy.EventLogReader.Incremental log;
+
+        @Override
+        public synchronized dev.incusspawn.proxy.EventLogReader.Log get() {
+            if (log == null) log = new dev.incusspawn.proxy.EventLogReader.Incremental(dev.incusspawn.Environment.proxyEventLogFile());
+            return log.read();
+        }
+    };
     /** The zone the overview's days and last use are shown in; tests fix it. */
     java.time.ZoneId overviewZone = java.time.ZoneId.systemDefault();
     /** Where the read runs: never the UI thread, which a large log would stall; tests run it in place. */
@@ -2969,56 +2985,169 @@ public class Tui {
     }
 
     /**
-     * Reads the overview's columns off the UI thread: the event log first, shown as soon as it is
-     * read, then each running guest's work state and GitHub's answer. The table shows the last
-     * read, or that it is reading, until each is done, and then the model's merge of each
-     * instance's sessions where it has several (cached on the host). Only on {@code o}, entering the Work tab
-     * and {@code r}, never on a live refresh, so nothing is read or asked unless a person asks.
+     * Reads the overview's columns off the UI thread (#2625). The event log, the running guests
+     * and the host's config are read at once; GitHub is asked as soon as the log is in, and each
+     * guest's row, with its cached merged summary, is shown as soon as that guest answers, while a
+     * merge the model must make is asked for then. A stopped instance's row is shown at once.
+     * Until a value is read again the table keeps the last read's, and the title counts the
+     * guests still being read. Only on {@code o}, entering the Work tab and {@code r}, never on
+     * a live refresh, so nothing is read or asked unless a person asks.
      */
     private void readOverview() {
         var reader = eventLogReader;
         var client = incus;
         var github = overviewGitHub;
         var configs = overviewConfig;
+        var model = overviewModel;
+        var caches = overviewCache;
+        var settled = overviewSettled;
         var rows = entries == null ? List.<InstanceInfo>of() : List.copyOf(entries);
-        // Only the latest read is kept: an earlier one that ends later would show an older log
-        var read = overviewReads.incrementAndGet();
-        overviewReading = null;
+        var running = viewportFirst(rows.stream().filter(i -> "running".equalsIgnoreCase(i.status())).toList());
+        var stopped = new java.util.HashMap<String, dev.incusspawn.command.GuestRead>();
+        for (var row : rows) {
+            if (!"running".equalsIgnoreCase(row.status())) stopped.put(row.name(), dev.incusspawn.command.GuestRead.NOT_READ);
+        }
+        // Only the latest read is kept: an earlier one that ends later would show older values
+        long read;
+        synchronized (overviewLock) {
+            read = overviewReads.incrementAndGet();
+            var pending = java.util.concurrent.ConcurrentHashMap.<String>newKeySet();
+            running.forEach(i -> pending.add(i.name()));
+            overviewPending = pending;
+            overviewReadingOf = running.size();
+            var base = overviewReading != null ? overviewReading : new dev.incusspawn.command.OverviewCommand.Reading(
+                    overviewLog != null ? overviewLog : dev.incusspawn.proxy.EventLogReader.Log.EMPTY,
+                    java.util.Map.of(), java.util.Map.of());
+            overviewReading = base.withGuests(stopped);
+        }
+        needsRepaint.set(true);
         overviewExecutor.execute(() -> {
-            dev.incusspawn.proxy.EventLogReader.Log log;
-            try {
-                log = reader.get();
-            } catch (RuntimeException e) {
-                log = dev.incusspawn.proxy.EventLogReader.Log.EMPTY;
-                warningLog.add("Could not read the proxy's event log: " + e.getMessage());
+            try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                // The config is for GitHub and the merges alone: neither the log nor a guest waits for it
+                var setup = new java.util.concurrent.CompletableFuture<OverviewSetup>();
+                pool.submit(() -> {
+                    try {
+                        var host = configs.get();
+                        if (host != null) {
+                            // A cache that cannot be opened costs the merges alone: GitHub is still asked
+                            dev.incusspawn.command.SessionMerge.Merger merger = null;
+                            try {
+                                merger = new dev.incusspawn.command.SessionMerge.Merger(host, model, caches.get(), warningLog::add);
+                            } catch (RuntimeException e) {
+                                warningLog.add("Could not merge the instances' sessions: " + e.getMessage());
+                            }
+                            setup.complete(new OverviewSetup(host, merger));
+                        }
+                    } catch (RuntimeException e) {
+                        warningLog.add("Could not read the host's config: " + e.getMessage());
+                    } finally {
+                        // Whatever went wrong, nothing waits for it for ever
+                        setup.complete(new OverviewSetup(null, null));
+                    }
+                });
+                pool.submit(() -> {
+                    dev.incusspawn.proxy.EventLogReader.Log log;
+                    try {
+                        log = reader.get();
+                    } catch (RuntimeException e) {
+                        log = dev.incusspawn.proxy.EventLogReader.Log.EMPTY;
+                        warningLog.add("Could not read the proxy's event log: " + e.getMessage());
+                    }
+                    var got = log;
+                    synchronized (overviewLock) {
+                        if (overviewReads.get() != read) return;
+                        overviewLog = got;
+                        overviewReading = overviewReading.withLog(got);
+                    }
+                    needsRepaint.set(true);
+                    var config = setup.join().config();
+                    if (config == null) return;
+                    try {
+                        var pulls = dev.incusspawn.command.PullRequestStates.read(rows, got, config, github, warningLog::add, settled);
+                        publishOverview(read, r -> r.withPulls(pulls));
+                    } catch (RuntimeException e) {
+                        warningLog.add("Could not ask GitHub whether pull requests were merged: " + e.getMessage());
+                    }
+                });
+                pool.submit(() -> {
+                    var byName = new java.util.HashMap<String, InstanceInfo>();
+                    running.forEach(i -> byName.put(i.name(), i));
+                    dev.incusspawn.command.GuestRead.readEach(client, running, (name, guest) -> {
+                        synchronized (overviewLock) {
+                            if (overviewReads.get() != read) return;
+                            overviewPending.remove(name);
+                            overviewReading = overviewReading.withGuests(java.util.Map.of(name, guest));
+                        }
+                        needsRepaint.set(true);
+                        var merger = setup.join().merger();
+                        if (merger == null) return;
+                        // The exact columns are shown first: a model call never holds them back
+                        try {
+                            var step = merger.step(byName.get(name), guest);
+                            var merged = step.call() == null ? step.known() : step.call().get();
+                            publishOverview(read, r -> r.withMerge(name, merged));
+                        } catch (RuntimeException e) {
+                            warningLog.add("Could not merge " + name + "'s sessions: " + e.getMessage());
+                        }
+                    });
+                });
+                // A stopped instance's last merged summary is on disk: shown without waiting for any guest
+                pool.submit(() -> {
+                    var merger = setup.join().merger();
+                    if (merger == null) return;
+                    for (var row : rows) {
+                        if (!stopped.containsKey(row.name())) continue;
+                        var known = merger.step(row, dev.incusspawn.command.GuestRead.NOT_READ).known();
+                        publishOverview(read, r -> r.withMerge(row.name(), known));
+                    }
+                });
             }
-            if (overviewReads.get() != read) return;
-            overviewLog = log;
-            needsRepaint.set(true);
-            dev.incusspawn.command.OverviewCommand.Reading reading;
-            SpawnConfig host = null;
-            try {
-                host = configs.get();
-                reading = dev.incusspawn.command.OverviewCommand.read(client, rows, log, host, github, warningLog::add);
-            } catch (RuntimeException e) {
-                warningLog.add("Could not read what the instances hold: " + e.getMessage());
-                reading = new dev.incusspawn.command.OverviewCommand.Reading(log, java.util.Map.of(), java.util.Map.of());
-            }
-            if (overviewReads.get() != read) return;
-            overviewReading = reading;
-            needsRepaint.set(true);
-            if (host == null) return;
-            // The exact columns are shown first: a model call never holds them back
-            try {
-                var merged = dev.incusspawn.command.SessionMerge.mergeAll(rows, reading.guests(), host,
-                        overviewModel, overviewCache.get(), warningLog::add);
-                if (overviewReads.get() == read && !merged.isEmpty()) overviewReading = reading.withMerged(merged);
-            } catch (RuntimeException e) {
-                warningLog.add("Could not merge the instances' sessions: " + e.getMessage());
-            }
-            needsRepaint.set(true);
         });
     }
+
+    /** The host's config for one read of the overview, and the merger made with it; both null when it could not be read. */
+    private record OverviewSetup(SpawnConfig config, dev.incusspawn.command.SessionMerge.Merger merger) {}
+
+    /** Changes the shown reading, unless a later read has started since read {@code read} did. */
+    private void publishOverview(long read,
+                                 java.util.function.UnaryOperator<dev.incusspawn.command.OverviewCommand.Reading> change) {
+        synchronized (overviewLock) {
+            if (overviewReads.get() != read) return;
+            overviewReading = change.apply(overviewReading);
+        }
+        needsRepaint.set(true);
+    }
+
+    /**
+     * {@code running} in the table's order from its first visible row, then the rows above it,
+     * then those the table does not show, so the rows on screen take the first read slots.
+     */
+    private List<InstanceInfo> viewportFirst(List<InstanceInfo> running) {
+        var wanted = new java.util.LinkedHashSet<>(running);
+        var ordered = new java.util.LinkedHashSet<InstanceInfo>();
+        int size = rowToEntry == null ? 0 : rowToEntry.size();
+        int first = instanceTableState == null ? 0 : Math.max(0, Math.min(instanceTableState.offset(), size));
+        for (int k = 0; k < size; k++) {
+            var instance = rowToEntry.get((first + k) % size);
+            if (instance != null && wanted.contains(instance)) ordered.add(instance);
+        }
+        ordered.addAll(wanted);
+        return List.copyOf(ordered);
+    }
+
+    /**
+     * Whether the instance's guest is still being read with nothing worth showing yet: no
+     * earlier read, or one from before it started. Its WORK and DONE cells then say {@code …}.
+     */
+    boolean overviewAwaits(InstanceInfo instance) {
+        if (!overviewPending.contains(instance.name())) return false;
+        var reading = overviewReading;
+        var guest = reading == null ? null : reading.guests().get(instance.name());
+        return guest == null || guest.work().state() == dev.incusspawn.command.WorkState.State.NOT_READ;
+    }
+
+    /** Guards the read-modify-write of {@link #overviewReading} by the reads' threads. */
+    private final Object overviewLock = new Object();
 
     /** How many reads of the event log were started, so a read that ends after a later one is dropped. */
     private final java.util.concurrent.atomic.AtomicLong overviewReads = new java.util.concurrent.atomic.AtomicLong();

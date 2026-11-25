@@ -690,9 +690,20 @@ The log keeps about 80 MiB of lines and daily sums beyond, so the counts start a
 
 The log is read only when a person asks: on `isx overview`, on `o`, on entering the Work tab, and on `r` while the overview is shown.
 The guests and GitHub are asked on the same occasions, never on a live refresh.
-In the TUI the read runs on a virtual thread, and the table shows `…` until it is done: the log's columns first, then WORK and the pull requests' states once every guest and GitHub answered.
+In the TUI each row is shown as soon as what it needs has arrived, never held back by the slowest guest (#2625).
+The log, the running guests and the host's config are read at once, and GitHub is asked as soon as the log is in.
+A stopped instance's row is shown at once, as `not read` with its last merged summary from the disk.
+A running one shows its WORK and DONE as soon as its guest answers, with its merged summary when the cache holds it; a merge the model must make is asked for then.
+The reads of the guests whose rows are on screen are started first, so they take the first read slots.
+A cell says `…` only while nothing was read for it yet: a refresh, on `r` or on coming back to the Work tab, keeps the last read's values until each is read again, and the title counts the guests still being read (`Work since Nov 1, reading 3/12 instances`).
+What that gives up: for a moment a row shows the previous reading beside newer ones, and only the title says the refresh is still under way.
+Only the latest read changes the table, so a read that ends after a later one started is dropped.
 `isx list` never reads it, since completion runs it on every TAB.
-The read parses every line of up to 80 MiB, which was not measured on a full log.
+A one-shot read parses every line of up to 80 MiB, which was not measured on a full log.
+The TUI keeps its read for the session (`EventLogReader.Incremental`) and parses only the lines the current file gained since.
+That holds while the older files and the sums are the same files, unchanged, and the current file is the same file, grown; a rollover, a fold, a truncation or a file system without file keys reads the whole log again.
+A file made again can get a deleted one's inode, and so its file key, so the last line read must also still end where the next read starts.
+A last line the proxy has not yet ended with its newline is left for the next read.
 
 The overview never shows a state nobody established.
 A branch shows as pushed even when GitHub refused it (a non-fast-forward, a protected branch): the proxy logs a push on a 2xx answer and does not read the per-ref report-status inside it (design/proxy.md "The event log").
@@ -716,7 +727,7 @@ The state is `unsaved` when any clone holds work, and `clean` only when every cl
 A timeout, a failed exit, an answer cut short, a line that is not the script's, a count Git would not give or a 51st clone make it `unknown`.
 A stopped instance is `not read`: starting it would cost its boot and change its last use, for a question the person did not ask of it.
 What this gives up: a clone elsewhere, such as `/tmp` or `/workspace`, and work outside any clone are not seen.
-Every running instance is read in parallel, so the slowest one sets the wait.
+Every running instance is read in parallel, so the slowest one sets the wait of `isx overview`, while the TUI shows each as it answers.
 
 **Pull requests are asked about with the instance's own GitHub account** (Sanne on #2264).
 `PullRequestStates` resolves the account the proxy would use for the instance: its `account.github` stamp, else the namespace's default.
@@ -724,6 +735,8 @@ A pin to a missing account, `inherit`, or no token means no request, so no other
 The pull requests asked about are every one the event log recorded for the instance, including one the proxy passed through without injecting the account, because the guest did not present its GitHub proof.
 So the account may be asked about a repository it was never used for in that instance; GitHub answers only for what the account can see, and nothing of the answer reaches the guest.
 All the pull requests of the instances on one account go in one GraphQL request, the repositories and numbers as variables, never written into the query, and a name that is not GitHub's shape is not asked about.
+The accounts are asked at once, over one HTTPS client.
+In the TUI, a pull request GitHub answered merged is not asked about again for that account while the session lasts, since a merged pull request stays merged.
 One GitHub could not see, or a failed request, leaves its state unknown, and the cell shows the pull request without one.
 Branch and repository names are the guest's text, so they are shown through `OutputFormat.oneLine`, and the newest 50 of each are kept per instance.
 A pull request is shown as its `owner/repo#number`, never cut through, since a cut name does not say which pull request it is (Sanne on #2292).

@@ -212,53 +212,19 @@ public final class SessionMerge {
      */
     public static Map<String, Merged> mergeAll(List<InstanceInfo> instances, Map<String, GuestRead> guests,
                                                SpawnConfig config, Model model, Cache cache, Consumer<String> failed) {
+        var merger = new Merger(config, model, cache, failed);
         var merged = new ConcurrentHashMap<String, Merged>();
-        var calls = new Semaphore(CONCURRENT_CALLS);
         var tasks = new ArrayList<Future<?>>();
         try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (var instance : instances) {
-                var incarnation = OverviewCommand.incarnation(instance);
-                if (incarnation.isEmpty()) continue;
-                var guest = guests.get(instance.name());
-                if (guest == null || guest.sessions().state() == AgentSessions.State.NOT_READ) {
-                    if ("running".equalsIgnoreCase(instance.status())) continue;
-                    var last = cache.get(instance.name(), incarnation);
-                    if (last != null) merged.put(instance.name(), last.merged());
+                var step = merger.step(instance, guests.get(instance.name()));
+                if (step.call() == null) {
+                    if (step.known() != null) merged.put(instance.name(), step.known());
                     continue;
                 }
-                var sessions = mergeable(guest.sessions());
-                if (sessions.isEmpty()) continue;
-                var target = target(config, instance);
-                var question = question(sessions, guest.work());
-                var fingerprint = fingerprint(target == null ? "" : target.model(), question);
-                var cached = cache.get(instance.name(), incarnation);
-                if (cached != null && cached.fingerprint().equals(fingerprint)) {
-                    merged.put(instance.name(), cached.merged());
-                    continue;
-                }
-                if (target == null) continue;
                 tasks.add(pool.submit(() -> {
-                    try {
-                        calls.acquire();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
-                    try {
-                        var answer = model.ask(config, target, SYSTEM, question);
-                        var made = parse(answer, sessions.size(), guest.sessions().total(), guest.work().repos().size(), Instant.now());
-                        if (made == null) {
-                            failed.accept("The model's summary of " + instance.name() + "'s sessions was not in the shape asked for, so the newest session is shown.");
-                            return;
-                        }
-                        merged.put(instance.name(), made);
-                        cache.put(instance.name(), incarnation, fingerprint, made, failed);
-                    } catch (IOException | RuntimeException e) {
-                        // The message is the client's or the provider's, which never holds the key sent
-                        failed.accept("Could not merge " + instance.name() + "'s sessions: " + e.getMessage());
-                    } finally {
-                        calls.release();
-                    }
+                    var made = step.call().get();
+                    if (made != null) merged.put(instance.name(), made);
                 }));
             }
         }
@@ -280,6 +246,78 @@ public final class SessionMerge {
             if (m != null) ordered.put(instance.name(), m);
         }
         return ordered;
+    }
+
+    /**
+     * One instance's merge as far as it is known without asking the model: {@code known}, the
+     * summary to show (null for none), when {@code call} is null; otherwise the call to make,
+     * which blocks for a turn among {@link #CONCURRENT_CALLS} and returns the summary or null.
+     */
+    public record Step(Merged known, java.util.function.Supplier<Merged> call) {
+        static final Step NONE = new Step(null, null);
+    }
+
+    /**
+     * Merges instance by instance, as each one's sessions are read (#2625): the TUI shows a cached
+     * summary as soon as its guest answers, and starts the calls it needs then. Its calls share
+     * one bound of {@link #CONCURRENT_CALLS}.
+     */
+    public static final class Merger {
+        private final SpawnConfig config;
+        private final Model model;
+        private final Cache cache;
+        private final Consumer<String> failed;
+        private final Semaphore calls = new Semaphore(CONCURRENT_CALLS);
+
+        public Merger(SpawnConfig config, Model model, Cache cache, Consumer<String> failed) {
+            this.config = config;
+            this.model = model;
+            this.cache = cache;
+            this.failed = failed;
+        }
+
+        /** What {@code instance}'s merge is, with {@code guest} its read, or null when it was not read. */
+        public Step step(InstanceInfo instance, GuestRead guest) {
+            var incarnation = OverviewCommand.incarnation(instance);
+            if (incarnation.isEmpty()) return Step.NONE;
+            if (guest == null || guest.sessions().state() == AgentSessions.State.NOT_READ) {
+                if ("running".equalsIgnoreCase(instance.status())) return Step.NONE;
+                var last = cache.get(instance.name(), incarnation);
+                return last == null ? Step.NONE : new Step(last.merged(), null);
+            }
+            var sessions = mergeable(guest.sessions());
+            if (sessions.isEmpty()) return Step.NONE;
+            var target = target(config, instance);
+            var question = question(sessions, guest.work());
+            var fingerprint = fingerprint(target == null ? "" : target.model(), question);
+            var cached = cache.get(instance.name(), incarnation);
+            if (cached != null && cached.fingerprint().equals(fingerprint)) return new Step(cached.merged(), null);
+            if (target == null) return Step.NONE;
+            return new Step(null, () -> {
+                try {
+                    calls.acquire();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+                try {
+                    var answer = model.ask(config, target, SYSTEM, question);
+                    var made = parse(answer, sessions.size(), guest.sessions().total(), guest.work().repos().size(), Instant.now());
+                    if (made == null) {
+                        failed.accept("The model's summary of " + instance.name() + "'s sessions was not in the shape asked for, so the newest session is shown.");
+                        return null;
+                    }
+                    cache.put(instance.name(), incarnation, fingerprint, made, failed);
+                    return made;
+                } catch (IOException | RuntimeException e) {
+                    // The message is the client's or the provider's, which never holds the key sent
+                    failed.accept("Could not merge " + instance.name() + "'s sessions: " + e.getMessage());
+                    return null;
+                } finally {
+                    calls.release();
+                }
+            });
+        }
     }
 
     /**
