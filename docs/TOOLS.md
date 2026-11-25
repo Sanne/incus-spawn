@@ -877,7 +877,7 @@ Each type takes one field of its own.
 | `url` | `url` | URL to open in the host browser |
 | `command` | `command` | Shell command to run on the host |
 | `shell` | `command` | Command to run inside the instance as an interactive terminal session |
-| `copy-to-clipboard` | `text` | Text to copy to the host clipboard |
+| `copy-to-clipboard` | `text` | Text to copy to the host clipboard; shown instead where isx reaches none, such as over SSH |
 
 Two fields control where else an action shows.
 

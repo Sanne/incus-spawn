@@ -137,7 +137,7 @@ So isx neither opens the pre-filled token page nor prints a link to it: a click 
 The guide's second step names the page where it is used, GitHub's page for a new token, and says isx has an address for it that fills in the permissions.
 At the token prompt `c` copies that address to the clipboard, to paste in the window signed in as the agent, and `u` prints it.
 Where no clipboard command exists the guide does not offer `c`, and a `c` typed anyway prints the address as `u` does, so it is never taken for a token.
-`c` is offered only where a clipboard command reaches the person's own screen (`CredentialSetup.clipboardCommand`: `pbcopy`, `wl-copy`, `xclip` or `xsel`, and never over SSH), which gives up clicking for everyone and copying for a person on a remote terminal.
+`c` is offered only where a clipboard command reaches the person's own screen (`Clipboard.command`, which tool actions use too: `pbcopy`, `wl-copy`, `xclip` or `xsel`, and never over SSH), which gives up clicking for everyone and copying for a person on a remote terminal.
 Enter at that prompt goes back to the three options.
 A token that verified asks which email the agent's commits carry: GitHub's private address, `<id>+<login>@users.noreply.github.com`, or the account's primary one, Enter taking the private one.
 With no primary address to read, the private one is taken without asking, so a token without the email permission no longer asks for another token.
