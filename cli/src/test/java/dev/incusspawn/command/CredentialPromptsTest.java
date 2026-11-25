@@ -259,8 +259,13 @@ class CredentialPromptsTest {
     }
 
     @Test
-    void skippedSecretStopsStepAndLeavesNothingBehind() {
-        configure(new SpawnConfig(), new ScriptedPrompts().secret(""));
+    void skippedSecretAsksNoConsentAndLeavesNothingBehind() {
+        // A skipped key skips the consent after it, never a plain setting, in 'isx account add' as in init
+        var prompts = new ScriptedPrompts().secret("").line("");
+        configure(new SpawnConfig(), prompts);
+        prompts.assertFullyConsumed();
+        assertTrue(prompts.questions().stream().anyMatch(q -> q.contains("Acme region")), prompts.questions().toString());
+        assertTrue(prompts.questions().stream().noneMatch(q -> q.contains("telemetry")), prompts.questions().toString());
         assertNothingSaved();
     }
 
@@ -354,7 +359,7 @@ class CredentialPromptsTest {
     /** Choosing 'r' and then skipping the secret stops at once and keeps what is there. */
     @Test
     void replacingWithNothingKeepsTheOldSecret() throws Exception {
-        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("r").secret(""));
+        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("r").secret("").line(""));
         assertUnchanged(KEY_AND_TELEMETRY);
     }
 
@@ -407,7 +412,7 @@ class CredentialPromptsTest {
 
     @Test
     void abandoningASecondYamlToolAccountLeavesTheCredentialAlone() throws Exception {
-        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("a", "work").secret(""));
+        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("a", "work").secret("").line(""));
         assertUnchanged(KEY_AND_TELEMETRY);
     }
 

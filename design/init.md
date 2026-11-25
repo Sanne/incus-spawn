@@ -54,7 +54,10 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    DNS is inside the block, since no step before it adds a search path, whose tools' domains it writes.
 7. It writes `tpl-agent.yaml` for the agent (`ExampleTemplate`), or with no agent nothing, and builds it, or `tpl-minimal`.
    The build shows its live steps, outcomes and warnings, its details in the log, as the block of setup does.
-   It suppresses the build's missing-credential warning (`BuildCommand.warnMissingAccounts`), since `isx branch` has not been introduced yet and the completion message right after lists the missing account in order.
+   It does not print the build's missing-account warning (`BuildCommand.warnMissingAccounts`), since `isx branch` has not been introduced yet.
+   The completion message right after lists every account the template lacks, in order, so none goes unnamed (`InitCommand.finishFirstRun`).
+   A GitHub account a kept `tpl-agent` lists, which the GitHub step owns, is a step of its own there, "Add a GitHub account", and init then does not offer to open the agent (`InitCommand.gitHubGapCommand`).
+   Sanne had first chosen the warning over saying it once; this run takes the review's recommendation of one place in order (#2528, PR #2609).
    Its step labels name no container or image ("Starting from tpl-minimal", "Restarting the build", "Stopping the build"), as every build's now do.
    A `tpl-agent` already there is said to be kept only when it installs another agent than the one chosen.
    A template with no coding agent in its chain says nothing of agents' Git identity: `tpl-minimal`, built first for `tpl-agent`, told a person who had just chosen their own GitHub account that its agents had no identity (`AgentGitIdentity.applyAndReport`).
@@ -106,11 +109,15 @@ An agent takes the whole terminal, so opening one unasked would hide the complet
 A person may not have the credential at hand, or may want to see isx work first.
 Init then does everything else, so the agent opens as soon as the credential is added.
 The build inside init runs with `BuildCommand.askForAccounts` and `warnMissingAccounts` off, so it neither asks again for the credential just declined nor warns about `isx branch` before the closing box introduces it.
-The completion message says the agent has no account yet, with the command that adds one, and init does not ask to open the agent, which could not sign in.
+The completion message says the agent has no account yet, with the command that adds each one it lacks, and init does not ask to open the agent, which could not sign in.
 The first `isx branch` at a terminal asks for it (#2405).
 
-A local sign-in found on the host answers which kind of account to set up, not only for a Claude Code subscription (`CredentialSetup.setupClaudeSubscription`), which is re-issued with `claude setup-token`, but also for a local Claude API key, Codex CLI (ChatGPT or API key) and Antigravity CLI (Google account): each acknowledges the local sign-in, says that isx keeps a separate credential for isx machines, and lets Enter set up that kind while `o` offers the other kinds and `s` skips.
-The step says what will happen before it asks: the command runs and opens the browser, the person approves, then isx reads the token, or the person pastes it when isx cannot.
+A Claude Code subscription found on the host answers which kind of account to set up (`CredentialSetup.setupClaudeSubscription`): it is re-issued with `claude setup-token`, never copied, since the proxy and the host's Claude Code would otherwise share one refresh token.
+Other local sign-ins answer it too: a local Claude API key, Codex CLI's ChatGPT sign-in or API key and Antigravity CLI's Google account (`InitCommand.localAgentSignIn`).
+Each of those steps names the sign-in it found and says that isx keeps a separate credential for isx machines.
+Enter sets up that kind, `o` offers the other kinds and `s` skips; Enter at a pasted key's prompt goes back to that choice.
+GitHub Copilot CLI's sign-in is only named above the GitHub question, which then asks as it always does.
+The subscription's step says what will happen before it asks: the command runs and opens the browser, the person approves, then isx reads the token, or the person pastes it when isx cannot.
 Its answers are `Y` (run it here), `n` (run it by hand), `o` (another kind of account) and `s` (skip), and Enter at the paste goes back to them.
 With `Y`, isx reads the token the command prints, so the person does not copy a wrapped token of about 108 characters back into the terminal (#2543).
 The command draws a full-screen program and needs a terminal, which the JVM cannot open, so it runs under `script(1)`: `script -q /dev/null claude setup-token` on macOS, `script -q -e -f -c 'claude setup-token' /dev/null` with util-linux.

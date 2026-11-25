@@ -1391,7 +1391,9 @@ public class InitCommand extends BaseCommand {
     FirstRunAnswers answers;
 
     /** The command that adds the account the chosen agent still lacks, or null when it has one. */
-    String agentAccountCommand;
+    List<String> agentAccountCommands = List.of();
+    /** The GitHub account a kept tpl-agent lists and none was given for, when it is not the agent's own. */
+    String gitHubAccountCommand;
 
     private final List<BackgroundDownloads> downloadsAhead = new ArrayList<>();
 
@@ -2103,6 +2105,21 @@ public class InitCommand extends BaseCommand {
      * find them: through the credentials its tools declare, so no agent's namespace is named here.
      */
     Map<CredentialCheck.Missing, List<String>> agentGaps() {
+        return templateGaps(false);
+    }
+
+    /**
+     * The GitHub account the first template lacks when it is not the agent's own, which
+     * {@link #agentGaps} leaves to the GitHub step: a tpl-agent an earlier run wrote can list gh,
+     * and the build inside init does not warn of it, so the closing box names it (#2528).
+     */
+    String gitHubGapCommand() {
+        if (chosenAgent == null || chosenAgent.credentialNamespaces().contains(dev.incusspawn.tool.GhSetup.NAMESPACE)) return null;
+        return templateGaps(true).keySet().stream().map(CredentialCheck.Missing::command).findFirst().orElse(null);
+    }
+
+    /** The first template's gaps: the agent's own when {@code gitHub} is false, else GitHub's alone. */
+    private Map<CredentialCheck.Missing, List<String>> templateGaps(boolean gitHub) {
         try {
             var config = SpawnConfig.load();
             // Trusted only, as the first template is: a project's tpl-agent never asks for an account here
@@ -2114,7 +2131,9 @@ public class InitCommand extends BaseCommand {
             // account the agent spends (Copilot): a tpl-agent an earlier run wrote can list gh (#2528)
             if (chosenAgent != null && !chosenAgent.credentialNamespaces().contains(dev.incusspawn.tool.GhSetup.NAMESPACE)) {
                 var tools = loader.allToolSetups();
-                gaps.keySet().removeIf(g -> "gh".equals(CredentialCheck.stepTool(g, tools)));
+                gaps.keySet().removeIf(g -> "gh".equals(CredentialCheck.stepTool(g, tools)) != gitHub);
+            } else if (gitHub) {
+                gaps.clear();
             }
             return gaps;
         } catch (IOException e) {
@@ -2349,9 +2368,15 @@ public class InitCommand extends BaseCommand {
         var template = prepareFirstTemplate();
         var agent = templateAgent();
         var project = projectLayer(template);
-        if (chosenAgent != null && answers.noCredential()) {
-            var gaps = agentGaps().keySet();
-            agentAccountCommand = gaps.isEmpty() ? null : gaps.iterator().next().command();
+        // Every account the template lacks, not only the one skipped: the build inside init does not warn of them (#2528)
+        if (chosenAgent != null) {
+            try {
+                agentAccountCommands = agentGaps().keySet().stream().map(CredentialCheck.Missing::command).distinct().toList();
+                gitHubAccountCommand = gitHubGapCommand();
+            } catch (RuntimeException e) {
+                // Only advice, as the build's own check is: the branch reports a missing account itself
+                ClientLog.warn("Missing-credential check skipped: " + e);
+            }
         }
         var built = false;
         // Whether the box says it is built: so when init holds back one built before, which it does not open here
@@ -2388,7 +2413,7 @@ public class InitCommand extends BaseCommand {
         // The name the offer branches, so the command printed is the one that works
         var instance = firstInstanceName();
         var message = firstRunNextSteps(new Closing(services, template, built || shownBuilt, buildFailed,
-                agent == null ? null : ExampleTemplate.title(agent), agentAccountCommand,
+                agent == null ? null : ExampleTemplate.title(agent), agentAccountCommands, gitHubAccountCommand,
                 agent == null ? List.of() : agent.firstStartNote(SpawnConfig.load()),
                 answers.noIdentity(), instance, !all));
         var lines = new ArrayList<>(message.box());
@@ -2406,7 +2431,7 @@ public class InitCommand extends BaseCommand {
         if (continued) lines.addAll(GROUP_PENDING);
         printClosing(message.title(), lines, message.later());
         var prompts = prompts();
-        if (built && chosenAgent != null && agentAccountCommand == null && !automatic && prompts != null
+        if (built && chosenAgent != null && agentAccountCommands.isEmpty() && gitHubAccountCommand == null && !automatic && prompts != null
                 && askYesNo(prompts, "Run 'isx branch " + instance + " --from " + template + "' now?", true)) {
             return CommandResult.valueOf(openAgent(template, instance));
         }
@@ -2514,7 +2539,7 @@ public class InitCommand extends BaseCommand {
 
     /** What a first run's closing message is told of the run. */
     record Closing(Services services, String template, boolean built, boolean buildFailed, String agent,
-                   String accountCommand, List<String> firstStart, boolean noIdentity, String instance, boolean listLater) {}
+                   List<String> accountCommands, String gitHubCommand, List<String> firstStart, boolean noIdentity, String instance, boolean listLater) {}
 
     /** The closing message: the box's title and lines, then the lines under it, for later. */
     record ClosingMessage(String title, List<String> box, List<String> later) {}
@@ -2540,7 +2565,12 @@ public class InitCommand extends BaseCommand {
             steps.add(List.of(c.buildFailed() ? "Fix the error above, then build " + c.template() + ":" : "Build " + c.template() + ":",
                     "isx build " + c.template()));
         }
-        if (c.accountCommand() != null) steps.add(List.of("Add " + c.agent() + "'s account:", c.accountCommand()));
+        if (!c.accountCommands().isEmpty()) {
+            var add = new ArrayList<>(List.of("Add " + c.agent() + (c.accountCommands().size() == 1 ? "'s account:" : "'s accounts:")));
+            add.addAll(c.accountCommands());
+            steps.add(add);
+        }
+        if (c.gitHubCommand() != null) steps.add(List.of("Add a GitHub account:", c.gitHubCommand()));
         var open = new ArrayList<>(List.of(plain ? "Open a new isx machine:" : "Open " + c.agent() + " in a new isx machine:",
                 "isx branch " + c.instance() + " --from " + c.template()));
         open.addAll(c.firstStart());

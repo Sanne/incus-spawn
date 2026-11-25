@@ -522,6 +522,11 @@ class InitTranscriptsTest {
         assertTrue(text.contains("GitHub Account                                        [3/3]"), text);
         // GitHub's account is not the agent's: the closing box does not ask for it as Claude Code's
         assertFalse(text.contains("Add Claude Code's account"), text);
+        // Named on its own, since the build inside init does not warn of it, and the agent is not offered before it
+        assertTrue(text.contains("Add a GitHub account:"), text);
+        assertTrue(text.contains("isx account add github"), text);
+        assertFalse(text.contains("Setup complete"), text);
+        assertFalse(text.contains("now? (Y/n)"), text);
     }
 
     /** {@code yaml} as the person's own tpl-agent.yaml, as an earlier run writes it. */

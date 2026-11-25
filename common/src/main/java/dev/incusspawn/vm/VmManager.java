@@ -1200,8 +1200,7 @@ public final class VmManager {
         // clock, a relay's complaint) and perl's, should the exec into it fail, go there.
         long pid = launchInOwnSession(cmd, LAUNCHER, Environment.launcherLogFile(), Environment.vmPidFile()).pid();
         dev.incusspawn.ClientLog.debug("Started " + LAUNCHER + " (pid=" + pid + ")");
-        var sessionNote = noSessionNote();
-        BuildOutput.stepDone(sessionNote.startsWith("; ") ? sessionNote.substring(2) : sessionNote);
+        BuildOutput.stepDone(startedDetail(OwnSession.available()));
     }
 
     /**
@@ -1256,8 +1255,12 @@ public final class VmManager {
         return process;
     }
 
-    private static String noSessionNote() {
-        return OwnSession.available() ? "" : "; no setsid or perl, so it stops when the command that started it exits";
+    /**
+     * What the VM's start step adds to its line: nothing in the usual case, since an empty detail
+     * still prints as {@code ()}, and why the VM will stop with the command when it has no session of its own.
+     */
+    static String startedDetail(boolean ownSession) {
+        return ownSession ? null : "no setsid or perl, so it stops when the command that started it exits";
     }
 
     /**
@@ -1760,6 +1763,8 @@ public final class VmManager {
     static String humanDiskSize(long bytes) {
         long gib = 1024L * 1024 * 1024;
         if (bytes >= gib && bytes % gib == 0) return (bytes / gib) + " GB";
+        // In the same unit as the whole sizes, never humanSize's "1.5G"
+        if (bytes >= gib) return String.format(java.util.Locale.ROOT, "%.1f GB", bytes / (double) gib);
         return humanSize(bytes);
     }
 
