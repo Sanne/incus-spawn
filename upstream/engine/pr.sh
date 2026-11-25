@@ -61,7 +61,8 @@ publish_item() {
     # An open PR of a newer version than the publisher lists now stays: feeds lag.
     local branch_version=""
     if [[ -n "$open" && -n "$branch_sha" ]]; then
-        branch_version="$(sed -n 's/^<!-- upstream-watch: [a-z0-9-]* \([^ ,>]*\).*-->$/\1/p' <<<"$body_now" | head -1)"
+        branch_version="$(sed -n 's/^<!-- upstream-watch: [a-z0-9-]* \([^ ,>]*\).*-->$/\1/p' <<<"$body_now")"
+        branch_version="${branch_version%%$'\n'*}"
         if [[ -n "$branch_version" && "$branch_version" != "$version" ]] && is_newer "$branch_version" "$version"; then
             echo "::warning::#$open proposes $branch_version, newer than $version; left open."
             return 0
@@ -118,7 +119,8 @@ close_stale() {
     open="$(gh pr list -R "$REPO" --head "$branch" --state open --json number,headRepositoryOwner,isCrossRepository --jq "[.[] | $ours][0].number // empty")"
     [[ -n "$open" ]] || return 0
     body="$(gh pr view "$open" -R "$REPO" --json body --jq .body)"
-    v="$(sed -n 's/^<!-- upstream-watch: [a-z0-9-]* \([^ ,>]*\).*-->$/\1/p' <<<"$body" | head -1)"
+    v="$(sed -n 's/^<!-- upstream-watch: [a-z0-9-]* \([^ ,>]*\).*-->$/\1/p' <<<"$body")"
+    v="${v%%$'\n'*}"
     [[ -n "$v" ]] || return 0
     is_newer "$v" "$current" && return 0
     if branch_exists "$branch"; then
