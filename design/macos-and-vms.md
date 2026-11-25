@@ -497,17 +497,19 @@ The relay notices within a second, while the room is still full, so callers that
 What the limit gives up: with 192 connections held, the next one waits for as long as they stay, whoever asks, the next `isx` command and `isx doctor` included.
 Refusing it at once was the alternative, and lost: a burst of short requests beyond the room would then fail where it now only takes longer, and isx holds nothing near 192 connections.
 
-**One isx process also caps its own connections, at 48** (`UnixSocketTransport`).
+**One isx process also caps its own connections, at 48 on macOS** (`UnixSocketTransport`).
 The cap predates the launcher: it kept one process from piling streams onto vfkit's forwarder, and it fails open after 10 s rather than wedge a burst.
 It was set well above one operation's need, which stopped being true once the overview ran an exec in every running instance (#2527).
 Each exec holds five connections, so with 30 instances running the execs took every permit, and a finished command's `/wait` waited past the 5 s Incus keeps a finished operation.
 So a bounded exec is now admitted before it is posted, and only as many run at once as fit in the cap with all five connections each (`IncusApi.BOUNDED_EXECS`).
-What this gives up: the reads run in a rolling window of eight, so N reads take about N/8 times one read, not the time of the slowest one.
+What this gives up: the reads run in a rolling window of eight on macOS, so N reads take about N/8 times one read, not the time of the slowest one.
 For 30 instances whose reads all time out, that is four waves of 13 s (the 10 s limit and the 3 s kill grace), about 50 s.
 Only probes wait in the window: the overview's reads, and `isx mcp`'s probes of instances other sessions hold (`probeElsewhere`) and of the task a person joins (`TaskJoin`).
-So with more than eight instances to ask, a task start waits for the waves before its own.
+So with more instances to ask than there are slots (eight on macOS, 50 on Linux), a task start waits for the waves before its own.
 `isx mcp`'s task status poll runs an unbounded exec, which is not admitted and does not wait.
-On Linux there is no forwarder for the cap to protect, and on a Mac the launcher's 192 is the real limit, so the cap's own value is still to be derived from the launcher's room and measured on a Mac.
+On Linux there is no forwarder for the cap to protect: the socket is incusd's own, so its cap is 256, a brake on a runaway that leaves most of the 1024 descriptors a process's soft limit commonly allows.
+That is 50 execs at once, so the overview reads 50 instances in one wave: with 40 instances whose reads took 1.5 s each, 2.5 s instead of 8.7 s (docs/dev/PERFORMANCE-NOTES.md "The overview's reads against the connection cap, on Linux").
+On a Mac the launcher's 192 is the real limit, so the cap's own value there is still to be derived from the launcher's room and measured on a Mac.
 
 The framework's objects are used on the main queue alone, the queue the machine is made on.
 A relay's thread reaches the guest through `dial`, which asks the main queue and waits for it; nothing on the main queue waits for a relay.
