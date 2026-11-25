@@ -30,6 +30,7 @@ Modules: `common` (shared code), `cli` (the `isx` binary), `proxy` (the `isx-pro
 - Markdown is one sentence per line, with short sentences (`DocsOneSentencePerLineTest`).
   `README.md` and `docs/*.md` also keep to the budgets in `.claude/rules/writing.md`.
 - Every text a person reads follows `.claude/rules/writing.md`, and the text isx prints (prompts, output, warnings, errors, the TUI) also follows `.claude/rules/interface-text.md`.
+  `TranscriptGate` checks the transcripts of the main flows against its mechanical rules.
 - A divergence from stock Fedora is listed in `docs/FEDORA.md` in the same change.
 - Never print to stdout or stderr directly; all output goes through `BuildOutput` (`RawOutputGateTest`).
 - A regular expression is a `static final Pattern` (`PatternConstantGateTest`).

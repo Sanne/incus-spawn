@@ -1725,7 +1725,7 @@ class CredentialSetup {
         BuildOutput.gap();
         prompts.say("  1. Sign in to GitHub as " + account + " account, in a");
         prompts.say("     private window or another browser profile.");
-        prompts.say("     No such account yet? Create one first:");
+        prompts.say("     If that account does not exist yet, create it first:");
         prompts.say("     " + TerminalLink.link("https://github.com/signup"));
         prompts.say("  2. In that window, open GitHub's page for a new token.");
         prompts.say("     isx has an address for it that fills in the");

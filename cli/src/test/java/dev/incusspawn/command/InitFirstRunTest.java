@@ -714,7 +714,7 @@ class InitFirstRunTest {
         var warning = recorded.events().stream().filter(e -> e.kind() == RecordingOutput.Kind.WARN).map(RecordingOutput.Event::text)
                 .filter(w -> w.contains("isx did not build tpl-agent")).findFirst().orElseThrow(() -> new AssertionError(recorded.events().toString()));
         assertTrue(warning.contains("/tmp/a-clone"), warning);
-        assertTrue(warning.contains(".incus-spawn/ of its own."), warning);
+        assertTrue(warning.contains("own .incus-spawn/."), warning);
         assertTrue(String.join("\n", recorded.frameLines()).contains("isx build tpl-agent"));
     }
 
@@ -789,7 +789,7 @@ class InitFirstRunTest {
         var box = String.join("\n", recorded.frameLines());
         assertTrue(box.contains("tpl-agent is built"), box);
         assertFalse(box.contains("Build it:"), box);
-        assertTrue(box.contains("(from a directory with no .incus-spawn/ of its own)"), box);
+        assertTrue(box.contains("(from a directory without its own .incus-spawn/)"), box);
         assertEquals(List.of(), init.opened);
     }
 

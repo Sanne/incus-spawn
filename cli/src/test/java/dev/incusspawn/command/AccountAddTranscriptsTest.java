@@ -74,18 +74,10 @@ class AccountAddTranscriptsTest {
             var text = transcript(branch);
             Files.writeString(OUT.resolve(branch.name() + ".txt"), text);
             assertFalse(text.contains("⟪the run threw"), branch.name() + ":\n" + text);
-            var lineNo = 0;
-            for (var line : text.split("\n", -1)) {
-                lineNo++;
-                var shown = line.replaceAll("(⏎|••••|⟪end of input⟫)$", "");
-                if (shown.strip().startsWith("⟪") || shown.strip().startsWith("https://")) continue;
-                var box = shown.startsWith("│") || shown.startsWith("╭") || shown.startsWith("╰");
-                if (shown.codePointCount(0, shown.length()) > (box ? InitTranscriptsTest.BOX : InitTranscriptsTest.WIDTH))
-                    faults.add(branch.name() + ":" + lineNo + " wider than the frame: " + line);
-                if (NEVER.matcher(shown).find()) faults.add(branch.name() + ":" + lineNo + " a word it never uses: " + line);
-            }
+            faults.addAll(TranscriptGate.faults(branch.name(), text, NEVER, null));
         }
-        assertEquals(List.of(), faults);
+        Files.writeString(OUT.resolve("faults.txt"), String.join("\n", faults) + "\n");
+        assertEquals(List.of(), faults, "against .claude/rules/interface-text.md");
     }
 
     @Test
