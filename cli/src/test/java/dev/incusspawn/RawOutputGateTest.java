@@ -152,11 +152,10 @@ class RawOutputGateTest {
             Map.entry("cli/src/main/java/dev/incusspawn/command/CredentialSetup.java", "'claude setup-token', whose prompts reach the user, where script(1) is missing"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/SetupTokenCapture.java", "the keyboard for 'claude setup-token' under script(1), and stty to restore the terminal"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/DoctorCommand.java", "an interactive remediation the user chose"),
-            Map.entry("cli/src/main/java/dev/incusspawn/command/InitCommand.java", "host setup commands, shown as they run, and stdin for a sudo prompt"),
+            Map.entry("cli/src/main/java/dev/incusspawn/command/InitCommand.java", "sudo -v asking for a password, the continuation under sg, and stdin for a sudo prompt"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/GroupContinuation.java", "the whole command run again under sg, on this process's streams (#2167)"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/TemplatesCommand.java", "the user's editor"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/LogFollower.java", "follows a log on the terminal, from the CLI alone"),
-            Map.entry("cli/src/main/java/dev/incusspawn/command/CowPoolBacking.java", "host pool commands, shown as they run"),
             Map.entry("proxy/src/main/java/dev/incusspawn/proxy/McpBridge.java", "the bridged isx mcp's log on the proxy's stderr"));
 
     @Test

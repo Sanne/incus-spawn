@@ -231,7 +231,9 @@ When a file is in place but applying it failed, say it applies after a reboot, a
 A step that runs several commands runs each through `ran()`, which names the one that failed, and combines the results (`ok &= ran(...)`, never short-circuiting, so the remaining rules are still applied) before choosing between its success line and a warning (#1102: the firewall and PREROUTING steps).
 *Host commands are captured*: `runHostQuiet` shows a command's output only when it fails (as `Container.runQuiet()` does in build), so firewall-cmd's `NOT_ENABLED`/`ALREADY_ENABLED` chatter on success never reaches the step.
 *Each host change is a live step* (`BuildOutput.liveStep`, #1791): a ✓ once its commands succeeded, and a ✗ when one failed, below the output and warning that command's failure printed.
-`runHost` (inherited output) and a `sudo` through `runHostQuiet` release the terminal first, since a password prompt on the tty bypasses the stream guard.
+`runHost` captures a command's output too, into the client log, and shows a failed command's last lines under its step.
+A `sudo` through either releases the terminal only when sudo asks (`SudoPrompt.run`, #2595), since a password prompt on the tty bypasses the stream guard.
+The subid write is a `sh -c` script whose sudos `sudo -n` cannot reach, so it asks first through `sudoReady`.
 `InitStepOutputTest` pins all three; `InitFirewallOutputTest` pins the firewall steps.
 
 **`isx init --plan`** (#2073) lists the same `InitStep`s (`planSteps`, in the run's order, with the unnumbered dependencies or VM, and the git remote helper), each assessed by its planner.
@@ -258,7 +260,7 @@ The script appends each change's key (`InitPlan.key`, a hash of its lines) to `/
 Once nothing is left, the steps run with their root parts reduced to a note (`HostSetup.DONE_BY_SCRIPT`): no `sudo -v`, no dependency install, Incus, subids, firewall, redirect, sysctl, KSM, btrfs rule or linger.
 The redirect's lines read the gateway from the bridge as the script runs, so a fresh host needs one script.
 The script detaches its stdin first (`exec </dev/null`): `incus storage create` and `incus network create` read a YAML config from any stdin that is not a terminal, so run from an agent's shell the script would wait forever (found on a real Fedora VM); its files come from here-documents, which bring their own.
-The run's own pool create, `CowPoolBacking.runCapturingStderr`, detaches it the same way, for `isx init` and doctor alike.
+The run's own pool create, `CowPoolBacking.runCapturingStderr`, detaches it the same way, for `isx init` and doctor alike, and keeps its stdout in the client log.
 The btrfs rule names btrfs as `HostSetup.btrfsPath()` finds it, a fixed search (the root-owned system directories first, /usr/local last, never the shell's `PATH`) that the script's lines repeat as they run, after it installed btrfs-progs: the rule is right in one round, and its lines and key are the same before and after the package exists, from any shell.
 `planEntries()` passes the plan through `InitPlan.withRecord`, so `--plan` and the summary report what the script recorded as done, its check commands kept; once nothing is left for root, `privilegedStepsLeft` removes the script.
 A step that finds root work as it runs hands it over too, by throwing `InitCommand.WaitingOnPerson`, which `runInit` turns into `handOver`'s script and exit 75: the MITM step does when this run moved the bridge off a host route (the redirect moves from the old gateway), or when firewalld shows the redirect missing and the record lacks it (`HostSetup.redirectLeftUnderNoSudo`).

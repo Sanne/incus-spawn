@@ -44,14 +44,14 @@ final class StdoutOnStderr {
      * runs, its stdout becomes a pipe, which {@link #copyStdout} drains to this process's stdout,
      * pointed at stderr. A child that writes its own stdout would otherwise reach the results.
      */
-    static boolean pipesStdout(ProcessBuilder pb) {
+    private static boolean pipesStdout(ProcessBuilder pb) {
         if (!active) return false;
         pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
         return true;
     }
 
     /** Drains {@code process}'s stdout to {@code System.out}, which {@link #during} points at stderr, in a thread of its own. */
-    static Thread copyStdout(Process process) {
+    private static Thread copyStdout(Process process) {
         var sink = System.out;
         return Thread.startVirtualThread(() -> {
             try (var in = process.getInputStream()) {

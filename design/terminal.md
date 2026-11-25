@@ -54,7 +54,7 @@ A decorated label (`"Launching x..."`) is right for neither: the ✓ line would 
 - **Success** (green checkmark, bold, at the header's column): `  ✓ tpl-dev built` — the line that closes the block, preceded by a blank line.
   The header opens a block at column 2 with `●`, so its close belongs at column 2 with `✓`, worded like every ✓ line: no period, no "successfully".
 
-`isx init`'s host changes follow the same kinds: each is a live step (`BuildOutput.liveStep`), whose ✗ follows the output and warning of a command that failed, and `InitCommand.runHost` and a `sudo` through `runHostQuiet` release the terminal first, as `ProxyService.runQuiet` does.
+`isx init`'s host changes follow the same kinds: each is a live step (`BuildOutput.liveStep`), whose ✗ follows the output and warning of a command that failed, and `InitCommand.runHost` and `runHostQuiet` capture a command's output and release the terminal only when its `sudo` asks, as `ProxyService.runQuiet` does.
 
 **Headers live in commands, steps in shared helpers.**
 A shared operation that runs both standalone and nested (e.g. `VmManager.start()`/`stop()`, called both by `isx vm start` and as sub-steps of `isx vm resize`) emits only steps/notes and never its own header.
@@ -70,7 +70,12 @@ A frozen line stays as it was and the step's mark comes on a new line, so a `sud
 It runs the command under `sudo -n` first, in the C locale, and freezes the line and runs it again only when sudo says a password is required.
 Asking the command itself, not `sudo -n true`, leaves no case where the two disagree, such as a sudoers rule for one command or a credential that expires in between.
 `SudoPrompt.read` keeps stderr apart, for a file isx reads and writes back, so a sudo warning never becomes part of it.
-A child whose output is inherited, such as `InitCommand.runHost`'s outside the first run, still freezes it every time, since the spinner would draw over what it prints.
+`InitCommand.runHost` and the CoW pool's create (`CowPoolBacking.runCapturingStderr`) capture their output too, in every run, so `Starting Incus` and `Creating a copy-on-write storage pool` show one line when sudo does not ask.
+Their output goes to the client log, and a failed command's last lines are shown under its step.
+This gives up the package manager's progress on the screen outside the first run, as the first run already did.
+It also gives up answering a package manager's question that `-y` does not answer, such as zypper's about a new repository key.
+The command's input is empty, so the question fails the step, its last lines shown, rather than wait unseen behind the spinner.
+A child whose output is inherited, such as `sudo -v` asking for the password, still freezes it every time, since the spinner would draw over what it prints.
 Host commands run under a step capture their output instead of inheriting it (`YamlToolSetup.runProcess`).
 
 **Warnings and errors** go to stderr.

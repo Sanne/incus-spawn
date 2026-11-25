@@ -48,7 +48,7 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
 5. On Linux it asks for sudo, and installs the dependencies.
 6. It runs the plumbing as one block (`firstRunPlumbing`): on Linux the dependencies first, then today's steps that ask nothing, the Git remote helper and DNS among them, then the services.
    The block shows one line per outcome (#2528): it binds `Output.detailsLogged`, so a step line, a note and a list go to the client log, and are shown only before a warning or a question that follows them.
-   A host command's output goes to the log too (`InitCommand.hostOutputToLog`), with the last lines of a failed one shown under its step.
+   A host command's output goes to the log too, as in every run, with the last lines of a failed one shown under its step; its input is empty, and in the block so is `runHostQuiet`'s (`InitCommand.hostOutputToLog`).
    sudo asks again with the terminal released only when its credentials expired, so its prompt is never drawn over.
    The proxy service's lifecycle lines stay in its own log, and a continuation under `sg` carries on the block under its parent's header.
    DNS is inside the block, since no step before it adds a search path, whose tools' domains it writes.
