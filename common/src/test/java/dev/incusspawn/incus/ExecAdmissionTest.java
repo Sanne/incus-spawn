@@ -76,13 +76,18 @@ class ExecAdmissionTest {
 
         var exits = new ArrayList<Future<Integer>>();
         var outputs = new ArrayList<ByteArrayOutputStream>();
+        var longestQueued = new java.util.concurrent.atomic.AtomicLong();
         try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (int i = 0; i < INSTANCES; i++) {
                 var out = new ByteArrayOutputStream();
                 outputs.add(out);
                 var name = "c" + i;
-                exits.add(pool.submit(() -> incus.execProbe(name, 1000, "/home/agentuser", "probe", out,
-                        Duration.ofSeconds(10))));
+                exits.add(pool.submit(() -> {
+                    long before = IncusClient.probeQueueNanos();
+                    int exit = incus.execProbe(name, 1000, "/home/agentuser", "probe", out, Duration.ofSeconds(10));
+                    longestQueued.accumulateAndGet(IncusClient.probeQueueNanos() - before, Math::max);
+                    return exit;
+                }));
             }
         }
 
@@ -95,5 +100,8 @@ class ExecAdmissionTest {
                 peak + " execs ran at once, more than the " + UnixSocketTransport.CONCURRENT_EXECS
                         + " whose connections fit in the cap of " + UnixSocketTransport.connectionCap());
         assertTrue(peak > 1, "the probes ran one at a time: " + peak);
+        // A probe that waited for its turn says so, so a caller timing the guest can leave it out.
+        assertTrue(longestQueued.get() >= Duration.ofMillis(50).toNanos(),
+                "no probe reported its wait behind the others: " + longestQueued.get() + " ns");
     }
 }
