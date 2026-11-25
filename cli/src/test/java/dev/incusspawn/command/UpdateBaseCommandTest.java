@@ -425,7 +425,7 @@ class UpdateBaseCommandTest {
                 "  2. Pin a specific version",
                 "  3. Cancel",
                 "",
-                "? Choice (Enter to cancel): "), prompts.conversation());
+                "? Choice, or Enter to cancel: "), prompts.conversation());
         assertTrue(recorded.events(RecordingOutput.Kind.STEP).stream().anyMatch(e -> e.msg().equals("Aborted.")));
     }
 

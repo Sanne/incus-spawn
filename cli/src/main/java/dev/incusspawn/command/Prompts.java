@@ -64,29 +64,49 @@ public interface Prompts {
      * that holds for several options once, and a final prompt that says what Enter does.
      * The lines are said, the prompt is shown, so a test reads the whole conversation.
      *
+     * <p>A prompt says what Enter does in one of two forms and no other (#2528). Where Enter
+     * takes one of the choices, that choice is in brackets, {@code Choice [1]:} ({@link
+     * #chooseDefault}), as {@code Choice [Y]:} and {@code (Y/n)} show theirs. Where Enter does
+     * something no choice does, the prompt ends in it: {@code Choice, or Enter to skip:}, as
+     * {@code Paste the token, or Enter to go back:} does. Where Enter does nothing, {@code
+     * Choice:}.
+     *
      * @param question  what is asked, shown as given: a question and a numbered list need no
      *                  "Choose one" after them (#2528)
      * @param options   one entry per choice, one or two lines each
      * @param note      a line after the list, or {@code null}
-     * @param enterDoes what an empty answer does, as it completes "Enter to ...": e.g. "skip";
-     *                  null when an empty answer chooses nothing, so the caller asks again
+     * @param enterDoes what an empty answer does that no choice does, as it completes
+     *                  "or Enter to ...": e.g. "skip"; null when an empty answer chooses
+     *                  nothing, so the caller asks again
      * @return the answer as typed, {@code null} at EOF
      */
     default String choose(String question, java.util.List<String> options, String note, String enterDoes) {
         sayOptions(question, options, note);
-        return ask(enterDoes == null ? "Choice: " : "Choice (Enter to " + enterDoes + "): ");
+        return ask(enterDoes == null ? "Choice: " : "Choice, or Enter to " + enterDoes + ": ");
+    }
+
+    /**
+     * {@link #choose} where Enter takes one of the choices: the prompt shows its number in
+     * brackets, {@code Choice [1]:}. The caller reads an empty answer as that choice.
+     *
+     * @param defaultOption the number, from 1, of the choice Enter takes
+     * @return the answer as typed, {@code null} at EOF
+     */
+    default String chooseDefault(String question, java.util.List<String> options, String note, int defaultOption) {
+        sayOptions(question, options, note);
+        return ask("Choice [" + defaultOption + "]: ");
     }
 
     /**
      * {@link #choose}'s layout for a question that takes several answers: the lead-in says so,
-     * and the prompt asks for numbers separated by commas, or {@code all}.
+     * and the prompt asks for numbers, showing two with their comma, or {@code all}.
      *
-     * @param enterDoes what an empty answer does, as it completes "Enter to ...": e.g. "skip"
+     * @param enterDoes what an empty answer does, as it completes "or Enter to ...": e.g. "skip"
      * @return the answer as typed, {@code null} at EOF
      */
     default String chooseSeveral(String question, java.util.List<String> options, String enterDoes) {
         sayOptions(question + " Choose one or more:", options, null);
-        return ask("Numbers separated by commas, or all (Enter to " + enterDoes + "): ");
+        return ask("Numbers (1,3) or 'all', or Enter to " + enterDoes + ": ");
     }
 
     /** The lead-in, the numbered options and the note of {@link #choose} and {@link #chooseSeveral}. */

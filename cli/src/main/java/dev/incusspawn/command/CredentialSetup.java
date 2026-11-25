@@ -290,7 +290,7 @@ class CredentialSetup {
             BuildOutput.step("OpenAI: configured with a ChatGPT session.");
             prompts.say("s. Sign in again (replaces the session and every instance proof made from it)");
             prompts.say("k. Switch to an API key instead");
-            var choice = readInput(prompts.ask("Choice (Enter to keep as-is): "));
+            var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: "));
             switch (choice) {
                 case "s" -> { signInChatGptInBrowser(config, target); return; }
                 case "k" -> { askAndSaveApiKey(config, target, prompts, false); return; }
@@ -915,7 +915,7 @@ class CredentialSetup {
                 prompts.say("x. Remove an account");
             }
             prompts.say("n. Rename an account");
-            var choice = readInput(prompts.ask("Choice (Enter to keep as-is): ")).toLowerCase(java.util.Locale.ROOT);
+            var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: ")).toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> {
@@ -988,7 +988,7 @@ class CredentialSetup {
 
     /** Prompts for a new account name, rejecting duplicates and anything YAML-hostile. */
     private static String askAccountName(Prompts prompts, java.util.Set<String> taken) {
-        return askAccountName(prompts, taken, "New account's name, such as work (Enter to cancel): ");
+        return askAccountName(prompts, taken, "New account's name, such as work, or Enter to cancel: ");
     }
 
     static String askAccountName(Prompts prompts, java.util.Set<String> taken, String prompt) {
@@ -1821,7 +1821,7 @@ class CredentialSetup {
                 BuildOutput.step("One " + label + " account is set up: " + OutputFormat.oneLine(only) + ".");
                 prompts.say("r. Replace its credential");
                 prompts.say("a. Add a second account, and keep this one");
-                var choice = readInput(prompts.ask("Choice (Enter to keep as-is): ")).toLowerCase(java.util.Locale.ROOT);
+                var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: ")).toLowerCase(java.util.Locale.ROOT);
                 switch (choice) {
                     case "" -> { return Optional.empty(); }
                     case "r" -> { return Optional.of(new AccountTarget(only, true)); }
@@ -1844,7 +1844,7 @@ class CredentialSetup {
             prompts.say("d. Change which account is the default");
             prompts.say("x. Remove an account");
             prompts.say("n. Rename an account");
-            var choice = readInput(prompts.ask("Choice (Enter to keep as-is): ")).toLowerCase(java.util.Locale.ROOT);
+            var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: ")).toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> { return Optional.empty(); }
@@ -1949,7 +1949,7 @@ class CredentialSetup {
             prompts.say("No account named '" + from + "'.");
             return;
         }
-        var to = askAccountName(prompts, accounts, "New name for '" + from + "' (Enter to cancel): ");
+        var to = askAccountName(prompts, accounts, "New name for '" + from + "', or Enter to cancel: ");
         if (to.isEmpty()) return;
         NamespaceAccounts.rename(config, namespace, from, to);
         config.save();
