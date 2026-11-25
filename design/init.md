@@ -145,6 +145,7 @@ A step header shows its number once, as `[2/3]`.
 Each header after the first also recaps the answers so far, above its title (`InitCommand.Answered`, `recapLine`): "Coding agent", "Its account" and "GitHub", each with a tick and what was chosen, or a hyphen and "left for later" or "none for now".
 By the third question a person has scrolled past a token guide and another program's output, and the count alone does not say what was decided.
 The account's line names the kind of Claude account or the GitHub login the token belongs to, never a credential, and an answer too long for the box is cut.
+The agent's line carries the answer to the agent's own question, such as Pi's provider, and the account's line then speaks of that provider's account, or says that none is needed for a provider isx does not manage.
 The recap is the questions' own: it is cleared when they end, so a header the setup shows later has none, and it costs each header two to four lines.
 When the questions end, a banner titled "Questions done" shows every answer with its mark, the last one included, which no header showed, and one sentence saying that isx now sets up the computer and builds the template (`printQuestionsDone`).
 Without it the setup's first line, on a Mac the VM starting, followed straight on the last answer, and nothing said the questions were over.
