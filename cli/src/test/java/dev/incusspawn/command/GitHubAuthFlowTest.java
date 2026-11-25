@@ -71,14 +71,22 @@ class GitHubAuthFlowTest {
         }
 
         @Override
-        GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts) {
+        GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts, java.util.function.Predicate<String> keepLogin) {
             verified.add(token);
-            return valid.get(token);
+            // As the real check: the account is offered to keepLogin before the email is chosen
+            var result = valid.get(token);
+            return result != null && result.login() != null && !keepLogin.test(result.login())
+                    ? GitHubVerifyResult.DECLINED : result;
         }
 
         @Override
         boolean ghCliLoggedIn() {
             return ghLoggedIn;
+        }
+
+        @Override
+        String ghCliLogin() {
+            return ghLoggedIn ? "operator" : null;
         }
 
         @Override
@@ -265,6 +273,47 @@ class GitHubAuthFlowTest {
         // assertFullyConsumed fails if the flow asks anything after the skipped PAT.
         run(new FakeInit(), declineBrowser().secret(""));
         assertNothingSaved();
+    }
+
+    // ── a pasted token of the person's own account (#2544) ───────────────────────
+
+    /** A token made in a browser signed in as the person is theirs: No goes back to the paste prompt. */
+    @Test
+    void aPastedTokenOfTheGhAccountIsAskedAboutAndNoAsksForAnother() {
+        var init = new FakeInit().personalGhLogin().acceptAgentPat().accept("ghp_mine", "Operator", "me@example.com");
+        var prompts = declineBrowser().secret("ghp_mine").line("").secret(AGENT_PAT).line(FINISHED);
+
+        var output = RecordingOutput.during(() -> run(init, prompts));
+
+        assertTrue(prompts.conversation().contains("This token belongs to Operator, your own account."),
+                () -> prompts.conversation().toString());
+        assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
+        assertEquals(0, init.ghTokenReads);
+        assertTrue(output.events(RecordingOutput.Kind.WARN).isEmpty());
+    }
+
+    @Test
+    void aPastedTokenOfTheGhAccountIsSavedWhenConfirmed() {
+        var init = new FakeInit().personalGhLogin().accept("ghp_mine", "operator", "me@example.com");
+        run(init, declineBrowser().secret("ghp_mine").line("y").line(FINISHED));
+
+        assertEquals("ghp_mine", saved("github.accounts.default.token"));
+    }
+
+    /** Another account's token, or no gh login to compare with, is saved without the question. */
+    @Test
+    void aTokenOfAnotherAccountIsNotAskedAbout() {
+        var another = declineBrowser().secret(AGENT_PAT).line(FINISHED);
+        run(new FakeInit().personalGhLogin().acceptAgentPat(), another);
+        assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
+
+        var noGh = declineBrowser().secret("ghp_mine").line(FINISHED);
+        run(new FakeInit().accept("ghp_mine", "operator", null), noGh);
+        assertEquals("ghp_mine", saved("github.accounts.default.token"));
+
+        for (var prompts : List.of(another, noGh)) {
+            assertTrue(prompts.questions().stream().noneMatch(q -> q.contains("Use it anyway?")), prompts.questions()::toString);
+        }
     }
 
     // ── the token's shape ────────────────────────────────────────────────────────

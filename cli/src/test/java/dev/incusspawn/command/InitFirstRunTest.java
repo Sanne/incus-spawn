@@ -930,12 +930,39 @@ class InitFirstRunTest {
         assertEquals(List.of(), output.events(RecordingOutput.Kind.WARN));
     }
 
+    /**
+     * Option 1 is an account of the agent's own, so a pasted token of gh's account is asked
+     * about, and No goes back to the paste prompt (#2544).
+     */
+    @Test
+    void theAgentsOwnAccountRefusesTheGhLoginsTokenUnlessConfirmed() throws Exception {
+        var setup = new CredentialSetup() {
+            // The real check around GitHub's answer, so the email question is seen in its place
+            @Override
+            GitHubUser fetchGitHubUser(String t) {
+                return t.equals("ghp_mine") ? new GitHubUser("JDoe", 1, "jane@example.org")
+                        : new GitHubUser("jdoe-bot", 2, "bot@example.org");
+            }
+        };
+        // No to the own account, then the agent's token and its email question
+        var prompts = ScriptedPrompts.lines("1").secret("ghp_mine").line("n").secret("ghp_agent").line("");
+
+        RecordingOutput.during(() -> assertTrue(setup.offerGitHubForAgent(SpawnConfig.load(), prompts, "jdoe")));
+
+        prompts.assertFullyConsumed();
+        assertTrue(prompts.conversation().contains("The agent would act on GitHub as you."), prompts.conversation()::toString);
+        // The own account's token never reached the email question
+        assertEquals(1, prompts.conversation().stream().filter(l -> l.startsWith("Which email")).count(),
+                prompts.conversation()::toString);
+        assertEquals("ghp_agent", savedGitHubToken());
+    }
+
     /** A pasted classic token is saved, and named as not taken by Copilot CLI. */
     @Test
     void forCopilotAPastedClassicTokenIsSavedWithAWarning() throws Exception {
         var setup = new CredentialSetup() {
             @Override
-            GitHubVerifyResult verifyGitHubToken(String t, Prompts p) {
+            GitHubVerifyResult verifyGitHubToken(String t, Prompts p, java.util.function.Predicate<String> keep) {
                 return new GitHubVerifyResult("jdoe-bot", "bot@example.com");
             }
         };
@@ -994,7 +1021,7 @@ class InitFirstRunTest {
             }
 
             @Override
-            GitHubVerifyResult verifyGitHubToken(String t, Prompts p) {
+            GitHubVerifyResult verifyGitHubToken(String t, Prompts p, java.util.function.Predicate<String> keep) {
                 return new GitHubVerifyResult("jdoe", "jdoe@example.com");
             }
         };
