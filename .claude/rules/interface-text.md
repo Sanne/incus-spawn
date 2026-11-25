@@ -65,6 +65,7 @@ Where Enter takes one of the answers, that answer is in brackets: `Choice [1]:`,
 Where Enter does something no answer does, the prompt ends in it: `Choice, or Enter to skip:`, `Paste the token, or Enter to go back:`.
 Where Enter does nothing, the prompt says nothing of it: `Choice:`.
 The first run once asked `Choice (Enter to choose Claude):` one screen and `Choice [1]:` the next, for the same thing.
+`Prompts.choiceEnterTakes`, `Prompts.choiceEnterDoes` and `Prompts.choice` build every `Choice` prompt, `choose` and `chooseDefault` included, and `ChoicePromptGateTest` fails a `"Choice` literal anywhere else in main source (#2593).
 
 **A step that starts something says what will happen, in order, before it asks.**
 "Run 'claude setup-token' now?" did not say that a program takes the terminal, opens a browser and prints a token to paste.

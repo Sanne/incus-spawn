@@ -160,6 +160,9 @@ A menu that each step laid out by hand read as a wall of text under the previous
 It leaves a blank line (`BuildOutput.gap()`, which does not double one a closing group just left), asks the question as given (a question and a numbered list need no "Choose one:" after them, #2528), lists the options numbered and indented as a group, states a note that holds for several options once after the list, and ends with a prompt that says what Enter does in one of two forms (#2528).
 Where Enter takes one of the choices, that choice is in brackets, `Choice [1]:` (`Prompts.chooseDefault`), as `Choice [Y]:` and `(Y/n)` show theirs.
 Where Enter does something no choice does, the prompt ends in it, `Choice, or Enter to skip:`, as `Paste the token, or Enter to go back:` does; where Enter does nothing, the prompt is `Choice:`.
+Both forms are built in one place, `Prompts.choiceEnterTakes` (a number or a letter), `Prompts.choiceEnterDoes` and `Prompts.choice` (Enter does nothing), which `choose`, `chooseDefault` and every menu laid out by hand use (#2593).
+Before that, the forms held only as long as each author remembered them, and rewording one was an edit at every site that asked.
+`ChoicePromptGateTest` fails a `"Choice` literal in main source outside `Prompts`.
 An option's second line is written as a newline in its text and aligns under the first.
 The layout leaves the caveats of each option out of the choice, at the cost of a step that needs a long disclosure having to put it elsewhere.
 A menu keyed by letters (account management) is not yet on it.
