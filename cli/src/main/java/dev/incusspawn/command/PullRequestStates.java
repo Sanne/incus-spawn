@@ -74,6 +74,17 @@ public final class PullRequestStates {
     public static Map<String, Map<PullRequest, State>> read(List<InstanceInfo> instances, EventLogReader.Log log,
                                                 SpawnConfig config, GitHub github,
                                                 java.util.function.Consumer<String> failed) {
+        return read(instances, log, config, github, failed, new Settled());
+    }
+
+    /**
+     * As {@link #read(List, EventLogReader.Log, SpawnConfig, GitHub, java.util.function.Consumer)},
+     * but a pull request {@code settled} holds as merged for the same account is not asked about
+     * again, and one GitHub answers merged is added to it. The accounts are asked at once.
+     */
+    public static Map<String, Map<PullRequest, State>> read(List<InstanceInfo> instances, EventLogReader.Log log,
+                                                SpawnConfig config, GitHub github,
+                                                java.util.function.Consumer<String> failed, Settled settled) {
         var pullsOf = new LinkedHashMap<String, List<PullRequest>>();
         var byToken = new LinkedHashMap<String, Set<PullRequest>>();
         var tokenOf = new LinkedHashMap<String, String>();
@@ -88,23 +99,33 @@ public final class PullRequestStates {
             pulls.stream().filter(PullRequest::githubShaped)
                     .forEach(byToken.computeIfAbsent(token, t -> new LinkedHashSet<>())::add);
         }
-        var answers = new LinkedHashMap<String, Map<PullRequest, State>>();
-        byToken.forEach((token, pulls) -> {
-            var states = new LinkedHashMap<PullRequest, State>();
-            var all = List.copyOf(pulls);
-            try {
-                for (int i = 0; i < all.size(); i += PER_REQUEST) {
-                    states.putAll(github.ask(token, all.subList(i, Math.min(all.size(), i + PER_REQUEST))));
+        var answers = new java.util.concurrent.ConcurrentHashMap<String, Map<PullRequest, State>>();
+        try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            byToken.forEach((token, pulls) -> pool.submit(() -> {
+                var states = new LinkedHashMap<PullRequest, State>();
+                var ask = new java.util.ArrayList<PullRequest>();
+                for (var pull : pulls) {
+                    if (settled.merged(token, pull)) states.put(pull, State.MERGED);
+                    else ask.add(pull);
                 }
-            } catch (IOException | RuntimeException e) {
-                // The message is the client's or GitHub's, which never holds the token sent
-                failed.accept("Could not ask GitHub whether pull requests were merged: " + e.getMessage());
-            }
-            answers.put(token, states);
-        });
+                try {
+                    for (int i = 0; i < ask.size(); i += PER_REQUEST) {
+                        states.putAll(github.ask(token, ask.subList(i, Math.min(ask.size(), i + PER_REQUEST))));
+                    }
+                } catch (IOException | RuntimeException e) {
+                    // The message is the client's or GitHub's, which never holds the token sent
+                    failed.accept("Could not ask GitHub whether pull requests were merged: " + e.getMessage());
+                }
+                states.forEach((pull, state) -> {
+                    if (state == State.MERGED) settled.merge(token, pull);
+                });
+                answers.put(token, states);
+            }));
+        }
         var result = new LinkedHashMap<String, Map<PullRequest, State>>();
         pullsOf.forEach((name, pulls) -> {
-            var states = answers.getOrDefault(tokenOf.get(name), Map.of());
+            var token = tokenOf.get(name);
+            var states = token == null ? Map.<PullRequest, State>of() : answers.getOrDefault(token, Map.of());
             var own = new LinkedHashMap<PullRequest, State>();
             for (var pull : pulls) {
                 var state = states.get(pull);
@@ -113,6 +134,27 @@ public final class PullRequestStates {
             result.put(name, own);
         });
         return result;
+    }
+
+    /**
+     * The pull requests GitHub answered merged, per account, for as long as one TUI session
+     * lasts: a merged pull request stays merged, so it is not asked about again. Kept per
+     * account, so an account is never told what only another one could see.
+     */
+    public static final class Settled {
+        private final Set<String> merged = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+        private static String key(String token, PullRequest pull) {
+            return dev.incusspawn.tool.ToolDef.sha256hex(token) + "\n" + pull;
+        }
+
+        boolean merged(String token, PullRequest pull) {
+            return merged.contains(key(token, pull));
+        }
+
+        void merge(String token, PullRequest pull) {
+            merged.add(key(token, pull));
+        }
     }
 
     /**
@@ -183,26 +225,36 @@ public final class PullRequestStates {
         return states;
     }
 
-    /** GitHub itself, through isx's HTTPS stack and the host's trust. */
+    /**
+     * GitHub itself, through isx's HTTPS stack and the host's trust. Its one client is made at the
+     * first request and serves every request after it, across accounts, so a TUI session pays
+     * for one TLS setup and not one per request.
+     */
     public static GitHub api() {
+        var shared = new java.util.concurrent.atomic.AtomicReference<HttpClient>();
         return (token, pulls) -> {
-            try (var client = SystemTrust.httpClient().connectTimeout(Duration.ofSeconds(5)).build()) {
-                var request = HttpRequest.newBuilder(URI.create("https://api.github.com/graphql"))
-                        .header("Authorization", "Bearer " + token)
-                        .header("Content-Type", "application/json")
-                        .timeout(Duration.ofSeconds(10))
-                        .POST(HttpRequest.BodyPublishers.ofString(body(pulls)))
-                        .build();
-                HttpResponse<byte[]> response;
-                try {
-                    response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("interrupted");
-                }
-                if (response.statusCode() != 200) throw new IOException("GitHub answered HTTP " + response.statusCode());
-                return parse(pulls, Jjq.parseForeign(response.body(), "GitHub's answer"));
+            var client = shared.get();
+            if (client == null) {
+                var made = SystemTrust.httpClient().connectTimeout(Duration.ofSeconds(5)).build();
+                client = shared.compareAndExchange(null, made);
+                if (client == null) client = made;
+                else made.close();
             }
+            var request = HttpRequest.newBuilder(URI.create("https://api.github.com/graphql"))
+                    .header("Authorization", "Bearer " + token)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(10))
+                    .POST(HttpRequest.BodyPublishers.ofString(body(pulls)))
+                    .build();
+            HttpResponse<byte[]> response;
+            try {
+                response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted");
+            }
+            if (response.statusCode() != 200) throw new IOException("GitHub answered HTTP " + response.statusCode());
+            return parse(pulls, Jjq.parseForeign(response.body(), "GitHub's answer"));
         };
     }
 
