@@ -26,6 +26,7 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    So Pi and opencode reach the Claude step through the credential their tool declares, and a new agent needs nothing here.
    A step that is not the agent's own is introduced by one line saying so (`InitCommand.sayWhoseAccount`), since its questions name another product: Pi is asked about Claude.
    For an agent with a `provider` parameter it also says to choose "None for now" for another provider, and links the agent's page, which shows how.
+   The OpenAI step of a first run for an agent other than Codex offers only an API key, since a ChatGPT session gives Pi and opencode no key (#2525).
    When the account is GitHub's (Copilot), the step is the GitHub question of the next step, which is then not asked a second time.
    For any other agent, GitHub's account is the next step's alone, even when a `tpl-agent.yaml` an earlier run wrote lists `gh` (`agentGaps`), so that question always has its own header and count.
    A namespace that already has a usable account is not asked again.
