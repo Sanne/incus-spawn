@@ -2249,11 +2249,19 @@ public class Tui {
         var definitions = java.util.concurrent.CompletableFuture.supplyAsync(
                 HelpContext::definitions, Thread::startVirtualThread);
         var previous = helpChat;
-        var chat = new HelpChatModal(modal, theme, targets, previous != null ? previous.target() : null,
+        // The account chosen last in this TUI while it can still answer, else the one that last answered (#2607)
+        var initial = previous != null && targets.contains(previous.target()) ? previous.target()
+                : dev.incusspawn.ai.AiHelpChoice.preferred(targets).orElse(null);
+        var chat = new HelpChatModal(modal, theme, targets, initial,
                 AiHelpClient.subscriptionAccounts(config),
-                (target, question, attach) -> AiHelpClient.ask(question, attach
-                        ? List.of(HelpContext.documentation(), definitions.join())
-                        : List.of(HelpContext.documentation()), config, target),
+                (target, question, attach) -> {
+                    var response = AiHelpClient.ask(question, attach
+                            ? List.of(HelpContext.documentation(), definitions.join())
+                            : List.of(HelpContext.documentation()), config, target);
+                    // Only an answer with text makes this the account asked first next time
+                    if (!response.content().isBlank()) dev.incusspawn.ai.AiHelpChoice.answered(target);
+                    return response;
+                },
                 Thread::startVirtualThread, () -> needsRepaint.set(true));
         definitions.thenAccept(text -> {
             chat.setAttachmentBytes(text.getBytes(StandardCharsets.UTF_8).length);

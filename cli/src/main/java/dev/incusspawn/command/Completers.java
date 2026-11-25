@@ -337,6 +337,15 @@ public final class Completers {
         return selections;
     }
 
+    /** What {@code isx ask --account} and {@code isx doctor --account} take: an account that can answer (#2607). */
+    public static class AiHelpAccount extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return dev.incusspawn.ai.AiHelpClient.targets(SpawnConfig.load()).stream()
+                    .map(dev.incusspawn.ai.AiHelpClient.Target::selection).toList();
+        }
+    }
+
     /**
      * {@code isx account set|unset}'s words: the instance first, then a selection per word for
      * {@code set} and a namespace per word for {@code unset}.

@@ -913,6 +913,7 @@ isx doctor [options]
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
 | `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
 | `--explain` | Ask your AI Help account for a first diagnosis of the material `--bundle` collects (uses AI tokens); implies `--deep` |
+| `--account <namespace>=<account>` | With `--explain`, the account that answers, as for `isx ask` |
 | `--format=<format>` | `table` (the default), `plain` or `json`; not with `--bundle` or `--explain` |
 
 Each finding carries a mark:
@@ -931,7 +932,7 @@ That is a note, not an issue to address, unless the older release lacks a known 
 `--bundle` creates an archive to attach to a GitHub issue.
 isx redacts credentials before it writes anything, and `REDACTIONS.txt` in the archive lists what it removed.
 
-`--explain` sends the findings and the archive's redacted files to the account `isx ask` uses, which is billed for it.
+`--explain` sends the findings and the archive's redacted files to the account `isx ask` would ask, which is billed for it.
 The answer lists the likely causes, the command to run next and the repository a fix belongs in.
 isx prints the size of what it sends before sending, and asks first when the size is over 100 KB.
 
@@ -1093,6 +1094,13 @@ isx ask <question...>
 | Option | What it does |
 |--------|--------------|
 | `--with-templates` | Include template and tool definitions in the AI context |
+| `--account <namespace>=<account>` | Ask this account, such as `claude=work` or `gemini=free` |
+
+isx asks the account that last answered, so an account you name once with `--account` is asked from then on.
+With no answer yet, it asks a Claude account with an API key or Vertex AI first, your default if it is one, then OpenAI's, then Gemini's.
+
+An account named with `--account` that is missing or cannot answer is an error, and isx does not ask another one instead.
+When the account fails, the error names the other accounts that can answer.
 
 An answer is AI-generated and can be wrong, so isx asks the AI to end the answer with the documentation sections the answer relies on: check the answer against them.
 A note on stderr says so after every answer, and stdout holds only the answer.

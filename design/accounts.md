@@ -614,7 +614,7 @@ A change to the key reaches a template at its next build, never a running branch
 
 ## The help assistant (`isx ask`)
 
-**AI help credentials (`isx ask` / `?` in the TUI):** `AiHelpClient.targets()` lists the accounts satisfying `ClaudeAccount::servesDirectApi` (the default account first), then every `openai` and `gemini` account holding an `apiKey`, each namespace's default first; the first is the one used by default.
+**AI help credentials (`isx ask` / `?` in the TUI):** `AiHelpClient.targets()` lists the accounts satisfying `ClaudeAccount::servesDirectApi` (the default account first), then every `openai` and `gemini` account holding an `apiKey`, each namespace's default first; the first is the one used when no account is named or recorded.
 An `openai` or `gemini` account counts by what it holds, not by being the default: a default ChatGPT session or Google sign-in hid a key beside it before #2541.
 Those sign-ins never answer, nor does Copilot's GitHub account: the proxy serves each only for an allowlist of its own agent's operations, and spending one here may be neither allowed by the provider nor wanted.
 An `oauth` account never satisfies it.
@@ -622,6 +622,19 @@ A Claude Pro/Max token is only valid for Claude Code itself.
 The Messages API rejects it unless `system` is a block array whose *first* block is Claude Code's own identity string — rejecting it with an opaque HTTP 429 `rate_limit_error` whose message is the literal text `Error`, so the failure reads as a generic API error rather than an auth hint.
 Satisfying that check would mean isx presenting itself as Claude Code to spend the user's subscription, so a Pro/Max account simply keeps serving instances while an `api-key` or `vertex` account answers here.
 Max and Team plans include monthly API credits for a key, so that second account need not cost a subscriber extra (#1674).
+**isx asks the account that last answered** (#2607).
+`AiHelpChoice` picks the account: the one `--account <ns>=<account>` names on `isx ask` and `isx doctor --explain`, else the recorded one, else the first of `targets()`.
+After an answer with text, `isx ask`, `--explain` and the TUI's AI Help record its account in `~/.local/state/incus-spawn/ai-help-account`, an explicit `--account` included, since it is the account that last worked.
+An empty reply, a failed request or a declined send leaves the record as it was.
+It is state, not configuration, so `config.yaml` has no setting for it.
+A recorded account that is gone, or can no longer answer, matches no target, and the fixed order applies.
+The TUI preselects it when AI Help first opens, and the account chosen in the dialog after that.
+A named account is never replaced: a bare name, a missing account or one that cannot answer is an error listing the accounts that can, and no account is offered to be added.
+The error says why an account that exists cannot answer: a subscription, a sign-in, the reserved `inherit`, a `type:` other than `api-key`, or a missing key, region or project.
+An unreadable `config.yaml` reads as empty, so the pin is refused with why the file cannot be read rather than as a missing account; `isx doctor --explain --account` then runs its checks first, so its config finding names the file.
+When a provider refuses the question, the error names the other accounts with `--account`.
+Sanne chose this over a `config.yaml` setting, which would be one more thing to set and to keep in step with what the person asks by hand.
+What it gives up is a fixed default: one question asked with `--account` moves every later question to that account.
 **An account is asked for where AI Help is first used** (#2541).
 The first run cannot know which accounts the person will have once they meet `isx ask`, so it does not ask, and neither does saving a subscription.
 With no account that can answer, `isx ask`, `?` in the TUI and `isx doctor --explain` go through `AiHelpAccount.ask`: off a terminal it is an error naming every kind and `isx account add <ns>`, never `isx init`; on one it says why and offers an Anthropic API key, Claude on Vertex AI, an OpenAI or a Gemini API key.

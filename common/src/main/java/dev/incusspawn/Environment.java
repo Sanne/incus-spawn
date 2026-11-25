@@ -214,6 +214,11 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/disk-hint");
     }
 
+    /** The AI Help account that last answered, as {@code <namespace>=<account>}, asked first next time (#2607). */
+    public static Path aiHelpAccountFile() {
+        return home().resolve(".local/state/incus-spawn/ai-help-account");
+    }
+
     public static Path apiDebugDir() {
         return home().resolve(".local/state/incus-spawn/api-debug");
     }
