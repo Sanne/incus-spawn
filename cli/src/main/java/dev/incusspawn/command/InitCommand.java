@@ -1861,7 +1861,8 @@ public class InitCommand extends BaseCommand {
         if (question.other() != null) options.add(question.other().label());
         var def = chosenAgent.parameters().get(question.parameter());
         while (true) {
-            var answer = prompts.choose(question.question(), options, null, "choose " + options.getFirst().lines().findFirst().orElse(""));
+            // Enter keeps the first choice, the parameter's default
+            var answer = prompts.chooseDefault(question.question(), options, null, 1);
             if (answer == null) return;
             int n;
             try {
@@ -3276,7 +3277,7 @@ public class InitCommand extends BaseCommand {
         while (true) {
             prompts.say("t. Change the approved templates");
             prompts.say("n. How to turn it off");
-            var choice = readInput(prompts.ask("Choice (Enter to keep as-is): ")).toLowerCase(java.util.Locale.ROOT);
+            var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: ")).toLowerCase(java.util.Locale.ROOT);
             if (choice.isEmpty() || choice.equals("t") || choice.equals("n")) return choice;
         }
     }

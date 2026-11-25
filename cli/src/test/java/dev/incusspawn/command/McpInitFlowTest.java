@@ -158,7 +158,7 @@ class McpInitFlowTest {
         host.hasClaude = false;
         var prompts = ScriptedPrompts.lines("");
         var out = reported(() -> run(host, prompts));
-        assertEquals(List.of("Choice (Enter to keep as-is): "),
+        assertEquals(List.of("Choice, or Enter to keep it as it is: "),
                 prompts.questions().stream().map(BuildOutput::stripAnsi).toList());
         assertTrue(out.contains("Currently approved templates: tpl-agent."), out);
         assertMcpUnchanged(seeded);

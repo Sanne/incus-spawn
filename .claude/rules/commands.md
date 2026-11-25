@@ -193,7 +193,7 @@ Nothing is echoed, so every pasted secret gets a receipt, `Received N characters
 The step's one outcome line then says the credential was saved, verified or `not checked` (#2528); `GitHubAuthFlowTest` asserts the raw token never reaches stdout.
 A new secret prompt goes through `CredentialSetup.askSecret`, or calls `received` itself once it has ruled out the answers that are no secret (`SecretReceiptTest`).
 New prompts in init follow the same shape: take `Prompts`, route any network or host call through an overridable method, and add a flow test asserting what reaches the file on disk.
-A question with several alternatives goes through `Prompts.choose` (#2492): a blank line, the question as its lead-in with no "Choose one" after it (#2528), the options indented as a group, one shared note after the list, and a prompt that says what Enter does.
+A question with several alternatives goes through `Prompts.choose` (#2492): a blank line, the question as its lead-in with no "Choose one" after it (#2528), the options indented as a group, one shared note after the list, and a prompt that says what Enter does in one of two forms: `Choice [1]:` where Enter takes a choice (`Prompts.chooseDefault`), `Choice, or Enter to skip:` where it does something no choice does, and `Choice:` where it does nothing.
 A question that takes several answers, such as Credential Setup's, goes through `Prompts.chooseSeveral`, the same layout, whose lead-in ends "Choose one or more:" since taking several is not what a list suggests.
 A step never indents its own menu lines.
 The host-setup confirmations (Incus install, subid, CoW pool) ask through the same `Prompts` (`askYesNo`).

@@ -59,6 +59,12 @@ The examples are from the review of the first run of `isx init` (#2528), which a
 The review asked for `Use Claude Code? (Y = yes, o = choose another, n = no agent)`.
 What the text says an answer does is what it does: an intro that ends "Press Enter to skip it for now" must not be followed by a question whose default runs a program.
 
+**A prompt says what Enter does in one of two forms.**
+Where Enter takes one of the answers, that answer is in brackets: `Choice [1]:`, `Choice [Y]:`, `(Y/n)`.
+Where Enter does something no answer does, the prompt ends in it: `Choice, or Enter to skip:`, `Paste the token, or Enter to go back:`.
+Where Enter does nothing, the prompt says nothing of it: `Choice:`.
+The first run once asked `Choice (Enter to choose Claude):` one screen and `Choice [1]:` the next, for the same thing.
+
 **A step that starts something says what will happen, in order, before it asks.**
 "Run 'claude setup-token' now?" did not say that a program takes the terminal, opens a browser and prints a token to paste.
 The step should list those three events, then ask.
