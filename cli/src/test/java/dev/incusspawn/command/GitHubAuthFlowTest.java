@@ -248,6 +248,16 @@ class GitHubAuthFlowTest {
         assertFalse(without.contains("Type c"), "c is offered only where a copy can work:\n" + without);
     }
 
+    /** The repository step links the page on how the agent's account reaches the person's repositories (#2545). */
+    @Test
+    void theGuideLinksHowTheAccountReachesYourRepositories() {
+        var prompts = new ScriptedPrompts().secret("");
+        run(new FakeInit(), prompts);
+
+        assertTrue(prompts.conversation().stream().anyMatch(line -> line.contains(CredentialSetup.GITHUB_ACCOUNTS_DOCS)),
+                () -> prompts.conversation().toString());
+    }
+
     /** {@code u} prints the page's whole address, to copy by hand. */
     @Test
     void uShowsTheWholeAddress() {

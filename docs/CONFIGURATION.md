@@ -151,6 +151,8 @@ The `name` and `email` fields on a GitHub account override the git identity that
 When both are set, the build uses them and makes no GitHub API call; otherwise the missing one is derived from the GitHub API.
 `isx init` does not prompt for `name`; write it by hand.
 
+To let the agent's own GitHub account work on your repositories, see [GitHub accounts for agents](GITHUB.md).
+
 Changing a default switches every instance that follows it to the new account; `isx init` lists those instances first and lets you keep them on their current account.
 
 Renaming an account in `isx init` updates the instances using that account, and when you remove an account, `isx init` tells you what still uses it.

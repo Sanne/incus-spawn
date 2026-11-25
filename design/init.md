@@ -137,6 +137,13 @@ At the token prompt `c` copies that address to the clipboard, to paste in the wi
 Where no clipboard command exists the guide does not offer `c`, and a `c` typed anyway prints the address as `u` does, so it is never taken for a token.
 `c` is offered only where a clipboard command reaches the person's own screen (`CredentialSetup.clipboardCommand`: `pbcopy`, `wl-copy`, `xclip` or `xsel`, and never over SSH), which gives up clicking for everyone and copying for a person on a remote terminal.
 Enter at that prompt goes back to the three options.
+The guide's repository step says a new account's list is empty and that "All repositories" also covers later ones.
+It links to docs/GITHUB.md, which lists the arrangements by which that account reaches the person's repositories: a fork, an organization, collaborator access (#2545).
+They were checked against GitHub's documentation: a fine-grained token cannot write to a repository where its account is only a collaborator, nor to a public one its account neither owns nor belongs to through an organization.
+No permission on the token page changes that, so the page's set stays as it was.
+Creating a fork through the API needs Administration, which would let every agent's token delete repositories and change their visibility.
+The page does not add it, and Sanne decided it stays out until there is a compelling reason, and even then limited in some way (PR #2590).
+The docs page sends the person to a fork made in the browser and does not mention the permission.
 A token that verified asks which email the agent's commits carry: GitHub's private address, `<id>+<login>@users.noreply.github.com`, or the account's primary one, Enter taking the private one.
 With no primary address to read, the private one is taken without asking, so a token without the email permission no longer asks for another token.
 A token that still belongs to the `gh` login is a mistake the guide cannot rule out, so isx names it and asks `Use it anyway?` before the email question (#2544).
