@@ -138,6 +138,31 @@ public abstract class SessionStore<T> {
     }
 
     /**
+     * Moves {@code from}'s session to {@code to}, as an account rename does, keeping its id and
+     * generation so what was made for it still works. Replaces a session {@code to} had, which
+     * only an account removed under that name could have left. A refresh of {@code from} still
+     * in flight then finds it {@link Commit#GONE}.
+     *
+     * @return whether {@code from} had a session
+     */
+    public boolean move(String from, String to) {
+        return locked(from, () -> {
+            var session = read(from);
+            if (session == null) return false;
+            locked(to, () -> {
+                write(new Session<>(to, session.sessionId(), session.generation(), session.tokens(), session.refreshing()));
+                return null;
+            });
+            try {
+                Files.deleteIfExists(file(from));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            return true;
+        });
+    }
+
+    /**
      * Records that a refresh of {@code session} is about to be sent, if the file still holds it;
      * returns whether it does. The record outlives a crash between the provider's answer and the commit.
      */
