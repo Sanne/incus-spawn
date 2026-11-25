@@ -664,4 +664,25 @@ class ProxyServiceTest {
             ProxyService.startWaitSecondsSupplier = original;
         }
     }
+
+    /** A unit systemd is starting, or waiting out RestartSec to start again, has not failed its restart (#2619). */
+    @Test
+    void aUnitThatSystemdIsStillStartingCountsAsRestarted() {
+        assertTrue(ProxyService.activeOrStarting("active"));
+        assertTrue(ProxyService.activeOrStarting("activating"));
+        assertFalse(ProxyService.activeOrStarting("failed"));
+        assertFalse(ProxyService.activeOrStarting("inactive"));
+        assertFalse(ProxyService.activeOrStarting(null));
+    }
+
+    /** A restart that stopped on a configuration error is named as one, in init, isx proxy start and restart and doctor (#2619). */
+    @Test
+    void aRestartThatDidNotAnswerNamesAConfigError() {
+        var config = ProxyService.notAnsweringAfterRestart(true);
+        assertEquals("Proxy failed due to a configuration problem (exit " + ProxyService.EXIT_CONFIG + ").", config.message());
+        assertArrayEquals(new String[] {ProxyService.CHECK_LOGS}, config.details());
+        var silent = ProxyService.notAnsweringAfterRestart(false);
+        assertEquals("Proxy is still not responding after restart.", silent.message());
+        assertTrue(java.util.List.of(silent.details()).contains(ProxyService.CHECK_LOGS));
+    }
 }

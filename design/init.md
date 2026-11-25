@@ -85,6 +85,11 @@ The box holds the result and the next command: the template, built or not, which
 When more is left, it lists it as numbered steps, one command to a line, in the order that works: start the services, build the template, add the agent's account, open the agent.
 Its title reads "Setup complete" only when opening the agent is all that is left, and otherwise counts the steps left; a build that failed is named.
 A later run's box ticks "Setup complete!" only when no service install failed; otherwise its header names the service it finished without, and starting it stays the first step (#2597).
+A running service that the run restarted counts only once the proxy answers, within the proxy's start wait (`ready-timeouts.proxy`), as `isx proxy install` waits: the unit reads `active` before a new proxy that exits at once has exited (#2619).
+An answer from another proxy on the service's ports does not count, and a unit the upgrade left down fails without the wait.
+A unit that reads `activating`, systemd waiting out `RestartSec` to start a proxy that exited, is not down: init waits for it too (`ProxyService.isActiveOrStarting`).
+`ProxyService.restart` counts it as restarted the same way, so `isx proxy restart` and doctor's restart remedies fail when the proxy does not answer within that wait.
+A proxy that systemd stopped for a configuration error (exit 78) is named as that, in each of them and in `isx proxy start` (`ProxyService.notAnsweringAfterRestart`).
 An agent that needs something of the person at its first start says so under its step (`ToolSetup.firstStartNote`): Antigravity CLI on a Google account signs in from the instance.
 Under the box come the commands for later: return to the machine, list the machines, edit the template, the templates guide and `isx init`.
 Its last line says that isx's commands and docs call an isx machine an "instance".

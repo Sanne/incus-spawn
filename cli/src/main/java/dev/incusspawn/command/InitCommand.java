@@ -529,6 +529,8 @@ public class InitCommand extends BaseCommand {
      * (#2597). A first run's box lists starting the proxy as a step left instead, and does not read it.
      */
     final Set<String> failed = new java.util.LinkedHashSet<>();
+    /** An earlier step of this run restarted the service, the firewall's: its answer is still owed (#2619). */
+    boolean proxyRestartedEarlier;
 
     /** The exit of a run that finished with steps left for the person, when a summary was asked for (#2075). */
     static final int EXIT_STEPS_LEFT = 76;
@@ -2983,6 +2985,11 @@ public class InitCommand extends BaseCommand {
         return ProxyService.isActive();
     }
 
+    /** Whether the proxy service runs or systemd is still bringing it up (#2619). */
+    boolean proxyServiceStarting() {
+        return ProxyService.isActiveOrStarting();
+    }
+
     boolean macOsServicesInstalled() {
         return ProxyService.isMacOsServiceInstalled();
     }
@@ -2992,7 +2999,25 @@ public class InitCommand extends BaseCommand {
         return ProxyService.upgradeIfNeeded();
     }
 
-    /** Restarts the proxy service; whether it came back up. */
+    /** Waits for a restarted proxy service to answer, as {@code isx proxy install} does; whether it did. */
+    boolean proxyServiceAnswers() {
+        return ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds());
+    }
+
+    /** Whether what answers is this user's service rather than another proxy on its ports (#1570); reports one that is not. */
+    boolean answeringIsTheProxyService() {
+        return ProxyService.answeringIsTheService();
+    }
+
+    /** Why the restarted proxy service did not answer: a configuration error, or nothing answering. */
+    ProxyService.NotAnswering proxyServiceNotAnswering() {
+        return ProxyService.notAnsweringAfterRestart();
+    }
+
+    /**
+     * Restarts the proxy service; whether systemd runs it or is still bringing it up, which only
+     * {@link #proxyServiceAnswers} confirms (#2619).
+     */
     boolean restartProxyService() {
         return ProxyService.restart();
     }
@@ -3739,7 +3764,8 @@ public class InitCommand extends BaseCommand {
      * A running service found with an outdated marker is restarted once the marker is written,
      * unless the upgrade did it: the firewall step leaves its restart here, and nothing else could
      * make one while the marker was stale (#1048). Read from the marker rather than remembered, so
-     * a restart owed by an earlier run that stopped before this step is still made.
+     * a restart owed by an earlier run that stopped before this step is still made. Either restart
+     * counts only once the proxy answers (#2619).
      */
     boolean completeWithProxyService(Prompts prompts) throws IOException {
         var active = proxyServiceActive();
@@ -3748,11 +3774,35 @@ public class InitCommand extends BaseCommand {
         markInitComplete();
         if (active) {
             // A restart that failed, the upgrade's or an owed one, leaves the service down, so the
-            // closing box ticks no setup (#2597, #2604). The upgrade says only that it restarted.
+            // closing box ticks no setup (#2597, #2604). restartProxyService warns of its own failure.
             var upgraded = upgradeProxyService();
-            if (upgraded ? !proxyServiceActive() : restartOwed && !restartProxyService()) {
-                // restartProxyService warns of its own failure; the upgrade's restart does not
-                if (upgraded) BuildOutput.warn("Proxy service did not restart.");
+            if (!upgraded && restartOwed && !restartProxyService()) {
+                failed.add("proxy-service");
+                return false;
+            }
+            // The upgrade says only that it restarted; a unit it left down fails at once, unwaited.
+            // One still coming up, systemd waiting out RestartSec included, is waited on below.
+            if (upgraded && !proxyServiceStarting()) {
+                BuildOutput.warn("Proxy service did not restart.");
+                failed.add("proxy-service");
+                return false;
+            }
+            // A restarted Type=simple unit reads active before its new proxy can exit, so only an
+            // answer counts (#2619).
+            var restarted = upgraded || restartOwed || proxyRestartedEarlier;
+            if (restarted) {
+                BuildOutput.stepStart("Waiting for the proxy to answer");
+                if (!proxyServiceAnswers()) {
+                    BuildOutput.stepBreak();
+                    var why = proxyServiceNotAnswering();
+                    BuildOutput.warn(why.message(), why.details());
+                    failed.add("proxy-service");
+                    return false;
+                }
+                BuildOutput.stepDone();
+            }
+            // An answer may be another proxy's, which holds the ports the restarted unit needs (#1570).
+            if (restarted && !answeringIsTheProxyService()) {
                 failed.add("proxy-service");
                 return false;
             }

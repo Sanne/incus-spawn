@@ -9,12 +9,15 @@ import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.proxy.BridgeDns;
 import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.util.MacKeychainTrust;
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.vm.VmManager;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -1118,7 +1121,7 @@ class DoctorCommandTest {
         assertEquals(DoctorCommand.Status.FAIL, f.status());
         assertTrue(f.detail().contains("isx-proxy"));
         assertNotNull(f.remediation());
-        assertEquals(dev.incusspawn.proxy.ProxyService.MISSING_PROXY_REMEDIATION,
+        assertEquals(ProxyService.MISSING_PROXY_REMEDIATION,
                 f.remediation().description(),
                 "doctor and 'isx proxy start' must offer the same command");
         assertFalse(f.remediation().description().contains("Restart"),
@@ -1394,7 +1397,7 @@ class DoctorCommandTest {
     void deleteOrphansStopsAtTheFirstUnknownVerbWithoutTryingTheRest() {
         var scan = subvolScan(List.of("a", "b"), List.of());
         var asked = new ArrayList<String>();
-        var failure = assertThrows(java.io.IOException.class, () -> DoctorCommand.deleteOrphans(scan, ref -> {
+        var failure = assertThrows(IOException.class, () -> DoctorCommand.deleteOrphans(scan, ref -> {
             asked.add(ref.path());
             return java.util.Optional.of("error: unknown verb");
         }));
@@ -1405,7 +1408,7 @@ class DoctorCommandTest {
     @Test
     void deleteOrphansCollectsEveryFailureInsteadOfStoppingAtTheFirst() {
         var scan = subvolScan(List.of("a", "b"), List.of());
-        var failure = assertThrows(java.io.IOException.class, () -> DoctorCommand.deleteOrphans(scan,
+        var failure = assertThrows(IOException.class, () -> DoctorCommand.deleteOrphans(scan,
                 ref -> java.util.Optional.of("error: still referenced by Incus")));
         assertTrue(failure.getMessage().contains("containers/a"), failure.getMessage());
         assertTrue(failure.getMessage().contains("containers/b"), failure.getMessage());
@@ -1420,7 +1423,7 @@ class DoctorCommandTest {
     @Test
     void deleteOrphansDoesNotTreatATimeoutAsUnsupported() {
         var scan = subvolScan(List.of("a"), List.of());
-        var failure = assertThrows(java.io.IOException.class,
+        var failure = assertThrows(IOException.class,
                 () -> DoctorCommand.deleteOrphans(scan, ref -> java.util.Optional.empty()));
         assertFalse(failure.getMessage().contains("isx vm reset"), failure.getMessage());
         assertTrue(failure.getMessage().contains("did not answer"), failure.getMessage());
@@ -1470,5 +1473,47 @@ class DoctorCommandTest {
                 new BridgeSubnetCheck.ConflictResult(false, null, null, null), MOVE_NOT_RUN);
         assertEquals(DoctorCommand.Status.OK, f.status());
         assertEquals("(no IPv4 address)", f.detail());
+    }
+
+    /** The restart remedy waits for the proxy under a live step, so a slow wait does not look hung (#2619). */
+    @Test
+    void theRestartRemedyWaitsForTheProxyUnderALiveStep() {
+        var output = RecordingOutput.during(() -> assertDoesNotThrow(() ->
+                DoctorCommand.restartProxyService(() -> true, () -> true, () -> true,
+                        () -> ProxyService.notAnsweringAfterRestart(false))));
+        assertEquals(1, output.events(RecordingOutput.Kind.STEP_START).size());
+        assertEquals(1, output.events(RecordingOutput.Kind.STEP_DONE).size());
+    }
+
+    /** A proxy that does not answer breaks the step and fails the remedy with why, a configuration error named (#2619). */
+    @Test
+    void theRestartRemedyFailsWhenTheProxyDoesNotAnswer() {
+        var output = RecordingOutput.during(() -> {
+            var e = assertThrows(IOException.class, () ->
+                    DoctorCommand.restartProxyService(() -> true, () -> false, () -> true,
+                            () -> ProxyService.notAnsweringAfterRestart(true)));
+            assertTrue(e.getMessage().contains("configuration problem (exit 78)"), e.getMessage());
+        });
+        assertEquals(1, output.events(RecordingOutput.Kind.STEP_BREAK).size());
+    }
+
+    /** Another proxy answering is not the service coming back (#1570). */
+    @Test
+    void theRestartRemedyFailsWhenAnotherProxyAnswers() {
+        RecordingOutput.during(() -> assertThrows(IOException.class, () ->
+                DoctorCommand.restartProxyService(() -> true, () -> true, () -> false,
+                        () -> ProxyService.notAnsweringAfterRestart(false))));
+    }
+
+    /** A restart that did not happen has warned so itself; the remedy adds where to look, not the same words. */
+    @Test
+    void aRestartThatDidNotHappenIsNotWaitedOn() {
+        var output = RecordingOutput.during(() -> {
+            var e = assertThrows(IOException.class, () ->
+                    DoctorCommand.restartProxyService(() -> false, () -> fail("waited"), () -> true,
+                            () -> ProxyService.notAnsweringAfterRestart(false)));
+            assertEquals(ProxyService.CHECK_LOGS, e.getMessage());
+        });
+        assertEquals(List.of(), output.events(RecordingOutput.Kind.STEP_START));
     }
 }

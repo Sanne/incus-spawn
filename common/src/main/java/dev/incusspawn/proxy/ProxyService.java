@@ -277,14 +277,37 @@ public final class ProxyService {
 
     public static boolean isActive() {
         if (Platform.isMacOS()) return isMacOsServiceActive();
+        return "active".equals(systemdActiveState());
+    }
+
+    /**
+     * Whether the service runs or is coming up. On Linux that is systemd's {@code active} or
+     * {@code activating}, which includes the {@code RestartSec} wait before systemd starts a proxy
+     * that exited again (#2619): a restart read then has not failed, and only an answer tells.
+     */
+    public static boolean isActiveOrStarting() {
+        if (Platform.isMacOS()) return isMacOsServiceActive();
+        return activeOrStarting(systemdActiveState());
+    }
+
+    static boolean activeOrStarting(String activeState) {
+        return "active".equals(activeState) || "activating".equals(activeState);
+    }
+
+    /** What {@code systemctl --user is-active} prints for the unit, or null when it cannot be read. */
+    private static String systemdActiveState() {
         try {
             var pb = new ProcessBuilder("systemctl", "--user", "is-active", SERVICE_NAME);
             pb.redirectErrorStream(true);
             var process = pb.start();
             var output = new String(process.getInputStream().readAllBytes()).strip();
-            return process.waitFor() == 0 && "active".equals(output);
+            process.waitFor();
+            return output;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
         } catch (Exception e) {
-            return false;
+            return null;
         }
     }
 
@@ -529,7 +552,9 @@ public final class ProxyService {
             // unconditional once the user has fixed the config. No-op when the unit is healthy.
             runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
-            restarted = isActive();
+            // A proxy that exited at once reads activating while systemd waits to start it again;
+            // that is not yet a failure, and the callers wait for an answer (#2619).
+            restarted = isActiveOrStarting();
         }
         if (restarted) {
             out.note("Proxy service restarted.");
@@ -660,8 +685,10 @@ public final class ProxyService {
                 var restarted = restartLocked(BuildOutput.bound(), true);
                 // The service files now exec proxyBin, so this records the binary the service
                 // really restarted onto. A bare restart() may still exec a binary from a previous
-                // installation, which says nothing about this one, so it records nothing.
-                if (restarted) DriftRestartRecord.write(proxyBin);
+                // installation, which says nothing about this one, so it records nothing. A unit
+                // systemd is still starting may not run it yet, so it is recorded, as by
+                // upgradeIfNeeded, only once active.
+                if (restarted && isActive()) DriftRestartRecord.write(proxyBin);
                 return restarted;
             }
             return false;
@@ -1278,6 +1305,24 @@ public final class ProxyService {
 
     /** Where to look when the service does not do what it was asked. */
     public static final String CHECK_LOGS = "Check logs with: isx proxy logs";
+
+    /** Why a restarted service did not answer, and where to look: the message and its details. */
+    public record NotAnswering(String message, String[] details) {}
+
+    /**
+     * Why a restarted service did not answer within the start wait: the configuration error
+     * systemd stopped it for ({@link #failedWithConfigError}), or nothing answering (#2619).
+     */
+    public static NotAnswering notAnsweringAfterRestart() {
+        return notAnsweringAfterRestart(failedWithConfigError());
+    }
+
+    public static NotAnswering notAnsweringAfterRestart(boolean configError) {
+        return configError
+                ? new NotAnswering("Proxy failed due to a configuration problem (exit " + EXIT_CONFIG + ").",
+                        new String[] {CHECK_LOGS})
+                : new NotAnswering("Proxy is still not responding after restart.", notResponding());
+    }
 
     /**
      * The lines under a service that is not responding: what launchd says of the proxy job's
