@@ -476,7 +476,13 @@ public class AccountCommand extends BaseCommand {
         var namespace = named.namespace();
         var account = named.account();
         // One listing of the instances, for what is named here and what the removal moves
-        var states = setup.instanceAccountStates();
+        var states = setup.listedAccountStates();
+        if (states == null) {
+            BuildOutput.step("isx cannot list the instances, so it cannot name the ones that use '" + account + "'."
+                    + (account.equals(CredentialSetup.currentDefault(config, namespace))
+                    ? " Any that follow the " + namespace + " default would switch to the new default." : ""));
+            states = Map.of();
+        }
         setup.nameWhatUses(config, namespace, List.of(account), BuildOutput::step, states);
         var usable = AccountResolver.usableAccountNames(config, namespace);
         if (usable.equals(List.of(account))) {
@@ -527,7 +533,16 @@ public class AccountCommand extends BaseCommand {
                     + " default, and cannot ask without a terminal.", "Run it in a terminal, or when Incus is reachable.");
             return 1;
         }
-        if (states == null) states = Map.of();
+        if (states == null) {
+            // A follower would switch unnamed, so say so and let the person decide
+            BuildOutput.step("isx cannot list the instances, so it cannot tell which follow the " + namespace
+                    + " default. Any that do would switch to '" + account + "'.");
+            if (!askYesNo(prompts, "Change the default anyway?", false)) {
+                BuildOutput.step("Default left as it was.");
+                return 0;
+            }
+            states = Map.of();
+        }
         if (prompts == null && states.values().stream().anyMatch(s -> s.followsDefault(namespace))) {
             BuildOutput.error("instances follow the " + namespace + " default, and isx cannot ask without a terminal whether they switch to '" + account + "'.",
                     "Run it in a terminal, or pin them first with 'isx account set'.");

@@ -765,7 +765,7 @@ isx account <subcommand>
 | `add [<credential>]` | Add or replace one credential with the step `isx init` runs for it |
 | `remove <ns>=<account> [--skip-confirmation]` | Remove the account, after naming the instances and templates that still use it and asking |
 | `default <ns>=<account>` | Make the account its credential's default, asking what the instances following the old default do |
-| `rename <ns>=<account> <new-name>` | Rename the account and update the instances that use it |
+| `rename <ns>=<account> <new-name>` | Rename the account and update the instances pinned to it; templates that name the old name are listed, not changed |
 | `show <instance>` | The account the instance uses for each credential, and where it comes from |
 | `set <instance> <ns>=<account>...` | Pin the instance to these accounts; takes effect on its next request |
 | `unset <instance> <ns>...` | Remove the pins, so the instance follows the default again |
