@@ -74,6 +74,21 @@ class UnixSocketTransport implements IncusTransport {
     private static final java.util.concurrent.Semaphore CONNECTION_PERMITS =
             new java.util.concurrent.Semaphore(MAX_CONCURRENT_CONNECTIONS);
 
+    // The cap stopped being "well above any single operation's need" once one operation became
+    // an exec in every running instance (#2527): unadmitted, a fan-out's execs take every permit
+    // with their sockets, and a finished command's /wait then waits for one past the 5 s Incus
+    // keeps a finished operation. So a bounded exec is admitted first, and only as many run at
+    // once as fit beside the pool's idle connections, each with all of its connections.
+    /** The connections one exec holds at most: control, stdin, stdout and stderr, and its {@code /wait}. */
+    static final int EXEC_CONNECTIONS = 5;
+    /** How many admitted execs one process runs at once, each with every connection it needs. */
+    static final int CONCURRENT_EXECS =
+            (MAX_CONCURRENT_CONNECTIONS - ConnectionPool.MAX_IDLE) / EXEC_CONNECTIONS;
+
+    // How long this thread has waited for permits, in total: an exec reads it before and after,
+    // so a lost operation says whether starvation lost it.
+    private static final ThreadLocal<long[]> PERMIT_WAIT = ThreadLocal.withInitial(() -> new long[1]);
+
     // Monotonic count of connections ever opened this process — the churn metric. With the
     // keep-alive pool, many sequential request-path calls should open only a handful of
     // connections instead of one each.
@@ -89,19 +104,29 @@ class UnixSocketTransport implements IncusTransport {
     /** Total connections opened this process (monotonic) — reuse keeps this low. */
     static long openedConnectionCount() { return TOTAL_OPENED.get(); }
 
+    /** The connection cap of this process. */
+    static int connectionCap() { return MAX_CONCURRENT_CONNECTIONS; }
+
+    /** Nanoseconds this thread has spent waiting for a connection permit, ever. */
+    static long permitWaitNanos() { return PERMIT_WAIT.get()[0]; }
+
     /**
      * Record a newly-opened connection and try to claim a concurrency permit.
      * @return true if a permit was acquired (must be passed to {@link #connectionClosed}).
      *         A false return means we proceeded without throttling (fail-open).
      */
     static boolean connectionOpened() {
-        boolean permit;
-        try {
-            permit = CONNECTION_PERMITS.tryAcquire(PERMIT_TIMEOUT_MS,
-                    java.util.concurrent.TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            permit = false;
+        boolean permit = CONNECTION_PERMITS.tryAcquire();
+        if (!permit) {
+            long start = System.nanoTime();
+            try {
+                permit = CONNECTION_PERMITS.tryAcquire(PERMIT_TIMEOUT_MS,
+                        java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                permit = false;
+            }
+            PERMIT_WAIT.get()[0] += System.nanoTime() - start;
         }
         TOTAL_OPENED.incrementAndGet();
         int now = OPEN_CONNECTIONS.incrementAndGet();

@@ -789,11 +789,40 @@ class IncusApi {
     int execStreamWithin(String instance, List<String> command,
                          Integer uid, Integer gid, String cwd, Map<String, String> env,
                          OutputStream stdout, OutputStream stderr, Duration limit) {
-        long deadline = System.nanoTime() + limit.toNanos(); // once: a retry does not extend it
-        return retryOnNotRunning(() -> {
-            var exec = postExec(instance, command, uid, gid, cwd, env, false, 0, 0);
-            return execWebSocket(exec, stdout, stderr, null, deadline);
-        });
+        admitExec(instance);
+        try {
+            // Once admitted, so the wait for a slot is not taken from the command; once, so a retry
+            // does not extend it.
+            long deadline = System.nanoTime() + limit.toNanos();
+            return retryOnNotRunning(() -> {
+                var exec = postExec(instance, command, uid, gid, cwd, env, false, 0, 0);
+                return execWebSocket(exec, stdout, stderr, null, deadline);
+            });
+        } finally {
+            BOUNDED_EXECS.release();
+        }
+    }
+
+    /**
+     * The bounded execs this process may run at once, each with every connection it holds within
+     * the transport's cap (#2527). Only bounded execs are admitted, and every step a slot is held
+     * through is bounded: the post and the websocket handshakes by the transport's timeout,
+     * {@code retryOnNotRunning}'s sleeps by its count, the command by its limit and the kill grace
+     * after it. So a wait for a slot is bounded too. The fan-outs that outnumber the slots run
+     * probes ({@link IncusClient#execProbe}: the overview, {@code isx mcp}'s {@code probeElsewhere}
+     * and {@code TaskJoin}), and only they wait here; {@code isx mcp}'s task status poll runs an
+     * unbounded exec and is not admitted. FIFO, so no read waits behind every later one.
+     */
+    private static final java.util.concurrent.Semaphore BOUNDED_EXECS =
+            new java.util.concurrent.Semaphore(UnixSocketTransport.CONCURRENT_EXECS, true);
+
+    private static void admitExec(String instance) {
+        try {
+            BOUNDED_EXECS.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IncusException("interrupted waiting to run a command in " + instance);
+        }
     }
 
     /**
@@ -847,7 +876,7 @@ class IncusApi {
                     joinQuietly(dataThread);
                 });
 
-                int exitCode = waitForExecOp(exec.instance, exec.opPath, 0, null);
+                int exitCode = waitForExecOp(exec, 0, null);
                 keepalive.stop();
                 return exitCode;
             } catch (IOException e) {
@@ -1122,11 +1151,18 @@ class IncusApi {
         return body;
     }
 
-    private record ExecOp(String instance, String opPath, JqValue fds) {}
+    /**
+     * A posted exec, with when its post went out and how long its thread had by then waited for
+     * connections in all, so a lost operation can say how much of its time went to that wait, the
+     * post's own included.
+     */
+    private record ExecOp(String instance, String opPath, JqValue fds, long postedAt, long permitWaitAtPost) {}
 
     private ExecOp postExec(String instance, List<String> command,
                             Integer uid, Integer gid, String cwd, Map<String, String> env,
                             boolean interactive, int width, int height) {
+        long postedAt = System.nanoTime();
+        long permitWaitAtPost = UnixSocketTransport.permitWaitNanos();
         var postResp = post("/1.0/instances/" + instance + "/exec",
                 buildExecBody(command, uid, gid, cwd, env, interactive, width, height));
         if (!postResp.isAsync()) throw new IncusException(
@@ -1135,7 +1171,8 @@ class IncusApi {
         var opMeta = postResp.body().getField("metadata");
         return new ExecOp(instance,
                 "/1.0/operations/" + opMeta.pathText("id", ""),
-                opMeta.getField("metadata").getField("fds"));
+                opMeta.getField("metadata").getField("fds"),
+                postedAt, permitWaitAtPost);
     }
 
     /**
@@ -1196,7 +1233,7 @@ class IncusApi {
             // Authoritative completion + exit code (HTTP, reliable over vsock).
             int exitCode;
             try {
-                exitCode = waitForExecOp(exec.instance, exec.opPath, deadline, controlWs);
+                exitCode = waitForExecOp(exec, deadline, controlWs);
             } catch (IncusException timedOut) {
                 // Given up on: stop every helper now, the sockets close on the way out.
                 stdoutAlive.stop();
@@ -1419,7 +1456,9 @@ class IncusApi {
      * one instance read of at most the grace. (Starting the exec and opening its
      * sockets, before this, are bounded by the transport's own timeouts.)
      */
-    private int waitForExecOp(String instance, String opPath, long limit, IncusTransport.WsConnection control) {
+    private int waitForExecOp(ExecOp exec, long limit, IncusTransport.WsConnection control) {
+        var instance = exec.instance;
+        var opPath = exec.opPath;
         long deadline = System.nanoTime() + MAX_EXEC_WAIT_SECONDS * 1_000_000_000L;
         long giveUp = limit + KILL_GRACE_SECONDS * 1_000_000_000L;
         boolean killed = false;
@@ -1451,8 +1490,7 @@ class IncusApi {
                     // An instance stopped or deleted under its command takes the operation with it;
                     // that is no news to the user, and there is no exit code to be had either way.
                     if (waitResp.statusCode() == 404 && instanceStoppedOrGone(instance, limit != 0)) return -1;
-                    BuildOutput.warn("exec operation lost (HTTP " + waitResp.statusCode()
-                            + " on " + opPath + "/wait) — exit code unknown");
+                    BuildOutput.warn(lostOperation(exec, waitResp.statusCode()));
                     return -1;
                 }
                 var meta = waitResp.body().getField("metadata");
@@ -1475,6 +1513,20 @@ class IncusApi {
             // killed, never running on unowned in the guest.
             if (limit != 0 && !killed && !finished) kill(control);
         }
+    }
+
+    /**
+     * Why an exec has no exit code, with what says whether isx starved it (#2527): the time from its
+     * post to the {@code /wait} that found it lost, and how much of that this thread spent waiting
+     * for a connection.
+     */
+    private static String lostOperation(ExecOp exec, int status) {
+        long waited = UnixSocketTransport.permitWaitNanos() - exec.permitWaitAtPost;
+        return String.format(java.util.Locale.ROOT,
+                "The exit code of a command in %s is unknown: Incus answered HTTP %d for its operation"
+                        + " %.1f s after it was posted, %.1f s of that spent waiting for a connection (%d/%d in use).",
+                exec.instance, status, (System.nanoTime() - exec.postedAt) / 1e9, waited / 1e9,
+                UnixSocketTransport.openConnectionCount(), UnixSocketTransport.connectionCap());
     }
 
     /**

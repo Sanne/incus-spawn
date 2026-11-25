@@ -331,6 +331,8 @@ public class IncusClient {
      * too) with {@code home} as HOME and working directory, and no login shell: nothing the
      * guest user's profile does runs first, so it cannot hang the script. Killed once
      * {@code limit} has passed and given up on shortly after, throwing {@link IncusException}.
+     * Only as many probes run at once as the connection cap carries; the limit starts when this
+     * one's turn comes (#2527).
      */
     public int execProbe(String container, int uid, String home, String script, OutputStream stdout,
                          Duration limit) {
