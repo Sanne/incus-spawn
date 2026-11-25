@@ -119,6 +119,8 @@ public final class TaskRuns {
         final String taskId;
         final int run;
         String instance, incarnation = "", kind = "", activity = "", state = "";
+        /** The incarnation its start line named, before {@link Reading#done} infers one, so done can be asked again. */
+        String written = "";
         Instant start, end;
         /** When the call this run's incarnation was taken from was made, for a start written without one. */
         Instant inferredAt;
@@ -152,6 +154,7 @@ public final class TaskRuns {
                     if (run.start != null) return;
                     run.start = at;
                     run.incarnation = incarnation;
+                    run.written = incarnation;
                     run.kind = line.pathText("task_kind", "");
                     run.activity = line.pathText("activity", "");
                 }
@@ -198,9 +201,16 @@ public final class TaskRuns {
                     .add(new Call(first, last, incarnation, calls, input, output, cacheRead, cacheCreation));
         }
 
+        /**
+         * The runs with the calls booked to them. It can be asked again after more lines were read,
+         * as {@code EventLogReader.Incremental} does: each run starts again from what its lines said.
+         */
         TaskRuns done() {
             var byInstance = new HashMap<String, List<Open>>();
             runs.values().forEach(run -> {
+                run.incarnation = run.written;
+                run.inferredAt = null;
+                run.usage = Usage.NONE;
                 if (run.start != null) byInstance.computeIfAbsent(run.instance, k -> new ArrayList<>()).add(run);
             });
             var result = new HashMap<String, Named>();
