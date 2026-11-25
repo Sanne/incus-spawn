@@ -79,6 +79,14 @@ class AccountMenuTest {
             return states;
         }
 
+        /** Incus cannot be asked: what an unreachable daemon looks like to the account flows. */
+        boolean incusDown;
+
+        @Override
+        java.util.Map<String, dev.incusspawn.proxy.InstanceRegistry.AccountState> listedAccountStates() {
+            return incusDown ? null : instanceAccountStates();
+        }
+
         @Override
         List<String> renameInInstances(SpawnConfig config, String namespace, String from, String to) {
             renames.add(namespace + ":" + from + "->" + to);

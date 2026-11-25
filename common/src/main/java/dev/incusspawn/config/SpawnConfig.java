@@ -771,7 +771,18 @@ public class SpawnConfig extends UnreadableFile {
      * {@code accounts: {acme: {}}}, which {@code AccountResolver} would still list.
      */
     public void removeConfigPath(String dotPath) {
-        var segments = dotPath.split("\\.");
+        removeConfigPath(dotPath.split("\\."), dotPath);
+    }
+
+    /**
+     * As {@link #removeConfigPath(String)}, with the path already split, so a segment such as an
+     * account name may hold dots.
+     */
+    public void removeConfigSegments(String... segments) {
+        removeConfigPath(segments, String.join(".", segments));
+    }
+
+    private void removeConfigPath(String[] segments, String dotPath) {
         if (segments.length == 0) return;
         if (!walkable(tree(), segments)) return;
         var pruned = removePath(tree(), segments, 0);

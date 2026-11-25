@@ -156,7 +156,9 @@ To let the agent's own GitHub account work on your repositories, see [GitHub acc
 
 Changing a default switches every instance that follows it to the new account; `isx init` lists those instances first and lets you keep them on their current account.
 
-Renaming an account in `isx init` updates the instances using that account, and when you remove an account, `isx init` tells you what still uses it.
+Renaming an account with `isx account rename` updates the instances using that account.
+Before `isx account remove` removes an account, it tells you what still uses it.
+`isx account default` changes the default.
 
 An instance set to an account that no longer exists stops working rather than using another account.
 `isx doctor` and `isx account show` report such instances.

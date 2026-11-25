@@ -142,6 +142,47 @@ class NamespaceAccountsTest {
                 "the default must never name an account that is gone");
     }
 
+    /** An account name may hold dots: removal takes it whole, never as a path into another account. */
+    @Test
+    void removingAnAccountWhoseNameHoldsADotRemovesThatAccountAlone() throws Exception {
+        var config = parse("""
+                github:
+                  accounts:
+                    work:
+                      token: "ghp_work"
+                      apiKey: "kept"
+                    my.work:
+                      token: "ghp_mywork"
+                    work.apiKey:
+                      token: "ghp_odd"
+                  default: work
+                """);
+        NamespaceAccounts.remove(config, "github", "my.work");
+        NamespaceAccounts.remove(config, "github", "work.apiKey");
+        assertEquals(List.of("work"), NamespaceAccounts.names(config, "github"));
+        assertEquals("kept", value(config, "github.accounts.work.apiKey"), dump(config));
+    }
+
+    /**
+     * What is written for an account is what the proxy reads back for it. Writing a dotted name
+     * whole while reading it split once left such an account listed and given no credential;
+     * new names now refuse '.', and the two sides must keep agreeing for whatever reaches them.
+     */
+    @Test
+    void anAccountsTokenReadsBackAsItWasWritten() throws Exception {
+        var config = parse("""
+                github:
+                  accounts:
+                    work:
+                      token: "ghp_work"
+                  default: work
+                """);
+        NamespaceAccounts.put(config, "github", "client", "token", "ghp_client");
+        NamespaceAccounts.put(config, "github", "my.work", "token", "ghp_mywork");
+        assertEquals("ghp_client", AccountResolver.value(config.tree(), "github", "client", "token"));
+        assertEquals("ghp_mywork", AccountResolver.value(config.tree(), "github", "my.work", "token"), dump(config));
+    }
+
     /** An emptied account would still be listed, so removal has to prune the parent. */
     @Test
     void removingTheLastAccountLeavesNothingBehind() throws Exception {
