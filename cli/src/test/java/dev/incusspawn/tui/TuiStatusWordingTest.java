@@ -31,4 +31,13 @@ class TuiStatusWordingTest {
         assertEquals("Skipped 1 instance busy with another change and 2 instances in use by another isx process",
                 Tui.destroyBatchSummary("instance", 0, 1, 2));
     }
+
+    @Test
+    void theFailureThatStoppedABatchLeadsItsSummary() {
+        assertEquals("Failed to destroy b: boom. Destroyed 1 instance",
+                Tui.destroyBatchSummary("instance", 1, 0, 0, "Failed to destroy b: boom."));
+        assertEquals("Failed to take the lock of a: denied",
+                Tui.destroyBatchSummary("instance", 0, 0, 0, "Failed to take the lock of a: denied"));
+        assertEquals("Destroyed 2 instances", Tui.destroyBatchSummary("instance", 2, 0, 0, null));
+    }
 }

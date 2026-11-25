@@ -1638,7 +1638,7 @@ public class Tui {
 
     /**
      * Destroys {@code names} in order in one background task, skipping any that are gone or locked
-     * and stopping at the first failure; the proxy is refreshed once at the end.
+     * and stopping at the first failure, which the summary keeps; the proxy is refreshed once at the end.
      */
     private void destroyBatch(List<String> names, DeleteConfirm.Kind what) {
         int count = names.size();
@@ -1648,6 +1648,7 @@ public class Tui {
             int destroyed = 0;
             int busyHere = 0;
             int lockedElsewhere = 0;
+            String failure = null;
             // One settle of the pool's accounting at the end, not one per instance (#2061)
             try (var batch = incus.deleteBatch()) {
                 for (var name : names) {
@@ -1660,7 +1661,7 @@ public class Tui {
                         lockOpt = lockManager.tryAcquire(name, Metadata.OP_DELETING);
                     } catch (java.io.UncheckedIOException e) {
                         backgroundTasks.releaseClaim(name);
-                        setStatusMessage("Failed to take the lock of " + name + ": " + e.getCause().getMessage());
+                        failure = "Failed to take the lock of " + name + ": " + e.getCause().getMessage();
                         break;
                     }
                     if (lockOpt.isEmpty()) {
@@ -1677,7 +1678,9 @@ public class Tui {
                                 InstanceLifecycle.removeHostIntegration(name, drawing);
                                 destroyed++;
                             } catch (Exception e) {
-                                setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
+                                failure = "Failed to destroy " + name + ": " + e.getMessage();
+                                // Now, so the failure stays on the line should clearing the mark throw too
+                                setStatusMessage(failure);
                                 incus.clearPendingOperation(name);
                                 refreshDataAfterBackground();
                                 break;
@@ -1689,7 +1692,7 @@ public class Tui {
                 }
             }
             if (destroyed > 0) InstanceDestroyer.refreshProxy();
-            var msg = destroyBatchSummary(kind, destroyed, busyHere, lockedElsewhere);
+            var msg = destroyBatchSummary(kind, destroyed, busyHere, lockedElsewhere, failure);
             if (msg != null) setStatusMessage(msg);
             refreshDataAfterBackground();
         });
@@ -1698,8 +1701,18 @@ public class Tui {
     /**
      * What a batch destroy did, or null when it neither destroyed nor skipped anything: a name this
      * TUI's own task still holds is busy here, one whose lock another process holds is in use there.
-     * The skip leads when nothing was destroyed.
+     * The skip leads when nothing was destroyed, and the {@code failure} that stopped the batch, when
+     * there was one, leads all: the line then reads as an error and says why the rest was not destroyed.
      */
+    static String destroyBatchSummary(String kind, int destroyed, int busyHere, int lockedElsewhere,
+                                      String failure) {
+        var done = destroyBatchSummary(kind, destroyed, busyHere, lockedElsewhere);
+        if (failure == null) return done;
+        if (done == null) return failure;
+        var lead = failure.stripTrailing();
+        return (lead.endsWith(".") ? lead.substring(0, lead.length() - 1) : lead) + ". " + done;
+    }
+
     static String destroyBatchSummary(String kind, int destroyed, int busyHere, int lockedElsewhere) {
         var skips = new java.util.ArrayList<String>();
         if (busyHere > 0) skips.add(Report.count(busyHere, kind) + " busy with another change");
