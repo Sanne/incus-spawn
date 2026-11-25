@@ -114,6 +114,7 @@ Never fix anything by going vague.
 In a sentence, negate the verb ("does not filter the connections", never "filters nothing"), name what a verb acts on and where, use literal words, and state the consequence.
 Split a sentence of more than about 40 words where it splits cleanly; `.claude/rules/writing.md` "Splitting a sentence" lists the only word changes a split may make.
 The text isx prints for a person (prompts, command output, warnings, errors, the TUI, `--help`, the proxy's 403 bodies) also follows `.claude/rules/interface-text.md`, which loads on the sources that word it (#2542).
+`TranscriptGate` holds the transcripts of the first run and of `isx account add` to its mechanical rules: the frame's width, each flow's vocabulary, a step number shown once, and a negated noun only in a listed label.
 
 The `gemini-cli` tool installs and configures Google Gemini CLI through `GeminiSetup`.
 Its optional `model` parameter leaves the upstream default unpinned, and a user policy auto-approves tools within isx isolation.

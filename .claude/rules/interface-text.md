@@ -136,14 +136,15 @@ A TUI label stays within its pane.
 **Separate the blocks of a long step.**
 An explanation, a list of steps and the question are three blocks, with a blank line between them, as the GitHub step lays out its numbered choices.
 
-## No test reads the wording yet
+## The transcript gate
 
 Two gates read interface text's string literals for its form alone: `StepLabelGateTest` holds a label bare, with no `...` and, for a live step, an `ok` or a `success`, no period, and `RawOutputGateTest` fails a print literal indented by hand.
-No test reads what a text says.
-`DocsShapeTest` exists because the prose rules alone did not hold for the docs, and these rules will not hold alone either.
-The gate that is worth having reads generated transcripts of the main flows, not Java string literals, since a message is assembled from several of them.
+`TranscriptGate` (cli tests) reads what a text says, in the transcripts of the main flows as a terminal draws them, since a message is assembled from several literals.
+`InitTranscriptsTest` runs it over every branch of the first run, and `AccountAddTranscriptsTest` over every path of `isx account add`; each writes its transcripts to `cli/target/` for a person to read.
 It checks what is mechanical: the line width, the words a flow must not use (the first run's "Never" column above, before the closing message's line) and a step number shown once.
-It also flags a negated noun ("none", "nothing", "nobody", and "no" before a noun), with a marked exception for each use that is meant, such as the option label "None for now".
-It does not flag what `writing.md` "Negate the verb" keeps: "has no", "needs no", "there is no", "nothing" as the subject, "costs nothing" and "does nothing".
-Terms used before they are introduced need a reviewer.
-Until that gate exists, a review checks every rule here.
+It also flags a negated noun ("none", "nothing", "nobody", "no one", and "no" before a word other than "longer", "more" or "less").
+It does not flag what `writing.md` "Negate the verb" keeps, in any tense: "has no", "needs no", "there is no", "nothing" at the start of a sentence, "costs nothing" and "does nothing".
+It reads a line together with the line whose sentence it continues, since the flows wrap a sentence by hand; a blank line, a box's edge or the person's answer ends a sentence.
+A use that is meant, such as the option label "None for now", is listed in `TranscriptGate.MEANT` with what it labels, and matches only a whole line where it is that label.
+A new flow with a transcript test runs the same gate, with the words that flow never uses.
+Terms used before they are introduced need a reviewer, and so does every flow without a transcript test.

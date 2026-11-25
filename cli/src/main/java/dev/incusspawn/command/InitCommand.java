@@ -2045,7 +2045,7 @@ public class InitCommand extends BaseCommand {
             options.add(ExampleTemplate.title(agent)
                     + (found.contains(agent.name()) ? " (found on " + dev.incusspawn.Platform.thisComputer() + ")" : ""));
         }
-        options.add("None for now\nA plain isx machine, with no agent and no account.");
+        options.add("None for now\nA plain isx machine, without an agent or an account.");
         var answer = prompts.choose("isx can set up these agents:", options, null, null);
         while (true) {
             if (answer == null) return null;
@@ -2318,7 +2318,7 @@ public class InitCommand extends BaseCommand {
                     + " defines a template or tool that " + template + " uses, and a build in this directory would use"
                     + " the project's in place of yours.", Lines.WIDTH - 2));
             details.addAll(Lines.wrap((builtAlready ? "Open it with 'isx branch <name> --from " : "Run 'isx build ")
-                    + template + "' from a directory with no .incus-spawn/ of its own.", Lines.WIDTH - 2));
+                    + template + "' from a directory without its own .incus-spawn/.", Lines.WIDTH - 2));
             BuildOutput.warn(builtAlready ? template + " is built, and isx does not open it here"
                     : "isx did not build " + template + " here", details.toArray(String[]::new));
             built = false;
@@ -2351,7 +2351,7 @@ public class InitCommand extends BaseCommand {
                 if (at < 0) continue;
                 // At the command's indent, which is deeper when the steps are numbered
                 var line = lines.get(at);
-                lines.add(at + 1, line.substring(0, line.indexOf(command)) + "(from a directory with no .incus-spawn/ of its own)");
+                lines.add(at + 1, line.substring(0, line.indexOf(command)) + "(from a directory without its own .incus-spawn/)");
             }
         }
         if (continued) lines.addAll(GROUP_PENDING);

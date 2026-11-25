@@ -51,7 +51,6 @@ class InitTranscriptsTest {
      * "machine" alone, not after "isx", and the words isx uses elsewhere.
      */
     private static final Pattern NEVER = Pattern.compile("(?i)\\b(instances?|containers?|host|hosts|box)\\b|(?<!isx )\\bmachines?\\b");
-    private static final Pattern ECHO = Pattern.compile("(⏎|••••|⟪end of input⟫)$");
     private static final Pattern CSI = Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
 
     static final HostAgentProbe.HostAgent CLAUDE_SUBSCRIPTION = new HostAgentProbe.HostAgent("claude", true,
@@ -245,7 +244,8 @@ class InitTranscriptsTest {
         @Override
         public String readLine() {
             var line = answers.readLine();
-            out.println(line == null ? "⟪end of input⟫" : line.isEmpty() ? "⏎" : line);
+            // A typed answer ends in Enter too, so TranscriptGate knows the line holds the person's answer
+            out.println(line == null ? "⟪end of input⟫" : line + "⏎");
             return line;
         }
 
@@ -422,44 +422,21 @@ class InitTranscriptsTest {
     }
 
     @Test
-    void everyBranchIsWrittenAndNoLineIsWiderThanTheFrame() throws Exception {
-        // ... and none uses a word outside the first run's vocabulary before its closing line
+    void everyBranchIsWrittenAndHeldToTheRulesOfInterfaceText() throws Exception {
         // Only this run's branches: one renamed or gone leaves no stale file behind
         if (Files.isDirectory(OUT)) try (var old = Files.list(OUT)) { for (var f : old.toList()) Files.delete(f); }
         Files.createDirectories(OUT);
-        var tooWide = new ArrayList<String>();
+        var faults = new ArrayList<String>();
         for (var branch : branches()) {
             IsolatedHome.configFile().toFile().delete();
             Files.deleteIfExists(ExampleTemplate.file());
             var text = transcript(branch);
             Files.writeString(OUT.resolve(branch.name() + ".txt"), text);
-            var lineNo = 0;
-            for (var line : text.split("\n", -1)) {
-                lineNo++;
-                // What the person typed is not the program's line, and an address cannot be broken
-                var shown = ECHO.matcher(line).replaceAll("");
-                // A box's own lines are as wide as the box; every other line is held to the frame
-                var limit = shown.startsWith("│") || shown.startsWith("╭") || shown.startsWith("╰") ? BOX : WIDTH;
-                if (shown.codePointCount(0, shown.length()) > limit && !shown.strip().startsWith("⟪")
-                        && !shown.strip().startsWith("https://"))
-                    tooWide.add(branch.name() + ":" + lineNo + ": " + line);
-            }
+            // The closing message's bridging line is the one place "instance" is said
+            faults.addAll(TranscriptGate.faults(branch.name(), text, NEVER, "isx commands and docs call"));
         }
-        Files.writeString(OUT.resolve("too-wide.txt"), String.join("\n", tooWide) + "\n");
-        var words = new ArrayList<String>();
-        for (var branch : branches()) {
-            var lineNo = 0;
-            for (var line : Files.readAllLines(OUT.resolve(branch.name() + ".txt"))) {
-                lineNo++;
-                // The closing message's bridging line is the one place "instance" is said
-                if (line.contains("isx commands and docs call")) break;
-                if (line.strip().startsWith("⟪") || line.strip().startsWith("https://")) continue;
-                if (NEVER.matcher(ECHO.matcher(line).replaceAll("")).find()) words.add(branch.name() + ":" + lineNo + ": " + line);
-            }
-        }
-        Files.writeString(OUT.resolve("never-words.txt"), String.join("\n", words) + "\n");
-        assertEquals(List.of(), words, "a word outside the first run's vocabulary (.claude/rules/interface-text.md)");
-        assertEquals(List.of(), tooWide, "wider than the frame (rule 8 of the review on #2528)");
+        Files.writeString(OUT.resolve("faults.txt"), String.join("\n", faults) + "\n");
+        assertEquals(List.of(), faults, "against .claude/rules/interface-text.md");
     }
 
     /** The branch named {@code name}, run alone from a fresh home. */

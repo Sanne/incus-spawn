@@ -822,3 +822,6 @@ The first run has a vocabulary of its own, "isx machine" and "this Mac", set in 
 A gate is worth having, since the rules alone did not hold for the docs either.
 It reads generated transcripts of the main flows rather than string literals, because a message is assembled from several of them.
 It checks only what is mechanical: line width, the first run's forbidden words, a step number shown once, and a negated noun outside a marked exception.
+That gate is `TranscriptGate`, run by the transcript tests of the first run and of `isx account add`.
+A negated noun it may not flag is one of a short list of labels, each meant, such as "None for now", so a new exception is one more phrase in that list, which a reviewer sees.
+What this gives up: a flow without a transcript test is not read, and a term used before it is introduced is left to a reviewer, since a pattern cannot tell which terms a person has met.
