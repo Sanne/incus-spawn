@@ -249,6 +249,29 @@ class AccountEditCommandsTest {
         assertUnchanged(TWO_ACCOUNTS);
     }
 
+    /** With a terminal, a failed listing is said, and the default changes only on a yes. */
+    @Test
+    void defaultWithATerminalAsksWhenIncusCannotBeAsked() throws Exception {
+        var config = seed(TWO_ACCOUNTS);
+        var init = new AccountMenuTest.StubbedInit();
+        init.incusDown = true;
+        var out = said(() -> assertEquals(0, AccountCommand.makeDefault(init, config, "github=acme", ScriptedPrompts.lines(""))));
+        assertTrue(out.contains("cannot tell which follow the github default"), out);
+        assertUnchanged(TWO_ACCOUNTS);
+
+        assertEquals(0, AccountCommand.makeDefault(init, config, "github=acme", ScriptedPrompts.lines("y")));
+        assertEquals("acme", saved("github.default"));
+    }
+
+    @Test
+    void removeSaysWhenIncusCannotBeAsked() throws Exception {
+        var config = seed(TWO_ACCOUNTS);
+        var init = new AccountMenuTest.StubbedInit();
+        init.incusDown = true;
+        var out = said(() -> AccountCommand.remove(init, config, "github=acme", true, null));
+        assertTrue(out.contains("cannot name the ones that use 'acme'"), out);
+    }
+
     @Test
     void renameRePointsPinnedInstancesAndTheDefault() throws Exception {
         var config = seed(TWO_ACCOUNTS);
