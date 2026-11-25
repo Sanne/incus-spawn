@@ -59,10 +59,26 @@ class InitNextStepsTest {
         assertFalse(lines.contains("   isx's services start on their own."), String.join("\n", lines));
     }
 
+    /** A service whose install failed is said in the header, never ticked as a complete setup (#2597). */
+    @Test
+    void aFailedServiceIsNotCalledComplete() {
+        var lines = Arrays.stream(InitCommand.nextSteps(InitCommand.Services.START_PROXY, "the proxy service"))
+                .map(BuildOutput::stripAnsi).toList();
+        var text = String.join("\n", lines);
+        assertFalse(text.contains("Setup complete"), text);
+        assertEquals("   ! Setup finished without the proxy service.", lines.getFirst());
+        assertTrue(lines.contains("   1. Start the proxy:   isx proxy start"), text);
+    }
+
     @Test
     void everyLineFitsTheBox() {
         for (var services : InitCommand.Services.values()) {
-            for (var line : lines(services)) assertTrue(line.length() <= InitCommand.BOX_WIDTH, line);
+            for (var failed : Arrays.asList(null, "the proxy service", "the VM and proxy services")) {
+                for (var line : InitCommand.nextSteps(services, failed)) {
+                    line = BuildOutput.stripAnsi(line);
+                    assertTrue(line.length() <= InitCommand.BOX_WIDTH, line);
+                }
+            }
         }
     }
 }

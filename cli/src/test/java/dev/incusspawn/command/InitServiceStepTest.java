@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.util.BuildOutput;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -9,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -25,6 +27,7 @@ class InitServiceStepTest {
         boolean serviceActive;
         boolean macOsServicesInstalled;
         boolean upgradeRestarts;
+        boolean installFails;
         final List<String> serviceActions = new ArrayList<>();
 
         private void record(String action) {
@@ -55,7 +58,7 @@ class InitServiceStepTest {
         @Override
         boolean installProxyService() {
             record("install");
-            return true;
+            return !installFails;
         }
     }
 
@@ -71,6 +74,36 @@ class InitServiceStepTest {
     private void assertCompleteWithoutTouchingTheService() {
         assertEquals(List.of(), init.serviceActions);
         assertTrue(Environment.hasBeenInitialized());
+    }
+
+    /** A service that did not start is remembered, so the closing box does not tick the setup (#2597). */
+    @Test
+    void aLinuxProxyServiceThatDidNotStartIsRecordedAsFailed() throws IOException {
+        init.installFails = true;
+        assertFalse(init.completeWithProxyService(ScriptedPrompts.lines("y")));
+        assertEquals(Set.of("proxy-service"), init.failed);
+        assertEquals("the proxy service", init.failedService());
+        var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
+        assertFalse(box.contains("Setup complete"), box);
+        assertTrue(box.contains("Setup finished without the proxy service."), box);
+    }
+
+    @Test
+    void macOsServicesThatDidNotStartAreRecordedAsFailed() throws IOException {
+        init.installFails = true;
+        assertFalse(init.completeWithMacOsServices(ScriptedPrompts.lines("y")));
+        assertEquals(Set.of("macos-services"), init.failed);
+        assertEquals("the VM and proxy services", init.failedService());
+        var box = BuildOutput.stripAnsi(String.join("\n", init.macOsClosingSteps(false)));
+        assertFalse(box.contains("Setup complete"), box);
+        assertTrue(box.contains("Setup finished without the VM and proxy services."), box);
+        assertTrue(box.contains("1. Start VM, proxy:"), box);
+    }
+
+    @Test
+    void anInstalledServiceIsNotRecordedAsFailed() throws IOException {
+        assertTrue(init.completeWithProxyService(ScriptedPrompts.lines("y")));
+        assertNull(init.failedService());
     }
 
     @Test
@@ -169,7 +202,7 @@ class InitServiceStepTest {
     @Test
     void aMarkerThatCannotBeWrittenAbortsBeforeTheServiceIsTouched() throws IOException {
         var configDir = Environment.configDir();
-        Files.setPosixFilePermissions(configDir, java.util.Set.of());
+        Files.setPosixFilePermissions(configDir, Set.of());
         try {
             org.junit.jupiter.api.Assumptions.assumeFalse(Files.isWritable(configDir), "running as root");
             var prompts = ScriptedPrompts.lines("y");
