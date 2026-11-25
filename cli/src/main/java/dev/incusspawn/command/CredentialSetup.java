@@ -2244,22 +2244,29 @@ class CredentialSetup {
                 prompts.say("As which GitHub account should isx machines act?");
                 prompts.say("");
                 prompts.say("  1. A separate account");
-                prompts.say("     What isx machines write or do on GitHub appears");
-                prompts.say("     under it, not under your name. Needs a second GitHub");
-                prompts.say("     account and a token for it.");
+                prompts.say("     Its permissions are independent of yours:");
+                prompts.say("     isx machines can work only on the repositories you");
+                prompts.say("     open to that account. Needs a second GitHub account");
+                prompts.say("     and a token for it.");
             } else {
                 prompts.say("As which GitHub account should the agent act?");
                 prompts.say("");
                 prompts.say("  1. An account of the agent's own (recommended)");
-                prompts.say("     Others can tell the agent's work from yours, and you");
-                prompts.say("     decide what it can reach. Needs a second GitHub");
-                prompts.say("     account and a token for it.");
+                // The hint gave the reason of identity; this is the one of access (#2528). It does
+                // not say a separate account is the only way to limit access: a restricted token
+                // of the person's own account limits it too, under their name
+                prompts.say("     Its permissions are independent of yours: the agent");
+                prompts.say("     can work only on the repositories you open to that");
+                prompts.say("     account. Needs a second GitHub account and a token");
+                prompts.say("     for it.");
             }
             if (login != null) {
                 prompts.say("  2. Your own account, " + OutputFormat.oneLine(login));
-                prompts.say(noAgent ? "     Quickest. What isx machines write or do on GitHub"
-                        : "     Quickest. Whatever the agent writes or does on GitHub");
-                prompts.say("     appears as yours, with all of your access.");
+                // The breadth is the token's that gh holds, which is what this option takes
+                prompts.say(noAgent ? "     Quickest. People cannot tell that work from yours."
+                        : "     Quickest. People cannot tell the agent's work from");
+                prompts.say(noAgent ? "     It uses gh's token, with all of your access."
+                        : "     yours. It uses gh's token, with all of your access.");
                 if (forCopilot) prompts.say("     Copilot CLI does not take a classic token from gh.");
             }
             prompts.say("  " + none + ". None for now");

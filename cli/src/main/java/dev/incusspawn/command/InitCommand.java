@@ -2095,7 +2095,8 @@ public class InitCommand extends BaseCommand {
             BuildOutput.step(TerminalLink.link("https://isx.run/docs/agents#" + anchor, "https://isx.run/docs/agents#" + anchor));
         } else {
             Lines.step(shown.equals("GitHub")
-                    ? title + " signs in with a GitHub account, and the agent acts on GitHub as that same account."
+                    ? title + " signs in with a GitHub account. Everything the agent does on GitHub is published"
+                            + " under that same account's name."
                     : title + " uses " + article + shown + " account.");
         }
         // The question that follows opens with a gap of its own
@@ -2150,13 +2151,22 @@ public class InitCommand extends BaseCommand {
         return steps;
     }
 
-    /** The GitHub question, which records in {@code saved} whether an account was saved. */
+    /**
+     * The GitHub question, which records in {@code saved} whether an account was saved. Its hint
+     * says what the account is to other people, the name everything is published under, and
+     * with it the reason for the option the list recommends, before the list (#2528): "acts on
+     * GitHub as this account" named no account yet, and "its name" could be the agent's.
+     */
     InitStep gitHubStep(AtomicBoolean saved) {
         return new InitStep("github", "GitHub Account", chosenAgent == null ? new String[]{
-                "Git and gh in isx machines act on GitHub as this account.",
-                "What they commit, push or open there carries its name."} : new String[]{
-                "The agent acts on GitHub as this account. Its commits,",
-                "pull requests, issues and comments carry its name."},
+                "Everything done on GitHub from an isx machine is published",
+                "under one account's name: commits, pull requests, issues,",
+                "comments. With a separate account, other people can tell",
+                "that work from yours."} : new String[]{
+                "Everything the agent does on GitHub is published under one",
+                "account's name: commits, pull requests, issues, comments.",
+                "With an account of its own, other people can tell what the",
+                "agent wrote from what you wrote."},
                 () -> saved.set(offerGitHub()), null);
     }
 
@@ -2469,7 +2479,7 @@ public class InitCommand extends BaseCommand {
                             + " or Google Cloud Vertex AI."), this::setupClaudeAuth, null);
             case "gh" -> new InitStep(toolName, "GitHub Account", credentialHint(
                     "The GitHub account Git and gh use in your instances."
-                            + " What they commit and open on GitHub carries its name."), this::setupGitHubAuth, null);
+                            + " Everything they do on GitHub is published under that account's name."), this::setupGitHubAuth, null);
             case "codex" -> new InitStep(toolName, "OpenAI Account", credentialHint(
                     "The OpenAI account Codex uses in your instances: a ChatGPT plan, signed in"
                             + " through your browser, or an OpenAI API key."), this::setupCodexAuth, null);

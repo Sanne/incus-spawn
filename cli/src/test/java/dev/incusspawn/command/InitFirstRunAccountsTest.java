@@ -194,7 +194,7 @@ class InitFirstRunAccountsTest {
 
         assertEquals(1, count(lines, "As which GitHub account should the agent act?"), String.join("\n", lines));
         // Said here, since the GitHub step's own header, which says it, is never shown on this path
-        assertTrue(at(lines, "GitHub Copilot CLI signs in with a GitHub account, and the") < at(lines, "As which GitHub account"),
+        assertTrue(at(lines, "GitHub Copilot CLI signs in with a GitHub account.") < at(lines, "As which GitHub account"),
                 String.join("\n", lines));
         assertEquals(0, count(lines, "GitHub Account"), String.join("\n", lines));
         // The counter matches the run: the agent, then its account, which is the GitHub question (#2528)

@@ -119,6 +119,10 @@ A credential in the environment, or accounts already saved, take the full step i
 ## A GitHub account in the first run
 
 The step is about identity: as which account the agent deals with other people on GitHub.
+Its hint says so before the list: everything the agent does on GitHub is published under one account's name, and with an account of its own other people can tell what the agent wrote from what the person wrote.
+That is the reason for the option the list recommends, which an earlier hint ("The agent acts on GitHub as this account") left to the option itself.
+The recommended option then gives the second reason, of access: the account's permissions are independent of the person's, so the agent can work only on the repositories the person opens to that account.
+The text does not claim that a separate account is the only way to limit access, since a restricted token of the person's own account limits it too, under their name; so the option for the `gh` login says that it uses gh's token, with all of the person's access.
 It has three options, each saying what it gives and what it costs: an account of the agent's own (recommended), the person's own account through the host's `gh` login, and "None for now".
 There is no default, so Enter asks again, and the `gh` login is taken only when the person types its number.
 With no signed-in `gh`, the second option is absent, and a line says how to get it.
