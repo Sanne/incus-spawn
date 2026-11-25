@@ -3018,15 +3018,20 @@ class CredentialSetup {
         printCurrentPaths(existing);
 
         var paths = new java.util.ArrayList<>(existing);
+        // Said once, when the list first has an entry to remove, not again on every pass
+        var told = false;
         while (true) {
             var hasEntries = !paths.isEmpty();
-            var input = readInput(prompts.ask(hasEntries
-                    ? "Add a local directory, type an entry's number to remove it, or press Enter to finish: "
-                    : "Add a local directory (or press Enter to skip): "));
+            if (hasEntries && !told) {
+                prompts.say("Type a directory to add, or an entry's number to remove it.");
+                told = true;
+            }
+            var input = readInput(prompts.ask(hasEntries ? "Directory or number, or Enter to finish: "
+                    : "Directory to add, or Enter to skip: "));
             if (input.isEmpty()) break;
 
             if (input.contains("://")) {
-                BuildOutput.step("That looks like a URL — this needs a local directory path (e.g. ~/my-templates).");
+                BuildOutput.step("That is a URL. Type the path of a directory, such as ~/my-templates.");
                 continue;
             }
 
@@ -3039,7 +3044,7 @@ class CredentialSetup {
                 } else if (paths.isEmpty()) {
                     BuildOutput.step("There are no entries to remove.");
                 } else {
-                    BuildOutput.step("No such entry — type a number from 1 to " + paths.size() + ".");
+                    BuildOutput.step("Type a number from 1 to " + paths.size() + ".");
                 }
                 continue;
             }
@@ -3067,11 +3072,11 @@ class CredentialSetup {
         if (!paths.equals(existing)) {
             setter.accept(config, paths);
             config.save();
-            BuildOutput.step("Paths saved.");
+            BuildOutput.ok("Saved the list in config.yaml");
         } else if (paths.isEmpty()) {
-            BuildOutput.step(skipMessage);
+            Lines.wrap(skipMessage).forEach(BuildOutput::step);
         } else {
-            BuildOutput.step("Paths unchanged.");
+            BuildOutput.step("The list stays as it was.");
         }
     }
 }

@@ -68,7 +68,7 @@ import static dev.incusspawn.command.CredentialSetup.readInput;
 
 @CommandDefinition(
         name = "init",
-        description = "One-time host setup: install Incus, configure auth, test connectivity",
+        description = "Set up the host for isx, or check its setup and repair it",
         generateHelp = true
 )
 public class InitCommand extends BaseCommand {
@@ -85,26 +85,26 @@ public class InitCommand extends BaseCommand {
     List<String> codeDirAnswers;
 
     @Option(name = "fork-templates", hasValue = false,
-            description = "Fork Sanne/incus-spawn-templates with gh if you have no copy, clone it and add it, without asking")
+            description = "Fork Sanne/incus-spawn-templates with gh if you do not have a copy, then clone it and add it, without asking")
     boolean forkTemplates;
 
     @Option(name = "service", hasValue = false,
             description = "Install the proxy (on macOS, the VM and the proxy) as a service, without asking")
     boolean service;
 
-    @Option(name = "no-service", hasValue = false, description = "Do not install the services, without asking")
+    @Option(name = "no-service", hasValue = false, description = "Do not install the services, and do not ask")
     boolean noService;
 
     @Option(name = AgentGitIdentityStep.FLAG, hasValue = false,
-            description = "Let agents with no GitHub account commit under this host's Git name and email, without asking")
+            description = "Let agents that lack a GitHub account commit under the Git name and email of this computer, without asking")
     boolean gitIdentityFromHost;
 
     @Option(name = "no-sudo", hasValue = false,
-            description = "Run nothing as root: write the steps that need root as a script for you to run, then carry on")
+            description = "Run nothing as root: write the steps that need root as a script, for you to run before you run init again")
     boolean noSudo;
 
     @Option(name = "plan", hasValue = false,
-            description = "Say what init would change on this host and who must do each step, changing nothing")
+            description = "Say what init would change on this computer and who must do each step, changing nothing")
     boolean plan;
 
     @Argument(description = "Run one step alone: credentials, search-paths, code-directories or mcp")
@@ -130,13 +130,27 @@ public class InitCommand extends BaseCommand {
         return styled(CYAN, "╭─ ") + styled(BOLD, title) + styled(CYAN, " " + "─".repeat(BOX_WIDTH - title.length() - 3) + "╮");
     }
 
-    private static final String[] DNS_HINT = {
-            "Configures the Incus bridge network so that containers",
-            "resolve intercepted domains (GitHub, Anthropic, etc.) to",
-            "the proxy gateway. This lets the MITM proxy transparently",
-            "inject credentials into HTTPS requests without containers",
-            "needing any special network configuration."
-    };
+    /**
+     * The {@code purpose} of each step {@code isx init --plan} lists, as its hint read before
+     * the hints were reworded for people (#2542): output a script reads is a contract.
+     */
+    private static final Map<String, String> PURPOSES = Map.ofEntries(
+            Map.entry("dependencies", "The commands init and isx need on the host: openssl, ssh-keygen and btrfs, installed with the package manager."),
+            Map.entry("dns", "Configures the Incus bridge network so that containers resolve intercepted domains (GitHub, Anthropic, etc.) to the proxy gateway. This lets the MITM proxy transparently inject credentials into HTTPS requests without containers needing any special network configuration."),
+            Map.entry("search-paths", "Local directories where isx looks for custom image and tool definitions. Definitions found here can extend or override the built-in templates. Each directory should contain images/ and/or tools/ subdirectories with YAML files."),
+            Map.entry("code-directories", "Directories on your host containing git repositories (e.g. ~/code). Enables fast reference clones inside containers and automatic git remote management — repos cloned from these paths get a remote named after the instance, to push and pull directly between container and host without round-tripping through GitHub. Your host files are never directly exposed to containers."),
+            Map.entry("mcp", "Lets an agent on this machine (Claude Code or another MCP client) use isx itself: create instances from templates you approve here, run commands in them, and hand tasks to the Claude Code, Codex, Pi, opencode or Antigravity CLI inside them. Agents can never approve templates themselves."),
+            Map.entry("proxy-service", "The MITM proxy intercepts HTTPS traffic from containers and injects real credentials (API keys, tokens) so that containers only ever hold placeholder values. Installing it as a systemd service means it starts automatically on boot — otherwise you'll need to run 'isx proxy start' before launching containers."),
+            Map.entry("macos-services", "Installs the Incus VM and MITM proxy as macOS launch agents so they start automatically on login and survive reboots. Without this you'll need to manually run 'isx vm start' and 'isx proxy start' before launching containers."),
+            Map.entry("ca", "Generates a custom Certificate Authority for the MITM proxy. Containers trust this CA so the proxy can intercept HTTPS and inject credentials transparently."),
+            Map.entry("ssh-key", "Generates a dedicated SSH key pair used only by isx to connect to containers. This is separate from your personal SSH keys and won't interfere with them. Your ~/.ssh/config is updated automatically."),
+            Map.entry("git-remote-helper", "Puts the git-remote-isx helper beside a JVM install of isx, so git can reach instances as remotes."),
+            Map.entry("vm", "Incus runs in a small Linux VM on macOS: init downloads its appliance when it is missing and starts it."));
+
+    /** A step's hint, broken into lines that fit under its header. */
+    private static String[] hint(String text) {
+        return Lines.wrap(text).toArray(String[]::new);
+    }
 
     /**
      * How many times the DNS step writes the overrides. Incus applies a bridge's raw.dnsmasq by
@@ -173,8 +187,10 @@ public class InitCommand extends BaseCommand {
         out.add(boxLine(""));
         out.add(boxLine("   " + styled(BOLD, title)));
         out.add(boxLine("   " + subtitle));
-        out.add(boxLine(""));
-        out.add(boxLine("   " + styled(DIM, info)));
+        if (info != null) {
+            out.add(boxLine(""));
+            out.add(boxLine("   " + styled(DIM, info)));
+        }
         out.add(boxLine(""));
         out.add(bottomBorder());
         out.add("");
@@ -182,17 +198,24 @@ public class InitCommand extends BaseCommand {
         BuildOutput.frame(out.toArray(String[]::new));
     }
 
+    /** The banner's last line under {@code --no-sudo}: the steps that need root are the person's script (#2074). */
+    static final String NO_SUDO_INFO = "Nothing runs as root here: your script did that.";
+
     /**
      * Init re-runs safely on a configured host, so a re-run must not read as a fresh setup that
      * forgot the existing configuration (#1119). Any marker counts, not only a current one
      * ({@link Environment#hasBeenInitialized()}): re-running init after an upgrade is the common case.
+     *
+     * @param fresh what the banner's last line says on a computer init never set up, or null for none
+     * @param again what it says on one init set up before, or null for none
      */
-    static void printSetupBanner(String platform, String info) {
+    static void printSetupBanner(String fresh, String again) {
         var configured = isConfigured();
-        printBanner("isx — " + (configured ? "Setup" : "First-Time Setup") + platform,
-                configured ? "Reviewing your existing configuration"
-                        : "Configuring your isolated development environment",
-                info);
+        var computer = Platform.thisComputer();
+        printBanner("isx init",
+                configured ? "Checks the setup of " + computer + ", and repairs it"
+                        : "Sets up " + computer + " to run isx instances",
+                configured ? again : fresh);
     }
 
     /** Whether init ran here before, by any marker or a config file: a re-run, not a first one. */
@@ -637,16 +660,11 @@ public class InitCommand extends BaseCommand {
         }
         if (firstRun) return runFirstRun(false);
         if (!continued && noSudo) {
-            printSetupBanner("", "runs nothing as root: the script did that");
+            printSetupBanner(NO_SUDO_INFO, NO_SUDO_INFO);
         } else if (!continued) {
-            printSetupBanner("", "~3 minutes · some steps require sudo");
+            printSetupBanner("About 3 minutes.", null);
 
-            BuildOutput.step("Several steps need " + styled(BOLD, "sudo") + " to install packages, configure"
-                    + " the firewall, and set up user namespace mappings.");
-            if (runHost("sudo", "-v") != 0) {
-                BuildOutput.error("sudo authentication failed.", "Please ensure you have sudo access and try again.");
-                return CommandResult.valueOf(1);
-            }
+            if (!sudoFirst()) return CommandResult.valueOf(1);
 
             dependencies().run().run();
         }
@@ -727,6 +745,28 @@ public class InitCommand extends BaseCommand {
     private static void refused(Path dir, String why) {
         BuildOutput.warn("Builds and host routes will refuse the secrets in " + dir, why + ".",
                 "Check that nothing in it is someone else's first.");
+    }
+
+    /**
+     * Says what needs sudo, then has it ask for a password once, before any step: the steps that
+     * need root run under it. A re-run says only that sudo may ask, since its cached timestamp
+     * may ask nothing; a first run's refusal says the setup of this computer did not start. False, said why, when sudo refused.
+     */
+    boolean sudoFirst() {
+        if (firstRun) {
+            BuildOutput.step("isx asks for your sudo password now. It installs packages,");
+            BuildOutput.step("and configures the firewall and the user IDs of isx machines.");
+        } else {
+            BuildOutput.step("Some steps run with sudo, which may ask for your password:");
+            BuildOutput.step("packages, the firewall and the user IDs of instances.");
+        }
+        if (runHost("sudo", "-v") == 0) return true;
+        BuildOutput.error("sudo refused, so isx init stopped.",
+                firstRun ? "It did not set up " + Platform.thisComputer() + "." : "It had not started its steps.",
+                "Run it again as a user who may use sudo.",
+                "Or run '" + NO_SUDO_COMMAND + "', which writes the steps",
+                "that need root as a script for an administrator.");
+        return false;
     }
 
     /** Whether this run is {@code --no-sudo}: the privileged steps are the person's script (#2074). */
@@ -856,25 +896,29 @@ public class InitCommand extends BaseCommand {
         var first = firstRun;
         return List.of(
                 new InitStep("incus", first ? "Incus" : "Incus Installation", first ? HostSetup.INCUS_FIRST_RUN : HostSetup.INCUS_HINT,
-                        this::installIncus, host::planIncusInstallation),
+                        this::installIncus, host::planIncusInstallation, purpose(first, HostSetup.INCUS_FIRST_RUN, HostSetup.INCUS_PURPOSE)),
                 new InitStep("subids", first ? "User Mappings" : "User Namespace Mappings", first ? HostSetup.SUBID_FIRST_RUN : HostSetup.SUBID_HINT,
-                        host::configureSubuidSubgid, host::planSubids),
+                        host::configureSubuidSubgid, host::planSubids, purpose(first, HostSetup.SUBID_FIRST_RUN, HostSetup.SUBID_PURPOSE)),
                 new InitStep("storage-network", "Storage & Network", first ? HostSetup.STORAGE_FIRST_RUN : HostSetup.STORAGE_HINT,
-                        host::initializeIncus, host::planStorageAndNetwork),
+                        host::initializeIncus, host::planStorageAndNetwork, purpose(first, HostSetup.STORAGE_FIRST_RUN, HostSetup.STORAGE_PURPOSE)),
                 new InitStep("firewall", first ? "Firewall" : "Firewall Configuration", first ? HostSetup.FIREWALL_FIRST_RUN : HostSetup.FIREWALL_HINT,
-                        host::configureFirewall, host::planFirewall),
+                        host::configureFirewall, host::planFirewall, purpose(first, HostSetup.FIREWALL_FIRST_RUN, HostSetup.FIREWALL_PURPOSE)),
                 new InitStep("mitm-proxy", first ? "The isx Proxy" : "MITM Authentication Proxy", first ? HostSetup.MITM_FIRST_RUN : HostSetup.MITM_HINT,
-                        host::configureMitmProxy, host::planMitmProxy),
+                        host::configureMitmProxy, host::planMitmProxy, purpose(first, HostSetup.MITM_FIRST_RUN, HostSetup.MITM_PURPOSE)),
                 sshKeyPair());
+    }
+
+    /** {@code --plan}'s purpose of a Linux step: the first run's hint, joined, or the one it has always had. */
+    private static String purpose(boolean first, String[] firstRun, String purpose) {
+        return first ? String.join(" ", firstRun) : purpose;
     }
 
     /** What Linux init installs before its numbered steps, with no header of its own. */
     InitStep dependencies() {
         var host = host();
-        return new InitStep("dependencies", "Dependencies", new String[]{
-                "The commands init and isx need on the host: openssl,",
-                "ssh-keygen and btrfs, installed with the package manager."},
-                host::installDependencies, host::planDependencies);
+        return new InitStep("dependencies", "Dependencies", hint("isx needs openssl, ssh-keygen and btrfs on "
+                + Platform.thisComputer() + ", and installs those missing with its package manager."),
+                host::installDependencies, host::planDependencies, PURPOSES.get("dependencies"));
     }
 
     /**
@@ -977,7 +1021,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private CommandResult doMacOsInit() throws Exception {
-        printSetupBanner(" (macOS)", "~2 minutes");
+        printSetupBanner("About 2 minutes.", null);
         var servicesInstalled = new AtomicBoolean();
 
         runSteps(macOsSetup(), finalSteps(macOsServicesStep(servicesInstalled)));
@@ -1078,9 +1122,18 @@ public class InitCommand extends BaseCommand {
      * exactly one, and the plan lists the same steps from the same lists, so the two cannot drift.
      * A credential's own step has no planner: Credential Setup plans the credentials together.
      *
-     * @param id    the step's name in {@code --plan}'s formats, a contract
+     * @param id      the step's name in {@code --plan}'s formats, a contract
+     * @param title   its header, and its {@code title} in those formats: a contract too
+     * @param hint    what its header says it is for, reworded freely (#2542)
+     * @param purpose its {@code purpose} in those formats, which a hint once read and which
+     *                stays as it was when the hint is reworded: output a script reads is a contract
      */
-    record InitStep(String id, String title, String[] hint, Step run, Planner plan) {}
+    record InitStep(String id, String title, String[] hint, Step run, Planner plan, String purpose) {
+        /** A step whose {@code --plan} purpose is its hint, joined. */
+        InitStep(String id, String title, String[] hint, Step run, Planner plan) {
+            this(id, title, hint, run, plan, String.join(" ", hint));
+        }
+    }
 
     /**
      * Runs init's numbered steps: {@code setup}, Credential Setup, a step for each credential
@@ -1132,13 +1185,16 @@ public class InitCommand extends BaseCommand {
 
     /** What each of {@link #DEFERRED} is for, in one line of the menu. */
     static final Map<String, String> PURPOSE = Map.of(
-            "credentials", "The accounts the proxy injects for your agents and tools",
-            "search-paths", "Where isx finds templates of your own, and the templates repository",
-            "code-directories", "Your repositories on this host, for fast clones and Git remotes",
-            "mcp", "Which templates an agent on this host may create instances from");
+            "credentials", "The accounts isx adds to the requests of instances",
+            "search-paths", "Where isx finds templates and tools of your own",
+            "code-directories", "Your Git repositories, for fast clones and remotes",
+            "mcp", "Templates an agent may make instances from, over MCP");
 
     /** Whether this run is init again at a terminal, which shows {@link #DEFERRED} as a menu rather than asking each. */
     boolean rerun;
+
+    /** Whether a step runs alone ({@link #runOne}): its text then names no command to run it, which is the one just run. */
+    boolean alone;
 
     /** Whether {@link #requireInit} started this run for another command, which then carries on: no menu. */
     boolean automatic;
@@ -1161,6 +1217,7 @@ public class InitCommand extends BaseCommand {
      * @return the exit code
      */
     int runOne(String id) throws Exception {
+        alone = true;
         if (!DEFERRED.contains(id)) {
             BuildOutput.error("no init step named '" + OutputFormat.oneLine(id) + "'.",
                     "Steps that run alone: " + String.join(", ", DEFERRED) + ".");
@@ -1192,14 +1249,13 @@ public class InitCommand extends BaseCommand {
         if (prompts == null) return;
         while (true) {
             var entries = planEntries(DEFERRED.stream().map(this::deferredStep).toList());
-            var width = entries.stream().mapToInt(e -> InitPlan.stateLabel(e.assessment()).length()).max().orElse(0);
-            BuildOutput.section("More setup, also run alone as 'isx init <step>'");
-            for (int i = 0; i < entries.size(); i++) prompts.say(menuLine(i + 1, entries.get(i), width));
-            var answer = readInput(prompts.ask("Run which (number or name, Enter to finish): "));
+            BuildOutput.section("More setup, each step also run alone as 'isx init <step>'");
+            for (int i = 0; i < entries.size(); i++) menuLines(i + 1, entries.get(i)).forEach(prompts::say);
+            var answer = readInput(prompts.ask("Step to run, by number or name, or Enter to finish: "));
             if (answer.isEmpty()) return;
             var id = menuChoice(answer);
             if (id == null) {
-                prompts.say("No step '" + OutputFormat.oneLine(answer) + "'.");
+                prompts.say("Type a number from 1 to " + entries.size() + ", or a step's name.");
                 continue;
             }
             try {
@@ -1211,10 +1267,23 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    /** One line of the menu: its number, the step's name, where it stands and what it is for. */
-    static String menuLine(int number, InitPlan.Entry entry, int stateWidth) {
-        return String.format("%d  %-17s %-" + Math.max(1, stateWidth) + "s %s", number, entry.step(),
-                InitPlan.stateLabel(entry.assessment()), PURPOSE.get(entry.step()));
+    /**
+     * A step of the menu: its number, its name and where it stands, then what it is for under
+     * them, so each line fits the frame (#2542).
+     */
+    static List<String> menuLines(int number, InitPlan.Entry entry) {
+        return List.of(String.format("%d  %-17s %s", number, entry.step(), menuState(entry.assessment())),
+                "   " + PURPOSE.get(entry.step()));
+    }
+
+    /** Where a step of the menu stands, in a person's words: {@code --plan}'s labels name who acts, which the menu does not need. */
+    static String menuState(InitPlan.Assessment assessment) {
+        return switch (assessment.state()) {
+            case DONE -> "set up";
+            case PENDING -> "to do";
+            case OPTIONAL -> "not set up";
+            case UNKNOWN -> "not checked";
+        };
     }
 
     /** The step of {@link #DEFERRED} that {@code answer}, a number from the menu or a name, chooses; null for none. */
@@ -1363,12 +1432,7 @@ public class InitCommand extends BaseCommand {
                 if (!macOs && !noSudo) {
                     // The one sudo prompt the intro promised, said before it asks (#2528)
                     BuildOutput.gap();
-                    BuildOutput.step("isx asks for your sudo password now. It installs packages,");
-                    BuildOutput.step("and configures the firewall and the user IDs of isx machines.");
-                    if (runHost("sudo", "-v") != 0) {
-                        BuildOutput.error("sudo authentication failed.", "Please ensure you have sudo access and try again.");
-                        return CommandResult.valueOf(1);
-                    }
+                    if (!sudoFirst()) return CommandResult.valueOf(1);
                 }
             }
             var servicesInstalled = new AtomicBoolean();
@@ -1431,7 +1495,7 @@ public class InitCommand extends BaseCommand {
         // Only a computer where init completed is a re-run: a config.yaml written by 'isx account
         // add', or by a first run that stopped, still gets the map
         if (Files.exists(Environment.initCompleteMarker())) {
-            printSetupBanner(macOs ? " (macOS)" : "", noSudo ? "runs nothing as root: the script did that" : "~5 minutes");
+            printSetupBanner(null, noSudo ? NO_SUDO_INFO : null);
             return;
         }
         var config = SpawnConfig.load();
@@ -2686,94 +2750,80 @@ public class InitCommand extends BaseCommand {
     }
 
     InitStep dnsStep() {
-        return new InitStep("dns", "DNS Configuration", DNS_HINT, this::setupBridgeDns, this::planBridgeDns);
+        return new InitStep("dns", "DNS Configuration", hint("In " + machines() + ", the names of the services that get your"
+                + " credentials, such as github.com, lead to the isx proxy. This step sets that up in the DNS of their network."),
+                this::setupBridgeDns, this::planBridgeDns, PURPOSES.get("dns"));
     }
 
     InitStep searchPathsStep() {
-        return new InitStep("search-paths", "Template Search Paths", new String[]{
-                "Local directories where isx looks for custom image and",
-                "tool definitions. Definitions found here can extend or",
-                "override the built-in templates. Each directory should",
-                "contain images/ and/or tools/ subdirectories with YAML",
-                "files."}, this::setupSearchPaths, this::planSearchPaths);
+        return new InitStep("search-paths", "Template Search Paths", hint("Directories where isx finds templates and tools"
+                + " of your own, beside the built-in ones. One of the same name replaces the built-in one."
+                + " A directory holds images/ for templates, tools/ for tools, or both, with YAML files in them."),
+                this::setupSearchPaths, this::planSearchPaths, PURPOSES.get("search-paths"));
     }
 
     InitStep codeDirectoriesStep() {
-        return new InitStep("code-directories", "Code Directories", new String[]{
-                "Directories on your host containing git repositories (e.g.",
-                "~/code). Enables fast reference clones inside containers",
-                "and automatic git remote management — repos cloned from",
-                "these paths get a remote named after the instance, to push",
-                "and pull directly between container and host without",
-                "round-tripping through GitHub. Your host files are never",
-                "directly exposed to containers."}, this::setupHostPaths, this::planHostPaths);
+        return new InitStep("code-directories", "Code Directories", hint("Directories that hold your Git repositories,"
+                + " such as ~/code. A repository from one is cloned into an instance in seconds, and gets a remote"
+                + " named after the instance, so you push and pull between the two without going through GitHub."),
+                this::setupHostPaths, this::planHostPaths, PURPOSES.get("code-directories"));
     }
 
     /** Agent Access over MCP, which {@code isx mcp setup} also runs alone (#2077). */
     InitStep mcpStep() {
-        return new InitStep("mcp", "Agent Access over MCP", new String[]{
-                "Lets an agent on this machine (Claude Code or another MCP",
-                "client) use isx itself: create instances from templates",
-                "you approve here, run commands in them, and hand tasks",
-                "to the Claude Code, Codex, Pi, opencode or Antigravity CLI inside them.",
-                "Agents can never approve templates themselves."}, this::setupMcp, this::planMcp);
+        return new InitStep("mcp", "Agent Access over MCP", hint("Lets an agent on " + Platform.thisComputer()
+                + ", such as Claude Code, use isx: create " + machines() + " from the templates you approve here,"
+                + " run commands in them, and hand tasks to the agents inside them."
+                + " An agent cannot approve a template itself."),
+                this::setupMcp, this::planMcp, PURPOSES.get("mcp"));
     }
 
     /** Linux's last step, which records in {@code installed} whether the service is installed once it ends. */
     InitStep proxyServiceStep(AtomicBoolean installed) {
-        return new InitStep("proxy-service", "Proxy Service", new String[]{
-                "The MITM proxy intercepts HTTPS traffic from containers",
-                "and injects real credentials (API keys, tokens) so that",
-                "containers only ever hold placeholder values. Installing",
-                "it as a systemd service means it starts automatically on",
-                "boot — otherwise you'll need to run 'isx proxy start'",
-                "before launching containers."},
-                () -> installed.set(completeWithProxyService(prompts())), this::planProxyService);
+        return new InitStep("proxy-service", "Proxy Service", hint("The isx proxy adds your credentials to the HTTPS"
+                + " requests of " + machines() + ", so " + machines() + " never hold them."
+                + " As a systemd service it starts with " + Platform.thisComputer() + "."
+                + " Without the service, run 'isx proxy start' first, in a terminal of its own."),
+                () -> installed.set(completeWithProxyService(prompts())), this::planProxyService, PURPOSES.get("proxy-service"));
     }
 
     /** macOS's last step, as {@link #proxyServiceStep} is Linux's. */
     InitStep macOsServicesStep(AtomicBoolean installed) {
-        return new InitStep("macos-services", "macOS Services", new String[]{
-                "Installs the Incus VM and MITM proxy as macOS launch",
-                "agents so they start automatically on login and survive",
-                "reboots. Without this you'll need to manually run",
-                "'isx vm start' and 'isx proxy start' before launching",
-                "containers."},
-                () -> installed.set(completeWithMacOsServices(prompts())), this::planMacOsServices);
+        return new InitStep("macos-services", "macOS Services", hint("The Incus VM runs your " + machines()
+                + ", and the isx proxy adds your credentials to their requests."
+                + " As services, both start when you log in."
+                + " Without them, run 'isx vm start', then 'isx proxy start' in a terminal of its own."),
+                () -> installed.set(completeWithMacOsServices(prompts())), this::planMacOsServices, PURPOSES.get("macos-services"));
     }
 
     /** The macOS steps before Credential Setup, in order. */
     List<InitStep> macOsSetup() {
         return List.of(
-                new InitStep("ca", "MITM CA Certificate", new String[]{
-                        "Generates a custom Certificate Authority for the MITM",
-                        "proxy. Containers trust this CA so the proxy can intercept",
-                        "HTTPS and inject credentials transparently."}, this::setupMacOsCa, this::planMacOsCa),
+                new InitStep("ca", "MITM CA Certificate", hint("The isx proxy's certificate, which " + machines()
+                        + " trust, so the proxy can open their HTTPS requests and add your credentials."),
+                        this::setupMacOsCa, this::planMacOsCa, PURPOSES.get("ca")),
                 sshKeyPair());
     }
 
     InitStep sshKeyPair() {
-        return new InitStep("ssh-key", "SSH Key Pair", new String[]{
-                "Generates a dedicated SSH key pair used only by isx",
-                "to connect to containers. This is separate from your personal",
-                "SSH keys and won't interfere with them. Your ~/.ssh/config is",
-                "updated automatically."}, this::setupSshKeyPair, this::planSshKeyPair);
+        return new InitStep("ssh-key", "SSH Key Pair", hint("A key of isx's own, which it uses only to reach "
+                + machines() + " over SSH. Your own SSH keys stay as they are, and isx adds what it needs"
+                + " to ~/.ssh/config."),
+                this::setupSshKeyPair, this::planSshKeyPair, PURPOSES.get("ssh-key"));
     }
 
     /** Writes the git remote helper beside a JVM isx, between the credentials and the last steps; no header. */
     InitStep gitRemoteHelper() {
-        return new InitStep("git-remote-helper", "Git Remote Helper", new String[]{
-                "Puts the git-remote-isx helper beside a JVM install of isx,",
-                "so git can reach instances as remotes."},
-                this::installGitRemoteShim, this::planGitRemoteShim);
+        return new InitStep("git-remote-helper", "Git Remote Helper", hint("Puts the git-remote-isx helper beside"
+                + " a JVM install of isx, so Git can reach " + machines() + " as remotes."),
+                this::installGitRemoteShim, this::planGitRemoteShim, PURPOSES.get("git-remote-helper"));
     }
 
     /** On macOS, the VM init needs before anything else, which {@link #requireIncusHost} starts; no header. */
     InitStep incusVm() {
-        return new InitStep("vm", "Incus VM", new String[]{
-                "Incus runs in a small Linux VM on macOS: init downloads its",
-                "appliance when it is missing and starts it."},
-                () -> {}, this::planIncusVm);
+        return new InitStep("vm", "Incus VM", hint("Incus runs in a small Linux VM on macOS: isx init downloads"
+                + " its appliance when it is missing, and starts it."),
+                () -> {}, this::planIncusVm, PURPOSES.get("vm"));
     }
 
     /**
@@ -2851,7 +2901,7 @@ public class InitCommand extends BaseCommand {
     /** The terminal, or null after saying why interactive setup cannot run without one. */
     private Prompts consoleOrExplain() {
         var prompts = prompts();
-        if (prompts == null) BuildOutput.error("No console available for interactive setup.");
+        if (prompts == null) BuildOutput.error("This step asks for a credential, so it needs a terminal.");
         return prompts;
     }
 
@@ -3113,7 +3163,7 @@ public class InitCommand extends BaseCommand {
         if (prompts != null) {
             credentials.setupPathList(getter, setter, skipMessage, config, prompts);
         } else {
-            BuildOutput.note("Skipped: no terminal. Add directories with " + flag + ", or run 'isx init " + step + "' at a terminal.");
+            skippedWithoutTerminal(flag + " adds them without asking,", "and 'isx init " + step + "' asks at a terminal.");
             skipped.add(step);
             credentials.printCurrentPaths(getter.apply(config));
         }
@@ -3146,7 +3196,7 @@ public class InitCommand extends BaseCommand {
         if (!paths.equals(getter.apply(config))) {
             setter.accept(config, paths);
             config.save();
-            BuildOutput.step("Paths saved.");
+            BuildOutput.ok("Saved the list in config.yaml");
         }
     }
 
@@ -3154,7 +3204,7 @@ public class InitCommand extends BaseCommand {
         var prompts = prompts();
         if (prompts == null) {
             skipped.add("mcp");
-            BuildOutput.step("Skipped: no console. Run '" + MCP_SETUP_COMMAND + "' at a terminal to set this up.");
+            skippedWithoutTerminal("'" + MCP_SETUP_COMMAND + "' sets it up at a terminal.");
             return;
         }
         setupMcp(prompts, trustedDefinitions());
@@ -3234,8 +3284,10 @@ public class InitCommand extends BaseCommand {
         var candidates = mcpCandidates(defs);
         var enabled = registered || !approved.isEmpty();
         if (enabled) {
-            BuildOutput.step("Currently " + (!claude ? "" : registered ? "registered with Claude Code; " : "not registered; ")
-                    + "approved templates: " + (approved.isEmpty() ? "none" : String.join(", ", approved)) + ".");
+            if (claude) BuildOutput.step(registered ? "isx mcp is registered with Claude Code."
+                    : "isx mcp is not registered with Claude Code.");
+            BuildOutput.step(approved.isEmpty() ? "You have not approved a template."
+                    : "Approved templates: " + String.join(", ", approved) + ".");
         }
         // Fully set up: a re-run of init for something else costs one Enter, as credentials do (#1292).
         boolean proceed;
@@ -3251,7 +3303,7 @@ public class InitCommand extends BaseCommand {
             }
             proceed = choice.equals("t");
         } else {
-            proceed = askYesNo(prompts, "Enable the isx MCP server?", enabled);
+            proceed = askYesNo(prompts, "Let agents on " + Platform.thisComputer() + " use isx over MCP?", enabled);
         }
         if (!proceed) {
             if (registered) {
@@ -3265,24 +3317,29 @@ public class InitCommand extends BaseCommand {
         }
 
         if (!claude) {
-            BuildOutput.note("Claude Code is not installed on this host, so nothing was registered.");
+            Lines.wrap("Claude Code is not installed on " + Platform.thisComputer() + ", so isx did not register isx mcp with it.")
+                    .forEach(BuildOutput::note);
         } else if (!registered) {
             var isx = isxPath();
             if (isx == null) {
-                BuildOutput.step("Could not find the installed isx binary; register it yourself:");
+                Lines.step("isx did not find its installed binary, so register isx mcp yourself:");
                 BuildOutput.stepNote(McpLaunch.display(claudeMcpAddCommand(mcpLaunch(McpLaunch.PLACEHOLDER))));
             } else if (registerClaudeMcp(isx)) {
                 BuildOutput.ok("Registered with Claude Code as '" + McpClientRegistration.SERVER_NAME + "' (all projects)");
             } else {
-                BuildOutput.step("Registering failed; register it yourself:");
+                Lines.step("Claude Code did not register isx mcp, so register it yourself:");
                 BuildOutput.stepNote(McpLaunch.display(claudeMcpAddCommand(mcpLaunch(isx))));
             }
         }
-        BuildOutput.stepNote("For another MCP client, add the entry '" + MCP_CONFIG_COMMAND + "' prints to its settings.");
+        Lines.wrap("For another MCP client, add the entry '" + MCP_CONFIG_COMMAND + "' prints to its settings.", Lines.WIDTH - 2)
+                .forEach(BuildOutput::stepNote);
 
         if (candidates.isEmpty()) {
-            BuildOutput.step("No template installs a coding agent yet, so there is none to approve."
-                    + " Add one, then run '" + MCP_SETUP_COMMAND + "' or edit " + McpConfig.file() + ".");
+            // The command keeps a line of its own, so it can be copied whole
+            Lines.wrap("Your templates do not install a coding agent yet, so you cannot approve one.")
+                    .forEach(BuildOutput::step);
+            BuildOutput.step("Define one that does, then run '" + MCP_SETUP_COMMAND + "',");
+            BuildOutput.step("or edit " + McpConfig.file() + ".");
             return;
         }
         var chosen = new java.util.ArrayList<String>();
@@ -3302,13 +3359,14 @@ public class InitCommand extends BaseCommand {
         approved.stream().filter(n -> !candidates.contains(n) || chosen.contains(n)).forEach(updated::add);
         chosen.stream().filter(n -> !updated.contains(n)).forEach(updated::add);
         if (updated.equals(approved)) {
-            BuildOutput.step("Approved templates unchanged.");
+            BuildOutput.step("The approved templates stay as they were.");
         } else {
             mcp.setTemplates(updated);
             mcp.save();
             BuildOutput.ok("Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)));
         }
-        if (claude) BuildOutput.stepNote("Keep agents to the MCP tools with Claude Code permissions: see https://isx.run/docs/mcp (docs/MCP.md).");
+        if (claude) Lines.wrap("Claude Code's permissions can keep an agent to the tools of isx mcp: https://isx.run/docs/mcp",
+                Lines.WIDTH - 2).forEach(BuildOutput::stepNote);
     }
 
     /** Enter (or end of input) to keep the MCP setup, {@code t} to change templates, {@code n} for how to turn it off. */
@@ -3422,7 +3480,7 @@ public class InitCommand extends BaseCommand {
         setupPathList(
                 SpawnConfig::getSearchPaths,
                 SpawnConfig::setSearchPaths,
-                "No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml",
+                alone ? "You have not added a search path." : "You have not added a search path. 'isx init search-paths' adds one later.",
                 "search-paths", answers, "--search-path");
     }
 
@@ -3463,7 +3521,7 @@ public class InitCommand extends BaseCommand {
         var login = commandExists("gh") && commandExists("git") ? getGhLogin() : null;
         var prompts = login == null ? null : prompts();
         if (prompts == null) {
-            pointAt("For community templates, see (clone and add the local path):");
+            pointAt("Community templates are in this repository. To use them, clone it and add the path of the clone:");
             return;
         }
 
@@ -3476,7 +3534,7 @@ public class InitCommand extends BaseCommand {
 
     /** {@code lead}, then the link to the upstream templates repository. */
     private static void pointAt(String lead) {
-        BuildOutput.step(lead);
+        Lines.wrap(lead).forEach(BuildOutput::step);
         BuildOutput.step(TerminalLink.link(TEMPLATES_URL));
     }
 
@@ -3606,8 +3664,7 @@ public class InitCommand extends BaseCommand {
         setupPathList(
                 SpawnConfig::getHostPaths,
                 SpawnConfig::setHostPaths,
-                "No host paths configured. Add them later with 'isx init code-directories'"
-                        + " or editing ~/.config/incus-spawn/config.yaml",
+                alone ? "You have not added a code directory." : "'isx init code-directories' adds a code directory later.",
                 "code-directories", codeDirAnswers, "--code-dir");
     }
 
@@ -3625,7 +3682,7 @@ public class InitCommand extends BaseCommand {
      */
     boolean completeWithMacOsServices(Prompts prompts) throws IOException {
         var present = macOsServicesInstalled();
-        if (present) BuildOutput.step("isx services are installed already.");
+        if (present) BuildOutput.step("The VM and proxy services are installed.");
         var install = !present && wantsMacOsServices(prompts);
         markInitComplete();
         return present || install && installed("macos-services");
@@ -3635,22 +3692,19 @@ public class InitCommand extends BaseCommand {
         if (service) return true;
         if (noService) {
             declined.add("macos-services");
-            BuildOutput.step("Not installed, as --no-service asks. Start manually with: isx vm start && isx proxy start; the proxy runs in the foreground.");
+            BuildOutput.step("Not installed, as --no-service asks.");
             return false;
         }
         // A first run installs them without asking: nearly everyone wants them (#2412)
         if (firstRun && prompts != null) return true;
         if (prompts == null) {
             skipped.add("macos-services");
-            BuildOutput.step("Skipped: no terminal. Install the services with 'isx init --service', or decline them with"
-                    + " --no-service; 'isx proxy start' runs the proxy in the foreground instead.");
+            skippedWithoutTerminal("'isx init --service' installs the services,", "and --no-service declines them.");
             return false;
         }
-        prompts.say("Optional: install VM and proxy as macOS services so they start automatically on login"
-                + " and survive reboots.");
-        if (!askYesNo(prompts, "Install services?", true)) {
+        if (!askYesNo(prompts, "Install the VM and proxy services?", true)) {
             declined.add("macos-services");
-            BuildOutput.step("Skipped. Start manually with: isx vm start && isx proxy start; the proxy runs in the foreground.");
+            BuildOutput.step("Not installed.");
             return false;
         }
         return true;
@@ -3677,7 +3731,7 @@ public class InitCommand extends BaseCommand {
                 failed.add("proxy-service");
                 return false;
             }
-            BuildOutput.step("Proxy service is already running.");
+            BuildOutput.step("The proxy service is running.");
             return true;
         }
         return install && installed("proxy-service");
@@ -3715,21 +3769,20 @@ public class InitCommand extends BaseCommand {
         if (service) return true;
         if (noService) {
             declined.add("proxy-service");
-            BuildOutput.step("Not installed, as --no-service asks. You can start the proxy manually with: isx proxy start, which runs in the foreground.");
+            BuildOutput.step("Not installed, as --no-service asks.");
             return false;
         }
         // A first run installs them without asking: nearly everyone wants them (#2412)
         if (firstRun && prompts != null) return true;
         if (prompts == null) {
             skipped.add("proxy-service");
-            BuildOutput.step("Skipped: no terminal. Install the proxy service with 'isx init" + (noSudo ? " --no-sudo" : "")
-                    + " --service', or decline it with --no-service; 'isx proxy start' runs the proxy in the foreground instead.");
+            skippedWithoutTerminal("'isx init" + (noSudo ? " --no-sudo" : "") + " --service' installs the service,",
+                    "and --no-service declines it.");
             return false;
         }
-        prompts.say("Optional: install the proxy as a systemd service so it starts automatically and survives reboots.");
-        if (!askYesNo(prompts, "Install proxy service?", true)) {
+        if (!askYesNo(prompts, "Install the proxy service?", true)) {
             declined.add("proxy-service");
-            BuildOutput.step("Skipped. You can start the proxy manually with: isx proxy start, which runs in the foreground.");
+            BuildOutput.step("Not installed.");
             return false;
         }
         return true;
@@ -3850,7 +3903,7 @@ public class InitCommand extends BaseCommand {
             } catch (Exception e) {
                 assessment = InitPlan.Assessment.unknown(PLAN_FAILED + failure(e));
             }
-            return new InitPlan.Entry(step.id(), step.title(), String.join(" ", step.hint()), assessment);
+            return new InitPlan.Entry(step.id(), step.title(), step.purpose(), assessment);
         }).toList();
     }
 

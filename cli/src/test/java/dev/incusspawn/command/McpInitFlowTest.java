@@ -139,14 +139,14 @@ class McpInitFlowTest {
         host.hasClaude = false;
         var prompts = ScriptedPrompts.lines("y", "n", "y");
         var out = reported(() -> run(host, prompts));
-        assertEquals(List.of("Enable the isx MCP server? (y/N): ",
+        assertEquals(List.of("Let agents on " + dev.incusspawn.Platform.thisComputer() + " use isx over MCP? (y/N): ",
                 "tpl-agent (not built yet: isx build tpl-agent)? (y/N): ",
                 "tpl-agent-java (not built yet: isx build tpl-agent-java)? (y/N): "),
                 prompts.questions().stream().map(BuildOutput::stripAnsi).toList());
         assertEquals(List.of("tpl-agent-java"), approved());
         assertEquals(List.of(), host.registrations);
         assertTrue(out.contains("isx mcp config"), out);
-        assertFalse(out.contains("Claude Code permissions"), out);
+        assertFalse(out.contains("Claude Code's permissions"), out);
     }
 
     /** #2078: without Claude Code, approved templates are the whole setup, so a re-run asks one question. */
@@ -160,7 +160,7 @@ class McpInitFlowTest {
         var out = reported(() -> run(host, prompts));
         assertEquals(List.of("Choice, or Enter to keep it as it is: "),
                 prompts.questions().stream().map(BuildOutput::stripAnsi).toList());
-        assertTrue(out.contains("Currently approved templates: tpl-agent."), out);
+        assertTrue(out.contains("Approved templates: tpl-agent."), out);
         assertMcpUnchanged(seeded);
         assertEquals(List.of(), host.registrations);
     }
@@ -209,7 +209,7 @@ class McpInitFlowTest {
         var prompts = ScriptedPrompts.lines("y", "n", "y");
         var recorded = RecordingOutput.during(() -> run(host, prompts));
 
-        assertEquals(List.of("Enable the isx MCP server? (y/N): ",
+        assertEquals(List.of("Let agents on " + dev.incusspawn.Platform.thisComputer() + " use isx over MCP? (y/N): ",
                 "tpl-agent (not built yet: isx build tpl-agent)? (y/N): ",
                 "tpl-agent-java (not built yet: isx build tpl-agent-java)? (y/N): "),
                 prompts.questions().stream().map(BuildOutput::stripAnsi).toList());
@@ -238,7 +238,7 @@ class McpInitFlowTest {
         seedMcp("templates: [tpl-agent]\n");
         var prompts = ScriptedPrompts.lines("");
         var out = reported(() -> run(host, prompts));
-        assertTrue(out.contains("Currently registered with Claude Code"), out);
+        assertTrue(out.contains("isx mcp is registered with Claude Code."), out);
         assertEquals(List.of(), host.registrations, "already registered: not again");
     }
 
@@ -448,7 +448,7 @@ class McpInitFlowTest {
         // Already set up: Enter keeps it.
         out = reported(() -> run(host, ScriptedPrompts.lines("")));
         assertTrue(out.contains("The mcp: section of config.yaml is no longer read; move its contents to"), out);
-        assertTrue(out.contains("approved templates: tpl-agent-java."), out);
+        assertTrue(out.contains("Approved templates: tpl-agent-java."), out);
         assertUnchanged(seeded);
     }
 
@@ -479,7 +479,7 @@ class McpInitFlowTest {
         }));
         prompts.assertFullyConsumed();
         assertEquals(0, exit[0]);
-        assertEquals(List.of("Enable the isx MCP server? (y/N): ",
+        assertEquals(List.of("Let agents on " + dev.incusspawn.Platform.thisComputer() + " use isx over MCP? (y/N): ",
                 "tpl-agent (not built yet: isx build tpl-agent)? (y/N): ",
                 "tpl-agent-java (not built yet: isx build tpl-agent-java)? (y/N): "),
                 prompts.questions().stream().map(BuildOutput::stripAnsi).toList());

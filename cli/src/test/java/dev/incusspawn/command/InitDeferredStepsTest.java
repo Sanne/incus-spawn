@@ -79,8 +79,8 @@ class InitDeferredStepsTest {
         var recorded = RecordingOutput.during(init::offerMenu);
         assertEquals(List.of("search-paths", "mcp"), init.ran);
         var said = recorded.events().stream().filter(e -> e.msg() != null).map(RecordingOutput.Event::msg).toList();
-        assertTrue(said.stream().anyMatch(l -> l.startsWith("1  credentials") && l.contains("done")), said.toString());
-        assertTrue(said.contains("No step '9'."), said.toString());
+        assertTrue(said.contains("1  credentials       set up"), said.toString());
+        assertTrue(said.contains("Type a number from 1 to 4, or a step's name."), said.toString());
     }
 
     @Test

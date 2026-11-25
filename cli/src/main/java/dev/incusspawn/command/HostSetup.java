@@ -17,6 +17,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
@@ -236,10 +237,11 @@ class HostSetup {
             "certificate."};
 
     static final String[] INCUS_HINT = {
-            "Incus provides full Linux system containers — lightweight",
-            "VMs with near-native performance. This step installs the",
-            "Incus package, enables its systemd service, and adds your",
-            "user to the incus-admin group for unprivileged access."};
+            "Incus runs instances: full Linux systems, each isolated",
+            "from this computer. This step installs Incus, starts its",
+            "service and adds you to the incus-admin group."};
+    /** {@code --plan}'s purpose for the step, as the hint once read it: a contract (#2542). */
+    static final String INCUS_PURPOSE = "Incus provides full Linux system containers — lightweight VMs with near-native performance. This step installs the Incus package, enables its systemd service, and adds your user to the incus-admin group for unprivileged access.";
 
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
@@ -347,11 +349,11 @@ class HostSetup {
     }
 
     static final String[] FIREWALL_HINT = {
-            "Configures the host firewall so containers can reach the",
-            "internet and resolve DNS. Detects whether firewalld or UFW",
-            "is active (and installs firewalld when neither is), adds the",
-            "Incus bridge to a trusted zone, enables NAT masquerading, and",
-            "sets up FORWARD rules."};
+            "Instances reach the internet through this computer. This",
+            "step lets the firewall pass their traffic and DNS, with",
+            "firewalld or UFW, and installs firewalld if neither runs."};
+    /** {@code --plan}'s purpose for the step, as the hint once read it: a contract (#2542). */
+    static final String FIREWALL_PURPOSE = "Configures the host firewall so containers can reach the internet and resolve DNS. Detects whether firewalld or UFW is active (and installs firewalld when neither is), adds the Incus bridge to a trusted zone, enables NAT masquerading, and sets up FORWARD rules.";
 
     // The firewalld commands the firewall step runs and the plan names, written once
     private static final String[] FWD_LIST_TRUSTED = {"firewall-cmd", "--zone=trusted", "--list-all"};
@@ -567,18 +569,21 @@ class HostSetup {
                 configureUfw(ProxyConfig.resolveGatewayIp(init.incus), UfwCheck.readBeforeRules());
             }
             case DetectionResult.NeitherInstalled n -> {
-                BuildOutput.step("No firewall detected.");
                 var cmd = installCommand(init::hostHasCommand, "firewalld");
                 if (cmd == null) {
-                    BuildOutput.warn("Could not detect package manager.");
+                    BuildOutput.warn(networkAtRisk(), fit("isx did not find a firewall, or a package manager to install firewalld with.",
+                            "Install firewalld or UFW, then run 'isx init' again."));
                     return;
                 }
+                BuildOutput.step("isx did not find a firewall, so it installs firewalld.");
                 if (!install("Installing firewalld", cmd)) {
-                    BuildOutput.warn("Failed to install firewalld.");
+                    BuildOutput.warn(networkAtRisk(), fit("firewalld did not install.",
+                            "Install firewalld or UFW, then run 'isx init' again."));
                     return;
                 }
                 if (!BuildOutput.liveStep("Starting firewalld", () -> runHost(ENABLE_FIREWALLD) == 0)) {
-                    BuildOutput.warn("Failed to start firewalld.");
+                    BuildOutput.warn(networkAtRisk(), fit("firewalld did not start.",
+                            "'sudo systemctl status firewalld' says why.", "Then run 'isx init' again."));
                     return;
                 }
                 configureFirewalld();
@@ -597,7 +602,7 @@ class HostSetup {
         boolean hasForwardOut = FirewalldCheck.isForwardRulePresent(directRulesOutput, "-o", "incusbr0");
 
         if (hasInterface && hasMasquerade && hasForwardIn && hasForwardOut) {
-            BuildOutput.step("Firewall already configured (firewalld).");
+            firewallReady("firewalld");
             return;
         }
 
@@ -605,10 +610,10 @@ class HostSetup {
             if (!BuildOutput.liveStep("Letting " + init.machines() + " through the firewall",
                     () -> runHostQuiet(FWD_TRUST_BRIDGE) == 0)) {
                 BuildOutput.warn("Failed to add incusbr0 to trusted zone.",
-                        "Until it is, " + init.machines() + " may not reach the network or DNS. Fix it by hand with:",
+                        fit("Until it is, " + init.machines() + " may not reach the network or DNS. Fix it by hand with:",
                         "sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent",
                         "sudo firewall-cmd --zone=trusted --add-masquerade --permanent",
-                        "sudo firewall-cmd --reload");
+                        "sudo firewall-cmd --reload"));
                 return;
             }
         }
@@ -641,7 +646,7 @@ class HostSetup {
             warnFirewallIncomplete();
             return;
         }
-        BuildOutput.step("Firewall configured: incusbr0 in trusted zone with masquerading (firewalld).");
+        firewallReady("firewalld");
     }
 
     void configureUfw(String gatewayIp, String beforeRules) {
@@ -656,7 +661,7 @@ class HostSetup {
         boolean hasMasquerade = UfwCheck.hasMasquerade(beforeRules, subnet);
 
         if (hasForward && hasMasquerade) {
-            BuildOutput.step("Firewall already configured (UFW).");
+            firewallReady("UFW");
             return;
         }
 
@@ -689,15 +694,43 @@ class HostSetup {
             warnFirewallIncomplete();
             return;
         }
-        BuildOutput.step("Firewall configured: incusbr0 trusted with masquerading (UFW).");
+        firewallReady("UFW");
+    }
+
+    /** A line of the setup block, its indent one level under the step's: at most this wide (.claude/rules/interface-text.md). */
+    private static final int BLOCK_WIDTH = Lines.WIDTH - 2;
+
+    /** {@code text} as steps of the setup block, wrapped to its frame. */
+    private static void stepFit(String text) {
+        Lines.wrap(text, BLOCK_WIDTH).forEach(BuildOutput::step);
+    }
+
+    /**
+     * A warning's details in the setup block: {@code prose} wrapped to the frame, then each of
+     * {@code whole} on a line of its own, since a command broken across two lines cannot be copied.
+     */
+    private static String[] fit(String prose, String... whole) {
+        var lines = new ArrayList<>(Lines.wrap(prose, BLOCK_WIDTH - 2));
+        lines.addAll(List.of(whole));
+        return lines.toArray(String[]::new);
+    }
+
+    /** What a firewall that is not set up means for the person. */
+    private String networkAtRisk() {
+        return "Your " + init.machines() + " may not reach the network.";
+    }
+
+    /** The firewall step's one outcome line, the same whether it changed the rules or found them in place. */
+    private void firewallReady(String firewall) {
+        stepFit("The firewall lets " + init.machines() + " reach the internet (" + firewall + ").");
     }
 
     private void warnFirewallIncomplete() {
-        warnIncomplete("The firewall is only partly set up, so " + init.machines() + " may not reach the network or DNS.");
+        warnIncomplete("The firewall is only partly set up.", "Your " + init.machines() + " may not reach the network or DNS.");
     }
 
-    private static void warnIncomplete(String consequence) {
-        BuildOutput.warn(consequence, "Fix the problem reported above, then re-run: isx init");
+    private static void warnIncomplete(String what, String consequence) {
+        BuildOutput.warn(what, fit(consequence, "Fix the problem above, then run 'isx init' again."));
     }
 
     /** Whether the new rules reached {@code before.rules}. */
@@ -750,7 +783,9 @@ class HostSetup {
             Files.writeString(tempFile, NM_CONF);
             if (installHostFile(tempFile, confFile.toString()) != 0) return;
             if (runHostQuiet("sudo", "nmcli", "general", "reload") != 0) {
-                BuildOutput.warn("Wrote " + confFile + " but could not reload NetworkManager; it applies after a reboot.");
+                BuildOutput.warn("New NetworkManager settings apply at the next reboot.",
+                        fit("They keep NetworkManager off the network devices of " + init.machines() + ". isx wrote them to "
+                                + confFile + ", but could not reload NetworkManager now."));
             } else {
                 BuildOutput.step("Configured NetworkManager to ignore veth devices.");
             }
@@ -811,7 +846,8 @@ class HostSetup {
             if (installHostFile(tempFile, sysctlConf) != 0) {
                 BuildOutput.warn("Could not write " + sysctlConf + ".");
             } else if (runHostQuiet("sudo", "sysctl", "-p", sysctlConf) != 0) {
-                BuildOutput.warn("Wrote " + sysctlConf + " but could not apply it now; it applies after a reboot.");
+                BuildOutput.warn("File-watch and perf limits change at the next reboot.",
+                        fit("isx wrote them to " + sysctlConf + ", but could not apply them now."));
             } else {
                 BuildOutput.step("Raised the file-watch limits.");
                 BuildOutput.step("Let " + init.machines() + " use perf.");
@@ -887,9 +923,11 @@ class HostSetup {
             tempFile = Files.createTempFile("isx-ksm-", ".conf");
             Files.writeString(tempFile, content);
             if (installHostFile(tempFile, KSM_TMPFILES) != 0) {
-                BuildOutput.warn("Could not write " + KSM_TMPFILES + "; KSM stays off.");
+                BuildOutput.warn("Kernel same-page merging stays off.",
+                        fit("It saves memory for VMs (KSM). isx could not write " + KSM_TMPFILES + "."));
             } else if (runHostQuiet("sudo", "systemd-tmpfiles", "--create", KSM_TMPFILES) != 0) {
-                BuildOutput.warn("Could not enable KSM now; it will be on after a reboot.");
+                BuildOutput.warn("Kernel same-page merging starts at the next reboot.",
+                        fit("It saves memory for VMs (KSM). isx could not turn it on now."));
             } else {
                 BuildOutput.step("Enabled kernel same-page merging (KSM) for VMs.");
             }
@@ -924,7 +962,7 @@ class HostSetup {
             }
         }
         if (from == null || from.isEmpty()) return List.of();
-        var step = new InitPlan.Entry("mitm-proxy", "MITM Authentication Proxy", String.join(" ", MITM_HINT),
+        var step = new InitPlan.Entry("mitm-proxy", "MITM Authentication Proxy", MITM_PURPOSE,
                 InitPlan.Assessment.done());
         var move = InitPlan.Change.sudo("Move the redirect to the proxy from the old gateway " + from
                 + " to the bridge's new one, which a run moved off a host route", null);
@@ -966,7 +1004,7 @@ class HostSetup {
      * move: the script made it, by its record.
      */
     List<InitPlan.Privileged> redirectLeftUnderNoSudo(String gatewayIp) {
-        var step = new InitPlan.Entry("mitm-proxy", "MITM Authentication Proxy", String.join(" ", MITM_HINT),
+        var step = new InitPlan.Entry("mitm-proxy", "MITM Authentication Proxy", MITM_PURPOSE,
                 InitPlan.Assessment.done());
         var firewall = init.runningFirewall();
         forgetMadeBridgeMove();
@@ -1026,8 +1064,8 @@ class HostSetup {
             init.reportCertificateCreated();
         }
         if (!redirected) {
-            warnIncomplete("isx could not send all HTTPS of " + init.machines() + " to the proxy, so the proxy may not add"
-                    + " your credentials to it.");
+            warnIncomplete("Some HTTPS does not go to the proxy.", "isx could not send all HTTPS of " + init.machines()
+                    + " to the proxy, so the proxy may not add your credentials to it.");
             return;
         }
         BuildOutput.ok("The isx proxy is set up");
@@ -1040,7 +1078,7 @@ class HostSetup {
 
         boolean ok = true;
         if (hasRedirect) {
-            BuildOutput.step("PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
+            stepFit("The HTTPS of " + init.machines() + " goes to the proxy (" + gatewayIp + ":443 -> "
                     + ProxyConfig.DEFAULT_MITM_PORT + ").");
         } else {
             // Remove stale redirect rule pointing to a previous gateway IP
@@ -1105,10 +1143,11 @@ class HostSetup {
     }
 
     static final String[] MITM_HINT = {
-            "The MITM proxy intercepts HTTPS from containers and injects",
-            "your real API credentials, so containers never hold sensitive",
-            "tokens directly. This step sets up iptables port redirection",
-            "and generates a custom CA certificate trusted by containers."};
+            "The isx proxy adds your credentials to the HTTPS requests",
+            "of instances, so instances never hold them. This step",
+            "sends that traffic to the proxy and makes its certificate."};
+    /** {@code --plan}'s purpose for the step, as the hint once read it: a contract (#2542). */
+    static final String MITM_PURPOSE = "The MITM proxy intercepts HTTPS from containers and injects your real API credentials, so containers never hold sensitive tokens directly. This step sets up iptables port redirection and generates a custom CA certificate trusted by containers.";
 
     /**
      * The redirect for the script, which reads the gateway from the bridge as it runs: the bridge
@@ -1190,7 +1229,7 @@ class HostSetup {
         boolean hasRedirect = UfwCheck.hasPreRoutingRedirect(beforeRules, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp);
 
         if (hasRedirect) {
-            BuildOutput.step("PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
+            stepFit("The HTTPS of " + init.machines() + " goes to the proxy (" + gatewayIp + ":443 -> "
                     + ProxyConfig.DEFAULT_MITM_PORT + ").");
         } else {
             var staleIp = UfwCheck.extractRedirectGatewayIp(beforeRules, ProxyConfig.DEFAULT_MITM_PORT);
@@ -1209,10 +1248,11 @@ class HostSetup {
     }
 
     static final String[] SUBID_HINT = {
-            "Containers use Linux user namespaces to isolate processes.",
-            "This configures /etc/subuid and /etc/subgid so the",
-            "container's root user maps to an unprivileged UID range",
-            "on the host, preventing privilege escalation."};
+            "The users inside instances map to users that have no",
+            "rights on this computer. This step writes those mappings",
+            "to /etc/subuid and /etc/subgid."};
+    /** {@code --plan}'s purpose for the step, as the hint once read it: a contract (#2542). */
+    static final String SUBID_PURPOSE = "Containers use Linux user namespaces to isolate processes. This configures /etc/subuid and /etc/subgid so the container's root user maps to an unprivileged UID range on the host, preventing privilege escalation.";
 
     static final List<String> SUBID_FILES = List.of("/etc/subuid", "/etc/subgid");
 
@@ -1284,7 +1324,7 @@ class HostSetup {
         if (changed) {
             BuildOutput.liveStep("Restarting Incus with user IDs for " + init.machines(), () -> runHost("sudo", "systemctl", "restart", "incus") == 0);
         }
-        BuildOutput.step("subuid/subgid configured.");
+        BuildOutput.step("The user IDs of " + init.machines() + " are set up.");
     }
 
     enum SubidAction { UNCHANGED, UPDATED, NEEDS_CONFIRMATION }
@@ -1423,7 +1463,7 @@ class HostSetup {
         // .listed() means "the list call succeeded", NOT "a pool exists" — using it here skipped
         // admin init on every fresh daemon, leaving no default profile / no incusbr0 bridge.
         if (init.incus.hasStoragePool()) {
-            BuildOutput.step("Incus already initialized.");
+            BuildOutput.step("Incus has a storage pool.");
         } else if (init.noSudo()) {
             // The root script ran it, by its record, yet Incus has no pool: nothing below can work without one
             throw new IllegalStateException("Incus has no storage pool, though the root script was to make one."
@@ -1431,9 +1471,10 @@ class HostSetup {
         } else {
             var exitCode = runHost("sudo", "incus", "admin", "init", "--minimal");
             if (exitCode == 0) {
-                BuildOutput.step("Incus initialized with default storage pool and network.");
+                BuildOutput.step("isx gave Incus a storage pool and a network.");
             } else {
-                BuildOutput.warn("Incus initialization may have failed.", "Check 'incus storage list'.");
+                BuildOutput.warn("'incus admin init' failed, so Incus may lack a storage pool or a network.",
+                        "'incus storage list' and 'incus network list' show what it has.");
             }
         }
 
@@ -1443,7 +1484,7 @@ class HostSetup {
         // check, MITM proxy) hard-fail without it. Ensure it exists here; this is a no-op when
         // the bridge is already present, and checkBridgeSubnet() fixes any VPN subnet conflict.
         if (init.incus.createBridgeIfMissing("incusbr0", VmManager.gatewayIp())) {
-            BuildOutput.step("Bridge 'incusbr0' was missing — created it ("
+            stepFit("Incus had no network for " + init.machines() + ", so isx created incusbr0 ("
                     + VmManager.gatewayIp() + "/24).");
         }
 
@@ -1547,10 +1588,11 @@ class HostSetup {
     }
 
     static final String[] STORAGE_HINT = {
-            "Initializes the Incus daemon with a network bridge and",
-            "storage pool. If no copy-on-write (btrfs) pool exists,",
-            "one is created — enabling instant, space-efficient clones",
-            "when you branch containers."};
+            "Instances need a network and a place on disk. With a",
+            "btrfs pool, each new instance is a copy made instantly",
+            "that shares the files it has not changed."};
+    /** {@code --plan}'s purpose for the step, as the hint once read it: a contract (#2542). */
+    static final String STORAGE_PURPOSE = "Initializes the Incus daemon with a network bridge and storage pool. If no copy-on-write (btrfs) pool exists, one is created — enabling instant, space-efficient clones when you branch containers.";
 
     private static final String ADMIN_INIT = "sudo incus admin init --minimal";
     /** The pool {@link #ADMIN_INIT} makes, and gives the default profile's root disk. */
@@ -1745,7 +1787,7 @@ class HostSetup {
             }
             if (runHostQuiet("sudo", "install", "-m", "0440", "-o", "root", "-g", "root",
                     tempFile.toString(), BTRFS_SUDOERS) == 0) {
-                BuildOutput.step("Enabled per-template disk accounting (scoped btrfs read).");
+                BuildOutput.step("isx reads the disk use of templates without a password.");
             }
             Files.deleteIfExists(tempFile);
         } catch (IOException e) {
@@ -1771,8 +1813,8 @@ class HostSetup {
         try {
             var added = init.incus.ensureDefaultProfileDevices(pool, "incusbr0");
             if (!added.isEmpty()) {
-                BuildOutput.step("Default profile was incomplete — added " + added
-                        + " (root disk on pool '" + pool + "').");
+                stepFit("Incus's default profile lacked " + OutputFormat.andList(added) + ", so isx added "
+                        + (added.size() == 1 ? "it" : "them") + " (root disk on pool " + pool + ").");
             }
             upgradeProfilePoolIfNeeded(pool);
         } catch (Exception e) {
@@ -1928,8 +1970,6 @@ class HostSetup {
                             "You may need to manually set the bridge address:",
                             "incus network set incusbr0 ipv4.address 172.20.0.1/24");
                 }
-            } else {
-                BuildOutput.step("Bridge subnet is clear of VPN route conflicts.");
             }
         } catch (Exception e) {
             BuildOutput.abandonStep();
