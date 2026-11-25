@@ -2349,7 +2349,6 @@ public class InitCommand extends BaseCommand {
         var branch = new BranchCommand();
         branch.name = instance;
         branch.source = template;
-        branch.firstRun = true;
         return branch.doExecute().getResultValue();
     }
 

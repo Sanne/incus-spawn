@@ -352,7 +352,7 @@ public final class ProxyService {
         } else {
             BuildOutput.stepBreak();
             // Why it failed comes right under its mark, before the next step's line (#2528)
-            BuildOutput.error("The isx proxy service did not start.", serviceLogs());
+            reportServiceFailure("The isx proxy service did not start.");
         }
 
         if (dev.incusspawn.util.Privilege.forbidden()) {
@@ -371,7 +371,7 @@ public final class ProxyService {
     /** Whether the service that is active answers, and is the one answering: says so, or why not. */
     private static boolean confirmAnswering() {
         if (!ProxyHealthCheck.awaitHealthy(configuredStartWaitSeconds())) {
-            BuildOutput.error("Service started but proxy is not responding.", serviceLogs());
+            reportServiceFailure("Service started but proxy is not responding.");
             return false;
         }
         if (!answeringIsTheService()) return false;
@@ -948,9 +948,40 @@ public final class ProxyService {
                 + "resolvable from the shell you run 'isx init' in.";
     }
 
-    /** What the journal says of the service, with advice for what it shows: the lines under a failed start. */
-    private static String[] serviceLogs() {
-        var lines = new ArrayList<String>();
+    /**
+     * Reports that the service failed, as {@code msg}: the error with the command that shows why
+     * and advice for what the journal holds, then the journal's last lines as the failure's
+     * detail ({@link BuildOutput#failureDetail}), which a first run keeps in its log (#2528).
+     * Ten raw journal lines under the error, each wider than the first run's frame, hid the one
+     * line a person acts on.
+     */
+    private static void reportServiceFailure(String msg) {
+        var journal = journal();
+        var advice = new ArrayList<String>();
+        advice.add(journal.isEmpty() ? "systemd has no log of it. This command says why:" : "This command says why:");
+        advice.add("systemctl --user status " + SERVICE_NAME);
+        if (journal.stream().anyMatch(line -> line.contains("status=127"))) {
+            advice.add("");
+            advice.add("Exit code 127 usually means a binary was not found.");
+            try {
+                var m = EXEC_START.matcher(Files.readString(Environment.proxyServiceFile()));
+                if (m.find()) advice.add("ExecStart: " + m.group(1));
+            } catch (Exception ignored) {}
+            advice.add("If isx-proxy was installed as a JVM wrapper, ensure Java "
+                    + REQUIRED_JAVA_MAJOR + "+ is available at the path embedded in the wrapper."
+                    + " If it was installed with JBang, ensure 'jbang' is on the PATH the"
+                    + " service was installed with.");
+            advice.add("Alternatively, reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
+        }
+        BuildOutput.error(msg, advice.toArray(String[]::new));
+        if (!journal.isEmpty()) {
+            BuildOutput.failureDetail("Recent logs:");
+            journal.forEach(BuildOutput::failureDetail);
+        }
+    }
+
+    /** The service's last journal lines, none when the journal is empty or cannot be read. */
+    private static List<String> journal() {
         try {
             var pb = new ProcessBuilder(
                     "journalctl", "--user", "-u", SERVICE_NAME, "--no-pager", "-n", "10");
@@ -959,31 +990,13 @@ public final class ProxyService {
             var output = new String(process.getInputStream().readAllBytes()).strip();
             process.waitFor();
             // journalctl's own words for an empty journal say nothing of why
-            if (output.isBlank() || output.equals("-- No entries --")) {
-                lines.add("systemd has no log of it. This command says why:");
-                lines.add("systemctl --user status " + SERVICE_NAME);
-            } else {
-                lines.add("Recent logs:");
-                output.lines().forEach(lines::add);
-                if (output.contains("status=127")) {
-                    lines.add("");
-                    lines.add("Exit code 127 usually means a binary was not found.");
-                    try {
-                        var svc = Files.readString(Environment.proxyServiceFile());
-                        var m = EXEC_START.matcher(svc);
-                        if (m.find()) lines.add("ExecStart: " + m.group(1));
-                    } catch (Exception ignored) {}
-                    lines.add("If isx-proxy was installed as a JVM wrapper, ensure Java "
-                            + REQUIRED_JAVA_MAJOR + "+ is available at the path embedded in the wrapper."
-                            + " If it was installed with JBang, ensure 'jbang' is on the PATH the"
-                            + " service was installed with.");
-                    lines.add("Alternatively, reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
-                }
-            }
-        } catch (Exception ignored) {
-            lines.add("Check logs with: journalctl --user -u " + SERVICE_NAME);
+            return output.isBlank() || output.equals("-- No entries --") ? List.of() : output.lines().toList();
+        } catch (IOException e) {
+            return List.of();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of();
         }
-        return lines.toArray(String[]::new);
     }
 
     /** The installed {@code isx} to point services and clients at, or null if none is found. */

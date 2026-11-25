@@ -155,18 +155,10 @@ public class BranchCommand extends BaseCommand {
             }
         }
         var menu = resolver.shellMenu(name, created.prefetched().templateName(), created.prefetched().workdir());
-        // An action draws its own screen, over anything said here; a plain shell is only a prompt
-        if (firstRun && shellPrep.shellCommand() == null) BuildOutput.step(ShellFarewell.entering(name));
         incus.interactiveShell(name, "agentuser", shellPrep, menu);
         BuildOutput.note(ShellFarewell.left(name));
         return CommandResult.SUCCESS;
     }
-
-    /**
-     * Whether {@code isx init}'s first run opens this instance: its person has never been inside
-     * one, so a plain shell is introduced before its prompt (#2528).
-     */
-    boolean firstRun;
 
     /**
      * The fields of {@code isx branch --format=plain|json}: the new name alone, so that
