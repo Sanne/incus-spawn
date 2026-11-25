@@ -145,8 +145,9 @@ _row_for() {
     r="$(awk -F'\t' -v id="$id" '
         function rank(s) { return s == "retired" ? 0 : s == "deprecated" ? 1 : s == "superseded" ? 2 : 3 }
         $1 == id || index($1, id "-") == 1 && substr($1, length(id) + 2) ~ /^([0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]|[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])$/ { print rank($2) "\t" $0 }
-    ' <<<"$rows" | sort -n | head -1 | cut -f2-)"
-    printf '%s' "$r"
+    ' <<<"$rows" | sort -n)"
+    r="${r%%$'\n'*}"
+    printf '%s' "${r#*$'\t'}"
 }
 
 # The findings: "key<TAB>title<TAB>body", the body's newlines written \n.
