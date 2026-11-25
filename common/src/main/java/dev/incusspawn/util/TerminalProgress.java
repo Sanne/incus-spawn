@@ -41,12 +41,27 @@ public final class TerminalProgress {
             pb.redirectErrorStream(true);
             var p = pb.start();
             var output = new String(p.getInputStream().readAllBytes()).strip();
-            if (p.waitFor(1, TimeUnit.SECONDS)) {
-                var parts = WHITESPACE.split(output);
-                if (parts.length >= 2) return Integer.parseInt(parts[1]);
-            }
+            if (p.waitFor(1, TimeUnit.SECONDS)) return widthOf(output);
         } catch (Exception ignored) {}
-        return 120;
+        return DEFAULT_WIDTH;
+    }
+
+    private static final int DEFAULT_WIDTH = 120;
+
+    /**
+     * The columns {@code stty size} reported, or the default when it did not say. A terminal that
+     * was never given a size (under {@code script}, a serial console) reports {@code 0 0}, and a
+     * width of 0 put every item of a list on a line of its own, each ending in a comma.
+     */
+    static int widthOf(String sttySize) {
+        var parts = WHITESPACE.split(sttySize.strip());
+        if (parts.length < 2) return DEFAULT_WIDTH;
+        try {
+            var columns = Integer.parseInt(parts[1]);
+            return columns > 0 ? columns : DEFAULT_WIDTH;
+        } catch (NumberFormatException e) {
+            return DEFAULT_WIDTH;
+        }
     }
 
     static String truncateToWidth(String s, int maxWidth) {

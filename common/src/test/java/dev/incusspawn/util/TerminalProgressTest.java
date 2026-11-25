@@ -11,6 +11,15 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TerminalProgressTest {
 
+    /** A terminal never given a size reports 0 columns, which put each list item on its own line. */
+    @Test
+    void aTerminalOfNoWidthIsTakenAsTheDefault() {
+        assertEquals(100, TerminalProgress.widthOf("40 100\n"));
+        assertEquals(120, TerminalProgress.widthOf("0 0"));
+        assertEquals(120, TerminalProgress.widthOf("stty: 'standard input': Inappropriate ioctl for device"));
+        assertEquals(120, TerminalProgress.widthOf(""));
+    }
+
     // Tests run headless (no console), so run() takes the plain, non-animated path.
 
     @Test
