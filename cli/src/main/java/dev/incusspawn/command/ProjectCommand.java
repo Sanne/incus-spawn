@@ -73,11 +73,11 @@ public class ProjectCommand extends BaseCommand {
         }
 
         /** A project template whose parent is deprecated says so, as {@code isx build} does (#1195, #1353). */
-        private static Optional<String> deprecationWarning(String imageName, String parent) {
+        private static Optional<ImageDef.Deprecation> deprecation(String imageName, String parent) {
             var project = new ImageDef();
             project.setName(imageName);
             project.setParent(parent);
-            return ImageDef.deprecationWarning(project, ImageDef.loadLayers(w -> { }).defs());
+            return ImageDef.deprecation(project, ImageDef.loadLayers(w -> { }).defs());
         }
 
         /**
@@ -109,7 +109,7 @@ public class ProjectCommand extends BaseCommand {
         private static int createHeld(IncusClient incus, ProjectConfig projectConfig, String imageName) {
             var parent = projectConfig.getParent();
             // Read before the parent is locked: loading definitions is I/O the lock need not wait for
-            var deprecation = deprecationWarning(imageName, parent);
+            var deprecation = deprecation(imageName, parent);
             boolean exists;
             boolean built;
             var buildName = imageName + BuildCommand.REBUILDING_SUFFIX;
@@ -123,7 +123,7 @@ public class ProjectCommand extends BaseCommand {
 
                 BuildOutput.header("Creating project template " + imageName);
                 BuildOutput.note("Parent: " + parent);
-                deprecation.ifPresent(w -> BuildOutput.warn(OutputFormat.oneLine(w)));
+                deprecation.ifPresent(BuildCommand::warnDeprecation);
 
                 exists = incus.exists(imageName);
                 if (exists) {

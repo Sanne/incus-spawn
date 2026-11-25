@@ -127,8 +127,8 @@ class GhSetupTest {
     @Test
     void theNoIdentityWarningSaysHowToFixIt() {
         var warning = new GhSetup().unbakedIdentityWarning("");
-        assertTrue(warning.contains("No git identity"), warning);
-        assertTrue(warning.contains("no GitHub token is configured"), warning);
+        assertTrue(warning.startsWith("Commits made in this template will not have an author.\n"), warning);
+        assertTrue(warning.contains("you have not set one up"), warning);
         assertTrue(warning.contains("isx account add github"), warning);
         assertFalse(warning.contains("next start"), "a plain start does not reconcile: " + warning);
     }

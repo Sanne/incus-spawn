@@ -97,39 +97,39 @@ import static dev.incusspawn.command.SkillInstaller.installSkills;
 
 @CommandDefinition(
         name = "build",
-        description = "Build or rebuild a template image (e.g. tpl-minimal)",
+        description = "Build or rebuild templates",
         generateHelp = true
 )
 public class BuildCommand extends BaseCommand {
 
-    @Arguments(completer = Completers.Template.class, description = "Names of the templates (e.g. tpl-minimal my-template)")
+    @Arguments(completer = Completers.Template.class, description = "Names of the templates to build, such as tpl-minimal my-template")
     List<String> names;
 
-    @Option(name = "all", hasValue = false, description = "Rebuild all defined templates")
+    @Option(name = "all", hasValue = false, description = "Rebuild every defined template")
     boolean all;
 
-    @Option(name = "out-of-sync", hasValue = false, description = "Rebuild templates that are out of sync (definition or isx version changed, or parent rebuilt since)")
+    @Option(name = "out-of-sync", hasValue = false, description = "Rebuild the templates that are out of date: their definition or isx changed, or their parent was rebuilt, since they were built")
     boolean outOfSync;
 
-    @Option(name = "with-parents", hasValue = false, description = "Rebuild the templates and all their parents unconditionally, shared parents once")
+    @Option(name = "with-parents", hasValue = false, description = "Rebuild the templates and all their parents, even those that are up to date, a shared parent once")
     boolean withParents;
 
-    @Option(name = "with-descendants", hasValue = false, description = "Rebuild the templates and all templates inheriting from them")
+    @Option(name = "with-descendants", hasValue = false, description = "Rebuild the templates and every template built on them")
     boolean withDescendants;
 
-    @Option(name = "missing", hasValue = false, description = "Build only templates that don't exist yet")
+    @Option(name = "missing", hasValue = false, description = "Build the templates that are not built yet, and leave the others as they are")
     boolean missing;
 
-    @Option(name = "skip-missing-accounts", hasValue = false, description = "With --all, --missing or --out-of-sync: skip each template that pins an account this host has not configured, and what inherits from it, and build the rest")
+    @Option(name = "skip-missing-accounts", hasValue = false, description = "With --all, --missing or --out-of-sync: skip each template that selects an account this host does not have, and the templates built on it, and build the rest")
     boolean skipMissingAccounts;
 
-    @Option(name = "type", description = "Instance type: container, vm, or kvm (overrides image definition)")
+    @Option(name = "type", description = "Build them as a container, vm or kvm, whatever their definitions say")
     InstanceType type;
 
-    @Option(name = "yes", hasValue = false, description = "Skip interactive confirmations (for TUI integration)")
+    @Option(name = "yes", hasValue = false, description = "Build without asking first")
     boolean yes;
 
-    @Option(name = "skip-git-refresh", hasValue = false, description = "Compatibility option; builds no longer refresh host checkouts")
+    @Option(name = "skip-git-refresh", hasValue = false, description = "Does nothing; kept so that older scripts still run")
     boolean skipGitRefresh;
 
     @Option(name = "verbose", hasValue = false, description = "Show every command the definitions ran, with its output, once each template is built, and how long each repository took to prepare")
@@ -146,12 +146,12 @@ public class BuildCommand extends BaseCommand {
      * the user declined. When there is no interactive console the prompt is
      * skipped and {@code true} is returned (non-interactive CI behaviour).
      */
-    private boolean confirm(String prompt) {
+    private boolean confirm(String prompt, String unchanged) {
         if (yes) return true;
         var prompts = prompts();
         if (prompts == null) return true;
         if (!askYesNo(prompts, prompt, false)) {
-            BuildOutput.step("Aborted.");
+            BuildOutput.step("Cancelled. " + unchanged);
             return false;
         }
         return true;
@@ -337,8 +337,9 @@ public class BuildCommand extends BaseCommand {
         }
 
         if (names.isEmpty()) {
-            BuildOutput.error("name a template to build.", "Usage: isx build <image-name>...  or  isx build --all",
-                    "Available images: " + String.join(", ", defs.keySet()));
+            BuildOutput.error("give the name of a template to build.",
+                    "Usage: isx build <template>...  or  isx build --all",
+                    "Defined templates: " + String.join(", ", defs.keySet()));
             return CommandResult.valueOf(1);
         }
 
@@ -350,7 +351,7 @@ public class BuildCommand extends BaseCommand {
         var seen = new HashSet<String>();
         for (var target : targets) collectAllRecursive(target, defs, chains, seen);
         requireKnownTools(targets.stream().map(ImageDef::getName).toList(), defs);
-        // Asked once a build goes ahead: a template that exists asks "Rebuild?" first
+        // Asked once a build goes ahead: a template that exists asks "Rebuild <name>?" first
         if (preflightBeforeConfirm(chains, defs)) pendingAccountAsk = () -> warnUnbranchable(chains, defs);
         build(parentsFirst(targets, defs), defs);
         return CommandResult.SUCCESS;
@@ -402,8 +403,9 @@ public class BuildCommand extends BaseCommand {
     private static List<ImageDef> definitionsOf(List<String> names, Map<String, ImageDef> defs) {
         var unknown = names.stream().filter(n -> !defs.containsKey(n)).toList();
         if (unknown.isEmpty()) return names.stream().map(defs::get).toList();
-        BuildOutput.error((unknown.size() == 1 ? "Unknown image: " : "Unknown images: ") + shown(String.join(", ", unknown)),
-                "Available images: " + String.join(", ", defs.keySet()));
+        BuildOutput.error((unknown.size() == 1 ? "no template named " : "no templates named ")
+                        + shown(OutputFormat.andList(unknown)) + (unknown.size() == 1 ? " is" : " are") + " defined.",
+                "Defined templates: " + String.join(", ", defs.keySet()));
         return null;
     }
 
@@ -453,8 +455,8 @@ public class BuildCommand extends BaseCommand {
         requireKnownTools(templatesToRebuild, defs);
         var askAfter = preflightBeforeConfirm(templatesToRebuild, defs);
 
-        if (!confirmBatch(outdatedOnly ? "Templates to rebuild: " : "This will rebuild: ",
-                templatesToRebuild, defs, outdatedOnly ? "Rebuild?" : "Continue?")) return;
+        if (!confirmBatch(outdatedOnly ? "Out of date, to rebuild: " : "Will rebuild, in this order: ",
+                templatesToRebuild, defs)) return;
         if (askAfter) warnUnbranchable(templatesToRebuild, defs);
 
         rebuildAll(templatesToRebuild, defs);
@@ -464,18 +466,20 @@ public class BuildCommand extends BaseCommand {
      * Ask once for a whole batch, after showing everything a per-template prompt would have:
      * which images exist and will be replaced, and which tools their rebuild drops (#911).
      */
-    private boolean confirmBatch(String heading, List<String> templates, Map<String, ImageDef> defs,
-                                 String prompt) {
+    private boolean confirmBatch(String heading, List<String> templates, Map<String, ImageDef> defs) {
         BuildOutput.step(heading + String.join(", ", templates));
         var existing = templates.stream().filter(incus::exists).toList();
         if (!yes && !existing.isEmpty()) {
-            BuildOutput.step(String.join(", ", existing)
-                    + " will be replaced, each only if its build succeeds.");
+            BuildOutput.step(OutputFormat.andList(existing) + (existing.size() == 1 ? " is" : " are")
+                    + " built already. A new build replaces "
+                    + (existing.size() == 1 ? "it" : "each") + " only if it succeeds.");
         }
         for (var name : existing) {
             warnDroppedTools(name, defs.get(name), defs);
         }
-        if (!confirm(prompt)) return false;
+        var one = templates.size() == 1;
+        if (!confirm("Build " + (one ? "it?" : "them?"),
+                one ? shown(templates.getFirst()) + " stays as it was." : "The templates stay as they were.")) return false;
         batchConfirmed = true;
         return true;
     }
@@ -503,7 +507,7 @@ public class BuildCommand extends BaseCommand {
                 }
                 if (shouldSkipDueToFailedParent(imageDef, defs, failedBuilds)) {
                     BuildOutput.buildHeader(templateName, buildIndex, buildTotal);
-                    BuildOutput.step("Skipped — parent failed to build.");
+                    BuildOutput.step("Skipped: a template it is built on failed to build.");
                     failedBuilds.add(templateName);
                     continue;
                 }
@@ -633,7 +637,7 @@ public class BuildCommand extends BaseCommand {
         var targets = skipped.isEmpty() ? missingLeaves : withoutSkipped(missingLeaves, skipped, defs);
         toCheck.removeAll(skipped);
         requireKnownTools(targets.stream().map(ImageDef::getName).toList(), defs);
-        // Asked once a build goes ahead: an outdated ancestor that exists asks "Rebuild?" first
+        // Asked once a build goes ahead: an outdated ancestor that exists asks "Build them?" first
         if (preflightBeforeConfirm(toCheck, defs)) pendingAccountAsk = () -> warnUnbranchable(toCheck, defs);
         build(targets, defs);
     }
@@ -683,7 +687,7 @@ public class BuildCommand extends BaseCommand {
         requireKnownTools(chain, defs);
         var askAfter = preflightBeforeConfirm(chain, defs);
 
-        if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
+        if (!confirmBatch("Will rebuild, in this order: ", chain, defs)) return;
         if (askAfter) warnUnbranchable(chain, defs);
 
         rebuildAll(chain, defs);
@@ -699,7 +703,7 @@ public class BuildCommand extends BaseCommand {
         requireKnownTools(chain, defs);
         var askAfter = preflightBeforeConfirm(chain, defs);
 
-        if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
+        if (!confirmBatch("Will rebuild, in this order: ", chain, defs)) return;
         if (askAfter) warnUnbranchable(chain, defs);
 
         rebuildAll(chain, defs);
@@ -759,7 +763,7 @@ public class BuildCommand extends BaseCommand {
     private void buildEach(List<ImageDef> targets, Map<String, ImageDef> defs) {
         for (var target : targets) {
             if (shouldSkipDueToFailedParent(target, defs, failedInRun)) {
-                BuildOutput.step("Skipped " + target.getName() + " — a parent failed to build.");
+                BuildOutput.step("Skipped " + target.getName() + ": a template it is built on failed to build.");
                 failedInRun.add(target.getName());
             } else {
                 try {
@@ -787,7 +791,7 @@ public class BuildCommand extends BaseCommand {
         // a chain that replaces nothing does not ask. Each asked holding it, so one caught in
         // another isx's swap is not taken for missing and replaced without asking (#1212).
         if (chain.stream().anyMatch(this::existsHeld)
-                && !confirmBatch("This will rebuild: ", chain, defs, "Rebuild?")) return;
+                && !confirmBatch("Will build, in this order: ", chain, defs)) return;
         rebuildAll(chain, defs);
     }
 
@@ -802,7 +806,7 @@ public class BuildCommand extends BaseCommand {
             // applies the entire ancestor chain from definitions alone —
             // parent Incus instances are not needed.
             if (effectiveMachineType(child) != effectiveMachineType(parentDef)
-                    || !parentNeedsBuild(parentDef.getName(), parentDef)) {
+                    || !parentNeedsBuild(child.getName(), parentDef.getName(), parentDef)) {
                 chain.addAll(parents.reversed());
                 return;
             }
@@ -810,7 +814,8 @@ public class BuildCommand extends BaseCommand {
             child = parentDef;
         }
         if (!child.isRoot() && !defs.containsKey(child.getParent())) {
-            BuildOutput.error("parent image '" + shown(child.getParent()) + "' not found in definitions.");
+            BuildOutput.error(shown(child.getName()) + " is built on " + shown(child.getParent())
+                    + ", and no template of that name is defined.");
             throw new BuildFailedException();
         }
         chain.addAll(parents.reversed());
@@ -828,15 +833,15 @@ public class BuildCommand extends BaseCommand {
      * and be rebuilt a second time, racing the first (#1212). Its own parent too: the outdated check
      * reads it, and one caught missing would make the parent look current.
      */
-    boolean parentNeedsBuild(String parentName, ImageDef parentDef) {
+    boolean parentNeedsBuild(String childName, String parentName, ImageDef parentDef) {
         try (var parentHeld = TemplateLock.reading(parentName, BuildOutput.bound());
              var grandparentHeld = TemplateLock.reading(parentDef.getParent(), BuildOutput.bound())) {
             if (!incus.exists(parentName)) {
-                BuildOutput.note("Parent '" + parentName + "' not found, building first.");
+                BuildOutput.note(shown(childName) + " is built on " + shown(parentName) + ", which is not built yet, so isx builds it first.");
                 return true;
             }
             if (isImageOutdated(parentName, parentDef, incus, toolDefLoader)) {
-                BuildOutput.note("Parent '" + parentName + "' is outdated, rebuilding first.");
+                BuildOutput.note(shown(childName) + " is built on " + shown(parentName) + ", which is out of date, so isx rebuilds it first.");
                 return true;
             }
             return false;
@@ -887,10 +892,10 @@ public class BuildCommand extends BaseCommand {
 
         if (!batchConfirmed && incus.exists(canonicalName)) {
             if (!yes) {
-                BuildOutput.step("Image already exists. It will be replaced if the build succeeds.");
+                BuildOutput.step(canonicalName + " is built already. A new build replaces it only if it succeeds.");
             }
             warnDroppedTools(canonicalName, imageDef, defs);
-            if (!confirm("Rebuild?")) return;
+            if (!confirm("Rebuild " + canonicalName + "?", canonicalName + " stays as it was.")) return;
         }
         askPendingAccounts();
 
@@ -1109,8 +1114,17 @@ public class BuildCommand extends BaseCommand {
      * template however many times a run builds it.
      */
     private void warnDeprecated(ImageDef imageDef, Map<String, ImageDef> defs) {
-        ImageDef.deprecationWarning(imageDef, defs).filter(warnedDeprecated::add)
-                .ifPresent(w -> BuildOutput.warn(shown(w)));
+        ImageDef.deprecation(imageDef, defs).filter(d -> warnedDeprecated.add(d.warning()))
+                .ifPresent(BuildCommand::warnDeprecation);
+    }
+
+    /**
+     * What is deprecated as the warning, and the definition's note under it, wrapped to init's frame:
+     * on one line, a note as long as the built-in templates' ran far past it (#2542).
+     */
+    static void warnDeprecation(ImageDef.Deprecation deprecation) {
+        var note = deprecation.note().isEmpty() ? List.<String>of() : Lines.wrap(shown(deprecation.note()), Lines.WIDTH - 2);
+        BuildOutput.warn(shown(deprecation.what()) + ".", note.toArray(String[]::new));
     }
 
     private void warnDroppedTools(String existingImage, ImageDef imageDef, Map<String, ImageDef> defs) {
@@ -1180,7 +1194,11 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
+    /** The build instance's status as {@link #printBuildDiagnostics} last read it, or "" when it did not. */
+    private String diagnosedStatus = "";
+
     String printBuildDiagnostics(String buildName, boolean created) {
+        diagnosedStatus = "";
         var diag = new StringBuilder();
         try {
             // Without a container only the host's state is left to report: a full pool can be
@@ -1188,6 +1206,7 @@ public class BuildCommand extends BaseCommand {
             var status = "";
             if (created) {
                 status = incus.getInstanceStatus(buildName);
+                diagnosedStatus = status == null ? "" : status;
                 appendDiag(diag, "  Container status: " + (status.isEmpty() ? "(unknown)" : status));
 
                 var log = incus.getLog(buildName);
@@ -1356,15 +1375,18 @@ public class BuildCommand extends BaseCommand {
                     Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_FAILED_BUILD,
                     Metadata.PARENT, canonicalName,
                     Metadata.CREATED, Metadata.now()));
-            var hint = savedHostReport
-                    ? " — see " + Environment.buildFailureLogFile(canonicalName)
-                    : (savedFailureSummary ? " — see ~/inbox/BUILD_FAILURE.txt inside the instance" : "");
+            // The report's path was said on the line before; only the inbox copy is new here
+            var details = new ArrayList<String>();
+            if (!savedHostReport && savedFailureSummary) {
+                details.add("Its report is in ~/inbox/BUILD_FAILURE.txt inside the instance.");
+            }
+            details.add("'isx destroy " + shown(promotedName) + "' deletes it.");
             // A warning, like the failure it follows: the instance to inspect is where to look next
-            BuildOutput.warn("Container promoted to instance '" + shown(promotedName)
-                    + "' for inspection" + shown(hint) + ".");
+            BuildOutput.warn("isx kept the failed build as the instance " + shown(promotedName)
+                    + ", for you to look into.", details.toArray(String[]::new));
         } catch (Exception promoteError) {
-            BuildOutput.warn("Could not promote the container: " + shown(BaseCommand.failure(promoteError)),
-                    "Container '" + shown(buildName) + "' may still exist for manual cleanup.");
+            BuildOutput.warn("Could not keep the failed build as an instance: " + shown(BaseCommand.failure(promoteError)),
+                    "Its instance " + shown(buildName) + " may still exist, for you to delete.");
         }
     }
 
@@ -1454,7 +1476,7 @@ public class BuildCommand extends BaseCommand {
                 Files.move(tmp, hostLog, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 savedHostReport = true;
                 // A warning, so the TUI's log and every output keep where to look
-                BuildOutput.warn("Failure report saved to " + shown(hostLog) + ".");
+                BuildOutput.warn("The failure report is in " + shown(hostLog) + ".");
             } catch (Exception e) {
                 BuildOutput.warn("Could not save the failure report to " + shown(hostLog) + ": " + shown(BaseCommand.failure(e)));
                 try { Files.deleteIfExists(tmp); } catch (Exception ignored) {}
@@ -1464,11 +1486,14 @@ public class BuildCommand extends BaseCommand {
         // The in-container copy is a convenience for poking around inside the promoted instance.
         savedFailureSummary = false;
         if (!created) return false;
+        // Written by an exec, which a stopped instance refuses: that refusal was the only line
+        // such a failure printed after its report (#2542). The status is the diagnostics' reading
+        if (!diagnosedStatus.isEmpty() && !"Running".equalsIgnoreCase(diagnosedStatus)) return true;
         try {
             new Container(incus, buildName).writeFile(INBOX_FAILURE_PATH, report);
             savedFailureSummary = true;
         } catch (Exception e) {
-            BuildOutput.warn("Could not write " + INBOX_FAILURE_PATH + " inside the container: "
+            BuildOutput.warn("Could not write " + INBOX_FAILURE_PATH + " inside the build's instance: "
                     + shown(BaseCommand.failure(e)));
         }
         return true;
@@ -2627,10 +2652,12 @@ public class BuildCommand extends BaseCommand {
      */
     static List<String> unbranchable(CredentialCheck.Missing credential, List<String> refused) {
         var one = refused.size() == 1;
-        return List.of(OutputFormat.andList(refused) + (one ? " lacks" : " lack") + " a credential: 'isx branch' refuses "
-                        + (one ? "it." : "them."),
-                "Needed: " + credential.credential() + ".",
-                "'" + credential.command() + "' adds it.");
+        var names = one ? refused.getFirst()
+                : String.join(", ", refused.subList(0, refused.size() - 1)) + " or " + refused.getLast();
+        return List.of("'isx branch' cannot copy " + names + " until a credential "
+                        + (one ? "it needs" : "they need") + " is set up.",
+                (one ? "It needs: " : "They need: ") + credential.credential() + ".",
+                "'" + credential.command() + "' sets it up.");
     }
 
     /**

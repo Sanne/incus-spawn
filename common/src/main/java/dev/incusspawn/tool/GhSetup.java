@@ -204,14 +204,18 @@ public class GhSetup implements ToolSetup {
      */
     @Override
     public String unbakedIdentityWarning(String accountName) {
-        var problem = accountName == null || accountName.isBlank()
-                ? "no GitHub token is configured, so commits made in this template and its branches"
-                        + " have no author. Add a token with 'isx account add " + NAMESPACE + "'"
-                : "GitHub account '" + accountName + "', which this template uses, has no token, so"
-                        + " commits made in this template and its branches have no author. Add a token"
-                        + " to it with 'isx account add " + NAMESPACE + "', or have the template use another account";
-        return "No git identity: " + problem + "; branches pick the identity up the next time isx"
-                + " branches, opens a shell in or runs a command in them.";
+        var add = "'isx account add " + NAMESPACE + "'";
+        var why = accountName == null || accountName.isBlank()
+                ? "isx takes the author's name and email from a GitHub account, and you have not set one up.\n"
+                        + add + " sets one up."
+                : "isx takes the author's name and email from the GitHub account '" + accountName
+                        + "', which this template uses, and it does not have a token.\n"
+                        + add + " adds one, or the template can use another account.";
+        // git-identity: is written by a build alone, so it reaches a branch only once the template is rebuilt
+        return "Commits made in this template will not have an author.\n" + why
+                + "\nAfter that, each branch of it gets the author the next time isx branches it, opens a shell"
+                + " in it or runs a command in it.\nOr git-identity: in config.yaml names an author, which the"
+                + " template's next build gives it and the branches made after.";
     }
 
     private void configureGit(Container c, SpawnConfig config, String accountName) {

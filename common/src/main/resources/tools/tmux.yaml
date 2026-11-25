@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: tmux
-description: Terminal multiplexer with incus-spawn session integration
+description: Terminal multiplexer with isx session integration
 
 parameters:
   auto_attach:

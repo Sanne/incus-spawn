@@ -33,7 +33,7 @@ class BuildCommandParentLockTest {
         var parentDef = new ImageDef();
         parentDef.setParent("tpl-grandparent");
 
-        assertTrue(cmd.parentNeedsBuild("tpl-parent", parentDef));
+        assertTrue(cmd.parentNeedsBuild("tpl-child", "tpl-parent", parentDef));
         assertEquals(Map.of("tpl-parent", true, "tpl-grandparent", true), heldWhenAsked,
                 "looked up without holding it, so a rebuild could swap it meanwhile");
         assertFalse(TemplateLockProbe.held("tpl-parent"));
