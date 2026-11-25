@@ -414,4 +414,19 @@ class AiHelpClientTest {
         assertEquals("API error (502): " + "x".repeat(199) + "\uD83D\uDE00...", AiHelpClient.describeError(502,
                 body.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
+
+    /**
+     * The AI Help offer refuses only a key the answer judged (#2606): any other error lets the
+     * person save the key unverified, so a retired model or a region Gemini does not serve never
+     * makes every pasted key read as wrong.
+     */
+    @Test
+    void onlyAnAnswerAboutTheKeyRefusesIt() {
+        assertTrue(new AiHelpClient.ApiError(401, "bad key", false).refusesKey());
+        assertTrue(new AiHelpClient.ApiError(429, "no quota left", false).refusesKey());
+        assertTrue(new AiHelpClient.ApiError(400, "API_KEY_INVALID", true).refusesKey());
+        for (var status : new int[] {400, 403, 404, 500, 503}) {
+            assertFalse(new AiHelpClient.ApiError(status, "other", false).refusesKey(), "HTTP " + status);
+        }
+    }
 }

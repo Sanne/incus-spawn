@@ -88,6 +88,7 @@ Claude Max and Team plans include [monthly API credits](https://platform.claude.
 Add the key as a second `claude` account with `type: api-key`, and keep the subscription as the default.
 `isx ask` offers this the first time it has no account that can answer.
 An OpenAI or Gemini API key answers too.
+isx checks the key with a short question before saving it, and does not save a key the provider refuses.
 
 An instance uses the account from the first of these that is set:
 

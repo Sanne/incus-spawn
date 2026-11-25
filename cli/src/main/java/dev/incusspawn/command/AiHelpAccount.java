@@ -4,7 +4,6 @@ import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.NamespaceAccounts;
 import dev.incusspawn.config.SpawnConfig;
-import dev.incusspawn.proxy.GoogleAccounts;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.TerminalLink;
@@ -28,7 +27,6 @@ import java.util.Optional;
  */
 final class AiHelpAccount {
 
-    private static final String OPENAI = "openai";
     static final String NOT_SENT = "isx did not send the request: no account that can answer was added.";
 
     private AiHelpAccount() {}
@@ -60,9 +58,9 @@ final class AiHelpAccount {
             var outcome = switch (choice) {
                 case "1" -> claude(config, prompts, credentials, subscription, false);
                 case "2" -> claude(config, prompts, credentials, subscription, true);
-                case "3" -> key(config, prompts, OPENAI, "Create a key at "
+                case "3" -> key(config, prompts, credentials, AiHelpClient.Provider.OPENAI, "Create a key at "
                         + TerminalLink.link("https://platform.openai.com/api-keys") + ".");
-                case "4" -> key(config, prompts, GoogleAccounts.NAMESPACE, "Create a key at "
+                case "4" -> key(config, prompts, credentials, AiHelpClient.Provider.GEMINI, "Create a key at "
                         + TerminalLink.link("https://aistudio.google.com/apikey") + ".");
                 case "5" -> CredentialSetup.Outcome.DONE;
                 default -> CredentialSetup.Outcome.BACK;
@@ -90,18 +88,58 @@ final class AiHelpAccount {
                 : credentials.setupClaudeApiKey(config, prompts, target.get(), null);
     }
 
-    /** An API key of {@code namespace}, saved unverified: the question it answers is its check. */
-    private static CredentialSetup.Outcome key(SpawnConfig config, Prompts prompts, String namespace, String help) {
+    /**
+     * An API key of {@code provider}'s namespace, checked before it is saved (#2606): a short
+     * question goes to the provider with it, so a wrong key, or one with no quota left, is not
+     * kept as the account that answers, which nothing would offer to replace. A key that fails
+     * gets the menu every credential step shows ({@link CredentialSetup#askVerificationFailureAction}):
+     * try again, or go back to the kinds, and save it unverified only when the check could not run.
+     */
+    private static CredentialSetup.Outcome key(SpawnConfig config, Prompts prompts, CredentialSetup credentials,
+                                               AiHelpClient.Provider provider, String help) {
+        var namespace = AiHelpClient.namespace(provider);
         var target = target(prompts, new HashSet<>(AccountResolver.accountNames(config, namespace)));
         if (target.isEmpty()) return CredentialSetup.Outcome.BACK;
+        var name = target.get().name();
+        var here = Platform.thisComputer();
         BuildOutput.gap();
         BuildOutput.step(help);
-        var key = CredentialSetup.askSecret(prompts, "Paste the API key, or Enter to go back: ");
-        if (key.isBlank()) return CredentialSetup.Outcome.BACK;
-        NamespaceAccounts.put(config, namespace, target.get().name(), "apiKey", key);
+        while (true) {
+            var key = CredentialSetup.askSecret(prompts, "Paste the API key, or Enter to go back: ");
+            if (key.isBlank()) return CredentialSetup.Outcome.BACK;
+            // The check reads the key from a copy, so a key nobody keeps never reaches config.yaml
+            var trial = SpawnConfig.load();
+            NamespaceAccounts.put(trial, namespace, name, "apiKey", key);
+            var checked = AiHelpClient.targets(trial).stream()
+                    .filter(t -> t.provider() == provider && t.accountName().equals(name)).findFirst();
+            // A namespace-wide type: in a hand-edited config.yaml can keep the new account from answering
+            var result = checked.isPresent() ? credentials.checkAiHelpKey(trial, checked.get())
+                    : new CredentialSetup.AuthResult(false, "The " + namespace
+                            + " section of config.yaml sets a type: other than an API key for every account, so account '"
+                            + name + "' cannot answer. Remove that type: line, or choose another kind of account.");
+            if (result.verified()) {
+                save(config, namespace, name, key, "API key verified and saved on " + here);
+                return CredentialSetup.Outcome.DONE;
+            }
+            switch (CredentialSetup.askVerificationFailureAction(prompts, "The key", result.message(), result.reached())) {
+                case RETRY -> { }
+                case SAVE_UNVERIFIED -> {
+                    save(config, namespace, name, key, "API key saved on " + here + ", unverified");
+                    BuildOutput.stepNote("If it fails, 'isx account add " + namespace + "' replaces it.");
+                    return CredentialSetup.Outcome.DONE;
+                }
+                // Skipping this key leaves the other kinds to choose from
+                case SKIP -> {
+                    return CredentialSetup.Outcome.BACK;
+                }
+            }
+        }
+    }
+
+    private static void save(SpawnConfig config, String namespace, String name, String key, String saved) {
+        NamespaceAccounts.put(config, namespace, name, "apiKey", key);
         config.save();
-        BuildOutput.ok("API key saved on " + Platform.thisComputer());
-        return CredentialSetup.Outcome.DONE;
+        BuildOutput.ok(saved);
     }
 
     /**
