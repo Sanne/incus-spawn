@@ -699,4 +699,44 @@ class InitPlanTest {
         assertTrue(table.contains("1 step to do; sudo is needed."), table);
         assertTrue(Objects.requireNonNull(table).lines().noneMatch(l -> l.contains("\u001b")), table);
     }
+
+    /**
+     * The table fits the terminal (design/terminal.md "Reports"): on a fresh host the notes ran to
+     * 728 columns. A command and a file stay whole, so they can be copied, and so does a word
+     * wider than the line; nothing else is wider, and each note is still there, word for word.
+     */
+    @Test
+    void theTableIsWrappedToTheTerminalWithItsCommandsWhole(@TempDir Path root) {
+        for (var macOS : List.of(false, true)) {
+            var entries = InitCommand.planEntries(init(root).planSteps(macOS));
+            var bytes = new ByteArrayOutputStream();
+            InitPlan.printTable(new PrintStream(bytes, true, StandardCharsets.UTF_8), entries, 80);
+            var table = bytes.toString(StandardCharsets.UTF_8);
+            var wide = table.lines().filter(l -> l.codePointCount(0, l.length()) > 80)
+                    .filter(l -> !l.startsWith("      $ ") && !l.startsWith("      writes "))
+                    // A word wider than the line, such as a long path, keeps a line of its own
+                    .filter(l -> l.strip().contains(" ")).toList();
+            assertEquals(List.of(), wide, table);
+            var words = String.join(" ", table.lines().map(String::strip).toList());
+            for (var entry : entries) {
+                var note = entry.assessment().note();
+                if (note != null) assertTrue(words.contains(note.strip().replaceAll("\\s+", " ")), note + "\n" + table);
+            }
+            assertTrue(entries.stream().anyMatch(e -> e.assessment().note() != null && e.assessment().note().length() > 80) || macOS,
+                    "a note wider than the table, which this test exists for");
+        }
+    }
+
+    /** A change's first line fills the width after its own indent, not after its continuation's. */
+    @Test
+    void aChangesFirstLineFillsTheWidthAfterItsIndent() {
+        var bytes = new ByteArrayOutputStream();
+        InitPlan.printTable(new PrintStream(bytes, true, StandardCharsets.UTF_8), List.of(new InitPlan.Entry("ssh-key",
+                "SSH Key Pair", "", InitPlan.Assessment.of(List.of(InitPlan.Change.write("a ".repeat(60).strip(),
+                        InitPlan.Who.NONE, "/x"))))), 60);
+        var lines = bytes.toString(StandardCharsets.UTF_8).lines().toList();
+        // Words of one letter fill 55 of the 56 columns after the four of the indent
+        assertEquals(59, lines.get(1).length(), String.join("\n", lines));
+        assertTrue(lines.get(2).startsWith("      a"), String.join("\n", lines));
+    }
 }
