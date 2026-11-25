@@ -131,6 +131,45 @@ class AccountEditCommandsTest {
         assertEquals("sk-ant-api03-work", saved("claude.accounts.work.apiKey"));
     }
 
+    /** A removed ChatGPT account's host session ends with it, so a later 'work' does not serve its token. */
+    @Test
+    void removingAChatGptAccountEndsItsSession() throws Exception {
+        var config = seed("""
+                openai:
+                  accounts:
+                    work:
+                      type: chatgpt
+                    other:
+                      type: chatgpt
+                  default: other
+                """);
+        var store = new dev.incusspawn.proxy.ChatGptSessionStore();
+        store.create("work", new dev.incusspawn.proxy.ChatGptSessionStore.Tokens("id-fixture", "access-fixture", "refresh-fixture", "acct"));
+        store.create("other", new dev.incusspawn.proxy.ChatGptSessionStore.Tokens("id-fixture", "access-fixture", "refresh-fixture", "acct"));
+        assertEquals(0, AccountCommand.remove(new AccountMenuTest.StubbedInit(), config, "openai=work", true, null));
+        assertNull(store.read("work"), "its refresh token must not stay on disk");
+        assertNotNull(store.read("other"), "another account's session stays");
+    }
+
+    /** A renamed Google account keeps its host session under the new name, so it stays signed in. */
+    @Test
+    void renamingAGoogleAccountMovesItsSession() throws Exception {
+        var config = seed("""
+                gemini:
+                  accounts:
+                    g:
+                      type: google
+                  default: g
+                """);
+        var store = new dev.incusspawn.proxy.GoogleSessionStore();
+        var before = store.create("g", new dev.incusspawn.proxy.GoogleSessionStore.Tokens("access-fixture", "refresh-fixture", 0, "me@example.com"));
+        assertEquals(0, AccountCommand.rename(new AccountMenuTest.StubbedInit(), config, "gemini=g", "home"));
+        assertNull(store.read("g"));
+        var after = store.read("home");
+        assertNotNull(after, "the renamed account is still signed in");
+        assertEquals(before.sessionId(), after.sessionId());
+    }
+
     @Test
     void anAccountThatIsNotConfiguredIsAnError() throws Exception {
         var config = seed(TWO_ACCOUNTS);
@@ -229,6 +268,10 @@ class AccountEditCommandsTest {
         assertEquals(1, AccountCommand.rename(init, config, "github=personal", "a b"));
         // A dotted name would be read as nested keys: listed, yet given no credential
         assertEquals(1, AccountCommand.rename(init, config, "github=personal", "my.work"));
+        // A session's directory is named after the account, and needs a letter or digit first
+        assertEquals(1, AccountCommand.rename(init, config, "github=personal", "_x"));
+        // ... and at most 128 characters, or its session could be neither stored nor moved
+        assertEquals(1, AccountCommand.rename(init, config, "github=personal", "a".repeat(129)));
         assertUnchanged(TWO_ACCOUNTS);
     }
 }

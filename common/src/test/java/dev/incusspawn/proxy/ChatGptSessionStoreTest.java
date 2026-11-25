@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -100,5 +101,21 @@ class ChatGptSessionStoreTest {
     @Test
     void tokensNeverPrint() {
         assertTrue(!tokens("a").toString().contains("rt-a"));
+    }
+
+    /** A rename keeps the session as it was, and a refresh begun under the old name finds it gone. */
+    @Test
+    void moveKeepsTheSessionUnderTheNewName() {
+        var store = store();
+        var created = store.create("work", tokens("a"));
+        store.create("home", tokens("stale"));
+        assertTrue(store.move("work", "home"));
+        assertNull(store.read("work"));
+        var moved = store.read("home");
+        assertEquals(created.sessionId(), moved.sessionId());
+        assertEquals(created.generation(), moved.generation());
+        assertEquals(tokens("a"), moved.tokens());
+        assertEquals(SessionStore.Commit.GONE, store.commit(created, tokens("b")));
+        assertFalse(store.move("absent", "elsewhere"));
     }
 }

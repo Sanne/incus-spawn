@@ -492,7 +492,10 @@ Unlike the menu, which offers removal only beside a second account, `remove` tak
 It deletes a credential, so with no terminal it needs `--skip-confirmation`.
 `default` with no terminal refuses while any instance follows the default, since moving whose account they spend is never done unasked.
 Removing the default makes the first usable account in file order the default (`NamespaceAccounts.remove`), and the first account only when none is usable.
-A new account's name holds letters, digits, `_` and `-` but no `.`: config paths are dotted, so `my.work` would be read as nested keys and listed as configured yet given no credential (`CredentialSetup.accountNameProblem`).
+A new account's name holds up to 128 letters, digits, `_` and `-`, starting with a letter or digit, as a host session's directory needs (`SessionNames`).
+It holds no `.`: config paths are dotted, so `my.work` would be read as nested keys and listed as configured yet given no credential (`CredentialSetup.accountNameProblem`).
+A ChatGPT or Google account's host session is a file named after the account, so `removeAccount` ends it and `renameAccount` moves it, keeping its id and generation (`SessionStore.move`).
+Left behind, a removed account's refresh token would be served again to a later account of that name.
 `AccountEditCommandsTest` covers the three.
 
 **What a build derives from an account, and what happens when it changes.**

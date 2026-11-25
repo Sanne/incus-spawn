@@ -69,8 +69,9 @@ import static dev.incusspawn.command.InitCommand.runHostCapturingExit;
  */
 class CredentialSetup {
     // No '.': config paths are dotted, so a name holding one would be written and read as
-    // nested keys, listed as configured yet given no credential (#2608).
-    private static final Pattern ACCOUNT_NAME = Pattern.compile("[A-Za-z0-9_-]+");
+    // nested keys, listed as configured yet given no credential (#2608). A letter or digit
+    // first and at most 128 characters, as a host sign-in session's directory needs (SessionNames).
+    private static final Pattern ACCOUNT_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_-]{0,127}");
     private static final Pattern ENTRY_NUMBER = Pattern.compile("#?\\s*(\\d+)");
 
     private HttpClient httpClient;
@@ -1960,7 +1961,7 @@ class CredentialSetup {
      */
     static String accountNameProblem(String name, java.util.Set<String> taken) {
         if (taken.contains(name)) return "There is already an account named '" + name + "'.";
-        if (!ACCOUNT_NAME.matcher(name).matches()) return "Use letters, digits, '_' or '-' only.";
+        if (!ACCOUNT_NAME.matcher(name).matches()) return "Use up to 128 letters, digits, '_' or '-', starting with a letter or digit.";
         if (AccountResolver.INHERIT.equals(name)) {
             return "'" + name + "' is reserved: it takes the credential of the isx instance isx runs in.";
         }
@@ -1983,6 +1984,7 @@ class CredentialSetup {
         NamespaceAccounts.remove(config, namespace, name);
         config.save();
         BuildOutput.step("Removed account '" + name + "'.");
+        endSessions(namespace, name);
         if (!moving.isEmpty()) refreshIdentities(moving);
     }
 
@@ -1994,6 +1996,7 @@ class CredentialSetup {
         NamespaceAccounts.rename(config, namespace, from, to);
         config.save();
         BuildOutput.step("Renamed '" + from + "' to '" + to + "'.");
+        moveSessions(namespace, from, to);
         try {
             var repointed = renameInInstances(config, namespace, from, to);
             if (!repointed.isEmpty()) {
@@ -2011,6 +2014,55 @@ class CredentialSetup {
                     + from + "' under accounts: -- change it to '" + to + "' in the YAML, or"
                     + " branching from " + (templates.size() == 1 ? "it" : "them") + " fails.");
         }
+    }
+
+    /**
+     * The stores of the host sign-in sessions a namespace's accounts may hold, one file per
+     * account name: ChatGPT's for {@code openai}, Google's for {@code gemini}.
+     */
+    private static List<dev.incusspawn.proxy.SessionStore<?>> sessionStores(String namespace) {
+        return switch (namespace) {
+            case dev.incusspawn.proxy.ChatGptAccounts.NAMESPACE -> List.of(new dev.incusspawn.proxy.ChatGptSessionStore());
+            case dev.incusspawn.proxy.GoogleAccounts.NAMESPACE -> List.of(new dev.incusspawn.proxy.GoogleSessionStore());
+            default -> List.of();
+        };
+    }
+
+    /**
+     * Ends the host session of an account that just left the config, whatever its type now:
+     * left behind, its refresh token stays on disk and a later account of that name serves it.
+     */
+    private static void endSessions(String namespace, String account) {
+        if (!dev.incusspawn.proxy.SessionNames.isValid(account)) return;
+        for (var store : sessionStores(namespace)) {
+            try {
+                store.remove(account);
+            } catch (java.io.UncheckedIOException e) {
+                BuildOutput.warn("Could not end the sign-in session of account '" + account + "': " + BaseCommand.failure(e),
+                        "Delete " + sessionFile(namespace, account) + " by hand, or a later account named '" + account
+                                + "' is served its sign-in.");
+            }
+        }
+    }
+
+    /** Moves a renamed account's host session to its new name, so it stays signed in. */
+    private static void moveSessions(String namespace, String from, String to) {
+        if (!dev.incusspawn.proxy.SessionNames.isValid(from) || !dev.incusspawn.proxy.SessionNames.isValid(to)) return;
+        for (var store : sessionStores(namespace)) {
+            try {
+                store.move(from, to);
+            } catch (RuntimeException e) {
+                BuildOutput.warn("Could not move the sign-in session of '" + from + "' to '" + to + "': " + BaseCommand.failure(e),
+                        "Sign '" + to + "' in again with 'isx account add " + namespace + "', and delete "
+                                + sessionFile(namespace, from) + " by hand, or a later account named '" + from
+                                + "' is served its sign-in.");
+            }
+        }
+    }
+
+    /** Where {@link dev.incusspawn.proxy.SessionStore} keeps {@code account}'s session, for a person to delete. */
+    private static Path sessionFile(String namespace, String account) {
+        return SpawnConfig.configDir().resolve(namespace).resolve(account).resolve("session.json");
     }
 
     /**
