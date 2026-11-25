@@ -43,7 +43,18 @@ final class ExampleTemplate {
      * and sets the account's Git name and email.
      */
     static String text(ToolSetup agent, boolean withGitHub) {
+        return text(agent, withGitHub, java.util.Map.of());
+    }
+
+    /**
+     * As {@link #text(ToolSetup, boolean)}, with the agent's {@code params}, the first run's answer
+     * to its {@link ToolSetup#firstRunQuestion()} (#2536): {@code - pi: {provider: openai}}.
+     * A value is one the parameter's pattern accepted, a plain YAML word.
+     */
+    static String text(ToolSetup agent, boolean withGitHub, java.util.Map<String, String> params) {
         var name = agent.name();
+        var listed = params.isEmpty() ? name : name + ": {" + String.join(", ",
+                params.entrySet().stream().map(e -> e.getKey() + ": " + e.getValue()).toList()) + "}";
         var title = title(agent);
         var action = agent.actions().isEmpty() ? "" : "default-action: " + name + "\n";
         return """
@@ -68,7 +79,7 @@ final class ExampleTemplate {
 
                 # A first template needs no other field. 'isx templates new' writes every one,
                 # with a note each (https://isx.run/docs/templates#image-schema-fields).
-                """.formatted(name, title, NAME, action, withGitHub ? "  - gh\n" : "");
+                """.formatted(listed, title, NAME, action, withGitHub ? "  - gh\n" : "");
     }
 
     /**
@@ -97,9 +108,14 @@ final class ExampleTemplate {
      * @return whether it was written: false when {@code file} exists
      */
     static boolean write(Path file, ToolSetup agent, boolean withGitHub) throws IOException {
+        return write(file, agent, withGitHub, java.util.Map.of());
+    }
+
+    /** As {@link #write(Path, ToolSetup, boolean)}, with the agent's {@code params}: {@link #text(ToolSetup, boolean, java.util.Map)}. */
+    static boolean write(Path file, ToolSetup agent, boolean withGitHub, java.util.Map<String, String> params) throws IOException {
         Files.createDirectories(file.getParent());
         try {
-            Files.writeString(file, text(agent, withGitHub), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            Files.writeString(file, text(agent, withGitHub, params), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             return true;
         } catch (FileAlreadyExistsException e) {
             return false;

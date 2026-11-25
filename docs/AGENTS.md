@@ -123,6 +123,8 @@ Use `/statusline` to customize the footer; the `permissions` item displays the i
 Pi is a provider-agnostic CLI coding agent.
 Its default provider is `anthropic`, so it uses your Claude account: an API key, Claude Pro/Max OAuth or Vertex AI.
 A template with Pi alone needs a Claude account unless it sets Pi's `provider` parameter, described below.
+`isx init` asks a Pi user which provider to use, and writes it into the first template.
+
 Add it to any template with `tools: [pi]`:
 
 ```yaml
@@ -189,7 +191,9 @@ tools:
 
 [opencode](https://opencode.ai) is a provider-agnostic CLI coding agent.
 Like Pi, its default provider is `anthropic`, so it uses your Claude account: an API key, Claude Pro/Max OAuth or Vertex AI.
+As for Pi, `isx init` asks which provider opencode should use.
 Anthropic bills a Claude Pro or Max subscription used from opencode as extra usage, since opencode is not Claude Code.
+
 Add it to any template with `tools: [opencode]`:
 
 ```yaml

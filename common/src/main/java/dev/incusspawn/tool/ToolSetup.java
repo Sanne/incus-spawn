@@ -153,6 +153,32 @@ public interface ToolSetup {
                         java.util.List<String> help, String outcome, java.util.List<String> tools) {}
 
     /**
+     * A question {@code isx init}'s first run asks about this agent before its account, whose
+     * answer is a parameter of the first template (#2536): Pi's and opencode's provider decides
+     * which account they spend. Null, the default, for an agent with nothing to ask.
+     */
+    default FirstRunQuestion firstRunQuestion() { return null; }
+
+    /**
+     * A first-run question about one of this tool's parameters.
+     *
+     * @param parameter the parameter the answer sets, one of {@link #parameters()}
+     * @param question  what is asked, without "Choose one"
+     * @param choices   what may be answered, the first the parameter's default
+     * @param other     the last choice, a value the person types, or null for none
+     */
+    record FirstRunQuestion(String parameter, String question, java.util.List<Choice> choices, Choice other) {}
+
+    /**
+     * One answer to a {@link FirstRunQuestion}.
+     *
+     * @param label  the choice as a person knows it, and a line under it after a newline
+     * @param value  the parameter's value, null for the parameter's default (nothing written);
+     *               for the typed choice, the question that asks for the value
+     */
+    record Choice(String label, String value) {}
+
+    /**
      * What a person has to do the first time this agent starts in an instance, beyond opening it:
      * short lines for the end of {@code isx init}'s first run, none when it just starts.
      */

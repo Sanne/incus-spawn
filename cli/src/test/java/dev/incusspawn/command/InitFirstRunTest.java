@@ -770,6 +770,9 @@ class InitFirstRunTest {
         }
         assertNull(InitCommand.FirstRunAnswers.decode(null));
         assertNull(InitCommand.FirstRunAnswers.decode("no-agent"));
+        // The provider a first run chose reaches the continuation under sg, which writes the template (#2536)
+        var withProvider = new InitCommand.FirstRunAnswers(false, false, true, false, java.util.Map.of("provider", "openai"));
+        assertEquals(withProvider, InitCommand.FirstRunAnswers.decode(withProvider.encode()));
     }
 
     /** {@code --all} asks the steps a first run leaves for later too, before the work. */
