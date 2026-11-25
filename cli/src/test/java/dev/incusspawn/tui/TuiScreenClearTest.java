@@ -62,6 +62,9 @@ class TuiScreenClearTest {
 
             @Override
             void warnIfFirewallStopped(BiConsumer<String, String> banner) {}
+
+            @Override
+            boolean bridgeSubnetConflicts() { return false; }
         };
         tui.useDefinitions(defs, new ToolDefLoader(List.of()), List.of());
         tui.startSession(daemon.client(), new BackgroundTaskManager(), new FlockInstanceLockManager(),

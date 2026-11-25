@@ -102,6 +102,11 @@ public final class TuiDemo {
             }
 
             @Override
+            boolean bridgeSubnetConflicts() {
+                return false;
+            }
+
+            @Override
             String currentVersion() {
                 return VERSION;
             }

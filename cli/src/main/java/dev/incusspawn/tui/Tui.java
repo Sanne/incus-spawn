@@ -3514,7 +3514,6 @@ public class Tui {
             // As isx shell warns, but into the log: the TUI still owns the terminal here
             warnIfFirewallStopped((title, diagnostic) -> warningLog.add(title + "\n" + diagnostic));
             shellLaunch.repairBeforeUse(target.name(), target.machineType());
-            // After the repairs, which report on the status line too: this is the one to act on
             showSubnetWarning();
             return false;
         } catch (IncusException e) {
@@ -3529,12 +3528,17 @@ public class Tui {
         FirewallDetector.warnIfNotRunning(banner);
     }
 
+    /** Whether the Incus bridge's subnet overlaps a host network; its own method so a test need not ask the host. */
+    boolean bridgeSubnetConflicts() {
+        return BridgeSubnetCheck.detectConflictDiagnostic(incus) != null;
+    }
+
     private void showSubnetWarning() {
         try {
-            var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
-            if (diagnostic != null) {
-                statusMessage = "⚠ The Incus bridge's subnet overlaps a network of this host: run "
-                        + (Platform.isLinux() ? "'isx doctor'" : "'isx init'") + " to fix it";
+            // Into the log, which the next key does not clear and w lists
+            if (bridgeSubnetConflicts()) {
+                drawing.warn("The Incus bridge's subnet overlaps a network of this host",
+                        "Run " + (Platform.isLinux() ? "'isx doctor'" : "'isx init'") + " to fix it.");
             }
         } catch (Exception ignored) {
         }
