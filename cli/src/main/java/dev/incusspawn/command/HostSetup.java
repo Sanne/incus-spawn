@@ -1813,8 +1813,10 @@ class HostSetup {
         try {
             var added = init.incus.ensureDefaultProfileDevices(pool, "incusbr0");
             if (!added.isEmpty()) {
+                // The pool only for the root disk: a NIC added alone is on no pool
                 stepFit("Incus's default profile lacked " + OutputFormat.andList(added) + ", so isx added "
-                        + (added.size() == 1 ? "it" : "them") + " (root disk on pool " + pool + ").");
+                        + (added.size() == 1 ? "it" : "them")
+                        + (added.contains("root") ? " (root disk on pool " + pool + ")" : "") + ".");
             }
             upgradeProfilePoolIfNeeded(pool);
         } catch (Exception e) {
