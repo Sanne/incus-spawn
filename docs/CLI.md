@@ -11,7 +11,12 @@ When the TUI cannot open, as when stdout is not a terminal, it prints the instan
 
 ```shell
 isx
+isx --version [--format=table|plain|json]
 ```
+
+`isx --version` prints the version, the commit it was built from, the Incus client and server, and the runtime.
+At a terminal it shows the logo beside them.
+A script reads `--format=plain` or `--format=json`, whose fields are in [Scripting isx](#isx---version-fields).
 
 ## `isx init`
 
@@ -1328,6 +1333,18 @@ Only the definition's own fields count, not its parent's.
 | `template_problem` | Why the template's own choice cannot be used |
 
 On that next start or shell, isx also fills in an identity missing from an instance whose template an older isx built, but `identity_pending` does not list that identity.
+
+#### `isx --version` fields
+
+| Field | Meaning |
+|-------|---------|
+| `display_version` | The version as people read it and as `isx --version` shows it, such as `0.6.0`, or `0.6.1-dev.2+3` for a development build |
+| `version` | The version builds are compared by: the same for a release, a placeholder for a development build |
+| `commit` | The Git commit isx was built from |
+| `incus_client`, `incus_server` | How isx talks to Incus, and the version of the server that answered, `unknown` when none did |
+| `runtime` | The Java VM isx runs on, or `native` with its GraalVM version for a native binary |
+
+In `plain` the first field is the version people read, so `isx --version --format=plain | cut -f1` prints it alone.
 
 #### `isx proxy status` fields
 
