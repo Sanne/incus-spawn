@@ -2286,26 +2286,30 @@ class CredentialSetup {
      * The GitHub question and its first option, an account apart from the person's own. The
      * step's hint gave the reason of identity; this gives the one of access (#2528). It does not
      * say a separate account is the only way to limit access: a restricted token of the person's
-     * own account limits it too, under their name.
+     * own account limits it too, under their name. It names what the token isx's page creates
+     * can write to, the account's own repositories and an organization's: "the repositories you
+     * open to that account" read as inviting it as a collaborator, where that token cannot write
+     * (#2545). The label is "a separate account for the agent": "an account of the agent's own"
+     * made the reader wait for its last word to learn what kind of account it is.
      */
     private static final List<String> SEPARATE_ACCOUNT_FOR_AGENT = List.of(
             "As which GitHub account should the agent act?",
             "",
-            "  1. An account of the agent's own (recommended)",
-            "     Its permissions are independent of yours: the agent",
-            "     can work only on the repositories you open to that",
-            "     account. Needs a second GitHub account and a token",
-            "     for it.");
+            "  1. A separate account for the agent (recommended)",
+            "     Its permissions are independent of yours. The agent",
+            "     can work only on the repositories this account owns,",
+            "     or those of an organization it belongs to.",
+            "     Needs a second GitHub account and a token for it.");
 
     /** {@link #SEPARATE_ACCOUNT_FOR_AGENT} when the first run chose no agent: what acts is isx machines. */
     private static final List<String> SEPARATE_ACCOUNT_FOR_MACHINES = List.of(
             "As which GitHub account should isx machines act?",
             "",
             "  1. A separate account",
-            "     Its permissions are independent of yours:",
-            "     isx machines can work only on the repositories you",
-            "     open to that account. Needs a second GitHub account",
-            "     and a token for it.");
+            "     Its permissions are independent of yours.",
+            "     isx machines can work only on the repositories this",
+            "     account owns, or those of an organization it belongs",
+            "     to. Needs a second GitHub account and a token for it.");
 
     /** Under the option for the gh login: the breadth is the token's that gh holds, which is what the option takes. */
     private static final List<String> OWN_ACCOUNT_FOR_AGENT = List.of(

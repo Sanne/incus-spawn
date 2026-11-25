@@ -14,7 +14,7 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
 
 `runFirstRun` takes these steps, in order:
 
-1. It prints a welcome in its banner (`printFirstRunIntro`): the logo, with "Welcome to isx." and two short lines beside it saying what the person came for and that it takes no more than 5 minutes, then the run as three numbered stages (the questions, isx setting up the computer and building an example template, and the agent ready to open in an isx machine).
+1. It prints a welcome in its banner (`printFirstRunIntro`): the logo, with "Welcome to isx." and two short lines beside it saying what the person came for and that it takes no more than 5 minutes, then the run as three numbered stages (the questions, isx installing what it needs and then building an example template, and the agent ready to open in an isx machine).
    The stages are sentences with isx as the actor: an earlier form labelled its rows "You answer", "isx then" and "You get", which read as orders.
    The logo is the TUI's, three rows beside the welcome's three lines (design/visual-language.md), and is drawn nowhere else in the run: once it is a signature, and the closing box is kept short.
    It is kept to eight lines of text, so it leaves out what isx installs (the Linux VM, Incus, the proxy) and what a template is for, which the setup block and the closing box say where they happen; on Linux it keeps the sudo password, which the person must be ready for.
@@ -123,11 +123,13 @@ A credential in the environment, or accounts already saved, take the full step i
 ## A GitHub account in the first run
 
 The step is about identity: as which account the agent deals with other people on GitHub.
-Its hint says so before the list: everything the agent does on GitHub is published under one account's name, and with an account of its own other people can tell what the agent wrote from what the person wrote.
+Its hint says so before the list: everything the agent does on GitHub is published under one account's name, and with a separate account for the agent other people can tell what the agent wrote from what the person wrote.
 That is the reason for the option the list recommends, which an earlier hint ("The agent acts on GitHub as this account") left to the option itself.
-The recommended option then gives the second reason, of access: the account's permissions are independent of the person's, so the agent can work only on the repositories the person opens to that account.
+The recommended option then gives the second reason, of access: the account's permissions are independent of the person's, and the agent can work only on the repositories that account owns, or those of an organization it belongs to.
+An earlier text said "the repositories you open to that account", which reads as inviting it as a collaborator, where the token isx's page creates cannot write (#2545).
+Its label is "A separate account for the agent": "An account of the agent's own" made the reader wait for the last word to learn what kind of account it is.
 The text does not claim that a separate account is the only way to limit access, since a restricted token of the person's own account limits it too, under their name; so the option for the `gh` login says that it uses gh's token, with all of the person's access.
-It has three options, each saying what it gives and what it costs: an account of the agent's own (recommended), the person's own account through the host's `gh` login, and "None for now".
+It has three options, each saying what it gives and what it costs: a separate account for the agent (recommended), the person's own account through the host's `gh` login, and "None for now".
 There is no default, so Enter asks again, and the `gh` login is taken only when the person types its number.
 With no signed-in `gh`, the second option is absent, and a line says how to get it.
 The agent's own account gets a guide that starts from being signed in as that account, which a browser signed in as the person is not.
@@ -158,7 +160,8 @@ The agent's line carries the answer to the agent's own question as the person ga
 The account's line goes by the namespace the account step filled, never by what the agent could use, since Pi can use three providers' accounts and the step sets up one; a provider isx does not manage reads "not needed for that provider".
 After a skipped GitHub account, the Git identity the person agreed to has a line of its own, "Commits as".
 The recap is the questions' own: it is cleared when they end, so a header the setup shows later has none, and it costs each header two to four lines.
-When the questions end, a banner titled "Questions done" shows every answer with its mark, the last one included, which no header showed, and one sentence saying that isx now sets up the computer and builds the template (`printQuestionsDone`).
+When the questions end, a banner titled "Questions done" shows every answer with its mark, the last one included, which no header showed, and one sentence saying what comes next: isx installs what it needs on the computer, and will then build the template (`printQuestionsDone`).
+The sentence, the welcome's second stage and the title of the setup block say "installs what it needs": "sets up this Mac" named nothing that happens to the computer.
 Without it the setup's first line, on a Mac the VM starting, followed straight on the last answer, and nothing said the questions were over.
 Starting each question on a cleared screen under that recap is an experiment left for later (#2583).
 The count is the run's own: before the agent is chosen it counts the questions for the agent offered first, and with none to offer it shows the most a run asks: the agent, its account and GitHub (`InitCommand.questionsFor`).

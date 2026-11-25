@@ -204,7 +204,7 @@ Which kind each line is (live step, note, step, step detail, success) and that i
 *The step counter is derived, never written down*: `runSteps(setup, finish)` counts its lists, Credential Setup and the credentials chosen there, so `[n/N]` adds up on every path (credentials or none, Linux or macOS) and the last step reads `[N/N]`.
 Until Credential Setup's choice the total reads `[n/N+]`, so a total that grows at the choice was never shown as final.
 Each step is an `InitStep` (id, title, hint, work, planner) in one of the lists `runSteps` takes, and `begin` shows its header, so a step shows exactly one and never calls `startStep` itself.
-A step that asks nothing joins one "Setting up this host" block instead (`InitCommand.PLUMBING`: Incus, user namespace mappings, storage and network, the firewall, the proxy, its CA, the SSH key and DNS).
+A step that asks nothing joins one "Installing what isx needs on this computer" block instead (`InitCommand.PLUMBING`: Incus, user namespace mappings, storage and network, the firewall, the proxy, its CA, the SSH key and DNS).
 `begin` shows only the lines the step prints itself, with no header, hint or number, and `runSteps` leaves it out of `[n/N]` (#2406).
 A plumbing step that throws prints its hint with its error, since the block no longer shows it on the way.
 `--plan` keeps every hint.

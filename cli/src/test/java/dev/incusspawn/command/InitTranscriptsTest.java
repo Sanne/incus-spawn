@@ -501,7 +501,9 @@ class InitTranscriptsTest {
         assertTrue(banner.contains(agent), banner);
         assertTrue(banner.contains("│  \u2713 Its account    Claude subscription"), banner);
         assertTrue(banner.contains("│  \u2713 GitHub         acts as jdoe-ai"), banner);
-        assertTrue(banner.contains("isx now sets up this Mac and builds an example template."), banner);
+        assertTrue(banner.contains("Next, isx installs what it needs on this Mac, and will"), banner);
+        assertTrue(banner.contains("then build an example template."), banner);
+        assertFalse(text.contains("sets up this"), "say what isx does to the computer:\n" + text);
         // The questions' own: the closing box and what follows show none
         assertFalse(text.substring(text.indexOf("Setup complete")).contains("Coding agent   "), text);
 

@@ -300,7 +300,7 @@ public class InitCommand extends BaseCommand {
         }
         // A continuation under sg carries on the block its parent opened, under the parent's header (#2528)
         if (plumbingBlock == null) plumbingBlock = BuildOutput.group(allPlumbing && continuedInGroup() ? ""
-                : "Setting up " + dev.incusspawn.Platform.thisComputer(), "");
+                : "Installing what isx needs on " + dev.incusspawn.Platform.thisComputer(), "");
         unannounced = step;
         try {
             step.run().run();
@@ -1337,7 +1337,7 @@ public class InitCommand extends BaseCommand {
                     // The one sudo prompt the intro promised, said before it asks (#2528)
                     BuildOutput.gap();
                     BuildOutput.step("isx asks for your sudo password now. It installs packages,");
-                    BuildOutput.step("and sets up the firewall and the user IDs of isx machines.");
+                    BuildOutput.step("and configures the firewall and the user IDs of isx machines.");
                     if (runHost("sudo", "-v") != 0) {
                         BuildOutput.error("sudo authentication failed.", "Please ensure you have sudo access and try again.");
                         return CommandResult.valueOf(1);
@@ -1481,17 +1481,23 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * The intro's second stage: isx sets up this computer and builds a template, called an
-     * example since the person changes or replaces it. Of what the setup does, only what the
+     * The intro's second stage: isx installs what it needs on this computer, then builds a
+     * template, called an example since the person changes or replaces it. "Sets up this Mac"
+     * said nothing of what happens to the computer (#2528). Of what is installed, only what the
      * person must be ready for is said: the sudo password on Linux.
      */
     static String introSetup(boolean macOs, boolean noSudo) {
-        String computer;
-        if (macOs) computer = "this Mac";
-        // The root steps ran from the script the --no-sudo run before this one printed
-        else if (noSudo) computer = "the rest of this computer";
-        else computer = "this computer (it asks for your sudo password)";
-        return "isx sets up " + computer + " and builds an example template.";
+        return "isx installs " + whatItNeeds(macOs, noSudo) + (macOs || noSudo ? "" : " (it asks for your sudo password)")
+                + ", and will then build an example template.";
+    }
+
+    /**
+     * What isx installs before the build, and where, for the intro and the banner that closes
+     * the questions: after {@code --no-sudo}'s script, which installed the root's part, the rest.
+     */
+    static String whatItNeeds(boolean macOs, boolean noSudo) {
+        if (macOs) return "what it needs on this Mac";
+        return noSudo ? "the rest of what it needs on this computer" : "what it needs on this computer";
     }
 
     /** The preferred agent in config.yaml, as a coding agent's tool, or null. */
@@ -1704,9 +1710,9 @@ public class InitCommand extends BaseCommand {
         out.add(topBorder("Questions done"));
         for (var answer : answered) out.add(boxLine(recapLine(answer)));
         out.add(boxLine(""));
-        var computer = macOs ? "this Mac" : noSudo ? "the rest of this computer" : "this computer";
         var template = chosenAgent == null ? "a first template" : "an example template";
-        for (var line : Lines.wrap("isx now sets up " + computer + " and builds " + template + ".", BOX_WIDTH - 4)) {
+        for (var line : Lines.wrap("Next, isx installs " + whatItNeeds(macOs, noSudo) + ", and will then build " + template + ".",
+                BOX_WIDTH - 4)) {
             out.add(boxLine("  " + line));
         }
         out.add(bottomBorder());
@@ -2166,8 +2172,8 @@ public class InitCommand extends BaseCommand {
                 ? "Everything done on GitHub from an isx machine is published under one account's name: commits,"
                         + " pull requests, issues, comments. With a separate account, other people can tell that work from yours."
                 : "Everything the agent does on GitHub is published under one account's name: commits, pull requests,"
-                        + " issues, comments. With an account of its own, other people can tell what the agent wrote"
-                        + " from what you wrote.").toArray(String[]::new),
+                        + " issues, comments. With a separate account for the agent, other people can tell what the agent"
+                        + " wrote from what you wrote.").toArray(String[]::new),
                 () -> saved.set(offerGitHub()), null);
     }
 
