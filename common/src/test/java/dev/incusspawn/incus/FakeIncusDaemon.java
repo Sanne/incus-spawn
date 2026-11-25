@@ -244,6 +244,12 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /** Answer {@code pool}'s {@code /resources} with a 404 from now on, as a pool that cannot say would. */
+    public synchronized FakeIncusDaemon noPoolSpace(String name) {
+        poolSpace.remove(name);
+        return this;
+    }
+
     /** Answer the pool listing with a 500 from now on, as a daemon that cannot say would. */
     public synchronized FakeIncusDaemon failPoolListing() {
         poolListingFails = true;
