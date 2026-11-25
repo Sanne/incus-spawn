@@ -2920,8 +2920,9 @@ public class InitCommand extends BaseCommand {
         return ProxyService.upgradeIfNeeded();
     }
 
-    void restartProxyService() {
-        ProxyService.restart();
+    /** Restarts the proxy service; whether it came back up. */
+    boolean restartProxyService() {
+        return ProxyService.restart();
     }
 
     /** Installs and starts the proxy service; on macOS, the VM launch agent with it. */
@@ -3643,7 +3644,11 @@ public class InitCommand extends BaseCommand {
         var restartOwed = active && !Environment.hasBeenInitialized();
         markInitComplete();
         if (active) {
-            if (!upgradeProxyService() && restartOwed) restartProxyService();
+            // An owed restart that failed leaves the service down, so the closing box ticks no setup (#2597)
+            if (!upgradeProxyService() && restartOwed && !restartProxyService()) {
+                failed.add("proxy-service");
+                return false;
+            }
             BuildOutput.step("Proxy service is already running.");
             return true;
         }
