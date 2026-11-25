@@ -521,4 +521,11 @@ class ChatGptAuthFlowTest {
             Thread.interrupted();
         }
     }
+
+    /** A failure without a message is named by its kind: the warning once ended "did not finish: null". */
+    @Test
+    void aSignInFailureWithoutAMessageIsNamedByItsKind() {
+        assertEquals("SocketTimeoutException", CredentialSetup.reason(new java.net.SocketTimeoutException()));
+        assertEquals("the code expired", CredentialSetup.reason(new java.io.IOException("the code expired")));
+    }
 }

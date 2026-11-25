@@ -369,11 +369,17 @@ class CredentialSetup {
                 BuildOutput.step(url);
             });
         } catch (Exception e) {
-            warnWrapped("The ChatGPT sign-in did not finish: " + e.getMessage(),
+            warnWrapped("The ChatGPT sign-in did not finish: " + reason(e),
                     "Sign in later with 'isx account add openai'.");
             return;
         }
         saveChatGptSession(config, target, tokens);
+    }
+
+    /** Why {@code e} was thrown, for a warning: its message, or its kind when it has none, never "null". */
+    static String reason(Exception e) {
+        var message = e.getMessage();
+        return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
     }
 
     /**
@@ -414,10 +420,10 @@ class CredentialSetup {
                     Thread.currentThread().interrupt();
                     BuildOutput.warn("The ChatGPT sign-in was interrupted.");
                 } catch (Exception e) {
-                    warnWrapped("The ChatGPT sign-in did not finish: " + e.getMessage());
+                    warnWrapped("The ChatGPT sign-in did not finish: " + reason(e));
                 }
             } catch (Exception e) {
-                warnWrapped("isx could not reach OpenAI's sign-in server: " + e.getMessage());
+                warnWrapped("isx could not reach OpenAI's sign-in server: " + reason(e));
             }
             if (tokens != null) {
                 saveChatGptSession(config, target, tokens);
