@@ -82,7 +82,7 @@ public interface Prompts {
      */
     default String choose(String question, java.util.List<String> options, String note, String enterDoes) {
         sayOptions(question, options, note);
-        return ask(enterDoes == null ? "Choice: " : "Choice, or Enter to " + enterDoes + ": ");
+        return ask(choiceEnterDoes(enterDoes));
     }
 
     /**
@@ -94,7 +94,38 @@ public interface Prompts {
      */
     default String chooseDefault(String question, java.util.List<String> options, String note, int defaultOption) {
         sayOptions(question, options, note);
-        return ask("Choice [" + defaultOption + "]: ");
+        return ask(choiceEnterTakes(String.valueOf(defaultOption)));
+    }
+
+    /**
+     * The prompt of a choice where Enter takes one of the answers, that answer in brackets:
+     * {@code Choice [1]:}, {@code Choice [Y]:} (#2528). Every such prompt is built here, so the
+     * form holds by construction ({@code ChoicePromptGateTest}).
+     *
+     * @param answer the label of the answer Enter takes, as typed: a number or a letter
+     */
+    static String choiceEnterTakes(String answer) {
+        return "Choice [" + answer + "]: ";
+    }
+
+    /**
+     * The prompt of a choice where Enter does something no answer does, ending in it:
+     * {@code Choice, or Enter to skip:}; or, when Enter does nothing, {@code Choice:} (#2528).
+     * Every such prompt is built here ({@code ChoicePromptGateTest}).
+     *
+     * @param enterDoes what an empty answer does, as it completes "or Enter to ...": e.g.
+     *                  "skip"; null when an empty answer does nothing, so the caller asks again
+     */
+    static String choiceEnterDoes(String enterDoes) {
+        return enterDoes == null ? choice() : "Choice, or Enter to " + enterDoes + ": ";
+    }
+
+    /**
+     * The prompt of a choice where Enter does nothing, so the caller asks again: {@code Choice:}
+     * (#2528).
+     */
+    static String choice() {
+        return "Choice: ";
     }
 
     /**

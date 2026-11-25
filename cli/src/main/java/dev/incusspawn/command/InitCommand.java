@@ -2021,7 +2021,7 @@ public class InitCommand extends BaseCommand {
         prompts.say("  o  choose another agent");
         prompts.say("  n  no agent for now");
         while (true) {
-            var answer = prompts.ask("Choice [Y]: ");
+            var answer = prompts.ask(Prompts.choiceEnterTakes("Y"));
             if (answer == null) return null;
             switch (answer.strip().toLowerCase(java.util.Locale.ROOT)) {
                 case "", "y", "yes" -> {
@@ -2062,7 +2062,7 @@ public class InitCommand extends BaseCommand {
                 // Asked again
             }
             prompts.say("Type a number from 1 to " + options.size() + ".");
-            answer = prompts.ask("Choice: ");
+            answer = prompts.ask(Prompts.choice());
         }
     }
 
@@ -3379,7 +3379,7 @@ public class InitCommand extends BaseCommand {
         while (true) {
             prompts.say("t. Change the approved templates");
             prompts.say("n. How to turn it off");
-            var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: ")).toLowerCase(java.util.Locale.ROOT);
+            var choice = readInput(prompts.ask(Prompts.choiceEnterDoes("keep it as it is"))).toLowerCase(java.util.Locale.ROOT);
             if (choice.isEmpty() || choice.equals("t") || choice.equals("n")) return choice;
         }
     }

@@ -291,7 +291,7 @@ class CredentialSetup {
             BuildOutput.step("OpenAI: configured with a ChatGPT session.");
             prompts.say("s. Sign in again (replaces the session and every instance proof made from it)");
             prompts.say("k. Switch to an API key instead");
-            var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: "));
+            var choice = readInput(prompts.ask(Prompts.choiceEnterDoes("keep it as it is")));
             switch (choice) {
                 case "s" -> { signInChatGptInBrowser(config, target); return; }
                 case "k" -> { askAndSaveApiKey(config, target, prompts, false); return; }
@@ -408,7 +408,7 @@ class CredentialSetup {
         prompts.say("  Y  " + again);
         prompts.say("  s  skip this account for now");
         while (true) {
-            var answer = prompts.ask("Choice [Y]: ");
+            var answer = prompts.ask(Prompts.choiceEnterTakes("Y"));
             // End of input skips, as every prompt's does
             if (answer == null) return false;
             switch (answer.strip().toLowerCase(java.util.Locale.ROOT)) {
@@ -766,7 +766,7 @@ class CredentialSetup {
                 prompts.say("  n  I run it myself and paste the token");
                 if (offerOther) prompts.say("  o  another kind of account (API key, Vertex AI)");
                 prompts.say("  s  skip this account for now");
-                var answer = prompts.ask("Choice [Y]: ");
+                var answer = prompts.ask(Prompts.choiceEnterTakes("Y"));
                 var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
                 switch (choice) {
                     case "", "y", "yes" -> {
@@ -916,7 +916,7 @@ class CredentialSetup {
                 prompts.say("x. Remove an account");
             }
             prompts.say("n. Rename an account");
-            var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: ")).toLowerCase(java.util.Locale.ROOT);
+            var choice = readInput(prompts.ask(Prompts.choiceEnterDoes("keep it as it is"))).toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> {
@@ -1052,7 +1052,7 @@ class CredentialSetup {
         if (!reached) prompts.say("  u  save it unverified, and check it later");
         prompts.say("  s  skip this account for now");
         while (true) {
-            var action = parseVerificationFailureAction(prompts.ask("Choice [Y]: "), !reached);
+            var action = parseVerificationFailureAction(prompts.ask(Prompts.choiceEnterTakes("Y")), !reached);
             if (action != null) return action;
             prompts.say(reached ? "Please answer y or s." : "Please answer y, u or s.");
         }
@@ -1823,7 +1823,7 @@ class CredentialSetup {
                 BuildOutput.step("One " + label + " account is set up: " + OutputFormat.oneLine(only) + ".");
                 prompts.say("r. Replace its credential");
                 prompts.say("a. Add a second account, and keep this one");
-                var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: ")).toLowerCase(java.util.Locale.ROOT);
+                var choice = readInput(prompts.ask(Prompts.choiceEnterDoes("keep it as it is"))).toLowerCase(java.util.Locale.ROOT);
                 switch (choice) {
                     case "" -> { return Optional.empty(); }
                     case "r" -> { return Optional.of(new AccountTarget(only, true)); }
@@ -1846,7 +1846,7 @@ class CredentialSetup {
             prompts.say("d. Change which account is the default");
             prompts.say("x. Remove an account");
             prompts.say("n. Rename an account");
-            var choice = readInput(prompts.ask("Choice, or Enter to keep it as it is: ")).toLowerCase(java.util.Locale.ROOT);
+            var choice = readInput(prompts.ask(Prompts.choiceEnterDoes("keep it as it is"))).toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> { return Optional.empty(); }
@@ -2260,7 +2260,7 @@ class CredentialSetup {
                 prompts.say("first, then run 'isx account add github'.");
             }
             prompts.say("");
-            var answer = prompts.ask("Choice: ");
+            var answer = prompts.ask(Prompts.choice());
             // End of input is no answer at all: no account
             var choice = answer == null ? none : answer.strip();
             if (choice.equals("1")) {
@@ -2551,7 +2551,7 @@ class CredentialSetup {
         prompts.say("     The account's primary address.");
         prompts.say("");
         while (true) {
-            var answer = prompts.ask("Choice [1]: ");
+            var answer = prompts.ask(Prompts.choiceEnterTakes("1"));
             var choice = answer == null ? "" : answer.strip();
             if (choice.isEmpty() || choice.equals("1")) return noreply;
             if (choice.equals("2")) return real;

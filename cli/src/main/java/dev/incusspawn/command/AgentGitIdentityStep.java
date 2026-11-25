@@ -85,7 +85,7 @@ final class AgentGitIdentityStep {
     /** The answer to the identity question: y or yes; Enter, n and end of input are No, anything else is asked again. */
     private static boolean yes(Prompts prompts) {
         while (true) {
-            var answer = prompts.ask("Choice [N]: ");
+            var answer = prompts.ask(Prompts.choiceEnterTakes("N"));
             if (answer == null) return false;
             switch (answer.strip().toLowerCase(java.util.Locale.ROOT)) {
                 case "y", "yes" -> { return true; }
