@@ -305,12 +305,18 @@ class InitTranscriptsTest {
         b.add(new Branch("14-codex-none-for-now", "Codex chosen; None for now",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "4", "2", "")));
-        b.add(new Branch("15-pi", "Pi chosen; it uses a Claude account; None for now",
+        b.add(new Branch("15-pi", "Pi chosen; Claude as its provider; None for now",
                 i -> { }, h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "4", "2", "")));
-        b.add(new Branch("16-opencode", "opencode chosen; a Claude API key",
+                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "", "4", "2", "")));
+        b.add(new Branch("15-pi-openai", "Pi chosen; OpenAI as its provider; an API key",
                 i -> { }, h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("opencode")), "1").secret(API_KEY).line("2", "")));
+                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "2", "1").secret(openaiKey).line("2", "")));
+        b.add(new Branch("15-pi-other-provider", "Pi chosen; a provider isx does not manage",
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "4", "Open Router", "openrouter", "2", "")));
+        b.add(new Branch("16-opencode", "opencode chosen; Claude as its provider; a Claude API key",
+                i -> { }, h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("opencode")), "", "1").secret(API_KEY).line("2", "")));
         b.add(new Branch("17-copilot", "GitHub Copilot CLI chosen; its account is GitHub's; the agent's own",
                 i -> i.login = "jdoe", h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("copilot")), "1").secret(GITHUB_TOKEN).line("")));

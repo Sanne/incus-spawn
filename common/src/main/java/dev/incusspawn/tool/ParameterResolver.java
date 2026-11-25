@@ -73,7 +73,8 @@ public class ParameterResolver {
         return new Result(errors, resolved);
     }
 
-    private static String validateValue(String name, String value, ToolDef.ParameterDef def) {
+    /** Why {@code value} is not one {@code def} takes, or empty when it is. */
+    public static String validateValue(String name, String value, ToolDef.ParameterDef def) {
         var type = def.getType() != null ? def.getType() : "string";
 
         return switch (type) {

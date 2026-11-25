@@ -21,11 +21,16 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    With none found the list is shown, and Enter chooses nothing: it shows the list again, so isx never picks a vendor for the person.
    "None for now" is a choice, and stores nothing.
    The answer starts the agent's own pinned downloads, less those already started.
+   An agent with a question of its own (`ToolSetup.firstRunQuestion`) is asked it next, unless a `tpl-agent` is kept (#2536).
+   Pi and opencode ask which provider: Claude, OpenAI, Gemini, or another, typed and checked against the parameter's pattern.
+   The answer is the agent's parameter in the `tpl-agent.yaml` init writes (`- pi: {provider: openai}`), and Claude's writes none, being the default.
+   So the next step finds that provider's account through the template, and a provider isx does not manage has no account step.
+   The question belongs to the tool, so init names no agent.
 3. It sets up the account the agent spends (`setUpAgentCredential`).
    Which one is not named in init: `agentGaps` runs `CredentialCheck.missingByCredential` over the example template for the agent, as a build of it would, and each gap runs the credential step `isx account add` runs for it.
    So Pi and opencode reach the Claude step through the credential their tool declares, and a new agent needs nothing here.
    A step that is not the agent's own is introduced by one line saying so (`InitCommand.sayWhoseAccount`), since its questions name another product: Pi is asked about Claude.
-   For an agent with a `provider` parameter it also says to choose "None for now" for another provider, and links the agent's page, which shows how.
+   For an agent with a `provider` parameter whose kept `tpl-agent` decided the provider, it also says to choose "None for now" for another provider, and links the agent's page, which shows how.
    The OpenAI step of a first run for an agent other than Codex offers only an API key, since a ChatGPT session gives Pi and opencode no key (#2525).
    When the account is GitHub's (Copilot), the step is the GitHub question of the next step, which is then not asked a second time.
    For any other agent, GitHub's account is the next step's alone, even when a `tpl-agent.yaml` an earlier run wrote lists `gh` (`agentGaps`), so that question always has its own header and count.

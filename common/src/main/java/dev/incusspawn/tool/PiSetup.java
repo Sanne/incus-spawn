@@ -169,6 +169,25 @@ public class PiSetup implements ToolSetup {
         };
     }
 
+    /** Which provider, so the first run sets up that provider's account, or none (#2536). */
+    @Override
+    public FirstRunQuestion firstRunQuestion() {
+        return providerQuestion("Pi");
+    }
+
+    /**
+     * The provider question of Pi and opencode, which name the managed providers alike: Claude's
+     * is the default, so choosing it writes no {@code provider}.
+     */
+    static FirstRunQuestion providerQuestion(String title) {
+        return new FirstRunQuestion("provider", "Which provider should " + title + " use?", List.of(
+                new Choice("Claude\nYour Claude account, set up next.", null),
+                new Choice("OpenAI\nYour OpenAI API key, set up next.", "openai"),
+                new Choice("Gemini\nYour Gemini API key, set up next.", "google")),
+                new Choice("Another provider\nOne isx does not manage; " + title + " signs in itself.",
+                        title + "'s name for the provider: "));
+    }
+
     @Override
     public String credentialProblem(SpawnConfig config, java.util.Map<String, String> resolvedParams,
                                     java.util.Map<String, String> selection) {

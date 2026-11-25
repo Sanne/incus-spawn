@@ -38,6 +38,26 @@ class ExampleTemplateTest {
         }
     }
 
+    /** The first run's answer to an agent's own question is the agent's parameter, and validates (#2536). */
+    @Test
+    void anAgentsAnswerIsItsParameter() throws Exception {
+        var known = ImageDef.loadBuiltins();
+        for (var agent : AgentCommand.agents(RuntimeConstants.CDI_TOOLS)) {
+            var question = agent.firstRunQuestion();
+            if (question == null) continue;
+            assertTrue(agent.parameters().containsKey(question.parameter()), agent.name());
+            for (var choice : question.choices()) {
+                if (choice.value() == null) continue;
+                var params = java.util.Map.of(question.parameter(), choice.value());
+                var text = ExampleTemplate.text(agent, true, params);
+                assertEquals(params, ImageDef.parseYaml(text).getTools().getFirst().getParams(), text);
+                var result = TemplateValidator.validate(text, ExampleTemplate.file(), known);
+                assertFalse(result.hasErrors(), agent.name() + ": " + result.errors());
+                assertFalse(result.hasWarnings(), agent.name() + ": " + result.warnings());
+            }
+        }
+    }
+
     @Test
     void anExistingFileIsLeftUntouched() throws Exception {
         var claude = AgentCommand.agents(RuntimeConstants.CDI_TOOLS).stream().filter(a -> a.name().equals("claude")).findFirst().orElseThrow();

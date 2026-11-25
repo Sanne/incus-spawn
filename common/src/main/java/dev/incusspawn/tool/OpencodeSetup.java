@@ -146,6 +146,12 @@ public class OpencodeSetup implements ToolSetup {
         };
     }
 
+    /** Which provider, so the first run sets up that provider's account, or none (#2536). */
+    @Override
+    public FirstRunQuestion firstRunQuestion() {
+        return PiSetup.providerQuestion("opencode");
+    }
+
     /**
      * Only Claude's typed accounts are checked here: a missing OpenAI or Gemini key is found by the
      * check of every tool's {@code secret: true} entries, for the account the instance uses. That

@@ -64,21 +64,57 @@ class InitFirstRunAccountsTest {
     }
 
     /**
-     * Pi is asked about Claude: the step says why first, and where another provider is set up,
-     * with no template syntax before a template was explained (#2528).
+     * Pi and opencode are asked for their provider first (#2536): Enter keeps Claude's, and the
+     * account step then says whose account it is, with no word on choosing another provider.
      */
     @Test
-    void anAgentWithNoAccountOfItsOwnIsToldWhoseItUses() {
+    void anAgentWithNoAccountOfItsOwnIsAskedItsProviderFirst() {
         for (var agent : List.of("pi", "opencode")) {
             IsolatedHome.configFile().toFile().delete();
-            var lines = ask(agent, ScriptedPrompts.lines("4"), new Init());
+            var init = new Init();
+            var lines = ask(agent, ScriptedPrompts.lines("", "4"), init);
 
-            var whose = at(lines, "works with several providers, and isx sets it up");
-            assertTrue(at(lines, "with a Claude account first.") == whose + 1, String.join("\n", lines));
-            assertTrue(whose < at(lines, "Which kind of Claude account do you have?"), String.join("\n", lines));
-            assertTrue(at(lines, "https://isx.run/docs/agents#") > whose, String.join("\n", lines));
+            var provider = at(lines, "should " + (agent.equals("pi") ? "Pi" : "opencode") + " use? Choose one:");
+            assertTrue(provider < at(lines, "uses a Claude account."), String.join("\n", lines));
+            assertTrue(at(lines, "uses a Claude account.") < at(lines, "Which kind of Claude account do you have?"), String.join("\n", lines));
+            assertEquals(0, count(lines, "works with several providers"), String.join("\n", lines));
             assertEquals(0, count(lines, "{provider:"), String.join("\n", lines));
+            assertEquals(java.util.Map.of(), init.agentParams);
         }
+    }
+
+    /** Choosing OpenAI sets up an OpenAI account, never a Claude one, and the template names the provider (#2536). */
+    @Test
+    void aProviderChosenDecidesTheAccountSetUp() throws Exception {
+        for (var agent : List.of("pi", "opencode")) {
+            IsolatedHome.configFile().toFile().delete();
+            var init = new Init();
+            // OpenAI, then end of input at its account step
+            var lines = ask(agent, ScriptedPrompts.lines("2"), init);
+
+            assertEquals(1, count(lines, "Which kind of OpenAI account do you have?"), String.join("\n", lines));
+            assertEquals(0, count(lines, "Which kind of Claude account"), String.join("\n", lines));
+            // A ChatGPT session would give Pi and opencode no key (#2525): only the key is offered
+            assertEquals(0, count(lines, "ChatGPT"), String.join("\n", lines));
+            assertEquals(java.util.Map.of("provider", "openai"), init.agentParams);
+            init.prepareFirstTemplate();
+            var tools = dev.incusspawn.config.ImageDef.parseYaml(java.nio.file.Files.readString(ExampleTemplate.file())).getTools();
+            assertEquals(java.util.Map.of("provider", "openai"), tools.getFirst().getParams(), agent);
+            java.nio.file.Files.delete(ExampleTemplate.file());
+        }
+    }
+
+    /** A provider isx does not manage is typed, checked, and needs no account step (#2536). */
+    @Test
+    void aProviderIsxDoesNotManageNeedsNoAccount() {
+        var init = new Init();
+        var lines = ask("pi", ScriptedPrompts.lines("4", "Not A Name", "openrouter"), init);
+
+        assertEquals(1, count(lines, "Use lowercase letters, digits"), String.join("\n", lines));
+        assertEquals(1, count(lines, "Pi needs no account from isx for that provider."), String.join("\n", lines));
+        assertEquals(0, count(lines, "Pi Account"), String.join("\n", lines));
+        assertEquals(0, count(lines, "Which kind of"), String.join("\n", lines));
+        assertEquals(java.util.Map.of("provider", "openrouter"), init.agentParams);
     }
 
     /** Copilot spends GitHub's account: skipped at its step, the GitHub question is not asked a second time. */

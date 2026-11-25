@@ -1205,13 +1205,24 @@ public class InitCommand extends BaseCommand {
      * What a first run's questions were answered that config.yaml does not hold: "none for now",
      * the agent's credential declined, the GitHub account skipped, the Git identity answered No.
      */
-    record FirstRunAnswers(boolean noAgent, boolean noCredential, boolean noGitHub, boolean noIdentity) {
+    record FirstRunAnswers(boolean noAgent, boolean noCredential, boolean noGitHub, boolean noIdentity,
+                           Map<String, String> agentParams) {
+        FirstRunAnswers {
+            agentParams = agentParams == null ? Map.of() : Map.copyOf(agentParams);
+        }
+
+        FirstRunAnswers(boolean noAgent, boolean noCredential, boolean noGitHub, boolean noIdentity) {
+            this(noAgent, noCredential, noGitHub, noIdentity, Map.of());
+        }
+
         String encode() {
             var words = new ArrayList<>(List.of("asked"));
             if (noAgent) words.add("no-agent");
             if (noCredential) words.add("no-credential");
             if (noGitHub) words.add("no-github");
             if (noIdentity) words.add("no-identity");
+            // The agent's own answer (#2536): its parameter's pattern keeps ',' and '=' out of it
+            new java.util.TreeMap<>(agentParams).forEach((k, v) -> words.add("param:" + k + "=" + v));
             return String.join(",", words);
         }
 
@@ -1220,8 +1231,15 @@ public class InitCommand extends BaseCommand {
             if (value == null) return null;
             var words = Set.copyOf(List.of(value.split(",")));
             if (!words.contains("asked")) return null;
+            var params = new LinkedHashMap<String, String>();
+            for (var word : words) {
+                var eq = word.indexOf('=');
+                if (word.startsWith("param:") && eq > "param:".length()) {
+                    params.put(word.substring("param:".length(), eq), word.substring(eq + 1));
+                }
+            }
             return new FirstRunAnswers(words.contains("no-agent"), words.contains("no-credential"),
-                    words.contains("no-github"), words.contains("no-identity"));
+                    words.contains("no-github"), words.contains("no-identity"), params);
         }
     }
 
@@ -1268,6 +1286,8 @@ public class InitCommand extends BaseCommand {
             if (continued) {
                 answers = continuationAnswers();
                 chosenAgent = answers.noAgent() ? null : preferredAgentTool();
+                // The provider its parent asked for, which the first template it writes names (#2536)
+                agentParams = answers.agentParams();
             } else {
                 printFirstRunIntro(macOs);
                 startDownloadsAhead(null);
@@ -1435,8 +1455,14 @@ public class InitCommand extends BaseCommand {
 
     /** The first template for {@code agent} among {@code trusted}: the person's own tpl-agent, kept, else the one init writes. */
     static ImageDef firstTemplate(Map<String, ImageDef> trusted, ToolSetup agent, SpawnConfig config) throws IOException {
+        return firstTemplate(trusted, agent, Map.of(), config);
+    }
+
+    /** As {@link #firstTemplate(Map, ToolSetup, SpawnConfig)}, the one init writes with the agent's {@code params}. */
+    static ImageDef firstTemplate(Map<String, ImageDef> trusted, ToolSetup agent, Map<String, String> params,
+                                  SpawnConfig config) throws IOException {
         var own = trusted.get(ExampleTemplate.NAME);
-        return own != null ? own : ImageDef.parseYaml(ExampleTemplate.text(agent, ExampleTemplate.hasGitHubAccount(config)));
+        return own != null ? own : ImageDef.parseYaml(ExampleTemplate.text(agent, ExampleTemplate.hasGitHubAccount(config), params));
     }
 
     /** The trusted definitions, which decide the first template; tests answer them instead. */
@@ -1501,7 +1527,12 @@ public class InitCommand extends BaseCommand {
             totalKnown = !all;
             var gaps = chosenAgent == null ? Map.<CredentialCheck.Missing, List<String>>of() : agentGaps();
             if (gaps.isEmpty()) {
-                if (chosenAgent != null) BuildOutput.note(ExampleTemplate.title(templateAgent()) + "'s account is set up already.");
+                if (chosenAgent != null && agentQuestionAsked && chosenAgent.credentialNamespaces(agentParams).isEmpty()) {
+                    // A provider isx does not manage: the agent signs in to it itself (#2536)
+                    BuildOutput.note(ExampleTemplate.title(chosenAgent) + " needs no account from isx for that provider.");
+                } else if (chosenAgent != null) {
+                    BuildOutput.note(ExampleTemplate.title(templateAgent()) + "'s account is set up already.");
+                }
             } else {
                 begin(agentCredentialStep(templateAgent()));
                 noCredential = !agentGaps().isEmpty();
@@ -1536,7 +1567,7 @@ public class InitCommand extends BaseCommand {
                 totalKnown = true;
             }
             for (var step : later) begin(step);
-            answers = new FirstRunAnswers(chosenAgent == null, noCredential, noGitHub, noIdentity);
+            answers = new FirstRunAnswers(chosenAgent == null, noCredential, noGitHub, noIdentity, agentParams);
         } finally {
             credentials.closeHttpClient();
         }
@@ -1616,6 +1647,75 @@ public class InitCommand extends BaseCommand {
         config.setPreferredAgent(chosenAgent.name());
         config.save();
         BuildOutput.ok("Preferred agent: " + ExampleTemplate.title(chosenAgent));
+        askAgentQuestion(prompts);
+    }
+
+    /**
+     * The first template's parameters the person chose for {@link #chosenAgent}: the answer to its
+     * {@link ToolSetup#firstRunQuestion()}, empty for the defaults (#2536).
+     */
+    Map<String, String> agentParams = Map.of();
+
+    /** Whether the agent's own question was asked, so its account step no longer says how to choose another provider. */
+    private boolean agentQuestionAsked;
+
+    /**
+     * Asks the chosen agent's own question (Pi's provider), which decides the account the next
+     * step sets up. Not for a kept tpl-agent, which init does not write: its tools say already.
+     */
+    private void askAgentQuestion(Prompts prompts) {
+        agentParams = Map.of();
+        agentQuestionAsked = false;
+        var question = chosenAgent.firstRunQuestion();
+        if (question == null || prompts == null || trustedTemplates().containsKey(ExampleTemplate.NAME)) return;
+        agentQuestionAsked = true;
+        var options = new ArrayList<>(question.choices().stream().map(ToolSetup.Choice::label).toList());
+        if (question.other() != null) options.add(question.other().label());
+        var def = chosenAgent.parameters().get(question.parameter());
+        while (true) {
+            var answer = prompts.choose(question.question(), options, null, "choose " + options.getFirst().lines().findFirst().orElse(""));
+            if (answer == null) return;
+            int n;
+            try {
+                n = answer.isBlank() ? 1 : Integer.parseInt(answer.strip());
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            if (n >= 1 && n <= question.choices().size()) {
+                var value = question.choices().get(n - 1).value();
+                if (value != null) agentParams = Map.of(question.parameter(), value);
+                return;
+            }
+            if (question.other() != null && n == options.size()) {
+                var value = askParameterValue(prompts, question.other().value(), question.parameter(), def);
+                if (value == null) return;
+                if (!value.isEmpty()) {
+                    agentParams = Map.of(question.parameter(), value);
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Words a YAML reader takes for null or a boolean, which tpl-agent.yaml writes unquoted. */
+    private static final Set<String> YAML_NON_STRINGS = Set.of("null", "true", "false", "yes", "no", "on", "off", "y", "n");
+
+    /** A value typed for {@code parameter}, until {@code def} takes it: empty to choose again, null at EOF. */
+    private static String askParameterValue(Prompts prompts, String ask, String parameter,
+                                             dev.incusspawn.tool.ToolDef.ParameterDef def) {
+        while (true) {
+            var answer = prompts.ask(ask);
+            if (answer == null) return null;
+            var value = answer.strip();
+            if (value.isEmpty()) return "";
+            // A plain YAML word the template would read as no string ('null', 'true') is not a name
+            if (YAML_NON_STRINGS.contains(value)) {
+                prompts.say("'" + value + "' is not a name " + parameter + " can take.");
+                continue;
+            }
+            if (def == null || dev.incusspawn.tool.ParameterResolver.validateValue(parameter, value, def).isEmpty()) return value;
+            prompts.say("Use lowercase letters, digits, - and _, a letter first.");
+        }
     }
 
     private ToolSetup confirmAgent(Prompts prompts, List<ToolSetup> agents, ToolSetup suggested,
@@ -1674,7 +1774,7 @@ public class InitCommand extends BaseCommand {
             var config = SpawnConfig.load();
             // Trusted only, as the first template is: a project's tpl-agent never asks for an account here
             var defs = new LinkedHashMap<>(trustedTemplates());
-            defs.putIfAbsent(ExampleTemplate.NAME, firstTemplate(defs, chosenAgent, config));
+            defs.putIfAbsent(ExampleTemplate.NAME, firstTemplate(defs, chosenAgent, agentParams, config));
             var loader = ToolDefLoader.withoutProjectTools(config.getSearchPaths());
             var gaps = new LinkedHashMap<>(CredentialCheck.missingByCredential(config, List.of(ExampleTemplate.NAME), defs, loader));
             // GitHub's account is the GitHub step's, with a header of its own, unless it is the only
@@ -1728,7 +1828,7 @@ public class InitCommand extends BaseCommand {
         for (var gap : agentGaps().keySet()) {
             var step = CredentialCheck.stepTool(gap, tools);
             if (step != null && !ran.add(step)) continue;
-            if (step != null && !step.equals(agent.name())) sayWhoseAccount(agent, tools.get(step), step);
+            if (step != null && !step.equals(agent.name())) sayWhoseAccount(agent, tools.get(step), step, agentQuestionAsked);
             if (step == null) {
                 BuildOutput.note(OutputFormat.oneLine(gap.credential()) + ": " + CredentialCheck.remedy(List.of(gap)));
             } else if (step.equals("gh")) {
@@ -1752,14 +1852,16 @@ public class InitCommand extends BaseCommand {
      * that follow name another product (Pi is asked about Claude), and for an agent with a
      * {@code provider}, how to spend another provider's account instead.
      */
-    private static void sayWhoseAccount(ToolSetup agent, ToolSetup owner, String step) {
+    private static void sayWhoseAccount(ToolSetup agent, ToolSetup owner, String step, boolean providerChosen) {
         var title = ExampleTemplate.title(agent);
         var proxy = owner == null ? null : owner.proxy();
         var namespace = proxy == null || proxy.getConfigNamespace().isBlank() ? step : proxy.getConfigNamespace();
         // Another tool of a kept template (gh beside Claude Code) lacks its own account, not the agent's
         if (!agent.credentialNamespaces().contains(namespace)) return;
         // Only the account the agent spends with no provider set is its default: a kept template may name another
-        var byDefault = agent.parameters().containsKey("provider") && agent.credentialNamespaces(Map.of()).contains(namespace);
+        // and one the person just chose needs no word on choosing another (#2536)
+        var byDefault = !providerChosen && agent.parameters().containsKey("provider")
+                && agent.credentialNamespaces(Map.of()).contains(namespace);
         var shown = CredentialSetup.accountName(namespace);
         // "an OpenAI account", "a Claude account"
         var article = "AEIOUaeiou".indexOf(shown.charAt(0)) >= 0 ? "an " : "a ";
@@ -1990,7 +2092,7 @@ public class InitCommand extends BaseCommand {
             }
         } else {
             // The closing box says what it is and how to change it (#2528); it lists gh with a GitHub account (#2535)
-            ExampleTemplate.write(ExampleTemplate.file(), chosenAgent, ExampleTemplate.hasGitHubAccount(SpawnConfig.load()));
+            ExampleTemplate.write(ExampleTemplate.file(), chosenAgent, ExampleTemplate.hasGitHubAccount(SpawnConfig.load()), agentParams);
         }
         return ExampleTemplate.NAME;
     }
