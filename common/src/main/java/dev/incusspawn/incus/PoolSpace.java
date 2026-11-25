@@ -29,13 +29,25 @@ public final class PoolSpace {
      * start, or null. One request.
      */
     public static String check(IncusClient incus, String pool, Need need) {
+        return check(incus, read(incus, pool), pool, need);
+    }
+
+    /** {@code pool}'s usage, or null when there is no pool or Incus does not answer. One request. */
+    public static IncusClient.PoolUsage read(IncusClient incus, String pool) {
         if (pool == null) return null;
-        IncusClient.PoolUsage usage;
         try {
-            usage = incus.getPoolUsageBytes(pool);
+            return incus.getPoolUsageBytes(pool);
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /**
+     * {@link #check(IncusClient, String, Need)} on a usage {@link #read} already read, so a caller
+     * that also wants the usage pays one request.
+     */
+    public static String check(IncusClient incus, IncusClient.PoolUsage usage, String pool, Need need) {
+        if (usage == null) return null;
         var macOS = Platform.isMacOS();
         // Asked only for a pool already short, so a branch with room pays no second request
         return check(usage, pool, need, macOS, () -> macOS || sharesIncusDisk(incus, pool));

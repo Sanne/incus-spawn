@@ -6,8 +6,10 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.McpScope;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
+import dev.incusspawn.incus.DiskHint;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.PoolSpace;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.lifecycle.TemplateLock;
@@ -16,6 +18,7 @@ import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tool.ShellMenu;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Headless;
 import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
@@ -115,7 +118,7 @@ public class BranchCommand extends BaseCommand {
     private IncusClient incus;
 
     /** A branch {@link #create} made, and what opening its shell needs. */
-    private record Created(String source, BranchFlow.Preflight preflight,
+    record Created(String source, BranchFlow.Preflight preflight,
                            RuntimeSetup.RuntimeConfig prefetched, McpScope mcpScope) {}
 
     @Override
@@ -137,7 +140,10 @@ public class BranchCommand extends BaseCommand {
 
         var created = create();
         if (created == null) return CommandResult.valueOf(1);
-        if (noStart) return CommandResult.SUCCESS;
+        if (noStart) {
+            diskHint(created);
+            return CommandResult.SUCCESS;
+        }
         if (!IncusClient.hasTerminal()) {
             // The branch is done; only the shell needs a terminal (#1027).
             BuildOutput.step("isx did not open a shell, since this is not a terminal. From a terminal: isx shell " + name);
@@ -156,8 +162,64 @@ public class BranchCommand extends BaseCommand {
         }
         var menu = resolver.shellMenu(name, created.prefetched().templateName(), created.prefetched().workdir());
         incus.interactiveShell(name, "agentuser", shellPrep, menu);
+        // After the shell, which an action clears the screen for, so the person sees it
+        diskHint(created);
         ShellFarewell.say(name);
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * Names {@code isx overview} when the pool is filling (#2563), at most once a day unless the
+     * level rises, and only to a person at a terminal: never under {@code --format}, never headless.
+     * The pool, read again, and the listing it counts from are read only when the hint is due, so a
+     * branch that shows nothing makes no request for them.
+     */
+    void diskHint(Created created) {
+        diskHint(created, incus);
+    }
+
+    /** {@link #diskHint(Created)} on a given Incus client, for tests. */
+    void diskHint(Created created, IncusClient incus) {
+        var usage = created.preflight().poolUsage();
+        var stamp = dev.incusspawn.Environment.diskHintFile();
+        var now = now();
+        if (Headless.active() || !interactive()
+                || !DiskHint.due(usage, created.preflight().settings().diskHintEnabled(), stamp, now)) {
+            return;
+        }
+        // Read again, since a shell may have run for hours since preflight read it: one request, only when due
+        var pool = IncusClient.rootDiskPoolFromDevices(created.preflight().sourceInstance().path("expanded_devices"));
+        var fresh = PoolSpace.read(incus, pool);
+        if (fresh != null) {
+            usage = fresh;
+            if (!DiskHint.due(usage, true, stamp, now)) return;
+        }
+        int instances = 0, stopped = 0;
+        try {
+            for (var i : InstanceListing.collectEntries(incus.listJsonConfig())) {
+                // Templates, a project's and one mid-rebuild included, and kept failed builds are
+                // not instances a person branched
+                if (Metadata.TYPE_BASE.equals(i.type()) || Metadata.TYPE_PROJECT.equals(i.type())
+                        || Metadata.TYPE_FAILED_BUILD.equals(i.type())
+                        || i.name().endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
+                instances++;
+                if ("Stopped".equalsIgnoreCase(i.status())) stopped++;
+            }
+        } catch (RuntimeException e) {
+            return;
+        }
+        DiskHint.lines(usage, instances, stopped).forEach(BuildOutput::note);
+        DiskHint.shown(stamp, usage.level(), now);
+    }
+
+    /** Whether a person is at the terminal; overridden by tests. */
+    boolean interactive() {
+        return IncusClient.hasTerminal();
+    }
+
+    /** The time the hint is stamped with; overridden by tests. */
+    java.time.Instant now() {
+        return java.time.Instant.now();
     }
 
     /**

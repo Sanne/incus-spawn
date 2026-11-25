@@ -65,6 +65,11 @@ public class SpawnConfig extends UnreadableFile {
     @JqName("tui-live-refresh")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Boolean tuiLiveRefresh;
+    // `disk-hint: false` keeps isx branch from naming isx overview as the pool fills (#2563).
+    // Null means on, and is never written back.
+    @JqName("disk-hint")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Boolean diskHint;
     // How long the proxy trusts a cached Maven/Gradle artifact's last confirmation with
     // upstream (ArtifactCacheConfig). Kept as the raw YAML value, so any shape loads and is
     // written back as it was; null means the defaults, and is never written back.
@@ -706,6 +711,9 @@ public class SpawnConfig extends UnreadableFile {
     // Deliberately not a bean getter: Jackson would serialize its boolean, writing the default out.
     public boolean tuiLiveRefreshEnabled() { return tuiLiveRefresh == null || tuiLiveRefresh; }
     public void setTuiLiveRefresh(Boolean enabled) { this.tuiLiveRefresh = enabled; }
+    /** Whether {@code isx branch} names {@code isx overview} as the pool fills; on unless {@code disk-hint: false}. */
+    public boolean diskHintEnabled() { return diskHint == null || diskHint; }
+    public void setDiskHint(Boolean enabled) { this.diskHint = enabled; }
     /** The {@code artifact-cache:} section, or null when there is none. */
     public ArtifactCacheConfig artifactCache() { return ArtifactCacheConfig.of(artifactCache); }
     /** Bounded, immutable remote-derived Git snapshots. */
@@ -888,6 +896,7 @@ public class SpawnConfig extends UnreadableFile {
         this.incusBridgeGateway = other.incusBridgeGateway;
         this.preferredAgent = other.preferredAgent;
         this.tuiLiveRefresh = other.tuiLiveRefresh;
+        this.diskHint = other.diskHint;
         this.artifactCache = other.artifactCache;
         this.gitCache = other.gitCache;
         this.gitTransfer = other.gitTransfer;

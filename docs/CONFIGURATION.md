@@ -402,6 +402,18 @@ To turn this off:
 tui-live-refresh: false
 ```
 
+## Storage hint
+
+When the storage pool is 85% full and has under 10 GiB free, `isx branch` names `isx overview` and the TUI's Work tab.
+They show what each instance did and what destroying it would lose, so you can choose what to delete before the pool fills.
+The hint shows at most once a day, and again when the pool gets fuller.
+
+To turn it off:
+
+```yaml
+disk-hint: false
+```
+
 ## Proxy ready timeout
 
 `isx proxy install` and `isx proxy start` wait for the proxy to become healthy after starting the service.

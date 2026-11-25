@@ -1082,6 +1082,11 @@ public class IncusClient {
         private static final long GIB = 1024L * 1024 * 1024;
         public static final int LOW_PERCENT = 75;
         public static final long LOW_FREE_BYTES = 10 * GIB;
+        /**
+         * The level at which {@code isx branch} names {@code isx overview} (#2563): between low and
+         * critical, under the same {@link #LOW_FREE_BYTES}, so a pool with room is never nagged.
+         */
+        public static final int HINT_PERCENT = 85;
         public static final int CRIT_PERCENT = 90;
         /**
          * Margin, not a build's size: btrfs can refuse writes with a few GiB still reported free,
@@ -1104,6 +1109,10 @@ public class IncusClient {
         public boolean isLow() {
             return totalBytes > 0 && percent() >= LOW_PERCENT && freeBytes() < LOW_FREE_BYTES;
         }
+        /** At least 85% used and under 10 GiB free: time to choose what to destroy (#2563). */
+        public boolean isHint() {
+            return totalBytes > 0 && percent() >= HINT_PERCENT && freeBytes() < LOW_FREE_BYTES;
+        }
         /** Red: at least 90% used and under 5 GiB free. */
         public boolean isCritical() {
             return totalBytes > 0 && percent() >= CRIT_PERCENT && freeBytes() < CRIT_FREE_BYTES;
@@ -1112,6 +1121,20 @@ public class IncusClient {
         public boolean isExhausted() {
             return totalBytes > 0 && freeBytes() < EXHAUSTED_FREE_BYTES;
         }
+        /**
+         * How short the pool is: the highest level that holds, NONE for one with room or unread.
+         * Low, hint and critical each imply the ones below, but exhausted holds on its own: an
+         * 8 GiB pool at 81% is exhausted without being at the hint.
+         */
+        public Level level() {
+            if (isExhausted()) return Level.EXHAUSTED;
+            if (isCritical()) return Level.CRITICAL;
+            if (isHint()) return Level.HINT;
+            if (isLow()) return Level.LOW;
+            return Level.NONE;
+        }
+        /** The levels of {@link #level()}, lowest first. */
+        public enum Level { NONE, LOW, HINT, CRITICAL, EXHAUSTED }
         public String format(String poolName) {
             return "%s pool: %dMiB used / %dMiB total (%d%% full)".formatted(
                     poolName, usedBytes / (1024 * 1024), totalBytes / (1024 * 1024), percent());

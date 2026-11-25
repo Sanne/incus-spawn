@@ -209,6 +209,11 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/events/events.jsonl");
     }
 
+    /** When {@code isx branch} last named {@code isx overview} for a filling pool, and at which level (#2563). */
+    public static Path diskHintFile() {
+        return home().resolve(".local/state/incus-spawn/disk-hint");
+    }
+
     public static Path apiDebugDir() {
         return home().resolve(".local/state/incus-spawn/api-debug");
     }

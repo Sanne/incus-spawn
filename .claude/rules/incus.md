@@ -222,6 +222,8 @@ A CoW pool is **required** for instance creation and copying -- `requireCowPool(
 `isx branch` and `BuildCommand.buildFromParent()` warn when a copy will be full (non-CoW), and `isx doctor` surfaces three cases -- no CoW pool (FAIL with Linux remediation), default profile root disk on a non-CoW pool (WARN with auto-fix remediation), and instances on non-CoW pools (WARN with rebuild/move guidance).
 `isCowDriver()` and `rootDiskPoolFromDevices()` are the unit-testable helpers.
 **A full pool is refused before it happens** (#2555, `PoolSpace`): `BranchFlow.preflight` refuses a branch once its source's pool has under 2 GiB free (`PoolUsage.isExhausted`) and warns at critical, and `BuildCommand.reportPoolTooFull` refuses a build at either, each with one read of the pool's `/resources` (`BranchPoolSpaceTest` pins the branch's).
+Before that, `isx branch` notes the pool's use and names `isx overview` and the Work tab once it reaches the hint level (`PoolUsage.isHint`: 85% used and under 10 GiB free), from the same read.
+It shows at most once a day unless the level rises, at a terminal only, and is off with `disk-hint: false` (`DiskHint`, #2563).
 On macOS a full data disk stops Incus, so the appliance keeps a reserve it releases at boot, and the agent's `disk-free` lets isx name the fix while Incus is down (design/storage.md "A full disk is refused before it happens").
 
 **Pool backing** (#1656, `CowPoolBacking` in `cli/command`): on a host whose `/var/lib/incus/storage-pools` is on btrfs, `isx init` creates `cow` with `source=/var/lib/incus/storage-pools/cow` (Incus makes the subvolume; no size cap), never a loop file, which would make every write copy-on-write twice.
