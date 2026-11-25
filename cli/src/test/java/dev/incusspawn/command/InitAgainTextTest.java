@@ -95,4 +95,15 @@ class InitAgainTextTest {
                 .filter(title -> !title.isEmpty()).toList();
         assertEquals(List.of("Installing what isx needs on " + dev.incusspawn.Platform.thisComputer()), headers);
     }
+
+    /** Without a terminal Credential Setup said nothing under its header, as if it had nothing to ask. */
+    @Test
+    void credentialSetupWithoutATerminalSaysItSkipped() throws Exception {
+        var init = new NoTerminal();
+        var recorded = RecordingOutput.during(() -> init.credentialSetup().run().run());
+        var notes = recorded.events(RecordingOutput.Kind.NOTE).stream().map(RecordingOutput.Event::msg).toList();
+        assertEquals(List.of("Skipped: this run has no terminal to ask in.",
+                "'isx account add' sets one up at a terminal."), notes);
+        assertTrue(init.skipped.contains("credentials"));
+    }
 }
