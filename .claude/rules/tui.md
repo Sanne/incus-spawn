@@ -107,7 +107,10 @@ Otherwise it does one `incus.exists()`.
 `ShellLaunch.shellInto()` re-checks the status itself, covering an event still in transit.
 A failed existence check lets the action proceed rather than blocking the UI.
 
-**Purpose** (#2239): `p` on an instance opens `PurposeDialog`, one metadata write on a running or a stopped one (empty text unsets it), and the branch dialog's Purpose field, right after the name, goes to the copy request as `Metadata.PURPOSE` in `extraConfig`.
+**Purpose** (#2239): F6 and `p` on an instance open `EditDialog` (#2621) at its name or its purpose, and `p` in F3's details opens it at the purpose and returns there.
+A purpose is one metadata write on a running or a stopped one (empty text unsets it), and none when unchanged; only a new name asks to stop a running instance (`CONFIRM_STOP_FOR_RENAME`), after both fields passed their checks, and Esc there writes neither.
+F3's details always show a Purpose row, `-` when unset, so a person finds where it goes.
+The branch dialog's Purpose field, right after the name, goes to the copy request as `Metadata.PURPOSE` in `extraConfig`.
 The instance table's PURPOSE column (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`, 118, or `PURPOSE_ALONE_MIN_WIDTH`, 108, when OWNER is not shown) is drawn only when some instance has a purpose, from the ninth cell of each row, `ListCommand.purposeCell`.
 `Tui.buildRowData` always makes nine cells and `MainScreen` keeps those of the columns it draws.
 
@@ -158,7 +161,7 @@ Shift+F2 (in the table and in F3 details) joins a delegated task's conversation 
 One task leaves `SHELL_WITH_COMMAND` pending with `pendingCommandOnly`, so the command runs outside the instance's tmux or zmx session; several open `TaskPicker`; anything else is a status line.
 The branch dialog is `BranchModal` (`BranchModalTest`): it owns its fields, their keys and its rendering, and hands Enter back, so `Tui` runs the proxy, credential and still-exists checks and creates the branch from `BranchModal.request` once the terminal is released.
 Its MCP control box (#1811) is `isx branch --mcp-client`: ticked from `BranchFlow.Defaults.mcpClient` (the template's `coordinator:`, #1812) and always sent as shown, never left to `BranchFlow`'s default (a grant is what the person saw), its row saying "off: project-local definition" when `Defaults.mcpClientNote` is set (`create` gives that note only for a null choice), unticked and skipped by Tab while the network is Airgapped (`BranchFlow.mcpClientUnreachable`) and given back what it held when the network leaves Airgapped, and `ShellLaunch` runs `McpClientGrant.check` after the branch when it is granted.
-The rename dialog is `RenameDialog` (`RenameDialogTest`): it owns the name input, its keys and its rendering, and hands Enter back, so `Tui` keeps `renameSourceName` through the stop-first confirm and runs the checks and the rename.
+The edit dialog is `EditDialog` (`EditDialogTest`): it owns the name and purpose inputs, their keys and its rendering, and hands Enter back, so `Tui` keeps `renameSourceName` and the dialog through the stop-first confirm and runs the checks, the purpose write and the rename (`applyEdit`).
 The new-template dialog is `NewTemplateModal` (`NewTemplateModalTest`): it owns the name, parent and location fields, their keys and its rendering, while `Tui` lists the locations (from `SpawnConfig`), checks the name and parent on Enter, and creates the template from `NewTemplateModal.parent` and `locationDir` once the terminal is released.
 The delete confirmation is `DeleteConfirm` (`DeleteConfirmTest`): it holds the target (one name, `--all` / `--all-instances`, or the marked names from `ofSeveral`) and the note `Tui.cowDeleteNote` worked out when it opened, its keys and its rendering, while `Tui` runs the destroy; every target of several goes through `Tui.destroyBatch`.
 **Branch dialog accounts** (`BranchAccountChoices`, snapshot-tested in `BranchAccountChoicesTest`): account rows follow the inbox field (`accountFieldBase()`), one per credential the template's tools use with more than one account.

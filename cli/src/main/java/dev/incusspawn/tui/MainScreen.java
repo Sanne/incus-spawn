@@ -766,7 +766,7 @@ final class MainScreen {
         items.add(makeKey("F3", "Details", onTemplates ? !hasTemplate : !hasInstance));
         items.add(makeKey("F4", "Branch\u2026", onTemplates ? !isBuilt : !hasInstance));
         items.add(makeKey("F5", "Build…", !hasTemplate || !onTemplates));
-        items.add(makeKey("F6", "Rename\u2026", !hasInstance || onTemplates));
+        items.add(makeKey("F6", "Edit\u2026", !hasInstance || onTemplates));
         // With marks, F7 and F8 act on the marked rows rather than the cursor's
         // (only on a row: with none, as when the search hides them all, no key acts)
         boolean stops = tui.markedInstances().isEmpty() ? running : hasInstance && tui.anyMarkedInstanceRunning();

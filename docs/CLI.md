@@ -396,7 +396,11 @@ The text is one line of at most 200 characters.
 `isx list` shows it in a PURPOSE column of the table, and in a `purpose` field after the others in `plain` and `json`.
 The TUI shows it in the instance details and in a PURPOSE column of the instance list, from a 120-column terminal (110 when no instance has an owner).
 
-In the TUI, `p` on an instance edits its purpose, and an empty text removes it.
+In the TUI, F6 on an instance opens a dialog that edits its name and its purpose, and `p` opens the same dialog at the purpose.
+An empty purpose removes it.
+Setting a purpose leaves a running instance running; a new name stops it first, after asking.
+
+The instance details always have a Purpose line, which shows `-` when the instance has no purpose.
 The branch dialog has a Purpose field.
 
 A purpose belongs to one instance: a branch of it does not inherit it, and a template cannot set one.

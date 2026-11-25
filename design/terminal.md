@@ -669,7 +669,7 @@ A terminal sends a digit as the digit however the layout types it, and Alt as an
 It never reports Shift on a digit, only the layout's own symbol above it (`@` on US, `"` on UK and German), and the TUI reads keys in their legacy encoding, without the Kitty keyboard protocol or `modifyOtherKeys`, the only ways a terminal says more.
 Shift+digit as the US symbols `!@#$%^&*()` was rejected as confusing everywhere else (Sanne): on AZERTY `&` is the unshifted 1 key, and would restart a row at once.
 `Tui.handleEvent` translates the key once, before the mode dispatch (`DigitKeys`), so every F-key check in every dialog takes it and none changes.
-A mode that reads digits itself says so on its `Mode` constant, which every constant must: the text fields (branch, rename, new template, AI Help) and the build menu, whose options are numbered.
+A mode that reads digits itself says so on its `Mode` constant, which every constant must: the text fields (branch, edit, new template, AI Help) and the build menu, whose options are numbered.
 The search bar keeps them too.
 Mnemonic letters lost because the free letters do not match the labels (`r`, `a`, `c` and `n` are taken) and the bar has no room for a second key per item.
 Esc then a digit, as Midnight Commander offers, lost because tamboui folds Esc and a key into Alt only within 50 ms, and Esc already clears the marks.

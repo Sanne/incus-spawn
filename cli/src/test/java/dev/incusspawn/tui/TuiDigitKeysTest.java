@@ -180,9 +180,9 @@ class TuiDigitKeysTest {
     void theRenameFieldKeepsItsDigits() {
         var tui = tui();
         press(tui, TAB, DOWN, KeyEvent.ofChar('6'));
-        assertEquals(Tui.Mode.RENAME, tui.mode(), "6 is F6 on the stopped gamma");
+        assertEquals(Tui.Mode.EDIT, tui.mode(), "6 is F6 on the stopped gamma");
         press(tui, KeyEvent.ofChar('1'), altDigit('2'));
-        assertEquals(Tui.Mode.RENAME, tui.mode());
+        assertEquals(Tui.Mode.EDIT, tui.mode());
         var screen = screen(tui);
         assertTrue(screen.contains("gamma1") && !screen.contains("gamma12"),
                 "1 is typed into the name, Alt+2 is not: " + screen);
@@ -229,8 +229,8 @@ class TuiDigitKeysTest {
     void exactlyTheModesThatReadDigitsKeepThem() {
         var owning = java.util.EnumSet.noneOf(Tui.Mode.class);
         for (var mode : Tui.Mode.values()) if (mode.ownsDigits()) owning.add(mode);
-        assertEquals(java.util.EnumSet.of(Tui.Mode.BUILD_MENU, Tui.Mode.BRANCH, Tui.Mode.RENAME,
-                Tui.Mode.PURPOSE, Tui.Mode.NEW_TEMPLATE, Tui.Mode.HELP_CHAT), owning,
+        assertEquals(java.util.EnumSet.of(Tui.Mode.BUILD_MENU, Tui.Mode.BRANCH, Tui.Mode.EDIT,
+                Tui.Mode.NEW_TEMPLATE, Tui.Mode.HELP_CHAT), owning,
                 "a mode with a text field or numbered options keeps its digits; a new one is added here");
     }
 

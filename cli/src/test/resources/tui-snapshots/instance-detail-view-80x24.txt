@@ -5,6 +5,7 @@
        │ KVM:            disabled                                    █ │
        │ Architecture:   x86_64                                      █ │
        │ Parent:         tpl-dev                                     █ │
+       │ Purpose:        -                                           █ │
        │                                                             █ │
        │ Network:        Full internet                               █ │
        │ IP address:     10.0.0.5                                    █ │
@@ -16,9 +17,8 @@
        │                                                             █ │
        │ Credential accounts:  (a to change)                         █ │
        │   github  work                                              █ │
-       │     Not pinned: follows the global default (github.default i█ │
-       │     config.yaml), so it changes if that default is changed. █ │
-       │                                                             │ │
-       │  F2 Shell   a Accounts   F3/Esc Close                         │
+       │     Not pinned: follows the global default (github.default i│ │
+       │     config.yaml), so it changes if that default is changed. │ │
+       │  F2 Shell   a Accounts   p Purpose   F3/Esc Close             │
        ╰───────────────────────────────────────────────────────────────╯
 

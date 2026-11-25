@@ -142,7 +142,7 @@ The screen is read top to bottom: where am I, what is there, what is selected, w
    docs-site       ○ Stopped              tpl-minimal   container   2 days ago
  ───────────────────────────────────────────────────────────────────────────────────────
  tpl-minimal  Minimal Fedora  Space Mark
- F1 Info   F2 Shell   F3 Details   F4 Branch…   F5 Build…   F6 Rename…   F7 Stop   …
+ F1 Info   F2 Shell   F3 Details   F4 Branch…   F5 Build…   F6 Edit…   F7 Stop   …
 ```
 
 **A panel is a rule and a title, not a box.**
@@ -166,15 +166,17 @@ Before, some dialogs opened with a blank row and some closed with one, so two di
 A dialog that scrolls has no blank row, since its content fills what the screen gives it.
 
 ```
-╭ Rename 'dev-1' ────────────────────────────────────╮
-│ New name:                                          │
+╭ Edit 'dev-1' ──────────────────────────────────────╮
+│ Name (renaming a running one asks to stop it):     │
 │ dev-1                                              │
+│ Purpose (empty removes it):                        │
+│ review                                             │
 │                                                    │
-│  Enter Confirm   Esc Cancel                        │
+│  Enter Confirm   Tab Next field   Esc Cancel       │
 ╰────────────────────────────────────────────────────╯
 ```
 
-- **The title** is in sentence case and names what the dialog acts on in quotes: `Rename 'dev-1'`, `Actions for 'dev-1'`, `Credential accounts of 'review-1'`.
+- **The title** is in sentence case and names what the dialog acts on in quotes: `Edit 'dev-1'`, `Actions for 'dev-1'`, `Credential accounts of 'review-1'`.
 - **A label** (`Status:`, `Parent:`) is in quiet text and its value in the dialog's text colour, so the value is what is read.
   The accent is not used for a label: it means a key to press or where the person is.
 - **A state** in a dialog has the glyph it has in the table (`● Running`).

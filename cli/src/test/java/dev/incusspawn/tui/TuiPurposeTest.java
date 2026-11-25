@@ -107,7 +107,7 @@ class TuiPurposeTest {
         var tui = tui(120, true, false);
         // The stopped instance is the second row, after the running one
         press(tui, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.DOWN), KeyEvent.ofChar('p'));
-        assertTrue(screen(tui, 120).contains("Purpose of 'ws'"), screen(tui, 120));
+        assertTrue(screen(tui, 120).contains("Edit 'ws'"), screen(tui, 120));
         type(tui, " now merged");
         press(tui, KeyEvent.ofKey(KeyCode.ENTER));
         assertEquals("waiting on review now merged", purposeOf("ws"));

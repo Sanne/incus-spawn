@@ -252,7 +252,7 @@ final class BranchModal {
                     if (Character.isLetterOrDigit(ch) || ch == '-') activeInput.insert(ch);
                 } else if (branchFieldIndex == PURPOSE_FIELD) {
                     // Free text: what Metadata.purposeProblem would refuse is left out as it is typed
-                    if (PurposeDialog.accepts(activeInput.text(), ch)) activeInput.insert(ch);
+                    if (EditDialog.acceptsPurpose(activeInput.text(), ch)) activeInput.insert(ch);
                 } else if (branchFieldIndex == inboxPathFieldIndex()) {
                     if (Character.isLetterOrDigit(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
                         activeInput.insert(ch);
