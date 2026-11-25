@@ -195,14 +195,14 @@ src_validate() {
     used=""
     for ((i = 0; i < n; i++)); do
         [[ -n "$(_pin "$i" text)" ]] || die "manifest: item $ITEM: pin $i has no text"
-        item_list "$ITEM" files | grep -qxF -- "$(_pin "$i" file)" || die "manifest: item $ITEM: pin $i: $(_pin "$i" file) is not one of the item's files"
+        grep -qxF -- "$(_pin "$i" file)" <<<"$(item_list "$ITEM" files)" || die "manifest: item $ITEM: pin $i: $(_pin "$i" file) is not one of the item's files"
         [[ "$(_pin "$i" count 1)" =~ ^[1-9][0-9]*$ ]] || die "manifest: item $ITEM: pin $i: count must be a number"
         have="$(_pin "$i" text | grep -o '{sum[^}]*}' || true)"
         while IFS= read -r fp; do
             [[ -n "$fp" ]] || continue
             l="${fp#\{sum}"; l="${l#:}"; l="${l%\}}"
             [[ -n "$l" ]] || l="$(_pin "$i" label "$(_sole_label)")"
-            _labels | grep -qxF -- "$l" || die "manifest: item $ITEM: pin $i: {sum} names no file label ('$l')"
+            grep -qxF -- "$l" <<<"$(_labels)" || die "manifest: item $ITEM: pin $i: {sum} names no file label ('$l')"
             used="$used $l"
         done <<<"$have"
     done

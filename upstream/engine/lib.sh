@@ -61,6 +61,9 @@ item() {
 }
 # item_list <item> <key>: a list of an item, one entry per line.
 item_list() { yq -r ".items[\"$1\"].$2 // [] | .[]" "$MANIFEST"; }
+# item_first <item> <key>: the list's first entry. Never "item_list ... | head -1" or "| grep -q": under
+# pipefail, the reader exiting early kills yq with SIGPIPE while it still writes, which fails at random (#2576).
+item_first() { yq -r ".items[\"$1\"].$2 // [] | .[0] // \"\"" "$MANIFEST"; }
 item_class() { item "$1" class judgement; }
 # item_proposed <item>: the engine writes this item's bump as a PR. A mechanical one the bot may merge
 # once it is proven; a review one (#2210) is proven the same way and merged by Sanne alone.

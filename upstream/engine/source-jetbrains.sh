@@ -4,7 +4,7 @@
 # that leaves source.url-prefix is refused, whatever the feed says. Every release is mechanical
 # (within: any): the tool installs whatever /opt/idea-IU-* unpacks to, which the re-hash checks.
 
-TOOL_FILE="$(item_list "$ITEM" files | head -1)"
+TOOL_FILE="$(item_first "$ITEM" files)"
 _api() { printf 'https://data.services.jetbrains.com/products/releases?code=%s&type=release' "$(item "$ITEM" source.code)"; }
 _prefix() { item "$ITEM" source.url-prefix; }
 

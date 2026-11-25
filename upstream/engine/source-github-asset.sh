@@ -13,7 +13,7 @@
 # is not numeric dotted never count, and a release must list every asset (and its .sha256) to count.
 # The series is the major version: a new major opens an issue.
 
-TOOL_FILE="$(item_list "$ITEM" files | head -1)"
+TOOL_FILE="$(item_first "$ITEM" files)"
 _repo() { item "$ITEM" source.repo; }
 _prefix() { item "$ITEM" source.tag-prefix; }
 _sums() { item "$ITEM" source.sums; }

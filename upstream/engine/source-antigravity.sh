@@ -12,7 +12,7 @@
 # The release date is the bucket's timeCreated for the later of the two tarballs. The series is the
 # major version.
 
-JAVA_FILE="$(item_list "$ITEM" files | head -1)"
+JAVA_FILE="$(item_first "$ITEM" files)"
 _UPDATER=https://antigravity-cli-auto-updater-974169037036.us-central1.run.app
 _BUCKET=https://storage.googleapis.com/antigravity-public/antigravity-cli/
 _OBJECTS=https://storage.googleapis.com/storage/v1/b/antigravity-public/o/antigravity-cli%2F

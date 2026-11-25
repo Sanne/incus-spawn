@@ -271,7 +271,7 @@ src_validate() {
         (( n > 0 )) || die "manifest: item $ITEM: member $key has no pins"
         for ((i = 0; i < n; i++)); do
             f="$(_pin "$key" "$i" file)"
-            grep -qxF -- "$f" <(item_list "$ITEM" files) || die "manifest: item $ITEM: member $key pins $f, which is not one of the item's files"
+            grep -qxF -- "$f" <<<"$(item_list "$ITEM" files)" || die "manifest: item $ITEM: member $key pins $f, which is not one of the item's files"
             text="$(_pin "$key" "$i" text)"
             [[ "$text" == *"{version}"* ]] || die "manifest: item $ITEM: pin $i of $key has no {version}"
             [[ "${text//\{version\}/}" != *[\{\}]* ]] || die "manifest: item $ITEM: pin $i of $key has a placeholder other than {version}"
@@ -300,7 +300,7 @@ src_validate() {
             [[ "$users" == "$(awk -F'\t' -v p="\${$prop}" 'index($2, p)' <<<"$all_entries" | wc -l)" ]] \
                 || die "manifest: item $ITEM: \${$prop} is used where it does not version a plugin or dependency"
             while read -r a; do
-                [[ -z "$a" ]] || _artifacts "$key" | grep -qxF -- "$a" \
+                [[ -z "$a" ]] || grep -qxF -- "$a" <<<"$(_artifacts "$key")" \
                     || die "manifest: item $ITEM: \${$prop} also versions $a, which is not an artifact of member $key (add it)"
             done <<<"$uses"
         done
