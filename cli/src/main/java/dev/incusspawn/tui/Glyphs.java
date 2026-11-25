@@ -21,10 +21,6 @@ final class Glyphs {
     /** Something the person should look at. */
     static final String WARNING = "⚠";
 
-    /** The logo, three rows of box drawing: the one decoration the TUI has. */
-    static final String[] LOGO = {
-            "╻ ┏━┓ ╻ ╻",
-            "┃ ┗━┓ ╺╋╸",
-            "╹ ┗━┛ ╹ ╹",
-    };
+    /** The logo, three rows of box drawing: the one decoration the TUI has. {@link Logo} holds it, for the first run's welcome too. */
+    static final String[] LOGO = Logo.ROWS;
 }
