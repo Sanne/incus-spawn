@@ -3098,9 +3098,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private String getGhLogin() {
-        if (runHostCapturingExit("gh", "auth", "status") != 0) return null;
-        var login = captureOutput("gh", "api", "user", "--jq", ".login");
-        return login.isEmpty() ? null : login;
+        return credentials.ghCliLogin();
     }
 
     private boolean ghRepoExists(String nwo) {
