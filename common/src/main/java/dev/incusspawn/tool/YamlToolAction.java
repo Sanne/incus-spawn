@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.Clipboard;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostPath;
 import java.io.IOException;
@@ -235,7 +236,7 @@ public class YamlToolAction implements ToolAction {
         if (text == null || text.isBlank()) {
             return ActionResult.error("Missing text for action: " + entry.getLabel());
         }
-        if (copyToClipboard(text)) {
+        if (Clipboard.copy(text)) {
             return ActionResult.ok("Copied to clipboard");
         } else {
             return ActionResult.ok("Text: " + text);
@@ -262,23 +263,6 @@ public class YamlToolAction implements ToolAction {
         }
 
         return result;
-    }
-
-    private static boolean copyToClipboard(String text) {
-        try {
-            var pb = new ProcessBuilder("xclip", "-selection", "clipboard");
-            var process = pb.start();
-            try (var out = process.getOutputStream()) {
-                out.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            }
-            var exitCode = process.waitFor();
-            return exitCode == 0;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        } catch (IOException ignored) {
-            return false;
-        }
     }
 
     // --- URL scheme prerequisite checks ---

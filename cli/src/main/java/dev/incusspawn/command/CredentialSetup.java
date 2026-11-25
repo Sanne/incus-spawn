@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.config.ModelIds;
+import dev.incusspawn.Clipboard;
 import dev.incusspawn.Environment;
 import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.config.AccountResolver;
@@ -1745,19 +1746,9 @@ class CredentialSetup {
         BuildOutput.gap();
     }
 
-    /**
-     * The command that takes text on its stdin for the clipboard of the person's own screen, or
-     * null: none over SSH, where the clipboard a command here reaches is not the one the person
-     * pastes from.
-     */
+    /** The command {@link Clipboard#command} picks here; tests answer it instead of the machine they run on. */
     List<String> clipboardCommand() {
-        if (!env("SSH_CONNECTION").isBlank() || !env("SSH_TTY").isBlank()) return null;
-        if (Platform.isMacOS()) return hostHasCommand("pbcopy") ? List.of("pbcopy") : null;
-        if (!env("WAYLAND_DISPLAY").isBlank() && hostHasCommand("wl-copy")) return List.of("wl-copy");
-        if (env("DISPLAY").isBlank()) return null;
-        if (hostHasCommand("xclip")) return List.of("xclip", "-selection", "clipboard");
-        if (hostHasCommand("xsel")) return List.of("xsel", "--clipboard", "--input");
-        return null;
+        return Clipboard.command(this::env, this::hostHasCommand);
     }
 
     /** Whether {@link #copyToClipboard} has a command to try. */
@@ -1767,28 +1758,7 @@ class CredentialSetup {
 
     /** Copies {@code text} to the clipboard: false when there is no command for it or it failed. */
     boolean copyToClipboard(String text) {
-        var command = clipboardCommand();
-        if (command == null) return false;
-        try {
-            // Nothing of the command's is read: wl-copy and xclip leave a child holding their output open
-            var process = new ProcessBuilder(command)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .redirectError(ProcessBuilder.Redirect.DISCARD)
-                    .start();
-            try (var stdin = process.getOutputStream()) {
-                stdin.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            }
-            if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                return false;
-            }
-            return process.exitValue() == 0;
-        } catch (java.io.IOException e) {
-            return false;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
+        return Clipboard.copy(clipboardCommand(), text);
     }
 
     /**
