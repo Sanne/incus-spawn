@@ -161,9 +161,10 @@ class HostSetup {
     private boolean aptRefreshed;
 
     /**
-     * Runs {@code cmd}, an {@link #installCommand}, at the terminal under {@code label}. On apt the
-     * run's first install refreshes the package lists first, as the script does: a failed refresh
-     * only warns, and the install reports its own error if the lists there are will not do.
+     * Runs {@code cmd}, an {@link #installCommand}, under the live step {@code label}, its output in
+     * the log. On apt the run's first install refreshes the package lists first, as the script
+     * does: a failed refresh only warns, and the install reports its own error if the lists there
+     * are will not do.
      */
     boolean install(String label, List<String> cmd) {
         if (!aptRefreshed && cmd.contains("apt")) {
@@ -1409,8 +1410,9 @@ class HostSetup {
 
     private boolean writeSubidFile(String path, String content) {
         var tmpPath = path + ".isx-tmp";
-        // Its sudo runs inside sh, so an expired sudo asks first, with the terminal released (#2528)
-        if (InitCommand.hostOutputToLog && !InitCommand.sudoReady()) {
+        // Its sudo runs inside sh, beyond sudo -n's reach, so an expired sudo asks first, with the
+        // terminal released (#2528): runHost captures the script's output, and a live step goes on drawing
+        if (!InitCommand.sudoReady()) {
             BuildOutput.warn("Failed to write " + path);
             return false;
         }
@@ -1883,9 +1885,8 @@ class HostSetup {
         if (!anyCow) {
             BuildOutput.step("No copy-on-write storage pool detected.");
             var hostFs = CowPoolBacking.filesystemOf(CowPoolBacking.POOLS_DIR);
+            // Its output is captured, so the line is frozen only when its sudo asks for a password (#2595)
             BuildOutput.stepStart("Creating a copy-on-write storage pool");
-            // Its sudo inherits the terminal, and may ask for a password there
-            BuildOutput.releaseTerminal();
             var created = CowPoolBacking.create(CowPoolBacking::filesystemOf,
                     () -> init.incus.hasApiExtension(STORAGE_CREATE_OPTIONS_EXTENSION),
                     CowPoolBacking::runCapturingStderr,

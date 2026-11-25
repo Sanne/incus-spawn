@@ -2969,7 +2969,7 @@ public class InitCommand extends BaseCommand {
         return commandExists(command);
     }
 
-    /** Runs a host command at the terminal, as {@link #runHost} does; tests record it instead. */
+    /** Runs a host command with its output in the log, as {@link #runHost} does; tests record it instead. */
     int runShown(String... command) {
         return runHost(command);
     }
@@ -4185,37 +4185,24 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * Whether {@link #runHost} keeps a command's output in the log: in a first run's block of
-     * setup, whose screen shows one line per outcome (#2528).
+     * Whether init is in a first run's block of setup, whose screen shows one line per outcome
+     * (#2528): there {@link #runHostQuiet}'s input is empty too, as {@link #runHost}'s always is,
+     * since no question of its may be asked unseen.
      */
     static volatile boolean hostOutputToLog;
 
-    /** The lines of a failed command's output a first run shows under its step, the rest in the log. */
+    /** The lines of a failed command's output shown under its step, the rest in the log. */
     static final int FAILED_OUTPUT_LINES = 10;
 
+    /**
+     * {@code command} with its output in the log, not on the screen, so a live step around it
+     * keeps its one line (#2595). Its input is empty, so a package manager's question fails the
+     * step rather than wait, unseen, behind its spinner; sudo asks on the tty, and only a sudo
+     * that would ask freezes the line first, so its prompt is never drawn over. A failed
+     * command's last lines are step notes, shown before the warning that follows.
+     */
     static int runHost(String... command) {
         dev.incusspawn.util.Privilege.check(command);
-        if (hostOutputToLog) return runHostLogged(command);
-        // The command writes to the terminal itself, and sudo may ask for a password there
-        BuildOutput.releaseTerminal();
-        try {
-            var pb = new ProcessBuilder(command);
-            pb.inheritIO();
-            return StdoutOnStderr.run(pb);
-        } catch (IOException | InterruptedException e) {
-            BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + failure(e));
-            return 1;
-        }
-    }
-
-    /**
-     * {@code command} with its output in the log, not on the screen. Its input is empty, so a
-     * package manager's question fails the step rather than wait, unseen, behind its spinner;
-     * sudo asks on the tty, and only a sudo whose credentials expired asks, with the terminal
-     * released, so its prompt is never hidden (#2595). A failed command's last lines are step
-     * notes, which the first run's output shows before the warning that follows.
-     */
-    private static int runHostLogged(String... command) {
         try {
             var ran = dev.incusspawn.util.SudoPrompt.run(
                     pb -> pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))), command);

@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * stdout: {@code incus storage create} printed 'Storage pool cow created' ahead of
  * {@code isx init --format=json}'s summary on a fresh host (#2120 review).
  */
+@ExtendWith(IsolatedHome.class)
 class StdoutOnStderrTest {
 
     /** Runs {@code work} under {@link StdoutOnStderr#during}, returning what reached its stand-in for stderr. */
@@ -33,17 +35,19 @@ class StdoutOnStderrTest {
     }
 
     @Test
-    void thePoolCreatesOutputGoesToStderrUnderASummary() throws Exception {
+    void thePoolCreatesOutputStaysOffTheResultsUnderASummary() throws Exception {
         var attempt = new CowPoolBacking.Attempt[1];
+        // Captured for the log since #2595, so it reaches neither stream
         var copied = stderrDuring(() -> attempt[0] = CowPoolBacking.runCapturingStderr("sh", "-c", "echo created; echo why >&2"));
-        assertEquals("created\n", copied);
+        assertEquals("", copied);
         assertEquals(0, attempt[0].exitCode());
         assertEquals("why\n", attempt[0].stderr(), "its stderr is still the caller's, to word a failure");
     }
 
     @Test
-    void runHostsChildGoesToStderrUnderASummary() throws Exception {
+    void runHostsChildStaysOffTheResultsUnderASummary() throws Exception {
+        // Captured for the log since #2595, so it reaches neither stream
         var copied = stderrDuring(() -> assertEquals(0, InitCommand.runHost("sh", "-c", "echo progress")));
-        assertEquals("progress\n", copied);
+        assertEquals("", copied);
     }
 }

@@ -1,7 +1,9 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.ClientLog;
 import dev.incusspawn.incus.BtrfsUsage;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.util.SudoPrompt;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -84,25 +86,20 @@ final class CowPoolBacking {
     }
 
     /**
-     * Run a host command with stdout shown, returning stderr so the caller can word the failure.
-     * Its stdin is detached: {@code incus storage create} reads a YAML config from a stdin that is
-     * not a terminal, so run from an agent's shell it would wait forever. sudo asks for a password
-     * on the terminal itself, not on stdin.
+     * Run a host command with its output captured, returning stderr so the caller can word the
+     * failure; stdout ('Storage pool cow created') goes to the log, so it is never drawn under a
+     * live step or into a script's results (#2120, #2595). Its stdin is detached:
+     * {@code incus storage create} reads a YAML config from a stdin that is not a terminal, so
+     * run from an agent's shell it would wait forever. sudo asks for a password on the terminal
+     * itself, not on stdin, and {@link SudoPrompt} freezes a live line only when it does.
      */
     static Attempt runCapturingStderr(String... command) {
         dev.incusspawn.util.Privilege.check(command);
         try {
-            var pb = new ProcessBuilder(command);
-            pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
-            pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
-            // Under a summary for a script, its stdout ('Storage pool cow created') goes to stderr (#2120)
-            var copied = StdoutOnStderr.pipesStdout(pb);
-            var process = pb.start();
-            var copy = copied ? StdoutOnStderr.copyStdout(process) : null;
-            var stderr = new String(process.getErrorStream().readAllBytes());
-            var exit = process.waitFor();
-            if (copy != null) copy.join();
-            return new Attempt(exit, stderr);
+            var ran = SudoPrompt.read(pb -> pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null"))), command);
+            ClientLog.debug("$ " + String.join(" ", command) + " (exit " + ran.exit() + ")");
+            (ran.output() + "\n" + ran.errors()).lines().map(String::strip).filter(l -> !l.isEmpty()).forEach(ClientLog::debug);
+            return new Attempt(ran.exit(), ran.errors());
         } catch (IOException e) {
             return new Attempt(1, "Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
         } catch (InterruptedException e) {
