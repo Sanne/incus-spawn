@@ -259,14 +259,9 @@ class CredentialPromptsTest {
     }
 
     @Test
-    void skippedPromptsLeaveNoEmptyCredentialBehind() throws Exception {
-        configure(new SpawnConfig(), new ScriptedPrompts().secret("").line("", ""));
-
-        // Answering the confirm (No) is a value; skipping the others must not become "".
-        assertEquals("false", saved("acme.telemetry"));
-        var acme = SpawnConfig.load().tree().getField("acme");
-        assertTrue(acme instanceof io.hyperfoil.tools.jjq.value.JqObject acmeObj
-                && acmeObj.size() == 1 && acmeObj.keys().contains("telemetry"), acme.toString());
+    void skippedSecretStopsStepAndLeavesNothingBehind() {
+        configure(new SpawnConfig(), new ScriptedPrompts().secret(""));
+        assertNothingSaved();
     }
 
     @Test
@@ -356,29 +351,36 @@ class CredentialPromptsTest {
         assertEquals("true", saved("acme.telemetry"));
     }
 
-    /** Choosing 'r' and then skipping every prompt must not clear what is there. */
+    /** Choosing 'r' and then skipping the secret stops at once and keeps what is there. */
     @Test
     void replacingWithNothingKeepsTheOldSecret() throws Exception {
-        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("r").secret("").line("", ""));
+        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("r").secret(""));
         assertUnchanged(KEY_AND_TELEMETRY);
     }
 
     /**
-     * Replacing, then skipping the secret but answering another prompt, must not replace a
-     * working credential with an account that has none: "replace all" clears every account, so
-     * it may only run once there is a credential to replace them with.
+     * Replacing, then answering a plain prompt before skipping the secret (as Atlassian asks for
+     * email before its token), must not replace a working credential with an account that has none.
      */
     @Test
     void replacingWithoutANewSecretKeepsTheWorkingCredential() throws Exception {
-        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("r").secret("").line("eu-west", ""));
-        assertUnchanged(KEY_AND_TELEMETRY);
+        var atlassian = new ToolDefLoader().allToolSetups().get("atlassian-mcp");
+        var seeded = seed("atlassian:\n  email: \"old@example.com\"\n  apiToken: \"old-token\"\n");
+        var prompts = new ScriptedPrompts().line("r", "new@example.com").secret("");
+        new Checked().setupGenericToolCredentials("atlassian-mcp", atlassian, seeded, prompts);
+        prompts.assertFullyConsumed();
+        assertUnchanged("atlassian:\n  email: \"old@example.com\"\n  apiToken: \"old-token\"\n");
     }
 
-    /** Likewise a new account: a name and a region, but no secret, is not an account. */
+    /** Likewise a new account: a name and an email, but no secret, is not an account. */
     @Test
     void addingAnAccountWithoutASecretCreatesNothing() throws Exception {
-        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("a", "work").secret("").line("eu-west", ""));
-        assertUnchanged(KEY_AND_TELEMETRY);
+        var atlassian = new ToolDefLoader().allToolSetups().get("atlassian-mcp");
+        var seeded = seed("atlassian:\n  email: \"old@example.com\"\n  apiToken: \"old-token\"\n");
+        var prompts = new ScriptedPrompts().line("a", "work", "work@example.com").secret("");
+        new Checked().setupGenericToolCredentials("atlassian-mcp", atlassian, seeded, prompts);
+        prompts.assertFullyConsumed();
+        assertUnchanged("atlassian:\n  email: \"old@example.com\"\n  apiToken: \"old-token\"\n");
     }
 
     /** Editing an existing account may change its other values while keeping its secret. */
@@ -405,7 +407,7 @@ class CredentialPromptsTest {
 
     @Test
     void abandoningASecondYamlToolAccountLeavesTheCredentialAlone() throws Exception {
-        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("a", "work").secret("").line("", ""));
+        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("a", "work").secret(""));
         assertUnchanged(KEY_AND_TELEMETRY);
     }
 

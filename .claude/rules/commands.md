@@ -226,6 +226,7 @@ The first run's text follows the nine rules of the review on #2528 (design/init.
 `InitTranscriptsTest` writes a transcript of every branch to `cli/target/init-transcripts/` and fails a line wider than the frame; a new branch of the first run adds one.
 A header of the first run's questions recaps the answers so far above its title (`InitCommand.Answered`, filled in `askFirstRunQuestions`); a new question of the first run adds its line there.
 A new agent that needs something of the person at its first start returns it from `ToolSetup.firstStartNote`, and `InitFirstRunAccountsTest` runs the account step of the agents that spend another tool's account.
+A local sign-in `HostAgentProbe` found for the chosen agent is acknowledged in its account step (`InitCommand.localAgentSignIn`), and `InitCommand.buildTemplate` runs with `BuildCommand.warnMissingAccounts = false` so the closing box is the one place that sequences a skipped account.
 *Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded.
 When a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.
 A step that runs several commands runs each through `ran()`, which names the one that failed, and combines the results (`ok &= ran(...)`, never short-circuiting, so the remaining rules are still applied) before choosing between its success line and a warning (#1102: the firewall and PREROUTING steps).

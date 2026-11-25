@@ -1013,7 +1013,7 @@ class InitFirstRunTest {
 
         var warns = output.events(RecordingOutput.Kind.WARN);
         assertEquals(1, warns.size(), warns::toString);
-        assertTrue(warns.get(0).msg().contains("it is a classic token"), warns::toString);
+        assertTrue(warns.get(0).text().replace('\n', ' ').contains("it is a classic token"), warns::toString);
     }
 
     @Test
@@ -1022,7 +1022,7 @@ class InitFirstRunTest {
 
         var warns = output.events(RecordingOutput.Kind.WARN);
         assertEquals(1, warns.size(), warns::toString);
-        assertTrue(warns.get(0).msg().contains("'Copilot Requests' permission"), warns::toString);
+        assertTrue(warns.get(0).text().contains("'Copilot Requests' permission"), warns::toString);
     }
 
     @Test
@@ -1075,7 +1075,7 @@ class InitFirstRunTest {
 
         var warns = output.events(RecordingOutput.Kind.WARN);
         assertEquals(1, warns.size(), warns::toString);
-        assertTrue(warns.get(0).msg().contains("it is a classic token"), warns::toString);
+        assertTrue(warns.get(0).text().contains("it is a classic\ntoken"), warns::toString);
         assertEquals("ghp_" + "a".repeat(36), savedGitHubToken());
     }
 

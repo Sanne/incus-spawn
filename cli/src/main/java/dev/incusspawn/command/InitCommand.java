@@ -1732,9 +1732,12 @@ public class InitCommand extends BaseCommand {
             var gaps = chosenAgent == null ? Map.<CredentialCheck.Missing, List<String>>of() : agentGaps();
             if (gaps.isEmpty()) {
                 if (chosenAgent != null && agentQuestionAsked && chosenAgent.credentialNamespaces(agentParams).isEmpty()) {
-                    // A provider isx does not manage: the agent signs in to it itself (#2536)
-                    BuildOutput.note(ExampleTemplate.title(chosenAgent) + " needs no account from isx for that provider.");
-                    recap.add(new Answered("Its account", "not needed for that provider", true));
+                    // A local or custom-proxied provider: warn against pasting keys inside the machine
+                    var provider = OutputFormat.oneLine(agentParams.getOrDefault("provider", "that provider"));
+                    Lines.step("If " + provider + " uses an API key, keep it on " + dev.incusspawn.Platform.thisComputer()
+                            + " with a custom tool proxy rule:");
+                    BuildOutput.step(TerminalLink.link("https://isx.run/docs/tools#proxy-credentials"));
+                    recap.add(new Answered("Its account", "not managed here", true));
                 } else if (chosenAgent != null) {
                     BuildOutput.note(ExampleTemplate.title(templateAgent()) + "'s account is set up already.");
                     recap.add(new Answered("Its account", "set up already", true));
@@ -1829,8 +1832,9 @@ public class InitCommand extends BaseCommand {
     String accountAnswer() {
         if (gitHubAsked) return "GitHub, " + gitHubAnswer();
         try {
+            var config = SpawnConfig.load();
             if (accountNamespaces.contains(SpawnConfig.ClaudeConfig.NAMESPACE)) {
-                var accounts = SpawnConfig.load().getClaude().allAccounts();
+                var accounts = config.getClaude().allAccounts();
                 var type = accounts.size() == 1 ? accounts.values().iterator().next().effectiveType() : null;
                 if (type != null) {
                     return switch (type) {
@@ -1840,6 +1844,18 @@ public class InitCommand extends BaseCommand {
                     };
                 }
             }
+            var tree = config.tree();
+            if (accountNamespaces.contains("openai")) {
+                var name = dev.incusspawn.config.NamespaceAccounts.defaultName(config, "openai");
+                return dev.incusspawn.proxy.ChatGptAccounts.isChatGpt(tree.path("openai").path("accounts").path(name))
+                        ? "ChatGPT" : "OpenAI API key";
+            }
+            if (accountNamespaces.contains("gemini")) {
+                var name = dev.incusspawn.config.NamespaceAccounts.defaultName(config, "gemini");
+                return dev.incusspawn.proxy.GoogleAccounts.isGoogle(tree.path("gemini").path("accounts").path(name))
+                        ? "Google account" : "Gemini API key";
+            }
+            if (accountNamespaces.contains("bob")) return "IBM Bob API key";
         } catch (RuntimeException e) {
             // A recap line is never worth a failed run
         }
@@ -1960,14 +1976,13 @@ public class InitCommand extends BaseCommand {
         if (question.other() != null) options.add(question.other().label());
         var def = chosenAgent.parameters().get(question.parameter());
         while (true) {
-            // Enter keeps the first choice, the parameter's default
-            var answer = prompts.chooseDefault(question.question(), options, null, 1);
+            // Enter chooses nothing, as on the agent list: isx never picks a vendor for the person
+            var answer = prompts.choose(question.question(), options, null, null);
             if (answer == null) return;
-            int n;
+            int n = -1;
             try {
-                n = answer.isBlank() ? 1 : Integer.parseInt(answer.strip());
-            } catch (NumberFormatException e) {
-                continue;
+                if (!answer.isBlank()) n = Integer.parseInt(answer.strip());
+            } catch (NumberFormatException ignored) {
             }
             if (n >= 1 && n <= question.choices().size()) {
                 var choice = question.choices().get(n - 1);
@@ -1986,7 +2001,9 @@ public class InitCommand extends BaseCommand {
                     agentAnswer = value;
                     return;
                 }
+                continue;
             }
+            prompts.say("Type a number from 1 to " + options.size() + ".");
         }
     }
 
@@ -2146,7 +2163,9 @@ public class InitCommand extends BaseCommand {
             var step = CredentialCheck.stepTool(gap, tools);
             if (step != null && !ran.add(step)) continue;
             if (step != null) accountNamespaces.add(namespaceOf(tools.get(step), step));
-            if (step != null && !step.equals(agent.name())) sayWhoseAccount(agent, tools.get(step), step, agentQuestionAsked);
+            if (step != null && !step.equals(agent.name()) && !"antigravity".equals(agent.name())) {
+                sayWhoseAccount(agent, tools.get(step), step, agentQuestionAsked);
+            }
             if (step == null) {
                 BuildOutput.note(OutputFormat.oneLine(gap.credential()) + ": " + CredentialCheck.remedy(List.of(gap)));
             } else if (step.equals("gh")) {
@@ -2156,6 +2175,18 @@ public class InitCommand extends BaseCommand {
             } else if (step.equals("claude") && claudeSubscriptionFound()) {
                 var prompts = consoleOrExplain();
                 if (prompts != null) credentials.setupClaudeSubscription(firstRunConfig(), prompts);
+            } else if (step.equals("claude") && "claude".equals(agent.name()) && localAgentSignIn("claude", HostAgentProbe.Kind.API_KEY)) {
+                var prompts = consoleOrExplain();
+                if (prompts != null) credentials.setupClaudeLocalApiKey(firstRunConfig(), prompts);
+            } else if (step.equals("codex") && "codex".equals(agent.name()) && localAgentSignIn("codex", HostAgentProbe.Kind.SUBSCRIPTION)) {
+                var prompts = consoleOrExplain();
+                if (prompts != null) credentials.setupCodexLocalChatGpt(firstRunConfig(), prompts);
+            } else if (step.equals("codex") && "codex".equals(agent.name()) && localAgentSignIn("codex", HostAgentProbe.Kind.API_KEY)) {
+                var prompts = consoleOrExplain();
+                if (prompts != null) credentials.setupCodexLocalApiKey(firstRunConfig(), prompts);
+            } else if (step.equals("gemini-cli") && "antigravity".equals(agent.name()) && localAgentSignIn("antigravity", HostAgentProbe.Kind.SUBSCRIPTION)) {
+                var prompts = consoleOrExplain();
+                if (prompts != null) credentials.setupAntigravityLocalGoogle(firstRunConfig(), prompts);
             } else {
                 credentialStep(step, tools.get(step), tools, SpawnConfig.load()).run().run();
             }
@@ -2224,8 +2255,12 @@ public class InitCommand extends BaseCommand {
 
     /** Whether Claude Code on this host is signed in with a subscription. */
     boolean claudeSubscriptionFound() {
-        return probeAgents().stream().anyMatch(a -> a.agent().equals("claude") && a.signedIn()
-                && a.kind() == HostAgentProbe.Kind.SUBSCRIPTION);
+        return localAgentSignIn("claude", HostAgentProbe.Kind.SUBSCRIPTION);
+    }
+
+    /** Whether {@link #probeAgents} found {@code agent} signed in on this computer with {@code kind}. */
+    boolean localAgentSignIn(String agent, HostAgentProbe.Kind kind) {
+        return probed().stream().anyMatch(a -> a.agent().equals(agent) && a.signedIn() && a.kind() == kind);
     }
 
     /** The GitHub question: an account for the agent, which the person may skip. */
@@ -2233,8 +2268,14 @@ public class InitCommand extends BaseCommand {
         var prompts = consoleOrExplain();
         credentials.noAgent = firstRun && chosenAgent == null;
         // The agent the build installs decides the Copilot guidance, not the one chosen
-        credentials.forCopilot = isCopilot(templateAgent());
-        return prompts != null && credentials.offerGitHubForAgent(firstRunConfig(), prompts, ghLogin());
+        var agent = templateAgent();
+        credentials.forCopilot = isCopilot(agent);
+        credentials.copilotSignedInHere = credentials.forCopilot && localAgentSignIn("copilot", HostAgentProbe.Kind.SUBSCRIPTION);
+        try {
+            return prompts != null && credentials.offerGitHubForAgent(firstRunConfig(), prompts, ghLogin());
+        } finally {
+            credentials.copilotSignedInHere = false;
+        }
     }
 
     /**
@@ -2440,6 +2481,7 @@ public class InitCommand extends BaseCommand {
         var build = new BuildCommand();
         build.names = List.of(template);
         build.askForAccounts = false;
+        build.warnMissingAccounts = false;
         // As the block of setup: one line per outcome, the details in the log (#2528)
         var quiet = dev.incusspawn.proxy.ProxyLog.setSuppressStderr(true);
         try (var details = BuildOutput.bind(dev.incusspawn.util.Output.detailsLogged(BuildOutput.current(), ClientLog::debug))) {

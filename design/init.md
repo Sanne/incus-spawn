@@ -31,9 +31,9 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    "None for now" is a choice, and stores nothing.
    The answer starts the agent's own pinned downloads, less those already started.
    An agent with a question of its own (`ToolSetup.firstRunQuestion`) is asked it next, unless a `tpl-agent` is kept (#2536).
-   Pi and opencode ask which provider: Claude, OpenAI, Gemini, or another, typed and checked against the parameter's pattern.
+   Pi and opencode ask which provider: Claude, OpenAI, Gemini, or a local or custom-proxied one, typed and checked against the parameter's pattern, with no vendor chosen on bare Enter.
    The answer is the agent's parameter in the `tpl-agent.yaml` init writes (`- pi: {provider: openai}`), and Claude's writes none, being the default.
-   So the next step finds that provider's account through the template, and a provider isx does not manage has no account step.
+   So the next step finds that provider's account through the template, and a local or custom-proxied provider gets a note pointing to custom proxy rules rather than encouraging keys inside the guest.
    The question belongs to the tool, so init names no agent.
 3. It sets up the account the agent spends (`setUpAgentCredential`).
    Which one is not named in init: `agentGaps` runs `CredentialCheck.missingByCredential` over the example template for the agent, as a build of it would, and each gap runs the credential step `isx account add` runs for it.
@@ -54,7 +54,7 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    DNS is inside the block, since no step before it adds a search path, whose tools' domains it writes.
 7. It writes `tpl-agent.yaml` for the agent (`ExampleTemplate`), or with no agent nothing, and builds it, or `tpl-minimal`.
    The build shows its live steps, outcomes and warnings, its details in the log, as the block of setup does.
-   It still warns of every account the template lacks, the one the person skipped included, though the completion message names it too: Sanne chose the warning over saying it once (#2528).
+   It suppresses the build's missing-credential warning (`BuildCommand.warnMissingAccounts`), since `isx branch` has not been introduced yet and the completion message right after lists the missing account in order.
    Its step labels name no container or image ("Starting from tpl-minimal", "Restarting the build", "Stopping the build"), as every build's now do.
    A `tpl-agent` already there is said to be kept only when it installs another agent than the one chosen.
    A template with no coding agent in its chain says nothing of agents' Git identity: `tpl-minimal`, built first for `tpl-agent`, told a person who had just chosen their own GitHub account that its agents had no identity (`AgentGitIdentity.applyAndReport`).
@@ -105,11 +105,11 @@ An agent takes the whole terminal, so opening one unasked would hide the complet
 
 A person may not have the credential at hand, or may want to see isx work first.
 Init then does everything else, so the agent opens as soon as the credential is added.
-The build inside init runs with `BuildCommand.askForAccounts` off, so it does not ask again for the credential just declined, and warns as a build without a terminal does.
+The build inside init runs with `BuildCommand.askForAccounts` and `warnMissingAccounts` off, so it neither asks again for the credential just declined nor warns about `isx branch` before the closing box introduces it.
 The completion message says the agent has no account yet, with the command that adds one, and init does not ask to open the agent, which could not sign in.
 The first `isx branch` at a terminal asks for it (#2405).
 
-A Claude Code subscription found on the host answers which kind of account to set up (`CredentialSetup.setupClaudeSubscription`): it is re-issued with `claude setup-token`, never copied, since the proxy and the host's Claude Code would otherwise share one refresh token.
+A local sign-in found on the host answers which kind of account to set up, not only for a Claude Code subscription (`CredentialSetup.setupClaudeSubscription`), which is re-issued with `claude setup-token`, but also for a local Claude API key, Codex CLI (ChatGPT or API key) and Antigravity CLI (Google account): each acknowledges the local sign-in, says that isx keeps a separate credential for isx machines, and lets Enter set up that kind while `o` offers the other kinds and `s` skips.
 The step says what will happen before it asks: the command runs and opens the browser, the person approves, then isx reads the token, or the person pastes it when isx cannot.
 Its answers are `Y` (run it here), `n` (run it by hand), `o` (another kind of account) and `s` (skip), and Enter at the paste goes back to them.
 With `Y`, isx reads the token the command prints, so the person does not copy a wrapped token of about 108 characters back into the terminal (#2543).
@@ -168,9 +168,9 @@ What is asked comes before why, a step that starts something says what will happ
 A step header shows its number once, as `[2/3]`.
 Each header after the first also recaps the answers so far, above its title (`InitCommand.Answered`, `recapLine`): "Coding agent", "Its account" and "GitHub", each with a tick and what was chosen, or a hyphen and "left for later" or "none for now".
 By the third question a person has scrolled past a token guide and another program's output, and the count alone does not say what was decided.
-The account's line names the kind of Claude account or the GitHub login the token belongs to, never a credential, and an answer too long for the box is cut.
+The account's line names the kind of account set up (Claude subscription, Anthropic API key, Vertex AI, ChatGPT, OpenAI API key, Gemini API key, Google account, IBM Bob API key, or the GitHub login), never a credential, and an answer too long for the box is cut.
 The agent's line carries the answer to the agent's own question as the person gave it: the label they picked, "Pi (OpenAI)", or the name they typed.
-The account's line goes by the namespace the account step filled, never by what the agent could use, since Pi can use three providers' accounts and the step sets up one; a provider isx does not manage reads "not needed for that provider".
+The account's line goes by the namespace the account step filled, never by what the agent could use, since Pi can use three providers' accounts and the step sets up one; a local or custom-proxied provider reads "not managed here".
 After a skipped GitHub account, the Git identity the person agreed to has a line of its own, "Commits as".
 The recap is the questions' own: it is cleared when they end, so a header the setup shows later has none, and it costs each header two to four lines.
 When the questions end, a banner titled "Questions done" shows every answer with its mark, the last one included, which no header showed, and one sentence saying what comes next: isx installs what it needs on the computer, and will then build the template (`printQuestionsDone`).
@@ -194,7 +194,7 @@ A pasted key nothing checks (a user's tool that declares no check, or `none`) is
 Every pasted secret gets a receipt first, `Received N characters`, with its masked ends (`CredentialSetup.received`, #2565).
 A secret is not echoed, so the receipt is the only sign that the paste arrived, and it comes before a check that can take a while and before the GitHub step's email question, which is asked ahead of the outcome line.
 It carries no tick, which is kept for a credential that was checked, and it costs a second line beside the outcome line.
-A ChatGPT sign-in by one-time code that did not finish offers the same `Y` and `s`, and `Y` asks for a new code, since a code expires by itself (`CredentialSetup.signInChatGptWithDeviceCode`).
+A ChatGPT sign-in, in the browser or by one-time code, says isx waits while the person signs in, and one that did not finish offers the same `Y` and `s` (`CredentialSetup.signInChatGptInBrowser`, `signInChatGptWithDeviceCode`).
 Saving unverified (`u`) is offered only when the check could not run or reach the service (`CredentialSetup.AuthResult.reached`), since a credential the service rejected fails the same way in every isx machine.
 A namespace with a hosted sign-in (Gemini's Google account) offers its kinds as the Claude step does, each with a line under it and "None for now", and offers the hosted kind only to the agents that can use it (`ToolSetup.HostedSignIn.tools`): a first run for Gemini CLI never offers Antigravity CLI's Google sign-in.
 No line under a step header, its indent included, is wider than 62 columns (.claude/rules/interface-text.md "A line fits its frame"): text built from names breaks through `Lines.wrap`.

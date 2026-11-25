@@ -2617,6 +2617,9 @@ public class BuildCommand extends BaseCommand {
      */
     boolean askForAccounts = true;
 
+    /** Whether {@link #warnUnbranchable} warns about missing accounts; false in {@code isx init}, whose closing box lists them. */
+    boolean warnMissingAccounts = true;
+
 
     /** Who asks for the accounts a build lacks: init's credential steps, at a terminal; overridden by tests. */
     InitCommand accountSetup() {
@@ -2629,6 +2632,7 @@ public class BuildCommand extends BaseCommand {
      * still missing: the build goes ahead, but {@code isx branch} refuses its instances (#1438).
      */
     private void warnUnbranchable(Collection<String> templates, Map<String, ImageDef> defs) {
+        if (!warnMissingAccounts) return;
         var missing = missingCredentials(templates, defs);
         if (missing == null) return;
         if (!missing.isEmpty() && asksForAccounts() && askedForMissing(missing)) {

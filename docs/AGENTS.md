@@ -162,7 +162,7 @@ Your own extensions in `~/.pi/agent/extensions/` load as usual.
 | `effort` | Pi's own default | Thinking level: `off`, `minimal`, `low`, `medium`, `high` or `xhigh` |
 
 The `openai` provider uses your OpenAI key, as shown below.
-A provider isx does not manage needs no credential from isx: Pi signs in to it itself.
+A local model needs no credential, and a [proxy tool](TOOLS.md#proxy-credentials) keeps another gateway's key on the host.
 A model ID may hold a `/`, as a gateway names its models, such as `zai-org/glm-5-3`.
 
 The `google` provider is the Gemini API, and uses your Gemini key, as [Gemini CLI](#gemini-cli) does.
@@ -231,7 +231,7 @@ opencode shows no isx footer: it has no place for one.
 
 The `openai` provider uses your OpenAI key, as [Codex CLI](#codex-cli) does.
 The `google` provider is the Gemini API, and uses your Gemini key, as [Gemini CLI](#gemini-cli) does.
-A provider isx does not manage needs no credential from isx: opencode signs in to it itself.
+A local model needs no credential, and a [proxy tool](TOOLS.md#proxy-credentials) keeps another gateway's key on the host.
 A model ID may hold a `/`, as a gateway names its models, such as `zai-org/glm-5-3`.
 
 The build writes `effort` as the variant opencode's build and plan agents start with, which `ctrl+t` still changes in a session.

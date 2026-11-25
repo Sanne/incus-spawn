@@ -377,7 +377,7 @@ class CredentialCheckTest {
     private static final String PI_NOTE_TAIL = " To use another provider, set it in the template's tools,"
             + " run 'isx build' on the template and branch from it:"
             + " '- pi: {provider: openai}' spends an OpenAI API key,"
-            + " and a provider isx does not manage needs nothing from isx.";
+            + " or add a custom tool with a proxy rule for another gateway.";
 
     /** Pi spends Claude's account on its behalf: the message says so, and what else would do (#1750). */
     @Test
