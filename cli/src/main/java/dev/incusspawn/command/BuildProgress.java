@@ -318,8 +318,21 @@ final class BuildProgress {
             state.set(0, StepProgress.done("succeeded after refresh"));
         } else {
             var out = retryLog.toString();
-            state.set(0, StepProgress.failed(lastNonEmptyLine(out), out));
+            state.set(0, StepProgress.failed(dnfFailureLine(out), out));
         }
+    }
+
+    /** What dnf 5 ends a failure with: advice, after the line that says why it failed. */
+    private static final String DNF_ADVICE = "\nYou can try to add to command line:";
+
+    /**
+     * The line of a failed dnf's output that says why it failed. Its last line is the advice dnf
+     * adds below it, such as "--skip-unavailable to skip unavailable packages", which the build's
+     * error quoted as the cause (#2542).
+     */
+    static String dnfFailureLine(String out) {
+        var advice = out.indexOf(DNF_ADVICE);
+        return lastNonEmptyLine(advice < 0 ? out : out.substring(0, advice));
     }
 
     /** Accumulate a streamed dnf line into {@code log} and, if it's a progress line,
