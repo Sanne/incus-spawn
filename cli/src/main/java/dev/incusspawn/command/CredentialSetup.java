@@ -1637,13 +1637,15 @@ class CredentialSetup {
             var p = new ProcessBuilder(command)
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start();
-            String out;
-            try (var in = p.getInputStream()) {
-                out = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
-            }
+            // Wait before reading: reading to the end would block until gh exits, so the timeout
+            // would never apply. What gh prints here (a token, a login) fits the pipe's buffer.
             if (!p.waitFor(30, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
                 return null;
+            }
+            String out;
+            try (var in = p.getInputStream()) {
+                out = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
             }
             return p.exitValue() == 0 ? out : null;
         } catch (Exception e) {
