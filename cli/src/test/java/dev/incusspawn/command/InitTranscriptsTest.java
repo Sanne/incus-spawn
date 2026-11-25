@@ -517,9 +517,21 @@ class InitTranscriptsTest {
         init.credentials = host;
         var echoing = new Echoing(branch.answers(), out);
         init.prompts = new Prompts() {
-            @Override public String readLine() { return echoing.readLine(); }
+            boolean atWelcome;
+            @Override public String readLine() {
+                // Every branch presses Enter at the welcome's pause: no script lists it
+                if (atWelcome) {
+                    atWelcome = false;
+                    out.println("⏎");
+                    return "";
+                }
+                return echoing.readLine();
+            }
             @Override public char[] readPassword() { return echoing.readPassword(); }
-            @Override public void show(String question) { branch.answers().show(question); }
+            @Override public void show(String question) {
+                atWelcome = question.equals(InitCommand.BEGIN_PROMPT);
+                branch.answers().show(question);
+            }
             @Override public void say(String line) { branch.answers().say(line); }
         };
         try (var ansi = ForcedAnsi.on(); var bound = BuildOutput.bind(TerminalOutput.to(out, out))) {
@@ -529,6 +541,7 @@ class InitTranscriptsTest {
                 init.runFirstRun(false);
             } else {
                 init.printFirstRunIntro(branch.macOs());
+                init.waitToBegin();
                 init.askFirstRunQuestions();
                 out.println();
                 out.println("⟪the host's setup runs here⟫");

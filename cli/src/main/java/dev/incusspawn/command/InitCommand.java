@@ -1290,7 +1290,9 @@ public class InitCommand extends BaseCommand {
                 agentParams = answers.agentParams();
             } else {
                 printFirstRunIntro(macOs);
+                // Before the pause: the base image comes down while the person reads the welcome
                 startDownloadsAhead(null);
+                if (!waitToBegin()) return CommandResult.valueOf(0);
                 askFirstRunQuestions();
                 if (macOs) {
                     if (!requireIncusHost()) return CommandResult.valueOf(1);
@@ -1395,6 +1397,36 @@ public class InitCommand extends BaseCommand {
         // A frame of init's own: laid out here, drawn as given
         BuildOutput.frame(out.toArray(String[]::new));
     }
+
+    /**
+     * Waits for the person after the welcome (#2528): the first question's header would
+     * otherwise be drawn straight under it, and a person answers what is asked before reading
+     * what is above. Enter begins, as does end of input, which every later question answers
+     * for itself; a person who types that they do not want to (n, no, q, quit) leaves with
+     * nothing asked. A re-run, which shows its own banner and no welcome, does not wait.
+     *
+     * @return false when the person chose to leave
+     */
+    boolean waitToBegin() {
+        if (Files.exists(Environment.initCompleteMarker())) return true;
+        var prompts = prompts();
+        if (prompts == null) return true;
+        // A line apart from the box, as a step's question is from its hint
+        BuildOutput.gap();
+        var answer = prompts.ask(BEGIN_PROMPT);
+        if (answer == null) return true;
+        if (LEAVE.contains(answer.strip().toLowerCase(java.util.Locale.ROOT))) {
+            BuildOutput.step("Stopped before the first question. Run 'isx init' when you are ready.");
+            return false;
+        }
+        return true;
+    }
+
+    /** The welcome's pause, which also says how to leave before isx asks or changes anything. */
+    static final String BEGIN_PROMPT = "Press Enter to begin, or Ctrl+C to leave: ";
+
+    /** What a person types at {@link #BEGIN_PROMPT} to say no, where Ctrl+C is what the prompt names. */
+    private static final java.util.Set<String> LEAVE = java.util.Set.of("n", "no", "q", "quit", "exit");
 
     /** The intro's margin inside the box, and the width of a stage's number, "1. ". */
     private static final String INTRO_INDENT = "   ";
