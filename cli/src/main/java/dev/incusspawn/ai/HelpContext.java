@@ -23,7 +23,7 @@ public class HelpContext {
     /** README.md, the docs/ pages isx.run publishes beside it, DESIGN.md and its design/ pages. Listed: a native image cannot list its resources. */
     static final List<String> HELP_RESOURCES = List.of("help/README.md",
             "help/docs/AGENT-INSTALL.md", "help/docs/AGENTS.md", "help/docs/CLI.md", "help/docs/CONFIGURATION.md",
-            "help/docs/CREDENTIAL-PROOFS.md", "help/docs/FAQ.md", "help/docs/FEDORA.md", "help/docs/INTEGRATIONS.md", "help/docs/MCP-PROTOCOL.md", "help/docs/MCP.md", "help/docs/SANDBOXES.md",
+            "help/docs/CREDENTIAL-PROOFS.md", "help/docs/FAQ.md", "help/docs/FEDORA.md", "help/docs/GITHUB.md", "help/docs/INTEGRATIONS.md", "help/docs/MCP-PROTOCOL.md", "help/docs/MCP.md", "help/docs/SANDBOXES.md",
             "help/docs/TEMPLATE-EXAMPLE.md", "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md", "help/DESIGN.md",
             "help/design/accounts.md", "help/design/doctor.md", "help/design/git.md",
             "help/design/host-resources.md", "help/design/init.md", "help/design/instances.md", "help/design/macos-and-vms.md",

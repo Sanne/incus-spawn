@@ -1715,7 +1715,8 @@ class CredentialSetup {
      * How to create a token of the agent's own account (#2528): signed in as that account, which
      * a browser signed in as the person is not. So isx neither opens the page nor prints a link
      * to click, both of which lead to the person's own account: step 2 names the page where it
-     * is used, and the address is copied or shown at the prompt, to paste in that window.
+     * is used, and the address is copied or shown at the prompt, to paste in that window. The
+     * links it does print, the signup page and isx's own docs, are the same for any account.
      */
     private void printGitHubPatGuide(Prompts prompts) {
         BuildOutput.gap();
@@ -1740,7 +1741,9 @@ class CredentialSetup {
                 : "     Type u below to show the address.");
         prompts.say("  3. Under \"Repository access\", pick the repositories.");
         prompts.say("     A new account does not own any yet, so its list is");
-        prompts.say("     empty.");
+        prompts.say("     empty. \"All repositories\" also covers later ones.");
+        prompts.say("     How the account reaches your repositories:");
+        prompts.say("     " + TerminalLink.link(GITHUB_ACCOUNTS_DOCS));
         prompts.say("  4. Set an expiry date, click \"Generate token\" and copy");
         prompts.say("     the token. It starts with github_pat_.");
         BuildOutput.gap();
@@ -1760,6 +1763,9 @@ class CredentialSetup {
     boolean copyToClipboard(String text) {
         return Clipboard.copy(clipboardCommand(), text);
     }
+
+    /** The page on how an agent's own account comes to work on the person's repositories: forks, an organization, collaborator access (#2545). */
+    static final String GITHUB_ACCOUNTS_DOCS = "https://isx.run/docs/github";
 
     /**
      * Account menu for any credential namespace, driven entirely by the namespace name.
