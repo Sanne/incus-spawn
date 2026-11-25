@@ -63,13 +63,20 @@ class UnixSocketTransport implements IncusTransport {
     private static volatile int peakConnections = 0;
 
     // Per-process safety valve: cap how many connections one isx invocation holds open
-    // at once, so a runaway fan-out can't pile streams onto the forwarder. This bounds a
-    // single process only — it cannot limit aggregate consumption across the many
-    // concurrent/short-lived isx processes a script spawns; that requires forwarder-side
-    // reaping. The cap is set well above any single operation's need (an exec holds ~5
-    // fds), so it never engages in normal use, and acquisition is fail-open after a
+    // at once, so a runaway fan-out can't pile streams onto what serves them. This bounds a
+    // single process only; it cannot limit aggregate consumption across the many
+    // concurrent/short-lived isx processes a script spawns. Acquisition is fail-open after a
     // timeout so it can never deadlock or wedge a legitimate burst.
-    private static final int MAX_CONCURRENT_CONNECTIONS = 48;
+    //
+    // The value is the platform's (#2527). On macOS every connection is a vsock stream through
+    // the launcher's relay, which holds at most 192 guest connections for all its relays
+    // (GuestRoom), so 48 stays until it is derived from that room and measured on a Mac. On
+    // Linux the socket is incusd's own and nothing sits between: the cap only stops a runaway
+    // from taking the descriptors, and 256 leaves most of the 1024 a process's soft limit
+    // commonly allows. It gives 50 concurrent execs, so the overview reads 50 instances at once.
+    // A Linux isx reaches an appliance's socket only in the appliance tests, through
+    // isx-vsock-bridge, which bounds its guest connections only when told to (--most).
+    private static final int MAX_CONCURRENT_CONNECTIONS = dev.incusspawn.Platform.isMacOS() ? 48 : 256;
     private static final long PERMIT_TIMEOUT_MS = 10_000;
     private static final java.util.concurrent.Semaphore CONNECTION_PERMITS =
             new java.util.concurrent.Semaphore(MAX_CONCURRENT_CONNECTIONS);

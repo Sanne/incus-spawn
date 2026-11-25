@@ -84,12 +84,12 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
   Any other exit before the command finished (a `/wait` overrunning its slack, a lost op, an interrupt) sends the kill too, from `waitForExecOp`'s `finally`.
   `IncusApiLossyTunnelTest` pins all three.
   A bounded exec (`execStreamWithin`) waits for a slot in `IncusApi.BOUNDED_EXECS` before it is posted (#2527, `ExecAdmissionTest`).
-  `UnixSocketTransport.CONCURRENT_EXECS` slots exist: the cap less the pool's idle connections, divided by the five connections one exec holds, which is 8.
+  `UnixSocketTransport.CONCURRENT_EXECS` slots exist: the cap less the pool's idle connections, divided by the five connections one exec holds, which is 50 on Linux and 8 on macOS.
   An exec's limit starts once it has its slot.
   Unadmitted, the overview's read of every running instance took every connection permit with its sockets, and a finished command's `/wait` waited for one past the 5 s Incus keeps a finished operation: a 404, `unknown` work state.
   So a lost operation's warning names the instance, the time since the post and the time spent waiting for a connection.
   Unbounded execs are not admitted: one may hold its slot for hours.
-  The cap itself (48, fail-open after 10 s) predates the launcher, and its value on either platform is still to be measured.
+  The cap is the platform's, fail-open after 10 s: 256 on Linux, where the socket is incusd's own and the cap only keeps a runaway off the descriptors, and 48 on macOS, still to be derived from the launcher's room and measured on a Mac.
   `execPty` (`isx shell`) has no `/wait` to end it, so its control keepalive closes control at its first ping after `EXEC_SILENCE_LIMIT_MS` (50s) with nothing received, not even a pong, and returns as a lost connection, which the reconnect loop retries (#1996).
   Only control is watched: fd "0"'s reader also blocks on the terminal.
 - **Bulk exec streams are framed large (#1643).**

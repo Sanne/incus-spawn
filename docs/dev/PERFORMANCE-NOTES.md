@@ -1479,3 +1479,19 @@ The 15 MiB covers a first boot that also made the filesystem, so the reserve's o
 isx settles a delete only on a pool with quotas on (`PoolAccounting.HOST`), so a plain `incus delete` on a pool with quotas off waits for btrfs to free it on its own.
 Here it had not after 14 minutes, well past two of the data disk's 300 s commits, and why was not found.
 Incus turns quotas on once an instance on the pool has a root `size`, which a VM build and a `--disk` give; a pool of containers with no size was not checked here, and there isx's deletes would wait as `incus delete` did.
+
+## The overview's reads against the connection cap, on Linux (issue #2527)
+
+Measured 2026-11-25 on a Linux box (Fedora, x86_64, 32 cores), JVM, nested Incus 6.23, with 40 running `tpl-minimal` branches.
+Each guest held one clone with a change not committed, and its `git` was wrapped to sleep 0.25 s per call, so each read took about 1.5 s, like a cold read.
+The two CLIs differ only in the Linux cap; `isx overview --format=json`, three runs each, alternated:
+
+| Linux cap | Execs at once | Wall time | Reads lost |
+|---|---|---|---|
+| 48 | 8 | 8.5-8.9 s | 0 of 40 |
+| 256 | 50 | 2.4-2.6 s | 0 of 40 |
+
+The native CLI at the cap of 256 took 1.7 s, three runs, reading all 40.
+Without the sleep each read is about 0.1 s, and both took 0.9 s, so the cap only shows once reads are slow.
+Forty execs at once lost nothing and left incusd answering: no warning, no `unknown`.
+The nested box could not show a read slowed by the host's own load rather than a sleep.
