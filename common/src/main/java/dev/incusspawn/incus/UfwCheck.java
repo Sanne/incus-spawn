@@ -271,7 +271,8 @@ public final class UfwCheck {
         try {
             dev.incusspawn.util.Privilege.check("sudo", "cat", BEFORE_RULES.toString());
             // sudo may prompt on the tty: only then is a live step's line frozen (#2595)
-            var read = dev.incusspawn.util.SudoPrompt.run(pb -> {}, "sudo", "cat", BEFORE_RULES.toString());
+            // Its stderr is kept apart: the rules are written back, so a sudo warning must not join them
+            var read = dev.incusspawn.util.SudoPrompt.read(pb -> {}, "sudo", "cat", BEFORE_RULES.toString());
             return read.exit() == 0 ? read.output() : "";
         } catch (IOException e) {
             return "";
