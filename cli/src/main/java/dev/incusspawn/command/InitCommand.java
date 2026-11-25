@@ -1392,8 +1392,8 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * What a first run shows before its first question (#2528): a welcome that says what the
-     * person came for and how long it takes at most, then the run as three numbered stages, each a
+     * What a first run shows before its first question (#2528): the logo beside a welcome that
+     * says what the person came for and how long it takes at most, then the run as three numbered stages, each a
      * sentence. An earlier form labelled the rows "You answer", "isx then" and "You get", which
      * read as orders, and a longer one said more than a first screen needs: what isx installs
      * and what a template is for are said where they happen. The first stage lists only the
@@ -1414,10 +1414,14 @@ public class InitCommand extends BaseCommand {
         var questions = suggested == null ? new Questions(true, false, needsGitHub) : questionsFor(suggested, needsGitHub);
         var out = new ArrayList<String>();
         out.add("");
-        out.add(topBorder("Welcome to isx"));
+        out.add(topBorder());
         out.add(boxLine(""));
-        out.add(boxLine(INTRO_INDENT + "Let's get your coding agent running."));
-        out.add(boxLine(INTRO_INDENT + "It won't take more than 5 minutes."));
+        // The logo beside the welcome: three rows, three lines, so it costs the box one line
+        var logo = logoRows();
+        var welcome = List.of("Welcome to isx.", "Let's get your coding agent running.", "It won't take more than 5 minutes.");
+        for (int row = 0; row < logo.size(); row++) {
+            out.add(boxLine(INTRO_INDENT + logo.get(row) + "    " + welcome.get(row)));
+        }
         out.add(boxLine(""));
         var stages = List.of(introQuestions(questions), introSetup(macOs, noSudo),
                 "Your agent is ready to open in an isx machine, its own isolated Linux system.");
@@ -1462,6 +1466,11 @@ public class InitCommand extends BaseCommand {
 
     /** What a person types at {@link #BEGIN_PROMPT} to say no, where Ctrl+C is what the prompt names. */
     private static final java.util.Set<String> LEAVE = java.util.Set.of("n", "no", "q", "quit", "exit");
+
+    /** The logo's rows as this terminal draws them ({@link dev.incusspawn.tui.Logo#forTerminal}); tests give the environment. */
+    List<String> logoRows() {
+        return dev.incusspawn.tui.Logo.forTerminal(System::getenv);
+    }
 
     /** The intro's margin inside the box, and the width of a stage's number, "1. ". */
     private static final String INTRO_INDENT = "   ";

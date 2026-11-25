@@ -14,9 +14,10 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
 
 `runFirstRun` takes these steps, in order:
 
-1. It prints a welcome in its banner (`printFirstRunIntro`): two short lines saying what the person came for and that it takes no more than 5 minutes, then the run as three numbered stages (the questions, isx setting up the computer and building an example template, and the agent ready to open in an isx machine).
+1. It prints a welcome in its banner (`printFirstRunIntro`): the logo, with "Welcome to isx." and two short lines beside it saying what the person came for and that it takes no more than 5 minutes, then the run as three numbered stages (the questions, isx setting up the computer and building an example template, and the agent ready to open in an isx machine).
    The stages are sentences with isx as the actor: an earlier form labelled its rows "You answer", "isx then" and "You get", which read as orders.
-   It is kept to seven lines of text, so it leaves out what isx installs (the Linux VM, Incus, the proxy) and what a template is for, which the setup block and the closing box say where they happen; on Linux it keeps the sudo password, which the person must be ready for.
+   The logo is the TUI's, three rows beside the welcome's three lines (design/visual-language.md), and is drawn nowhere else in the run: once it is a signature, and the closing box is kept short.
+   It is kept to eight lines of text, so it leaves out what isx installs (the Linux VM, Incus, the proxy) and what a template is for, which the setup block and the closing box say where they happen; on Linux it keeps the sudo password, which the person must be ready for.
    It then waits at `Press Enter to begin, or Ctrl+C to leave:` (`waitToBegin`), since the first question's header would otherwise be drawn straight under the welcome, and a person answers what is asked before reading what is above it.
    Enter begins, and so does end of input; `n`, `no`, `q`, `quit` or `exit` leaves before the first question.
    A re-run, which shows its own banner, does not wait, and neither does a run without a terminal.
