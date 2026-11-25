@@ -47,6 +47,7 @@ class TuiCharacterisationTest {
 
     /** The host firewall's banner title, as the stood-in check reports it; null for a running one. */
     private String stoppedFirewall;
+    private boolean subnetConflict;
 
     /** The tools tpl-minimal declares; none unless a test says. */
     private List<ToolDef.ToolRef> minimalTools = List.of();
@@ -127,6 +128,12 @@ class TuiCharacterisationTest {
             @Override
             void warnIfFirewallStopped(BiConsumer<String, String> banner) {
                 if (stoppedFirewall != null) banner.accept(stoppedFirewall, "Fix:\n  sudo systemctl enable --now firewalld");
+            }
+
+            // Nor the host's networks: the test says whether the bridge's subnet overlaps one.
+            @Override
+            boolean bridgeSubnetConflicts() {
+                return subnetConflict;
             }
 
             // A version no build has, so the header and the outdated marks never move with a release.
@@ -592,6 +599,17 @@ class TuiCharacterisationTest {
         assertEquals(List.of("firewalld is not running:\nFix:\n  sudo systemctl enable --now firewalld"),
                 tui.warningMessages());
         assertEquals(Tui.PendingAction.SHELL, tui.pendingAction(), "an advisory, so the shell still opens");
+    }
+
+    @Test
+    void aShellWhoseBridgeSubnetOverlapsTheHostsLogsTheConflict() {
+        subnetConflict = true;
+        var tui = tui();
+        press(tui, TAB, KeyEvent.ofKey(KeyCode.F2));
+        assertEquals(1, tui.warningMessages().size());
+        assertTrue(tui.warningMessages().getFirst().startsWith("The Incus bridge's subnet overlaps a network of this host"),
+                tui.warningMessages().getFirst());
+        assertEquals(Tui.PendingAction.SHELL, tui.pendingAction(), "a warning, so the shell still opens");
     }
 
     @Test
