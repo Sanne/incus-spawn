@@ -1271,6 +1271,32 @@ class CredentialSetup {
         config.save();
     }
 
+    /**
+     * The AI Help offer's check of an OpenAI or Gemini key that {@code config} gives
+     * {@code target} (#2606), the one network call, which tests replace. A 401, a 429 (no quota
+     * left) or Gemini's 400 {@code API_KEY_INVALID} refuses the key, as does a character no header
+     * carries; any other answer, or none, means the check could not run.
+     */
+    AuthResult checkAiHelpKey(SpawnConfig config, AiHelpClient.Target target) {
+        try {
+            AiHelpClient.checkKey(config, target);
+            return new AuthResult(true, "Verified.");
+        } catch (AiHelpClient.ApiError e) {
+            return e.refusesKey() ? new AuthResult(false, BaseCommand.failure(e)) : AuthResult.unchecked(BaseCommand.failure(e));
+        } catch (IllegalArgumentException e) {
+            // A pasted character no header takes: the key fails the same way on every request
+            return new AuthResult(false, "The key holds a character an HTTP header cannot carry.");
+        } catch (java.net.ConnectException e) {
+            var host = target.provider() == AiHelpClient.Provider.OPENAI ? "api.openai.com" : "generativelanguage.googleapis.com";
+            // A refused connection may carry no message: its kind says what happened, as checkSecret says it
+            var why = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return AuthResult.unchecked("isx could not reach " + host + ": " + OutputFormat.oneLine(why));
+        } catch (java.io.IOException | RuntimeException e) {
+            // A timeout, an error inside the stream or a stream that is not JSON reached no verdict either
+            return AuthResult.unchecked(BaseCommand.failure(e));
+        }
+    }
+
     AuthResult verifyAnthropicApiKey(String key) {
         if (!key.startsWith("sk-ant-")) {
             BuildOutput.warn("Key does not start with 'sk-ant-' (unexpected format).");

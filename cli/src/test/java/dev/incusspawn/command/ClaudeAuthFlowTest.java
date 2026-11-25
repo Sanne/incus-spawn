@@ -97,6 +97,15 @@ class ClaudeAuthFlowTest {
         }
 
         @Override
+        AuthResult checkAiHelpKey(SpawnConfig config, dev.incusspawn.ai.AiHelpClient.Target target) {
+            var key = dev.incusspawn.config.AccountResolver.value(config,
+                    dev.incusspawn.ai.AiHelpClient.namespace(target.provider()), target.accountName(), "apiKey");
+            // A key named "unreachable" is one whose check could not reach the provider
+            if (key.contains("unreachable")) return AuthResult.unchecked("isx could not reach api.openai.com: Connection refused");
+            return new AuthResult(validKeys.contains(key), "API error (429): You exceeded your current quota.");
+        }
+
+        @Override
         AuthResult verifyOauthToken(String token) {
             return new AuthResult(validOauth.contains(token), "token checked");
         }

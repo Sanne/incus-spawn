@@ -310,9 +310,37 @@ public class AiHelpClient {
             case VERTEX -> streamVertex(question, systemBlocks, target.model(),
                     claudeAccount(config, target), onChunk);
             case OPENAI -> streamOpenAI(question, String.join("", systemBlocks), target.model(),
-                    targetKey(config, target), onChunk);
-            case GEMINI -> streamGemini(question, systemBlocks, target.model(), targetKey(config, target), onChunk);
+                    targetKey(config, target), HELP, onChunk);
+            case GEMINI -> streamGemini(question, systemBlocks, target.model(), targetKey(config, target), HELP, onChunk);
         };
+    }
+
+    /**
+     * How long a request may wait for its answer to start, and how many tokens it may answer
+     * with: null leaves the provider's own default for OpenAI, and {@link #GEMINI_MAX_OUTPUT} for Gemini.
+     */
+    private record Limits(Duration timeout, Long maxOutputTokens) {}
+
+    private static final Limits HELP = new Limits(Duration.ofSeconds(120), null);
+    /** A one-word answer: no two-minute wait and no thousands of tokens for it (#2606). */
+    private static final Limits KEY_CHECK = new Limits(Duration.ofSeconds(15), 256L);
+    private static final long GEMINI_MAX_OUTPUT = 8192L;
+
+    /**
+     * Asks {@code target}, an OpenAI or Gemini key account of {@link #targets}, for one word, to
+     * check its key before the AI Help offer saves it (#2606). A question, not a list of models,
+     * since only a question finds a key with no quota left. Throws {@link ApiError} when the
+     * provider answered with an error, and another {@link IOException} when it was not reached.
+     */
+    public static void checkKey(SpawnConfig config, Target target) throws IOException {
+        var question = "Reply with the single word OK.";
+        var system = "You check that an API key works.";
+        Consumer<String> ignored = chunk -> { };
+        switch (target.provider()) {
+            case OPENAI -> streamOpenAI(question, system, target.model(), targetKey(config, target), KEY_CHECK, ignored);
+            case GEMINI -> streamGemini(question, List.of(system), target.model(), targetKey(config, target), KEY_CHECK, ignored);
+            case ANTHROPIC, VERTEX -> throw new IllegalArgumentException("only an OpenAI or Gemini key is checked this way");
+        }
     }
 
     /** A provider's error answer, with its HTTP status and, when the key is the likely cause, what replaces it. */
@@ -334,6 +362,15 @@ public class AiHelpClient {
         }
 
         public int status() { return status; }
+
+        /**
+         * The answer refuses the key {@link #checkKey} sent (#2606): a 401, a 429 (no quota left),
+         * or Gemini's 400 naming {@code API_KEY_INVALID}. A 403, a retired model's 404, a 400 from
+         * a region Gemini does not serve or a 5xx says nothing of the key.
+         */
+        public boolean refusesKey() {
+            return status == 401 || status == 429 || (status == 400 && keyInvalid);
+        }
 
         ApiError withAdvice(String advice) {
             if (advice == null) return this;
@@ -470,9 +507,9 @@ public class AiHelpClient {
     }
 
     private static StreamEnd streamOpenAI(String question, String systemPrompt, String model,
-                                      String apiKey,
+                                      String apiKey, Limits limits,
                                       Consumer<String> onChunk) throws IOException {
-        var body = JqObject.builder(4)
+        var builder = JqObject.builder(5)
                 .put("model", model)
                 .put("stream", true)
                 // Streamed responses only report token usage when asked to, in a final chunk.
@@ -480,14 +517,15 @@ public class AiHelpClient {
                 .put("messages", JqArray.arrayBuilder()
                         .add(JqObject.builder(2).put("role", "system").put("content", systemPrompt).build())
                         .add(JqObject.builder(2).put("role", "user").put("content", question).build())
-                        .build())
-                .build();
+                        .build());
+        if (limits.maxOutputTokens() != null) builder.put("max_completion_tokens", limits.maxOutputTokens());
+        var body = builder.build();
 
         var request = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.openai.com/v1/chat/completions"))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + apiKey)
-                .timeout(Duration.ofSeconds(120))
+                .timeout(limits.timeout())
                 .POST(HttpRequest.BodyPublishers.ofString(body.toJsonString()))
                 .build();
 
@@ -501,20 +539,25 @@ public class AiHelpClient {
      * is held at {@code LOW}, as Claude's effort is, and its thoughts are not shown.
      */
     private static StreamEnd streamGemini(String question, List<String> systemBlocks, String model,
-                                          String apiKey, Consumer<String> onChunk) throws IOException {
+                                          String apiKey, Limits limits, Consumer<String> onChunk) throws IOException {
         var request = HttpRequest.newBuilder()
                 .uri(URI.create("https://generativelanguage.googleapis.com/v1beta/models/" + model
                         + ":streamGenerateContent?alt=sse"))
                 .header("Content-Type", "application/json")
                 .header("x-goog-api-key", apiKey)
-                .timeout(Duration.ofSeconds(120))
-                .POST(HttpRequest.BodyPublishers.ofString(geminiBody(question, systemBlocks).toJsonString()))
+                .timeout(limits.timeout())
+                .POST(HttpRequest.BodyPublishers.ofString(geminiBody(question, systemBlocks,
+                        limits.maxOutputTokens() != null ? limits.maxOutputTokens() : GEMINI_MAX_OUTPUT).toJsonString()))
                 .build();
         return processGeminiStream(sendStream(request), onChunk);
     }
 
     /** A {@code generateContent} request for one question, {@code systemBlocks} as the system instruction's parts. */
     static JqObject geminiBody(String question, List<String> systemBlocks) {
+        return geminiBody(question, systemBlocks, GEMINI_MAX_OUTPUT);
+    }
+
+    private static JqObject geminiBody(String question, List<String> systemBlocks, long maxOutputTokens) {
         var system = JqArray.arrayBuilder();
         for (var text : systemBlocks) system.add(JqObject.builder(1).put("text", text).build());
         return JqObject.builder(3)
@@ -528,7 +571,7 @@ public class AiHelpClient {
                         .build())
                 .put("generationConfig", JqObject.builder(2)
                         // Gemini counts its thinking against this, so it leaves room beyond Claude's 4096
-                        .put("maxOutputTokens", 8192L)
+                        .put("maxOutputTokens", maxOutputTokens)
                         .put("thinkingConfig", JqObject.builder(1).put("thinkingLevel", "LOW").build())
                         .build())
                 .build();

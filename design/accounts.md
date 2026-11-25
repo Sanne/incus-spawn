@@ -618,6 +618,13 @@ With no account that can answer, `isx ask`, `?` in the TUI and `isx doctor --exp
 Each goes beside the namespace's accounts under a name the person gives, and the namespace's `default:` is left alone, so instances keep the account they spend.
 In a namespace with no account it is the first account, and so its default, as `isx account add` makes it.
 A subscription's user is shown the credits note and link there, with the key.
+An OpenAI or Gemini key is checked before it is saved (#2606): a short question goes to the provider with it, through `CredentialSetup.checkAiHelpKey` and `AiHelpClient.checkKey`, waiting at most 15 seconds for the answer to start and allowing it 256 tokens.
+A question, not a list of models, because only a question shows a key with no quota left.
+The question waiting to be asked is not the check, since the TUI's `?` asks for an account before any question is typed, and `--explain`'s request is large.
+When the check fails, the offer shows the menu every credential step shows (`CredentialSetup.askVerificationFailureAction`): try again, or skip back to the kinds.
+Saving the key unverified is offered only when the check could not run: the provider was not reached, or its answer said nothing of the key (a 403, a retired model's 404, a 5xx).
+A key the provider refused (a 401, a 429 with no quota left, Gemini's 400 `API_KEY_INVALID`) is not saved there, and `isx account add <ns>` still saves one on purpose.
+The key is put in a copy of the config for the check, so a key nobody keeps never reaches `config.yaml`, and the offer comes back the next time.
 Once a key is saved nothing offers again, so a key the provider refuses (401, and at Gemini also a 400 whose reason is `API_KEY_INVALID`) is reported with its account and the `isx account add <ns>` that replaces it; a 403 is left out, since a permission, a model or a disabled API gives it more often than the key (`AiHelpClient.ApiError`, `rejectedKeyAdvice`).
 `isx ask` and `--explain` run the offer under `withStdoutOnStderr`, so stdout still holds only the answer; the TUI lends the terminal to it as a pending action (`ADD_AI_HELP_ACCOUNT`) and opens AI Help on return once an account answers.
 When none was added, the offer ends with one error, which the TUI's log keeps, and the TUI waits for Enter before it draws over the offer's last lines.

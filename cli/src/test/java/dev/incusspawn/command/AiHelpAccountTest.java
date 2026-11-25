@@ -33,7 +33,7 @@ class AiHelpAccountTest {
 
     private static SpawnConfig ask(SpawnConfig config, ScriptedPrompts prompts) {
         var answered = AiHelpAccount.ask(config, prompts,
-                new ClaudeAuthFlowTest.FakeInit().acceptKey(API_KEY)).orElse(null);
+                new ClaudeAuthFlowTest.FakeInit().acceptKey(API_KEY, "AIza-good", "sk-proj-good")).orElse(null);
         prompts.assertFullyConsumed();
         return answered;
     }
@@ -106,6 +106,65 @@ class AiHelpAccountTest {
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR, AiHelpAccount.NOT_SENT)),
                 out.events(RecordingOutput.Kind.ERROR));
         assertEquals(List.of(), out.events(RecordingOutput.Kind.NOTE));
+    }
+
+    /**
+     * A pasted key is checked with a short question before it is kept (#2606): one that cannot
+     * answer, such as a free-tier key with no quota left, is said why, and another pasted in its
+     * place is the one saved.
+     */
+    @Test
+    void aKeyThatCannotAnswerIsReplacedByTheNextPaste() throws Exception {
+        var config = seed("");
+        var prompts = new ScriptedPrompts().line("4").secret("AIza-no-quota").line("y").secret("AIza-good");
+        var out = RecordingOutput.during(() -> assertNotNull(ask(config, prompts)));
+
+        assertEquals("AIza-good", AccountResolver.value(SpawnConfig.load(), "gemini", "default", "apiKey"));
+        var said = out.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).toList();
+        assertTrue(String.join(" ", said).contains("The key did not verify. API error (429): You exceeded your current quota."),
+                said::toString);
+        // One outcome, one line
+        assertEquals(List.of("API key verified and saved on " + dev.incusspawn.Platform.thisComputer()),
+                out.events(RecordingOutput.Kind.OK).stream().map(RecordingOutput.Event::text).toList());
+    }
+
+    /** A key that cannot answer and is skipped is not left in config.yaml, so the offer comes back next time. */
+    @Test
+    void aKeyThatCannotAnswerIsNotKept() throws Exception {
+        var config = seed("");
+        var out = RecordingOutput.during(() -> assertNull(ask(config,
+                new ScriptedPrompts().line("3").secret("sk-proj-wrong").line("s", "5"))));
+
+        assertEquals(List.of(), AccountResolver.accountNames(SpawnConfig.load(), "openai"));
+        assertTrue(AiHelpClient.targets(SpawnConfig.load()).isEmpty());
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR, AiHelpAccount.NOT_SENT)),
+                out.events(RecordingOutput.Kind.ERROR));
+    }
+
+    /** A key the provider refused cannot be saved unverified, as at every other credential step. */
+    @Test
+    void aRefusedKeyCannotBeSavedUnverified() throws Exception {
+        var config = seed("");
+        var prompts = new ScriptedPrompts().line("3").secret("sk-proj-wrong").line("u", "s", "5");
+        RecordingOutput.during(() -> assertNull(ask(config, prompts)));
+
+        assertEquals(List.of(), AccountResolver.accountNames(SpawnConfig.load(), "openai"));
+        var conversation = String.join("\n", prompts.conversation());
+        assertFalse(conversation.contains("save it unverified"), conversation);
+        assertTrue(conversation.contains("Please answer y or s."), conversation);
+    }
+
+    /** A key whose check could not reach the provider may be saved unverified, with what replaces it. */
+    @Test
+    void aKeyThatCouldNotBeCheckedMayBeSavedUnverified() throws Exception {
+        var config = seed("");
+        var out = RecordingOutput.during(() -> assertNotNull(ask(config,
+                new ScriptedPrompts().line("3").secret("sk-proj-unreachable").line("u"))));
+
+        assertEquals("sk-proj-unreachable", AccountResolver.value(SpawnConfig.load(), "openai", "default", "apiKey"));
+        var said = String.join(" ", out.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).toList());
+        assertTrue(said.contains("isx could not reach api.openai.com: Connection refused"), said);
+        assertTrue(said.contains("If it fails, 'isx account add openai' replaces it."), said);
     }
 
     /** Off a terminal nothing is asked: the error names every kind and the commands, never 'isx init'. */
