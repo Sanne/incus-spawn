@@ -1613,8 +1613,10 @@ public class InitCommand extends BaseCommand {
         recap.clear();
         try {
             begin(agentStep());
+            // With the answer to the agent's own question, such as Pi's provider (#2536)
             recap.add(chosenAgent == null ? new Answered("Coding agent", "none for now", false)
-                    : new Answered("Coding agent", ExampleTemplate.title(chosenAgent), true));
+                    : new Answered("Coding agent", ExampleTemplate.title(chosenAgent)
+                            + (agentParams.isEmpty() ? "" : " (" + String.join(", ", new java.util.TreeMap<>(agentParams).values()) + ")"), true));
             if (chosenAgent != null) startDownloadsAhead(chosenAgent);
             // Counted again for the agent chosen, before the next header shows it
             totalSteps = questionsFor(chosenAgent, needsGitHub).count() + extra;
@@ -1714,7 +1716,10 @@ public class InitCommand extends BaseCommand {
         if (gitHubAsked) return "GitHub, " + gitHubAnswer();
         try {
             var agent = templateAgent();
-            if (agent != null && agent.credentialNamespaces().contains(SpawnConfig.ClaudeConfig.NAMESPACE)) {
+            // The account of the provider the person chose for the agent, not of its default one (#2536)
+            var namespaces = agent == null ? java.util.Set.<String>of()
+                    : agent == chosenAgent ? agent.credentialNamespaces(agentParams) : agent.credentialNamespaces();
+            if (namespaces.contains(SpawnConfig.ClaudeConfig.NAMESPACE)) {
                 var accounts = SpawnConfig.load().getClaude().allAccounts();
                 var type = accounts.size() == 1 ? accounts.values().iterator().next().effectiveType() : null;
                 if (type != null) {

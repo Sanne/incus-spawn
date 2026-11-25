@@ -75,7 +75,7 @@ class InitFirstRunAccountsTest {
             var init = new Init();
             var lines = ask(agent, ScriptedPrompts.lines("", "4"), init);
 
-            var provider = at(lines, "should " + (agent.equals("pi") ? "Pi" : "opencode") + " use? Choose one:");
+            var provider = at(lines, "should " + (agent.equals("pi") ? "Pi" : "opencode") + " use?");
             assertTrue(provider < at(lines, "uses a Claude account."), String.join("\n", lines));
             assertTrue(at(lines, "uses a Claude account.") < at(lines, "Which kind of Claude account do you have?"), String.join("\n", lines));
             assertEquals(0, count(lines, "works with several providers"), String.join("\n", lines));
