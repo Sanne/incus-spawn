@@ -22,8 +22,6 @@ import dev.tamboui.widgets.block.Borders;
 import dev.tamboui.widgets.block.Title;
 import dev.tamboui.widgets.checkbox.Checkbox;
 import dev.tamboui.widgets.checkbox.CheckboxState;
-import dev.tamboui.widgets.input.TextInput;
-import dev.tamboui.widgets.input.TextInputState;
 import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.select.Select;
 import dev.tamboui.widgets.select.SelectState;
@@ -200,35 +198,6 @@ final class ModalRenderer {
         } else {
             spans.add(Span.styled(display, Style.EMPTY.fg(theme.checkDisabled()).bg(theme.inputInactiveBg())));
         }
-    }
-
-    void renderInputModal(Frame frame, Rect screen,
-                                  String title, String label, String placeholder,
-                                  TextInputState inputState) {
-        var modalArea = centerRect(screen, 54, 6);
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(styledTitle(" " + title + " ", theme.modalBorder()))
-                .borderStyle(Style.EMPTY.fg(theme.modalBorder()))
-                .style(Style.EMPTY.bg(theme.modalBg()))
-                .padding(Padding.horizontal(1))
-                .build();
-        renderBlock(frame, block, modalArea);
-        var inner = block.inner(modalArea);
-        var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
-                .split(inner);
-        frame.renderWidget(Paragraph.from(Line.styled(
-                label, Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg()))), rows.get(0));
-        TextInput.builder()
-                .placeholder(placeholder)
-                .style(Style.EMPTY.fg(theme.focusedLabel()).bg(theme.inputBg()))
-                .build()
-                .renderWithCursor(rows.get(1), frame.buffer(), inputState, frame);
-        var hintSpans = new ArrayList<Span>();
-        addKey(hintSpans, "Enter", "Confirm");
-        addKey(hintSpans, "Esc", "Cancel");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(3));
     }
 
     void renderConfirmModal(Frame frame, Rect screen,
