@@ -122,6 +122,7 @@ Some of what init checks only root can read, such as the btrfs sudoers rule.
 Firewall rules are read without sudo where the host's polkit policy allows it or polkit is not installed, and never in a way that asks for a password.
 
 The plan reports anything it could not read as `unknown`, saying what it skipped and why.
+The table calls that state `not checked`.
 Its `check_commands` are the sudo commands that let you check what the plan skipped.
 
 The plan lists every step init would take, in its order, with what it is for and its state:

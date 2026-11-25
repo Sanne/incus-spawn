@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.Report;
 
 import java.io.PrintStream;
 import java.util.ArrayList;
@@ -256,19 +257,33 @@ final class InitPlan {
             case DONE -> "done";
             case PENDING -> "to do, " + whoLabel(a.who());
             case OPTIONAL -> "optional, " + whoLabel(a.who());
+            // One name in the table for the one state, which the summary line counts as such; its
+            // value in the machine formats stays "unknown"
             case UNKNOWN -> a.checks().isEmpty()
-                    ? (a.changes().isEmpty() ? "unknown" : "unknown, " + whoLabel(a.who()))
+                    ? (a.changes().isEmpty() ? "not checked" : "not checked, " + whoLabel(a.who()))
                     : "not checked: it needs root";
         };
+    }
+
+    /** The narrowest a table is laid out for, so a tiny terminal still gets words on each line. */
+    static final int LEAST_WIDTH = 40;
+
+    /** The {@code table} format, laid out for the terminal's width, or {@link Report#FALLBACK_WIDTH} off one. */
+    static void printTable(PrintStream out, List<Entry> entries) {
+        printTable(out, entries, Report.width());
     }
 
     /**
      * The {@code table} format: each step with its state, then what it would change and how. For
      * people, and free to change; every line is shown as {@code plain} shows a value, since
-     * host files and definitions supply some of it.
+     * host files and definitions supply some of it. What a step would change and its note are
+     * wrapped to {@code width} (design/terminal.md "Reports": a report fits the terminal), since
+     * a note runs to hundreds of columns; a command and a file stay on one line each, so they can
+     * be copied whole.
      */
-    static void printTable(PrintStream out, List<Entry> entries) {
-        var width = entries.stream().mapToInt(e -> e.title().length()).max().orElse(0);
+    static void printTable(PrintStream out, List<Entry> entries, int width) {
+        width = Math.max(width, LEAST_WIDTH);
+        var titles = entries.stream().mapToInt(e -> e.title().length()).max().orElse(0);
         for (var entry : entries) {
             var a = entry.assessment();
             var mark = switch (a.state()) {
@@ -277,15 +292,15 @@ final class InitPlan {
                 case OPTIONAL -> "○";
                 case UNKNOWN -> "?";
             };
-            line(out, mark + " " + entry.title() + " ".repeat(width - entry.title().length() + 2) + stateLabel(a)
-                    + (a.asks() ? "; asks you" : ""));
+            var lead = mark + " " + entry.title() + " ".repeat(titles - entry.title().length() + 2);
+            wrapped(out, lead, " ".repeat(lead.length()), stateLabel(a) + (a.asks() ? "; asks you" : ""), width);
             for (var change : a.changes()) {
                 var who = change.who() == Who.NONE ? "" : " (" + whoLabel(change.who()) + ")";
-                line(out, "    " + change.what() + who);
+                wrapped(out, "    ", "      ", change.what() + who, width);
                 if (change.command() != null) line(out, "      $ " + change.command());
                 if (change.file() != null) line(out, "      writes " + change.file());
             }
-            if (a.note() != null) line(out, "    " + a.note());
+            if (a.note() != null) wrapped(out, "    ", "    ", a.note(), width);
             if (!a.checks().isEmpty()) line(out, "    To check it yourself:");
             for (var check : a.checks()) line(out, "      $ " + check);
         }
@@ -297,10 +312,25 @@ final class InitPlan {
         } else {
             var sudo = entries.stream().anyMatch(e -> e.assessment().state() != State.DONE
                     && e.assessment().changes().stream().anyMatch(c -> c.who() == Who.SUDO));
-            line(out, left + " step" + (left == 1 ? "" : "s") + " to do"
-                    + (unknown == 0 ? "" : ", " + unknown + " that the plan cannot read")
-                    + (sudo ? "; sudo is needed" : "") + ".");
+            wrapped(out, "", "", left + " step" + (left == 1 ? "" : "s") + " to do"
+                    + (unknown == 0 ? "" : ", " + unknown + " not checked")
+                    + (sudo ? "; sudo is needed" : "") + ".", width);
         }
+    }
+
+    /**
+     * {@code text} broken at spaces to fit {@code width}: its first line after {@code lead}, the
+     * rest after {@code hang}, each filling what is left of the line after its own indent.
+     */
+    private static void wrapped(PrintStream out, String lead, String hang, String text, int width) {
+        var first = Lines.wrap(OutputFormat.oneLine(text), width - lead.length());
+        if (first.isEmpty()) {
+            line(out, lead);
+            return;
+        }
+        line(out, lead + first.getFirst());
+        if (first.size() == 1) return;
+        for (var rest : Lines.wrap(String.join(" ", first.subList(1, first.size())), width - hang.length())) line(out, hang + rest);
     }
 
     private static void line(PrintStream out, String text) {
