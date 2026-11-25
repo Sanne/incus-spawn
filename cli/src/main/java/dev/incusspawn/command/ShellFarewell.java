@@ -3,7 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.util.OutputFormat;
 
 /**
- * What isx says around a shell in an instance (#2528). Leaving one printed only the guest's
+ * What isx says when a shell in an instance ends (#2528). Leaving one printed only the guest's
  * {@code logout}, and nothing said that the instance goes on running or how to come back: a
  * person who had just opened their first one was left at their own prompt with no word. The
  * line costs no request: it says what isx does, not what it read.
@@ -24,13 +24,5 @@ final class ShellFarewell {
     static String left(String name) {
         var shown = OutputFormat.oneLine(name);
         return "Left " + shown + ", which isx leaves running. Return: isx shell " + shown + ". Stop it: isx stop " + shown + ".";
-    }
-
-    /**
-     * Before the prompt of the first shell a person opens, in the first run's words: where they
-     * are, and how to leave.
-     */
-    static String entering(String name) {
-        return "You are now inside " + OutputFormat.oneLine(name) + ", an isx machine. Type 'exit' to leave it.";
     }
 }
