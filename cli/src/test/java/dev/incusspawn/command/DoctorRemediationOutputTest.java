@@ -26,7 +26,7 @@ class DoctorRemediationOutputTest {
         var recorded = RecordingOutput.during(() -> DoctorCommand.applyOrSuggest(
                 new DoctorCommand.Remediation("Restart the proxy", false, () -> ran[0] = true), null));
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP_NOTE,
-                "fix: Restart the proxy (re-run in a terminal to apply)")), recorded.events());
+                "Restart the proxy: isx offers to do this when you run 'isx doctor' in a terminal")), recorded.events());
         assertEquals(false, ran[0]);
     }
 }

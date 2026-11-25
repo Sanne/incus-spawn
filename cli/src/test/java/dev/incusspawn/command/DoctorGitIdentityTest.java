@@ -25,7 +25,7 @@ class DoctorGitIdentityTest {
     void insideAnInstanceNoIdentityIsAWarning() {
         var none = DoctorCommand.instanceGitIdentityFinding("");
         assertEquals(DoctorCommand.Status.WARN, none.status());
-        assertEquals("(none: commits made here have no author)", none.detail());
+        assertEquals("(commits made here do not get an author name or email)", none.detail());
     }
 
     @Test

@@ -6,7 +6,7 @@ How isx diagnoses a host, what it collects for a report, and how CI keeps secret
 
 `isx doctor` reports four statuses, not three.
 `OK`/`WARN`/`FAIL` cover "fine", "you should look at this" and "this is broken"; `NOTE` (`·`) states something about the setup that nothing is waiting on.
-Only `WARN` and `FAIL` answer `Status.isProblem()`, which is what the exit code, the "N issue(s) can be addressed" list and the closing summary all consult.
+Only `WARN` and `FAIL` answer `Status.isProblem()`, which is what the exit code, the "What to do about N issues" list and the closing summary all consult.
 So a note can never turn a clean run into a reported problem, and never dilutes the exit status a script checks.
 
 It exists because of unconfigured credentials.

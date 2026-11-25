@@ -125,7 +125,7 @@ public class DoctorCommand extends BaseCommand {
         boolean isProblem() { return this == WARN || this == FAIL; }
     }
 
-    /** A remediation a check can offer. {@code destructive} drives the confirmation wording. */
+    /** A remediation a check can offer. {@code destructive} marks one that stops instances or deletes data; its description says which. */
     interface Action { void run() throws Exception; }
     record Remediation(String description, boolean destructive, Action action) {}
 
@@ -147,7 +147,7 @@ public class DoctorCommand extends BaseCommand {
             outputFormat.print(BuildOutput.results(), findingRecords(findings));
             return exitFor(findings);
         }
-        BuildOutput.step("Running incus-spawn doctor");
+        BuildOutput.step("Running isx doctor");
 
         var findings = Platform.isLinux() ? runLinuxChecks() : runMacChecks();
 
@@ -168,14 +168,14 @@ public class DoctorCommand extends BaseCommand {
             if (anyProblem) {
                 // The report went to the results stream, which the step's spacing does not see
                 BuildOutput.results().println();
-                BuildOutput.step("Some checks reported issues with no automatic fix.");
+                BuildOutput.step("isx cannot offer a fix for the issues above. Their details say what is wrong.");
             }
             else BuildOutput.success("All checks passed");
             return exitFor(findings);
         }
 
         var prompts = Prompts.terminal();
-        try (var group = BuildOutput.group(actionable.size() + " issue(s) can be addressed", null)) {
+        try (var group = BuildOutput.group("What to do about " + actionable.size() + (actionable.size() == 1 ? " issue" : " issues"), null)) {
             for (var f : actionable) {
                 BuildOutput.step(f.status().symbol + " " + f.label());
                 applyOrSuggest(f.remediation(), prompts);
@@ -233,19 +233,18 @@ public class DoctorCommand extends BaseCommand {
             return;
         }
         if (prompts == null) {
-            BuildOutput.stepNote("fix: " + r.description() + " (re-run in a terminal to apply)");
+            BuildOutput.stepNote(r.description() + ": isx offers to do this when you run 'isx doctor' in a terminal");
             return;
         }
-        var warn = r.destructive() ? " This is disruptive." : "";
-        if (!askYesNo(prompts, r.description() + "." + warn + " Apply now?", false)) {
-            BuildOutput.stepNote("skipped.");
+        if (!askYesNo(prompts, r.description() + ". Do it now?", false)) {
+            BuildOutput.stepNote("Not done");
             return;
         }
         try {
             r.action().run();
-            BuildOutput.stepNote("done.");
+            BuildOutput.stepNote("Done");
         } catch (Exception e) {
-            BuildOutput.warn("Failed: " + failure(e));
+            BuildOutput.warn("Could not do it: " + failure(e));
         }
     }
 
@@ -258,7 +257,7 @@ public class DoctorCommand extends BaseCommand {
         findings.addAll(checkHostConfig());
         findings.add(keychainTrustFinding(SystemTrust.keychain(), SystemTrust.findBundle()));
         // Said here so nobody has to find it out from a failed build or branch (#1254)
-        findings.add(Finding.note("VM instances and KVM", "(not available on macOS: isx runs containers only)"));
+        findings.add(Finding.note("VM instances and KVM", "(isx on macOS runs containers only, so it cannot make a VM instance)"));
 
         // Layer 2: Incus daemon (via VM)
         boolean vmRunning = VmManager.isRunning();
@@ -350,8 +349,8 @@ public class DoctorCommand extends BaseCommand {
             return null;
         }
         return Finding.fail("Bridge " + BridgeAddress.BRIDGE + " missing",
-                Platform.isMacOS() ? "(bridge DNS and instance network checks skipped)"
-                        : "(proxy, bridge DNS and instance network checks skipped)",
+                Platform.isMacOS() ? "(isx skipped the bridge DNS and instance network checks, which need it)"
+                        : "(isx skipped the proxy, bridge DNS and instance network checks, which need it)",
                 new Remediation("Run 'isx init' to create it", false, null));
     }
 
@@ -381,14 +380,14 @@ public class DoctorCommand extends BaseCommand {
     static List<Finding> notSetUp(SpawnConfig config) {
         var findings = new ArrayList<Finding>();
         if (config.getSearchPaths().isEmpty()) {
-            findings.add(Finding.note("Template search paths", "(none: run 'isx init search-paths' to add yours)"));
+            findings.add(Finding.note("Template search paths", "(not set up: 'isx init search-paths' adds a directory of your templates)"));
         }
         if (config.getHostPaths().isEmpty()) {
-            findings.add(Finding.note("Code directories", "(none: run 'isx init code-directories' to add yours)"));
+            findings.add(Finding.note("Code directories", "(not set up: 'isx init code-directories' adds the directories of your code)"));
         }
         try {
             if (McpConfig.load().templates().isEmpty()) {
-                findings.add(Finding.note("Agent access over MCP", "(no template approved: run 'isx init mcp')"));
+                findings.add(Finding.note("Agent access over MCP", "(you have not approved any template: 'isx init mcp' asks which ones an agent may branch)"));
             }
         } catch (McpConfig.Invalid e) {
             // Said by the MCP checks
@@ -401,7 +400,7 @@ public class DoctorCommand extends BaseCommand {
      * to reuse. A note, so an agent that is not signed in never turns a clean run into a problem.
      */
     static List<Finding> hostAgentFindings(List<HostAgentProbe.HostAgent> agents) {
-        if (agents.isEmpty()) return List.of(Finding.note("Coding agents on this host", "(none found)"));
+        if (agents.isEmpty()) return List.of(Finding.note("Coding agents on this host", "(isx did not find any)"));
         return agents.stream().map(a -> Finding.note(a.title() + " on this host", "(" + a.summary() + ")")).toList();
     }
 
@@ -416,13 +415,13 @@ public class DoctorCommand extends BaseCommand {
                 SystemTrust.upstreamAnchors(bundle, trust);
             } catch (GeneralSecurityException e) {
                 // Nothing left: the proxy refuses to start and every download fails, and a user-level process can cause it (#1552)
-                return Finding.warn("Keychain CAs trusted for TLS", "(isx trusts no CA, so the proxy will not start: " + e.getMessage()
+                return Finding.warn("Keychain CAs trusted for TLS", "(isx does not trust any CA, so the proxy will not start: " + e.getMessage()
                         + (trust.problem() == null ? "" : "; " + trust.problem()) + ")", null);
             }
         }
         if (trust.problem() != null) {
             // A deny of the default roots left nothing to trust, which the check above reported
-            var trusts = "isx trusts /etc/ssl/cert.pem and the CA list it was built with, no Keychain CA"
+            var trusts = "isx trusts /etc/ssl/cert.pem and the CA list it was built with, but not any Keychain CA"
                     + (trust.denied().isEmpty() ? "" : ", less the " + trust.denied().size() + " the Keychain denies");
             return Finding.warn("Keychain trust settings unreadable", "(" + trust.problem() + "; " + trusts + ")", null);
         }
@@ -431,8 +430,8 @@ public class DoctorCommand extends BaseCommand {
                 + (trust.denied().isEmpty() ? "" : trust.denied().size());
         var denied = denies.isEmpty() ? "" : "; " + denies + " denied (security dump-trust-settings, with -d for an administrator's)";
         if (trust.trusted().isEmpty()) {
-            return Finding.note("Keychain CAs trusted for TLS", "(none" + denied + "; a CA trusted only in a login keychain is not used: "
-                    + "trust it system-wide with sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain <ca.pem>)");
+            return Finding.note("Keychain CAs trusted for TLS", "(isx does not trust any Keychain CA" + denied + "; it does not use a CA trusted only in a login keychain."
+                    + " To trust one system-wide: sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain <ca.pem>)");
         }
         var cas = trust.trusted().stream()
                 .map(c -> c.getSubjectX500Principal().getName() + " sha256:" + CertificateAuthority.fingerprintOf(c))
@@ -485,12 +484,12 @@ public class DoctorCommand extends BaseCommand {
         }
         if (secret.isEmpty()) {
             findings.add(Finding.warn("Credential secret missing", "(" + secretFile
-                    + ": credential proofs cannot be restored in this shell, as after a reboot isx did not do)",
+                    + " is missing or empty, as after a reboot that isx did not make, so this shell cannot get its credential proofs back)",
                     redeliver));
             return findings;
         }
         if (!InstanceSecret.isWellFormed(secret)) {
-            findings.add(Finding.warn("Credential secret invalid", "(" + secretFile + " holds no secret isx made)", redeliver));
+            findings.add(Finding.warn("Credential secret invalid", "(" + secretFile + " does not hold a secret isx made)", redeliver));
             return findings;
         }
         String proofs;
@@ -498,7 +497,7 @@ public class DoctorCommand extends BaseCommand {
             proofs = Files.readString(proofsFile);
         } catch (java.nio.file.NoSuchFileException e) {
             findings.add(Finding.warn("Proof tokens missing", "(" + proofsFile
-                    + ": this instance's secret came without them, from an older isx or a failed write)", redeliver));
+                    + ": this instance's secret came without them, from an older isx or from a write that failed)", redeliver));
             return findings;
         } catch (IOException e) {
             findings.add(Finding.warn("Proof tokens unreadable", "(" + proofsFile + ": " + e.getMessage()
@@ -541,8 +540,8 @@ public class DoctorCommand extends BaseCommand {
             if (build && placeholder != null && !placeholder.guard().isEmpty() && !guardHolds.test(placeholder.guard())) {
                 mismatch = true;
                 findings.add(Finding.warn(name + " requires a rebuilt image",
-                        "(this image cannot refresh its API-key approval; its static placeholder cannot authorize credentials)",
-                        new Remediation("Rebuild this instance's template and branch it again; a new login alone cannot fix this image",
+                        "(the proxy does not add credentials for its placeholder, and this image cannot replace it at login)",
+                        new Remediation("Rebuild this instance's template and branch it again: a new login does not fix this image",
                                 false, null)));
                 continue;
             }
@@ -558,7 +557,7 @@ public class DoctorCommand extends BaseCommand {
                     + " declarations differ from the host's; compared with what was delivered)"));
         }
         if (!mismatch) {
-            findings.add(Finding.ok("Proof tokens", matching == 0 ? "(none to compare in this shell)"
+            findings.add(Finding.ok("Proof tokens", matching == 0 ? "(this shell does not export any of this start's proof tokens)"
                     : "(" + matching + " match this start's secret)"));
         }
         return findings;
@@ -589,14 +588,14 @@ public class DoctorCommand extends BaseCommand {
         var configFile = SpawnConfig.configDir().resolve("config.yaml");
         if (!Files.exists(configFile)) {
             return Finding.warn("config.yaml missing", "",
-                    new Remediation("Run 'isx init' to create configuration", false, null));
+                    new Remediation("Run 'isx init', which creates it", false, null));
         }
         try {
             var perms = PosixFilePermissions.toString(Files.getPosixFilePermissions(configFile));
             var permFinding = evaluateConfigPermissions(perms);
             if (permFinding.status() != Status.OK) {
                 return new Finding(permFinding.status(), permFinding.label(), permFinding.detail(),
-                        new Remediation("Restrict to owner-only (chmod 600)", false, () -> {
+                        new Remediation("Make it readable by you alone (chmod 600)", false, () -> {
                             Files.setPosixFilePermissions(configFile,
                                     PosixFilePermissions.fromString("rw-------"));
                         }));
@@ -629,7 +628,7 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkCaCertificate() {
         if (!CertificateAuthority.exists()) {
             return Finding.warn("CA certificate missing", "",
-                    new Remediation("Run 'isx init' to generate CA", false, null));
+                    new Remediation("Run 'isx init', which creates it", false, null));
         }
         try {
             var ca = CertificateAuthority.loadOrCreate();
@@ -640,10 +639,10 @@ public class DoctorCommand extends BaseCommand {
                 return Finding.warn("CA certificate expires soon",
                         "(" + daysLeft + " days left)", null);
             }
-            return Finding.ok("CA certificate", "valid (" + daysLeft + " days remaining)");
+            return Finding.ok("CA certificate", "valid (" + daysLeft + " days left)");
         } catch (CertificateExpiredException e) {
             return Finding.fail("CA certificate expired", "",
-                    new Remediation("Delete old CA and run 'isx init' to regenerate", true, null));
+                    new Remediation("Delete the expired CA certificate, then run 'isx init', which creates a new one", true, null));
         } catch (CertificateNotYetValidException e) {
             return Finding.warn("CA certificate not yet valid", "(" + e.getMessage() + ")", null);
         } catch (Exception e) {
@@ -674,7 +673,7 @@ public class DoctorCommand extends BaseCommand {
         }
         if (problems.isEmpty()) return null;
         return Finding.warn("Git identity for agents", "(" + problems.getFirst() + ")",
-                new Remediation("Give git-identity in config.yaml a name: and an email:", false, null));
+                new Remediation("Give git-identity in config.yaml both a name: and an email:", false, null));
     }
 
     /**
@@ -695,7 +694,7 @@ public class DoctorCommand extends BaseCommand {
     static Finding instanceGitIdentityFinding(String showOrigin) {
         var effective = dev.incusspawn.lifecycle.AgentGitIdentity.parse(showOrigin);
         if (effective == null) {
-            return Finding.warn("Git identity", "(none: commits made here have no author)",
+            return Finding.warn("Git identity", "(commits made here do not get an author name or email)",
                     new Remediation("On the host, add a GitHub account with 'isx account add github', or run"
                             + " 'isx init --git-identity-from-host', then rebuild the template", false, null));
         }
@@ -844,7 +843,7 @@ public class DoctorCommand extends BaseCommand {
         var findings = new ArrayList<Finding>();
         if (!needed.isEmpty()) {
             findings.add(Finding.warn("Missing credentials", "(" + String.join(", ", needed) + ")",
-                    new Remediation("Run 'isx account add' to configure", false, null)));
+                    new Remediation("Run 'isx account add' to add them", false, null)));
         } else if (inherited.isEmpty() || inheritance == Inheritance.AVAILABLE) {
             // An inherited credential that cannot be served here is not configured: its own warning follows
             var detail = unused.isEmpty() ? "configured" : "configured for the tools in use";
@@ -857,7 +856,7 @@ public class DoctorCommand extends BaseCommand {
             findings.add(Finding.warn("Credentials set to inherit outside an isx instance",
                     "(" + String.join(", ", inherited) + ")",
                     new Remediation("Set 'default:' to an account of yours in config.yaml,"
-                            + " adding one with 'isx account add' if there is none", false, null)));
+                            + " adding one with 'isx account add' if you do not have one yet", false, null)));
         } else if (inheritance == Inheritance.SECRET_UNUSABLE && !inherited.isEmpty()) {
             findings.add(Finding.warn("Credentials set to inherit, but this instance's secret cannot be read",
                     "(" + String.join(", ", inherited) + ")",
@@ -868,7 +867,7 @@ public class DoctorCommand extends BaseCommand {
         }
         if (!unused.isEmpty()) {
             findings.add(Finding.note("Credentials not configured",
-                    "(" + String.join(", ", unused) + ") — no template of yours uses these tools"));
+                    "(" + String.join(", ", unused) + ": your templates do not use these tools)"));
         }
         return findings;
     }
@@ -915,7 +914,7 @@ public class DoctorCommand extends BaseCommand {
 
     static Finding noCowPoolFinding(Map<String, String> pools, boolean linux, String hostFs,
                                     java.util.function.BooleanSupplier skipTrim) {
-        var poolDesc = pools.isEmpty() ? "no storage pools configured"
+        var poolDesc = pools.isEmpty() ? "Incus does not have any storage pool"
                 : String.join(", ", pools.entrySet().stream()
                         .map(e -> "'" + e.getKey() + "' (" + e.getValue() + ")")
                         .toList());
@@ -934,14 +933,14 @@ public class DoctorCommand extends BaseCommand {
                         if (created.result().exitCode() != 0) {
                             var why = CowPoolBacking.failureExplanation(created.result().stderr());
                             throw new RuntimeException("Failed to create pool: " + (why.isEmpty()
-                                    ? "Incus gave no reason; check that the 'loop' kernel module is loaded (sudo modprobe loop)"
+                                    ? "Incus did not say why; check that the 'loop' kernel module is loaded (sudo modprobe loop)"
                                     : String.join(" ", why)));
                         }
                     });
         }
         return Finding.fail("No copy-on-write storage pool",
-                poolDesc + " — every branch and derived build is a full rsync copy:"
-                        + " minutes instead of seconds, and the template's full size on disk each time",
+                poolDesc + ": every branch, and every build on a parent template, starts from a full copy."
+                        + " Each copy takes minutes instead of under a second, and the template's full size on disk",
                 remediation);
     }
 
@@ -963,7 +962,7 @@ public class DoctorCommand extends BaseCommand {
             return List.of(Finding.warn(
                     "Default profile root disk on non-CoW pool '" + profilePool + "'",
                     "the default profile's root disk uses '" + profilePool + "' (" + driver
-                            + ") instead of CoW pool '" + cowPool + "', so new instances land on it",
+                            + ") instead of copy-on-write pool '" + cowPool + "', so new instances are made on it",
                     new Remediation(
                             "Point the default profile's root disk at pool '" + cowPool + "'",
                             false,
@@ -993,13 +992,13 @@ public class DoctorCommand extends BaseCommand {
         var detail = "(" + status.mode() + ", drop_subtree_threshold=" + status.dropSubtreeThreshold() + ")";
         if (status.inconsistent()) {
             return List.of(Finding.warn("Disk accounting inconsistent",
-                    "btrfs qgroup counters are frozen — every template/instance size is stale " + detail,
-                    new Remediation("Start a btrfs quota rescan (rebuilds the counters in the background; data is untouched)",
+                    "btrfs marked its qgroup counters inconsistent, so every template and instance size isx shows may be wrong " + detail,
+                    new Remediation("Start a btrfs quota rescan, which rebuilds the counters in the background and does not change any data",
                             false,
                             () -> {
                                 if (!dev.incusspawn.incus.BtrfsUsage.rescan(pool)) {
                                     throw new RuntimeException("could not start the rescan"
-                                            + (Platform.isLinux() ? " — re-run 'isx init' to refresh the sudoers rule" : ""));
+                                            + (Platform.isLinux() ? "; run 'isx init' again, which updates the sudoers rule" : ""));
                                 }
                             })));
         }
@@ -1038,7 +1037,7 @@ public class DoctorCommand extends BaseCommand {
     static Finding thresholdNotSettable(String pool) {
         return Finding.note("Deletes slow down later branches",
                 "(isx cannot set drop_subtree_threshold on pool '" + pool + "', so after a bulk delete a new branch"
-                        + " can take seconds for minutes; re-run 'isx init' to update the btrfs sudoers rule)");
+                        + " can take seconds for minutes; run 'isx init' again, which updates the btrfs sudoers rule)");
     }
 
     /**
@@ -1049,11 +1048,11 @@ public class DoctorCommand extends BaseCommand {
     static Optional<Finding> pendingCleanupFinding(String pool, BtrfsUsage.PendingCleanup pending, boolean macOS) {
         if (pending.subvolumes() == 0) return Optional.empty();
         var wait = macOS ? "" : "; 'sudo btrfs subvolume sync " + BtrfsUsage.POOL_MOUNT_PREFIX + pool
-                + "' waits until it is done";
+                + "' waits until it finishes";
         return Optional.of(Finding.note("Deleted instances still being freed",
                 "(btrfs is freeing " + pending.subvolumes() + " deleted subvolume(s), "
                         + VmManager.humanSize(pending.referencedBytes()) + " referenced, on pool '" + pool
-                        + "'; until it finishes, a new branch can take seconds instead of a fraction of one" + wait + ")"));
+                        + "'. Until btrfs finishes, a new branch can take seconds instead of a fraction of one" + wait + ")"));
     }
 
     /**
@@ -1081,7 +1080,7 @@ public class DoctorCommand extends BaseCommand {
             var orphan = findings.get(0);
             findings = new ArrayList<>(findings);
             findings.set(0, new Finding(orphan.status(), orphan.label(), orphan.detail(),
-                    new Remediation("Remove them individually through the VM agent, keeping the rest of the pool",
+                    new Remediation("Delete them one by one through the VM agent, keeping the rest of the pool",
                             true, () -> deleteOrphans(scan))));
         }
         return findings;
@@ -1150,7 +1149,7 @@ public class DoctorCommand extends BaseCommand {
                 listed.add(ref.path() + (size == null ? "" : " (" + VmManager.humanSize(size) + " referenced)"));
             }
             var detail = "Incus has no record of " + String.join(", ", listed)
-                    + " — the data is unreachable, still takes space, and blocks creating an instance of the same name"
+                    + ": Incus does not use the data, which still takes space and blocks creating an instance of the same name"
                     + (blocked.isEmpty() ? "" : "; builds of " + String.join(", ", blocked)
                             + " will fail with \"file exists\"");
             var remediation = macOS
@@ -1167,8 +1166,8 @@ public class DoctorCommand extends BaseCommand {
             var names = scan.dangling().stream().map(InstanceSubvolumes.Ref::name).toList();
             findings.add(Finding.warn(
                     scan.dangling().size() + " instance record(s) without storage on pool '" + scan.pool() + "'",
-                    String.join(", ", names) + " — Incus lists them, but the pool has no subvolume at their path"
-                            + " (if a build or branch is running, re-check once it finishes). isx refuses to delete"
+                    String.join(", ", names) + ": Incus lists them, but the pool does not have a subvolume at their path."
+                            + " If a build or branch is running, run 'isx doctor' again once it finishes. isx does not delete"
                             + " them: their data may be under another name, and deleting the record would orphan it",
                     null));
         }
@@ -1200,7 +1199,7 @@ public class DoctorCommand extends BaseCommand {
             var movable = names.stream().filter(n -> !running.contains(n)).toList();
             var busy = names.stream().filter(running::contains).toList();
             var detail = "on '" + poolName + "' (" + driver + "): " + listed
-                    + " — branching from these is a full copy; rebuild templates with 'isx build <name>' or move them"
+                    + ". A branch of any of them is a full copy: rebuild a template with 'isx build <name>', or move them"
                     + (busy.isEmpty() ? "" : "; " + String.join(", ", busy) + (busy.size() == 1
                             ? " is running: stop it and re-run 'isx doctor' to move it"
                             : " are running: stop them and re-run 'isx doctor' to move them"));
@@ -1244,7 +1243,7 @@ public class DoctorCommand extends BaseCommand {
         var usageString = usage.format(poolName);
         if (usage.isCritical()) {
             return Finding.warn("Storage pool " + poolName + " nearly full",
-                    usageString + " — run 'isx clean pool' to reclaim space", null);
+                    usageString + "; 'isx clean pool' frees space", null);
         }
         return Finding.ok("Storage pool " + poolName, usageString);
     }
@@ -1296,14 +1295,13 @@ public class DoctorCommand extends BaseCommand {
                 if (maxSize > 0 && newSize > maxSize) newSize = maxSize;
                 if (newSize <= total) {
                     return Finding.warn("Pool " + pool + " is full",
-                            "currently " + (total / GIB) + "GiB — cannot enlarge further,"
-                                    + " host filesystem has insufficient free space", null);
+                            "currently " + (total / GIB) + "GiB; isx cannot enlarge it, since the host"
+                                    + " filesystem does not have enough free space", null);
                 }
                 String newSizeStr = (newSize / GIB) + "GiB";
                 return Finding.warn("Pool " + pool + " could be enlarged",
-                        "currently " + (total / GIB) + "GiB — the pool is thin-provisioned"
-                                + " (a sparse file that only uses real disk space as data is written,"
-                                + " so enlarging is free)",
+                        "currently " + (total / GIB) + "GiB. The pool is a sparse file, which takes host disk"
+                                + " only as data is written, so enlarging it does not take any",
                         new Remediation("Resize to " + newSizeStr, false,
                                 () -> incus.resizePool(pool, newSizeStr)));
             }
@@ -1313,14 +1311,14 @@ public class DoctorCommand extends BaseCommand {
         if (maxSize > 0 && target > maxSize) target = maxSize;
         if (target <= total) {
             return Finding.warn("Pool " + pool + " is undersized",
-                    (total / GIB) + "GiB — default is " + (MIN_POOL_SIZE / GIB) + "GiB,"
-                            + " but host filesystem has insufficient free space to enlarge", null);
+                    (total / GIB) + "GiB, where the default is " + (MIN_POOL_SIZE / GIB) + "GiB; isx cannot enlarge it,"
+                            + " since the host filesystem does not have enough free space", null);
         }
         String targetStr = (target / GIB) + "GiB";
         return Finding.warn("Pool " + pool + " is undersized",
-                (total / GIB) + "GiB — default is " + (MIN_POOL_SIZE / GIB) + "GiB."
-                        + " The pool is thin-provisioned (a sparse file that only uses real disk space"
-                        + " as data is written), so resizing does not consume additional host disk",
+                (total / GIB) + "GiB, where the default is " + (MIN_POOL_SIZE / GIB) + "GiB."
+                        + " The pool is a sparse file, which takes host disk only as data is written,"
+                        + " so resizing it does not take any",
                 new Remediation("Resize pool to " + targetStr, false,
                         () -> incus.resizePool(pool, targetStr)));
     }
@@ -1339,7 +1337,7 @@ public class DoctorCommand extends BaseCommand {
     private List<Finding> findFailedBuilds(IncusClient incus) {
         var findings = new ArrayList<Finding>();
         for (var name : CleanCommand.findFailedBuilds(incus)) {
-            findings.add(Finding.warn("Failed build: " + name, "can be deleted to reclaim space",
+            findings.add(Finding.warn("Failed build: " + name, "deleting it frees its space",
                     new Remediation("Delete " + name, true,
                             () -> CleanCommand.deleteFailedBuild(incus, name))));
         }
@@ -1363,7 +1361,7 @@ public class DoctorCommand extends BaseCommand {
         try {
             if (incus.storageVolumeExists(pool, GuestProvisioning.DNF_CACHE_VOLUME)) {
                 return Finding.warn("DNF build cache volume exists",
-                        "can be deleted to reclaim space (will be recreated on next build)",
+                        "deleting it frees its space; the next build makes it again",
                         new Remediation("Delete DNF cache volume", false,
                                 () -> incus.deleteStorageVolume(pool, GuestProvisioning.DNF_CACHE_VOLUME)));
             }
@@ -1394,7 +1392,7 @@ public class DoctorCommand extends BaseCommand {
         if (!stopped.isEmpty()) {
             return Finding.warn("Stopped instances",
                     stopped.size() + " stopped: " + String.join(", ", stopped)
-                            + " — delete with 'isx destroy <name>'", null);
+                            + "; 'isx destroy <name>' deletes one", null);
         }
         return null;
     }
@@ -1417,7 +1415,7 @@ public class DoctorCommand extends BaseCommand {
             if (limit < INOTIFY_RECOMMENDED_MIN) {
                 return Finding.warn("Inotify instance limit low",
                         "max_user_instances=" + limit + " (recommended ≥" + INOTIFY_RECOMMENDED_MIN
-                                + "); at ~" + perContainer + " per container, builds will fail around "
+                                + "); at about " + perContainer + " per container, builds fail at about "
                                 + (limit / perContainer) + " concurrent containers",
                         new Remediation(
                                 "Run 'isx init' to raise fs.inotify.max_user_instances to 8192",
@@ -1444,8 +1442,8 @@ public class DoctorCommand extends BaseCommand {
         if (running) {
             // A VM an isx before the launcher started keeps running after the upgrade (#2031).
             if (VmManager.runsUnderLegacyHypervisor()) {
-                return Finding.warn("VM running under vfkit", "(started by an older isx; a restart moves it to isx-vm)",
-                        new Remediation("Restart the VM under isx-vm (stops running containers)", true, DoctorCommand::restartVm));
+                return Finding.warn("VM running under vfkit", "(an older isx started it; a restart runs it under isx-vm)",
+                        new Remediation("Restart the VM under isx-vm, which stops the running instances", true, DoctorCommand::restartVm));
             }
             return Finding.ok("VM running", "");
         }
@@ -1467,18 +1465,18 @@ public class DoctorCommand extends BaseCommand {
                                          Finding forwarder) {
         if (forwarder.remediation() == FORWARDER_RESTART) {
             var cause = "the leaked vsock connections below are the likely cause";
-            if (!reachable) return Finding.fail("Incus not reachable", "(the Incus API did not answer — " + cause + ")", null);
-            if (seconds > 5.0) return Finding.warn("Incus reachable but slow", String.format("(%.1fs — %s)", seconds, cause), null);
+            if (!reachable) return Finding.fail("Incus not reachable", "(the Incus API did not answer; " + cause + ")", null);
+            if (seconds > 5.0) return Finding.warn("Incus reachable but slow", String.format("(%.1fs; %s)", seconds, cause), null);
         }
         if (!reachable) {
             var detail = connectivity.get();
             return Finding.fail("Incus not reachable", detail == null ? "" : "(" + detail + ")",
-                    new Remediation("Restart the VM to restore the tunnel", true, DoctorCommand::restartVm));
+                    new Remediation("Restart the VM, which restores the tunnel and stops the running instances", true, DoctorCommand::restartVm));
         }
         if (seconds > 5.0) {
             return Finding.warn("Incus reachable but slow",
-                    String.format("(%.1fs — possible forwarder pressure)", seconds),
-                    new Remediation("Restart the VM to clear the tunnel", true, DoctorCommand::restartVm));
+                    String.format("(%.1fs; the VM's forwarder may be overloaded)", seconds),
+                    new Remediation("Restart the VM, which clears the tunnel and stops the running instances", true, DoctorCommand::restartVm));
         }
         return Finding.ok("Incus reachable", String.format("(%.1fs)", seconds));
     }
@@ -1520,7 +1518,7 @@ public class DoctorCommand extends BaseCommand {
 
     /** One instance, so {@link #incusReachableFinding} can tell when the forwarder finding offers it. */
     private static final Remediation FORWARDER_RESTART = new Remediation(
-            "Restart the forwarder in the VM (no reboot — running containers keep going)",
+            "Restart the forwarder in the VM, without a reboot, so the running instances keep running",
             false, DoctorCommand::restartForwarderViaAgent);
 
     private static Finding offerForwarderRestart(Finding base, String detail) {
@@ -1535,13 +1533,13 @@ public class DoctorCommand extends BaseCommand {
         return Finding.warn("Appliance outdated",
                 "running " + running + ", installed " + skew.installed(),
                 new Remediation("Restart the VM to apply appliance " + skew.installed()
-                        + " (stops running containers)", true, DoctorCommand::restartVm));
+                        + ", which stops the running instances", true, DoctorCommand::restartVm));
     }
 
     private Finding checkVmDiskHeadroom() {
         try {
             var diskImage = Environment.vmDiskImage();
-            if (!Files.exists(diskImage)) return Finding.ok("VM disk", "(no disk image found)");
+            if (!Files.exists(diskImage)) return Finding.ok("VM disk", "(isx did not find a disk image)");
             var store = Files.getFileStore(diskImage.getParent());
             long usable = store.getUsableSpace();
             long total = store.getTotalSpace();
@@ -1561,12 +1559,12 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkRootDiskIntegrity() {
         var diskImage = Environment.vmDiskImage();
         if (!Files.exists(diskImage)) {
-            return Finding.ok("Root disk", "(not yet extracted — will be created on next start)");
+            return Finding.ok("Root disk", "(not extracted yet; the next start makes it)");
         }
         var f = validateBtrfsSuperblock(diskImage);
         if (f.status() == Status.FAIL) {
             return new Finding(f.status(), f.label(), f.detail(),
-                    new Remediation("Delete the corrupted image (re-extracted on next start)", true, () -> {
+                    new Remediation("Delete the corrupted image, which the next start extracts again", true, () -> {
                         Files.deleteIfExists(diskImage);
                         Files.deleteIfExists(Environment.vmDiskVersion());
                     }));
@@ -1593,10 +1591,10 @@ public class DoctorCommand extends BaseCommand {
         if (conns < 0) return Finding.ok("vsock forwarder", "(not measurable)");
         if (conns > VmManager.VSOCK_CONN_WARN_THRESHOLD) {
             return Finding.warn("vsock forwarder connections: " + conns,
-                    "(high — leaked streams degrade new-connection latency)",
+                    "(high: leaked connections slow down every new one)",
                     // Names no layer: it also stands for a LAUNCHER leak, which the forwarder did not cause.
-                    new Remediation("Restart the VM to release the leaked vsock connections "
-                            + "(stops running containers)", true, DoctorCommand::restartVm));
+                    new Remediation("Restart the VM, which releases the leaked vsock connections "
+                            + "and stops the running instances", true, DoctorCommand::restartVm));
         }
         return Finding.ok("vsock forwarder connections: " + conns, "");
     }
@@ -1657,11 +1655,11 @@ public class DoctorCommand extends BaseCommand {
     static Finding confirmedCacheFinding(List<String> domains, List<String> dropped, long maxSize, long stored, Path dir) {
         if (!dropped.isEmpty()) {
             return Finding.warn("Confirmed cache", String.join("; ", dropped),
-                    new Remediation("Fix confirmed-cache: in config.yaml as the warning says", false, null));
+                    new Remediation("Correct confirmed-cache: in config.yaml as the details say", false, null));
         }
         return Finding.note("Confirmed cache", String.join(", ", domains) + ": "
                 + dev.incusspawn.util.MemorySize.shown(stored) + " of at most " + dev.incusspawn.util.MemorySize.shown(maxSize)
-                + " in " + dir + ", private downloads included, each served only on upstream's 304; isx clean cache removes them");
+                + " in " + dir + ", private downloads included. Each is served only when upstream answers 304. 'isx clean cache' removes them");
     }
 
     /** The bytes the files under {@code dir} take, 0 when it is missing or cannot be read. */
@@ -1712,7 +1710,7 @@ public class DoctorCommand extends BaseCommand {
         }
         if (!dropped.isEmpty()) {
             return Finding.warn("Exposed host ports", refused.substring(2),
-                    new Remediation("List each port once, as a number, and none isx serves (443, 18443, 18080, 53)",
+                    new Remediation("List each port once, as a number, and leave out the ports isx serves (443, 18443, 18080, 53)",
                             false, null));
         }
         var listed = ports.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", "));
@@ -1763,9 +1761,9 @@ public class DoctorCommand extends BaseCommand {
         var placement = activity.placement();
         var unplaced = placement.unplacedRunning();
         if (placement.registryStale()) {
-            findings.add(Finding.warn("Proxy instance listing", "(its last listing of the instances failed or has not answered;"
-                            + " until one succeeds, it refuses every credential proof after a failure, and any new or renewed one while it hangs)",
-                    new Remediation("Check that Incus is answering, then 'isx proxy logs'", false, null)));
+            findings.add(Finding.warn("Proxy instance listing", "(its last listing of the instances failed or has not answered."
+                            + " Until one succeeds, it refuses every credential proof after a failure, and every new or renewed one while it waits)",
+                    new Remediation("Check that Incus answers, then read 'isx proxy logs'", false, null)));
         }
         if (placement.refusedAddressMisses() > 0 && !unplaced.isEmpty()) {
             // The misses never go down and an idle instance is unplaced too. #1582's signature is a
@@ -1786,8 +1784,8 @@ public class DoctorCommand extends BaseCommand {
                     : "(" + misses + ", and no traffic is attributed to " + names
                             + "; if one of them is in use, the proxy cannot tell it apart")
                     + (macOS ? ". On macOS the appliance's NAT hides each instance's address" : "") + ")";
-            var remediation = new Remediation("Restart the proxy with 'isx proxy restart'; if it persists, report it with"
-                    + " 'isx proxy logs' (isx doctor inside an instance cannot fix this)", false, null);
+            var remediation = new Remediation("Restart the proxy with 'isx proxy restart' on the host; if it happens again, report it with"
+                    + " 'isx proxy logs'", false, null);
             findings.add(new Finding(failing ? Status.FAIL : Status.WARN, "Proxy caller placement", detail, remediation));
         }
         var limited = activity.throttled().entrySet().stream()
@@ -1802,14 +1800,14 @@ public class DoctorCommand extends BaseCommand {
                     + " time(s) since the proxy started. The limit is upstream's, not isx's: a registry's is on this host's address,"
                     + " a model API's or GitHub's may be the account's. Cached artifacts are still served, "
                     + unconfirmed + " of them unconfirmed)",
-                    new Remediation("Wait for the limit to lift, or build from a different network; 'isx proxy activity'"
+                    new Remediation("Wait until upstream allows requests again, or build from another network; 'isx proxy activity'"
                             + " shows the counts", false, null)));
         }
         if (placement.refusedProofs() > 0) {
             findings.add(Finding.warn("Credential proofs", "(" + placement.refusedProofs()
                             + " refused since the proxy started: an instance presented a proof that matches none of its own)",
-                    new Remediation("In the instance, open a new login shell; if needed, run 'isx shell <name>' and"
-                            + " 'isx doctor' inside it. Old API-key Claude images may need rebuilding", false, null)));
+                    new Remediation("In the instance, open a new login shell. If that does not help, run 'isx shell <name>' and"
+                            + " 'isx doctor' inside it, which says whether its template needs a rebuild", false, null)));
         }
         return findings;
     }
@@ -1830,8 +1828,8 @@ public class DoctorCommand extends BaseCommand {
                     ? missingProxyBinaryFinding()
                     : proxyNotRunningFinding(
                             ProxyService.isInstalled(), ProxyService.failedWithConfigError());
-            case STALE_DNS -> Finding.fail("Proxy not running", "(stale DNS overrides still active)",
-                    new Remediation("Start proxy to restore connectivity", false, null));
+            case STALE_DNS -> Finding.fail("Proxy not running", "(the bridge still sends intercepted domains to it, so instances cannot reach them)",
+                    new Remediation("Start the proxy with 'isx proxy start', which restores their network", false, null));
             case STALE_GATEWAY -> staleGatewayFinding(ProxyService.isActive());
         };
     }
@@ -1843,8 +1841,8 @@ public class DoctorCommand extends BaseCommand {
     static Finding staleGatewayFinding(boolean serviceActive) {
         var detail = "(running, but on an old address of incusbr0 that instances can no longer reach)";
         return Finding.fail("Proxy unreachable", detail, serviceActive
-                ? new Remediation("Restart proxy service", false, () -> ProxyService.restart())
-                : new Remediation("Restart with 'isx proxy stop && isx proxy start'", false, null));
+                ? new Remediation("Restart the proxy service", false, () -> ProxyService.restart())
+                : new Remediation("Restart the proxy with 'isx proxy stop && isx proxy start'", false, null));
     }
 
     /**
@@ -1854,8 +1852,8 @@ public class DoctorCommand extends BaseCommand {
      */
     static Finding missingProxyBinaryFinding() {
         return Finding.fail("Proxy not running",
-                "('isx-proxy' binary not found next to 'isx' — the proxy runs as its own "
-                        + "process and the CLI cannot serve it)",
+                "(isx did not find 'isx-proxy' next to 'isx'. The proxy is a program of its own, "
+                        + "and 'isx' cannot run it in its place)",
                 new Remediation(ProxyService.MISSING_PROXY_REMEDIATION, false, null));
     }
 
@@ -1863,23 +1861,23 @@ public class DoctorCommand extends BaseCommand {
         if (installed) {
             if (configError) {
                 return Finding.fail("Proxy not running",
-                        "(service failed with a configuration error — check 'journalctl --user -u "
-                                + Environment.PROXY_SERVICE_NAME + "' for details; "
-                                + "if the error is about incus-admin group membership, log out and back in)",
-                        new Remediation("Restart proxy service after fixing the issue", false,
+                        "(the service stopped on a configuration error; 'journalctl --user -u "
+                                + Environment.PROXY_SERVICE_NAME + "' shows it. "
+                                + "If it names the incus-admin group, log out and back in)",
+                        new Remediation("Restart the proxy service once the error is fixed", false,
                                 () -> ProxyService.restart()));
             }
-            return Finding.fail("Proxy not running", "(service installed but inactive)",
-                    new Remediation("Restart proxy service", false, () -> ProxyService.restart()));
+            return Finding.fail("Proxy not running", "(its service is installed but not running)",
+                    new Remediation("Restart the proxy service", false, () -> ProxyService.restart()));
         }
         return Finding.fail("Proxy not running", "",
-                new Remediation("Start with 'isx proxy start' or install service with 'isx init'", false, null));
+                new Remediation("Start it with 'isx proxy start', or install its service with 'isx init'", false, null));
     }
 
     private List<Finding> checkProxyDrift(IncusClient incus) {
         try {
             var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
-            if (info == null) return List.of(Finding.ok("Proxy version", "(proxy not reachable, skipped)"));
+            if (info == null) return List.of(Finding.ok("Proxy version", "(not checked: the proxy does not answer)"));
             var report = ProxyHealthCheck.assessDrift(info);
             if (report.isEmpty()) {
                 return List.of(Finding.ok("Proxy version", "matches CLI"));
@@ -1888,10 +1886,10 @@ public class DoctorCommand extends BaseCommand {
             if (report.futileReason() != null) {
                 restart = new Remediation(report.futileReason(), false, null);
             } else if (ProxyService.isActive()) {
-                restart = new Remediation("Restart proxy service to update", false,
+                restart = new Remediation("Restart the proxy service, which runs the new version", false,
                         () -> ProxyService.reinstallIfChanged(incus, info));
             } else {
-                restart = new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null);
+                restart = new Remediation("Restart the proxy with 'isx proxy stop && isx proxy start', which runs the new version", false, null);
             }
             var findings = new ArrayList<Finding>();
             for (var drift : report.drifts()) {
@@ -1958,12 +1956,12 @@ public class DoctorCommand extends BaseCommand {
     static Finding bridgeSubnetFinding(BridgeSubnetCheck.ConflictResult result, Action move) {
         if (!result.conflictDetected()) {
             return Finding.ok("Bridge subnet", result.oldSubnet() == null ? "(no IPv4 address)"
-                    : "(" + result.oldSubnet() + ", clear of host routes)");
+                    : "(" + result.oldSubnet() + ", which does not overlap any host route)");
         }
         var detail = "(" + result.oldSubnet() + " overlaps host route: " + result.conflictingRoute() + ")";
         if (result.newSubnet() == null) {
             return Finding.warn("Bridge subnet conflict", detail, new Remediation(
-                    "Host routes cover every subnet isx would move the bridge to ("
+                    "Host routes overlap every subnet isx would move the bridge to ("
                             + BridgeSubnetCheck.candidateRange() + "); free one, then re-run 'isx doctor'", false, null));
         }
         return Finding.warn("Bridge subnet conflict", detail, new Remediation(
@@ -2012,7 +2010,7 @@ public class DoctorCommand extends BaseCommand {
         var repair = new Remediation("Rewrite bridge DNS overrides", false, rewrite);
         if (status.legacy().isEmpty() && status.missing().size() == domains.size()) {
             return Finding.fail("Bridge DNS overrides",
-                    "none configured (instances reach intercepted domains directly, bypassing the proxy)",
+                    "not set up: instances reach the intercepted domains directly, without the proxy and so without credentials",
                     repair);
         }
         if (status.legacy().isEmpty() && status.stale().size() == domains.size()) {
@@ -2037,10 +2035,10 @@ public class DoctorCommand extends BaseCommand {
         }
         if (UfwCheck.isInstalled()) {
             return ufwFindings(UfwCheck.readBeforeRules(), false,
-                    Finding.fail("Firewall not running", "(UFW installed but inactive)",
+                    Finding.fail("Firewall not running", "(UFW is installed but not enabled)",
                             new Remediation("Enable UFW and re-run 'isx init'", false, null)));
         }
-        return List.of(Finding.warn("Firewall redirect", "(no firewall installed, cannot verify)", null));
+        return List.of(Finding.warn("Firewall redirect", "(not checked: this host does not have firewalld or UFW)", null));
     }
 
     /**
@@ -2057,7 +2055,7 @@ public class DoctorCommand extends BaseCommand {
                         + "#ufw-forward-rules-written-into-the-stock-commit-comment"
                         + ", then enable UFW and re-run 'isx init'", false, null);
         return List.of(Finding.fail("UFW forward rules",
-                "(written into a comment in /etc/ufw/before.rules, so ufw cannot load its rules)", repair),
+                "(an older isx wrote them into a comment in /etc/ufw/before.rules, so UFW cannot load its rules)", repair),
                 firewall);
     }
 
@@ -2074,7 +2072,7 @@ public class DoctorCommand extends BaseCommand {
                             + " then re-run 'isx init' if the redirect is missing;"
                             + " if systemd refuses, 'sudo systemctl reset-failed firewalld' first", false, null));
         }
-        return Finding.fail("Firewall not running", "(firewalld installed but inactive)",
+        return Finding.fail("Firewall not running", "(firewalld is installed but not running)",
                 new Remediation("Enable firewalld and re-run 'isx init'", false, null));
     }
 
@@ -2100,10 +2098,10 @@ public class DoctorCommand extends BaseCommand {
             if (staleIp != null) {
                 return Finding.fail("Firewall PREROUTING redirect",
                         "rule points to stale gateway " + staleIp + " (current: " + gatewayIp + ")",
-                        new Remediation("Re-run 'isx init' to update iptables rules", false, null));
+                        new Remediation("Run 'isx init' again, which updates the rule", false, null));
             }
             return Finding.fail("Firewall PREROUTING redirect", "rule not found",
-                    new Remediation("Re-run 'isx init' to configure iptables rules", false, null));
+                    new Remediation("Run 'isx init' again, which adds the rule", false, null));
         } catch (Exception e) {
             return Finding.warn("Firewall PREROUTING redirect", "(check failed: " + e.getMessage() + ")", null);
         }
@@ -2122,10 +2120,10 @@ public class DoctorCommand extends BaseCommand {
             if (staleIp != null) {
                 return Finding.fail("Firewall PREROUTING redirect",
                         "rule points to stale gateway " + staleIp + " (current: " + gatewayIp + ")",
-                        new Remediation("Re-run 'isx init' to update firewall rules", false, null));
+                        new Remediation("Run 'isx init' again, which updates the rule", false, null));
             }
             return Finding.fail("Firewall PREROUTING redirect", "rule not found in /etc/ufw/before.rules",
-                    new Remediation("Re-run 'isx init' to configure firewall rules", false, null));
+                    new Remediation("Run 'isx init' again, which adds the rule", false, null));
         } catch (Exception e) {
             return Finding.warn("Firewall PREROUTING redirect", "(check failed: " + e.getMessage() + ")", null);
         }
@@ -2179,7 +2177,7 @@ public class DoctorCommand extends BaseCommand {
             }
             if (!refused.isEmpty()) {
                 problems.add(refused.size() + (refused.size() == 1 ? " has its" : " have their")
-                        + " requests refused, being served an account of another auth mode than built for: "
+                        + " requests refused, since each has an account of another kind than the one its template was built for: "
                         + String.join(", ", refused));
             }
             return Finding.fail("Instance credential accounts", "(" + String.join("; ", problems) + ")",
@@ -2202,9 +2200,9 @@ public class DoctorCommand extends BaseCommand {
                     ? String.join(", ", stale)
                     : stale.get(0) + ", " + stale.get(1) + " + " + (stale.size() - 2) + " more";
             return Finding.fail("Instance network config",
-                    "(" + stale.size() + " on stale subnet: " + names + ")",
-                    new Remediation("Migrate all instances to current bridge subnet"
-                            + " (running ones are stopped and started again)",
+                    "(" + stale.size() + " on an old subnet of the bridge: " + names + ")",
+                    new Remediation("Move every instance to the bridge's current subnet,"
+                            + " which restarts the running ones",
                             false,
                             () -> {
                                 var incusClient = incus();
@@ -2263,7 +2261,7 @@ public class DoctorCommand extends BaseCommand {
             var scope = McpScope.coordinator(lineage, defs, approved);
             if (scope.templates().isEmpty()) {
                 findings.add(Finding.warn("Coordinator " + OutputFormat.oneLine(name),
-                        "controls no template, and its workers are released when it next connects. "
+                        "does not control any template, so isx releases its workers when it next connects. "
                                 + String.join(" ", scope.mismatches()), null));
             }
         }
@@ -2342,10 +2340,10 @@ public class DoctorCommand extends BaseCommand {
                     // template's own baked copy — informational, not something to act on.
                     case REPAIRABLE -> findings.add(Finding.warn(
                             "Template " + name + " has the pre-upgrade CA cert",
-                            "instances are fixed automatically on first use", null));
+                            "isx fixes its instances automatically, each the first time isx starts it", null));
                     case FOREIGN -> findings.add(Finding.warn(
-                            "Template " + name + " CA mismatch", "template CA differs from current",
-                            new Remediation("Rebuild: isx build " + name, false, null)));
+                            "Template " + name + " CA mismatch", "it was built to trust another CA than the one isx uses now",
+                            new Remediation("Rebuild it with 'isx build " + name + "'", false, null)));
                     default -> { }
                 }
 
@@ -2496,7 +2494,7 @@ public class DoctorCommand extends BaseCommand {
         if (!incomparable.isEmpty()) notes.add("release not comparable: " + String.join(", ", incomparable));
         if (!notes.isEmpty()) findings.add(Finding.note("Base images", "(" + String.join("; ", notes) + ")"));
         if (findings.isEmpty() && checked > 0) {
-            findings.add(Finding.ok("Base images", "(" + checked + " checked, none older than a rebuild would use)"));
+            findings.add(Finding.ok("Base images", "(" + checked + " checked, each as new as a rebuild would use)"));
         }
         return findings;
     }
@@ -2531,7 +2529,7 @@ public class DoctorCommand extends BaseCommand {
                     .toList();
 
             if (running.isEmpty()) {
-                findings.add(Finding.ok("Instances", "no running instances to check"));
+                findings.add(Finding.ok("Instances", "not checked: no instance is running"));
                 return findings;
             }
 
@@ -2605,7 +2603,7 @@ public class DoctorCommand extends BaseCommand {
                 findings.add(Finding.ok(prefix + "TLS proxy handshake", "successful"));
             } else {
                 findings.add(Finding.warn(prefix + "TLS proxy handshake",
-                        "(failed, exit " + result.exitCode() + " — CA trust or proxy issue)", null));
+                        "(failed with exit " + result.exitCode() + ": the instance may not trust the CA, or the proxy may not have answered)", null));
             }
         } catch (Exception e) {
             findings.add(Finding.warn(prefix + "TLS proxy handshake", "(exec failed)", null));
@@ -2646,8 +2644,8 @@ public class DoctorCommand extends BaseCommand {
         }
 
         try (var group = BuildOutput.group("Support archive", result.archive().toString())) {
-            BuildOutput.step(result.fileCount() + " files — findings, versions, logs, proxy and"
-                    + " instance state, and a redacted config.");
+            BuildOutput.step(result.fileCount() + " files: findings, versions, logs, proxy and"
+                    + " instance state, and config.yaml with its secrets removed");
             BuildOutput.step(describeRedactions(result));
         }
         try (var group = BuildOutput.group("What to do with it", null)) {
@@ -2665,7 +2663,7 @@ public class DoctorCommand extends BaseCommand {
         int keys = result.redactedPaths().size();
         int scrubbed = result.scrubCount();
         if (keys == 0 && scrubbed == 0) {
-            return "No credentials were found to redact.";
+            return "isx did not find any credential to remove.";
         }
         var parts = new ArrayList<String>();
         if (keys > 0) {
@@ -2694,7 +2692,8 @@ public class DoctorCommand extends BaseCommand {
     /**
      * The fields of {@code isx doctor --format=plain|json}, in order: add to the end, never
      * rename. {@code level} is {@code ok}, {@code note}, {@code warn} or {@code fail}, and
-     * {@code remediation} what would fix it, when something can.
+     * {@code remediation} what would fix it, when something can. {@code detail} and
+     * {@code remediation} are free text for people, as docs/CLI.md says, and may be reworded.
      */
     static List<Map<String, Object>> findingRecords(List<Finding> findings) {
         var records = new ArrayList<Map<String, Object>>();

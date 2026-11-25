@@ -60,7 +60,7 @@ class DoctorCommandTest {
         // With no Keychain CA either, isx trusts nothing: the proxy will not start
         var nothingTrusted = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), true, null), null);
         assertEquals(DoctorCommand.Status.WARN, nothingTrusted.status());
-        assertTrue(nothingTrusted.detail().contains("isx trusts no CA"), nothingTrusted.detail());
+        assertTrue(nothingTrusted.detail().contains("isx does not trust any CA"), nothingTrusted.detail());
         assertTrue(nothingTrusted.detail().contains("security dump-trust-settings"), nothingTrusted.detail());
         // The same when each CA of the bundle is denied on its own: doctor asks the proxy's own rule
         var bundle = Files.writeString(temp.resolve("cert.pem"), dev.incusspawn.DerEncoder.toPem("CERTIFICATE", ca.getEncoded()));
@@ -70,7 +70,7 @@ class DoctorCommandTest {
         // Also when part of the Keychain could not be read: its denies still leave the proxy nothing
         var partlyRead = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(MacKeychainTrust.sha1(ca)), "timed out"), bundle);
         assertEquals(DoctorCommand.Status.WARN, partlyRead.status());
-        assertTrue(partlyRead.detail().contains("isx trusts no CA") && partlyRead.detail().contains("timed out"), partlyRead.detail());
+        assertTrue(partlyRead.detail().contains("isx does not trust any CA") && partlyRead.detail().contains("timed out"), partlyRead.detail());
 
         var failed = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), "timed out"), null);
         assertEquals(DoctorCommand.Status.WARN, failed.status());
@@ -391,7 +391,7 @@ class DoctorCommandTest {
         assertNotNull(f);
         assertEquals(DoctorCommand.Status.WARN, f.status());
         assertTrue(f.label().contains("undersized"), "label: " + f.label());
-        assertTrue(f.detail().contains("thin-provisioned"), "should explain thin provisioning");
+        assertTrue(f.detail().contains("sparse file"), "should explain the sparse file");
         assertNotNull(f.remediation());
         assertTrue(f.remediation().description().contains("100GiB"));
     }
@@ -405,7 +405,7 @@ class DoctorCommandTest {
         assertNotNull(f);
         assertEquals(DoctorCommand.Status.WARN, f.status());
         assertTrue(f.label().contains("enlarged"), "label: " + f.label());
-        assertTrue(f.detail().contains("thin-provisioned"), "should explain thin provisioning");
+        assertTrue(f.detail().contains("sparse file"), "should explain the sparse file");
         assertNotNull(f.remediation());
         assertTrue(f.remediation().description().contains("200GiB"));
     }
@@ -1006,7 +1006,7 @@ class DoctorCommandTest {
     void anInactiveFirewalldIsEnabled() {
         var f = DoctorCommand.firewalldNotRunningFinding(FirewalldCheck.State.INACTIVE);
         assertEquals(DoctorCommand.Status.FAIL, f.status());
-        assertTrue(f.detail().contains("installed but inactive"));
+        assertTrue(f.detail().contains("installed but not"));
         assertTrue(f.remediation().description().startsWith("Enable firewalld"));
     }
 
@@ -1089,14 +1089,14 @@ class DoctorCommandTest {
         assertTrue(f.detail().contains("journalctl"), "should point to journal for details");
         assertTrue(f.detail().contains("incus-admin"), "should mention group membership");
         assertNotNull(f.remediation());
-        assertTrue(f.remediation().description().contains("after fixing"));
+        assertTrue(f.remediation().description().contains("once the error is fixed"));
     }
 
     @Test
     void proxyNotRunningInstalledButInactiveIsGeneric() {
         var f = DoctorCommand.proxyNotRunningFinding(true, false);
         assertEquals(DoctorCommand.Status.FAIL, f.status());
-        assertTrue(f.detail().contains("installed but inactive"));
+        assertTrue(f.detail().contains("installed but not"));
         assertNotNull(f.remediation());
         assertFalse(f.detail().contains("journalctl"),
                 "generic inactive should not suggest journal inspection");
@@ -1207,7 +1207,7 @@ class DoctorCommandTest {
     @Test
     void redactionSummarySaysSoWhenThereWasNothingToRedact() {
         var result = new SupportBundle.Result(Path.of("/tmp/b.tar.gz"), List.of(), 0, 12);
-        assertEquals("No credentials were found to redact.", DoctorCommand.describeRedactions(result));
+        assertEquals("isx did not find any credential to remove.", DoctorCommand.describeRedactions(result));
     }
 
     @Test
@@ -1238,7 +1238,7 @@ class DoctorCommandTest {
     void bridgeDnsWithNoOverridesFailsWhileTheProxyRuns() {
         var f = dnsFinding(ProxyHealthCheck.ProxyStatus.RUNNING, "");
         assertEquals(DoctorCommand.Status.FAIL, f.status());
-        assertTrue(f.detail().contains("none configured"), f.detail());
+        assertTrue(f.detail().contains("not set up"), f.detail());
         assertNotNull(f.remediation(), "the proxy is listening, so rewriting the overrides is safe");
     }
 
