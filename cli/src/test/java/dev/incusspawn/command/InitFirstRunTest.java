@@ -173,6 +173,57 @@ class InitFirstRunTest {
         assertTrue(said.contains("None for now"), said);
     }
 
+    /**
+     * The welcome waits for the person, so the first question is not drawn straight under it
+     * (#2528): Enter begins.
+     */
+    @Test
+    void theWelcomeWaitsForEnterBeforeTheFirstQuestion() {
+        var init = new FirstRunInit();
+        var prompts = ScriptedPrompts.lines("");
+        init.prompts = prompts;
+
+        assertTrue(init.waitToBegin());
+
+        prompts.assertFullyConsumed();
+        assertEquals(List.of(InitCommand.BEGIN_PROMPT), prompts.questions());
+        assertEquals("Press Enter to begin, or Ctrl+C to leave: ", InitCommand.BEGIN_PROMPT);
+    }
+
+    /** A person who types that they do not want to begin leaves, and is told how to come back. */
+    @Test
+    void sayingNoAtTheWelcomeLeavesWithNothingAsked() {
+        for (var no : List.of("n", "No", " q ", "quit")) {
+            var init = new FirstRunInit();
+            init.prompts = ScriptedPrompts.lines(no);
+            var recorded = RecordingOutput.during(() -> assertFalse(init.waitToBegin(), no));
+            assertTrue(String.join("\n", recorded.lines()).contains("Run 'isx init' when you are ready."), recorded.lines()::toString);
+        }
+    }
+
+    /** End of input begins, as it answers every later question for itself; so does any other text. */
+    @Test
+    void endOfInputAndAnyOtherAnswerBegin() {
+        var init = new FirstRunInit();
+        init.prompts = ScriptedPrompts.lines();
+        assertTrue(init.waitToBegin());
+        init.prompts = ScriptedPrompts.lines("yes");
+        assertTrue(init.waitToBegin());
+    }
+
+    /** A re-run shows its own banner and no welcome, so it does not wait. */
+    @Test
+    void aReRunDoesNotWait() throws Exception {
+        Files.createDirectories(dev.incusspawn.Environment.initCompleteMarker().getParent());
+        Files.writeString(dev.incusspawn.Environment.initCompleteMarker(), "1");
+        var init = new FirstRunInit();
+        var prompts = ScriptedPrompts.lines();
+        init.prompts = prompts;
+
+        assertTrue(init.waitToBegin());
+        assertEquals(List.of(), prompts.questions());
+    }
+
     /** The list is by the name shown, so a person finds their agent without reading every line (#2528). */
     @Test
     void theAgentListIsByNameWithThoseFoundFirst() {
