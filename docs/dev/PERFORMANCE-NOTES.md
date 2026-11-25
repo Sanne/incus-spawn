@@ -1438,11 +1438,15 @@ Measured 2026-11-20 on a Linux box (Fedora 45, x86_64), to size the figures tool
 |---|---|---|
 | An idle container of the base image, `memory.current` of its cgroup after 45 s | 133 MiB (anon 10, file 114, kernel 8) | 160 MiB baseline |
 | `idea-backend` 2026.3, `remote-dev-server run` on a Gradle project, `-Xmx2048m`, after 150 s, no client attached | RSS 1,387 MiB, heap committed 490 MiB, metaspace committed 151 MiB | `-Xmx` plus 1 GiB |
+| An idle VM of the base image (KVM host, 15 GiB RAM, measured 2026-11-21), 4 GiB given | guest `free -m` used 122 MiB; Incus `memory` current 166 MiB; QEMU RSS on the host 393 MiB | same 160 MiB baseline |
 
 The backend held about 900 MiB beside its heap: metaspace, code cache, threads and mapped index files.
 Its heap may grow to `-Xmx` while a project is indexed, so the declared need is the heap's ceiling plus that, rounded up to 1 GiB.
 No Gateway client was attached and the Gradle import was not trusted, so a working session holds more beside the heap; the figure is a floor.
-A VM's own kernel and firmware were not measured: the box had no `/dev/kvm`, and the baseline counts the container's figure for both.
+A VM's guest uses less than the container's figure, 122 MiB, so the one baseline covers both and `MemoryNeed` has no VM baseline.
+Incus reported 166 MiB for the same VM, and its QEMU process held 393 MiB of the host's RAM; neither figure was broken down.
+On that host, a VM template installing `idea-backend` with `memory: 8g` has a figure of 9.2 GiB, rounded up to 10 GiB, and its build and template got `limits.memory` 9605MiB, the 60% cap of the host.
+Its branch got the same 9605MiB without a warning, since that is above the figure, and a branch with `--memory 4GiB` warned, naming idea-backend and suggesting `--memory 10GiB`.
 
 ## Reading the event log with task runs booked (issue #2428)
 
