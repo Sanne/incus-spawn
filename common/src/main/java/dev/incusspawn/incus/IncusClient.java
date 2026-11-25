@@ -327,6 +327,14 @@ public class IncusClient {
     }
 
     /**
+     * Nanoseconds this thread has spent waiting for a turn to run an {@link #execProbe}, ever: the
+     * difference across a probe is its time in the queue, which says nothing about the guest.
+     */
+    public static long probeQueueNanos() {
+        return IncusApi.admissionWaitNanos();
+    }
+
+    /**
      * Run one of isx's own scripts in a guest that may never answer, as {@code uid} (its group
      * too) with {@code home} as HOME and working directory, and no login shell: nothing the
      * guest user's profile does runs first, so it cannot hang the script. Killed once

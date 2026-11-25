@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
 import dev.incusspawn.incus.ExecScript;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.util.Report;
 
@@ -691,13 +692,17 @@ final class Tasks {
             try {
                 var out = new ByteArrayOutputStream();
                 var began = System.nanoTime();
+                var queuedBefore = IncusClient.probeQueueNanos();
                 var exit = backend.probe(name, TaskScripts.busy(), out, elsewhereTimeout);
+                // The time this probe waited for its turn behind other instances' probes (#2527)
+                // says nothing about this instance, so it is not counted towards slow.
+                var queued = IncusClient.probeQueueNanos() - queuedBefore;
                 if (exit != 0) throw new ToolError(ToolError.Code.UNAVAILABLE, "exit " + exit);
                 count = (long) TaskScripts.taskIds(out.toString(StandardCharsets.UTF_8).lines()).size();
                 // An instance that answers, but slowly -- after the caller gave up, or close to it --
                 // would cost every task start nearly the whole wait: it is treated as one that did
                 // not answer, and not asked while it cools down.
-                if (System.nanoTime() - began > elsewhereTimeout.toNanos() / 2) {
+                if (System.nanoTime() - began - queued > elsewhereTimeout.toNanos() / 2) {
                     quietUntil.put(name, System.nanoTime() + elsewhereCooldown.toNanos());
                 }
             } catch (RuntimeException e) {

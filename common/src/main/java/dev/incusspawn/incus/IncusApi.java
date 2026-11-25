@@ -816,12 +816,24 @@ class IncusApi {
     private static final java.util.concurrent.Semaphore BOUNDED_EXECS =
             new java.util.concurrent.Semaphore(UnixSocketTransport.CONCURRENT_EXECS, true);
 
+    // How long this thread has waited for a slot, in total, so a caller that times an exec can
+    // leave the queue out (#2527).
+    private static final ThreadLocal<long[]> ADMISSION_WAIT = ThreadLocal.withInitial(() -> new long[1]);
+
+    /** Nanoseconds this thread has spent waiting for a bounded exec's slot, ever. */
+    static long admissionWaitNanos() { return ADMISSION_WAIT.get()[0]; }
+
     private static void admitExec(String instance) {
+        long start = System.nanoTime();
         try {
+            // Never the untimed tryAcquire() first: it takes a free slot ahead of those queued, even
+            // on a fair semaphore, where acquire() keeps FIFO.
             BOUNDED_EXECS.acquire();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IncusException("interrupted waiting to run a command in " + instance);
+        } finally {
+            ADMISSION_WAIT.get()[0] += System.nanoTime() - start;
         }
     }
 
