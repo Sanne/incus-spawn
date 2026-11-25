@@ -97,6 +97,32 @@ class CompletersTest {
         // A list option keeps the selections typed before the comma.
         assertEquals(List.of("github=acme,github=personal"), linux("branch", "x", "--account", "github=acme,github=p"));
         assertTrue(linux("account", "unset", "box", "").contains("github"));
+        // The menu's 'x', 'd' and 'n' as commands, found on TAB (#2608)
+        assertEquals(List.of("github=", "github=acme", "github=personal"), linux("account", "default", "gi"));
+        for (var sub : List.of("remove", "rename")) {
+            assertEquals(List.of("github=acme", "github=personal"), linux("account", sub, "gi"), sub);
+        }
+        assertTrue(linux("account", "rename", "github=acme", "").stream().noneMatch(w -> w.startsWith("github=")),
+                "the second word is a new name: " + linux("account", "rename", "github=acme", ""));
+        assertTrue(linux("account", "re").containsAll(List.of("remove", "rename", "reset-proofs")), linux("account", "re").toString());
+    }
+
+    /** remove offers an incomplete account too, which default does not: it is the one people remove (#2608). */
+    @Test
+    void removeCompletesEveryConfiguredAccount() throws Exception {
+        IsolatedHome.seed("""
+                claude:
+                  default: work
+                  accounts:
+                    work:
+                      type: api-key
+                      apiKey: "sk-ant-api03-work"
+                    half:
+                      type: vertex
+                """);
+        assertTrue(linux("account", "remove", "claude=").contains("claude=half"), linux("account", "remove", "claude=").toString());
+        assertTrue(linux("account", "rename", "claude=").contains("claude=half"));
+        assertFalse(linux("account", "default", "claude=").contains("claude=half"), "default takes only an account that works");
     }
 
     /** A completer's own description reaches the answer: PowerShell showed no default marker (#1842). */

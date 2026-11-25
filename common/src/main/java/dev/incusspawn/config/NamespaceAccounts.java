@@ -105,15 +105,19 @@ public final class NamespaceAccounts {
 
     /**
      * Remove an account, re-pointing the default when it named the one going away so the
-     * namespace is never left pointing at something that is gone.
+     * namespace is never left pointing at something that is gone. The new default is the first
+     * usable account in file order, else the first account, else the {@code default:} line goes.
      */
     public static void remove(SpawnConfig config, String namespace, String account) {
-        materialize(config, namespace);
+        var shape = AccountResolver.shapeOf(config, namespace);
+        materialize(config, namespace, shape);
         var wasDefault = account.equals(
                 AccountResolver.defaultName(config.tree(), namespace));
-        config.removeConfigPath(namespace + "." + AccountResolver.ACCOUNTS_KEY + "." + account);
+        // Taken whole: an account name may hold dots, which removeConfigPath reads as nesting
+        config.removeConfigSegments(namespace, AccountResolver.ACCOUNTS_KEY, account);
         if (!wasDefault) return;
-        var remaining = names(config, namespace);
+        var usable = AccountResolver.usableAccountNames(config.tree(), namespace, shape);
+        var remaining = usable.isEmpty() ? names(config, namespace) : usable;
         if (remaining.isEmpty()) {
             config.removeConfigPath(namespace + "." + AccountResolver.DEFAULT_KEY);
         } else {

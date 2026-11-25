@@ -756,7 +756,7 @@ For `config.yaml` and `mcp.yaml`, `json` prints one object with `kind`, `path`, 
 
 ## `isx account`
 
-Add credentials, and show or change which [credential account](CONFIGURATION.md#credential-accounts) an instance uses.
+Add, remove or rename credentials, and show or change which [credential account](CONFIGURATION.md#credential-accounts) an instance uses.
 Bare `isx account` runs `list`.
 
 ```shell
@@ -767,6 +767,9 @@ isx account <subcommand>
 |------------|--------------|
 | `list [--verbose]` | Configured accounts per credential, the default, and the instances pinned to each |
 | `add [<credential>]` | Add or replace one credential with the step `isx init` runs for it |
+| `remove <ns>=<account> [--skip-confirmation]` | Remove the account, after naming the instances and templates that still use it and asking |
+| `default <ns>=<account>` | Make the account its credential's default, asking what the instances following the old default do |
+| `rename <ns>=<account> <new-name>` | Rename the account and update the instances that use it |
 | `show <instance>` | The account the instance uses for each credential, and where it comes from |
 | `set <instance> <ns>=<account>...` | Pin the instance to these accounts; takes effect on its next request |
 | `unset <instance> <ns>...` | Remove the pins, so the instance follows the default again |
@@ -779,6 +782,10 @@ Name the credential by namespace (`github`, `claude`, `openai`) or by tool (`gh`
 
 Adding a second account goes through the same account menu.
 The proxy applies the change automatically.
+
+`remove` also takes a credential's last account, and says what stops working.
+Without a terminal, it removes nothing unless given `--skip-confirmation`.
+With it, the instances that follow a removed default switch to the new default without being asked.
 
 ## `isx agent`
 

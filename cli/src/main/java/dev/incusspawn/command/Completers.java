@@ -299,6 +299,44 @@ public final class Completers {
         }
     }
 
+    /** {@code isx account rename}'s first word, an account; the second is a new name, so nothing is offered for it. */
+    public static class AccountToRename extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            var args = invocation.getCommand() instanceof AccountCommand.Rename rename && rename.args != null
+                    ? rename.args : List.<String>of();
+            // aesh may already hold the word being completed as the last one.
+            var typed = invocation.getGivenCompleteValue();
+            boolean typedIsLast = typed != null && !typed.isEmpty() && !args.isEmpty() && typed.equals(args.getLast());
+            return args.size() == (typedIsLast ? 1 : 0) ? configuredAccounts() : List.of();
+        }
+    }
+
+    /**
+     * Every configured account as {@code <namespace>=<account>}, usable or not, as {@code isx
+     * account remove} takes: an incomplete account is the one a person most wants to remove.
+     */
+    public static class ConfiguredAccount extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return configuredAccounts();
+        }
+    }
+
+    private static List<String> configuredAccounts() {
+        var config = SpawnConfig.load();
+        var setups = AccountSelection.namespaceSetups(config, new ToolDefLoader(config.getSearchPaths()));
+        var tree = config.tree();
+        var selections = new java.util.ArrayList<String>();
+        setups.forEach((ns, setup) -> {
+            if (!AccountCommand.typable(ns)) return;
+            for (var name : dev.incusspawn.config.AccountResolver.accountNames(tree, ns, setup.accountShape())) {
+                if (AccountCommand.typable(name)) selections.add(ns + "=" + name);
+            }
+        });
+        return selections;
+    }
+
     /**
      * {@code isx account set|unset}'s words: the instance first, then a selection per word for
      * {@code set} and a namespace per word for {@code unset}.

@@ -68,7 +68,9 @@ import static dev.incusspawn.command.InitCommand.runHostCapturingExit;
  * variables, Incus lookups) are package-private methods, overridden by the flow tests.
  */
 class CredentialSetup {
-    private static final Pattern ACCOUNT_NAME = Pattern.compile("[A-Za-z0-9._-]+");
+    // No '.': config paths are dotted, so a name holding one would be written and read as
+    // nested keys, listed as configured yet given no credential (#2608).
+    private static final Pattern ACCOUNT_NAME = Pattern.compile("[A-Za-z0-9_-]+");
     private static final Pattern ENTRY_NUMBER = Pattern.compile("#?\\s*(\\d+)");
 
     private HttpClient httpClient;
@@ -966,14 +968,7 @@ class CredentialSetup {
                                 BuildOutput.step("Did not remove '" + name + "': it is the only account that works.");
                             } else if (confirmLosingAccounts(config, SpawnConfig.ClaudeConfig.NAMESPACE,
                                     List.of(name), prompts)) {
-                                var moving = runningFollowersIfDefault(config, SpawnConfig.ClaudeConfig.NAMESPACE, name);
-                                claude.getAccounts().remove(name);
-                                if (name.equals(claude.getDefaultAccount())) {
-                                    claude.setDefaultAccount(claude.accountName());
-                                }
-                                config.save();
-                                BuildOutput.step("Removed account '" + name + "'.");
-                                if (!moving.isEmpty()) refreshIdentities(moving);
+                                removeAccount(config, SpawnConfig.ClaudeConfig.NAMESPACE, name);
                             }
                         } else if (!name.isEmpty()) {
                             prompts.say("No account named '" + name + "'.");
@@ -996,19 +991,9 @@ class CredentialSetup {
         while (true) {
             var name = readInput(prompts.ask(prompt));
             if (name.isEmpty()) return "";
-            if (taken.contains(name)) {
-                prompts.say("There is already an account named '" + name + "'.");
-                continue;
-            }
-            if (!ACCOUNT_NAME.matcher(name).matches()) {
-                prompts.say("Use letters, digits, '.', '_' or '-' only.");
-                continue;
-            }
-            if (AccountResolver.INHERIT.equals(name)) {
-                prompts.say("'" + name + "' is reserved: it takes the credential of the isx instance isx runs in.");
-                continue;
-            }
-            return name;
+            var problem = accountNameProblem(name, taken);
+            if (problem.isEmpty()) return name;
+            prompts.say(problem);
         }
     }
 
@@ -1879,11 +1864,7 @@ class CredentialSetup {
                 case "x" -> {
                     var name = readInput(prompts.ask("Name of the account to remove: "));
                     if (accounts.contains(name) && confirmLosingAccounts(config, namespace, List.of(name), prompts)) {
-                        var moving = runningFollowersIfDefault(config, namespace, name);
-                        NamespaceAccounts.remove(config, namespace, name);
-                        config.save();
-                        BuildOutput.step("Removed account '" + name + "'.");
-                        if (!moving.isEmpty()) refreshIdentities(moving);
+                        removeAccount(config, namespace, name);
                     } else if (!name.isEmpty() && !accounts.contains(name)) {
                         prompts.say("No account named '" + name + "'.");
                     }
@@ -1904,8 +1885,25 @@ class CredentialSetup {
      */
     boolean confirmLosingAccounts(SpawnConfig config, String namespace, java.util.Collection<String> going,
                                   Prompts prompts) {
-        if (going.isEmpty()) return true;
-        var states = instanceAccountStates();
+        return !nameWhatUses(config, namespace, going, prompts::say) || askYesNo(prompts, "Remove anyway?", false);
+    }
+
+    /**
+     * Name what still uses the accounts in {@code going}: the instances pinned to them, the
+     * templates naming them and, when the default is among them, the instances following it.
+     * Each name is a line given to {@code item}.
+     *
+     * @return whether anything uses them
+     */
+    boolean nameWhatUses(SpawnConfig config, String namespace, java.util.Collection<String> going,
+                         java.util.function.Consumer<String> item) {
+        return !going.isEmpty() && nameWhatUses(config, namespace, going, item, instanceAccountStates());
+    }
+
+    /** As above, with the instances' account states the caller already listed. */
+    boolean nameWhatUses(SpawnConfig config, String namespace, java.util.Collection<String> going,
+                         java.util.function.Consumer<String> item, Map<String, InstanceRegistry.AccountState> states) {
+        if (going.isEmpty()) return false;
         var pins = pinsOf(states);
         var instances = new java.util.ArrayList<String>();
         var templates = new java.util.ArrayList<String>();
@@ -1919,25 +1917,25 @@ class CredentialSetup {
         // instance -- not an error for them, but a change of principal worth saying out loud.
         var followers = going.contains(currentDefault(config, namespace))
                 ? followersOf(states, namespace) : List.<String>of();
-        if (instances.isEmpty() && templates.isEmpty() && followers.isEmpty()) return true;
+        if (instances.isEmpty() && templates.isEmpty() && followers.isEmpty()) return false;
         if (!followers.isEmpty()) {
             BuildOutput.step("These instances follow the " + namespace + " default, which is going,"
                     + " and would switch to the new default:");
-            followers.forEach(name -> prompts.say("- " + name));
+            followers.forEach(name -> item.accept("- " + name));
         }
         if (!instances.isEmpty()) {
             BuildOutput.step("These instances are pinned to " + (going.size() == 1 ? "it" : "those accounts")
                     + " and would fail their requests:");
-            instances.forEach(name -> prompts.say("- " + name));
+            instances.forEach(name -> item.accept("- " + name));
             BuildOutput.step("Re-point them first with 'isx account set', or 'isx account unset'"
                     + " to have them follow the default.");
         }
         if (!templates.isEmpty()) {
             BuildOutput.step("These templates name " + (going.size() == 1 ? "it" : "them")
                     + " under accounts: and could no longer be branched:");
-            templates.forEach(name -> prompts.say("- " + name));
+            templates.forEach(name -> item.accept("- " + name));
         }
-        return askYesNo(prompts, "Remove anyway?", false);
+        return true;
     }
 
     /**
@@ -1953,6 +1951,46 @@ class CredentialSetup {
         }
         var to = askAccountName(prompts, accounts, "New name for '" + from + "', or Enter to cancel: ");
         if (to.isEmpty()) return;
+        renameAccount(config, namespace, from, to);
+    }
+
+    /**
+     * Why {@code name} cannot be a new account's name among {@code taken}, or {@code ""} when it can.
+     * The menus' question and {@code isx account rename} hold names to the same rule.
+     */
+    static String accountNameProblem(String name, java.util.Set<String> taken) {
+        if (taken.contains(name)) return "There is already an account named '" + name + "'.";
+        if (!ACCOUNT_NAME.matcher(name).matches()) return "Use letters, digits, '_' or '-' only.";
+        if (AccountResolver.INHERIT.equals(name)) {
+            return "'" + name + "' is reserved: it takes the credential of the isx instance isx runs in.";
+        }
+        return "";
+    }
+
+    /**
+     * Remove an account once the caller has asked, and move what followed it: both menus' 'x'
+     * and {@code isx account remove} end here. Running instances that followed it as the default
+     * get the new default's git identity straight away.
+     */
+    void removeAccount(SpawnConfig config, String namespace, String name) {
+        removeAccount(config, namespace, name, null);
+    }
+
+    /** As above, with the account states the caller already listed, or null to list them. */
+    void removeAccount(SpawnConfig config, String namespace, String name,
+                       Map<String, InstanceRegistry.AccountState> states) {
+        var moving = runningFollowersIfDefault(config, namespace, name, states);
+        NamespaceAccounts.remove(config, namespace, name);
+        config.save();
+        BuildOutput.step("Removed account '" + name + "'.");
+        if (!moving.isEmpty()) refreshIdentities(moving);
+    }
+
+    /**
+     * Rename an account, re-point the instances pinned to it and name the templates that still
+     * use the old name: both menus' 'n' and {@code isx account rename} end here.
+     */
+    void renameAccount(SpawnConfig config, String namespace, String from, String to) {
         NamespaceAccounts.rename(config, namespace, from, to);
         config.save();
         BuildOutput.step("Renamed '" + from + "' to '" + to + "'.");
@@ -1994,10 +2032,19 @@ class CredentialSetup {
 
     /** Every isx instance's account state, or none when Incus cannot be asked. Overridden in tests. */
     Map<String, InstanceRegistry.AccountState> instanceAccountStates() {
+        var states = listedAccountStates();
+        return states == null ? Map.of() : states;
+    }
+
+    /**
+     * Every isx instance's account state, or null when Incus cannot be asked: for a caller that
+     * must not take "could not list" for "nothing follows the default". Overridden in tests.
+     */
+    Map<String, InstanceRegistry.AccountState> listedAccountStates() {
         try {
             return InstanceRegistry.accountStates(incus());
         } catch (Exception e) {
-            return Map.of();
+            return null;
         }
     }
 
@@ -2012,7 +2059,7 @@ class CredentialSetup {
                 .map(Map.Entry::getKey).toList();
     }
 
-    private static String currentDefault(SpawnConfig config, String namespace) {
+    static String currentDefault(SpawnConfig config, String namespace) {
         try {
             return dev.incusspawn.config.AccountResolver.effectiveAccount(config, namespace, null);
         } catch (RuntimeException e) {
@@ -2021,9 +2068,10 @@ class CredentialSetup {
     }
 
     /** The running instances that follow {@code account} as the default, which removing it moves. */
-    private List<String> runningFollowersIfDefault(SpawnConfig config, String namespace, String account) {
+    private List<String> runningFollowersIfDefault(SpawnConfig config, String namespace, String account,
+                                                   Map<String, InstanceRegistry.AccountState> states) {
         if (!account.equals(currentDefault(config, namespace))) return List.of();
-        return instanceAccountStates().entrySet().stream()
+        return (states == null ? instanceAccountStates() : states).entrySet().stream()
                 .filter(e -> e.getValue().followsDefault(namespace) && e.getValue().running())
                 .map(Map.Entry::getKey).toList();
     }
@@ -2042,12 +2090,18 @@ class CredentialSetup {
      */
     boolean changeDefaultAccount(SpawnConfig config, String namespace, String to, Runnable apply,
                                  Prompts prompts) {
+        return changeDefaultAccount(config, namespace, to, apply, prompts, null);
+    }
+
+    /** As above, with the instances' account states the caller already listed, or null to list them. */
+    boolean changeDefaultAccount(SpawnConfig config, String namespace, String to, Runnable apply,
+                                 Prompts prompts, Map<String, InstanceRegistry.AccountState> states) {
         var from = currentDefault(config, namespace);
         if (to.equals(from)) {
             BuildOutput.step("'" + to + "' is already the default.");
             return false;
         }
-        var states = instanceAccountStates();
+        if (states == null) states = instanceAccountStates();
         var followers = new LinkedHashMap<String, InstanceRegistry.AccountState>();
         states.forEach((name, state) -> { if (state.followsDefault(namespace)) followers.put(name, state); });
 
@@ -2079,6 +2133,7 @@ class CredentialSetup {
 
     private DefaultChange askDefaultChange(SpawnConfig config, String namespace, String from, String to,
                                            Map<String, InstanceRegistry.AccountState> followers, Prompts prompts) {
+        if (prompts == null) return DefaultChange.CANCEL;   // no terminal: never change principals unasked
         BuildOutput.step("These instances follow the " + namespace + " default and would switch from '"
                 + from + "' to '" + to + "':");
         var setup = dev.incusspawn.config.AccountSelection.namespaceSetups(config).get(namespace);

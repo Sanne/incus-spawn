@@ -40,11 +40,14 @@ import java.util.function.IntSupplier;
  */
 @CommandDefinition(
         name = "account",
-        description = "Add credentials, and show or change the accounts an instance uses",
+        description = "Add, remove or rename credentials, and show or change the accounts an instance uses",
         generateHelp = true,
         groupCommands = {
                 AccountCommand.ListSub.class,
                 AccountCommand.Add.class,
+                AccountCommand.Remove.class,
+                AccountCommand.Default.class,
+                AccountCommand.Rename.class,
                 AccountCommand.Show.class,
                 AccountCommand.Set.class,
                 AccountCommand.Unset.class,
@@ -371,6 +374,182 @@ public class AccountCommand extends BaseCommand {
      */
     static List<String> addCompletionLines(Map<String, ToolSetup> tools) {
         return CredentialCheck.acceptedNames(tools).stream().filter(ToolDefValidator::isNamespace).toList();
+    }
+
+    // ── remove, default, rename ─────────────────────────────────────────────────
+    //
+    // The account menu's 'x', 'd' and 'n' as commands (#2608), running the menu's own code, so
+    // a person finds them on TAB and the last account of a namespace can be removed too.
+
+    @CommandDefinition(name = "remove",
+            description = "Remove a credential account, after naming what still uses it",
+            generateHelp = true)
+    public static class Remove extends BaseCommand {
+
+        @Argument(completer = Completers.ConfiguredAccount.class, description = "The account, as <namespace>=<account>", required = true)
+        String selection;
+
+        @Option(name = "skip-confirmation", hasValue = false,
+                description = "Skip the confirmation prompt; instances that follow a removed default switch to the new default")
+        boolean skipConfirmation;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            return CommandResult.valueOf(remove(new CredentialSetup(), SpawnConfig.load(), selection, skipConfirmation, Prompts.terminal()));
+        }
+    }
+
+    @CommandDefinition(name = "default",
+            description = "Make a credential account the default of its namespace",
+            generateHelp = true)
+    public static class Default extends BaseCommand {
+
+        @Argument(completer = Completers.Account.class, description = "The account, as <namespace>=<account>", required = true)
+        String selection;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            return CommandResult.valueOf(makeDefault(new CredentialSetup(), SpawnConfig.load(), selection, Prompts.terminal()));
+        }
+    }
+
+    @CommandDefinition(name = "rename",
+            description = "Rename a credential account, and re-point the instances pinned to it",
+            generateHelp = true)
+    public static class Rename extends BaseCommand {
+
+        @Arguments(completer = Completers.AccountToRename.class,
+                description = "The account, as <namespace>=<account>, then its new name")
+        List<String> args;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            if (args == null || args.size() != 2) {
+                BuildOutput.error("name the account and its new name.",
+                        "Usage: isx account rename <namespace>=<account> <new-name>",
+                        "Example: isx account rename github=personal home");
+                return CommandResult.valueOf(1);
+            }
+            return CommandResult.valueOf(rename(new CredentialSetup(), SpawnConfig.load(), args.get(0), args.get(1)));
+        }
+    }
+
+    /** A configured account a command names, as {@code <namespace>=<account>}. */
+    record Named(String namespace, String account) {}
+
+    /** The account {@code spec} names, or null once the reason it names none is reported. */
+    static Named named(SpawnConfig config, String spec) {
+        Map<String, String> parsed;
+        try {
+            parsed = AccountSelection.parse(spec == null ? List.of() : List.of(spec));
+        } catch (AccountSelection.InvalidSelectionException e) {
+            parsed = Map.of();
+        }
+        if (parsed.size() != 1) {
+            BuildOutput.error("name one account as <namespace>=<account>, for example github=personal.");
+            return null;
+        }
+        var entry = parsed.entrySet().iterator().next();
+        var namespace = entry.getKey();
+        var account = entry.getValue();
+        if (!dev.incusspawn.config.NamespaceAccounts.names(config, namespace).contains(account)) {
+            BuildOutput.error("there is no " + OutputFormat.oneLine(namespace) + " account named '"
+                    + OutputFormat.oneLine(account) + "'.", "Run 'isx account list' to see the accounts.");
+            return null;
+        }
+        return new Named(namespace, account);
+    }
+
+    /**
+     * {@code isx account remove}: names what uses the account and asks, unless {@code yes}
+     * ({@code --skip-confirmation}). With no terminal ({@code prompts} null) it refuses without it, since it deletes a
+     * credential. Declining is not an error.
+     */
+    static int remove(CredentialSetup setup, SpawnConfig config, String spec, boolean yes, Prompts prompts) {
+        var named = named(config, spec);
+        if (named == null) return 1;
+        if (prompts == null && !yes) {
+            BuildOutput.error("removing an account deletes its credential, and isx cannot ask you to confirm it without a terminal.",
+                    "Re-run with --skip-confirmation to remove it without asking.");
+            return 1;
+        }
+        var namespace = named.namespace();
+        var account = named.account();
+        // One listing of the instances, for what is named here and what the removal moves
+        var states = setup.instanceAccountStates();
+        setup.nameWhatUses(config, namespace, List.of(account), BuildOutput::step, states);
+        var usable = AccountResolver.usableAccountNames(config, namespace);
+        if (usable.equals(List.of(account))) {
+            BuildOutput.step("This is the last " + namespace + " account that works. Once it is removed, instances"
+                    + " do not get a " + namespace + " credential until you add one with 'isx account add " + namespace + "'.");
+        }
+        if (!yes && !askYesNo(prompts, "Remove the " + namespace + " account '" + account + "'?", false)) {
+            BuildOutput.step("Aborted.");
+            return 0;
+        }
+        setup.removeAccount(config, namespace, account, states);
+        return 0;
+    }
+
+    /**
+     * {@code isx account default}: asks what the instances following the default do, as the
+     * menu's 'd' does. With no terminal it refuses when any instance follows the default, since
+     * changing whose account they spend is never done unasked.
+     */
+    static int makeDefault(CredentialSetup setup, SpawnConfig config, String spec, Prompts prompts) {
+        var named = named(config, spec);
+        if (named == null) return 1;
+        var namespace = named.namespace();
+        var account = named.account();
+        if (!AccountResolver.usableAccountNames(config, namespace).contains(account)) {
+            BuildOutput.error("'" + account + "' is incomplete, so it cannot be the default.",
+                    "Complete it with 'isx account add " + namespace + "'.");
+            return 1;
+        }
+        // The account that serves now, which with no default: line is the first usable one
+        if (account.equals(CredentialSetup.currentDefault(config, namespace))) {
+            // It may serve only because the default: line names a missing or incomplete account,
+            // which would serve again once completed: write the line, which moves no instance.
+            var line = dev.incusspawn.config.AccountResolver.defaultName(config.tree(), namespace);
+            if (!line.isBlank() && !line.equals(account)) {
+                dev.incusspawn.config.NamespaceAccounts.setDefault(config, namespace, account);
+                config.save();
+                BuildOutput.step("Default account is now '" + account + "'.");
+                return 0;
+            }
+            BuildOutput.step("'" + account + "' is already the default.");
+            return 0;
+        }
+        var states = setup.listedAccountStates();
+        if (prompts == null && states == null) {
+            // Not knowing who follows the default is not knowing that nobody does
+            BuildOutput.error("isx cannot list the instances to tell whether any follow the " + namespace
+                    + " default, and cannot ask without a terminal.", "Run it in a terminal, or when Incus is reachable.");
+            return 1;
+        }
+        if (states == null) states = Map.of();
+        if (prompts == null && states.values().stream().anyMatch(s -> s.followsDefault(namespace))) {
+            BuildOutput.error("instances follow the " + namespace + " default, and isx cannot ask without a terminal whether they switch to '" + account + "'.",
+                    "Run it in a terminal, or pin them first with 'isx account set'.");
+            return 1;
+        }
+        setup.changeDefaultAccount(config, namespace, account,
+                () -> dev.incusspawn.config.NamespaceAccounts.setDefault(config, namespace, account), prompts, states);
+        return 0;
+    }
+
+    /** {@code isx account rename}: the menu's 'n' with both names given, so it asks nothing. */
+    static int rename(CredentialSetup setup, SpawnConfig config, String spec, String to) {
+        var named = named(config, spec);
+        if (named == null) return 1;
+        var problem = CredentialSetup.accountNameProblem(to,
+                new LinkedHashSet<>(dev.incusspawn.config.NamespaceAccounts.names(config, named.namespace())));
+        if (!problem.isEmpty()) {
+            BuildOutput.error("cannot rename '" + named.account() + "' to '" + OutputFormat.oneLine(to) + "'.", problem);
+            return 1;
+        }
+        setup.renameAccount(config, named.namespace(), named.account(), to);
+        return 0;
     }
 
     // ── show ────────────────────────────────────────────────────────────────────
