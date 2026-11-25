@@ -563,7 +563,7 @@ Key design:
   The file rolled out is first folded into daily sums, `events.jsonl.sums` (`EventLogFold`, #2429), which `EventLogReader` reads first; design/proxy.md says what it keeps.
   A push and a pull request opened (`GitHubCall`, wired in `streamApiRequest`, carried and ended by the flow as a model call is) are lines too, written only after a 2xx, from at most the first 8 KiB of the push body and 32 KiB of the answer; the two PR requests are sent with `Accept-Encoding: identity`.
   Design: design/proxy.md "The event log".
-  `EventLogReader` (`common`) is the one reader, for `isx overview` and the TUI's overview: by incarnation, torn lines skipped and counted; `EventLog.KEPT` is its `KEPT`, and `EventLogReaderTest` (proxy) reads what `EventLog` wrote.
+  `EventLogReader` (`common`) is the one reader, for `isx overview` and the TUI's overview (whose `Incremental` parses only what the current file gained, #2625): by incarnation, torn lines skipped and counted; `EventLog.KEPT` is its `KEPT`, and `EventLogReaderTest` (proxy) reads what `EventLog` wrote.
   `EventLogTest` pins it.
   `isx mcp` appends `kind: task` lines to the same file itself (`EventLogAppender`, #2428), so the proxy's cached size undercounts by those few lines; the reader books calls to runs in `TaskRuns`.
 - **`/activity` (#898)** serves `ApiActivity`: per instance, Messages API creates only (`ApiActivity.isModelCall`), counted in `streamApiRequest` and `retainVertexRequest` (`beginModelCall`) and ended once on the client response's end or close, with tokens read from 2xx responses' `usage` by `UsageTap` as `pipeResponse` relays them (cumulative stream counts: keep the max per field).
