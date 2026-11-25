@@ -333,12 +333,14 @@ public final class BranchFlow {
      * @param defaults the {@link #defaultsFor defaults} for the source, worked out once
      * @param proxyOnlyNic for a proxy-only branch, the bridge NIC as the copy will have it, before
      *                     its restriction; null for any other branch, or a source with no such NIC
+     * @param poolUsage the copy's pool as the space check read it, for {@code isx branch}'s
+     *                  {@link dev.incusspawn.incus.DiskHint}; null when it could not be read
      */
     public record Preflight(Request request, Map<String, ImageDef> defs,
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
                             dev.incusspawn.config.SpawnConfig settings,
                             JqValue sourceInstance, String template, Defaults defaults,
-                            IncusClient.NicDevice proxyOnlyNic) {}
+                            IncusClient.NicDevice proxyOnlyNic, IncusClient.PoolUsage poolUsage) {}
 
     /** An account selection and who chose each pin in it. */
     /** @param template the leaf template the source was built from ({@link Inherited#template}) */
@@ -422,8 +424,9 @@ public final class BranchFlow {
         }
         // A branch's first writes would fill a pool this short, and a full disk stops Incus (#2555).
         // The source's pool is the copy's whenever it is CoW, which is every branch worth the read
-        refusal = PoolSpace.check(incus, IncusClient.rootDiskPoolFromDevices(sourceInstance.path("expanded_devices")),
-                PoolSpace.Need.BRANCH);
+        var pool = IncusClient.rootDiskPoolFromDevices(sourceInstance.path("expanded_devices"));
+        var poolUsage = PoolSpace.read(incus, pool);
+        refusal = PoolSpace.check(incus, poolUsage, pool, PoolSpace.Need.BRANCH);
         if (refusal != null) throw new BranchException(refusal);
 
         // Resolve and validate the account selection before anything is created: a typo
@@ -491,7 +494,7 @@ public final class BranchFlow {
         }
         var defaults = defaultsFor(req.source(), sourceInstance, defs);
         return new Preflight(withMcpClient(req, defaults), defs, accounts.accounts(), accounts.origins(), config,
-                sourceInstance, accounts.inherited().template(), defaults, proxyOnlyNic);
+                sourceInstance, accounts.inherited().template(), defaults, proxyOnlyNic, poolUsage);
     }
 
     /**

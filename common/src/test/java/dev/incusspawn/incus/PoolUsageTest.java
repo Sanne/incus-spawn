@@ -2,6 +2,7 @@ package dev.incusspawn.incus;
 
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -59,5 +60,27 @@ class PoolUsageTest {
     void noSpaceInfoIsNeitherLowNorCritical() {
         assertFalse(usage(0, 0).isLow());
         assertFalse(usage(0, 0).isCritical());
+    }
+
+    @Test
+    void theHintNeedsEightyFivePercentAndUnderTenGibFree() {
+        // #2563: between low and critical, under low's floor
+        assertFalse(usage(84, 100).isHint(), "84%, 16 GiB free");
+        assertFalse(usage(85, 100).isHint(), "85%, but 15 GiB free");
+        assertFalse(usage(50, 59).isHint(), "84%, 9 GiB free");
+        assertTrue(usage(51, 60).isHint(), "85%, 9 GiB free");
+        assertTrue(usage(17, 20).isLow(), "the hint is above low");
+        assertFalse(usage(16, 20).isHint(), "80% of a small pool is low, not yet the hint");
+        assertFalse(new IncusClient.PoolUsage(0, 0).isHint(), "a pool that cannot say");
+    }
+
+    @Test
+    void theLevelsAreOrderedAndNested() {
+        assertEquals(IncusClient.PoolUsage.Level.NONE, usage(10, 100).level());
+        assertEquals(IncusClient.PoolUsage.Level.LOW, usage(16, 20).level());
+        assertEquals(IncusClient.PoolUsage.Level.HINT, usage(17, 20).level());
+        assertEquals(IncusClient.PoolUsage.Level.CRITICAL, usage(18, 20).level());
+        assertEquals(IncusClient.PoolUsage.Level.EXHAUSTED, usage(19, 20).level());
+        assertEquals(IncusClient.PoolUsage.Level.NONE, new IncusClient.PoolUsage(0, 0).level());
     }
 }

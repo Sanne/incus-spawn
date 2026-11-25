@@ -304,6 +304,34 @@ An appliance with the agent's `btrfs-settle` commits after a delete, and the spa
 A plain `incus delete` on a pool with quotas off is not settled, and its space had not shown after 14 minutes.
 An appliance from before the verb answers `error: unknown verb`, and isx then says what it said before.
 
+### A hint names the overview before the pool is critical (#2563)
+
+People run out of pool space because they lose track of which instances they still need.
+The refusals above help only at the last moment, so `isx branch` says earlier that the pool is filling, and names the tools that help choose what to delete.
+It refuses nothing, deletes nothing and ranks nothing.
+
+The hint is a level of `PoolUsage` between low and critical (`isHint`: at least 85% used and under 10 GiB free), on the same rule as the others, so a pool with plenty of room is never nagged whatever its percentage.
+`PoolUsage.level()` names the levels in one place, lowest first: low, hint, critical, exhausted.
+On the default 60 GiB VM disk the hint starts at about 9 GiB free.
+
+The hint is two notes on stderr, after the branch's own output: the pool's use and free space, how many instances there are and how many are stopped, then `isx overview` and the TUI's Work tab.
+It calls no instance forgotten or unused, since idle time does not say whether a box is still needed, and a stopped one's work cannot be read without starting it.
+An interactive branch prints it after the shell ends, since an action clears the screen before it draws.
+It reuses the pool read of the space check, which `BranchFlow.Preflight.poolUsage` carries.
+Only when the hint is due, at most once a day, does it read the pool again, since a shell may have run for hours, and the instance listing it counts.
+So a branch that shows nothing makes no request for them (`BranchDiskHintTest`).
+
+`DiskHint` decides when: at most once per 24 hours, and again at once when the level rises.
+Its stamp, `~/.local/state/incus-spawn/disk-hint`, holds the time and the level; a stamp that cannot be read or written shows the hint again rather than silencing it.
+It shows only at a terminal, never under `--format`, never in `isx mcp` (whose `create_instance` keeps the refusal), and never with `disk-hint: false` in `config.yaml`.
+`isx list` does not show it, since a script's call there costs one request.
+The TUI adds no line: its gauge, amber from the low level, names the Work tab beside `C:clean` from the hint level when the header has room.
+
+The pool's use is what Incus reports for it: on a loop-file pool the loop file's filesystem, on a subvolume pool the host's own filesystem, which other files fill too.
+The hint names the pool's use in both cases, and on a subvolume pool deleting instances may not be enough.
+
+What this gives up: a person who never reads a command's stderr or the TUI gets nothing, and the count says how much there is, not what is safe to delete.
+
 ### Orphaned subvolumes and dangling records
 
 A pool's instance subvolumes and Incus's records can drift apart (#717).

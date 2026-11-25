@@ -67,6 +67,11 @@
       "default": true,
       "description": "Whether the TUI updates live as instances change elsewhere. false falls back to polling."
     },
+    "disk-hint": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether isx branch names isx overview once the storage pool is 85% full with under 10 GiB free. false turns the hint off."
+    },
     "artifact-cache": {
       "type": ["object", "null"],
       "description": "How long the proxy trusts a cached Maven or Gradle artifact's last confirmation with upstream.",

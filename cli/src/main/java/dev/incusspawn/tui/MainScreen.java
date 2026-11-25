@@ -108,7 +108,10 @@ final class MainScreen {
                 }
                 gauge.add(Span.styled(readout, Style.EMPTY.fg(fillColor).bg(bg)));
                 if (low) {
+                    // From the hint level the Work tab is named too, where it fits (#2563)
                     var hint = "  C:clean";
+                    var withWork = hint + "  Work tab";
+                    if (tui.poolUsage.isHint() && avail - gaugeW >= withWork.length()) hint = withWork;
                     if (avail - gaugeW >= hint.length()) {
                         gauge.add(Span.styled(hint, Style.EMPTY.fg(tui.theme.textDim()).bg(bg)));
                         gaugeW += hint.length();
