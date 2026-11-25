@@ -69,7 +69,7 @@ public class IncusSpawn implements QuarkusApplication {
             if (isTopLevelHelp(args)) {
                 var help = LazyHelp.render(topCommand, args);
                 if (help != null) {
-                    BuildOutput.results().println(filterHiddenCommands(help));
+                    BuildOutput.results().println(withLogo(filterHiddenCommands(help), System::getenv));
                     return 0;
                 }
             }
@@ -99,6 +99,30 @@ public class IncusSpawn implements QuarkusApplication {
 
     private static boolean isTopLevelHelp(String[] args) {
         return args.length == 1 && (args[0].equals("--help") || args[0].equals("-h"));
+    }
+
+    /**
+     * The top-level help as a person at a terminal sees it: the logo, with the description the
+     * help opens with beside its middle row, then the rest. Anywhere else, and for a help that
+     * does not open with a description above its usage line, {@code help} as it is, so a script
+     * reads what it always read.
+     */
+    static String withLogo(String help, java.util.function.UnaryOperator<String> env) {
+        if (!BuildOutput.ansi()) return help;
+        var lines = help.lines().toList();
+        if (lines.size() < 2 || !ANSI_ESCAPE.matcher(lines.get(1)).replaceAll("").startsWith("Usage:")) return help;
+        var out = new java.util.ArrayList<>(dev.incusspawn.tui.Logo.beside(java.util.List.of("", lines.getFirst(), ""), env));
+        out.add("");
+        out.addAll(lines.subList(1, lines.size()));
+        return String.join("\n", out);
+    }
+
+    /** What {@code isx --version} prints: the logo beside its three lines for a person at a terminal, the lines alone anywhere else. */
+    static java.util.List<String> versionLines(BuildInfo info, java.util.function.UnaryOperator<String> env) {
+        return dev.incusspawn.tui.Logo.beside(java.util.List.of(
+                "isx " + info.displayVersion() + " (" + info.gitSha() + ")",
+                "incus client " + info.incusClient() + ", server " + info.incusServer(),
+                info.runtime()), env);
     }
 
     static String filterHiddenCommands(String help) {
@@ -136,9 +160,7 @@ public class IncusSpawn implements QuarkusApplication {
         if (versionRequested) {
             var info = BuildInfo.instance();
             var results = BuildOutput.results();
-            results.println("isx " + info.displayVersion() + " (" + info.gitSha() + ")");
-            results.println("incus client " + info.incusClient() + ", server " + info.incusServer());
-            results.println(info.runtime());
+            versionLines(info, System::getenv).forEach(results::println);
             return CommandResult.SUCCESS;
         }
         return launchTui() ? CommandResult.SUCCESS : CommandResult.valueOf(1);
