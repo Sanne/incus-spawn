@@ -103,6 +103,10 @@ public class DoctorCommand extends BaseCommand {
             description = "Send the findings and the redacted support material to the AI Help account for a first-pass diagnosis (uses AI tokens); implies --deep")
     boolean explain;
 
+    @Option(name = "account", completer = Completers.AiHelpAccount.class,
+            description = "With --explain, the account that answers, as <namespace>=<account>, such as claude=work")
+    String account;
+
     @Option(name = "deep", hasValue = false,
             description = "Run per-instance checks (DNS, TLS, resolv.conf)")
     boolean deep;
@@ -142,10 +146,19 @@ public class DoctorCommand extends BaseCommand {
         if (outputFormat != OutputFormat.TABLE) {
             if (bundle) throw new IllegalArgumentException("--bundle writes an archive; it cannot be combined with --format");
             if (explain) throw new IllegalArgumentException("--explain prints a diagnosis for people; it cannot be combined with --format");
+            if (account != null) throw new IllegalArgumentException("--account names the account that explains the findings with --explain, which cannot be combined with --format");
             // Only the findings: no remediation is offered or applied, and the exit code is the same.
             var findings = withStdoutOnStderr(() -> Platform.isLinux() ? runLinuxChecks() : runMacChecks());
             outputFormat.print(BuildOutput.results(), findingRecords(findings));
             return exitFor(findings);
+        }
+        if (account != null) {
+            if (!explain) throw new IllegalArgumentException("--account names the account that explains the findings; it needs --explain");
+            var refused = refusedBeforeChecks(SpawnConfig.load(), account);
+            if (refused != null) {
+                BuildOutput.error(refused.getMessage(), refused.advice());
+                return CommandResult.valueOf(1);
+            }
         }
         BuildOutput.step("Running isx doctor");
 
@@ -182,6 +195,21 @@ public class DoctorCommand extends BaseCommand {
             }
         }
         return exitFor(findings);
+    }
+
+    /**
+     * Why {@code --account} is refused before the checks run, rather than after them, or null.
+     * An unreadable config.yaml is never refused here: it is the checks' to report first
+     * ({@link #checkConfigFile}), and {@link DoctorExplain} refuses the pin after them.
+     */
+    static dev.incusspawn.ai.AiHelpChoice.Refused refusedBeforeChecks(SpawnConfig config, String account) {
+        if (config.unreadableReason() != null) return null;
+        try {
+            dev.incusspawn.ai.AiHelpChoice.pinned(config, account);
+            return null;
+        } catch (dev.incusspawn.ai.AiHelpChoice.Refused e) {
+            return e;
+        }
     }
 
     /**
@@ -2656,7 +2684,7 @@ public class DoctorCommand extends BaseCommand {
             return false;
         }
         boolean ok = !bundle || generateBundle(material);
-        if (explain) ok &= DoctorExplain.run(material, config, Prompts::terminal);
+        if (explain) ok &= DoctorExplain.run(material, config, account, Prompts::terminal);
         return ok;
     }
 

@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.ai.AiHelpChoice;
 import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.ai.HelpContext;
 import dev.incusspawn.config.SpawnConfig;
@@ -85,18 +86,48 @@ final class DoctorExplain {
         return bytes < 1024 ? bytes + " bytes" : String.format(Locale.ROOT, "%,d KB", (bytes + 512) / 1024);
     }
 
-    /** Asks the first AI Help account of {@code config}; false once a failure is reported. */
-    static boolean run(SupportBundle bundle, SpawnConfig config, Supplier<Prompts> terminal) throws Exception {
-        // With no account that can answer, one is asked for here, where it is needed (#2541)
-        var answering = AiHelpClient.targets(config).isEmpty() ? AskCommand.answering(config, terminal.get()) : config;
-        if (answering == null) return false;
-        var target = AiHelpClient.targets(answering).getFirst();
-        return run(bundle, target.label(), terminal,
-                (question, blocks, chunks) -> AiHelpClient.askStreaming(question, blocks, answering, target, chunks));
+    /**
+     * Asks the account {@code selection} names, or with none the AI Help account of
+     * {@code config} that last answered (#2607); false once a failure is reported.
+     */
+    static boolean run(SupportBundle bundle, SpawnConfig config, String selection, Supplier<Prompts> terminal) throws Exception {
+        SpawnConfig answering;
+        AiHelpClient.Target target;
+        if (selection != null) {
+            answering = config;
+            try {
+                target = AiHelpChoice.pinned(config, selection);
+            } catch (AiHelpChoice.Refused e) {
+                BuildOutput.error(e.getMessage(), e.advice());
+                return false;
+            }
+        } else {
+            // With no account that can answer, one is asked for here, where it is needed (#2541)
+            answering = AiHelpClient.targets(config).isEmpty() ? AskCommand.answering(config, terminal.get()) : config;
+            if (answering == null) return false;
+            target = AiHelpChoice.preferred(AiHelpClient.targets(answering)).orElseThrow();
+        }
+        // Recorded only once the account answered: declining to send leaves the record alone
+        return run(bundle, target.label(), terminal, (question, blocks, chunks) -> {
+                    var answered = new boolean[1];
+                    var end = AiHelpClient.askStreaming(question, blocks, answering, target, chunks.andThen(chunk -> {
+                        if (!chunk.isBlank()) answered[0] = true;
+                    }));
+                    // Only an answer with text makes this the account asked first next time
+                    if (answered[0]) AiHelpChoice.answered(target);
+                    return end;
+                },
+                AiHelpChoice.others(AiHelpClient.targets(answering), target));
     }
 
-    /** {@link #run(SupportBundle, SpawnConfig, Supplier)} sending through {@code sender}, to the account {@code account}. */
+    /** {@link #run(SupportBundle, SpawnConfig, String, Supplier)} sending through {@code sender}, to the account {@code account}. */
     static boolean run(SupportBundle bundle, String account, Supplier<Prompts> terminal, Sender sender) throws Exception {
+        return run(bundle, account, terminal, sender, new String[0]);
+    }
+
+    /** As above; {@code others} names the accounts to try when this one fails. */
+    static boolean run(SupportBundle bundle, String account, Supplier<Prompts> terminal, Sender sender,
+                       String[] others) throws Exception {
         var question = question(material(bundle.files()));
         long bytes = question.getBytes(StandardCharsets.UTF_8).length;
         var what = size(bytes) + " of redacted findings, logs and configuration";
@@ -124,7 +155,10 @@ final class DoctorExplain {
                 return end.note();
             });
         } catch (Exception e) {
-            BuildOutput.error("could not explain the findings: " + BaseCommand.failure(e), AiHelpClient.advice(e));
+            var advice = AiHelpClient.advice(e);
+            // Only the provider's refusal says this account failed; a network error fails any
+            if (e instanceof AiHelpClient.ApiError) advice = AskCommand.joined(advice, others);
+            BuildOutput.error("could not explain the findings: " + BaseCommand.failure(e), advice);
             return false;
         }
         var summary = usage[0].summary();

@@ -150,6 +150,11 @@ public class AiHelpClient {
                     && !accountName.equals(SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME);
             return named ? accountName + " (" + provider.credentialKind() + ")" : provider.credentialKind();
         }
+
+        /** How a person names this account to {@code --account}: {@code <namespace>=<account>}, as {@code isx branch} takes it. */
+        public String selection() {
+            return namespace(provider) + "=" + accountName;
+        }
     }
 
     /** The credential namespace whose accounts each provider's targets come from. */

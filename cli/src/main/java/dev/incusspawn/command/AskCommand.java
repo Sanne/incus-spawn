@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.ai.AiHelpChoice;
 import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.ai.HelpContext;
 import dev.incusspawn.config.SpawnConfig;
@@ -29,6 +30,11 @@ public class AskCommand extends BaseCommand {
             description = "Include template and tool definitions in the AI context")
     boolean withTemplates;
 
+    @Option(name = "account", completer = Completers.AiHelpAccount.class,
+            description = "The account that answers, as <namespace>=<account>, such as claude=work."
+                    + " Without it, the account that last answered is asked.")
+    String account;
+
     @Override
     protected CommandResult doExecute() throws Exception {
         if (questionWords == null || questionWords.isEmpty()) {
@@ -37,21 +43,54 @@ public class AskCommand extends BaseCommand {
         }
 
         var question = String.join(" ", questionWords);
-        var config = answering(SpawnConfig.load(), prompts());
-        if (config == null) return CommandResult.valueOf(1);
-
-        var target = AiHelpClient.targets(config).getFirst();
+        AiHelpClient.Target target;
+        SpawnConfig config;
+        if (account != null) {
+            // A named account is never replaced by another, nor offered to be added
+            config = SpawnConfig.load();
+            try {
+                target = AiHelpChoice.pinned(config, account);
+            } catch (AiHelpChoice.Refused e) {
+                BuildOutput.error(e.getMessage(), e.advice());
+                return CommandResult.valueOf(1);
+            }
+        } else {
+            config = answering(SpawnConfig.load(), prompts());
+            if (config == null) return CommandResult.valueOf(1);
+            target = AiHelpChoice.preferred(AiHelpClient.targets(config)).orElseThrow();
+        }
         var label = "Asking " + target.label() + (withTemplates ? " (with templates)" : "");
         var systemBlocks = HelpContext.systemBlocks(withTemplates);
+        // Only an answer with text makes this the account asked first next time
+        var answered = new boolean[1];
         try {
-            answer(label,
-                    chunks -> AiHelpClient.askStreaming(question, systemBlocks, config, target, chunks).note());
+            answer(label, chunks -> send(question, systemBlocks, config, target, chunks.andThen(chunk -> {
+                if (!chunk.isBlank()) answered[0] = true;
+            })).note());
         } catch (AiHelpClient.ApiError e) {
             // A rejected key says what replaces it: nothing asks for one again once it is saved
-            BuildOutput.error(failure(e), AiHelpClient.advice(e));
+            BuildOutput.error(failure(e), withOthers(AiHelpClient.advice(e), config, target));
             return CommandResult.valueOf(1);
         }
+        if (answered[0]) AiHelpChoice.answered(target);
         return CommandResult.SUCCESS;
+    }
+
+    /** Sends the question; overridden by tests. */
+    AiHelpClient.StreamEnd send(String question, List<String> systemBlocks, SpawnConfig config,
+                                AiHelpClient.Target target, Consumer<String> chunks) throws Exception {
+        return AiHelpClient.askStreaming(question, systemBlocks, config, target, chunks);
+    }
+
+    /** {@code advice}, then the other accounts of {@code config} that can answer, for when {@code asked} failed. */
+    static String[] withOthers(String[] advice, SpawnConfig config, AiHelpClient.Target asked) {
+        return joined(advice, AiHelpChoice.others(AiHelpClient.targets(config), asked));
+    }
+
+    static String[] joined(String[] first, String[] then) {
+        var all = java.util.Arrays.copyOf(first, first.length + then.length);
+        System.arraycopy(then, 0, all, first.length, then.length);
+        return all;
     }
 
     /** Where this command asks, overridden by tests: {@link Prompts#terminal()}. */
@@ -194,6 +233,7 @@ public class AskCommand extends BaseCommand {
 
                 Usage: isx ask <question>
                        isx ask --with-templates <question>
+                       isx ask --account <namespace>=<account> <question>
 
                 Examples:
                   isx ask how do I configure a custom base image?
@@ -202,9 +242,11 @@ public class AskCommand extends BaseCommand {
 
                 Options:
                   --with-templates  Include tool and image definitions in the AI context
+                  --account         The account that answers, such as claude=work
 
                 Accounts: an Anthropic API key, Claude on Vertex AI, an OpenAI API key or a
                 Gemini API key answers. Without one, isx asks for one on a terminal.
+                The account that last answered is asked first.
                 """);
     }
 }

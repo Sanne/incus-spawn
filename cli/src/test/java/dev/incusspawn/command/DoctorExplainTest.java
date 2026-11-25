@@ -119,6 +119,28 @@ class DoctorExplainTest {
                 recorded.events(Kind.ERROR));
     }
 
+    /** A named account that cannot answer is refused before anything is sent, never replaced by another (#2607). */
+    @Test
+    void aNamedAccountThatCannotAnswerSendsNothing() {
+        var config = new dev.incusspawn.config.SpawnConfig();
+        config.getClaude().putAccount("work", dev.incusspawn.config.SpawnConfig.ClaudeAccount.ofApiKey("sk-ant-api03-work"));
+        var recorded = RecordingOutput.during(() -> assertFalse(DoctorExplain.run(bundle(""), config, "claude=other",
+                () -> { throw new AssertionError("nothing is asked"); })));
+        assertEquals(List.of(new Event(Kind.ERROR, "there is no claude account 'other'",
+                        "Accounts that can answer: claude=work.")),
+                recorded.events(Kind.ERROR));
+    }
+
+    /** A provider's refusal names the other accounts to pass with --account. */
+    @Test
+    void aRefusedRequestNamesTheOtherAccounts() {
+        var recorded = RecordingOutput.during(() -> assertFalse(DoctorExplain.run(bundle(""), "work", () -> null,
+                (question, blocks, chunks) -> { throw dev.incusspawn.ai.TestApiErrors.of(429, "API error (429)"); },
+                new String[] {"Ask another account with --account gemini=free."})));
+        assertEquals(List.of("Ask another account with --account gemini=free."),
+                recorded.events(Kind.ERROR).getFirst().details());
+    }
+
     @Test
     void sizesReadForPeople() {
         assertEquals("812 bytes", DoctorExplain.size(812));

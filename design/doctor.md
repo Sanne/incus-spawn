@@ -114,7 +114,7 @@ A declaration outranks all of this: a declared path is taken at its word and red
 ## `isx doctor --explain`: the bundle, read by AI Help
 
 Reading a bundle was a maintainer's job, after the user had opened an issue (#1677).
-`--explain` asks the AI Help account (`AiHelpClient.targets`, the first one, as `isx ask` does) for a first diagnosis before that.
+`--explain` asks the AI Help account (`AiHelpChoice`, as `isx ask` does: `--account`, else the one that last answered) for a first diagnosis before that.
 
 **The model is sent what an issue would carry, and nothing else.**
 `SupportBundle.collect` gathers the files through `add()` into memory, and the archive and `DoctorExplain` both read them from there.

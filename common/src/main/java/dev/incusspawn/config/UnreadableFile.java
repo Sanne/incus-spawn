@@ -14,4 +14,9 @@ import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 abstract class UnreadableFile extends UndeclaredKeys {
     @JqIgnore
     String unreadable;
+
+    /** Why config.yaml could not be read, or null when it was: then this configuration is an empty stand-in. */
+    public String unreadableReason() {
+        return unreadable;
+    }
 }
