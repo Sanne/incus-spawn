@@ -137,8 +137,8 @@ final class McpBridge {
     private static String whyNot(InstanceRegistry registry, String address, boolean bySecretAlone,
                                  InstanceRegistry.Identified instance) {
         if (instance == null) return CallerCheck.unidentified(registry, address, bySecretAlone, "isx mcp");
-        return "instance '" + instance.instanceName() + "' may not call isx mcp: only one branched "
-                + "with 'isx branch --mcp-client' may";
+        return "instance '" + instance.instanceName() + "' may not call isx mcp: the proxy serves it only to an instance"
+                + " branched with 'isx branch --mcp-client', or from a template that makes coordinators";
     }
 
     private void serve(HttpServerRequest req, String instance) {

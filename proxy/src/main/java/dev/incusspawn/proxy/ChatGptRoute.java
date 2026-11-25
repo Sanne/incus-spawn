@@ -344,7 +344,7 @@ final class ChatGptRoute {
             var what = req.method() + " " + req.path();
             warnOnce("Refusing " + domain + " " + what + " for " + describe(sourceAddress)
                     + ": not an operation ChatGPT sessions allow (#1332)");
-            refuse(resp, 403, "forbidden", what + " is not allowed for ChatGPT sessions");
+            refuse(resp, 403, "forbidden", "isx did not send " + what + ": with a ChatGPT account, the proxy sends only the requests Codex makes");
             return null;
         }
         return op;

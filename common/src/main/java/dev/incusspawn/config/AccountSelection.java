@@ -96,8 +96,8 @@ public final class AccountSelection {
             if (!setup.accountShape().credentialOutsideConfig(node)) continue;
             var message = setup.hostedSignInRefusal(instance, account);
             throw new SignInAccountException(namespace, message != null ? message
-                    : "isx sent nothing: instance '" + instance + "' uses " + namespace + " account '" + account
-                            + "', a sign-in that holds no credential for this request.");
+                    : "isx did not send this request: instance '" + instance + "' uses the " + namespace + " account '"
+                            + account + "', a sign-in, which does not hold a credential for it.");
         }
     }
 

@@ -476,7 +476,7 @@ class ChatGptRouteTest {
         var reply = backend(parts[0], parts[1], accessPlaceholder(proofs().access()));
 
         assertEquals(403, reply.status(), reply.body());
-        assertTrue(reply.body().contains("not allowed for ChatGPT sessions"), reply.body());
+        assertTrue(reply.body().contains("the proxy sends only the requests Codex makes"), reply.body());
         assertTrue(seen.isEmpty(), "never relayed: " + seen);
     }
 

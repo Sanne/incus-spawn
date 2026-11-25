@@ -187,12 +187,12 @@ public class GeminiSetup implements ToolSetup {
      */
     @Override
     public String hostedSignInRefusal(String instance, String account) {
-        return "isx sent nothing to Google: instance '" + instance + "' uses gemini account '" + account
-                + "', a Google account, which holds no API key for this request."
+        return "isx did not send this request to Google: instance '" + instance + "' uses the gemini account '" + account
+                + "', a Google account, which does not hold an API key for it."
                 + " Gemini CLI, Pi and opencode need an API key account: isx account set " + instance
                 + " gemini=<an API key account>."
                 + " If Antigravity CLI sent it, agy is still set up for an API key:"
-                + " restart agy from a new isx shell " + instance + ", and rebuild the template if this repeats.";
+                + " restart agy in a new 'isx shell " + instance + "', and rebuild the template if this happens again.";
     }
 
     /** A Google account: whether it has signed in, and as whom; "" for an API key account. */

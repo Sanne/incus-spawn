@@ -2244,7 +2244,7 @@ public class MitmProxy {
                 && !ctx.creds().inheritedNamespaces().contains(claude);
     }
 
-    private static final String ONLY_CLAUDE_MODEL_CALLS = "Only Claude model calls are served with the Vertex AI account";
+    private static final String ONLY_CLAUDE_MODEL_CALLS = "isx did not send this request: with a Vertex AI account, the proxy sends only Claude model calls";
 
     /** Whether a call in the standard API's format is one the proxy translates for Vertex: {@code POST} to a messages route it serves. */
     private static boolean isTranslatedModelCall(HttpServerRequest clientReq) {
@@ -2318,19 +2318,19 @@ public class MitmProxy {
         var uri = GeminiOnVertex.projectUri(clientReq.method(), clientReq.uri(),
                 credentials.vertexProjectId(), credentials.vertexRegion());
         if (uri == null) {
-            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "Only Gemini model calls are served with the Vertex AI account");
+            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "isx did not send this request: with a Vertex AI account, the proxy sends only Gemini model calls");
             return;
         }
         if (clientReq.headers().contains("Content-Encoding")) {
             // The check cannot read an encoded body, whatever the coding claims to be
-            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "A Gemini call on the Vertex AI account"
-                    + " must not have a Content-Encoding");
+            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "isx did not send this request: a Gemini call on a Vertex AI account"
+                    + " must not have a Content-Encoding, since the proxy cannot check an encoded body");
             return;
         }
         if (!isJson(clientReq.headers().getAll("Content-Type"))) {
             // Vertex may read an untyped, protobuf (application/x-protobuf, json+protobuf) or non-UTF-8 body
             // as another format or text than the check does
-            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "A Gemini call on the Vertex AI account"
+            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "isx did not send this request: a Gemini call on a Vertex AI account"
                     + " must have a JSON body in UTF-8 (Content-Type: application/json)");
             return;
         }
@@ -2425,8 +2425,8 @@ public class MitmProxy {
                     var uri = result.path();
                     if (ctx.authorized() && !isVertexFormat(path) && !isVertexFormat(uri)) {
                         // Not translated (no body, or no JSON object): the guest's path is never signed (#1921)
-                        refuseOnVertex(clientReq, ctx, "claude-on-vertex", 403, "A Claude model call on the Vertex"
-                                + " AI account needs a JSON object for its body");
+                        refuseOnVertex(clientReq, ctx, "claude-on-vertex", 403, "isx did not send this request: a Claude model"
+                                + " call on a Vertex AI account needs a JSON object for its body");
                         return null;
                     }
                     // A request already in Vertex's format keeps its query (#1576); a translation's URI is its own

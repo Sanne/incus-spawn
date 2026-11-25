@@ -80,8 +80,9 @@ final class CallerCheck {
      * instance, unless the secret alone may identify (#1583); otherwise the secret is wrong.
      */
     static String unidentified(InstanceRegistry registry, String address, boolean bySecretAlone, String what) {
-        if (!bySecretAlone && registry.lookup(address) == null) return "only an isx instance may call " + what;
-        return "send this start's secret as " + InstanceSecret.HEADER + " (from $" + InstanceSecret.FILE_ENV_VAR + ")";
+        if (!bySecretAlone && registry.lookup(address) == null) return "the proxy serves " + what + " only to isx instances, and this request did not come from one";
+        return "this request did not carry the instance's current secret: send the contents of the file $"
+                + InstanceSecret.FILE_ENV_VAR + " names, as the " + InstanceSecret.HEADER + " header";
     }
 
     /** Answer {@code req} with {@code status} and a plain-text line, reading and dropping any body. */
