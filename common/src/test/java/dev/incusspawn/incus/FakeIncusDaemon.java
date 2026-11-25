@@ -77,6 +77,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** Each pool's config, as the listing and a pool PATCH see it. */
     private final Map<String, Map<String, String>> poolConfigs = new LinkedHashMap<>();
     private boolean poolListingFails;
+    private boolean instanceListingFails;
     /** Each pool's {@code space} as its {@code /resources} answers it, {used, total}; unset is a 404. */
     private final Map<String, long[]> poolSpace = new LinkedHashMap<>();
     private final java.util.Set<String> customVolumes = new java.util.LinkedHashSet<>();
@@ -247,6 +248,12 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** Answer {@code pool}'s {@code /resources} with a 404 from now on, as a pool that cannot say would. */
     public synchronized FakeIncusDaemon noPoolSpace(String name) {
         poolSpace.remove(name);
+        return this;
+    }
+
+    /** Answer the instance listing with a 500 from now on, as a daemon that cannot say would. */
+    public synchronized FakeIncusDaemon failInstanceListing() {
+        instanceListingFails = true;
         return this;
     }
 
@@ -734,6 +741,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             return sync(JqObject.of("status", status != null ? status : "Success"));
         }
         if (path.startsWith("/1.0/instances?") && method.equals("GET")) {
+            if (instanceListingFails) return error(500, "instance listing failed");
             if (listingOverride != null) return sync(listingOverride);
             return sync(JqArray.of(List.<JqValue>copyOf(instances.values())));
         }

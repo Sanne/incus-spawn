@@ -62,7 +62,7 @@ class InitNextStepsTest {
     /** A service whose install failed is said in the header, never ticked as a complete setup (#2597). */
     @Test
     void aFailedServiceIsNotCalledComplete() {
-        var lines = Arrays.stream(InitCommand.nextSteps(InitCommand.Services.START_PROXY, "the proxy service"))
+        var lines = Arrays.stream(InitCommand.nextSteps(InitCommand.Services.START_PROXY, "the proxy service", false))
                 .map(BuildOutput::stripAnsi).toList();
         var text = String.join("\n", lines);
         assertFalse(text.contains("Setup complete"), text);
@@ -70,13 +70,28 @@ class InitNextStepsTest {
         assertTrue(lines.contains("   1. Start the proxy:   isx proxy start"), text);
     }
 
+    /** A host with a template built is not told to define and build one again (#2598). */
+    @Test
+    void aHostWithATemplateIsNotLedToAFirstOne() {
+        var lines = Arrays.stream(InitCommand.nextSteps(InitCommand.Services.START_PROXY, null, true))
+                .map(BuildOutput::stripAnsi).toList();
+        var text = String.join("\n", lines);
+        assertFalse(text.contains("first agent"), text);
+        assertFalse(text.contains("tpl-agent"), text);
+        assertTrue(lines.contains("   1. Start the proxy:   isx proxy start"), text);
+        assertTrue(lines.contains("   2. Branch a template: isx branch <name> --from <template>"), text);
+        assertTrue(lines.contains("   Or launch the TUI:    isx"), text);
+    }
+
     @Test
     void everyLineFitsTheBox() {
         for (var services : InitCommand.Services.values()) {
             for (var failed : Arrays.asList(null, "the proxy service", "the VM and proxy services")) {
-                for (var line : InitCommand.nextSteps(services, failed)) {
-                    line = BuildOutput.stripAnsi(line);
-                    assertTrue(line.length() <= InitCommand.BOX_WIDTH, line);
+                for (var built : List.of(false, true)) {
+                    for (var line : InitCommand.nextSteps(services, failed, built)) {
+                        line = BuildOutput.stripAnsi(line);
+                        assertTrue(line.length() <= InitCommand.BOX_WIDTH, line);
+                    }
                 }
             }
         }

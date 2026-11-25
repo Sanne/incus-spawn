@@ -1079,26 +1079,31 @@ public class InitCommand extends BaseCommand {
      * points at the page that shows it rather than printing it.
      */
     static String[] nextSteps(Services services) {
-        return nextSteps(services, null);
+        return nextSteps(services, null, false);
     }
 
     /**
      * As {@link #nextSteps(Services)}, but when {@code failedService} names a service whose install
      * failed (not written, or not started), the header says so rather than ticking the setup
-     * (#2597); its step stays first.
+     * (#2597); its step stays first. When {@code templateBuilt}, the host already has a template
+     * to branch, so the box lists only what is left on it, never the Quick Start again (#2598).
      */
-    static String[] nextSteps(Services services, String failedService) {
+    static String[] nextSteps(Services services, String failedService, boolean templateBuilt) {
         var header = failedService == null
                 ? "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!")
                 : "   " + styled(BOLD + YELLOW, "!") + styled(BOLD, " Setup finished without " + failedService + ".");
         var lines = new ArrayList<String>(List.of(header, ""));
         if (services.step == null) lines.addAll(List.of("   isx's services start on their own.", ""));
-        lines.add("   " + styled(BOLD, "Next steps, to a first agent:"));
+        lines.add("   " + styled(BOLD, templateBuilt ? "Next steps:" : "Next steps, to a first agent:"));
         var steps = new ArrayList<String>();
         if (services.step != null) steps.add(services.step);
-        steps.add("Define tpl-agent:  https://isx.run/docs#quick-start");
-        steps.add("Build it:          isx build tpl-agent");
-        steps.add("Branch it:         isx branch my-first --from tpl-agent");
+        if (templateBuilt) {
+            steps.add("Branch a template: isx branch <name> --from <template>");
+        } else {
+            steps.add("Define tpl-agent:  https://isx.run/docs#quick-start");
+            steps.add("Build it:          isx build tpl-agent");
+            steps.add("Branch it:         isx branch my-first --from tpl-agent");
+        }
         for (int i = 0; i < steps.size(); i++) lines.add("   " + (i + 1) + ". " + steps.get(i));
         lines.add("   Or launch the TUI:    isx");
         return lines.toArray(String[]::new);
@@ -3460,6 +3465,22 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    /**
+     * Whether any template is built on this host, a project's included, from one config-only
+     * listing, so a re-run's closing box leaves out the way to a first one (#2598). One mid-rebuild
+     * does not count. A listing that cannot be read shows the Quick Start, which is never wrong,
+     * only more than such a host needs.
+     */
+    boolean anyTemplateBuilt() {
+        try {
+            return incus != null && InstanceListing.collectEntries(incus.listJsonConfig()).stream()
+                    .anyMatch(i -> (Metadata.TYPE_BASE.equals(i.type()) || Metadata.TYPE_PROJECT.equals(i.type()))
+                            && !i.name().endsWith(BuildCommand.REBUILDING_SUFFIX));
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private static final String TEMPLATES_REPO = "incus-spawn-templates";
     private static final String TEMPLATES_UPSTREAM = "Sanne/" + TEMPLATES_REPO;
     private static final String TEMPLATES_URL = "https://github.com/" + TEMPLATES_UPSTREAM;
@@ -3743,7 +3764,7 @@ public class InitCommand extends BaseCommand {
 
     /** Linux's closing box after a re-run: the next steps, naming a service whose install failed (#2597). */
     String[] linuxClosingSteps(boolean serviceInstalled, boolean continued) {
-        var next = new ArrayList<>(List.of(nextSteps(linuxServices(serviceInstalled), failedService())));
+        var next = new ArrayList<>(List.of(nextSteps(linuxServices(serviceInstalled), failedService(), anyTemplateBuilt())));
         if (continued) next.addAll(GROUP_PENDING);
         return next.toArray(String[]::new);
     }
@@ -3752,7 +3773,7 @@ public class InitCommand extends BaseCommand {
     String[] macOsClosingSteps(boolean servicesInstalled) {
         return nextSteps(servicesInstalled ? Services.INSTALLED
                 : skipped.contains("macos-services") ? Services.INSTALL_VM_AND_PROXY : Services.START_VM_AND_PROXY,
-                failedService());
+                failedService(), anyTemplateBuilt());
     }
 
     /** What the closing box names as not set up, when this run's service install failed; else null. */

@@ -216,4 +216,7 @@ The first run gets shorter, and isx does not get smaller.
   They are asked with the first run's questions, before the plumbing, so DNS still follows the search paths.
 - The flags that answer init's questions stay; in a first run, a step whose answer flag is given runs with that answer.
 - The completion message names `isx init`, whose menu lists each deferred step.
+- A later run's closing box reads whether any template is built, in one listing (`InitCommand.anyTemplateBuilt`) (#2598).
+  When one is, it lists only what is left on the host: the services to start, the credential gaps, a branch and the TUI.
+  The way to a first agent comes back only when no template is built, or when the listing cannot be read.
 - `InitFirstRunTest#everyStepIsInTheFirstRunOrInTheMenu` holds that every step `isx init --plan` lists, on Linux and on macOS, is in the first run or in the menu, so a step cannot be dropped from both.
