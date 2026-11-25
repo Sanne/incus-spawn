@@ -1640,15 +1640,29 @@ public final class ProxyService {
         var said = new StringBuilder();
         if (exitsZero(unasked.toArray(String[]::new), said)) return true;
         // The command ran and failed: running it again would only fail again
-        if (!said.toString().contains("password is required")) return false;
+        if (!sudoNeedsPassword(said.toString())) return false;
         BuildOutput.releaseTerminal();
         return exitsZero(command, null);
     }
 
-    /** Whether {@code command} exits 0; what it printed goes to {@code said} when given, else nowhere. */
+    /**
+     * Whether what {@code sudo -n} printed says that it would have had to ask: its own words,
+     * which {@link #exitsZero} makes sudo say untranslated.
+     */
+    static boolean sudoNeedsPassword(String said) {
+        return said.contains("a password is required");
+    }
+
+    /**
+     * Whether {@code command} exits 0; what it printed goes to {@code said} when given, else
+     * nowhere. Read, its output is in the C locale: sudo translates "a password is required",
+     * and a German or French sudo would otherwise be taken for a command that failed, and never
+     * asked for the password.
+     */
     private static boolean exitsZero(String[] command, StringBuilder said) {
         try {
             var pb = new ProcessBuilder(command);
+            if (said != null) pb.environment().put("LC_ALL", "C");
             pb.redirectErrorStream(true);
             var process = pb.start();
             var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);

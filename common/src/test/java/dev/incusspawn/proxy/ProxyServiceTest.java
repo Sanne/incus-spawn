@@ -664,4 +664,18 @@ class ProxyServiceTest {
             ProxyService.startWaitSecondsSupplier = original;
         }
     }
+
+    /**
+     * A sudo that could not ask says so in these words, which isx reads in the C locale: the
+     * same message translated would be taken for a command that failed, and the person never
+     * asked for the password.
+     */
+    @Test
+    void aSudoThatWouldAskIsToldFromACommandThatFailed() {
+        assertTrue(ProxyService.sudoNeedsPassword("sudo: a password is required\n"));
+        assertFalse(ProxyService.sudoNeedsPassword("Failed to enable linger: Access denied\n"));
+        assertFalse(ProxyService.sudoNeedsPassword(""));
+        // What a German sudo prints, which is why the probe runs with LC_ALL=C
+        assertFalse(ProxyService.sudoNeedsPassword("sudo: Ein Passwort ist notwendig\n"));
+    }
 }
