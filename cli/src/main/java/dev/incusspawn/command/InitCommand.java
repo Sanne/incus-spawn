@@ -211,6 +211,9 @@ public class InitCommand extends BaseCommand {
         var out = new ArrayList<String>();
         out.add("");
         out.add(topBorder());
+        // The first run's recap: what was answered so far, above the question this header opens
+        for (var answered : recap) out.add(boxLine(styled(DIM, recapLine(answered))));
+        if (!recap.isEmpty()) out.add(boxLine(""));
         out.add(styled(CYAN, "│") + styled(BOLD, left)
                 + " ".repeat(Math.max(1, gap)) + styled(DIM, right) + styled(CYAN, "│"));
         out.add(bottomBorder());
@@ -223,6 +226,37 @@ public class InitCommand extends BaseCommand {
         }
         // A frame of init's own: laid out here, drawn as given
         BuildOutput.frame(out.toArray(String[]::new));
+    }
+
+    /**
+     * A question of the first run that is answered, for the recap in the next headers (#2528):
+     * by its third question a person has scrolled past a token guide and another program's
+     * output, and a bare {@code [3/3]} does not say what was decided.
+     *
+     * @param question what was asked, in two or three words
+     * @param answer   what the person chose, or that they left it for later
+     * @param done     false when the question was left for later, which the mark shows
+     */
+    record Answered(String question, String answer, boolean done) {}
+
+    /** The first run's answers so far, in the order asked; empty outside its questions, so no other header shows one. */
+    private final List<Answered> recap = new ArrayList<>();
+
+    /** The widest question of a recap, "Coding agent", and the gap after it. */
+    private static final int RECAP_QUESTION = 15;
+
+    /**
+     * One recap line as the box holds it: a tick for an answer, a hyphen for a question left for
+     * later, the question in a column and the answer after it, cut to the box when a login or a
+     * name is long. The answer is the person's or an account's text, so it is shown through
+     * {@code oneLine}.
+     */
+    static String recapLine(Answered answered) {
+        var line = "  " + (answered.done() ? "\u2713" : "-") + " "
+                + String.format("%-" + RECAP_QUESTION + "s", answered.question())
+                + OutputFormat.oneLine(answered.answer());
+        var room = BOX_WIDTH - 2;
+        return line.length() <= room ? line : line.substring(0, room - 3) + "...";
     }
 
     /**
@@ -1575,8 +1609,11 @@ public class InitCommand extends BaseCommand {
         totalSteps = (suggested == null ? new Questions(true, false, needsGitHub) : questionsFor(suggested, needsGitHub)).count() + extra;
         totalKnown = !all;
         var noCredential = false;
+        recap.clear();
         try {
             begin(agentStep());
+            recap.add(chosenAgent == null ? new Answered("Coding agent", "none for now", false)
+                    : new Answered("Coding agent", ExampleTemplate.title(chosenAgent), true));
             if (chosenAgent != null) startDownloadsAhead(chosenAgent);
             // Counted again for the agent chosen, before the next header shows it
             totalSteps = questionsFor(chosenAgent, needsGitHub).count() + extra;
@@ -1586,12 +1623,16 @@ public class InitCommand extends BaseCommand {
                 if (chosenAgent != null && agentQuestionAsked && chosenAgent.credentialNamespaces(agentParams).isEmpty()) {
                     // A provider isx does not manage: the agent signs in to it itself (#2536)
                     BuildOutput.note(ExampleTemplate.title(chosenAgent) + " needs no account from isx for that provider.");
+                    recap.add(new Answered("Its account", "not needed for that provider", true));
                 } else if (chosenAgent != null) {
                     BuildOutput.note(ExampleTemplate.title(templateAgent()) + "'s account is set up already.");
+                    recap.add(new Answered("Its account", "set up already", true));
                 }
             } else {
                 begin(agentCredentialStep(templateAgent()));
                 noCredential = !agentGaps().isEmpty();
+                recap.add(noCredential ? new Answered("Its account", "left for later", false)
+                        : new Answered("Its account", accountAnswer(), true));
             }
             var noGitHub = false;
             var noIdentity = false;
@@ -1611,6 +1652,9 @@ public class InitCommand extends BaseCommand {
                     offerAgentGitIdentity();
                     noIdentity = SpawnConfig.load().gitIdentity() == null;
                 }
+                // Asked in a step of its own; as the agent's account (Copilot), that line says it
+                if (!gitHubAsked) recap.add(noGitHub ? new Answered("GitHub", "none for now", false)
+                        : new Answered("GitHub", gitHubAnswer(), true));
             } else if (!all && !gitHubAsked) {
                 // Not after the agent's own step, which asked for it and said it was saved
                 BuildOutput.note("A GitHub account is set up already.");
@@ -1625,8 +1669,42 @@ public class InitCommand extends BaseCommand {
             for (var step : later) begin(step);
             answers = new FirstRunAnswers(chosenAgent == null, noCredential, noGitHub, noIdentity, agentParams);
         } finally {
+            // The recap is the questions' own: a header the setup shows later has none
+            recap.clear();
             credentials.closeHttpClient();
         }
+    }
+
+    /**
+     * What the recap says of the agent's account once it is set up: GitHub's when that is the
+     * account the agent uses (Copilot), the kind of Claude account when the agent uses one and
+     * config.yaml holds a single one, else that it is saved. Never a credential.
+     */
+    String accountAnswer() {
+        if (gitHubAsked) return "GitHub, " + gitHubAnswer();
+        try {
+            var agent = templateAgent();
+            if (agent != null && agent.credentialNamespaces().contains(SpawnConfig.ClaudeConfig.NAMESPACE)) {
+                var accounts = SpawnConfig.load().getClaude().allAccounts();
+                var type = accounts.size() == 1 ? accounts.values().iterator().next().effectiveType() : null;
+                if (type != null) {
+                    return switch (type) {
+                        case API_KEY -> "Anthropic API key";
+                        case OAUTH -> "Claude subscription";
+                        case VERTEX -> "Vertex AI";
+                    };
+                }
+            }
+        } catch (RuntimeException e) {
+            // A recap line is never worth a failed run
+        }
+        return "saved";
+    }
+
+    /** What the recap says of the GitHub account saved in this run: whose it is, when GitHub named it. */
+    String gitHubAnswer() {
+        var login = credentials.savedGitHubLogin;
+        return login == null || login.isBlank() ? "saved" : "acts as " + login;
     }
 
     /** What {@link #probeAgents} found, read once a run: the intro and the agent question both ask. */

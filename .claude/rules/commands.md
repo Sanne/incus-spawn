@@ -224,6 +224,7 @@ A new step goes in the first run or in `DEFERRED`; `InitFirstRunTest#everyStepIs
 Its closing message (`firstRunNextSteps`, #2528) numbers what is left in the order it is done, one command to a line, and no line may be wider than the box (`InitFirstRunTest#noLineOfTheClosingMessageIsWiderThanItsBox`, and `#everyLineOfTheClosingBoxEndsAtItsBorderAsTheTerminalDrawsIt` with escapes on).
 The first run's text follows the nine rules of the review on #2528 (design/init.md "The first run's words"): "isx machine" and "this Mac"/"this computer" there, "instance" in the shared credential steps outside it (`CredentialSetup.machines`, `Platform.thisComputer`), and a line never wider than the frame (`Lines.wrap`).
 `InitTranscriptsTest` writes a transcript of every branch to `cli/target/init-transcripts/` and fails a line wider than the frame; a new branch of the first run adds one.
+A header of the first run's questions recaps the answers so far above its title (`InitCommand.Answered`, filled in `askFirstRunQuestions`); a new question of the first run adds its line there.
 A new agent that needs something of the person at its first start returns it from `ToolSetup.firstStartNote`, and `InitFirstRunAccountsTest` runs the account step of the agents that spend another tool's account.
 *Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded.
 When a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.

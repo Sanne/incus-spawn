@@ -142,6 +142,11 @@ What an agent runs in is an "isx machine", the computer is "this Mac" or "this c
 That word is the first run's alone: a credential step shared with `isx account add` says "instance" outside it (`CredentialSetup.machines`), and nothing else in isx was renamed.
 What is asked comes before why, a step that starts something says what will happen first, and each answer says what it does.
 A step header shows its number once, as `[2/3]`.
+Each header after the first also recaps the answers so far, above its title (`InitCommand.Answered`, `recapLine`): "Coding agent", "Its account" and "GitHub", each with a tick and what was chosen, or a hyphen and "left for later" or "none for now".
+By the third question a person has scrolled past a token guide and another program's output, and the count alone does not say what was decided.
+The account's line names the kind of Claude account or the GitHub login the token belongs to, never a credential, and an answer too long for the box is cut.
+The recap is the questions' own: it is cleared when they end, so a header the setup shows later has none, and it costs each header two to four lines.
+Starting each question on a cleared screen under that recap is an experiment left for later (#2583).
 The count is the run's own: before the agent is chosen it counts the questions for the agent offered first, and with none to offer it shows the most a run asks: the agent, its account and GitHub (`InitCommand.questionsFor`).
 So the total can drop at the next header and never reads `+`; it grows only when the person turns down the agent offered for one with an account to set up.
 After the choice it counts again, so a Copilot run, whose account step is the GitHub question, reads `[2/2]`, and the intro's first stage lists the same questions.

@@ -224,6 +224,18 @@ class InitFirstRunTest {
         assertEquals(List.of(), prompts.questions());
     }
 
+    /** A recap line fits the box whatever the answer, and shows an account's text on one line. */
+    @Test
+    void aRecapLineFitsTheBox() {
+        assertEquals("  \u2713 Coding agent   Claude Code", InitCommand.recapLine(new InitCommand.Answered("Coding agent", "Claude Code", true)));
+        assertEquals("  - GitHub         none for now", InitCommand.recapLine(new InitCommand.Answered("GitHub", "none for now", false)));
+        var longLogin = InitCommand.recapLine(new InitCommand.Answered("GitHub", "acts as " + "a".repeat(80), true));
+        assertEquals(InitCommand.BOX_WIDTH - 2, longLogin.length());
+        assertTrue(longLogin.endsWith("..."), longLogin);
+        var hostile = InitCommand.recapLine(new InitCommand.Answered("GitHub", "acts as a\nb\u001b[2J", true));
+        assertFalse(hostile.contains("\n") || hostile.contains("\u001b"), hostile);
+    }
+
     /** The list is by the name shown, so a person finds their agent without reading every line (#2528). */
     @Test
     void theAgentListIsByNameWithThoseFoundFirst() {
