@@ -28,6 +28,7 @@ class InitServiceStepTest {
         boolean macOsServicesInstalled;
         boolean upgradeRestarts;
         boolean installFails;
+        boolean restartFails;
         final List<String> serviceActions = new ArrayList<>();
 
         private void record(String action) {
@@ -51,8 +52,9 @@ class InitServiceStepTest {
         }
 
         @Override
-        void restartProxyService() {
+        boolean restartProxyService() {
             record("restart");
+            return !restartFails;
         }
 
         @Override
@@ -98,6 +100,19 @@ class InitServiceStepTest {
         assertFalse(box.contains("Setup complete"), box);
         assertTrue(box.contains("Setup finished without the VM and proxy services."), box);
         assertTrue(box.contains("1. Start VM, proxy:"), box);
+    }
+
+    /** A running service whose owed restart failed is down, so it is not reported as running (#2597). */
+    @Test
+    void aRunningLinuxProxyServiceWhoseOwedRestartFailedIsRecordedAsFailed() throws IOException {
+        Files.writeString(Environment.initCompleteMarker(), String.valueOf(Environment.INIT_VERSION - 1));
+        init.serviceActive = true;
+        init.restartFails = true;
+        assertFalse(init.completeWithProxyService(null));
+        assertEquals(List.of("upgrade", "restart"), init.serviceActions);
+        assertEquals("the proxy service", init.failedService());
+        var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
+        assertFalse(box.contains("Setup complete"), box);
     }
 
     @Test
