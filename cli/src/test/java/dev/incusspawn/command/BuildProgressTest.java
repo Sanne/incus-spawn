@@ -8,6 +8,21 @@ class BuildProgressTest {
 
     // --- StepProgress ---
 
+    /** dnf 5's advice below a failure is not why it failed: the line above it is (#2542). */
+    @Test
+    void aFailedDnfIsQuotedByItsErrorNotItsAdvice() {
+        var out = """
+                Repositories loaded.
+                Failed to resolve the transaction:
+                No match for argument: no-such-package-isx
+                You can try to add to command line:
+                  --skip-unavailable to skip unavailable packages
+                """;
+        assertEquals("No match for argument: no-such-package-isx", BuildProgress.dnfFailureLine(out));
+        assertEquals("Error: Unable to find a match: nonesuch",
+                BuildProgress.dnfFailureLine("Error: Unable to find a match: nonesuch\n"));
+    }
+
     @Test
     void guestOutputInAStepCannotDriveTheTerminal() {
         // What a guest command printed, such as a repository's prime, is shown as text (#1588):
