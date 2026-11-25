@@ -229,7 +229,7 @@ class DoctorBaseImageTest {
         var daemon = new FakeIncusDaemon()
                 .container("tpl-java", stamps(Metadata.TYPE_BASE, "tpl-java", "fedora-44-20261021", CURRENT_SHA))
                 .container("a", stamps(Metadata.TYPE_CLONE, "tpl-java", "fedora-44-20261030", "ff".repeat(32)));
-        assertEquals(List.of(DoctorCommand.Finding.ok("Base images", "(2 checked, none older than a rebuild would use)")),
+        assertEquals(List.of(DoctorCommand.Finding.ok("Base images", "(2 checked, each as new as a rebuild would use)")),
                 findings(daemon));
 
         daemon.container("ancient", stamps(Metadata.TYPE_CLONE, "tpl-java", null, "ee".repeat(32)));

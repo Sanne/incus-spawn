@@ -105,7 +105,7 @@ class DoctorInstanceCredentialsTest {
                 List.of(guarded), guard -> !guard.equals("false")));
         assertEquals(1, findings.size());
         assertTrue(findings.getFirst().remediation().description().contains("Rebuild"));
-        assertTrue(findings.getFirst().remediation().description().contains("login alone cannot"));
+        assertTrue(findings.getFirst().remediation().description().contains("a new login does not fix"));
     }
 
     @Test

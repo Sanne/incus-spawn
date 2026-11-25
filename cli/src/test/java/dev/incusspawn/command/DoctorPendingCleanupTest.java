@@ -59,6 +59,6 @@ class DoctorPendingCleanupTest {
     void aThresholdIsxCannotSetIsANoteThatNamesTheFix() {
         var finding = DoctorCommand.thresholdNotSettable("cow");
         assertEquals(DoctorCommand.Status.NOTE, finding.status());
-        assertTrue(finding.detail().contains("re-run 'isx init'"), finding.detail());
+        assertTrue(finding.detail().contains("run 'isx init' again"), finding.detail());
     }
 }
