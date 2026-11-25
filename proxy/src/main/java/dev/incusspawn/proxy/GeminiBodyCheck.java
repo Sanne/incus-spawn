@@ -266,7 +266,7 @@ final class GeminiBodyCheck {
             case CONTENT, RESPONSE -> "parts".equals(name) ? PARTS : OPAQUE;
             case PART -> {
                 if ("fileData".equals(name) || "file_data".equals(name)) {
-                    throw new Refused(403, "a part's " + name + " is not served with the Vertex AI account");
+                    throw new Refused(403, "did not send this request: with a Vertex AI account, the proxy does not send a part's " + name);
                 }
                 yield "functionResponse".equals(name) || "function_response".equals(name) ? RESPONSE : OPAQUE;
             }
@@ -279,7 +279,7 @@ final class GeminiBodyCheck {
     }
 
     private static Refused refusedField(String name) {
-        return new Refused(403, "the field " + name + " is not served with the Vertex AI account");
+        return new Refused(403, "did not send this request: with a Vertex AI account, the proxy does not send the field " + name);
     }
 
     /** The key as read, quoted, with what could start or style a line of a log escaped. */

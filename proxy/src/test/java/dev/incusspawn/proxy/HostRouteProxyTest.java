@@ -319,7 +319,7 @@ class HostRouteProxyTest {
         try {
             var refused = send(WORK, withSecret());
             assertEquals(403, refused.status(), "Linux keeps the address check");
-            assertTrue(refused.body().contains("only an isx instance"), refused.body());
+            assertTrue(refused.body().contains("only to isx instances"), refused.body());
 
             proxy.proofIdentifies = (remote, local) -> true;
             var reply = send(WORK, withSecret());

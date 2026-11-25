@@ -378,7 +378,7 @@ class GoogleAuthRouteTest {
         // Nobody asked yet: refused, never relayed, so an API-key instance's sign-in cannot become the Google account's
         var unasked = token(form(exchangeForm("4/0Aunasked")));
         assertEquals(403, unasked.status(), unasked.body());
-        assertTrue(unasked.body().contains("asked to sign in"), unasked.body());
+        assertTrue(unasked.body().contains("cannot tell which instance this sign-in is for"), unasked.body());
         assertEquals(0, tokenRequests.get());
         assertNull(store.read(ACCOUNT));
 

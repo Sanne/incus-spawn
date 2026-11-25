@@ -215,7 +215,7 @@ final class GoogleAuthRoute {
             var what = req.method() + " " + req.path();
             warnOnce("Refusing " + domain + " " + what + " for " + describe(sourceAddress)
                     + ": not a request Google sign-ins allow (#2443)");
-            refuse(resp, 403, "forbidden", what + " is not allowed for a Google sign-in");
+            refuse(resp, 403, "forbidden", "isx did not send " + what + ": with a Google account, the proxy sends only the requests Antigravity CLI makes");
         }
         return ok;
     }
@@ -367,7 +367,7 @@ final class GoogleAuthRoute {
         if (registry == null) {
             // As proven() does: with nobody to tell a Google-account instance from another, a
             // relayed exchange could hand one real tokens
-            refuse(req.response(), 403, "forbidden", "no instance is known to the proxy yet; try again shortly");
+            refuse(req.response(), 403, "forbidden", "the proxy has not listed the instances yet; try again in a few seconds");
             return;
         }
         CallerCheck.identify(vertx, req, registry, r -> signInAccount(r, sourceAddress, byProofAlone), signIn -> {
@@ -434,8 +434,8 @@ final class GoogleAuthRoute {
         var running = registry.incarnations().running();
         var asked = signingIn.entrySet().stream().filter(e -> running.contains(e.getKey())).toList();
         if (asked.isEmpty()) {
-            return SignIn.refused("no instance on a Google account asked to sign in; open a new login shell in the"
-                    + " instance and start agy again, so its request shows the proxy which account signs in");
+            return SignIn.refused("the proxy cannot tell which instance this sign-in is for: open a new login shell in"
+                    + " the instance, start agy again there, and sign in from it");
         }
         if (asked.size() > 1) {
             return SignIn.refused("several instances asked to sign in at once (" + asked.stream().map(Map.Entry::getKey)

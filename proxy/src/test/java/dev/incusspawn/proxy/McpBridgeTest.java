@@ -214,7 +214,7 @@ class McpBridgeTest {
         try {
             var refused = post(null, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}");
             assertEquals(403, refused.status(), "Linux keeps the address check");
-            assertTrue(refused.body().contains("only an isx instance"), refused.body());
+            assertTrue(refused.body().contains("only to isx instances"), refused.body());
 
             proxy.proofIdentifies = (remote, local) -> true;
             var session = initialize();

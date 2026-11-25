@@ -160,7 +160,11 @@ final class HostRouteRelay {
             ProxyLog.warn("Refusing host route " + route.name() + " to instance '" + caller.instanceName() + "'"
                     + (lineage.untrusted() ? ", " + lineage.why()
                             : ", whose template '" + lineage.template() + "' the route does not list"));
-            CallerCheck.refuse(req, 403, "instance '" + caller.instanceName() + "' may not call " + route.name());
+            CallerCheck.refuse(req, 403, lineage.untrusted()
+                    ? "the host route " + route.name() + " does not admit instance '" + caller.instanceName()
+                            + "': it is " + lineage.why()
+                    : "the host route " + route.name() + " admits only instances of the templates"
+                            + " config.yaml lists for it, and instance '" + caller.instanceName() + "' is not one");
             return;
         }
         forward(req, served, caller);
