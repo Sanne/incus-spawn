@@ -128,7 +128,10 @@ class IncusApiLossyTunnelTest {
         server.instanceStatus = state;
         var said = RecordingOutput.during(() -> assertEquals(-1, exec(api()).exitCode()));
         assertEquals(1, said.warnings().size(), "nothing explains the lost operation: " + said.warnings());
-        assertTrue(said.warnings().getFirst().contains("exec operation lost (HTTP 404"), said.warnings().getFirst());
+        var warning = said.warnings().getFirst();
+        assertTrue(warning.startsWith("The exit code of a command in c1 is unknown: Incus answered HTTP 404"), warning);
+        // What says whether starvation lost it (#2527): this exec waited for no connection.
+        assertTrue(warning.contains(", 0.0 s of that spent waiting for a connection ("), warning);
     }
 
     @Test

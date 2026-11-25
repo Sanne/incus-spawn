@@ -497,6 +497,18 @@ The relay notices within a second, while the room is still full, so callers that
 What the limit gives up: with 192 connections held, the next one waits for as long as they stay, whoever asks, the next `isx` command and `isx doctor` included.
 Refusing it at once was the alternative, and lost: a burst of short requests beyond the room would then fail where it now only takes longer, and isx holds nothing near 192 connections.
 
+**One isx process also caps its own connections, at 48** (`UnixSocketTransport`).
+The cap predates the launcher: it kept one process from piling streams onto vfkit's forwarder, and it fails open after 10 s rather than wedge a burst.
+It was set well above one operation's need, which stopped being true once the overview ran an exec in every running instance (#2527).
+Each exec holds five connections, so with 30 instances running the execs took every permit, and a finished command's `/wait` waited past the 5 s Incus keeps a finished operation.
+So a bounded exec is now admitted before it is posted, and only as many run at once as fit in the cap with all five connections each (`IncusApi.BOUNDED_EXECS`).
+What this gives up: the reads run in a rolling window of eight, so N reads take about N/8 times one read, not the time of the slowest one.
+For 30 instances whose reads all time out, that is four waves of 13 s (the 10 s limit and the 3 s kill grace), about 50 s.
+Only probes wait in the window: the overview's reads, and `isx mcp`'s probes of instances other sessions hold (`probeElsewhere`) and of the task a person joins (`TaskJoin`).
+So with more than eight instances to ask, a task start waits for the waves before its own.
+`isx mcp`'s task status poll runs an unbounded exec, which is not admitted and does not wait.
+On Linux there is no forwarder for the cap to protect, and on a Mac the launcher's 192 is the real limit, so the cap's own value is still to be derived from the launcher's room and measured on a Mac.
+
 The framework's objects are used on the main queue alone, the queue the machine is made on.
 A relay's thread reaches the guest through `dial`, which asks the main queue and waits for it; nothing on the main queue waits for a relay.
 A connection that ends is closed there too: `hangUp` hands the close to the main queue and returns before it, since the relay has already shut the descriptor down.
