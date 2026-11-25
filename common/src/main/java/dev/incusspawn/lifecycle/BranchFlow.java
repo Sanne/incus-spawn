@@ -679,7 +679,8 @@ public final class BranchFlow {
         var memory = req.memory() != null ? req.memory() : defaults.memory();
         var disk = req.disk() != null ? req.disk() : defaults.disk();
 
-        BuildOutput.step("Resource limits: " +
+        // What the copy above was given: a note under it, not a line among the steps (#2528)
+        BuildOutput.stepNote("Resource limits: " +
                 (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
         warnIfMemoryShort(source, req.memory(), memory, defaults);
         if (req.kvm() == null && defaults.kvmNote() != null) BuildOutput.warn(defaults.kvmNote());

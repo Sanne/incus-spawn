@@ -66,6 +66,7 @@ public class RunCommand extends BaseCommand {
                 var prep = dev.incusspawn.incus.IncusClient.ShellPrep.fromInstance(incus, instance);
                 incus.interactiveShell(name, "agentuser", prep,
                         resolver.shellMenu(name, instance, parent, prep.workdir()));
+                BuildOutput.note(ShellFarewell.left(name));
                 return CommandResult.SUCCESS;
             }
             toolAction = ActionResolver.findActionByRef(ref, allActions).orElseThrow();
@@ -117,6 +118,7 @@ public class RunCommand extends BaseCommand {
                     ? ShellMenu.of(allActions, prep.workdir(), context)
                     : ShellMenu.NONE;
             incus.interactiveShell(name, "agentuser", updatedPrep, menu);
+            BuildOutput.note(ShellFarewell.left(name));
             return CommandResult.SUCCESS;
         }
 

@@ -34,6 +34,7 @@ abstract class ForwardingOutput implements Output {
     @Override public void prompt(String question) { delegate().prompt(question); }
     @Override public void windowTitle(String title) { delegate().windowTitle(title); }
     @Override public void stepNote(String msg) { delegate().stepNote(msg); }
+    @Override public void failureDetail(String msg) { delegate().failureDetail(msg); }
     @Override public void ok(String msg) { delegate().ok(msg); }
     @Override public void success(String msg) { delegate().success(msg); }
     @Override public void list(Collection<String> items) { delegate().list(items); }

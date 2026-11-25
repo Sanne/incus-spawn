@@ -502,6 +502,9 @@ The TUI had to redirect one and copy the other, and the copy caught `BuildOutput
 Progress printed while the TUI drew scrambled its screen, since only `Warnings` were redirected.
 Now `BuildOutput`'s static methods hand every message to one bound `Output`, and only the owner of the terminal binds it: the CLI keeps the `TerminalOutput` default, the TUI binds its log while it draws and a copying terminal while it lends it out, `PreTuiOutput` a terminal that holds what `Warnings` reports, `isx mcp` a terminal on stderr, the proxy its log.
 The first run of `isx init` binds `Output.detailsLogged` around its block of setup and its build (#2528): outcomes, warnings and questions reach the terminal, while step lines, notes and lists go to the client log, shown only before a warning or question that follows them.
+A failure's diagnostics are a kind of their own, `Output.failureDetail`: a note wherever a person reads the whole report, and in this output a line of the log that is never shown again.
+A failed build's container status and LXC log were notes, which this output held and replayed before the warning that names the saved report: twenty lines wider than the frame, above a closing box that said "Fix the error above".
+The error and the warning with the report's path stay on the screen.
 A failed step is printed, not copied: whoever called it reports the failure, as the TUI's status line does.
 An output that is not a terminal ignores progress and notes by default, while every diagnostic defaults to `warn`, so a new binding cannot lose a warning by forgetting a method.
 The TUI binds its copying terminal around every action it lends the terminal to, not per action, so the next action added cannot forget it.

@@ -16,6 +16,10 @@ import java.util.function.Consumer;
  * person reads the warning or answers the question by. An outcome ({@code ok}, a live step's end)
  * forgets them, so the screen shows one line for it, and the step notes right under it, which
  * say what it means.
+ *
+ * <p>A {@link #failureDetail} goes to the log and is never held: a failed build's container status
+ * and LXC log ran to twenty lines wider than the first run's frame, replayed before the warning
+ * that named the saved report, above a closing box that said "Fix the error above".
  */
 final class DetailsLoggedOutput extends ForwardingOutput {
 
@@ -40,8 +44,13 @@ final class DetailsLoggedOutput extends ForwardingOutput {
         if (msg == null) return;
         afterOutcome = false;
         // A blank line is held, not logged: a list of choices a question shows is spaced by them
-        if (!msg.isBlank()) BuildOutput.safeLines(msg.strip()).lines().forEach(log);
+        if (!msg.isBlank()) log(msg);
         held.add(show);
+    }
+
+    /** {@code msg} in the log, a line to a line, each made safe. */
+    private void log(String msg) {
+        BuildOutput.safeLines(msg.strip()).lines().forEach(log);
     }
 
     /** Shows what was held, before a message the person acts on. */
@@ -57,6 +66,10 @@ final class DetailsLoggedOutput extends ForwardingOutput {
         // A note right under an outcome says what it means, as the token's "isx keeps it" does
         if (afterOutcome) terminal.stepNote(msg);
         else hold(msg, () -> terminal.stepNote(msg));
+    }
+    // Logged and not held: nothing replays it before the next warning
+    @Override public void failureDetail(String msg) {
+        if (msg != null && !msg.isBlank()) log(msg);
     }
     @Override public void list(Collection<String> items) {
         hold(String.join(", ", items), () -> terminal.list(items));

@@ -1299,7 +1299,7 @@ public class BuildCommand extends BaseCommand {
      * kept, and in the report.
      */
     private static void appendDiag(StringBuilder diag, String line) {
-        BuildOutput.note(BuildOutput.stripAnsi(line).stripTrailing());
+        BuildOutput.failureDetail(BuildOutput.stripAnsi(line).stripTrailing());
         // Raw: the report's scrub sees what showing it would hide (#1878), and makes it safe
         diag.append(line).append('\n');
     }

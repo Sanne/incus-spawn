@@ -2240,33 +2240,11 @@ class CredentialSetup {
         var none = login == null ? "2" : "3";
         while (true) {
             BuildOutput.gap();
-            if (noAgent) {
-                prompts.say("As which GitHub account should isx machines act?");
-                prompts.say("");
-                prompts.say("  1. A separate account");
-                prompts.say("     Its permissions are independent of yours:");
-                prompts.say("     isx machines can work only on the repositories you");
-                prompts.say("     open to that account. Needs a second GitHub account");
-                prompts.say("     and a token for it.");
-            } else {
-                prompts.say("As which GitHub account should the agent act?");
-                prompts.say("");
-                prompts.say("  1. An account of the agent's own (recommended)");
-                // The hint gave the reason of identity; this is the one of access (#2528). It does
-                // not say a separate account is the only way to limit access: a restricted token
-                // of the person's own account limits it too, under their name
-                prompts.say("     Its permissions are independent of yours: the agent");
-                prompts.say("     can work only on the repositories you open to that");
-                prompts.say("     account. Needs a second GitHub account and a token");
-                prompts.say("     for it.");
-            }
+            // Each text whole, for the case it is said in: no line assembled from two halves
+            (noAgent ? SEPARATE_ACCOUNT_FOR_MACHINES : SEPARATE_ACCOUNT_FOR_AGENT).forEach(prompts::say);
             if (login != null) {
                 prompts.say("  2. Your own account, " + OutputFormat.oneLine(login));
-                // The breadth is the token's that gh holds, which is what this option takes
-                prompts.say(noAgent ? "     Quickest. People cannot tell that work from yours."
-                        : "     Quickest. People cannot tell the agent's work from");
-                prompts.say(noAgent ? "     It uses gh's token, with all of your access."
-                        : "     yours. It uses gh's token, with all of your access.");
+                (noAgent ? OWN_ACCOUNT_FOR_MACHINES : OWN_ACCOUNT_FOR_AGENT).forEach(prompts::say);
                 if (forCopilot) prompts.say("     Copilot CLI does not take a classic token from gh.");
             }
             prompts.say("  " + none + ". None for now");
@@ -2303,6 +2281,40 @@ class CredentialSetup {
 
     /** The login of the GitHub account this run last saved, as GitHub named it, or null: for the first run's recap. */
     String savedGitHubLogin;
+
+    /**
+     * The GitHub question and its first option, an account apart from the person's own. The
+     * step's hint gave the reason of identity; this gives the one of access (#2528). It does not
+     * say a separate account is the only way to limit access: a restricted token of the person's
+     * own account limits it too, under their name.
+     */
+    private static final List<String> SEPARATE_ACCOUNT_FOR_AGENT = List.of(
+            "As which GitHub account should the agent act?",
+            "",
+            "  1. An account of the agent's own (recommended)",
+            "     Its permissions are independent of yours: the agent",
+            "     can work only on the repositories you open to that",
+            "     account. Needs a second GitHub account and a token",
+            "     for it.");
+
+    /** {@link #SEPARATE_ACCOUNT_FOR_AGENT} when the first run chose no agent: what acts is isx machines. */
+    private static final List<String> SEPARATE_ACCOUNT_FOR_MACHINES = List.of(
+            "As which GitHub account should isx machines act?",
+            "",
+            "  1. A separate account",
+            "     Its permissions are independent of yours:",
+            "     isx machines can work only on the repositories you",
+            "     open to that account. Needs a second GitHub account",
+            "     and a token for it.");
+
+    /** Under the option for the gh login: the breadth is the token's that gh holds, which is what the option takes. */
+    private static final List<String> OWN_ACCOUNT_FOR_AGENT = List.of(
+            "     Quickest. People cannot tell the agent's work from",
+            "     yours. It uses gh's token, with all of your access.");
+
+    private static final List<String> OWN_ACCOUNT_FOR_MACHINES = List.of(
+            "     Quickest. People cannot tell that work from yours.",
+            "     It uses gh's token, with all of your access.");
 
     /** How the token part of the GitHub step ended. */
     enum GitHubOutcome { SAVED, SKIPPED, BACK }

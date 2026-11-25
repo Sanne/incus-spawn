@@ -85,4 +85,32 @@ class DetailsLoggedOutputTest {
         assertEquals(List.of(STEP, GAP, STEP, PROMPT), shown().stream().map(RecordingOutput.Event::kind).toList());
         assertEquals(List.of("The bridge's subnet is also a VPN's."), log);
     }
+
+    /**
+     * A failure's diagnostics go to the log and are not replayed (#2528): a failed build's
+     * container status and LXC log, a note anywhere else, came back before the warning that
+     * names the saved report.
+     */
+    @Test
+    void aFailuresDetailsAreLoggedAndNeverReplayedBeforeAWarning() {
+        out.failureDetail("  Container status: Running");
+        out.failureDetail("  LXC log (last 8 lines):");
+        out.error("Build failed for tpl-minimal: Operation failed", "exit status 1");
+        out.warn("The failure report is in build-failures/tpl-minimal.log.");
+
+        assertEquals(List.of(new RecordingOutput.Event(ERROR, "Build failed for tpl-minimal: Operation failed", List.of("exit status 1")),
+                new RecordingOutput.Event(WARN, "The failure report is in build-failures/tpl-minimal.log.")), shown());
+        assertEquals(List.of("Container status: Running", "LXC log (last 8 lines):"), log);
+    }
+
+    /** An output that shows everything draws a failure's detail as the note it always was. */
+    @Test
+    void aFailureDetailIsANoteWhereThePersonReadsTheWholeReport() {
+        var notes = new ArrayList<String>();
+        new Output() {
+            @Override public void warn(String msg, String... details) { }
+            @Override public void note(String msg) { notes.add(msg); }
+        }.failureDetail("  Container status: Running");
+        assertEquals(List.of("  Container status: Running"), notes);
+    }
 }

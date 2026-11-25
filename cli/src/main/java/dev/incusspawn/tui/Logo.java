@@ -1,8 +1,10 @@
 package dev.incusspawn.tui;
 
 import dev.incusspawn.util.BuildOutput;
+import dev.tamboui.style.Color;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.UnaryOperator;
 
@@ -31,8 +33,8 @@ public final class Logo {
      * prints lines does not ask, since the answer arrives on the stream its prompts read. So
      * these lie halfway between the two themes' accents, and read on either background.
      */
-    static final int[] FROM = {0x37, 0xa6, 0xbb};
-    static final int[] TO = {0x92, 0x63, 0xf4};
+    static final Color.Rgb FROM = new Color.Rgb(0x37, 0xa6, 0xbb);
+    static final Color.Rgb TO = new Color.Rgb(0x92, 0x63, 0xf4);
 
     /**
      * The rows for a terminal that is not the TUI's, coloured as far as that terminal is known
@@ -44,18 +46,10 @@ public final class Logo {
      * @param env reads an environment variable, null or empty when unset
      */
     public static List<String> forTerminal(UnaryOperator<String> env) {
+        if (!BuildOutput.ansi()) return List.of(ROWS);
         var depth = depth(env);
-        var rows = new ArrayList<String>();
-        for (var row : ROWS) {
-            if (!BuildOutput.ansi()) {
-                rows.add(row);
-            } else if (depth == ColorDepth.ANSI) {
-                rows.add(BuildOutput.styled(BuildOutput.BOLD + BuildOutput.CYAN, row));
-            } else {
-                rows.add(gradient(row, depth));
-            }
-        }
-        return rows;
+        return Arrays.stream(ROWS).map(row -> depth == ColorDepth.ANSI
+                ? BuildOutput.styled(BuildOutput.BOLD + BuildOutput.CYAN, row) : gradient(row, depth)).toList();
     }
 
     /** The gap between the logo and the text beside it. */
@@ -71,7 +65,14 @@ public final class Logo {
      * @param env reads an environment variable, null or empty when unset
      */
     public static List<String> beside(List<String> lines, UnaryOperator<String> env) {
-        if (!BuildOutput.ansi()) return lines;
+        return BuildOutput.ansi() ? rowsBeside(lines, env) : lines;
+    }
+
+    /**
+     * {@code lines} with the logo to their left whatever the terminal: for the first run's
+     * welcome, whose box is laid out around the logo, so colour off draws its rows plain.
+     */
+    public static List<String> rowsBeside(List<String> lines, UnaryOperator<String> env) {
         var rows = forTerminal(env);
         var out = new ArrayList<String>();
         for (int i = 0; i < Math.max(rows.size(), lines.size()); i++) {
@@ -95,7 +96,10 @@ public final class Logo {
         return value == null ? "" : value.toLowerCase(java.util.Locale.ROOT);
     }
 
-    /** {@code row} from {@link #FROM} to {@link #TO}, cell by cell; a space takes no colour. */
+    /**
+     * {@code row} from {@link #FROM} to {@link #TO}, cell by cell; a space takes no colour. Only
+     * for a terminal {@link BuildOutput#ansi()} holds for, which {@link #forTerminal} asked.
+     */
     private static String gradient(String row, ColorDepth depth) {
         var out = new StringBuilder();
         int last = Math.max(1, row.length() - 1);
@@ -105,17 +109,12 @@ public final class Logo {
                 out.append(cell);
                 continue;
             }
-            double t = i / (double) last;
-            int r = mix(FROM[0], TO[0], t), g = mix(FROM[1], TO[1], t), b = mix(FROM[2], TO[2], t);
-            var colour = depth == ColorDepth.TRUECOLOR
-                    ? "\033[1;38;2;" + r + ";" + g + ";" + b + "m" // raw ANSI: the logo's gradient, a colour per cell
-                    : "\033[1;38;5;" + ColorDepth.nearestIndexed(r, g, b) + "m"; // raw ANSI: the logo's gradient in the palette
-            out.append(BuildOutput.styled(colour, String.valueOf(cell)));
+            var colour = ColorDepth.mix(FROM, TO, i / (double) last);
+            out.append(depth == ColorDepth.TRUECOLOR
+                    ? "\033[1;38;2;" + colour.r() + ";" + colour.g() + ";" + colour.b() + "m" // raw ANSI: the logo's gradient, a colour per cell
+                    : "\033[1;38;5;" + ColorDepth.nearestIndexed(colour.r(), colour.g(), colour.b()) + "m") // raw ANSI: the logo's gradient in the palette
+                    .append(cell).append(BuildOutput.RESET);
         }
         return out.toString();
-    }
-
-    private static int mix(int from, int to, double t) {
-        return (int) Math.round(from + (to - from) * t);
     }
 }
