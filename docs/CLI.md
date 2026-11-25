@@ -20,8 +20,9 @@ A script reads `--format=plain` or `--format=json`, whose fields are in [Scripti
 
 ## `isx init`
 
-Set up the host once: install Incus, configure credentials and their [accounts](CONFIGURATION.md#credential-accounts), and test connectivity.
-Running it again is safe.
+Set up the host for isx, or check its setup and repair it.
+It installs Incus, its network and firewall rules, the proxy, and your credentials and their [accounts](CONFIGURATION.md#credential-accounts).
+Running it again is safe: it checks each step and repairs what is missing.
 
 ```shell
 isx init [--all] [--no-sudo] [--search-path=<dir>,...] [--code-dir=<dir>,...] [--fork-templates] [--service | --no-service] [--git-identity-from-host] [--format=table|plain|json]

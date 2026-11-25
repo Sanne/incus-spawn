@@ -34,7 +34,7 @@ class NoIncusCliHintTest {
     private static final Map<String, Set<String>> ALLOWED = Map.of(
             // isx init's Linux setup, before any pool or profile is isx's to manage
             "HostSetup.java", Set.of(
-                    "\"Check 'incus storage list'.\"",
+                    "\"'incus storage list' and 'incus network list' show what it has.\"",
                     "\"incus profile device add default root disk path=/ pool=\"",
                     "\"incus profile device add default eth0 nic network=incusbr0\"",
                     "\"Resize with: sudo incus storage set cow size=200GiB\"",

@@ -681,8 +681,7 @@ public class CertificateAuthority {
         Files.setPosixFilePermissions(caCertFile(),
                 PosixFilePermissions.fromString("rw-------"));
 
-        BuildOutput.stepNote("CA certificate saved to " + caCertFile());
-        BuildOutput.stepNote("CA private key saved to " + caKeyFile());
+        // Not reported: the live step around this, in generate(), says it is made (#2542)
 
         var cert = (X509Certificate) CertificateFactory.getInstance("X.509")
                 .generateCertificate(new ByteArrayInputStream(certDer));

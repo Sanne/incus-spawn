@@ -79,7 +79,7 @@ class InitFirewallOutputTest {
 
         assertEquals(List.of("Firewall reload failed.\nRun: sudo firewall-cmd --reload"), recorded.warnings());
         assertTrue(recorded.events(RecordingOutput.Kind.STEP).stream()
-                .noneMatch(e -> e.msg().startsWith("Firewall configured")), recorded.events()::toString);
+                .noneMatch(e -> e.msg().startsWith("The firewall lets")), recorded.events()::toString);
     }
 
     /**
@@ -108,7 +108,7 @@ class InitFirewallOutputTest {
     @Test
     void firewalldReportsSuccessWhenEveryCommandSucceeds() throws Exception {
         var output = firewalld("");
-        assertTrue(output.out().contains("Firewall configured"), output.out());
+        assertTrue(output.out().contains("The firewall lets instances reach the internet"), output.out());
         assertEquals("", output.err());
     }
 
@@ -129,13 +129,13 @@ class InitFirewallOutputTest {
         init.alsoFailing = "--reload";
         var output = capture(init.host()::configureFirewalld);
         assertFailureReported(output, "--add-masquerade");
-        assertTrue(output.err().contains("re-run: isx init"), output.err());
+        assertTrue(output.err().contains("then run 'isx init' again"), output.err());
     }
 
     @Test
     void ufwReportsSuccessWhenEveryCommandSucceeds() throws Exception {
         var output = ufw("");
-        assertTrue(output.out().contains("Firewall configured"), output.out());
+        assertTrue(output.out().contains("The firewall lets instances reach the internet"), output.out());
         assertEquals("", output.err());
     }
 

@@ -80,7 +80,7 @@ jbang app install isx-proxy@Sanne/incus-spawn
 The package is called `incus-spawn`, and it installs the `isx` command.
 
 ```shell
-# One-time host setup, ending with a first agent
+# Set up the host, ending with a first agent
 isx init
 ```
 
@@ -409,7 +409,7 @@ A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](do
 | Command | Description |
 |---------|-------------|
 | [`isx`](docs/CLI.md#isx) | Launch the interactive TUI |
-| [`isx init`](docs/CLI.md#isx-init) | One-time host setup, or one of its steps by name |
+| [`isx init`](docs/CLI.md#isx-init) | Set up the host for isx, or check its setup and repair it |
 | [`isx build`](docs/CLI.md#isx-build) | Build or rebuild templates |
 | [`isx branch`](docs/CLI.md#isx-branch) | Create a CoW clone from a template or instance |
 | [`isx shell`](docs/CLI.md#isx-shell) | Open a shell in an instance |

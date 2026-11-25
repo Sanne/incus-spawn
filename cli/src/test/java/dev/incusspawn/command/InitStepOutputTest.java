@@ -114,7 +114,7 @@ class InitStepOutputTest {
 
         assertEquals("sudo sysctl -p " + conf, init.commands.getLast());
         assertFalse(output.out().contains("Configured host sysctls"), output.out());
-        assertTrue(output.err().contains("applies after a reboot"), output.err());
+        assertTrue(output.err().contains("at the next reboot"), output.err());
     }
 
     @Test
@@ -125,7 +125,7 @@ class InitStepOutputTest {
 
         assertEquals("sudo nmcli general reload", init.commands.getLast());
         assertFalse(output.out().contains("Configured NetworkManager"), output.out());
-        assertTrue(output.err().contains("applies after a reboot"), output.err());
+        assertTrue(output.err().contains("at the next reboot"), output.err());
     }
 
     /** firewall-cmd warns on stderr and exits 0 when it removes a rule that is not there. */

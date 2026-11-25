@@ -15,12 +15,14 @@ class InitBannerTest {
 
     /** The banner, a frame init draws as given. */
     private static String banner() {
-        return String.join("\n", RecordingOutput.during(() -> InitCommand.printSetupBanner("", "~3 minutes")).frameLines());
+        return String.join("\n", RecordingOutput.during(() -> InitCommand.printSetupBanner("About 3 minutes.", null)).frameLines());
     }
 
     @Test
     void aFreshHostGetsFirstTimeSetup() {
-        assertTrue(banner().contains("First-Time Setup"));
+        var banner = banner();
+        assertTrue(banner.contains("Sets up this"), banner);
+        assertTrue(banner.contains("About 3 minutes."), banner);
     }
 
     @Test
@@ -28,8 +30,10 @@ class InitBannerTest {
         Files.createDirectories(Environment.configDir());
         Files.writeString(Environment.initCompleteMarker(), "1");
         var banner = banner();
-        assertFalse(banner.contains("First-Time"), banner);
-        assertTrue(banner.contains("existing configuration"), banner);
+        assertFalse(banner.contains("Sets up"), banner);
+        assertTrue(banner.contains("Checks the setup of"), banner);
+        // How long a first setup takes says nothing about a re-run
+        assertFalse(banner.contains("minutes"), banner);
     }
 
     @Test
@@ -37,7 +41,9 @@ class InitBannerTest {
         Files.createDirectories(Environment.configDir());
         Files.writeString(Environment.configDir().resolve("config.yaml"), "{}\n");
         var banner = banner();
-        assertFalse(banner.contains("First-Time"), banner);
-        assertTrue(banner.contains("existing configuration"), banner);
+        assertFalse(banner.contains("Sets up"), banner);
+        assertTrue(banner.contains("Checks the setup of"), banner);
+        // How long a first setup takes says nothing about a re-run
+        assertFalse(banner.contains("minutes"), banner);
     }
 }

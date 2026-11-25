@@ -43,6 +43,7 @@ Read those sections before rewording a flow.
 Which output call prints a text is `.claude/rules/terminal-output.md`; this file is how the text is worded.
 
 Output a script reads is a contract and is never reworded: the field names and values of `--format=plain|json` stay as they are (`.claude/rules/commands.md`).
+An `isx init` step's title and hint are values of `isx init --plan` too, its `title` and `purpose`: a reworded hint keeps the purpose it had in `InitCommand.PURPOSES` or a `HostSetup` `*_PURPOSE` constant, and a title is not reworded.
 
 ## The person meets a flow, not a file
 
