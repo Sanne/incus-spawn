@@ -479,7 +479,8 @@ class InitTranscriptsTest {
     @Test
     void aGitHubAccountAnEarlierTemplateListsIsAskedInItsOwnStep() throws Exception {
         var text = transcriptOf("38-earlier-tpl-agent-lists-gh");
-        assertTrue(text.contains("You answer   your coding agent, its account, GitHub"), text);
+        assertTrue(text.contains("1. A few questions about your preferred coding agent,"), text);
+        assertTrue(text.contains("its account and GitHub."), text);
         assertTrue(text.contains("Claude Code Account                                   [2/3]"), text);
         assertTrue(text.contains("GitHub Account                                        [3/3]"), text);
         // GitHub's account is not the agent's: the closing box does not ask for it as Claude Code's
