@@ -67,7 +67,7 @@ src_validate() {
     while read -r p; do
         [[ "$p" =~ $GMP_PATH_RE && "$p" != *..* ]] || die "manifest: item $ITEM: path '$p' is not a plain relative path"
     done < <(_paths)
-    item_list "$ITEM" files | grep -qxF -- "$(_pin_file)" || die "manifest: item $ITEM: source.pin.file is not one of its files"
+    grep -qxF -- "$(_pin_file)" <<<"$(item_list "$ITEM" files)" || die "manifest: item $ITEM: source.pin.file is not one of its files"
     text="$(_pin_text)"
     [[ "$text" == *"{version}"* && "${text/\{version\}/}" != *"{version}"* ]] || die "manifest: item $ITEM: source.pin.text must hold {version} once"
     src_first_party || die "manifest: item $ITEM: every git-main-paths item, review or mechanical, follows a repository of the manifest's owner that GitHub says is not a fork; $(_repo) is not one, or GitHub could not be asked: main-commit proves only that the owner merged it"

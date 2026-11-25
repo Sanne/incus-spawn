@@ -558,7 +558,7 @@ _verify_trees() {
         i="${touched[0]}"
         item_proposed "$i" || die "item $i is class $(item_class "$i"), so no PR of the app's may bump it"
         while read -r f; do
-            grep -qxF -- "$f" <(item_list "$i" files) || die "an upstream PR for $i changes $f, which is not one of its files"
+            grep -qxF -- "$f" <<<"$(item_list "$i" files)" || die "an upstream PR for $i changes $f, which is not one of its files"
         done <<<"$changed"
         load_source "$i"
         v_head="$(TREE="$wt_head" src_current)"

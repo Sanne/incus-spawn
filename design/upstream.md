@@ -57,6 +57,12 @@ It passes at once when no item's files changed, so it can be a required check.
 For anyone else's bump it re-derives every declared field of each touched item from the publisher, re-hashing the downloads, and fails on a difference.
 For a PR by the app from this repository it requires more: exactly one item, `class: mechanical` or `review`, only that item's files, a version newer than the base's and of the same series when `within: series`, a version the engine would propose itself (its `cooling` period over since the publisher dated it, and not one a closed unmerged `upstream/<item>` PR declined), every regenerated sum of a sum's shape, and a tree byte-identical to `main`'s engine applying that version to the merge base; anything else in the diff fails it.
 The regeneration runs in a subshell with errexit on and `inherit_errexit` set, since a function on the left of `||` runs with errexit off and a `die` inside `$(...)` would otherwise leave an empty sum that the final diff passes (the review of #2047 reproduced exactly that); the fixture test keeps that case.
+The engine reads a yq answer whole and never pipes it into a reader that may stop early, such as `grep -q` or `head -1` (#2576).
+Under `pipefail`, such a reader exiting at its first line kills a yq still writing with SIGPIPE, and the pipeline fails as if nothing matched.
+On a busy runner that happened now and then: `validate` reported that a pin named no file label, about a label the item does declare.
+A reader in a process substitution, `grep -q <(item_list ...)`, fails nothing when it stops early, but a yq still writing prints a write error where SIGPIPE is ignored, as on GitHub's runners, so it reads the whole answer too.
+`item_first` gives a list's first entry, and a membership check is `grep -qxF -- "$x" <<<"$(item_list ...)"`.
+`test-slow-pipe.sh` runs `validate` with SIGPIPE ignored, under a yq that delays its second line and names the call whose reader stopped before it.
 A PR touching `upstream/**` or `.github/**` is never the app's regeneration of any item, so the engine and its manifest change only through a PR a person merges, checked by `main`'s copy of themselves.
 
 **The merge gate** lives outside Actions, in the coordinator box: isx-workflow's `bin/upstream-merge.sh` is the only thing that ever approves or merges as the bot (its documentation is in that repository, WORKFLOW.md "Upstream bumps").

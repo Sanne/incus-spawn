@@ -13,7 +13,7 @@
 
 _vendors() { yq -r ".items[\"$ITEM\"].source.vendors | keys | .[]" "$MANIFEST"; }
 _vget() { yq -r ".items[\"$ITEM\"].source.vendors[\"$1\"][\"$2\"] // \"\"" "$MANIFEST"; }
-_models_file() { printf '%s/%s' "$TREE" "$(item_list "$ITEM" files | head -1)"; }
+_models_file() { printf '%s/%s' "$TREE" "$(item_first "$ITEM" files)"; }
 MODEL_ID_RE='^[a-z][a-z0-9.]*(-[a-z0-9.]+)+$'
 # A date as the vendors write it: June 9, 2026 or Jan 14, 2027.
 MODEL_DATE_RE='^[A-Z][a-z]{2,8}\.? [0-9]{1,2}, [0-9]{4}$'
