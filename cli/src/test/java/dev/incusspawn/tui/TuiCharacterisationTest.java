@@ -309,6 +309,26 @@ class TuiCharacterisationTest {
         snapshot("main-gauge-hint", tui);
     }
 
+    /** A deleted instance's row leaves the cursor on its neighbour, not on the first row (#2622). */
+    @Test
+    void aDeletedInstanceLeavesTheCursorOnItsNeighbour() {
+        var daemon = new FakeIncusDaemon();
+        for (var name : List.of("a-1", "b-1", "c-1", "d-1")) {
+            daemon.instance(name, "container", "Stopped", branch("tpl-minimal", 3 * 60 + 30));
+        }
+        var tui = tui(false, daemon);
+        press(tui, TAB, DOWN, DOWN);
+        assertEquals("c-1", tui.selectedInstance().name());
+
+        daemon.client().delete("c-1", true);
+        press(tui, KeyEvent.ofChar('r'));
+        assertEquals("d-1", tui.selectedInstance().name(), "the next row moved up under the cursor");
+
+        daemon.client().delete("d-1", true);
+        press(tui, KeyEvent.ofChar('r'));
+        assertEquals("b-1", tui.selectedInstance().name(), "the last row gone, the cursor goes to the one above");
+    }
+
     /** The widths come from every row, not the search's: a narrower listing moved the columns on a keystroke. */
     @Test
     void theColumnsHoldStillWhileASearchNarrowsTheLists() {

@@ -3040,12 +3040,16 @@ public class Tui {
     }
 
     /**
-     * Run a data reload while keeping both panels' selections on the same names. A row that
-     * disappeared falls back to the first instance.
+     * Run a data reload while keeping both panels' selections on the same names. When the selected
+     * instance disappeared, as a deleted one does, the cursor goes to its nearest neighbour still
+     * listed: the next one, or the previous one when it was the last (#2622).
      */
     private void preservingSelection(TableState tableState, Runnable reload) {
         var selectedInstance = selectedEntry(tableState);
         var selectedInstanceName = selectedInstance != null ? selectedInstance.name() : null;
+        // A reload builds a new row list, so this one still holds the rows as they were
+        var rowsBefore = rowToEntry;
+        var rowBefore = tableState.selected();
         var selectedTpl = selectedTemplate();
         var selectedTplName = selectedTpl != null ? selectedTpl.name() : null;
 
@@ -3061,18 +3065,29 @@ public class Tui {
             }
         }
 
-        // Restore instance selection
-        boolean reselected = false;
-        if (selectedInstanceName != null) {
-            for (int i = 0; i < rowToEntry.size(); i++) {
-                if (rowToEntry.get(i) != null && rowToEntry.get(i).name().equals(selectedInstanceName)) {
-                    tableState.select(i);
-                    reselected = true;
-                    break;
-                }
+        // Restore instance selection, else the nearest neighbour still listed: below it, then above
+        if (selectedInstanceName == null) {
+            selectFirstDataRow(tableState);
+            return;
+        }
+        if (selectInstanceNamed(tableState, selectedInstanceName)) return;
+        for (int i = rowBefore + 1; i < rowsBefore.size(); i++) {
+            if (rowsBefore.get(i) != null && selectInstanceNamed(tableState, rowsBefore.get(i).name())) return;
+        }
+        for (int i = rowBefore - 1; i >= 0; i--) {
+            if (rowsBefore.get(i) != null && selectInstanceNamed(tableState, rowsBefore.get(i).name())) return;
+        }
+        selectFirstDataRow(tableState);
+    }
+
+    private boolean selectInstanceNamed(TableState tableState, String name) {
+        for (int i = 0; i < rowToEntry.size(); i++) {
+            if (rowToEntry.get(i) != null && rowToEntry.get(i).name().equals(name)) {
+                tableState.select(i);
+                return true;
             }
         }
-        if (!reselected) selectFirstDataRow(tableState);
+        return false;
     }
 
     // --- Live refresh ---
