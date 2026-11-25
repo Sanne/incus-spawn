@@ -3726,8 +3726,12 @@ public class InitCommand extends BaseCommand {
         var restartOwed = active && !Environment.hasBeenInitialized();
         markInitComplete();
         if (active) {
-            // An owed restart that failed leaves the service down, so the closing box ticks no setup (#2597)
-            if (!upgradeProxyService() && restartOwed && !restartProxyService()) {
+            // A restart that failed, the upgrade's or an owed one, leaves the service down, so the
+            // closing box ticks no setup (#2597, #2604). The upgrade says only that it restarted.
+            var upgraded = upgradeProxyService();
+            if (upgraded ? !proxyServiceActive() : restartOwed && !restartProxyService()) {
+                // restartProxyService warns of its own failure; the upgrade's restart does not
+                if (upgraded) BuildOutput.warn("Proxy service did not restart.");
                 failed.add("proxy-service");
                 return false;
             }

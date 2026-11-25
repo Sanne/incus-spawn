@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,6 +28,7 @@ class InitServiceStepTest {
         boolean serviceActive;
         boolean macOsServicesInstalled;
         boolean upgradeRestarts;
+        boolean upgradeLeavesItDown;
         boolean installFails;
         boolean restartFails;
         final List<String> serviceActions = new ArrayList<>();
@@ -48,6 +50,7 @@ class InitServiceStepTest {
         @Override
         boolean upgradeProxyService() {
             record("upgrade");
+            if (upgradeLeavesItDown) serviceActive = false;
             return upgradeRestarts;
         }
 
@@ -111,6 +114,22 @@ class InitServiceStepTest {
         assertFalse(init.completeWithProxyService(null));
         assertEquals(List.of("upgrade", "restart"), init.serviceActions);
         assertEquals("the proxy service", init.failedService());
+        var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
+        assertFalse(box.contains("Setup complete"), box);
+    }
+
+    /** An upgrade whose restart left the service down is not reported as running either (#2604). */
+    @Test
+    void aRunningLinuxProxyServiceThatTheUpgradeRestartLeftDownIsRecordedAsFailed() throws IOException {
+        Environment.markInitComplete();
+        init.serviceActive = true;
+        init.upgradeRestarts = true;
+        init.upgradeLeavesItDown = true;
+        var output = RecordingOutput.during(() -> assertFalse(init.completeWithProxyService(null)));
+        assertEquals(List.of("upgrade"), init.serviceActions);
+        assertEquals("the proxy service", init.failedService());
+        assertEquals(List.of(), output.events(RecordingOutput.Kind.STEP));
+        assertEquals(1, output.events(RecordingOutput.Kind.WARN).size());
         var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
         assertFalse(box.contains("Setup complete"), box);
     }
