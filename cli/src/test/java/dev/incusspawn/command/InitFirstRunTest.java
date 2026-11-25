@@ -142,23 +142,53 @@ class InitFirstRunTest {
         assertEquals(List.of("claude"), init.downloads);
     }
 
+    /** The number the agent list shows for {@code agent}, with no agent found on this computer. */
+    private static String listed(FirstRunInit init, String agent) {
+        var order = InitCommand.agentsInListOrder(init.codingAgentTools(), java.util.Set.of());
+        return String.valueOf(order.indexOf(init.agent(agent)) + 1);
+    }
+
+    /**
+     * With no agent found the list is shown once, and Enter chooses nothing: an answer that is
+     * no number of the list is told which numbers there are and asked again (#2528).
+     */
     @Test
     void withNoAgentFoundEnterChoosesNothing() throws Exception {
         var init = new FirstRunInit();
         init.credentialGiven = true;
         init.gitHubGiven = true;
-        var agents = init.codingAgentTools();
-        var codex = agents.indexOf(init.agent("codex")) + 1;
-        var prompts = ScriptedPrompts.lines("", String.valueOf(codex));
+        var prompts = ScriptedPrompts.lines("", "codex", listed(init, "codex"));
         init.prompts = prompts;
 
         RecordingOutput.during(init::askFirstRunQuestions);
 
         prompts.assertFullyConsumed();
         assertEquals("codex", init.chosenAgent.name());
-        assertEquals(List.of("Choice (Enter to see the list again): ", "Choice (Enter to see the list again): "), prompts.questions());
-        assertTrue(said(prompts).contains("isx can set up these agents. Choose one:"), said(prompts));
-        assertTrue(said(prompts).contains("None for now"), said(prompts));
+        assertEquals(List.of("Choice: ", "Choice: ", "Choice: "), prompts.questions());
+        var said = said(prompts);
+        assertEquals(1, said.split("isx can set up these agents:", -1).length - 1, "the list is shown once:\n" + said);
+        assertFalse(said.contains("Choose one"), said);
+        var numbers = "Type a number from 1 to " + (init.codingAgentTools().size() + 1) + ".";
+        assertEquals(2, said.split(java.util.regex.Pattern.quote(numbers), -1).length - 1, said);
+        assertTrue(said.contains("None for now"), said);
+    }
+
+    /** The list is by the name shown, so a person finds their agent without reading every line (#2528). */
+    @Test
+    void theAgentListIsByNameWithThoseFoundFirst() {
+        var init = new FirstRunInit();
+        var agents = init.codingAgentTools();
+        var titles = InitCommand.agentsInListOrder(agents, java.util.Set.of()).stream().map(ExampleTemplate::title).toList();
+        var sorted = new ArrayList<>(titles);
+        sorted.sort(String.CASE_INSENSITIVE_ORDER);
+        assertEquals(sorted, titles);
+        assertEquals(agents.size(), titles.size());
+
+        var found = InitCommand.agentsInListOrder(agents, java.util.Set.of("pi", "codex")).stream().map(ToolSetup::name).toList();
+        assertEquals(java.util.Set.of("pi", "codex"), java.util.Set.copyOf(found.subList(0, 2)), found::toString);
+        assertEquals(titles.stream().filter(t -> !t.equals(ExampleTemplate.title(init.agent("pi")))
+                        && !t.equals(ExampleTemplate.title(init.agent("codex")))).toList(),
+                found.subList(2, found.size()).stream().map(n -> ExampleTemplate.title(init.agent(n))).toList());
     }
 
     @Test

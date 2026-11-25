@@ -1513,11 +1513,13 @@ public class InitCommand extends BaseCommand {
         if (all || searchPathAnswers != null || forkTemplates) later.add(searchPathsStep());
         if (all || codeDirAnswers != null) later.add(codeDirectoriesStep());
         if (all) later.add(mcpStep());
-        // Counted for the agent offered first; with none, the fewest a run can ask, marked "+" (#2528)
+        // Counted for the agent offered first, as the intro's "You answer" row is; with none to
+        // offer, the most a run can ask (the agent, its account, GitHub), so the total can only
+        // drop at the next header and never reads "+" (#2528)
         var extra = (all ? 1 : 0) + later.size();
         var suggested = suggestedAgent();
-        totalSteps = (suggested == null ? new Questions(false, false, needsGitHub) : questionsFor(suggested, needsGitHub)).count() + extra;
-        totalKnown = !all && suggested != null;
+        totalSteps = (suggested == null ? new Questions(true, false, needsGitHub) : questionsFor(suggested, needsGitHub)).count() + extra;
+        totalKnown = !all;
         var noCredential = false;
         try {
             begin(agentStep());
@@ -1748,21 +1750,44 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    /** The list of agents and "None for now", until one is chosen: Enter chooses nothing, EOF none. */
+    /**
+     * The list of agents and "None for now", shown once, until one is chosen: an answer that is
+     * no number of the list is asked again, and EOF chooses none.
+     */
     private ToolSetup chooseAgent(Prompts prompts, List<ToolSetup> agents) {
-        var options = new ArrayList<>(agents.stream().map(ExampleTemplate::title).toList());
+        var found = probed().stream().map(HostAgentProbe.HostAgent::agent).collect(Collectors.toSet());
+        var listed = agentsInListOrder(agents, found);
+        var options = new ArrayList<String>();
+        for (var agent : listed) {
+            options.add(ExampleTemplate.title(agent)
+                    + (found.contains(agent.name()) ? " (found on " + dev.incusspawn.Platform.thisComputer() + ")" : ""));
+        }
         options.add("None for now\nA plain isx machine, with no agent and no account.");
+        var answer = prompts.choose("isx can set up these agents:", options, null, null);
         while (true) {
-            var answer = prompts.choose("isx can set up these agents.", options, null, "see the list again");
             if (answer == null) return null;
             try {
                 var n = Integer.parseInt(answer.strip());
-                if (n >= 1 && n <= agents.size()) return agents.get(n - 1);
-                if (n == agents.size() + 1) return null;
+                if (n >= 1 && n <= listed.size()) return listed.get(n - 1);
+                if (n == listed.size() + 1) return null;
             } catch (NumberFormatException e) {
                 // Asked again
             }
+            prompts.say("Type a number from 1 to " + options.size() + ".");
+            answer = prompts.ask("Choice: ");
         }
+    }
+
+    /**
+     * The agents as the list shows them: those found on this computer first, then the others,
+     * each group by the name shown, so a person finds theirs without reading every line and no
+     * order of isx's own ranks one above another (#2528).
+     */
+    static List<ToolSetup> agentsInListOrder(List<ToolSetup> agents, java.util.Set<String> found) {
+        return agents.stream()
+                .sorted(java.util.Comparator.comparing((ToolSetup a) -> !found.contains(a.name()))
+                        .thenComparing(ExampleTemplate::title, String.CASE_INSENSITIVE_ORDER))
+                .toList();
     }
 
     /**

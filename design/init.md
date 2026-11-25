@@ -18,7 +18,8 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    The questions it lists are those this run asks: an account already set up is left out.
 2. It asks for the preferred agent (`askAgent`).
    One the person already prefers, else one `HostAgentProbe` found signed in, else one found installed, is offered and chosen by Enter, with `o` for the list and `n` for no agent; the prompt says what each letter does.
-   With none found the list is shown, and Enter chooses nothing: it shows the list again, so isx never picks a vendor for the person.
+   With none found the list is shown once, and Enter chooses nothing: an answer that is no number of the list gets one line saying which numbers there are, so isx never picks a vendor for the person.
+   The list shows the agents found on this computer first, each marked as found, then the others, each group by the name shown (`InitCommand.agentsInListOrder`), so no order of isx's own ranks one vendor above another.
    "None for now" is a choice, and stores nothing.
    The answer starts the agent's own pinned downloads, less those already started.
    An agent with a question of its own (`ToolSetup.firstRunQuestion`) is asked it next, unless a `tpl-agent` is kept (#2536).
@@ -115,7 +116,10 @@ It has three options, each saying what it gives and what it costs: an account of
 There is no default, so Enter asks again, and the `gh` login is taken only when the person types its number.
 With no signed-in `gh`, the second option is absent, and a line says how to get it.
 The agent's own account gets a guide that starts from being signed in as that account, which a browser signed in as the person is not.
-So isx prints the pre-filled token page as a link and never opens it; `u` at the token prompt prints its whole address, for a terminal whose links cannot be clicked.
+So isx neither opens the pre-filled token page nor prints a link to it: a click opens the browser that is signed in as the person.
+The guide's second step names the page where it is used, GitHub's page for a new token, and says isx has an address for it that fills in the permissions.
+At the token prompt `c` copies that address to the clipboard, to paste in the window signed in as the agent, and `u` prints it.
+`c` is offered only where a clipboard command reaches the person's own screen (`CredentialSetup.clipboardCommand`: `pbcopy`, `wl-copy`, `xclip` or `xsel`, and never over SSH), which gives up clicking for everyone and copying for a person on a remote terminal.
 Enter at that prompt goes back to the three options.
 A token that verified asks which email the agent's commits carry: GitHub's private address, `<id>+<login>@users.noreply.github.com`, or the account's primary one, Enter taking the private one.
 With no primary address to read, the private one is taken without asking, so a token without the email permission no longer asks for another token.
@@ -131,7 +135,8 @@ What an agent runs in is an "isx machine", the computer is "this Mac" or "this c
 That word is the first run's alone: a credential step shared with `isx account add` says "instance" outside it (`CredentialSetup.machines`), and nothing else in isx was renamed.
 What is asked comes before why, a step that starts something says what will happen first, and each answer says what it does.
 A step header shows its number once, as `[2/3]`.
-The count is the run's own: before the agent is chosen it counts the questions for the agent offered first, and with none to offer it shows the fewest a run asks, as `[1/2+]` (`InitCommand.questionsFor`).
+The count is the run's own: before the agent is chosen it counts the questions for the agent offered first, and with none to offer it shows the most a run asks: the agent, its account and GitHub (`InitCommand.questionsFor`).
+So the total can drop at the next header and never reads `+`; it grows only when the person turns down the agent offered for one with an account to set up.
 After the choice it counts again, so a Copilot run, whose account step is the GitHub question, reads `[2/2]`, and the intro's "You answer" row lists the same questions.
 With no agent chosen, the GitHub step and the Git identity question speak of isx machines, never of "the agent" (`CredentialSetup.noAgent`).
 A check that fails is answered with one letter per meaning across the step: `Y` tries again and `s` skips, as in the step's own menu.
@@ -143,7 +148,10 @@ The check always comes from the definition the proxy uses, loaded without the pr
 A 2xx verifies a key, a 401 rejects it, and so does a 400 that calls it invalid or expired; any other answer, a 403 included, lets the person save it unverified.
 `s` after a failed check skips the account and saves nothing of the step.
 Claude's and GitHub's steps check their credentials in code; Bob's, Atlassian's and TypeSafe's keys declare `none`, since no documented request checks them.
-A pasted key nothing checks (a user's tool that declares no check, or `none`) is reported in one line, `saved on this computer, not checked`, with the command that replaces it; no line confirms the paste apart from it (#2528).
+A pasted key nothing checks (a user's tool that declares no check, or `none`) is reported in one line, `saved on this computer, not checked`, with the command that replaces it (#2528).
+Every pasted secret gets a receipt first, `Received N characters`, with its masked ends (`CredentialSetup.received`, #2565).
+A secret is not echoed, so the receipt is the only sign that the paste arrived, and it comes before a check that can take a while and before the GitHub step's email question, which is asked ahead of the outcome line.
+It carries no tick, which is kept for a credential that was checked, and it costs a second line beside the outcome line.
 A ChatGPT sign-in by one-time code that did not finish offers the same `Y` and `s`, and `Y` asks for a new code, since a code expires by itself (`CredentialSetup.signInChatGptWithDeviceCode`).
 Saving unverified (`u`) is offered only when the check could not run or reach the service (`CredentialSetup.AuthResult.reached`), since a credential the service rejected fails the same way in every isx machine.
 A namespace with a hosted sign-in (Gemini's Google account) offers its kinds as the Claude step does, each with a line under it and "None for now", and offers the hosted kind only to the agents that can use it (`ToolSetup.HostedSignIn.tools`): a first run for Gemini CLI never offers Antigravity CLI's Google sign-in.

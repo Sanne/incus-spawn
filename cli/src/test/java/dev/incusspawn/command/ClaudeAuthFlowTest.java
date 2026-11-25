@@ -162,12 +162,12 @@ class ClaudeAuthFlowTest {
         var prompts = new ScriptedPrompts().line("4");
         run(new FakeInit(), prompts);
         assertEquals(java.util.List.of(
-                "Which kind of Claude account do you have? Choose one:",
+                "Which kind of Claude account do you have?",
                 "",
                 "  1. An Anthropic API key",
                 "     From the Claude Console, billed by use.",
                 "  2. A Claude subscription (Pro, Max or Team)",
-                "     Claude Code makes a token for it.",
+                "     Claude Code creates a token for it.",
                 "  3. Google Cloud Vertex AI",
                 "     Billed to your Google Cloud project.",
                 "  4. None for now",
@@ -233,7 +233,7 @@ class ClaudeAuthFlowTest {
         var said = out.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).toList();
         assertTrue(said.stream().anyMatch(line -> line.startsWith("The token isx read did not verify.")), said::toString);
         assertTrue(said.contains("The token above starts with 'sk-ant-oat01-'."), said::toString);
-        assertTrue(prompts.conversation().stream().anyMatch(line -> line.contains("Paste the token above, or Enter to go back")),
+        assertTrue(prompts.conversation().stream().anyMatch(line -> line.contains("Paste the Claude token above, or Enter to go back")),
                 prompts.conversation()::toString);
     }
 

@@ -189,10 +189,12 @@ Tests drive flows with `ScriptedPrompts`, which fails if a value scripted as a s
 `@ExtendWith(IsolatedHome.class)` is required for anything that can reach `config.save()`, which otherwise writes `target/test-home/.config/incus-spawn/config.yaml`, shared by the module's tests: surefire points every test JVM's `user.home` there so the developer's real one is never touched (#2426).
 It also gives `CredentialSetup` an empty `FakeIncusDaemon` (`CredentialSetup.replaceIncus`, `IsolatedHome.incus()`), so an account flow never reads the developer's instances, which made it ask questions no test scripted (#1965).
 Secrets are read with `askSecret(prompts)`, never a bare `readPassword()`.
-Nothing is echoed, and nothing confirms the paste on its own line: the step's one outcome line says the credential was saved, verified or `not checked` (#2528); `GitHubAuthFlowTest` asserts the raw token never reaches stdout.
+Nothing is echoed, so every pasted secret gets a receipt, `Received N characters (<masked>)` (`CredentialSetup.received`, #2565): a plain line with no tick, printed before the check and before any question that comes ahead of the outcome line.
+The step's one outcome line then says the credential was saved, verified or `not checked` (#2528); `GitHubAuthFlowTest` asserts the raw token never reaches stdout.
+A new secret prompt goes through `CredentialSetup.askSecret`, or calls `received` itself once it has ruled out the answers that are no secret (`SecretReceiptTest`).
 New prompts in init follow the same shape: take `Prompts`, route any network or host call through an overridable method, and add a flow test asserting what reaches the file on disk.
-A question with several alternatives goes through `Prompts.choose` (#2492): a blank line, a lead-in that says "Choose one", the options indented as a group, one shared note after the list, and a prompt that says what Enter does.
-A question that takes several answers, such as Credential Setup's, goes through `Prompts.chooseSeveral`, the same layout.
+A question with several alternatives goes through `Prompts.choose` (#2492): a blank line, the question as its lead-in with no "Choose one" after it (#2528), the options indented as a group, one shared note after the list, and a prompt that says what Enter does.
+A question that takes several answers, such as Credential Setup's, goes through `Prompts.chooseSeveral`, the same layout, whose lead-in ends "Choose one or more:" since taking several is not what a list suggests.
 A step never indents its own menu lines.
 The host-setup confirmations (Incus install, subid, CoW pool) ask through the same `Prompts` (`askYesNo`).
 

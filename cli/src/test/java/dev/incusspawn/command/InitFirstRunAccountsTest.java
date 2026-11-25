@@ -39,7 +39,8 @@ class InitFirstRunAccountsTest {
     /** The questions for {@code agent}, chosen from the list, then answered with {@code answers} and end of input. */
     private static List<String> ask(String agent, ScriptedPrompts answers, Init init) {
         init.credentials = new Host();
-        var agents = init.codingAgentTools();
+        // As the list shows them with no agent found on this computer
+        var agents = InitCommand.agentsInListOrder(init.codingAgentTools(), java.util.Set.of());
         var number = agents.indexOf(agents.stream().filter(a -> a.name().equals(agent)).findFirst().orElseThrow()) + 1;
         var prompts = ScriptedPrompts.lines(String.valueOf(number));
         init.prompts = new Prompts() {
@@ -145,7 +146,7 @@ class InitFirstRunAccountsTest {
         // The key, then Enter at it, which goes back to the kinds (#2528); end of input ends there
         var lines = ask("antigravity", new ScriptedPrompts().line("1").secret(""), new Init());
 
-        var question = at(lines, "Which kind of Gemini account do you have? Choose one:");
+        var question = at(lines, "Which kind of Gemini account do you have?");
         assertTrue(at(lines, "Antigravity CLI uses a Gemini account.") < question, String.join("\n", lines));
         assertTrue(at(lines, "1. A Gemini API key") > question, String.join("\n", lines));
         assertTrue(at(lines, "2. A Google account") > question, String.join("\n", lines));
