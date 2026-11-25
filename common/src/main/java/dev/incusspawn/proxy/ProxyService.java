@@ -341,20 +341,6 @@ public final class ProxyService {
 
         // The path is for a log, not for the person setting up (#2528)
         dev.incusspawn.ClientLog.debug("Service file written to " + Environment.proxyServiceFile());
-        // The step's own mark says whether the service is running, asked of the service itself:
-        // the commands can succeed for a service that then is not active
-        BuildOutput.stepStart("Starting the isx proxy service");
-        runQuiet("systemctl", "--user", "daemon-reload");
-        runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME);
-        var active = isActive();
-        if (active) {
-            BuildOutput.stepDone();
-        } else {
-            BuildOutput.stepBreak();
-            // Why it failed comes right under its mark, before the next step's line (#2528)
-            reportServiceFailure("The isx proxy service did not start.");
-        }
-
         if (dev.incusspawn.util.Privilege.forbidden()) {
             // isx init --no-sudo: the person's script enabled it (#2074)
             BuildOutput.note("Lingering is the root script's step, so the proxy keeps running after you log out once it ran.");
@@ -364,16 +350,25 @@ public final class ProxyService {
             else BuildOutput.stepFail("The proxy stops when you log out. Run: sudo loginctl enable-linger "
                     + System.getProperty("user.name"));
         }
-        // Asked last, so the proxy starts while sudo runs and may ask for a password
-        return active && confirmAnswering();
-    }
 
-    /** Whether the service that is active answers, and is the one answering: says so, or why not. */
-    private static boolean confirmAnswering() {
+        // One live step from the commands to the proxy answering, so its mark says what is true:
+        // a unit that crashes at once can still read active right after it is enabled, and the
+        // tick then stood above a long wait and an error. Why it failed comes right under the
+        // mark (#2528).
+        BuildOutput.stepStart("Starting the isx proxy service");
+        runQuiet("systemctl", "--user", "daemon-reload");
+        runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME);
+        if (!isActive()) {
+            BuildOutput.stepBreak();
+            reportServiceFailure("The isx proxy service did not start.");
+            return false;
+        }
         if (!ProxyHealthCheck.awaitHealthy(configuredStartWaitSeconds())) {
+            BuildOutput.stepBreak();
             reportServiceFailure("Service started but proxy is not responding.");
             return false;
         }
+        BuildOutput.stepDone();
         if (!answeringIsTheService()) return false;
         BuildOutput.step("Proxy service is running.");
         return true;
@@ -1630,30 +1625,34 @@ public final class ProxyService {
         return previous;
     }
 
-    /** Whether sudo has no cached credential and would ask for a password: {@code sudo -n true} fails. */
-    private static boolean sudoWouldAsk() {
-        try {
-            var process = new ProcessBuilder("sudo", "-n", "true")
-                    .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
-            return process.waitFor() != 0;
-        } catch (IOException e) {
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return true;
-        }
+    /**
+     * Runs {@code command} quietly. A sudo is first run so that it cannot ask ({@code sudo -n}):
+     * only when sudo itself says a password is required is the live step's line frozen and the
+     * command run again, free to ask on the terminal. Frozen before every sudo, the line stayed
+     * on the screen as a stale "… label" above the step's own mark (#2528); and asking the
+     * command itself, not {@code sudo -n true}, leaves no case where the two disagree, such as a
+     * sudoers rule for one command or a credential that expires in between.
+     */
+    private static boolean runProcess(String... command) {
+        if (command.length == 0 || !command[0].equals("sudo")) return exitsZero(command, null);
+        var unasked = new ArrayList<>(List.of(command));
+        unasked.add(1, "-n");
+        var said = new StringBuilder();
+        if (exitsZero(unasked.toArray(String[]::new), said)) return true;
+        // The command ran and failed: running it again would only fail again
+        if (!said.toString().contains("password is required")) return false;
+        BuildOutput.releaseTerminal();
+        return exitsZero(command, null);
     }
 
-    private static boolean runProcess(String... command) {
-        // sudo may ask for a password on the tty, which a live step line would be drawn over. Only
-        // then is the line frozen: frozen for a sudo that asks nothing, it stayed on the screen
-        // as a stale "… label" above the step's own mark (#2528).
-        if (command.length > 0 && command[0].equals("sudo") && sudoWouldAsk()) BuildOutput.releaseTerminal();
+    /** Whether {@code command} exits 0; what it printed goes to {@code said} when given, else nowhere. */
+    private static boolean exitsZero(String[] command, StringBuilder said) {
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
             var process = pb.start();
-            process.getInputStream().readAllBytes();
+            var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            if (said != null) said.append(output);
             return process.waitFor() == 0;
         } catch (Exception ignored) {
             return false;

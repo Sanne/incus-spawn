@@ -952,7 +952,9 @@ class InitFirstRunTest {
         var said = said(prompts);
         assertTrue(said.contains("2. Your own account, jdoe"), said);
         // Each option says its cost: whose name is on the work, and whose access the token has (#2528)
-        assertTrue(said.contains("Its permissions are independent of yours: the agent"), said);
+        assertTrue(said.contains("1. A separate account for the agent (recommended)"), said);
+        assertTrue(said.contains("can work only on the repositories this account owns,"), said);
+        assertFalse(said.contains("you open to"), "that reads as inviting a collaborator, where the token cannot write:\n" + said);
         assertTrue(said.contains("Quickest. People cannot tell the agent's work from"), said);
         assertTrue(said.contains("yours. It uses gh's token, with all of your access."), said);
         assertFalse(said.contains("reach"), "say which repositories, not what it can reach:\n" + said);

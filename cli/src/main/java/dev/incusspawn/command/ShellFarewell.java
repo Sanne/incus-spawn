@@ -1,6 +1,9 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+
+import java.util.List;
 
 /**
  * What isx says when a shell in an instance ends (#2528). Leaving one printed only the guest's
@@ -18,11 +21,18 @@ final class ShellFarewell {
 
     /**
      * After a shell in {@code name} ends: that isx leaves the instance running, and the two
-     * commands that follow from that. It says what isx did, never the state it did not read,
-     * since something run inside the shell may have stopped the instance.
+     * commands that follow from that, on a line of their own so neither wraps on an 80-column
+     * terminal. It says what isx did, never the state it did not read, since something run
+     * inside the shell may have stopped the instance.
      */
-    static String left(String name) {
+    static List<String> left(String name) {
         var shown = OutputFormat.oneLine(name);
-        return "Left " + shown + ", which isx leaves running. Return: isx shell " + shown + ". Stop it: isx stop " + shown + ".";
+        return List.of("Left " + shown + ", which isx leaves running.",
+                "Return: isx shell " + shown + ". Stop it: isx stop " + shown + ".");
+    }
+
+    /** Says {@link #left} as notes. */
+    static void say(String name) {
+        left(name).forEach(BuildOutput::note);
     }
 }

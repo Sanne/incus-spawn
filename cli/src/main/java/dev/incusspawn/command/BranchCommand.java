@@ -156,7 +156,7 @@ public class BranchCommand extends BaseCommand {
         }
         var menu = resolver.shellMenu(name, created.prefetched().templateName(), created.prefetched().workdir());
         incus.interactiveShell(name, "agentuser", shellPrep, menu);
-        BuildOutput.note(ShellFarewell.left(name));
+        ShellFarewell.say(name);
         return CommandResult.SUCCESS;
     }
 
