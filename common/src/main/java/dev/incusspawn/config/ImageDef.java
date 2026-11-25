@@ -934,6 +934,23 @@ public class ImageDef extends DefinitionOrigin {
      * descendant, one per deprecated ancestor, buried which one that was.
      */
     public static Optional<String> deprecationWarning(ImageDef start, Map<String, ImageDef> defs) {
+        return deprecation(start, defs).map(Deprecation::warning);
+    }
+
+    /**
+     * What a deprecation says, in two parts: {@code what} is deprecated, as a sentence without its
+     * full stop, and the definition's {@code note}, empty for {@code deprecated: true}. A terminal
+     * shows the note under {@code what}, wrapped to its frame (#2542).
+     */
+    public record Deprecation(String what, String note) {
+        /** Both parts on one line, as the TUI's template details show them. */
+        public String warning() {
+            return note.isEmpty() ? what + "." : what + ": " + note;
+        }
+    }
+
+    /** The parts of {@link #deprecationWarning}. */
+    public static Optional<Deprecation> deprecation(ImageDef start, Map<String, ImageDef> defs) {
         var parent = start.isRoot() ? null : defs.get(start.getParent());
         var parentDeprecated = parent != null && parent.isDeprecated();
         var deprecated = start.isDeprecated() ? start : parentDeprecated ? parent : null;
@@ -946,7 +963,7 @@ public class ImageDef extends DefinitionOrigin {
                 ? start.getName() + " is deprecated, and so is its parent " + parent.getName()
                 : start.getName() + " is deprecated";
         var note = deprecated.getDeprecated().strip();
-        return Optional.of("true".equalsIgnoreCase(note) ? what + "." : what + ": " + note);
+        return Optional.of(new Deprecation(what, "true".equalsIgnoreCase(note) ? "" : note));
     }
 
     /** Whether this image is built from scratch (no parent). */

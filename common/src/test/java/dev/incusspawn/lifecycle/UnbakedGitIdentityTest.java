@@ -86,8 +86,14 @@ class UnbakedGitIdentityTest {
         var warnings = new ArrayList<String>();
         assertEquals(verified(Metadata.ACCOUNT_IDENTITY_NONE),
                 build(withoutToken(), Map.of(), new RecordingGh(), true, warnings));
-        assertEquals(List.of(new GhSetup().unbakedIdentityWarning("")), warnings);
+        // Said as the warning's first line, its details wrapped to init's frame under it (#2542)
+        assertEquals(1, warnings.size(), warnings::toString);
+        assertEquals(WHITESPACE.matcher(new GhSetup().unbakedIdentityWarning("")).replaceAll(" "),
+                WHITESPACE.matcher(warnings.getFirst()).replaceAll(" "));
+        assertEquals("Commits made in this template will not have an author.", warnings.getFirst().lines().findFirst().orElseThrow());
     }
+
+    private static final java.util.regex.Pattern WHITESPACE = java.util.regex.Pattern.compile("\\s+");
 
     /**
      * The git-identity of config.yaml (#2410) is no account's: the stamp still says none, so an

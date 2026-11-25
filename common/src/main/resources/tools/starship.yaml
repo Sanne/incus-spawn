@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: starship
-description: Starship cross-shell prompt 1.27.0 with incus-spawn indicator
+description: Starship cross-shell prompt 1.27.0 with an isx indicator
 
 downloads:
   - url: https://github.com/starship/starship/releases/download/v1.27.0/starship-x86_64-unknown-linux-gnu.tar.gz

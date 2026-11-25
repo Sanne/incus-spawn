@@ -26,6 +26,9 @@ import java.util.Map;
  */
 public final class BuildAccounts {
 
+    /** The width a warning's details wrap to: init's frame, which a first run's build prints inside. */
+    private static final int DETAIL_WIDTH = 56;
+
     private BuildAccounts() {}
 
     /**
@@ -338,7 +341,13 @@ public final class BuildAccounts {
         lacking.removeAll(rederived);
         for (var namespace : lacking) {
             var warning = setups.get(namespace).unbakedIdentityWarning(config, accountFor.apply(namespace));
-            if (warning != null) out.warn(warning);
+            if (warning == null) continue;
+            // Its first line is the warning, the rest what to do about it, wrapped to init's frame (#2542)
+            var lines = warning.lines().toList();
+            var details = lines.subList(1, lines.size()).stream()
+                    .flatMap(line -> dev.incusspawn.util.OutputFormat.wrap(line, DETAIL_WIDTH).stream())
+                    .toArray(String[]::new);
+            out.warn(lines.getFirst(), details);
         }
         var stamps = identityStamps(wanted, inherited, lacking);
         stamps.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");

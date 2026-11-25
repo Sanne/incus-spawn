@@ -183,7 +183,7 @@ On macOS `isx init` needs no administrator, so `--no-sudo` has no effect there.
 
 ## `isx build`
 
-Build or rebuild a template image.
+Build or rebuild templates.
 While another isx builds or updates the same template, the build is refused.
 A template that lists a tool isx does not know is refused too, before anything is built.
 So is a template with a tool that has no distribution for the host's architecture.

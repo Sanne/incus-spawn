@@ -3,9 +3,9 @@ name: tpl-dev
 description: Podman, GitHub CLI, Starship
 parent: tpl-minimal
 deprecated: >-
-  will be removed from isx; define your own template instead, in
+  isx will drop this template in a later release. Define your own instead, in
   ~/.config/incus-spawn/images/ or a searchPaths directory. To start from a copy,
-  take images/dev.yaml from https://github.com/Sanne/incus-spawn-templates
+  take images/dev.yaml from https://github.com/Sanne/incus-spawn-templates.
 tools:
   - tmux
   - starship

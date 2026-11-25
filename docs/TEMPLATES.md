@@ -217,6 +217,8 @@ isx ignores `coordinator:` in a project-local definition.
 The template still builds, but every build of it, or of a template naming it as `parent`, warns; builds of templates that inherit from it through another template do not warn.
 The TUI shows the warning in the template's details.
 
+A build shows the note on lines of its own, under the warning, so write it as whole sentences.
+
 ## Building templates
 
 `isx build` builds a template and any of its parents that is not built yet:

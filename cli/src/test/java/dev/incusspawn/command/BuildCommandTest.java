@@ -282,10 +282,10 @@ class BuildCommandTest {
                     () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef))));
 
             assertTrue(out.contains("Failed to download base image"), out);
-            assertTrue(out.contains("Failure report saved to " + Environment.buildFailureLogFile("tpl-minimal")), out);
+            assertTrue(out.contains("The failure report is in " + Environment.buildFailureLogFile("tpl-minimal")), out);
             assertFalse(out.contains("Container"), out);
             assertFalse(out.contains("BUILD_FAILURE.txt"), out);
-            assertFalse(out.contains("promote"), out);
+            assertFalse(out.contains("kept the failed build"), out);
             verify(incus, never()).getInstanceStatus(anyString());
             verify(incus, never()).forceStop(anyString());
             verify(incus, never()).rename(anyString(), anyString());
@@ -577,8 +577,8 @@ class BuildCommandTest {
                 cmd.buildSingleImage(below, defs);
             }).lines();
 
-            assertEquals(List.of("tpl-old is deprecated: use tpl-new instead",
-                    "tpl-mine derives from tpl-old, which is deprecated: use tpl-new instead"),
+            assertEquals(List.of("tpl-old is deprecated.\nuse tpl-new instead",
+                    "tpl-mine derives from tpl-old, which is deprecated.\nuse tpl-new instead"),
                     said.stream().filter(w -> w.contains("deprecated")).toList());
             verify(cmd.incus, times(2)).rename("tpl-mine-rebuilding", "tpl-mine");
             verify(cmd.incus).rename("tpl-below-rebuilding", "tpl-below");
@@ -671,10 +671,10 @@ class BuildCommandTest {
             prompts.assertFullyConsumed();
             verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
             verify(incus).rename("tpl-dev-rebuilding", "tpl-dev");
-            int question = text.indexOf("Continue?");
+            int question = text.indexOf("Build them?");
             assertTrue(question >= 0, text);
-            assertTrue(text.indexOf("tpl-minimal, tpl-dev will be replaced") >= 0
-                    && text.indexOf("tpl-minimal, tpl-dev will be replaced") < question, text);
+            assertTrue(text.indexOf("tpl-minimal and tpl-dev are built already") >= 0
+                    && text.indexOf("tpl-minimal and tpl-dev are built already") < question, text);
             assertTrue(text.indexOf("Tools no longer included in tpl-dev: claude") >= 0
                     && text.indexOf("Tools no longer included in tpl-dev: claude") < question, text);
             assertEquals(-1, text.indexOf("Rebuild?"), text);

@@ -159,12 +159,12 @@ class BuildCommandBatchTest {
     void anUnknownNameAnywhereBuildsNothing() {
         assertEquals(1, build("tpl-isx", "tpl-nope", "tpl-gone", "--with-parents"));
         assertEquals(List.of(), built);
-        assertTrue(stderr.contains("Unknown images: tpl-nope, tpl-gone"), stderr);
+        assertTrue(stderr.contains("no templates named tpl-nope and tpl-gone are defined."), stderr);
 
         assertEquals(1, build("tpl-isx", "tpl-nope", "--with-descendants"));
         assertEquals(1, build("tpl-isx", "tpl-nope"));
         assertEquals(List.of(), built);
-        assertTrue(stderr.contains("Unknown image: tpl-nope"), stderr);
+        assertTrue(stderr.contains("no template named tpl-nope is defined."), stderr);
     }
 
     /** Plain {@code isx build a b} rebuilds a shared missing parent for the first only. */
@@ -240,7 +240,7 @@ class BuildCommandBatchTest {
         assertThrows(BuildCommand.BuildFailedException.class, () -> build("tpl-a", "tpl-b"));
 
         assertEquals(List.of("tpl-b"), built);
-        assertTrue(stderr.contains("parent image 'tpl-gone' not found in definitions."), stderr);
+        assertTrue(stderr.contains("tpl-a is built on tpl-gone, and no template of that name is defined."), stderr);
         assertTrue(stderr.endsWith("Some templates failed to build: tpl-a"), stderr);
     }
 
@@ -487,7 +487,7 @@ class BuildCommandBatchTest {
         assertEquals(List.of(), built);
         assertTrue(stderr.contains("Cannot build tpl-a: no definition of that name is loaded"), stderr);
         assertTrue(stderr.contains("/nonexistent/images/a.yaml no longer exists"), stderr);
-        assertTrue(stderr.contains("Unknown image: tpl-nope"), stderr);
+        assertTrue(stderr.contains("no template named tpl-nope is defined."), stderr);
         assertFalse(stderr.contains("parent cycle"), stderr);
     }
 
@@ -509,8 +509,8 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-agent"));
 
         assertEquals(List.of("tpl-agent"), built);
-        var missing = "tpl-dev and tpl-agent lack a credential: 'isx branch' refuses them. "
-                + "Needed: GitHub personal access token. 'isx account add github' adds it.";
+        var missing = "'isx branch' cannot copy tpl-dev or tpl-agent until a credential they need is set up. "
+                + "They need: GitHub personal access token. 'isx account add github' sets it up.";
         // Once, and before the build
         assertEquals(List.of(missing), oneLine(warnings).filter(w -> w.contains("GitHub personal access token")).toList());
         assertTrue(oneLine(warningsBeforeBuild).toList().contains(missing), warningsBeforeBuild::toString);
@@ -569,9 +569,9 @@ class BuildCommandBatchTest {
         prompts.assertFullyConsumed();
         assertEquals(List.of("tpl-dev"), built);
         assertEquals("acme-secret", IsolatedHome.saved("acmeCloud.accounts.default.apiKey"));
-        assertEquals(List.of("tpl-dev lacks a credential: 'isx branch' refuses it. "
-                        + "Needed: GitHub personal access token. 'isx account add github' adds it."),
-                oneLine(warningsBeforeBuild).filter(w -> w.contains("lacks a credential")).toList());
+        assertEquals(List.of("'isx branch' cannot copy tpl-dev until a credential it needs is set up. "
+                        + "It needs: GitHub personal access token. 'isx account add github' sets it up."),
+                oneLine(warningsBeforeBuild).filter(w -> w.contains("cannot copy")).toList());
     }
 
     /**
@@ -599,9 +599,9 @@ class BuildCommandBatchTest {
         accounts.assertFullyConsumed();
         assertEquals("acme-secret", IsolatedHome.saved("acmeCloud.accounts.default.apiKey"));
         assertFalse(built.isEmpty());
-        assertEquals(List.of("tpl-dev lacks a credential: 'isx branch' refuses it. "
-                        + "Needed: GitHub personal access token. 'isx account add github' adds it."),
-                oneLine(warningsBeforeBuild).filter(w -> w.contains("lacks a credential")).toList());
+        assertEquals(List.of("'isx branch' cannot copy tpl-dev until a credential it needs is set up. "
+                        + "It needs: GitHub personal access token. 'isx account add github' sets it up."),
+                oneLine(warningsBeforeBuild).filter(w -> w.contains("cannot copy")).toList());
     }
 
     /** A caller that has just asked turns the question off: the build warns as without a terminal. */
@@ -617,7 +617,7 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-dev"));
 
         assertEquals(0, asked);
-        assertEquals(2, warnings.stream().filter(w -> w.contains("a credential: 'isx branch' refuses")).count(), warnings::toString);
+        assertEquals(2, warnings.stream().filter(w -> w.contains("'isx branch' cannot copy")).count(), warnings::toString);
     }
 
     /** {@code --yes} is a build nobody watches: nothing is asked. */
@@ -633,7 +633,7 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-dev"));
 
         assertEquals(0, asked);
-        assertEquals(2, warnings.stream().filter(w -> w.contains("a credential: 'isx branch' refuses")).count(), warnings::toString);
+        assertEquals(2, warnings.stream().filter(w -> w.contains("'isx branch' cannot copy")).count(), warnings::toString);
     }
 
     /**
