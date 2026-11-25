@@ -26,14 +26,14 @@
   │   F4/4    Branch                                                         │
   │   F5/5    Build menu                                                     │
   │   Space   Mark for F5/F7/F8         Esc          Clear marks             │
-  │   F6/6    Rename instance                                                │
+  │   F6/6    Edit name and purpose                                          │
   │   F7/7    Stop instance             ⇧F7/Alt+7    Restart                 │
   │   F8/8    Destroy                   ⇧F8/Alt+8    Destroy all             │
   │   Del     Destroy                   ⇧Del         Destroy all             │
   │   F9/9    Tool actions                                                   │
   │   F10/0   Quit                                                           │
   │   a       Credential accounts                                            │
-  │   p       Purpose of an instance    o            Overview                │
+  │   p       Edit the purpose          o            Overview                │
   │   C       Clean pool storage                                             │
   │   r       Refresh                                                        │
   │   w       Warnings                                                       │

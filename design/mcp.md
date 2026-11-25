@@ -688,7 +688,9 @@ It is untrusted text: one line of at most 200 characters on write, and `oneLine`
 `isx list`'s formats append `purpose`, and the TUI's instance details show it.
 The TUI's instance table has the same `PURPOSE` column, only when an instance has one and from 118 inner columns (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`), or from 108 (`PURPOSE_ALONE_MIN_WIDTH`) when no `OWNER` column takes room beside it.
 A narrower table leaves it out, and the details still show it.
-`p` on an instance edits the purpose and the branch dialog has a Purpose field, so a person never leaves the TUI to set one.
+F6 on an instance opens one dialog for its name and its purpose, `p` opens it at the purpose, and the branch dialog has a Purpose field, so a person never leaves the TUI to set one (#2621).
+The purpose sits beside the name because F6 is where a person looked for it, and a purpose alone is written to a running instance without stopping it; only a new name asks to stop it first.
+The instance details always have a Purpose line, `-` when unset, since a line shown only when set left a person searching for where it goes.
 
 **Orchestrators with no hooks: a tool's host half.**
 herdr keeps a list of SSH machines and has no lifecycle hooks, so nothing in it can call isx.

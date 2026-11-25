@@ -1,24 +1,24 @@
 
-
-               ╭ vm-1 ─────────────────────────────────────────╮
-               │ Status:         ○ Stopped                     │
-               │ Type:           virtual-machine               │
-               │ Architecture:   x86_64                        │
-               │ Parent:         tpl-dev                       │
-               │ Created:        2026-10-11T09:00:00  (3h ago) │
-               │                                               │
-               │ Network:        Full internet                 │
-               │ IP address:     -                             │
-               │                                               │
-               │ Resource limits:                              │
-               │   CPU:          4                             │
-               │   Memory:       8GiB                          │
-               │   Disk limit:   50GiB                         │
-               │                                               │
-               │ Project:        default                       │
-               │ Profile:        default                       │
-               │                                               │
-               │  F2 Shell   a Accounts   F3/Esc Close         │
-               ╰───────────────────────────────────────────────╯
+             ╭ vm-1 ─────────────────────────────────────────────╮
+             │ Status:         ○ Stopped                         │
+             │ Type:           virtual-machine                   │
+             │ Architecture:   x86_64                            │
+             │ Parent:         tpl-dev                           │
+             │ Created:        2026-10-11T09:00:00  (3h ago)     │
+             │ Purpose:        -                                 │
+             │                                                   │
+             │ Network:        Full internet                     │
+             │ IP address:     -                                 │
+             │                                                   │
+             │ Resource limits:                                  │
+             │   CPU:          4                                 │
+             │   Memory:       8GiB                              │
+             │   Disk limit:   50GiB                             │
+             │                                                   │
+             │ Project:        default                           │
+             │ Profile:        default                           │
+             │                                                   │
+             │  F2 Shell   a Accounts   p Purpose   F3/Esc Close │
+             ╰───────────────────────────────────────────────────╯
 
 

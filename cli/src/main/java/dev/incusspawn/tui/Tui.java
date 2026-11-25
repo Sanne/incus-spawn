@@ -231,7 +231,7 @@ public class Tui {
      */
     enum Mode {
         BROWSE(false), CONFIRM_DELETE(false), CONFIRM_MARKED_STOP(false), CONFIRM_STOP_FOR_RENAME(false),
-        CONFIRM_BUILD_FOR_BRANCH(false), BUILD_MENU(true), BRANCH(true), RENAME(true), PURPOSE(true), TEMPLATE_DETAIL(false),
+        CONFIRM_BUILD_FOR_BRANCH(false), BUILD_MENU(true), BRANCH(true), EDIT(true), TEMPLATE_DETAIL(false),
         INSTANCE_DETAIL(false), ACCOUNTS(false), INFO(false), ERROR(false), ACTIONS(false), NEW_TEMPLATE(true),
         CLEAN_CONFIRM(false), CLEAN_RESULT(false), HELP_CHAT(true), WARNINGS(false), TASK_PICKER(false);
 
@@ -261,16 +261,15 @@ public class Tui {
     String branchSourceName;
     /** The branch dialog; set when it opens, and read once more to create the branch after it closes. */
     BranchModal branch;
-    // Rename modal state
-    /** The instance F6 renames, kept through the stop-first confirm and while the dialog is open. */
+    // Edit dialog state (#2621)
+    /** The instance F6 or p edits, kept while the dialog is open and through the stop-first confirm. */
     private String renameSourceName;
-    /** The rename dialog; set when it opens. */
-    private RenameDialog rename;
-    /** The purpose dialog (#2239); set when it opens, for {@link #purposeTarget}. */
-    private PurposeDialog purposeDialog;
-    private String purposeTarget;
+    /** The edit dialog: its name and purpose; set when it opens, kept through the stop-first confirm. */
+    private EditDialog edit;
     /** The purpose when the dialog opened, to skip a write that changes nothing. */
     private String purposeBefore;
+    /** Where the edit dialog returns: the table, or the details it was opened from. */
+    private Mode editReturn = Mode.BROWSE;
     /** The new-template dialog; set when it opens, and read once more to create the template after it closes. */
     private NewTemplateModal newTemplate;
     String statusMessage;
@@ -866,8 +865,7 @@ public class Tui {
             case CONFIRM_STOP_FOR_RENAME -> handleConfirmStopForRenameEvent(key, tui, tableState);
             case CONFIRM_BUILD_FOR_BRANCH -> handleConfirmBuildForBranchEvent(key, tui);
             case BRANCH -> handleBranchEvent(key, tui, tableState);
-            case RENAME -> handleRenameEvent(key, tui, tableState);
-            case PURPOSE -> handlePurposeEvent(key, tableState);
+            case EDIT -> handleEditEvent(key, tableState);
             case NEW_TEMPLATE -> handleNewTemplateEvent(key, tui);
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
@@ -1194,20 +1192,11 @@ public class Tui {
             return true;
         }
         if (key.isChar('p') && !key.hasCtrl()) {
-            purposeTarget = selected.name();
-            purposeBefore = selected.purpose();
-            purposeDialog = new PurposeDialog(modal, selected.name(), selected.purpose());
-            mode = Mode.PURPOSE;
+            openEdit(selected, EditDialog.Field.PURPOSE, Mode.BROWSE);
             return true;
         }
         if (key.isKey(KeyCode.F6)) {
-            renameSourceName = selected.name();
-            if (isRunning(selected)) {
-                mode = Mode.CONFIRM_STOP_FOR_RENAME;
-            } else {
-                rename = new RenameDialog(modal, selected.name());
-                mode = Mode.RENAME;
-            }
+            openEdit(selected, EditDialog.Field.NAME, Mode.BROWSE);
             return true;
         }
         if (key.isKey(KeyCode.F9)) {
@@ -1527,15 +1516,22 @@ public class Tui {
         return true;
     }
 
-    private boolean handleRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
-        return switch (rename.handleKey(key)) {
-            case HANDLED -> true;
-            case CLOSE -> {
-                mode = Mode.BROWSE;
-                yield true;
-            }
-            case CONFIRM -> confirmRename(tableState);
-        };
+    /** Open the edit dialog on {@code selected}'s name or purpose; Esc or Enter go back to {@code back}. */
+    private void openEdit(InstanceInfo selected, EditDialog.Field field, Mode back) {
+        renameSourceName = selected.name();
+        purposeBefore = selected.purpose();
+        editReturn = back;
+        edit = new EditDialog(modal, theme, selected.name(), selected.purpose(), field);
+        mode = Mode.EDIT;
+    }
+
+    private boolean handleEditEvent(KeyEvent key, TableState tableState) {
+        switch (edit.handleKey(key)) {
+            case HANDLED -> { }
+            case CLOSE -> mode = editReturn;
+            case CONFIRM -> confirmEdit(tableState);
+        }
+        return true;
     }
 
     /** A {@code Metadata.purposeProblem} as a status sentence. */
@@ -1543,53 +1539,93 @@ public class Tui {
         return problem.substring(0, 1).toUpperCase() + problem.substring(1) + ".";
     }
 
-    private boolean handlePurposeEvent(KeyEvent key, TableState tableState) {
-        switch (purposeDialog.handleKey(key)) {
-            case HANDLED -> { }
-            case CLOSE -> mode = Mode.BROWSE;
-            case CONFIRM -> confirmPurpose(tableState);
-        }
-        return true;
-    }
-
     /**
-     * Enter in the purpose dialog: write the text on the instance, running or stopped, or remove the
-     * purpose when it is empty. One metadata write; a refusal stays on the status line (#2239).
+     * Enter in the edit dialog: check the name and the purpose, then apply both, or ask to stop
+     * the instance first when a new name is for a running one. Nothing is written before both
+     * pass, and a purpose alone never stops the instance (#2621).
      */
-    private void confirmPurpose(TableState tableState) {
-        var text = purposeDialog.text();
-        var problem = text.isEmpty() ? null : Metadata.purposeProblem(text);
-        mode = Mode.BROWSE;
+    private void confirmEdit(TableState tableState) {
+        var newName = edit.name();
+        var purpose = edit.purpose();
+        mode = editReturn;
+        var problem = purpose.isEmpty() ? null : Metadata.purposeProblem(purpose);
         if (problem != null) {
             statusMessage = refusal(problem);
             return;
         }
-        if (text.equals(purposeBefore == null ? "" : purposeBefore)) return;
-        if (vanished(purposeTarget)) return;
-        try {
-            if (text.isEmpty()) incus.configUnset(purposeTarget, Metadata.PURPOSE);
-            else incus.configSet(purposeTarget, Metadata.PURPOSE, text);
-            statusMessage = (text.isEmpty() ? "Cleared the purpose of " : "Set the purpose of ") + purposeTarget;
-        } catch (Exception e) {
-            statusMessage = "Failed to set the purpose: " + e.getMessage();
+        boolean renaming = editRenames();
+        if (renaming) {
+            var validation = validateInstanceName(newName);
+            if (validation != null) {
+                statusMessage = validation;
+                return;
+            }
+        }
+        if (!renaming && !editChangesPurpose()) return;
+        if (vanished(renameSourceName)) return;
+        if (renaming && isRunning(renameSourceName)) {
+            mode = Mode.CONFIRM_STOP_FOR_RENAME;
+            return;
+        }
+        applyEdit(tableState);
+    }
+
+    /** Whether the edit dialog holds a new name: Enter and the stop-first confirm ask the same. */
+    private boolean editRenames() {
+        return !edit.name().isEmpty() && !edit.name().equals(renameSourceName);
+    }
+
+    /** Whether the edit dialog's purpose differs from the one it opened with. */
+    private boolean editChangesPurpose() {
+        return !edit.purpose().equals(purposeBefore == null ? "" : purposeBefore);
+    }
+
+    /** Whether the listing shows {@code name} running. */
+    private boolean isRunning(String name) {
+        var entries = allEntries != null ? allEntries : this.entries;
+        return entries != null && entries.stream().anyMatch(e -> e.name().equals(name) && isRunning(e));
+    }
+
+    /**
+     * Write the edit dialog's purpose, when it changed, then rename the instance, when its name
+     * changed; a rename needs it stopped. One metadata write for the purpose, none when unchanged
+     * (#2239). A failed purpose write is reported and the rename still made, so a stop is never wasted.
+     */
+    private void applyEdit(TableState tableState) {
+        var newName = edit.name();
+        var purpose = edit.purpose();
+        String purposeDone = null;
+        String purposeFailed = null;
+        if (editChangesPurpose()) {
+            try {
+                if (purpose.isEmpty()) incus.configUnset(renameSourceName, Metadata.PURPOSE);
+                else incus.configSet(renameSourceName, Metadata.PURPOSE, purpose);
+                purposeDone = (purpose.isEmpty() ? "Cleared the purpose of " : "Set the purpose of ") + renameSourceName;
+            } catch (Exception e) {
+                // The rename still goes ahead: a stop the person agreed to must not be for nothing
+                purposeFailed = "Failed to set the purpose: " + e.getMessage();
+            }
+        }
+        if (editRenames()) {
+            boolean renamed = rename(newName);
+            // The details followed the old name, which is gone once the rename succeeded
+            if (renamed && mode == Mode.INSTANCE_DETAIL) mode = Mode.BROWSE;
+            if (purposeFailed != null) {
+                statusMessage = purposeFailed + ". " + statusMessage;
+            } else if (purposeDone != null && renamed) {
+                statusMessage += (purpose.isEmpty() ? ", and cleared its purpose" : ", and set its purpose");
+            } else if (purposeDone != null) {
+                statusMessage = purposeDone + ". " + statusMessage;
+            }
+        } else {
+            statusMessage = purposeFailed != null ? purposeFailed : purposeDone;
         }
         refreshData(tableState);
     }
 
-    /** Enter in the rename dialog: check the new name and rename the instance. */
-    private boolean confirmRename(TableState tableState) {
-        var newName = rename.name();
-        if (newName.isEmpty() || newName.equals(renameSourceName)) {
-            mode = Mode.BROWSE;
-            return true;
-        }
-        var validation = validateInstanceName(newName);
-        if (validation != null) {
-            statusMessage = validation;
-            mode = Mode.BROWSE;
-            return true;
-        }
-        if (vanished(renameSourceName)) return true;
+
+    /** Rename the stopped instance the edit dialog is on to {@code newName}, setting the status line; whether it was renamed. */
+    private boolean rename(String newName) {
         try {
             var instance = incus.rename(renameSourceName, newName);
             try {
@@ -1614,12 +1650,11 @@ public class Tui {
                 // best-effort: instance is renamed, host integration may partially fail
             }
             statusMessage = "Renamed " + renameSourceName + " to " + newName;
+            return true;
         } catch (Exception e) {
             statusMessage = "Failed to rename: " + e.getMessage();
+            return false;
         }
-        refreshData(tableState);
-        mode = Mode.BROWSE;
-        return true;
     }
 
     private boolean handleConfirmDeleteEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
@@ -1837,7 +1872,7 @@ public class Tui {
     private boolean handleConfirmStopForRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (key.isChar('y') || key.isChar('Y')) {
             if (vanished(renameSourceName)) return true;
-            mode = Mode.BROWSE;
+            mode = editReturn;
             progressMessage = "Stopping " + renameSourceName + "...";
             tui.draw(frame -> render(frame, tableState));
             try {
@@ -1845,16 +1880,15 @@ public class Tui {
                 var source = renameSourceName;
                 HostIntegration.stopAll(incus, source, drawing, () -> incus.stop(source));
                 progressMessage = null;
-                refreshData(tableState);
-                rename = new RenameDialog(modal, renameSourceName);
-                mode = Mode.RENAME;
+                applyEdit(tableState);
             } catch (Exception e) {
                 progressMessage = null;
                 statusMessage = "Failed to stop " + renameSourceName + ": " + e.getMessage();
-                mode = Mode.BROWSE;
+                mode = editReturn;
             }
         } else {
-            mode = Mode.BROWSE;
+            // Back where the edit was opened from: the table, or the details (#2621)
+            mode = editReturn;
         }
         return true;
     }
@@ -2051,12 +2085,11 @@ public class Tui {
             case CONFIRM_STOP_FOR_RENAME -> {
                 modal.renderConfirmModal(frame, screen,
                         " Rename '" + renameSourceName + "' ",
-                        "Instance is running. Stop it first?", modal.border(),
+                        "Instance is running. Stop it to rename it?", modal.border(),
                         "Stop & rename");
             }
             case BRANCH -> branch.render(frame, screen);
-            case RENAME -> rename.render(frame, screen);
-            case PURPOSE -> purposeDialog.render(frame, screen);
+            case EDIT -> edit.render(frame, screen);
             case NEW_TEMPLATE -> newTemplate.render(frame, screen);
             case TEMPLATE_DETAIL -> {
                 var template = selectedTemplate();
@@ -2135,6 +2168,16 @@ public class Tui {
                     yield true;
                 }
                 openAccountsModal(selected.name(), Mode.INSTANCE_DETAIL);
+                yield true;
+            }
+            case PURPOSE -> {
+                var selected = selectedEntry(instanceTableState);
+                if (selected == null || vanished(selected.name())) yield true;
+                if (isBusy(selected)) {
+                    statusMessage = busy(selected);
+                    yield true;
+                }
+                openEdit(selected, EditDialog.Field.PURPOSE, Mode.INSTANCE_DETAIL);
                 yield true;
             }
             case JOIN_TASK -> {
@@ -3311,8 +3354,7 @@ public class Tui {
         return switch (mode) {
             case CONFIRM_DELETE -> deleteConfirm.name() != null && !deleteConfirm.name().startsWith("--")
                     ? deleteConfirm.name() : null;
-            case CONFIRM_STOP_FOR_RENAME, RENAME -> renameSourceName;
-            case PURPOSE -> purposeTarget;
+            case CONFIRM_STOP_FOR_RENAME, EDIT -> renameSourceName;
             case BRANCH -> branchSourceName;
             case INSTANCE_DETAIL -> detailInstanceName;
             case ACCOUNTS -> accountsModal != null ? accountsModal.instance() : null;

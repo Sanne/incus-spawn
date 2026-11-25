@@ -1,0 +1,24 @@
+
+
+
+
+
+
+
+
+             ╭ Edit 'dev-1' ──────────────────────────────────────╮
+             │ Name (renaming a running one asks to stop it):     │
+             │ dev-1                                              │
+             │ Purpose (empty removes it):                        │
+             │ review                                             │
+             │                                                    │
+             │  Enter Confirm   Tab Next field   Esc Cancel       │
+             ╰────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+

@@ -465,20 +465,116 @@ class TuiCharacterisationTest {
     }
 
     @Test
-    void renameARunningInstanceAsksToStopIt() {
-        var tui = tui();
+    void renamingARunningInstanceAsksToStopItAndEscChangesNothing() {
+        var daemon = new FakeIncusDaemon();
+        var tui = tui(true, daemon);
         press(tui, TAB, KeyEvent.ofKey(KeyCode.F6));
+        assertEquals(Tui.Mode.EDIT, tui.mode(), "F6 opens the edit dialog, running or not (#2621)");
+        typeText(tui, "x");
+        press(tui, KeyEvent.ofKey(KeyCode.TAB));
+        typeText(tui, "review");
+        press(tui, ENTER);
         assertEquals(Tui.Mode.CONFIRM_STOP_FOR_RENAME, tui.mode());
         snapshotInContext("confirm-stop-for-rename", tui);
         press(tui, ESC);
         assertEquals(Tui.Mode.BROWSE, tui.mode());
+        assertEquals("", daemon.instance("work-1").path("config").path(Metadata.PURPOSE).asText(""),
+                "declining the stop writes nothing, the purpose included");
+        assertEquals(List.of(), daemon.stateActions(), "and stops nothing");
+    }
+
+    /** #2621: y stops the running instance, then renames it and writes the purpose typed beside the name. */
+    @Test
+    void stoppingARunningInstanceForItsNewNameAppliesTheWholeEdit() {
+        var daemon = new FakeIncusDaemon();
+        var tui = tui(true, daemon);
+        press(tui, TAB, KeyEvent.ofKey(KeyCode.F6));
+        typeText(tui, "x");
+        press(tui, KeyEvent.ofKey(KeyCode.TAB));
+        typeText(tui, "review");
+        press(tui, ENTER, KeyEvent.ofChar('y'));
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        assertEquals("review", daemon.instance("work-1x").path("config").path(Metadata.PURPOSE).asText(""));
+        assertEquals("Renamed work-1 to work-1x, and set its purpose", tui.statusMessage);
     }
 
     @Test
-    void renameAStoppedInstance() {
+    void editAStoppedInstance() {
         var tui = tui();
         press(tui, TAB, DOWN);
-        opensAndCloses("rename", tui, Tui.Mode.RENAME, KeyEvent.ofKey(KeyCode.F6));
+        opensAndCloses("edit", tui, Tui.Mode.EDIT, KeyEvent.ofKey(KeyCode.F6));
+    }
+
+    /** #2621: a purpose is set from F6 on a running instance without stopping it. */
+    @Test
+    void thePurposeOfARunningInstanceIsSetWithoutStoppingIt() {
+        var daemon = new FakeIncusDaemon();
+        var tui = tui(true, daemon);
+        press(tui, TAB, KeyEvent.ofKey(KeyCode.F6), KeyEvent.ofKey(KeyCode.TAB));
+        typeText(tui, "review #12");
+        press(tui, ENTER);
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        assertEquals("review #12", daemon.instance("work-1").path("config").path(Metadata.PURPOSE).asText());
+        assertEquals(List.of(), daemon.stateActions(), "a purpose alone stops nothing");
+    }
+
+    /** #2621: one Enter renames a stopped instance and sets its purpose. */
+    @Test
+    void oneEditRenamesAStoppedInstanceAndSetsItsPurpose() {
+        var daemon = new FakeIncusDaemon();
+        var tui = tui(true, daemon);
+        press(tui, TAB, DOWN, KeyEvent.ofKey(KeyCode.F6));
+        typeText(tui, "-b");
+        press(tui, KeyEvent.ofKey(KeyCode.TAB));
+        typeText(tui, "bisect");
+        press(tui, ENTER);
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        assertEquals("bisect", daemon.instance("vm-1-b").path("config").path(Metadata.PURPOSE).asText());
+        assertEquals("Renamed vm-1 to vm-1-b, and set its purpose", tui.statusMessage);
+    }
+
+    /** A failed purpose write still lets the rename go ahead, so a stop the person agreed to is not wasted. */
+    @Test
+    void aFailedPurposeWriteStillRenames() {
+        var daemon = new FakeIncusDaemon();
+        var tui = tui(true, daemon);
+        daemon.refuseWritesContaining(Metadata.PURPOSE);
+        press(tui, TAB, DOWN, KeyEvent.ofKey(KeyCode.F6));
+        typeText(tui, "-b");
+        press(tui, KeyEvent.ofKey(KeyCode.TAB));
+        typeText(tui, "bisect");
+        press(tui, ENTER);
+        assertEquals("", daemon.instance("vm-1-b").path("config").path(Metadata.PURPOSE).asText(""));
+        assertTrue(tui.statusMessage.startsWith("Failed to set the purpose: ")
+                && tui.statusMessage.endsWith("Renamed vm-1 to vm-1-b"), tui.statusMessage);
+    }
+
+    /** #2621: p in the details edits the purpose and comes back to the details. */
+    @Test
+    void pInTheDetailsEditsThePurposeAndReturnsToThem() {
+        var daemon = new FakeIncusDaemon();
+        var tui = tui(true, daemon);
+        press(tui, TAB, KeyEvent.ofKey(KeyCode.F3), KeyEvent.ofChar('p'));
+        assertEquals(Tui.Mode.EDIT, tui.mode());
+        press(tui, ESC);
+        assertEquals(Tui.Mode.INSTANCE_DETAIL, tui.mode(), "Esc goes back to the details");
+        press(tui, KeyEvent.ofChar('p'));
+        typeText(tui, "docs");
+        press(tui, ENTER);
+        assertEquals(Tui.Mode.INSTANCE_DETAIL, tui.mode(), "so does Enter");
+        assertEquals("docs", daemon.instance("work-1").path("config").path(Metadata.PURPOSE).asText());
+    }
+
+    /** #2621: declining the stop for a new name typed from the details goes back to the details. */
+    @Test
+    void decliningTheStopFromTheDetailsReturnsToThem() {
+        var tui = tui();
+        press(tui, TAB, KeyEvent.ofKey(KeyCode.F3), KeyEvent.ofChar('p'), KeyEvent.ofKey(KeyCode.TAB));
+        typeText(tui, "x");
+        press(tui, ENTER);
+        assertEquals(Tui.Mode.CONFIRM_STOP_FOR_RENAME, tui.mode());
+        press(tui, ESC);
+        assertEquals(Tui.Mode.INSTANCE_DETAIL, tui.mode());
     }
 
     @Test

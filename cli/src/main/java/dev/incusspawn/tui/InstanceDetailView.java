@@ -32,7 +32,7 @@ import static dev.incusspawn.tui.Tui.isRunning;
 public final class InstanceDetailView {
 
     /** What a key did: a scroll key, one the view does not own, or one the TUI must act on. */
-    enum Outcome { HANDLED, UNHANDLED, CLOSE, ACCOUNTS, SHELL, JOIN_TASK, DEFAULT_ACTION }
+    enum Outcome { HANDLED, UNHANDLED, CLOSE, ACCOUNTS, PURPOSE, SHELL, JOIN_TASK, DEFAULT_ACTION }
 
     private final ModalRenderer modal;
     private final TuiTheme theme;
@@ -59,6 +59,9 @@ public final class InstanceDetailView {
         }
         if (key.isChar('a')) {
             return Outcome.ACCOUNTS;
+        }
+        if (key.isChar('p') && !key.hasCtrl()) {
+            return Outcome.PURPOSE;
         }
         if (key.isKey(KeyCode.F2)) {
             return key.hasShift() ? Outcome.JOIN_TASK : Outcome.SHELL;
@@ -101,6 +104,7 @@ public final class InstanceDetailView {
         modal.addKey(hintSpans, "F2", "Shell");
         if (selected.mcp() != null) modal.addKey(hintSpans, "⇧F2", "Join task");
         modal.addKey(hintSpans, "a", "Accounts");
+        modal.addKey(hintSpans, "p", "Purpose");
         modal.addKey(hintSpans, "F3/Esc", "Close");
 
         // As wide as the widest line, the key hints included (without the padding after the last),
@@ -358,8 +362,8 @@ public final class InstanceDetailView {
         }
 
         var rows = new ArrayList<>(baseImageRows(BaseImageAge.tag(info.metadata()), baseImage));
-        // #2239: what a person wrote it is for; isx purpose <name> changes it
-        if (info.purpose() != null) rows.add(new DetailRow("Purpose:", OutputFormat.oneLine(info.purpose())));
+        // #2239: what a person wrote it is for. Shown when unset too, so a person finds where it goes (#2621)
+        rows.add(new DetailRow("Purpose:", info.purpose() == null ? "-" : OutputFormat.oneLine(info.purpose())));
         // #1053: no column for it in the instance table, which has no width to spare.
         rows.addAll(mcpDetailRows(info.mcp()));
         rows.addAll(mcpControlRows(info.mcpCaller(), mcpScope));
