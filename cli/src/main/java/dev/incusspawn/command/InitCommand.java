@@ -1328,6 +1328,7 @@ public class InitCommand extends BaseCommand {
                 startDownloadsAhead(null);
                 if (!waitToBegin()) return CommandResult.valueOf(0);
                 askFirstRunQuestions();
+                printQuestionsDone(macOs);
                 if (macOs) {
                     if (!requireIncusHost()) return CommandResult.valueOf(1);
                     this.incus = RuntimeServices.incus();
@@ -1658,6 +1659,7 @@ public class InitCommand extends BaseCommand {
             } else if (!all && !gitHubAsked) {
                 // Not after the agent's own step, which asked for it and said it was saved
                 BuildOutput.note("A GitHub account is set up already.");
+                recap.add(new Answered("GitHub", "set up already", true));
             }
             if (all) {
                 for (var step : credentialSteps()) {
@@ -1669,10 +1671,38 @@ public class InitCommand extends BaseCommand {
             for (var step : later) begin(step);
             answers = new FirstRunAnswers(chosenAgent == null, noCredential, noGitHub, noIdentity, agentParams);
         } finally {
-            // The recap is the questions' own: a header the setup shows later has none
+            // The recap is the questions' own: a header the setup shows later has none. The
+            // banner that closes the questions shows it whole, once
+            answered = List.copyOf(recap);
             recap.clear();
             credentials.closeHttpClient();
         }
+    }
+
+    /** Every answer of the questions that just ended, for {@link #printQuestionsDone}. */
+    private List<Answered> answered = List.of();
+
+    /**
+     * The banner between the questions and the work (#2528): every answer with its mark, the
+     * last one included, which no header showed, and one sentence saying what isx does now.
+     * Without it the setup's first line (on a Mac, the VM starting) followed straight on the
+     * last answer, and nothing said the questions were over.
+     */
+    void printQuestionsDone(boolean macOs) {
+        if (answered.isEmpty()) return;
+        var out = new ArrayList<String>();
+        out.add("");
+        out.add(topBorder("Questions done"));
+        for (var answer : answered) out.add(boxLine(recapLine(answer)));
+        out.add(boxLine(""));
+        var computer = macOs ? "this Mac" : noSudo ? "the rest of this computer" : "this computer";
+        var template = chosenAgent == null ? "a first template" : "an example template";
+        for (var line : Lines.wrap("isx now sets up " + computer + " and builds " + template + ".", BOX_WIDTH - 4)) {
+            out.add(boxLine("  " + line));
+        }
+        out.add(bottomBorder());
+        // A frame of init's own: laid out here, drawn as given
+        BuildOutput.frame(out.toArray(String[]::new));
     }
 
     /**

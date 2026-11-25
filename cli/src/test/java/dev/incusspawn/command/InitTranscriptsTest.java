@@ -493,6 +493,15 @@ class InitTranscriptsTest {
         var beforeThird = text.substring(second, third);
         assertTrue(beforeThird.contains(agent), text);
         assertTrue(beforeThird.contains("│  \u2713 Its account    Claude subscription"), text);
+        // The banner that closes the questions shows every answer, the last one too, before the setup
+        var done = text.indexOf("─ Questions done ─");
+        var setup = text.indexOf("⟪the host's setup runs here⟫");
+        assertTrue(third < done && done < setup, text);
+        var banner = text.substring(done, setup);
+        assertTrue(banner.contains(agent), banner);
+        assertTrue(banner.contains("│  \u2713 Its account    Claude subscription"), banner);
+        assertTrue(banner.contains("│  \u2713 GitHub         acts as jdoe-ai"), banner);
+        assertTrue(banner.contains("isx now sets up this Mac and builds an example template."), banner);
         // The questions' own: the closing box and what follows show none
         assertFalse(text.substring(text.indexOf("Setup complete")).contains("Coding agent   "), text);
 
@@ -571,6 +580,7 @@ class InitTranscriptsTest {
                 init.printFirstRunIntro(branch.macOs());
                 init.waitToBegin();
                 init.askFirstRunQuestions();
+                init.printQuestionsDone(branch.macOs());
                 out.println();
                 out.println("⟪the host's setup runs here⟫");
                 init.finishFirstRun(branch.macOs(), branch.servicesInstalled(), init.continuation);
