@@ -317,9 +317,11 @@ On the default 60 GiB VM disk the hint starts at about 9 GiB free.
 The hint is two notes on stderr, after the branch's own output: the pool's use and free space, how many instances there are and how many are stopped, then `isx overview` and the TUI's Work tab.
 It calls no instance forgotten or unused, since idle time does not say whether a box is still needed, and a stopped one's work cannot be read without starting it.
 An interactive branch prints it after the shell ends, since an action clears the screen before it draws.
-It reuses the pool read of the space check, which `BranchFlow.Preflight.poolUsage` carries.
-Only when the hint is due, at most once a day, does it read the pool again, since a shell may have run for hours, and the instance listing it counts.
-So a branch that shows nothing makes no request for them (`BranchDiskHintTest`).
+With `--no-start` it reuses the pool read of the space check, which `BranchFlow.Preflight.poolUsage` carries, taken milliseconds before.
+After a shell, which may have run for hours, it reads the pool again whatever preflight read, so a pool that filled during the shell is named.
+That read is one request on nearly every interactive branch, made after the person left the shell, so it delays nothing they wait for to start.
+It skips that read when `disk-hint` is off or the stamp is quiet at the highest level, and shows nothing when the read fails, since preflight's figures may be hours old.
+The instance listing it counts is read only when the hint shows, at most once a day (`BranchDiskHintTest`).
 
 `DiskHint` decides when: at most once per 24 hours, and again at once when the level rises.
 Its stamp, `~/.local/state/incus-spawn/disk-hint`, holds the time and the level; a stamp that cannot be read or written shows the hint again rather than silencing it.

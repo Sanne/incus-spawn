@@ -300,6 +300,15 @@ class TuiCharacterisationTest {
         snapshotInContext("main-gauge-legend-status", tui);
     }
 
+    /** At the hint level the gauge names the Work tab beside C:clean, where the header has room (#2563). */
+    @Test
+    void mainScreenWithGaugeAtTheHintLevel() {
+        var tui = tui();
+        // 87% of 60 GiB, 7.5 GiB free
+        tui.poolUsage = new IncusClient.PoolUsage((105L << 30) / 2, 60L << 30);
+        snapshot("main-gauge-hint", tui);
+    }
+
     /** The widths come from every row, not the search's: a narrower listing moved the columns on a keystroke. */
     @Test
     void theColumnsHoldStillWhileASearchNarrowsTheLists() {

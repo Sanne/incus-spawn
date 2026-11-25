@@ -141,7 +141,7 @@ public class BranchCommand extends BaseCommand {
         var created = create();
         if (created == null) return CommandResult.valueOf(1);
         if (noStart) {
-            diskHint(created);
+            diskHint(created, false);
             return CommandResult.SUCCESS;
         }
         if (!IncusClient.hasTerminal()) {
@@ -163,7 +163,7 @@ public class BranchCommand extends BaseCommand {
         var menu = resolver.shellMenu(name, created.prefetched().templateName(), created.prefetched().workdir());
         incus.interactiveShell(name, "agentuser", shellPrep, menu);
         // After the shell, which an action clears the screen for, so the person sees it
-        diskHint(created);
+        diskHint(created, true);
         ShellFarewell.say(name);
         return CommandResult.SUCCESS;
     }
@@ -171,29 +171,27 @@ public class BranchCommand extends BaseCommand {
     /**
      * Names {@code isx overview} when the pool is filling (#2563), at most once a day unless the
      * level rises, and only to a person at a terminal: never under {@code --format}, never headless.
-     * The pool, read again, and the listing it counts from are read only when the hint is due, so a
-     * branch that shows nothing makes no request for them.
+     * With {@code --no-start} it takes the pool as preflight read it, milliseconds before. After a
+     * shell, which may have run for hours, it reads the pool again, whatever preflight read, and
+     * shows nothing when that read fails. The listing it counts is read only when the hint shows.
      */
-    void diskHint(Created created) {
-        diskHint(created, incus);
+    void diskHint(Created created, boolean afterShell) {
+        diskHint(created, incus, afterShell);
     }
 
-    /** {@link #diskHint(Created)} on a given Incus client, for tests. */
-    void diskHint(Created created, IncusClient incus) {
-        var usage = created.preflight().poolUsage();
+    /** {@link #diskHint(Created, boolean)} on a given Incus client, for tests. */
+    void diskHint(Created created, IncusClient incus, boolean afterShell) {
+        if (Headless.active() || !interactive()) return;
+        var preflight = created.preflight();
+        var enabled = preflight.settings().diskHintEnabled();
         var stamp = dev.incusspawn.Environment.diskHintFile();
         var now = now();
-        if (Headless.active() || !interactive()
-                || !DiskHint.due(usage, created.preflight().settings().diskHintEnabled(), stamp, now)) {
-            return;
+        var usage = preflight.poolUsage();
+        if (afterShell) {
+            if (!DiskHint.mayBeDue(enabled, stamp, now)) return;
+            usage = PoolSpace.read(incus, IncusClient.rootDiskPoolFromDevices(preflight.sourceInstance().path("expanded_devices")));
         }
-        // Read again, since a shell may have run for hours since preflight read it: one request, only when due
-        var pool = IncusClient.rootDiskPoolFromDevices(created.preflight().sourceInstance().path("expanded_devices"));
-        var fresh = PoolSpace.read(incus, pool);
-        if (fresh != null) {
-            usage = fresh;
-            if (!DiskHint.due(usage, true, stamp, now)) return;
-        }
+        if (!DiskHint.due(usage, enabled, stamp, now)) return;
         int instances = 0, stopped = 0;
         try {
             for (var i : InstanceListing.collectEntries(incus.listJsonConfig())) {

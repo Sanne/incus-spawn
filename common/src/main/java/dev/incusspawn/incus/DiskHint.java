@@ -33,7 +33,19 @@ public final class DiskHint {
     public static boolean due(PoolUsage usage, boolean enabled, Path stamp, Instant now) {
         if (!enabled || usage == null) return false;
         var level = usage.level();
-        if (level.compareTo(PoolUsage.Level.HINT) < 0) return false;
+        return level.compareTo(PoolUsage.Level.HINT) >= 0 && due(level, stamp, now);
+    }
+
+    /**
+     * Whether the hint could be due at any level, so the pool is worth reading: not when it is
+     * turned off, nor while it is quiet at the highest level, which no reading can rise above.
+     */
+    public static boolean mayBeDue(boolean enabled, Path stamp, Instant now) {
+        var levels = PoolUsage.Level.values();
+        return enabled && due(levels[levels.length - 1], stamp, now);
+    }
+
+    private static boolean due(PoolUsage.Level level, Path stamp, Instant now) {
         String[] last;
         try {
             last = Files.readString(stamp, StandardCharsets.UTF_8).trim().split(" ");
@@ -42,8 +54,7 @@ public final class DiskHint {
         }
         try {
             var shownAt = Instant.ofEpochSecond(Long.parseLong(last[0]));
-            var shownLevel = PoolUsage.Level.valueOf(last[1]);
-            if (level.compareTo(shownLevel) > 0) return true;
+            if (level.compareTo(PoolUsage.Level.valueOf(last[1])) > 0) return true;
             // A stamp from the future (a clock set back) does not silence the hint
             return shownAt.isAfter(now) || !now.isBefore(shownAt.plus(QUIET));
         } catch (RuntimeException e) {

@@ -87,4 +87,15 @@ class DiskHintTest {
         assertEquals("The storage pool is 87% full (7.5 GiB free), with 1 instance, which is stopped.", DiskHint.lines(hint(), 1, 1).get(0));
         assertEquals("The storage pool is 87% full (7.5 GiB free), with 1 instance.", DiskHint.lines(hint(), 1, 0).get(0));
     }
+
+    @Test
+    void thePoolIsWorthReadingUnlessOffOrQuietAtTheTopLevel() {
+        assertTrue(DiskHint.mayBeDue(true, stamp(), NOW));
+        assertFalse(DiskHint.mayBeDue(false, stamp(), NOW));
+        DiskHint.shown(stamp(), critical().level(), NOW);
+        assertTrue(DiskHint.mayBeDue(true, stamp(), NOW.plusSeconds(60)), "it could still rise to exhausted");
+        DiskHint.shown(stamp(), IncusClient.PoolUsage.Level.EXHAUSTED, NOW);
+        assertFalse(DiskHint.mayBeDue(true, stamp(), NOW.plusSeconds(60)));
+        assertTrue(DiskHint.mayBeDue(true, stamp(), NOW.plus(Duration.ofHours(24))));
+    }
 }

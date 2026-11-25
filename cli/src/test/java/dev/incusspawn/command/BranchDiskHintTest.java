@@ -19,8 +19,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * #2563: {@code isx branch} names {@code isx overview} as a note once the pool reaches the hint
- * level, from the pool read its space check already made. The listing it counts is read only
- * when the hint shows, so a branch that shows nothing costs the same requests as before.
+ * level. With {@code --no-start} it uses the pool read its space check already made; after a
+ * shell it reads the pool again. The listing it counts is read only when the hint shows.
  */
 @ExtendWith(IsolatedHome.class)
 class BranchDiskHintTest {
@@ -54,20 +54,25 @@ class BranchDiskHintTest {
         return new BranchCommand.Created("tpl-dev", BranchFlow.preflight(daemon.client(), request, Map.of("tpl-dev", def)), null, null);
     }
 
+    private static long resourceReads(FakeIncusDaemon daemon) {
+        return daemon.requests().stream().filter(r -> r.endsWith("/resources")).count();
+    }
+
     @Test
-    void atTheHintLevelItNotesTheCountsOnceAndStampsIt() {
+    void withNoStartItNotesThePoolAsPreflightReadItOnceAndStampsIt() {
         // 87% of 60 GiB, 7.5 GiB free
         var daemon = daemon(52 * GIB + GIB / 2);
         var created = preflight(daemon);
         var command = new Command();
-        var notes = RecordingOutput.during(() -> command.diskHint(created, daemon.client())).events(RecordingOutput.Kind.NOTE);
+        var notes = RecordingOutput.during(() -> command.diskHint(created, daemon.client(), false)).events(RecordingOutput.Kind.NOTE);
         assertEquals(2, notes.size(), notes.toString());
         assertEquals("The storage pool is 87% full (7.5 GiB free), with 2 instances, 1 of them stopped.", notes.get(0).msg());
+        assertEquals(1, resourceReads(daemon), "the pool read milliseconds earlier is not repeated");
         assertTrue(Files.exists(Environment.diskHintFile()));
 
         // Within the day it shows nothing, and reads no listing
         var before = daemon.requests().size();
-        var again = RecordingOutput.during(() -> command.diskHint(created, daemon.client())).events(RecordingOutput.Kind.NOTE);
+        var again = RecordingOutput.during(() -> command.diskHint(created, daemon.client(), false)).events(RecordingOutput.Kind.NOTE);
         assertEquals(List.of(), again);
         assertEquals(before, daemon.requests().size(), () -> String.join("\n", daemon.requests()));
     }
@@ -77,7 +82,7 @@ class BranchDiskHintTest {
         var low = daemon(48 * GIB);
         var created = preflight(low);
         var before = low.requests().size();
-        assertEquals(List.of(), RecordingOutput.during(() -> new Command().diskHint(created, low.client()))
+        assertEquals(List.of(), RecordingOutput.during(() -> new Command().diskHint(created, low.client(), false))
                 .events(RecordingOutput.Kind.NOTE));
         assertEquals(before, low.requests().size());
 
@@ -86,20 +91,44 @@ class BranchDiskHintTest {
         var command = new Command();
         command.terminal = false;
         before = short_.requests().size();
-        assertEquals(List.of(), RecordingOutput.during(() -> command.diskHint(atHint, short_.client()))
+        assertEquals(List.of(), RecordingOutput.during(() -> command.diskHint(atHint, short_.client(), true))
                 .events(RecordingOutput.Kind.NOTE));
         assertEquals(before, short_.requests().size());
         assertFalse(Files.exists(Environment.diskHintFile()));
     }
 
     @Test
-    void itShowsThePoolAsItIsAfterTheShellNotAsPreflightReadIt() {
-        var daemon = daemon(52 * GIB + GIB / 2);
+    void afterTheShellItReadsThePoolAgainThoughPreflightFoundRoom() {
+        // 80% when the branch was made: below the hint
+        var daemon = daemon(48 * GIB);
         var created = preflight(daemon);
         // The shell ran for hours, and the pool filled meanwhile
         daemon.poolSpace("default", 56 * GIB, 60 * GIB);
-        var notes = RecordingOutput.during(() -> new Command().diskHint(created, daemon.client())).events(RecordingOutput.Kind.NOTE);
+        var notes = RecordingOutput.during(() -> new Command().diskHint(created, daemon.client(), true)).events(RecordingOutput.Kind.NOTE);
+        assertEquals(2, notes.size(), notes.toString());
         assertTrue(notes.getFirst().msg().startsWith("The storage pool is 93% full (4.0 GiB free)"), notes.toString());
+        assertEquals(2, resourceReads(daemon));
+    }
+
+    @Test
+    void afterTheShellAFailedReadShowsNothingRatherThanPreflightsFigures() {
+        var daemon = daemon(52 * GIB + GIB / 2);
+        var created = preflight(daemon);
+        daemon.noPoolSpace("default");
+        assertEquals(List.of(), RecordingOutput.during(() -> new Command().diskHint(created, daemon.client(), true))
+                .events(RecordingOutput.Kind.NOTE));
+        assertFalse(Files.exists(Environment.diskHintFile()), "nothing shown, so the next day is not quiet");
+    }
+
+    @Test
+    void afterTheShellItDoesNotReadThePoolWhileQuietAtTheTopLevel() {
+        var daemon = daemon(48 * GIB);
+        var created = preflight(daemon);
+        dev.incusspawn.incus.DiskHint.shown(Environment.diskHintFile(),
+                dev.incusspawn.incus.IncusClient.PoolUsage.Level.EXHAUSTED, NOW.minusSeconds(60));
+        var before = daemon.requests().size();
+        RecordingOutput.during(() -> new Command().diskHint(created, daemon.client(), true));
+        assertEquals(before, daemon.requests().size());
     }
 
     @Test
@@ -107,7 +136,9 @@ class BranchDiskHintTest {
         IsolatedHome.seed("disk-hint: false\n");
         var daemon = daemon(52 * GIB);
         var created = preflight(daemon);
-        assertEquals(List.of(), RecordingOutput.during(() -> new Command().diskHint(created, daemon.client()))
+        var before = daemon.requests().size();
+        assertEquals(List.of(), RecordingOutput.during(() -> new Command().diskHint(created, daemon.client(), true))
                 .events(RecordingOutput.Kind.NOTE));
+        assertEquals(before, daemon.requests().size(), "turned off, it does not read the pool after the shell");
     }
 }
