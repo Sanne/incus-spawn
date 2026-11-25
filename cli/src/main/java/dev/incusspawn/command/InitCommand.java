@@ -280,6 +280,16 @@ public class InitCommand extends BaseCommand {
 
     /** The open block of plumbing steps, if the last step run was one. */
     private Output.Group plumbingBlock;
+    /**
+     * Whether a block of plumbing steps was opened in this run, under its header, and no plumbing
+     * step's question has broken it since ({@link #announce}).
+     */
+    private boolean plumbingShown;
+    /**
+     * Whether a plumbing step's question broke the block in this run ({@link #announce}): a
+     * continuation under sg then opens it again under its header, as a first process does.
+     */
+    private boolean plumbingBroken;
 
     private void closePlumbingBlock() {
         if (plumbingBlock == null) return;
@@ -299,8 +309,12 @@ public class InitCommand extends BaseCommand {
             return;
         }
         // A continuation under sg carries on the block its parent opened, under the parent's header (#2528)
-        if (plumbingBlock == null) plumbingBlock = BuildOutput.group(allPlumbing && continuedInGroup() ? ""
+        // A block shown already in this run is carried on without its header: the DNS step, after
+        // the questions, prints only when it retries or fails, and a header over nothing read as
+        // a second setup that did not happen (#2542)
+        if (plumbingBlock == null) plumbingBlock = BuildOutput.group(allPlumbing && continuedInGroup() && !plumbingBroken || plumbingShown ? ""
                 : "Installing what isx needs on " + dev.incusspawn.Platform.thisComputer(), "");
+        plumbingShown = true;
         unannounced = step;
         try {
             step.run().run();
@@ -2889,6 +2903,9 @@ public class InitCommand extends BaseCommand {
         if (step == null) return;
         unannounced = null;
         closePlumbingBlock();
+        // The block is broken by the step's own frame, so the next plumbing step opens it again under its header
+        plumbingShown = false;
+        plumbingBroken = true;
         var out = new ArrayList<String>();
         out.add("");
         out.add(styled(BOLD, "  " + step.title()));
