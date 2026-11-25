@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -132,6 +135,46 @@ class InitServiceStepTest {
         assertEquals(1, output.events(RecordingOutput.Kind.WARN).size());
         var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
         assertFalse(box.contains("Setup complete"), box);
+    }
+
+    /** A re-run reads what is built, so a host with a template is not led to a first one (#2598). */
+    @Test
+    void aReRunOnAHostWithATemplateLeavesOutTheQuickStart() {
+        var daemon = new FakeIncusDaemon().container("tpl-mine", Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
+        init.incus = daemon.client();
+        var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
+        assertFalse(box.contains("tpl-agent"), box);
+        assertTrue(box.contains("Branch a template:"), box);
+        init.incus = new FakeIncusDaemon().container("my-box", Map.of(Metadata.TYPE, "")).client();
+        box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
+        assertTrue(box.contains("Define tpl-agent:"), box);
+    }
+
+    /** A project's template is one to branch too (#2598). */
+    @Test
+    void aReRunOnAHostWithOnlyAProjectTemplateLeavesOutTheQuickStart() {
+        init.incus = new FakeIncusDaemon().container("my-project", Map.of(Metadata.TYPE, Metadata.TYPE_PROJECT)).client();
+        var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
+        assertFalse(box.contains("tpl-agent"), box);
+        assertTrue(box.contains("Branch a template:"), box);
+    }
+
+    /** A listing that cannot be read shows the Quick Start, the longer box that is never wrong (#2598). */
+    @Test
+    void aReRunWhoseListingFailsKeepsTheQuickStart() {
+        init.incus = new FakeIncusDaemon().container("tpl-mine", Map.of(Metadata.TYPE, Metadata.TYPE_BASE))
+                .failInstanceListing().client();
+        var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
+        assertTrue(box.contains("Define tpl-agent:"), box);
+    }
+
+    @Test
+    void aMacOsReRunOnAHostWithATemplateLeavesOutTheQuickStart() {
+        init.incus = new FakeIncusDaemon().container("tpl-mine", Map.of(Metadata.TYPE, Metadata.TYPE_BASE)).client();
+        var box = BuildOutput.stripAnsi(String.join("\n", init.macOsClosingSteps(false)));
+        assertFalse(box.contains("tpl-agent"), box);
+        assertTrue(box.contains("1. Start VM, proxy:"), box);
+        assertTrue(box.contains("2. Branch a template:"), box);
     }
 
     @Test
