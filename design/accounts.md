@@ -50,6 +50,7 @@ Claude's rules won, for every namespace:
 
 What the resolver needs to know about a namespace is an `AccountShape`, declared rather than coded.
 `ToolSetup.accountShape()` derives it from the tool's proxy definition: its `secret: true` entries are the credential (so a leftover `github.email`, or the `apiKey: ""` older releases wrote for every namespace, is not an account), every entry the user supplies is held per account, and `confirm` entries — Bob's licence consent — stay at the namespace level, where every account inherits them.
+A fresh key left blank skips the `confirm` entries after it, so Bob Shell asks no licence consent for a key nobody gave, while a plain setting after it is still asked (`CredentialSetup.setupGenericToolCredentials`, #2528).
 Two built-in tools override it.
 `GhSetup` names `email` and `name` as per-account, because the commit identity belongs to an account but neither is something the proxy injects.
 `ClaudeConfig.ACCOUNT_SHAPE` recognises the flat Vertex setup (`useVertex: true` is not a secret) and judges each account by its type.

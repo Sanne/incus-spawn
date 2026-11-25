@@ -366,8 +366,13 @@ class InitFirstRunTest {
 
     private static InitCommand.Closing closing(InitCommand.Services services, boolean built, boolean buildFailed,
                                                String agent, String accountCommand, List<String> firstStart) {
+        return closing(services, built, buildFailed, agent, accountCommand == null ? List.of() : List.of(accountCommand), firstStart);
+    }
+
+    private static InitCommand.Closing closing(InitCommand.Services services, boolean built, boolean buildFailed,
+                                               String agent, List<String> accountCommands, List<String> firstStart) {
         return new InitCommand.Closing(services, agent == null ? "tpl-minimal" : "tpl-agent", built, buildFailed, agent,
-                accountCommand, firstStart, true, "my-first-12", true);
+                accountCommands, null, firstStart, true, "my-first-12", true);
     }
 
     private static List<String> plain(List<String> lines) {
@@ -377,7 +382,7 @@ class InitFirstRunTest {
     /** Ready: the result and the one next command in the box, then what the person may want later. */
     @Test
     void aReadyRunEndsWithTheOneCommandAndWhatComesAfter() {
-        var message = InitCommand.firstRunNextSteps(closing(InitCommand.Services.INSTALLED, true, false, "Claude Code", null, List.of()));
+        var message = InitCommand.firstRunNextSteps(closing(InitCommand.Services.INSTALLED, true, false, "Claude Code", (String) null, List.of()));
         var box = String.join("\n", plain(message.box()));
         var later = String.join("\n", plain(message.later()));
 
@@ -413,6 +418,20 @@ class InitFirstRunTest {
             assertTrue(next > at, part + " out of order in:\n" + box);
             at = next;
         }
+    }
+
+    /**
+     * Every account the template lacks is named, each command on its own line (#2528): the build
+     * inside init does not warn of them, so a second gap left out here would go unmentioned.
+     */
+    @Test
+    void everyMissingAccountIsNamed() {
+        var message = InitCommand.firstRunNextSteps(closing(InitCommand.Services.INSTALLED, true, false,
+                "Pi", List.of("isx account add gemini", "isx account add github"), List.of()));
+        var box = String.join("\n", plain(message.box()));
+
+        assertTrue(box.contains("1. Add Pi's accounts:\n        isx account add gemini\n        isx account add github\n"), box);
+        assertTrue(box.contains("2. Open Pi in a new isx machine:"), box);
     }
 
     /** No line is wider than the box, on any path: a wider one breaks its right border. */

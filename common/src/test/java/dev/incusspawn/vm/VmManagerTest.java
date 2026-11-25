@@ -507,4 +507,11 @@ class VmManagerTest {
         assertEquals(java.util.List.of(skew.message()), seen, "once, then quiet for the interval");
         assertTrue(Files.exists(marker));
     }
+
+    /** The usual start adds nothing to its line: an empty detail printed "Starting VM (4 CPUs, 8 GB memory) ()" (#2528). */
+    @Test
+    void theVmStartLineHasNoDetailWhenTheVmHasItsOwnSession() {
+        assertNull(VmManager.startedDetail(true));
+        assertEquals("no setsid or perl, so it stops when the command that started it exits", VmManager.startedDetail(false));
+    }
 }

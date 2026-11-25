@@ -407,19 +407,23 @@ class CredentialSetup {
         }
         Lines.step("Codex CLI on " + Platform.thisComputer() + " is signed in with an API key.");
         Lines.step("isx uses a separate key for " + machines() + ".");
-        BuildOutput.gap();
-        prompts.say("Set up an OpenAI API key now?");
-        prompts.say("  Y  paste an OpenAI API key");
-        prompts.say("  o  use another kind of OpenAI account");
-        prompts.say("  s  skip for now");
+        var ask = true;
         while (true) {
+            if (ask) {
+                BuildOutput.gap();
+                prompts.say("Set up an OpenAI API key now?");
+                prompts.say("  Y  paste an OpenAI API key");
+                prompts.say("  o  use another kind of OpenAI account");
+                prompts.say("  s  skip for now");
+                ask = false;
+            }
             var answer = prompts.ask("Choice [Y]: ");
             var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
             switch (choice) {
                 case "", "y", "yes" -> {
                     if (askAndSaveApiKey(config, AccountTarget.FRESH, prompts, true)) return;
-                    setupCodexAuth(config, prompts);
-                    return;
+                    // Enter at the key goes back to this question, as its prompt says
+                    ask = true;
                 }
                 case "o" -> {
                     setupCodexAuth(config, prompts);
@@ -893,19 +897,23 @@ class CredentialSetup {
         }
         Lines.step("Claude Code on " + Platform.thisComputer() + " is signed in with an API key.");
         Lines.step("isx uses a separate key for " + machines() + ".");
-        BuildOutput.gap();
-        prompts.say("Set up an Anthropic API key now?");
-        prompts.say("  Y  paste an Anthropic API key");
-        prompts.say("  o  use another kind of Claude account");
-        prompts.say("  s  skip for now");
+        var ask = true;
         while (true) {
+            if (ask) {
+                BuildOutput.gap();
+                prompts.say("Set up an Anthropic API key now?");
+                prompts.say("  Y  paste an Anthropic API key");
+                prompts.say("  o  use another kind of Claude account");
+                prompts.say("  s  skip for now");
+                ask = false;
+            }
             var answer = prompts.ask("Choice [Y]: ");
             var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
             switch (choice) {
                 case "", "y", "yes" -> {
                     if (setupClaudeApiKey(config, prompts, AccountTarget.FRESH, null) == Outcome.DONE) return;
-                    chooseClaudeAccountKind(config, prompts, AccountTarget.FRESH);
-                    return;
+                    // Enter at the key goes back to this question, as its prompt says
+                    ask = true;
                 }
                 case "o" -> {
                     chooseClaudeAccountKind(config, prompts, AccountTarget.FRESH);
@@ -3013,6 +3021,8 @@ class CredentialSetup {
         // Lists entered anew, by full path: their old items go once the new ones are saved
         var replacedLists = new ArrayList<String>();
         var secretSkipped = false;
+        // A secret left blank with none kept: the consents after it are not asked
+        var freshSecretSkipped = false;
         var secretHeld = false;
         // A secret typed or pasted in this step, not one kept
         var secretEntered = false;
@@ -3034,6 +3044,7 @@ class CredentialSetup {
             replacedLists.clear();
             answers.clear();
             secretSkipped = false;
+            freshSecretSkipped = false;
             secretHeld = false;
             secretEntered = false;
             secretVerified = false;
@@ -3077,6 +3088,7 @@ class CredentialSetup {
                 var configDef = entry.getValue();
                 if (!configDef.getValue().isBlank()) continue;
                 if (configDef.getConfigPath().isBlank()) continue;
+                if (freshSecretSkipped && configDef.isConfirm()) continue;
 
                 // Definition text, so one line each, like describeTool.
                 var description = OutputFormat.oneLine(configDef.getDescription());
@@ -3211,8 +3223,10 @@ class CredentialSetup {
                     secretSkipped |= value.isBlank();
                     secretHeld |= !value.isBlank();
                     secretEntered |= !value.isBlank();
-                    // Skipping a fresh secret skips the rest of the step (such as a licence prompt)
-                    if (value.isBlank() && !secretHeld) break;
+                    // Skipping a fresh secret skips the consents after it (such as a licence prompt), never another
+                    // setting; a later secret entered is an account again, whose consents are asked
+                    if (!value.isBlank()) freshSecretSkipped = false;
+                    else if (!secretHeld) freshSecretSkipped = true;
                 }
                 if (value.isBlank()) continue;
                 answers.put(configKey, value);
