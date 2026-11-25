@@ -174,8 +174,8 @@ public class AntigravitySetup implements ToolSetup {
         if (!GoogleAccounts.TYPE.equals(type)) return List.of();
         // The agent by the name the first run gave it: no screen introduces "agy" (#2528)
         return List.of("Antigravity CLI then prints a Google sign-in link.",
-                "Open it here, sign in, and paste the code it shows",
-                "back into Antigravity CLI.");
+                "Open it in a browser, sign in, and paste the code",
+                "it shows back into Antigravity CLI.");
     }
 
     @Override

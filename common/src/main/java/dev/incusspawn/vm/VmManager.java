@@ -604,18 +604,20 @@ public final class VmManager {
             // The launcher shares the home read-only at the hypervisor, and the appliance mounts it
             // read-only too (rcS).
             if (replacesLegacy) BuildOutput.note(LAUNCHER + " now runs the VM in place of " + LEGACY_HYPERVISOR + ".");
-            BuildOutput.note("macOS may ask to allow access to your home folder and the local network.");
-            BuildOutput.note("Both are safe to approve.");
-            BuildOutput.note("isx's Linux VM mounts your home folder read-only, to share host paths you configure.");
-            BuildOutput.note("Your agents' machines see only those paths, never your whole home folder.");
-            BuildOutput.note("Local network access gives the Linux containers their network.");
+            BuildOutput.note("macOS may ask to allow access to your home folder and the");
+            BuildOutput.note("local network. Both are safe to approve.");
+            BuildOutput.note("The VM mounts your home folder read-only to share folders");
+            BuildOutput.note("you choose later. isx machines see only those folders,");
+            BuildOutput.note("never your whole home folder.");
+            BuildOutput.note("Local network access connects isx machines to the network.");
         }
 
         // Every start, the automatic one included: an older isx's proxy still running would take
         // the booting VM's sockets for stale ones and remove them (#2552).
         if (!proxyChecked) dev.incusspawn.proxy.ProxyHealthCheck.restartDriftedBeforeVmStart();
 
-        BuildOutput.stepStart("Launching VM (" + LAUNCHER + ", cpus=" + cpus + ", memory=" + memoryMiB + "M)");
+        BuildOutput.stepStart("Starting VM (" + cpus + (cpus == 1 ? " CPU, " : " CPUs, ")
+                + humanMemorySize(memoryMiB) + " memory)");
         try {
             Files.createDirectories(Environment.vmStateDir());
             startLauncher(launcher, cpus, memoryMiB);
@@ -627,7 +629,7 @@ public final class VmManager {
     }
 
     private static boolean awaitReady() {
-        BuildOutput.stepStart("Waiting for Incus daemon");
+        BuildOutput.stepStart("Waiting for Incus");
         if (waitUntilReady(60)) {
             BuildOutput.stepDone();
             return true;
@@ -1032,15 +1034,15 @@ public final class VmManager {
         }
 
         // The same start and wait as 'isx vm start', under a header of its own, a download first
-        BuildOutput.header("Starting incus-spawn VM", null);
+        BuildOutput.header("Starting isx's Linux VM", null);
         if (!Files.exists(Environment.applianceKernel())
                 || (!Files.exists(Environment.applianceDiskImage())
                     && !Files.exists(Environment.vmDiskImage()))) {
-            BuildOutput.step("Downloading VM appliance artifacts");
+            BuildOutput.step("Downloading the Linux VM");
             try {
                 downloadArtifacts();
             } catch (IOException e) {
-                BuildOutput.error("Failed to download appliance artifacts: " + e.getMessage());
+                BuildOutput.error("Failed to download the Linux VM: " + e.getMessage());
                 return false;
             }
         }
@@ -1197,7 +1199,9 @@ public final class VmManager {
         // writer on the same file corrupts both (#971 review). Its own lines (a wake, the guest's
         // clock, a relay's complaint) and perl's, should the exec into it fail, go there.
         long pid = launchInOwnSession(cmd, LAUNCHER, Environment.launcherLogFile(), Environment.vmPidFile()).pid();
-        BuildOutput.stepDone("pid=" + pid + noSessionNote());
+        dev.incusspawn.ClientLog.debug("Started " + LAUNCHER + " (pid=" + pid + ")");
+        var sessionNote = noSessionNote();
+        BuildOutput.stepDone(sessionNote.startsWith("; ") ? sessionNote.substring(2) : sessionNote);
     }
 
     /**
@@ -1356,7 +1360,7 @@ public final class VmManager {
                     + "\nRun 'isx init' to download appliance artifacts.");
         }
 
-        BuildOutput.stepStart("Extracting root disk");
+        BuildOutput.stepStart("Unpacking system disk");
         try {
             Files.createDirectories(Environment.vmStateDir());
             try (var gzIn = new GZIPInputStream(Files.newInputStream(compressed), 64 * 1024);
@@ -1370,8 +1374,7 @@ public final class VmManager {
             validateBtrfsMagic(tmp);
             Files.writeString(versionFile, currentVersion);
             Files.move(tmp, Environment.vmDiskImage(), StandardCopyOption.ATOMIC_MOVE);
-            BuildOutput.stepDone(humanSize(Files.size(Environment.vmDiskImage()))
-                    + ", " + rootDiskSize() + " virtual");
+            BuildOutput.stepDone();
         } catch (IOException e) {
             BuildOutput.stepBreak();
             try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
@@ -1404,7 +1407,7 @@ public final class VmManager {
 
     /** A blank sparse data disk; the appliance's rcS formats it on the next boot. */
     private static void createDataDisk(long bytes) {
-        BuildOutput.stepStart("Creating data disk (" + humanSize(bytes) + " sparse)");
+        BuildOutput.stepStart("Creating " + humanDiskSize(bytes) + " storage disk (grows as used)");
         try {
             Files.createDirectories(Environment.vmStateDir());
             try (var raf = new RandomAccessFile(Environment.vmDataImage().toFile(), "rw")) {
@@ -1597,7 +1600,7 @@ public final class VmManager {
         try {
             if (newKernel) downloadKernel(cache, baseUrl, arch, nextKernel);
             if (newImage) {
-                downloadStep(cache, "Downloading disk image (" + arch + ")",
+                downloadStep(cache, "System disk (" + arch + ")",
                         baseUrl + "/disk-" + arch + ".img.gz", nextImage);
             }
             if (newKernel) Files.move(nextKernel, kernel, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -1626,11 +1629,11 @@ public final class VmManager {
     private static void downloadKernel(DownloadCache cache, String baseUrl, String arch, java.nio.file.Path dest)
             throws IOException {
         try {
-            downloadStep(cache, "Downloading vmlinuz (" + arch + ")",
+            downloadStep(cache, "Kernel (" + arch + ")",
                     baseUrl + "/vmlinuz-" + arch + ".gz", dest, true);
         } catch (IOException compressed) {
             try {
-                downloadStep(cache, "Downloading vmlinuz (" + arch + ", uncompressed)",
+                downloadStep(cache, "Kernel (" + arch + ", uncompressed)",
                         baseUrl + "/vmlinuz-" + arch, dest, false);
             } catch (IOException legacy) {
                 compressed.addSuppressed(legacy);
@@ -1747,6 +1750,17 @@ public final class VmManager {
         }
         try { Files.deleteIfExists(Environment.vmVsockSocket()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(Environment.vmAgentSocket()); } catch (IOException ignored) {}
+    }
+
+    static String humanMemorySize(int memoryMiB) {
+        if (memoryMiB % 1024 == 0) return (memoryMiB / 1024) + " GB";
+        return String.format(java.util.Locale.ROOT, "%.1f GB", memoryMiB / 1024.0);
+    }
+
+    static String humanDiskSize(long bytes) {
+        long gib = 1024L * 1024 * 1024;
+        if (bytes >= gib && bytes % gib == 0) return (bytes / gib) + " GB";
+        return humanSize(bytes);
     }
 
     public static String humanSize(long bytes) {

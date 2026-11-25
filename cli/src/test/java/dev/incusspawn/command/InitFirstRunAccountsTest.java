@@ -70,17 +70,19 @@ class InitFirstRunAccountsTest {
     }
 
     /**
-     * Pi and opencode are asked for their provider first (#2536): Enter keeps Claude's, and the
-     * account step then says whose account it is, with no word on choosing another provider.
+     * Pi and opencode are asked for their provider first (#2536): bare Enter chooses nothing, 1
+     * chooses Claude, and the account step then says whose account it is, with no word on choosing
+     * another provider.
      */
     @Test
     void anAgentWithNoAccountOfItsOwnIsAskedItsProviderFirst() {
         for (var agent : List.of("pi", "opencode")) {
             IsolatedHome.configFile().toFile().delete();
             var init = new Init();
-            var lines = ask(agent, ScriptedPrompts.lines("", "4"), init);
+            var lines = ask(agent, ScriptedPrompts.lines("", "1", "4"), init);
 
             var provider = at(lines, "should " + (agent.equals("pi") ? "Pi" : "opencode") + " use?");
+            assertEquals(1, count(lines, "Type a number from 1 to 4."), String.join("\n", lines));
             assertTrue(provider < at(lines, "uses a Claude account."), String.join("\n", lines));
             assertTrue(at(lines, "uses a Claude account.") < at(lines, "Which kind of Claude account do you have?"), String.join("\n", lines));
             assertEquals(0, count(lines, "works with several providers"), String.join("\n", lines));
@@ -110,20 +112,21 @@ class InitFirstRunAccountsTest {
         }
     }
 
-    /** A provider isx does not manage is typed, checked, and needs no account step (#2536). */
+    /** A local or custom-proxied provider is typed, checked, and warns to keep keys on the computer (#2536). */
     @Test
     void aProviderIsxDoesNotManageNeedsNoAccount() {
         var init = new Init();
-        var lines = ask("pi", ScriptedPrompts.lines("4", "Not A Name", "openrouter"), init);
+        var lines = ask("pi", ScriptedPrompts.lines("4", "Not A Name", "ollama"), init);
+        var joined = String.join(" ", lines);
 
         assertEquals(1, count(lines, "Use lowercase letters, digits"), String.join("\n", lines));
-        assertEquals(1, count(lines, "Pi needs no account from isx for that provider."), String.join("\n", lines));
+        assertTrue(joined.contains("with a custom tool proxy rule:"), String.join("\n", lines));
         assertEquals(0, count(lines, "Pi Account"), String.join("\n", lines));
         assertEquals(0, count(lines, "Which kind of"), String.join("\n", lines));
-        assertEquals(java.util.Map.of("provider", "openrouter"), init.agentParams);
-        // The recap names the provider as typed, and says no account is needed for it (#2528)
-        assertEquals(1, count(lines, "Coding agent   Pi (openrouter)"), String.join("\n", lines));
-        assertEquals(1, count(lines, "Its account    not needed for that provider"), String.join("\n", lines));
+        assertEquals(java.util.Map.of("provider", "ollama"), init.agentParams);
+        // The recap names the provider as typed, and says the account is not managed here (#2528)
+        assertEquals(1, count(lines, "Coding agent   Pi (ollama)"), String.join("\n", lines));
+        assertEquals(1, count(lines, "Its account    not managed here"), String.join("\n", lines));
     }
 
     /** The recap shows the provider by the label the person picked from the list, not the parameter's value. */
@@ -137,14 +140,14 @@ class InitFirstRunAccountsTest {
         assertEquals(0, count(lines, "Pi (openai)"), String.join("\n", lines));
 
         IsolatedHome.configFile().toFile().delete();
-        var byDefault = ask("pi", ScriptedPrompts.lines(""), new Init());
-        assertTrue(count(byDefault, "Coding agent   Pi (Claude)") >= 1, String.join("\n", byDefault));
+        var claudeChosen = ask("pi", ScriptedPrompts.lines("1"), new Init());
+        assertTrue(count(claudeChosen, "Coding agent   Pi (Claude)") >= 1, String.join("\n", claudeChosen));
     }
 
     /**
      * The recap's account line goes by the account the step set up, never by what the agent
      * could use (#2528): a Pi user who chose OpenAI, with a Claude subscription saved before,
-     * reads that the account is saved, not "Claude subscription".
+     * reads "OpenAI API key", not "Claude subscription".
      */
     @Test
     void theRecapNamesTheAccountTheStepSetUpNotOneSavedBefore() throws Exception {
@@ -166,7 +169,7 @@ class InitFirstRunAccountsTest {
         var lines = askWith("pi", new ScriptedPrompts().line("2", "1").secret("sk-proj-" + "b".repeat(40)), init);
 
         assertTrue(count(lines, "Coding agent   Pi (OpenAI)") >= 1, String.join("\n", lines));
-        assertTrue(count(lines, "Its account    saved") >= 1, String.join("\n", lines));
+        assertTrue(count(lines, "Its account    OpenAI API key") >= 1, String.join("\n", lines));
         assertEquals(0, count(lines, "Claude subscription"), String.join("\n", lines));
     }
 
@@ -179,8 +182,8 @@ class InitFirstRunAccountsTest {
                 return new AuthResult(true, label + " verified.");
             }
         };
-        // Claude by Enter, an API key, then end of input at the GitHub question
-        var lines = askWith("pi", new ScriptedPrompts().line("", "1").secret("sk-ant-api03-" + "c".repeat(90)), init);
+        // Claude (1), an API key, then end of input at the GitHub question
+        var lines = askWith("pi", new ScriptedPrompts().line("1", "1").secret("sk-ant-api03-" + "c".repeat(90)), init);
 
         assertTrue(count(lines, "Its account    Anthropic API key") >= 1, String.join("\n", lines));
     }
@@ -192,9 +195,10 @@ class InitFirstRunAccountsTest {
         // With no gh login, None for now is the second option
         var lines = ask("copilot", ScriptedPrompts.lines("2"), init);
 
-        assertEquals(1, count(lines, "As which GitHub account should the agent act?"), String.join("\n", lines));
+        assertEquals(1, count(lines, "Which GitHub account should GitHub Copilot CLI use?"), String.join("\n", lines));
+        assertEquals(1, count(lines, "GitHub Copilot CLI cannot start until you add one"), String.join("\n", lines));
         // Said here, since the GitHub step's own header, which says it, is never shown on this path
-        assertTrue(at(lines, "GitHub Copilot CLI signs in with a GitHub account.") < at(lines, "As which GitHub account"),
+        assertTrue(at(lines, "GitHub Copilot CLI signs in with a GitHub account.") < at(lines, "Which GitHub account"),
                 String.join("\n", lines));
         assertEquals(0, count(lines, "GitHub Account"), String.join("\n", lines));
         // The counter matches the run: the agent, then its account, which is the GitHub question (#2528)
@@ -213,22 +217,21 @@ class InitFirstRunAccountsTest {
         // The key, then Enter at it, which goes back to the kinds (#2528); end of input ends there
         var lines = ask("antigravity", new ScriptedPrompts().line("1").secret(""), new Init());
 
-        var question = at(lines, "Which kind of Gemini account do you have?");
-        assertTrue(at(lines, "Antigravity CLI uses a Gemini account.") < question, String.join("\n", lines));
+        var question = at(lines, "How should Antigravity CLI sign in?");
         assertTrue(at(lines, "1. A Gemini API key") > question, String.join("\n", lines));
         assertTrue(at(lines, "2. A Google account") > question, String.join("\n", lines));
         assertTrue(at(lines, "3. None for now") > question, String.join("\n", lines));
-        assertEquals(2, count(lines, "Which kind of Gemini account do you have?"), String.join("\n", lines));
+        assertEquals(2, count(lines, "How should Antigravity CLI sign in?"), String.join("\n", lines));
         assertEquals(0, count(lines, "A credential entered here"), String.join("\n", lines));
     }
 
-    /** A key left blank is not a credential: the consent saved after it is not reported as one. */
+    /** Skipping a fresh key stops the step without asking the license prompt or saving anything. */
     @Test
-    void aSkippedKeyIsNotSaidToBeSaved() {
-        var lines = ask("bob", new ScriptedPrompts().secret("").line(""), new Init());
+    void aSkippedKeyStopsWithoutAskingLicenseTerms() {
+        var lines = ask("bob", new ScriptedPrompts().secret(""), new Init());
 
         assertEquals(0, count(lines, "Saved on"), String.join("\n", lines));
-        assertEquals(1, count(lines, "Your answer to \"Accept IBM license terms\" is saved."), String.join("\n", lines));
+        assertEquals(0, count(lines, "Accept IBM license terms"), String.join("\n", lines));
         assertEquals(1, count(lines, "Add one later with 'isx account add bob'."), String.join("\n", lines));
     }
 }

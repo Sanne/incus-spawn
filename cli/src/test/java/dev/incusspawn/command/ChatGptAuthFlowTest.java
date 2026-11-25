@@ -111,6 +111,43 @@ class ChatGptAuthFlowTest {
                 "the address is printed for the person to open, never opened for them: " + said);
         assertTrue(said.contains("in a browser on " + dev.incusspawn.Platform.thisComputer()),
                 "the browser flow's redirect answers only a browser on this host: " + said);
+        assertTrue(said.contains("isx waits here while you sign in."), said);
+    }
+
+    @Test
+    void aFailedBrowserSignInOffersAnotherTryAndSkippingLeavesNothingSaved() {
+        var failing = new FakeInit() {
+            int attempts;
+            @Override
+            dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
+                return new FakeSignIn() {
+                    @Override
+                    public ChatGptSessionStore.Tokens signInWithBrowser(java.util.function.Consumer<String> openUrl) {
+                        attempts++;
+                        openUrl.accept("https://auth.openai.com/oauth/authorize?response_type=code");
+                        if (attempts == 1) throw new IllegalStateException("timed out");
+                        return super.signInWithBrowser(openUrl);
+                    }
+                };
+            }
+        };
+        run(failing, new SpawnConfig(), new ScriptedPrompts().line("1", ""));
+        assertEquals("chatgpt", saved("openai.accounts.default.type"));
+
+        IsolatedHome.configFile().toFile().delete();
+        var alwaysFailing = new FakeInit() {
+            @Override
+            dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
+                return new FakeSignIn() {
+                    @Override
+                    public ChatGptSessionStore.Tokens signInWithBrowser(java.util.function.Consumer<String> openUrl) {
+                        throw new IllegalStateException("cancelled");
+                    }
+                };
+            }
+        };
+        run(alwaysFailing, new SpawnConfig(), new ScriptedPrompts().line("1", "s"));
+        assertNothingSaved();
     }
 
     @Test
@@ -403,7 +440,7 @@ class ChatGptAuthFlowTest {
             }
         };
 
-        run(init, new SpawnConfig(), chooseChatGpt());
+        run(init, new SpawnConfig(), new ScriptedPrompts().line("1", "s"));
 
         assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
     }

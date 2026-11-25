@@ -316,8 +316,10 @@ class HostSetup {
             BuildOutput.liveStep("Starting Incus", () -> runHost("sudo", "systemctl", "enable", "--now", "incus") == 0);
             BuildOutput.liveStep("Adding you to the incus-admin group",
                     () -> runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0);
-            BuildOutput.step("You may need to log out and back in for group membership to take effect, or run:");
-            BuildOutput.stepNote("newgrp incus-admin");
+            if (!init.firstRun) {
+                BuildOutput.step("You may need to log out and back in for group membership to take effect, or run:");
+                BuildOutput.stepNote("newgrp incus-admin");
+            }
         } else {
             BuildOutput.step("Incus is installed.");
             var serviceActive = runHost("systemctl", "is-active", "--quiet", "incus");
@@ -1395,7 +1397,7 @@ class HostSetup {
                 var prompts = init.prompts();
                 if (prompts != null) {
                     prompts.say(path + " contains an unexpected entry: " + conflicting);
-                    prompts.say("incus-spawn expects: " + entry);
+                    prompts.say("isx expects: " + entry);
                     if (askYesNo(prompts, styled(BOLD + YELLOW, "Replace it?"), false)) {
                         yield writeSubidFile(path, replaceSubidLine(content, result.conflictingEntry(), entry));
                     }
@@ -1403,7 +1405,7 @@ class HostSetup {
                     BuildOutput.warn("Left " + path + " as it is, so " + init.machines() + " may not start correctly.");
                 } else {
                     BuildOutput.warn("Left " + path + " as it is, so " + init.machines() + " may not start correctly.",
-                            "It holds " + result.conflictingEntry() + "; incus-spawn expects: " + entry);
+                            "It holds " + result.conflictingEntry() + "; isx expects: " + entry);
                 }
                 yield false;
             }
@@ -1914,18 +1916,18 @@ class HostSetup {
                 var lines = new ArrayList<String>(CowPoolBacking.failureExplanation(create.stderr()).stream()
                         .map(BuildOutput::guestText).toList());
                 lines.add("");
-                lines.add("Without a CoW pool, clones and branches will be FULL COPIES,");
-                lines.add("using significantly more disk space and taking longer to create.");
+                lines.add("Without a copy-on-write pool, copying a template makes a full");
+                lines.add("copy, using much more disk space and time.");
                 lines.add("");
                 lines.add("You can create one manually later:");
                 lines.add(styled(BOLD, String.join(" ", CowPoolBacking.createCommand(hostFs, false))));
-                lines.add("incus-spawn will automatically use it for all new instances.");
+                lines.add("isx uses it automatically for new " + init.machines() + ".");
                 BuildOutput.warnBanner("Failed to create btrfs storage pool!", lines.toArray(String[]::new));
 
                 var prompts = init.prompts();
                 if (prompts != null) {
-                    if (!askYesNo(prompts, styled(BOLD + YELLOW, "Continue without CoW storage?"), false)) {
-                        BuildOutput.step("Aborted. Re-run 'isx init' after creating a CoW storage pool.");
+                    if (!askYesNo(prompts, styled(BOLD + YELLOW, "Continue without copy-on-write storage?"), false)) {
+                        BuildOutput.step("Aborted. Run 'isx init' again after creating a storage pool.");
                         System.exit(0);
                     }
                 }

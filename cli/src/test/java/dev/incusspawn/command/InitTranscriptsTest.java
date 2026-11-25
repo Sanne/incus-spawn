@@ -59,6 +59,10 @@ class InitTranscriptsTest {
             HostAgentProbe.Kind.API_KEY, "anthropic", null, null, null, "~/.claude.json");
     static final HostAgentProbe.HostAgent CODEX_FOUND = new HostAgentProbe.HostAgent("codex", true,
             HostAgentProbe.Kind.SUBSCRIPTION, "openai", null, null, null, "~/.codex/auth.json");
+    static final HostAgentProbe.HostAgent ANTIGRAVITY_FOUND = new HostAgentProbe.HostAgent("antigravity", true,
+            HostAgentProbe.Kind.SUBSCRIPTION, "google", null, null, null, "~/.gemini/antigravity-cli/antigravity-oauth-token");
+    static final HostAgentProbe.HostAgent COPILOT_FOUND = new HostAgentProbe.HostAgent("copilot", true,
+            HostAgentProbe.Kind.SUBSCRIPTION, "github", null, null, null, "~/.copilot/config.json");
 
     static final String OAUTH_TOKEN = "sk-ant-oat01-" + "a".repeat(95);
     static final String API_KEY = "sk-ant-api03-" + "b".repeat(80);
@@ -280,7 +284,7 @@ class InitTranscriptsTest {
                 new ScriptedPrompts().line("", "s", "3", "")));
         b.add(new Branch("04-claude-api-key-found", "Claude Code signed in with an API key; a key pasted; no gh login",
                 i -> i.found = List.of(CLAUDE_API_KEY), claudeHere,
-                new ScriptedPrompts().line("", "1").secret(API_KEY).line("2", "")));
+                new ScriptedPrompts().line("", "").secret(API_KEY).line("2", "")));
         b.add(new Branch("05-no-agent-found-claude-not-installed", "No agent found; Claude Code chosen; not installed here; a subscription token",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "2").secret(OAUTH_TOKEN).line("2", "")));
@@ -301,40 +305,51 @@ class InitTranscriptsTest {
                 new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "4", "2", "")));
         b.add(new Branch("11-several-agents-found-another-chosen", "Claude Code and Codex found; Codex chosen from the list; an OpenAI API key",
                 i -> i.found = List.of(CLAUDE_SUBSCRIPTION, CODEX_FOUND), claudeHere,
-                new ScriptedPrompts().line("o", String.valueOf(probe.number("codex", java.util.Set.of("claude", "codex"))), "3").secret(openaiKey).line("2", "")));
+                new ScriptedPrompts().line("o", String.valueOf(probe.number("codex", java.util.Set.of("claude", "codex"))), "o", "3").secret(openaiKey).line("2", "")));
         b.add(new Branch("12-codex-chatgpt-browser", "Codex chosen; ChatGPT in the browser",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "1", "2", "")));
+        b.add(new Branch("12b-codex-found-chatgpt", "Codex CLI signed in with ChatGPT on this computer; Enter signs in for isx",
+                i -> i.found = List.of(CODEX_FOUND), h -> { },
+                new ScriptedPrompts().line("", "", "2", "")));
         b.add(new Branch("13-codex-chatgpt-code-fails", "Codex chosen; ChatGPT with a one-time code, which expires; tried again, then skipped",
                 i -> { }, h -> h.chatGptSignsIn = false,
                 new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "2", "", "s", "2", "")));
         b.add(new Branch("14-codex-none-for-now", "Codex chosen; None for now",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "4", "2", "")));
-        b.add(new Branch("15-pi", "Pi chosen; Claude as its provider; None for now",
+        b.add(new Branch("15-pi", "Pi chosen; Enter re-asks, then Claude as its provider; None for now",
                 i -> { }, h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "", "4", "2", "")));
+                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "", "1", "4", "2", "")));
         b.add(new Branch("15-pi-openai", "Pi chosen; OpenAI as its provider; an API key",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "2", "1").secret(openaiKey).line("2", "")));
-        b.add(new Branch("15-pi-other-provider", "Pi chosen; a provider isx does not manage",
+        b.add(new Branch("15-pi-other-provider", "Pi chosen; a local or custom-proxied provider",
                 i -> { }, h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "4", "Open Router", "openrouter", "2", "")));
+                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "4", "Open Router", "ollama", "2", "")));
         b.add(new Branch("16-opencode", "opencode chosen; Claude as its provider; a Claude API key",
                 i -> { }, h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("opencode")), "", "1").secret(API_KEY).line("2", "")));
+                new ScriptedPrompts().line(String.valueOf(probe.number("opencode")), "1", "1").secret(API_KEY).line("2", "")));
         b.add(new Branch("17-copilot", "GitHub Copilot CLI chosen; its account is GitHub's; the agent's own",
                 i -> i.login = "jdoe", h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("copilot")), "1").secret(GITHUB_TOKEN).line("")));
+        b.add(new Branch("17b-copilot-found-classic-gh", "GitHub Copilot CLI signed in; own gh login holds a classic token, warning wrapped",
+                i -> { i.found = List.of(COPILOT_FOUND); i.login = "jdoe"; },
+                h -> { h.ghLoggedIn = true; h.ghToken = "ghp_" + "d".repeat(36);
+                    h.gitHub = new CredentialSetup.GitHubUser("jdoe", 1234567, "jane@example.org"); },
+                new ScriptedPrompts().line("", "2", "2", "")));
         b.add(new Branch("18-gemini-api-key", "Gemini CLI chosen; an API key",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("gemini-cli")), "1").secret(geminiKey).line("2", "")));
         b.add(new Branch("19-antigravity-google", "Antigravity CLI chosen; a Google sign-in",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("antigravity")), "2", "2", "")));
-        b.add(new Branch("20-bob", "Bob Shell chosen; its key skipped, the license declined",
+        b.add(new Branch("19b-antigravity-found-google", "Antigravity CLI signed in on this computer; Enter chooses Google sign-in",
+                i -> i.found = List.of(ANTIGRAVITY_FOUND), h -> { },
+                new ScriptedPrompts().line("", "", "2", "")));
+        b.add(new Branch("20-bob", "Bob Shell chosen; its key skipped",
                 i -> { }, h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("bob"))).secret("").line("", "2", "")));
+                new ScriptedPrompts().line(String.valueOf(probe.number("bob"))).secret("").line("2", "")));
         b.add(new Branch("21-none-for-now-identity-yes", "No agent; GitHub None for now; the Git identity of this computer taken",
                 i -> i.login = "jdoe", h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.none()), "3", "y")));
@@ -485,8 +500,14 @@ class InitTranscriptsTest {
         assertFalse(text.substring(text.indexOf("Setup complete")).contains("Coding agent   "), text);
 
         var later = transcriptOf("15-pi");
-        assertTrue(later.contains("│  \u2713 Coding agent   Pi"), later);
+        assertTrue(later.contains("│  \u2713 Coding agent   Pi (Claude)"), later);
         assertTrue(later.contains("│  - Its account    left for later"), later);
+
+        var chatGpt = transcriptOf("12b-codex-found-chatgpt");
+        assertTrue(chatGpt.contains("│  \u2713 Its account    ChatGPT"), chatGpt);
+
+        var google = transcriptOf("19b-antigravity-found-google");
+        assertTrue(google.contains("│  \u2713 Its account    Google account"), google);
 
         var none = transcriptOf("21-none-for-now-identity-yes");
         assertTrue(none.contains("│  - Coding agent   none for now"), none);

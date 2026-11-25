@@ -184,8 +184,8 @@ public class PiSetup implements ToolSetup {
                 new Choice("Claude\nYour Claude account, set up next.", null),
                 new Choice("OpenAI\nYour OpenAI API key, set up next.", "openai"),
                 new Choice("Gemini\nYour Gemini API key, set up next.", "google")),
-                new Choice("Another provider\nOne isx does not manage; " + title + " signs in itself.",
-                        title + "'s name for the provider: "));
+                new Choice("A local or custom-proxied provider\nSuch as ollama, or a gateway with a proxy rule.\nNever put an API key inside an isx machine.",
+                        "Provider ID, or Enter to go back: "));
     }
 
     @Override
@@ -219,7 +219,7 @@ public class PiSetup implements ToolSetup {
                 "To use another provider, set it in the template's tools, run 'isx build' on the template"
                         + " and branch from it:"
                         + " '- pi: {provider: openai}' spends an OpenAI API key,"
-                        + " and a provider isx does not manage needs nothing from isx.");
+                        + " or add a custom tool with a proxy rule for another gateway.");
     }
 
     /** The isx-managed credential a pi provider spends. */

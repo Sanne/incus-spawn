@@ -128,6 +128,9 @@ class CredentialSetup {
     /** Whether the GitHub account is for GitHub Copilot CLI, which needs more of the token than isx does (#2537). */
     boolean forCopilot;
 
+    /** Whether GitHub Copilot CLI is signed in on this computer already. */
+    boolean copilotSignedInHere;
+
     /**
      * What the agent runs in, as this step names it: "isx machines" in the first run, which
      * introduces that word, and "instances", as the rest of isx says, everywhere else (#2528).
@@ -312,7 +315,7 @@ class CredentialSetup {
             prompts.say("k. Switch to an API key instead");
             var choice = readInput(prompts.ask(Prompts.choiceEnterDoes("keep it as it is")));
             switch (choice) {
-                case "s" -> { signInChatGptInBrowser(config, target); return; }
+                case "s" -> { signInChatGptInBrowser(config, target, prompts); return; }
                 case "k" -> { askAndSaveApiKey(config, target, prompts, false); return; }
                 default -> { return; }
             }
@@ -335,7 +338,7 @@ class CredentialSetup {
             // Numbered as the full list is, when the ChatGPT kinds are left out
             if (!chatGpt) choice = switch (choice) { case "1" -> "3"; case "2" -> "4"; default -> answer == null ? "4" : ""; };
             switch (choice) {
-                case "1" -> signInChatGptInBrowser(config, target);
+                case "1" -> signInChatGptInBrowser(config, target, prompts);
                 case "2" -> signInChatGptWithDeviceCode(config, target, prompts);
                 case "3" -> {
                     // Enter at the key goes back to the kinds of account
@@ -352,28 +355,120 @@ class CredentialSetup {
     }
 
     /**
-     * Signs a ChatGPT session in through the browser, where an organisation's SSO happens.
-     * The address is printed, never opened for the person: they click or paste it themselves,
-     * and the redirect answers only a browser on this host.
+     * The first run's OpenAI step when Codex CLI on this computer is signed in with ChatGPT:
+     * acknowledges the local sign-in, explains why isx keeps a separate one, and lets Enter
+     * sign in through the browser while {@code c} uses a device code and {@code o} opens the
+     * full account-kind menu.
      */
-    private void signInChatGptInBrowser(SpawnConfig config, AccountTarget target) {
-        var signIn = chatGptSignIn();
-        dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens;
-        try {
-            tokens = signIn.signInWithBrowser(url -> {
-                // A report between questions, so through BuildOutput rather than the prompts'
-                // conversation (#1703); the address plain, on its own line, so nothing stands
-                // between a terminal's link detection and the URL
-                BuildOutput.gap();
-                BuildOutput.step("Sign in at this address, in a browser on " + Platform.thisComputer() + ":");
-                BuildOutput.step(url);
-            });
-        } catch (Exception e) {
-            warnWrapped("The ChatGPT sign-in did not finish: " + reason(e),
-                    "Sign in later with 'isx account add openai'.");
+    void setupCodexLocalChatGpt(SpawnConfig config, Prompts prompts) {
+        if (hasAccountsToPreserve(config, "openai")) {
+            setupCodexAuth(config, prompts);
             return;
         }
-        saveChatGptSession(config, target, tokens);
+        var here = Platform.thisComputer();
+        Lines.step("Codex CLI on " + here + " is signed in with ChatGPT.");
+        Lines.step("isx uses a separate sign-in for " + machines() + ".");
+        BuildOutput.gap();
+        prompts.say("Sign in to ChatGPT now?");
+        prompts.say("  Y  get a sign-in link for a browser on " + here);
+        prompts.say("  c  sign in with a code on another device");
+        prompts.say("  o  use another kind of OpenAI account");
+        prompts.say("  s  skip for now");
+        while (true) {
+            var answer = prompts.ask("Choice [Y]: ");
+            var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
+            switch (choice) {
+                case "", "y", "yes" -> {
+                    signInChatGptInBrowser(config, AccountTarget.FRESH, prompts);
+                    return;
+                }
+                case "c" -> {
+                    signInChatGptWithDeviceCode(config, AccountTarget.FRESH, prompts);
+                    return;
+                }
+                case "o" -> {
+                    setupCodexAuth(config, prompts);
+                    return;
+                }
+                case "s" -> {
+                    BuildOutput.step("Skipped. 'isx account add openai' adds one later.");
+                    return;
+                }
+                default -> prompts.say("Please answer y, c, o or s.");
+            }
+        }
+    }
+
+    /** The first run's OpenAI step when Codex CLI on this computer is signed in with an API key. */
+    void setupCodexLocalApiKey(SpawnConfig config, Prompts prompts) {
+        if (hasAccountsToPreserve(config, "openai")) {
+            setupCodexAuth(config, prompts);
+            return;
+        }
+        Lines.step("Codex CLI on " + Platform.thisComputer() + " is signed in with an API key.");
+        Lines.step("isx uses a separate key for " + machines() + ".");
+        BuildOutput.gap();
+        prompts.say("Set up an OpenAI API key now?");
+        prompts.say("  Y  paste an OpenAI API key");
+        prompts.say("  o  use another kind of OpenAI account");
+        prompts.say("  s  skip for now");
+        while (true) {
+            var answer = prompts.ask("Choice [Y]: ");
+            var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
+            switch (choice) {
+                case "", "y", "yes" -> {
+                    if (askAndSaveApiKey(config, AccountTarget.FRESH, prompts, true)) return;
+                    setupCodexAuth(config, prompts);
+                    return;
+                }
+                case "o" -> {
+                    setupCodexAuth(config, prompts);
+                    return;
+                }
+                case "s" -> {
+                    BuildOutput.step("Skipped. 'isx account add openai' adds one later.");
+                    return;
+                }
+                default -> prompts.say("Please answer y, o or s.");
+            }
+        }
+    }
+
+    /**
+     * Signs a ChatGPT session in through the browser, where an organisation's SSO happens.
+     * The address is printed, never opened for the person: they click or paste it themselves,
+     * and the redirect answers only a browser on this host. A failed or cancelled attempt offers
+     * another try or skipping, matching {@link #signInChatGptWithDeviceCode}.
+     */
+    private void signInChatGptInBrowser(SpawnConfig config, AccountTarget target, Prompts prompts) {
+        var signIn = chatGptSignIn();
+        while (true) {
+            dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens = null;
+            try {
+                tokens = signIn.signInWithBrowser(url -> {
+                    // A report between questions, so through BuildOutput rather than the prompts'
+                    // conversation (#1703); the address plain, on its own line, so nothing stands
+                    // between a terminal's link detection and the URL
+                    BuildOutput.gap();
+                    BuildOutput.step("Sign in at this address, in a browser on " + Platform.thisComputer() + ":");
+                    BuildOutput.step(url);
+                    BuildOutput.step("isx waits here while you sign in.");
+                });
+            } catch (Exception e) {
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                warnWrapped(Thread.currentThread().isInterrupted() ? "The ChatGPT sign-in was interrupted."
+                        : "The ChatGPT sign-in did not finish: " + reason(e));
+            }
+            if (tokens != null) {
+                saveChatGptSession(config, target, tokens);
+                return;
+            }
+            if (Thread.currentThread().isInterrupted() || !tryAgain(prompts, "try again")) {
+                BuildOutput.step(hasAccountsToPreserve(config, "openai") ? "Your OpenAI accounts stay as they were."
+                        : "Skipped. 'isx account add openai' adds one later.");
+                return;
+            }
+        }
     }
 
     /** Why {@code e} was thrown, for a warning: its message, or its kind when it has none, never "null". */
@@ -413,12 +508,13 @@ class CredentialSetup {
                 BuildOutput.step("On any device, open this address:");
                 BuildOutput.step(device.verificationUrl());
                 BuildOutput.step("Then enter this code there: " + styled(BOLD, device.userCode()));
+                BuildOutput.step("isx waits here while you sign in.");
                 try {
                     tokens = signIn.awaitAuthorization(device, null);
                 } catch (InterruptedException e) {
                     // An interrupt ends the step: it is never answered with a new code
                     Thread.currentThread().interrupt();
-                    BuildOutput.warn("The ChatGPT sign-in was interrupted.");
+                    warnWrapped("The ChatGPT sign-in was interrupted.");
                 } catch (Exception e) {
                     warnWrapped("The ChatGPT sign-in did not finish: " + reason(e));
                 }
@@ -732,7 +828,7 @@ class CredentialSetup {
         while (true) {
             var projectId = readInput(prompts.ask("Project ID, or Enter to go back: "));
             if (projectId.isBlank()) return Outcome.BACK;
-            var region = readInput(prompts.ask("Region (such as us-east5): "));
+            var region = readInput(prompts.ask("Region (such as us-east5), or Enter to go back: "));
             if (region.isBlank()) return Outcome.BACK;
             var result = verifyVertexConfig(region, projectId);
             if (result.verified()) {
@@ -780,6 +876,47 @@ class CredentialSetup {
         Lines.step("isx uses a separate token for " + machines() + ".");
         if (claudeToken(config, prompts, AccountTarget.FRESH, true) == Outcome.BACK) {
             chooseClaudeAccountKind(config, prompts, AccountTarget.FRESH);
+        }
+    }
+
+    /**
+     * The first run's Claude step when Claude Code on this computer is signed in with an API key
+     * (in its local files, not the process environment): acknowledges the local sign-in and lets
+     * Enter paste a separate key for isx, while {@code o} opens the full account-kind menu.
+     */
+    void setupClaudeLocalApiKey(SpawnConfig config, Prompts prompts) {
+        var fromEnvironment = "1".equals(env("CLAUDE_CODE_USE_VERTEX")) || !env("ANTHROPIC_API_KEY").isBlank()
+                || !env("CLAUDE_CODE_OAUTH_TOKEN").isBlank();
+        if (fromEnvironment || !config.getClaude().allAccounts().isEmpty()) {
+            setupClaudeAuth(config, prompts);
+            return;
+        }
+        Lines.step("Claude Code on " + Platform.thisComputer() + " is signed in with an API key.");
+        Lines.step("isx uses a separate key for " + machines() + ".");
+        BuildOutput.gap();
+        prompts.say("Set up an Anthropic API key now?");
+        prompts.say("  Y  paste an Anthropic API key");
+        prompts.say("  o  use another kind of Claude account");
+        prompts.say("  s  skip for now");
+        while (true) {
+            var answer = prompts.ask("Choice [Y]: ");
+            var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
+            switch (choice) {
+                case "", "y", "yes" -> {
+                    if (setupClaudeApiKey(config, prompts, AccountTarget.FRESH, null) == Outcome.DONE) return;
+                    chooseClaudeAccountKind(config, prompts, AccountTarget.FRESH);
+                    return;
+                }
+                case "o" -> {
+                    chooseClaudeAccountKind(config, prompts, AccountTarget.FRESH);
+                    return;
+                }
+                case "s" -> {
+                    BuildOutput.step(claudeSkipped(config));
+                    return;
+                }
+                default -> prompts.say("Please answer y, o or s.");
+            }
         }
     }
 
@@ -1083,10 +1220,11 @@ class CredentialSetup {
     static VerificationFailureAction askVerificationFailureAction(Prompts prompts, String what, String why, boolean reached) {
         Lines.step(reached ? what + " did not verify. " + why
                 : couldNotCheck(what.substring(0, 1).toLowerCase(java.util.Locale.ROOT) + what.substring(1), why));
+        var pronoun = what.endsWith("s") ? "them" : "it";
         BuildOutput.gap();
         prompts.say("What now?");
         prompts.say("  Y  try again");
-        if (!reached) prompts.say("  u  save it unverified, and check it later");
+        if (!reached) prompts.say("  u  save " + pronoun + " unverified, and check " + pronoun + " later");
         prompts.say("  s  skip this account for now");
         while (true) {
             var action = parseVerificationFailureAction(prompts.ask(Prompts.choiceEnterTakes("Y")), !reached);
@@ -1181,6 +1319,15 @@ class CredentialSetup {
         return Optional.empty();
     }
 
+    /** Warns at the width of init's frame, so a long message or detail never overflows it. */
+    private static void warnWrapped(String first, String... more) {
+        var lines = new ArrayList<>(Lines.wrap(first, Lines.WIDTH - 2));
+        for (var detail : more) lines.addAll(Lines.wrap(detail, Lines.WIDTH - 2));
+        if (!lines.isEmpty()) {
+            BuildOutput.warn(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
+        }
+    }
+
     /**
      * Warns of a token's shape before it is checked, at the width of the frame. Its length only
      * when it was {@code pasted}: a token read from the environment was never pasted, so a short
@@ -1190,10 +1337,7 @@ class CredentialSetup {
     private static void warnOfShape(String token, boolean pasted) {
         var shape = oauthTokenShapeWarning(token);
         if (!pasted && token != null && token.startsWith(SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX)) shape = Optional.empty();
-        shape.ifPresent(warning -> {
-            var lines = Lines.wrap(warning, Lines.WIDTH - 2);
-            BuildOutput.warn(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
-        });
+        shape.ifPresent(CredentialSetup::warnWrapped);
     }
 
     private static final Pattern WHITESPACE_RUN = Pattern.compile("\\s+");
@@ -1336,7 +1480,7 @@ class CredentialSetup {
 
     AuthResult verifyAnthropicApiKey(String key) {
         if (!key.startsWith("sk-ant-")) {
-            BuildOutput.warn("Key does not start with 'sk-ant-' (unexpected format).");
+            warnWrapped("The key does not start with 'sk-ant-', as Anthropic's keys do.");
         }
         return verifyAnthropicCredential("x-api-key", key, "API key");
     }
@@ -1753,11 +1897,11 @@ class CredentialSetup {
      */
     static void warnIfCopilotCannotUse(String token) {
         if (token.startsWith("ghp_")) {
-            BuildOutput.warn("Copilot CLI does not take this gh login's token: it is a classic token.",
+            warnWrapped("Copilot CLI does not take this gh login's token: it is a classic token.",
                     "Replace it with 'isx account add github': with gh's token once gh signs in through the browser"
                             + " ('gh auth login --web'), or with a fine-grained token that has the 'Copilot Requests' permission.");
         } else if (token.startsWith("github_pat_")) {
-            BuildOutput.warn("Copilot CLI runs on this gh login's token only if it has the 'Copilot Requests' permission.",
+            warnWrapped("Copilot CLI runs on this gh login's token only if it has the 'Copilot Requests' permission.",
                     "Add it to the token on GitHub, under Permissions.");
         }
     }
@@ -1769,7 +1913,7 @@ class CredentialSetup {
      */
     static void warnIfCopilotCannotUsePasted(String token) {
         if (token.startsWith("ghp_")) {
-            BuildOutput.warn("Copilot CLI does not take this token: it is a classic token.",
+            warnWrapped("Copilot CLI does not take this token: it is a classic token.",
                     "Give the agent a fine-grained token with the 'Copilot Requests' permission ('isx account add github').");
         }
     }
@@ -2398,23 +2542,34 @@ class CredentialSetup {
             return !dev.incusspawn.config.AccountResolver.usableAccountNames(config, GhSetup.NAMESPACE).isEmpty();
         }
         var none = login == null ? "2" : "3";
+        if (copilotSignedInHere) {
+            Lines.step("GitHub Copilot CLI on " + Platform.thisComputer()
+                    + " is signed in. isx uses a separate GitHub token for " + machines() + ".");
+        }
         while (true) {
             BuildOutput.gap();
             // Each text whole, for the case it is said in: no line assembled from two halves
-            (noAgent ? SEPARATE_ACCOUNT_FOR_MACHINES : SEPARATE_ACCOUNT_FOR_AGENT).forEach(prompts::say);
+            (forCopilot ? SEPARATE_ACCOUNT_FOR_COPILOT
+                    : noAgent ? SEPARATE_ACCOUNT_FOR_MACHINES : SEPARATE_ACCOUNT_FOR_AGENT).forEach(prompts::say);
             if (login != null) {
                 prompts.say("  2. Your own account, " + OutputFormat.oneLine(login));
-                (noAgent ? OWN_ACCOUNT_FOR_MACHINES : OWN_ACCOUNT_FOR_AGENT).forEach(prompts::say);
-                if (forCopilot) prompts.say("     Copilot CLI does not take a classic token from gh.");
+                (forCopilot ? OWN_ACCOUNT_FOR_COPILOT
+                        : noAgent ? OWN_ACCOUNT_FOR_MACHINES : OWN_ACCOUNT_FOR_AGENT).forEach(prompts::say);
             }
             prompts.say("  " + none + ". None for now");
-            prompts.say(noAgent ? "     isx machines cannot push, comment or open anything on"
-                    : "     The agent cannot push, comment or open anything on");
-            prompts.say("     GitHub. Add an account later with");
-            prompts.say("     'isx account add github'.");
+            if (forCopilot) {
+                prompts.say("     GitHub Copilot CLI cannot start until you add one");
+                prompts.say("     with 'isx account add github'.");
+            } else {
+                prompts.say(noAgent ? "     isx machines cannot push, comment or open anything on"
+                        : "     The agent cannot push, comment or open anything on");
+                prompts.say("     GitHub. Add an account later with");
+                prompts.say("     'isx account add github'.");
+            }
             if (login == null) {
                 prompts.say("");
-                prompts.say("To use your own account, sign in with 'gh auth login'");
+                prompts.say(forCopilot ? "To use your own account, sign in with 'gh auth login --web'"
+                        : "To use your own account, sign in with 'gh auth login'");
                 prompts.say("first, then run 'isx account add github'.");
             }
             prompts.say("");
@@ -2479,6 +2634,22 @@ class CredentialSetup {
     private static final List<String> OWN_ACCOUNT_FOR_MACHINES = List.of(
             "     Quickest. People cannot tell that work from yours.",
             "     It uses gh's token, with all of your access.");
+
+    private static final List<String> SEPARATE_ACCOUNT_FOR_COPILOT = List.of(
+            "Which GitHub account should GitHub Copilot CLI use?",
+            "",
+            "  1. A separate account for the agent (recommended)",
+            "     Its permissions are independent of yours. The agent",
+            "     can work only on the repositories this account owns,",
+            "     or those of an organization it belongs to.",
+            "     Needs a second GitHub account, a Copilot plan of",
+            "     its own, and a token for it.");
+
+    private static final List<String> OWN_ACCOUNT_FOR_COPILOT = List.of(
+            "     Uses your Copilot plan, and people cannot tell the",
+            "     agent's work from yours. It uses gh's token, with",
+            "     all of your access.",
+            "     Copilot CLI does not take a classic token from gh.");
 
     /** How the token part of the GitHub step ended. */
     enum GitHubOutcome { SAVED, SKIPPED, BACK }
@@ -2582,7 +2753,7 @@ class CredentialSetup {
      * the flow rather than the seam, which tests replace, so the warning stays testable.
      */
     private GitHubVerifyResult verifyPastedGitHubToken(String token, Prompts prompts, Predicate<String> keepLogin) {
-        githubTokenShapeWarning(token).ifPresent(BuildOutput::warn);
+        githubTokenShapeWarning(token).ifPresent(CredentialSetup::warnWrapped);
         return verifyGitHubToken(token, prompts, keepLogin);
     }
 
@@ -3040,6 +3211,8 @@ class CredentialSetup {
                     secretSkipped |= value.isBlank();
                     secretHeld |= !value.isBlank();
                     secretEntered |= !value.isBlank();
+                    // Skipping a fresh secret skips the rest of the step (such as a licence prompt)
+                    if (value.isBlank() && !secretHeld) break;
                 }
                 if (value.isBlank()) continue;
                 answers.put(configKey, value);
@@ -3108,6 +3281,58 @@ class CredentialSetup {
         Lines.step("Skipped the " + skipped + ".");
         Lines.step(later);
         if (savedAny) Lines.step(answersSaved);
+    }
+
+    /**
+     * The first run's Gemini step when Antigravity CLI on this computer is signed in with a Google
+     * account: acknowledges the local sign-in and lets Enter choose a Google account for isx
+     * machines, while {@code o} opens the full menu for a Gemini API key instead.
+     */
+    void setupAntigravityLocalGoogle(SpawnConfig config, Prompts prompts) {
+        var tool = toolsOf(config).get("gemini-cli");
+        if (tool == null) return;
+        if (hasAccountsToPreserve(config, "gemini")) {
+            setupGenericToolCredentials("gemini-cli", tool, config, prompts);
+            return;
+        }
+        var hosted = tool.hostedSignIn();
+        if (hosted == null) {
+            setupGenericToolCredentials("gemini-cli", tool, config, prompts);
+            return;
+        }
+        var here = Platform.thisComputer();
+        Lines.step("Antigravity CLI on " + here + " is signed in with a Google account.");
+        Lines.step("isx uses a separate sign-in for " + machines() + ".");
+        BuildOutput.gap();
+        prompts.say("Use a Google account in " + machines() + "?");
+        prompts.say("  Y  sign in when Antigravity CLI first starts");
+        prompts.say("  o  use a Gemini API key instead");
+        prompts.say("  s  skip for now");
+        while (true) {
+            var answer = prompts.ask("Choice [Y]: ");
+            var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
+            switch (choice) {
+                case "", "y", "yes" -> {
+                    var values = Map.of("type", hosted.type());
+                    if (saveAccount(config, "gemini", tool.accountShape(), AccountTarget.FRESH, values)) {
+                        config.save();
+                        BuildOutput.gap();
+                        for (var line : hosted.help()) BuildOutput.step(line);
+                        BuildOutput.ok(OutputFormat.oneLine(hosted.outcome()));
+                    }
+                    return;
+                }
+                case "o" -> {
+                    setupGenericToolCredentials("gemini-cli", tool, config, prompts);
+                    return;
+                }
+                case "s" -> {
+                    BuildOutput.note("No Gemini account for now.");
+                    return;
+                }
+                default -> prompts.say("Please answer y, o or s.");
+            }
+        }
     }
 
     /** Which kind of account a namespace with a hosted sign-in sets up, or none for now. */
@@ -3185,8 +3410,11 @@ class CredentialSetup {
                 + "\n" + OutputFormat.oneLine(hosted.keyDescription()));
         if (offered) options.add("A " + OutputFormat.oneLine(hosted.label()) + "\n" + hosted.description());
         options.add("None for now\nAdd one later with 'isx account add " + OutputFormat.oneLine(namespace) + "'.");
+        var question = offered && "antigravity".equals(agent)
+                ? "How should Antigravity CLI sign in?"
+                : "Which kind of " + accountName(namespace) + " account do you have?";
         while (true) {
-            var answer = prompts.choose("Which kind of " + accountName(namespace) + " account do you have?", options, null, null);
+            var answer = prompts.choose(question, options, null, null);
             // End of input is no answer at all: nothing is set up
             if (answer == null) return AccountKind.NONE;
             switch (answer.strip()) {

@@ -171,7 +171,7 @@ public class OpencodeSetup implements ToolSetup {
                 "To use another provider, set it in the template's tools, run 'isx build' on the template"
                         + " and branch from it:"
                         + " '- opencode: {provider: openai}' spends an OpenAI API key,"
-                        + " and a provider isx does not manage needs nothing from isx.");
+                        + " or add a custom tool with a proxy rule for another gateway.");
     }
 
     /** The isx-managed credential an opencode provider spends. */
