@@ -84,6 +84,7 @@ The completion message then names the build command.
 The box holds the result and the next command: the template, built or not, which is where "template" is explained in every variant of the box, and the command that opens the agent in a new isx machine (`InitCommand.firstRunNextSteps`).
 When more is left, it lists it as numbered steps, one command to a line, in the order that works: start the services, build the template, add the agent's account, open the agent.
 Its title reads "Setup complete" only when opening the agent is all that is left, and otherwise counts the steps left; a build that failed is named.
+A later run's box ticks "Setup complete!" only when no service install failed; otherwise its header names the service it finished without, and starting it stays the first step (#2597).
 An agent that needs something of the person at its first start says so under its step (`ToolSetup.firstStartNote`): Antigravity CLI on a Google account signs in from the instance.
 Under the box come the commands for later: return to the machine, list the machines, edit the template, the templates guide and `isx init`.
 Its last line says that isx's commands and docs call an isx machine an "instance".

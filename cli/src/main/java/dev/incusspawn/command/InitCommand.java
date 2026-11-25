@@ -487,6 +487,12 @@ public class InitCommand extends BaseCommand {
     /** The steps whose offer was answered no, typed or by a flag such as {@code --no-service}: nothing is left there. */
     final Set<String> declined = new java.util.LinkedHashSet<>();
 
+    /**
+     * The steps whose install or owed restart failed, so a re-run's closing box ticks no setup
+     * (#2597). A first run's box lists starting the proxy as a step left instead, and does not read it.
+     */
+    final Set<String> failed = new java.util.LinkedHashSet<>();
+
     /** The exit of a run that finished with steps left for the person, when a summary was asked for (#2075). */
     static final int EXIT_STEPS_LEFT = 76;
 
@@ -638,9 +644,7 @@ public class InitCommand extends BaseCommand {
         }
 
         offerMenu();
-        var next = new ArrayList<>(List.of(nextSteps(linuxServices(proxyServiceInstalled.get()))));
-        if (continued) next.addAll(GROUP_PENDING);
-        printCompletionBox(next.toArray(String[]::new));
+        printCompletionBox(linuxClosingSteps(proxyServiceInstalled.get(), continued));
         return CommandResult.SUCCESS;
     }
 
@@ -965,8 +969,7 @@ public class InitCommand extends BaseCommand {
         runSteps(macOsSetup(), finalSteps(macOsServicesStep(servicesInstalled)));
         offerMenu();
 
-        printCompletionBox(nextSteps(servicesInstalled.get() ? Services.INSTALLED
-                : skipped.contains("macos-services") ? Services.INSTALL_VM_AND_PROXY : Services.START_VM_AND_PROXY));
+        printCompletionBox(macOsClosingSteps(servicesInstalled.get()));
         return CommandResult.SUCCESS;
     }
 
@@ -1018,9 +1021,19 @@ public class InitCommand extends BaseCommand {
      * points at the page that shows it rather than printing it.
      */
     static String[] nextSteps(Services services) {
-        var lines = new ArrayList<String>(List.of(
-                "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"),
-                ""));
+        return nextSteps(services, null);
+    }
+
+    /**
+     * As {@link #nextSteps(Services)}, but when {@code failedService} names a service whose install
+     * failed (not written, or not started), the header says so rather than ticking the setup
+     * (#2597); its step stays first.
+     */
+    static String[] nextSteps(Services services, String failedService) {
+        var header = failedService == null
+                ? "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!")
+                : "   " + styled(BOLD + YELLOW, "!") + styled(BOLD, " Setup finished without " + failedService + ".");
+        var lines = new ArrayList<String>(List.of(header, ""));
         if (services.step == null) lines.addAll(List.of("   isx's services start on their own.", ""));
         lines.add("   " + styled(BOLD, "Next steps, to a first agent:"));
         var steps = new ArrayList<String>();
@@ -3586,7 +3599,7 @@ public class InitCommand extends BaseCommand {
         if (present) BuildOutput.step("isx services are installed already.");
         var install = !present && wantsMacOsServices(prompts);
         markInitComplete();
-        return present || install && installProxyService();
+        return present || install && installed("macos-services");
     }
 
     private boolean wantsMacOsServices(Prompts prompts) {
@@ -3634,7 +3647,35 @@ public class InitCommand extends BaseCommand {
             BuildOutput.step("Proxy service is already running.");
             return true;
         }
-        return install && installProxyService();
+        return install && installed("proxy-service");
+    }
+
+    /** Linux's closing box after a re-run: the next steps, naming a service whose install failed (#2597). */
+    String[] linuxClosingSteps(boolean serviceInstalled, boolean continued) {
+        var next = new ArrayList<>(List.of(nextSteps(linuxServices(serviceInstalled), failedService())));
+        if (continued) next.addAll(GROUP_PENDING);
+        return next.toArray(String[]::new);
+    }
+
+    /** macOS's closing box after a re-run, as {@link #linuxClosingSteps} is Linux's. */
+    String[] macOsClosingSteps(boolean servicesInstalled) {
+        return nextSteps(servicesInstalled ? Services.INSTALLED
+                : skipped.contains("macos-services") ? Services.INSTALL_VM_AND_PROXY : Services.START_VM_AND_PROXY,
+                failedService());
+    }
+
+    /** What the closing box names as not set up, when this run's service install failed; else null. */
+    String failedService() {
+        if (failed.contains("proxy-service")) return "the proxy service";
+        if (failed.contains("macos-services")) return "the VM and proxy services";
+        return null;
+    }
+
+    /** Installs the services for the step {@code id}, recording a failure for the closing box. */
+    private boolean installed(String id) {
+        if (installProxyService()) return true;
+        failed.add(id);
+        return false;
     }
 
     private boolean wantsProxyService(Prompts prompts) {
