@@ -60,6 +60,48 @@ class AccountAddTranscriptsTest {
         b.add(new Branch("12-menu-two-chosen", "No credential named; Claude and GitHub chosen, both skipped", null, null, h -> { },
                 new ScriptedPrompts().line("1, 2", "4").secret("")));
         b.add(new Branch("10-atlassian", "atlassian", "atlassian-mcp", null, h -> { }, ScriptedPrompts.lines("")));
+        var claudeKey = "claude:\n  accounts:\n    default:\n      apiKey: " + InitTranscriptsTest.API_KEY + "\n  default: default\n";
+        var gitHubToken = "github:\n  accounts:\n    default:\n      token: " + InitTranscriptsTest.GITHUB_TOKEN + "\n  default: default\n";
+        b.add(new Branch("13-claude-vertex", "claude, Vertex AI, verified", "claude", null, h -> { },
+                ScriptedPrompts.lines("3", "my-project", "us-east5")));
+        b.add(new Branch("14-claude-vertex-unchecked", "claude, Vertex AI, gcloud missing", "claude", null, h -> h.vertexAccepts = false,
+                ScriptedPrompts.lines("3", "my-project", "us-east5", "y")));
+        b.add(new Branch("15-claude-key-rejected", "claude, an API key Anthropic rejects, then skipped", "claude", null,
+                h -> h.anthropicAccepts = false, new ScriptedPrompts().line("1").secret(InitTranscriptsTest.API_KEY).line("s")));
+        b.add(new Branch("16-claude-key-in-env", "claude, ANTHROPIC_API_KEY set on this computer", "claude", null,
+                h -> h.env.put("ANTHROPIC_API_KEY", InitTranscriptsTest.API_KEY), ScriptedPrompts.lines("")));
+        b.add(new Branch("17-claude-replace", "claude, an account configured; replace all", "claude", claudeKey, h -> { },
+                new ScriptedPrompts().line("r", "1").secret(InitTranscriptsTest.API_KEY)));
+        b.add(new Branch("18-claude-rename", "claude, an account configured; rename it", "claude", claudeKey, h -> { },
+                ScriptedPrompts.lines("n", "default", "work", "")));
+        b.add(new Branch("19-github-rejected", "github, a token GitHub rejects, then skipped", "github", null,
+                h -> h.gitHub = null, new ScriptedPrompts().secret(InitTranscriptsTest.GITHUB_TOKEN).line("s")));
+        b.add(new Branch("20-github-replace", "github, an account configured; replace its credential", "github", gitHubToken, h -> { },
+                new ScriptedPrompts().line("r").secret(InitTranscriptsTest.GITHUB_TOKEN).line("")));
+        b.add(new Branch("21-github-second", "github, an account configured; add a second", "github", gitHubToken, h -> { },
+                new ScriptedPrompts().line("a", "work").secret(InitTranscriptsTest.GITHUB_TOKEN).line("", "")));
+        b.add(new Branch("22-github-gh-signed-in", "github, gh signed in on this computer", "github", null, h -> {
+                    h.commands.add("gh");
+                    h.ghLoggedIn = true;
+                    h.ghToken = "gho_" + "d".repeat(36);
+                }, new ScriptedPrompts().secret(InitTranscriptsTest.GITHUB_TOKEN).line("", "")));
+        b.add(new Branch("23-openai-chatgpt-browser", "openai, ChatGPT in a browser here", "openai", null, h -> { },
+                ScriptedPrompts.lines("1", "")));
+        b.add(new Branch("24-openai-chatgpt-device", "openai, ChatGPT with a code on another device", "openai", null, h -> { },
+                ScriptedPrompts.lines("2", "")));
+        b.add(new Branch("25-openai-chatgpt-fails", "openai, a ChatGPT sign-in that is cancelled", "openai", null,
+                h -> h.chatGptSignsIn = false, ScriptedPrompts.lines("1", "", "")));
+        b.add(new Branch("26-gemini-google", "gemini, a Google account", "gemini", null, h -> { }, ScriptedPrompts.lines("2", "")));
+        b.add(new Branch("27-bob", "bob, an API key", "bob", null, h -> { },
+                new ScriptedPrompts().secret("bob-" + "g".repeat(40)).line("")));
+        b.add(new Branch("29-claude-subscription-only", "claude, a subscription account only; Enter keeps it", "claude",
+                "claude:\n  accounts:\n    default:\n      oauthToken: " + InitTranscriptsTest.OAUTH_TOKEN + "\n  default: default\n",
+                h -> { }, ScriptedPrompts.lines("")));
+        b.add(new Branch("28-claude-oauth-read-from-screen", "claude, a subscription token read from claude setup-token's screen", "claude", null,
+                h -> {
+                    h.commands.add("claude");
+                    h.screenTokens = List.of(InitTranscriptsTest.OAUTH_TOKEN);
+                }, ScriptedPrompts.lines("2", "", "")));
         return b;
     }
 
@@ -85,6 +127,68 @@ class AccountAddTranscriptsTest {
         var text = transcript(branches().getFirst());
         assertTrue(text.contains("Which credentials should isx set up? Choose one or more:"), text);
         assertTrue(text.contains("Skipped. 'isx account add' adds one later."), text);
+    }
+
+    /**
+     * The list names each credential as the step it starts is titled, with the tools that spend
+     * it: it once listed "Codex CLI" and then started "OpenAI Account", and said "Gemini CLI" of
+     * the account Antigravity CLI, Pi and opencode spend too.
+     */
+    @Test
+    void theListNamesEachAccountAsItsStepDoesWithWhatSpendsIt() throws Exception {
+        var text = transcript(branches().getFirst());
+        assertTrue(text.contains("1. Claude Account\n         For Claude Code, Pi and opencode\n"), text);
+        assertTrue(text.contains("2. GitHub Account\n         For Git, gh and GitHub Copilot CLI\n"), text);
+        assertTrue(text.contains("4. OpenAI Account\n         For Codex CLI, Pi and opencode\n"), text);
+        assertTrue(text.contains("6. Gemini Account\n         For Gemini CLI, Antigravity CLI, Pi and opencode\n"), text);
+        // One tool alone: its own description, as before
+        assertTrue(text.contains("3. Bob Shell\n         IBM AI coding assistant\n"), text);
+        var gemini = transcript(branches().stream().filter(b -> b.name().equals("08-gemini")).findFirst().orElseThrow());
+        assertTrue(gemini.contains("│  Gemini Account "), gemini);
+        assertTrue(gemini.contains("The credential Gemini CLI, Antigravity CLI, Pi and"), gemini);
+    }
+
+    /**
+     * A tool behind a feature gate is named under a credential by the config the list was given,
+     * as the list itself decides by it: a tool the config in hand enables is named while
+     * config.yaml on disk does not enable it, and one it does not enable is not.
+     */
+    @Test
+    void theToolsNamedUnderACredentialFollowTheConfigInHand() {
+        var tools = new java.util.LinkedHashMap<>(new dev.incusspawn.tool.ToolDefLoader().allToolSetups());
+        tools.put("gated", new dev.incusspawn.tool.ToolSetup() {
+            @Override public String name() { return "gated"; }
+            @Override public String description() { return "Gated Agent — behind a feature"; }
+            @Override public String feature() { return "gated-agent"; }
+            @Override public java.util.Set<String> credentialNamespaces() { return java.util.Set.of("gemini"); }
+            @Override public void install(dev.incusspawn.incus.Container container, java.util.Map<String, String> params) {}
+        });
+        var gemini = tools.get("gemini-cli");
+        var off = new dev.incusspawn.config.SpawnConfig();
+        var on = new dev.incusspawn.config.SpawnConfig();
+        on.setFeatures(List.of("gated-agent"));
+        assertFalse(InitCommand.spending("gemini-cli", gemini, tools, off).contains("Gated Agent"));
+        assertTrue(InitCommand.spending("gemini-cli", gemini, tools, on).contains("Gated Agent"));
+        assertTrue(CredentialSetup.optionAbout("gemini-cli", gemini, tools, on).contains("Gated Agent"),
+                CredentialSetup.optionAbout("gemini-cli", gemini, tools, on));
+    }
+
+    /**
+     * A Claude account's line that does not fit the frame keeps its tag whole, two spaces before
+     * it, on the last line when it has room and on a line of its own when it has not; no line is
+     * wider than the frame.
+     */
+    @Test
+    void aWrappedClaudeAccountLineKeepsItsTagWhole() {
+        var region = "europe-west1";
+        for (var project = "p"; project.length() < 2 * Lines.WIDTH; project += "x y") {
+            var account = dev.incusspawn.config.SpawnConfig.ClaudeAccount.ofVertex(region, project);
+            var lines = CredentialSetup.describeClaudeAccount("work", account, true);
+            assertTrue(lines.stream().allMatch(l -> l.length() <= Lines.WIDTH), String.join("\n", lines));
+            var shown = String.join("\n", lines);
+            assertTrue(lines.getLast().endsWith("  (default)"), shown);
+            assertEquals(shown.indexOf("(default)"), shown.lastIndexOf("(default)"), shown);
+        }
     }
 
     static String transcript(Branch branch) throws Exception {

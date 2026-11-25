@@ -181,12 +181,11 @@ class CredentialSetup {
         for (var entry : toolsWithProxy) {
             var toolName = entry.getKey();
             var tool = entry.getValue();
-            // The tool's description on a line of its own, under its name, as the other menus lay out an option
-            var title = OutputFormat.oneLine(ExampleTemplate.title(tool));
-            var desc = describeTool(toolName, tool);
-            var about = desc.startsWith(title + " — ") ? desc.substring(title.length() + 3) : "";
+            // Named as the step it starts is titled, with what spends the credential on a line of
+            // its own, as the other menus lay out an option: a person picks an account, not a tool
             var tag = isToolConfigured(toolName, tool, config, configTree, allTools) ? " (set up already)" : "";
-            options.add(title + tag + (about.isBlank() ? "" : "\n" + Character.toUpperCase(about.charAt(0)) + about.substring(1)));
+            var about = optionAbout(toolName, tool, allTools, config);
+            options.add(InitCommand.credentialTitle(toolName, tool) + tag + (about.isBlank() ? "" : "\n" + about));
         }
         var input = readInput(prompts.chooseSeveral("Which credentials should isx set up?", options, "skip"));
         if (input.isBlank()) {
@@ -209,6 +208,23 @@ class CredentialSetup {
             }
         }
         return selected;
+    }
+
+    /**
+     * What Credential Setup's list says under a credential: the tools that spend it when there are
+     * several, Git and gh for GitHub's, else the tool's own description.
+     */
+    static String optionAbout(String toolName, ToolSetup tool, Map<String, ToolSetup> allTools, SpawnConfig config) {
+        var spending = new ArrayList<>(InitCommand.spending(toolName, tool, allTools, config));
+        if (toolName.equals("gh")) {
+            spending.set(0, "gh");
+            spending.addFirst("Git");
+        }
+        if (spending.size() > 1) return "For " + OutputFormat.andList(spending);
+        var title = OutputFormat.oneLine(ExampleTemplate.title(tool));
+        var desc = describeTool(toolName, tool);
+        var about = desc.startsWith(title + " — ") ? desc.substring(title.length() + 3) : "";
+        return about.isBlank() ? "" : Character.toUpperCase(about.charAt(0)) + about.substring(1);
     }
 
     private static boolean isToolConfigured(String toolName, ToolSetup tool,
@@ -345,15 +361,27 @@ class CredentialSetup {
                 // A report between questions, so through BuildOutput rather than the prompts'
                 // conversation (#1703); the address plain, on its own line, so nothing stands
                 // between a terminal's link detection and the URL
+                BuildOutput.gap();
                 BuildOutput.step("Sign in at this address, in a browser on " + Platform.thisComputer() + ":");
                 BuildOutput.step(url);
             });
         } catch (Exception e) {
-            BuildOutput.warn("The ChatGPT sign-in did not finish: " + e.getMessage(),
+            warnWrapped("The ChatGPT sign-in did not finish: " + e.getMessage(),
                     "Sign in later with 'isx account add openai'.");
             return;
         }
         saveChatGptSession(config, target, tokens);
+    }
+
+    /**
+     * A warning whose text ends in a reason another library words, broken to the frame under the
+     * warning's mark (.claude/rules/interface-text.md "A line fits its frame"), then {@code advice}.
+     */
+    private static void warnWrapped(String text, String... advice) {
+        var lines = new ArrayList<>(Lines.wrap(OutputFormat.oneLine(text), Lines.WIDTH - 2));
+        var first = lines.removeFirst();
+        lines.addAll(List.of(advice));
+        BuildOutput.warn(first, lines.toArray(String[]::new));
     }
 
     /**
@@ -372,6 +400,7 @@ class CredentialSetup {
                 // stands between a terminal's link detection and the URL. Any device serves, for the
                 // one-time code carries the sign-in -- "on this machine" would send a headless host's
                 // user nowhere, and this path exists for exactly them.
+                BuildOutput.gap();
                 BuildOutput.step("On any device, open this address:");
                 BuildOutput.step(device.verificationUrl());
                 BuildOutput.step("Then enter this code there: " + styled(BOLD, device.userCode()));
@@ -382,10 +411,10 @@ class CredentialSetup {
                     Thread.currentThread().interrupt();
                     BuildOutput.warn("The ChatGPT sign-in was interrupted.");
                 } catch (Exception e) {
-                    BuildOutput.warn("The ChatGPT sign-in did not finish: " + e.getMessage());
+                    warnWrapped("The ChatGPT sign-in did not finish: " + e.getMessage());
                 }
             } catch (Exception e) {
-                BuildOutput.warn("isx could not reach OpenAI's sign-in server: " + e.getMessage());
+                warnWrapped("isx could not reach OpenAI's sign-in server: " + e.getMessage());
             }
             if (tokens != null) {
                 saveChatGptSession(config, target, tokens);
@@ -876,8 +905,13 @@ class CredentialSetup {
         return question + " (replaces account '" + target.name() + "'; the others are kept)";
     }
 
-    /** One line per account: marker, name, what it is, and a masked credential. */
-    private static String describeClaudeAccount(String name, SpawnConfig.ClaudeAccount account, boolean isDefault) {
+    /**
+     * The lines of one account: marker, name, what it is, a masked credential and its tag. Wrapped
+     * to the frame only when it does not fit, its continuation under the account's name; only the
+     * text before the tag is wrapped, so the two spaces before the tag stay, and the tag goes on a
+     * line of its own when the last one has no room.
+     */
+    static List<String> describeClaudeAccount(String name, SpawnConfig.ClaudeAccount account, boolean isDefault) {
         var resolved = account.effectiveType();
         var secret = resolved == null ? "" : switch (resolved) {
             case API_KEY -> " (" + maskSecret(account.getApiKey()) + ")";
@@ -886,7 +920,15 @@ class CredentialSetup {
         };
         // Laid out as the other credentials' account lists are
         var tag = isDefault ? "  (default)" : !account.isComplete() ? "  (incomplete)" : "";
-        return "- " + name + ": " + account.describe() + secret + tag;
+        var text = "- " + name + ": " + account.describe() + secret;
+        if (text.length() + tag.length() <= Lines.WIDTH) return List.of(text + tag);
+        var lines = new ArrayList<>(Lines.wrap(text, Lines.WIDTH - 2));
+        // The first line has no indent, so it holds the whole width
+        var room = (lines.size() == 1 ? Lines.WIDTH : Lines.WIDTH - 2) - lines.getLast().length();
+        if (tag.length() <= room) lines.set(lines.size() - 1, lines.getLast() + tag);
+        else lines.add(tag.strip());
+        for (int i = 1; i < lines.size(); i++) lines.set(i, "  " + lines.get(i));
+        return lines;
     }
 
     /**
@@ -900,11 +942,14 @@ class CredentialSetup {
             var claude = config.getClaude();
             var accounts = claude.allAccounts();
             var defaultName = claude.accountName();
+            // A block of its own: a rename comes back here
+            BuildOutput.gap();
             BuildOutput.step("Claude accounts:");
             accounts.forEach((name, account) ->
-                    prompts.say(describeClaudeAccount(name, account, name.equals(defaultName))));
+                    describeClaudeAccount(name, account, name.equals(defaultName)).forEach(prompts::say));
             if (claude.accountFor(SpawnConfig.ClaudeAccount::servesDirectApi) == null) {
-                prompts.say("'isx ask' cannot use any of these accounts. It needs an API key, which Max and Team plans include credits for, or Vertex AI.");
+                Lines.wrap("'isx ask' cannot use any of these accounts. It needs an API key, which Max and Team plans"
+                        + " include credits for, or Vertex AI.").forEach(prompts::say);
             }
             // 'd' and 'x' are reachable as raw keystrokes even when not listed, so the same
             // fact gates both the menu and the handlers -- state it once.

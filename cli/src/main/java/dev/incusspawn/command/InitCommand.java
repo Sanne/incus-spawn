@@ -2154,7 +2154,7 @@ public class InitCommand extends BaseCommand {
                 var prompts = consoleOrExplain();
                 if (prompts != null) credentials.setupClaudeSubscription(firstRunConfig(), prompts);
             } else {
-                credentialStep(step, tools.get(step)).run().run();
+                credentialStep(step, tools.get(step), tools, SpawnConfig.load()).run().run();
             }
         }
     }
@@ -2560,7 +2560,7 @@ public class InitCommand extends BaseCommand {
                 + " and never puts it inside one.").toArray(String[]::new),
                 () -> {
                     var tools = new ToolDefLoader().allToolSetups();
-                    chosenCredentials = selectCredentials(tools).stream().map(name -> credentialStep(name, tools.get(name))).toList();
+                    chosenCredentials = selectCredentialSteps(tools);
                 },
                 this::planCredentials);
     }
@@ -2574,25 +2574,65 @@ public class InitCommand extends BaseCommand {
                 + " as they leave an instance, and never puts it inside one.").toArray(String[]::new);
     }
 
-    /** The step that configures {@code toolName}'s credential, as {@code isx account add} and init's walk show it. */
-    private InitStep credentialStep(String toolName, ToolSetup tool) {
+    /**
+     * The step that configures {@code toolName}'s credential, as {@code isx account add} and init's
+     * walk show it; {@code tools} are every tool, so the step names each that spends the credential,
+     * and {@code config} decides which of them a feature gate leaves out.
+     */
+    private InitStep credentialStep(String toolName, ToolSetup tool, Map<String, ToolSetup> tools, SpawnConfig config) {
+        var title = credentialTitle(toolName, tool);
         return switch (toolName) {
-            case "claude" -> new InitStep(toolName, "Claude Account", credentialHint(
+            case "claude" -> new InitStep(toolName, title, credentialHint(
                     "The Claude account your instances use: an API key, a subscription (Pro, Max or Team)"
                             + " or Google Cloud Vertex AI."), this::setupClaudeAuth, null);
-            case "gh" -> new InitStep(toolName, "GitHub Account", credentialHint(
+            case "gh" -> new InitStep(toolName, title, credentialHint(
                     "The GitHub account Git and gh use in your instances."
                             + " Everything they do on GitHub is published under that account's name."), this::setupGitHubAuth, null);
-            case "codex" -> new InitStep(toolName, "OpenAI Account", credentialHint(
+            case "codex" -> new InitStep(toolName, title, credentialHint(
                     "The OpenAI account Codex uses in your instances: a ChatGPT plan, signed in"
                             + " through your browser, or an OpenAI API key."), this::setupCodexAuth, null);
             default -> {
-                // Definition text, so one line, as describeTool made it before
-                var title = OutputFormat.oneLine(ExampleTemplate.title(tool));
-                yield new InitStep(toolName, title, credentialHint("The credential " + title + " uses in your instances."),
+                var spending = spending(toolName, tool, tools, config);
+                yield new InitStep(toolName, title, credentialHint("The credential " + OutputFormat.andList(spending)
+                                + (spending.size() == 1 ? " uses" : " use") + " in your instances."),
                         () -> setupGenericToolCredentials(toolName, tool), null);
             }
         };
+    }
+
+    /**
+     * The title of {@code toolName}'s credential step, which Credential Setup's list shows too: the
+     * account it sets up for the built-in agents whose step asks for one, else the tool's title,
+     * definition text made one line.
+     */
+    static String credentialTitle(String toolName, ToolSetup tool) {
+        return switch (toolName) {
+            case "claude" -> "Claude Account";
+            case "gh" -> "GitHub Account";
+            case "codex" -> "OpenAI Account";
+            case "gemini-cli" -> "Gemini Account";
+            default -> OutputFormat.oneLine(ExampleTemplate.title(tool));
+        };
+    }
+
+    /**
+     * The tools that spend the credential {@code toolName}'s step sets up, by title: that tool
+     * first, then each other tool that spends its namespace, such as Antigravity CLI and Pi for
+     * Gemini CLI's. A credential only one tool spends names that tool alone.
+     */
+    static List<String> spending(String toolName, ToolSetup tool, Map<String, ToolSetup> tools, SpawnConfig config) {
+        var names = new ArrayList<String>();
+        names.add(OutputFormat.oneLine(ExampleTemplate.title(tool)));
+        var namespace = tool.proxy() == null ? "" : tool.proxy().getConfigNamespace();
+        if (namespace.isBlank()) return names;
+        // A tool behind a feature gate that is off is not offered, so it is not named either (#1441);
+        // decided by the config Credential Setup's list decides it by, so the two cannot differ
+        tools.entrySet().stream().filter(e -> !e.getKey().equals(toolName))
+                .filter(e -> e.getValue().credentialNamespaces().contains(namespace))
+                .filter(e -> !BuildTools.isFeatureGated(e.getValue(), config))
+                .map(e -> OutputFormat.oneLine(ExampleTemplate.title(e.getValue())))
+                .sorted().forEach(name -> { if (!names.contains(name)) names.add(name); });
+        return names;
     }
 
     /**
@@ -2659,7 +2699,7 @@ public class InitCommand extends BaseCommand {
                 }
                 return 1;
             }
-            steps = List.of(credentialStep(toolName, tools.get(toolName)));
+            steps = List.of(credentialStep(toolName, tools.get(toolName), tools, SpawnConfig.load()));
         }
         totalSteps = currentStep + steps.size();
         try {
@@ -2693,6 +2733,7 @@ public class InitCommand extends BaseCommand {
             if (step != null) steps.computeIfAbsent(step, s -> new LinkedHashSet<>()).addAll(templates);
         });
         if (steps.isEmpty()) return false;
+        var config = SpawnConfig.load();
         currentStep = 0;
         totalSteps = steps.size();
         totalKnown = true;
@@ -2709,7 +2750,7 @@ public class InitCommand extends BaseCommand {
                     currentStep++;
                     continue;
                 }
-                begin(credentialStep(entry.getKey(), tool));
+                begin(credentialStep(entry.getKey(), tool, tools, config));
                 ran = true;
             }
         } finally {
@@ -3107,7 +3148,11 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private List<String> selectCredentials(Map<String, ToolSetup> allTools) {
+    /**
+     * Credential Setup's list, then a step for each credential chosen, both from one read of
+     * {@code config.yaml}, so the list and the steps' hints apply the same feature gates.
+     */
+    private List<InitStep> selectCredentialSteps(Map<String, ToolSetup> allTools) {
         var prompts = prompts();
         if (prompts == null) {
             // No answer to a credential comes from anywhere but a person at a terminal (#2075)
@@ -3115,7 +3160,9 @@ public class InitCommand extends BaseCommand {
             skippedWithoutTerminal("'isx account add' sets one up at a terminal.");
             return List.of();
         }
-        return credentials.selectCredentials(allTools, credentialConfig(), prompts);
+        var config = credentialConfig();
+        return credentials.selectCredentials(allTools, config, prompts).stream()
+                .map(name -> credentialStep(name, allTools.get(name), allTools, config)).toList();
     }
 
     /**
