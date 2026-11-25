@@ -113,6 +113,9 @@ So isx prints the pre-filled token page as a link and never opens it; `u` at the
 Enter at that prompt goes back to the three options.
 A token that verified asks which email the agent's commits carry: GitHub's private address, `<id>+<login>@users.noreply.github.com`, or the account's primary one, Enter taking the private one.
 With no primary address to read, the private one is taken without asking, so a token without the email permission no longer asks for another token.
+A token that still belongs to the `gh` login is a mistake the guide cannot rule out, so isx names it and asks `Use it anyway?` before the email question (#2544).
+No, Enter included, goes back to the token prompt, and `isx account add github` asks the same.
+The two logins are compared without case, as GitHub compares them; without a signed-in `gh`, the step has nothing to compare with and does not ask.
 A namespace that already holds accounts, usable or not, gets the full step, which keeps them.
 
 ## The first run's words (#2528)

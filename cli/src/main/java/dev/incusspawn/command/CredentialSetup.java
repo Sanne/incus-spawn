@@ -43,6 +43,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -1525,7 +1526,7 @@ class CredentialSetup {
             BuildOutput.warn("isx could not read gh's token: 'gh auth token' printed none.");
             return GhTokenOutcome.FAILED;
         }
-        var result = verifyGitHubToken(token, prompts);
+        var result = verifyGitHubToken(token, prompts, login -> true);
         if (result == null) {
             BuildOutput.warn("isx could not use your gh sign-in");
             Lines.step((gitHubReached ? "GitHub rejected the token gh is signed in with." : gitHubFailure())
@@ -1612,10 +1613,28 @@ class CredentialSetup {
 
     /** Reads the token backing the current 'gh' login (stdout of 'gh auth token'). */
     String readGhAuthToken() {
+        return ghOutput("auth", "token");
+    }
+
+    /**
+     * The login of the account the computer's {@code gh} is signed in to, or null when it is not
+     * signed in or cannot say; tests answer it instead.
+     */
+    String ghCliLogin() {
+        if (!ghCliLoggedIn()) return null;
+        var login = ghOutput("api", "user", "--jq", ".login");
+        return login == null || login.isBlank() ? null : login;
+    }
+
+    /** What {@code gh <args>} prints, or null when it fails or takes too long. */
+    private static String ghOutput(String... args) {
         try {
+            var command = new ArrayList<String>();
+            command.add("gh");
+            command.addAll(List.of(args));
             // Discard stderr: gh warnings must not leak into the interactive init flow, and an
             // undrained stderr pipe could fill and block the process until the timeout below.
-            var p = new ProcessBuilder("gh", "auth", "token")
+            var p = new ProcessBuilder(command)
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start();
             String out;
@@ -2123,7 +2142,7 @@ class CredentialSetup {
         // Enter (or EOF) moves on.
         warnUnreadKeys(config, GhSetup.NAMESPACE);
         var account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
-        while (account.isPresent() && collectGitHubToken(config, prompts, account.get(), false) == GitHubOutcome.SAVED) {
+        while (account.isPresent() && collectGitHubToken(config, prompts, account.get(), false, this::ghCliLogin) == GitHubOutcome.SAVED) {
             account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
         }
     }
@@ -2183,7 +2202,7 @@ class CredentialSetup {
             // End of input is no answer at all: no account
             var choice = answer == null ? none : answer.strip();
             if (choice.equals("1")) {
-                var outcome = collectGitHubToken(config, prompts, AccountTarget.FRESH, true);
+                var outcome = collectGitHubToken(config, prompts, AccountTarget.FRESH, true, () -> login);
                 if (outcome == GitHubOutcome.BACK) continue;
                 return outcome == GitHubOutcome.SAVED;
             }
@@ -2207,8 +2226,14 @@ class CredentialSetup {
      * Walks the person through one token for {@code account}. With {@code canGoBack} (the first
      * run's options), Enter goes back to them; without, Enter offers the account {@code gh} is
      * signed in to, then skips.
+     *
+     * <p>A token that verifies as the account {@code gh} is signed in to is saved only after the
+     * person confirms it (#2544): made in a browser signed in as them, it is their own account,
+     * not a separate one. {@code ghLogin} gives that login, or null for none, and is asked only
+     * once a pasted token verifies.
      */
-    private GitHubOutcome collectGitHubToken(SpawnConfig config, Prompts prompts, AccountTarget account, boolean canGoBack) {
+    private GitHubOutcome collectGitHubToken(SpawnConfig config, Prompts prompts, AccountTarget account, boolean canGoBack,
+                                             Supplier<String> ghLogin) {
         printGitHubPatGuide(prompts);
         while (true) {
             var token = readSecret(prompts.askSecret(canGoBack ? "Paste the token, or Enter to go back: "
@@ -2228,7 +2253,10 @@ class CredentialSetup {
                 return GitHubOutcome.SKIPPED;
             }
 
-            var result = verifyPastedGitHubToken(token, prompts);
+            // GitHub logins ignore case
+            var result = verifyPastedGitHubToken(token, prompts, login -> !login.equalsIgnoreCase(ghLogin.get())
+                    || confirmOwnAccount(prompts, login));
+            if (result == GitHubVerifyResult.DECLINED) continue;
             if (result == null) {
                 // As for Claude: a check that failed for want of a network need not cost the token (#1441)
                 switch (askVerificationFailureAction(prompts, "The token", gitHubFailure(), gitHubReached)) {
@@ -2255,6 +2283,17 @@ class CredentialSetup {
     }
 
     /**
+     * Asks whether a pasted token of the person's own account is to be used anyway. Enter and
+     * end of input decline, back to the token prompt.
+     */
+    private boolean confirmOwnAccount(Prompts prompts, String login) {
+        BuildOutput.gap();
+        prompts.say("This token belongs to " + OutputFormat.oneLine(login) + ", your own account.");
+        prompts.say(noAgent ? "isx machines would act on GitHub as you." : "The agent would act on GitHub as you.");
+        return askYesNo(prompts, "Use it anyway?", false);
+    }
+
+    /**
      * A skip leaves every saved account as it was, so "no account added" is only said when there
      * are none: not after adding a first account this run, nor on a re-run that has some.
      */
@@ -2268,9 +2307,9 @@ class CredentialSetup {
      * {@link #verifyGitHubToken} for a token the user typed, after checking its shape: kept in
      * the flow rather than the seam, which tests replace, so the warning stays testable.
      */
-    private GitHubVerifyResult verifyPastedGitHubToken(String token, Prompts prompts) {
+    private GitHubVerifyResult verifyPastedGitHubToken(String token, Prompts prompts, Predicate<String> keepLogin) {
         githubTokenShapeWarning(token).ifPresent(BuildOutput::warn);
-        return verifyGitHubToken(token, prompts);
+        return verifyGitHubToken(token, prompts, keepLogin);
     }
 
     /**
@@ -2292,7 +2331,10 @@ class CredentialSetup {
     }
 
     /** The account a token verified as, and the email its commits carry, or null for none. */
-    record GitHubVerifyResult(String login, String email) {}
+    record GitHubVerifyResult(String login, String email) {
+        /** A token that verified as an account the person then declined: compared by identity. */
+        static final GitHubVerifyResult DECLINED = new GitHubVerifyResult(null, null);
+    }
 
     /** What GitHub says of a token's account: its login and number, and its primary verified email or null. */
     record GitHubUser(String login, long id, String email) {}
@@ -2310,9 +2352,11 @@ class CredentialSetup {
 
     /**
      * Checks {@code token} with GitHub and asks which email the agent's commits carry: null,
-     * with {@link #gitHubFailure} saying why, when it did not verify.
+     * with {@link #gitHubFailure} saying why, when it did not verify. {@code keepLogin} sees the
+     * token's account first, when GitHub names one, and declining it answers
+     * {@link GitHubVerifyResult#DECLINED} with no email question.
      */
-    GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts) {
+    GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts, Predicate<String> keepLogin) {
         GitHubUser user;
         try {
             user = fetchGitHubUser(token);
@@ -2321,6 +2365,7 @@ class CredentialSetup {
             gitHubFailure = gitHubReached ? e.getMessage() : "isx could not reach GitHub: " + BaseCommand.failure(e);
             return null;
         }
+        if (user.login() != null && !keepLogin.test(user.login())) return GitHubVerifyResult.DECLINED;
         return new GitHubVerifyResult(user.login(), chooseCommitEmail(user, prompts, noAgent));
     }
 

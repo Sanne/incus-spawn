@@ -83,6 +83,8 @@ class InitTranscriptsTest {
         @Override boolean openUrl(String url) { return false; }
         @Override boolean ghCliLoggedIn() { return ghLoggedIn; }
         @Override String readGhAuthToken() { return ghToken; }
+        // No transcript pastes a token of gh's own account, and the real one would run gh
+        @Override String ghCliLogin() { return null; }
 
         // Only the network call: the checks around it, a token's shape warning included, are the real ones
         @Override
