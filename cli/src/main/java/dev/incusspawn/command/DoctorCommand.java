@@ -1835,13 +1835,40 @@ public class DoctorCommand extends BaseCommand {
     }
 
     /**
+     * Restarts the proxy service and waits for it to answer: a restart counts a unit systemd is
+     * still starting as restarted, so only an answer says the remedy worked (#2619).
+     */
+    static void restartProxyService() throws IOException {
+        restartProxyService(ProxyService::restart,
+                () -> ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds()),
+                ProxyService::answeringIsTheService, ProxyService::notAnsweringAfterRestart);
+    }
+
+    /** {@link #restartProxyService()} with the service's calls given, for tests. */
+    static void restartProxyService(BooleanSupplier restart, BooleanSupplier answers,
+            BooleanSupplier answeringIsTheService, Supplier<ProxyService.NotAnswering> why) throws IOException {
+        // The restart has warned that it did not restart; this adds where to look
+        if (!restart.getAsBoolean()) throw new IOException(ProxyService.CHECK_LOGS);
+        BuildOutput.stepStart("Waiting for the proxy to answer");
+        if (!answers.getAsBoolean()) {
+            BuildOutput.stepBreak();
+            // The details say where to look; applyOrSuggest shows only the message
+            var notAnswering = why.get();
+            throw new IOException(String.join(" ", notAnswering.message(), String.join(" ", notAnswering.details())).strip());
+        }
+        BuildOutput.stepDone();
+        // Another proxy on the ports answers for a service that did not come back (#1570); it reports the holder
+        if (!answeringIsTheService.getAsBoolean()) throw new IOException("another proxy answers on the service's ports");
+    }
+
+    /**
      * The proxy outlived a change of the bridge's address (#919): only a restart rebinds it. A
      * service restart only helps when the service is what runs it, not a foreground proxy.
      */
     static Finding staleGatewayFinding(boolean serviceActive) {
         var detail = "(running, but on an old address of incusbr0 that instances can no longer reach)";
         return Finding.fail("Proxy unreachable", detail, serviceActive
-                ? new Remediation("Restart the proxy service", false, () -> ProxyService.restart())
+                ? new Remediation("Restart the proxy service", false, DoctorCommand::restartProxyService)
                 : new Remediation("Restart the proxy with 'isx proxy stop && isx proxy start'", false, null));
     }
 
@@ -1865,10 +1892,10 @@ public class DoctorCommand extends BaseCommand {
                                 + Environment.PROXY_SERVICE_NAME + "' shows it. "
                                 + "If it names the incus-admin group, log out and back in)",
                         new Remediation("Restart the proxy service once the error is fixed", false,
-                                () -> ProxyService.restart()));
+                                DoctorCommand::restartProxyService));
             }
             return Finding.fail("Proxy not running", "(its service is installed but not running)",
-                    new Remediation("Restart the proxy service", false, () -> ProxyService.restart()));
+                    new Remediation("Restart the proxy service", false, DoctorCommand::restartProxyService));
         }
         return Finding.fail("Proxy not running", "",
                 new Remediation("Start it with 'isx proxy start', or install its service with 'isx init'", false, null));

@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +35,15 @@ class InitServiceStepTest {
         boolean upgradeLeavesItDown;
         boolean installFails;
         boolean restartFails;
+        /** The restarted proxy exits at once: systemd still reads the unit active, nothing answers. */
+        boolean restartedProxyExits;
+        /** Another proxy holds the ports, so what answers is not the restarted service. */
+        boolean anotherProxyAnswers;
+        /** systemd waits out RestartSec to start a proxy that exited: the unit reads activating, not active. */
+        boolean unitActivating;
+        /** systemd stopped the restarted proxy for a configuration error (exit 78). */
+        boolean configError;
+        int answerWaits;
         final List<String> serviceActions = new ArrayList<>();
 
         private void record(String action) {
@@ -61,6 +71,27 @@ class InitServiceStepTest {
         boolean restartProxyService() {
             record("restart");
             return !restartFails;
+        }
+
+        @Override
+        boolean proxyServiceStarting() {
+            return serviceActive || unitActivating;
+        }
+
+        @Override
+        boolean proxyServiceAnswers() {
+            answerWaits++;
+            return (serviceActive || unitActivating) && !restartedProxyExits;
+        }
+
+        @Override
+        ProxyService.NotAnswering proxyServiceNotAnswering() {
+            return ProxyService.notAnsweringAfterRestart(configError);
+        }
+
+        @Override
+        boolean answeringIsTheProxyService() {
+            return !anotherProxyAnswers;
         }
 
         @Override
@@ -135,6 +166,128 @@ class InitServiceStepTest {
         assertEquals(1, output.events(RecordingOutput.Kind.WARN).size());
         var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
         assertFalse(box.contains("Setup complete"), box);
+    }
+
+    /**
+     * The unit reads active straight after its restart even when the new proxy exits at once, so
+     * init waits for the proxy to answer before it reports the service running (#2619).
+     */
+    @Test
+    void anUpgradeRestartWhoseProxyDoesNotAnswerIsRecordedAsFailed() throws IOException {
+        Environment.markInitComplete();
+        init.serviceActive = true;
+        init.upgradeRestarts = true;
+        init.restartedProxyExits = true;
+        var output = RecordingOutput.during(() -> assertFalse(init.completeWithProxyService(null)));
+        assertEquals(1, init.answerWaits);
+        assertEquals("the proxy service", init.failedService());
+        assertEquals(List.of(), output.events(RecordingOutput.Kind.STEP));
+        assertEquals(1, output.events(RecordingOutput.Kind.WARN).size());
+    }
+
+    /** The owed restart is waited on the same way (#2619). */
+    @Test
+    void anOwedRestartWhoseProxyDoesNotAnswerIsRecordedAsFailed() throws IOException {
+        Files.writeString(Environment.initCompleteMarker(), String.valueOf(Environment.INIT_VERSION - 1));
+        init.serviceActive = true;
+        init.restartedProxyExits = true;
+        var output = RecordingOutput.during(() -> assertFalse(init.completeWithProxyService(null)));
+        assertEquals(List.of("upgrade", "restart"), init.serviceActions);
+        assertEquals(1, init.answerWaits);
+        assertEquals("the proxy service", init.failedService());
+        assertEquals(List.of(), output.events(RecordingOutput.Kind.STEP));
+        assertEquals(1, output.events(RecordingOutput.Kind.WARN).size());
+        assertEquals(1, output.events(RecordingOutput.Kind.STEP_BREAK).size());
+    }
+
+    /** A restarted proxy that stopped on a configuration error says so, not only that nothing answers (#2619). */
+    @Test
+    void aRestartThatStoppedOnAConfigErrorNamesIt() throws IOException {
+        Environment.markInitComplete();
+        init.serviceActive = true;
+        init.upgradeRestarts = true;
+        init.restartedProxyExits = true;
+        init.configError = true;
+        var output = RecordingOutput.during(() -> assertFalse(init.completeWithProxyService(null)));
+        var warns = output.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warns.size());
+        assertTrue(warns.getFirst().msg().contains("configuration problem (exit 78)"), warns.toString());
+        assertEquals("the proxy service", init.failedService());
+    }
+
+    /** The owed restart's answer is checked for another proxy too (#1570). */
+    @Test
+    void anOwedRestartAnsweredByAnotherProxyIsRecordedAsFailed() throws IOException {
+        Files.writeString(Environment.initCompleteMarker(), String.valueOf(Environment.INIT_VERSION - 1));
+        init.serviceActive = true;
+        init.anotherProxyAnswers = true;
+        var output = RecordingOutput.during(() -> assertFalse(init.completeWithProxyService(null)));
+        assertEquals(List.of("upgrade", "restart"), init.serviceActions);
+        assertEquals("the proxy service", init.failedService());
+        assertEquals(List.of(), output.events(RecordingOutput.Kind.STEP));
+    }
+
+    /**
+     * Read during systemd's RestartSec wait, the upgraded unit is activating, not active. That is
+     * not a failure: init waits, and the proxy systemd starts again answers (#2619).
+     */
+    @Test
+    void anUpgradedUnitThatSystemdIsStillStartingIsWaitedOn() throws IOException {
+        Environment.markInitComplete();
+        init.serviceActive = true;
+        init.upgradeRestarts = true;
+        init.upgradeLeavesItDown = true;
+        init.unitActivating = true;
+        var output = RecordingOutput.during(() -> assertTrue(init.completeWithProxyService(null)));
+        assertEquals(1, init.answerWaits);
+        assertNull(init.failedService());
+        assertEquals(List.of(), output.events(RecordingOutput.Kind.WARN));
+        assertEquals(1, output.events(RecordingOutput.Kind.STEP_START).size());
+        assertEquals(1, output.events(RecordingOutput.Kind.STEP_DONE).size());
+    }
+
+    /** A unit the upgrade left down fails at once, without the wait for an answer. */
+    @Test
+    void anUpgradeRestartThatLeftTheUnitDownIsNotWaitedOn() throws IOException {
+        Environment.markInitComplete();
+        init.serviceActive = true;
+        init.upgradeRestarts = true;
+        init.upgradeLeavesItDown = true;
+        assertFalse(init.completeWithProxyService(null));
+        assertEquals(0, init.answerWaits);
+    }
+
+    /** An answer from another proxy on the ports is not the restarted service's (#1570). */
+    @Test
+    void aRestartAnsweredByAnotherProxyIsRecordedAsFailed() throws IOException {
+        Environment.markInitComplete();
+        init.serviceActive = true;
+        init.upgradeRestarts = true;
+        init.anotherProxyAnswers = true;
+        var output = RecordingOutput.during(() -> assertFalse(init.completeWithProxyService(null)));
+        assertEquals("the proxy service", init.failedService());
+        assertEquals(List.of(), output.events(RecordingOutput.Kind.STEP));
+    }
+
+    /** The firewall step's restart is waited on too, since it makes the same unit read active (#2619). */
+    @Test
+    void anEarlierStepsRestartWhoseProxyDoesNotAnswerIsRecordedAsFailed() throws IOException {
+        Environment.markInitComplete();
+        init.serviceActive = true;
+        init.proxyRestartedEarlier = true;
+        init.restartedProxyExits = true;
+        RecordingOutput.during(() -> assertFalse(init.completeWithProxyService(null)));
+        assertEquals(1, init.answerWaits);
+        assertEquals("the proxy service", init.failedService());
+    }
+
+    /** A running service that nothing restarted is not waited on: its re-run costs no wait. */
+    @Test
+    void aRunningServiceThatWasNotRestartedIsNotWaitedOn() throws IOException {
+        Environment.markInitComplete();
+        init.serviceActive = true;
+        assertTrue(init.completeWithProxyService(ScriptedPrompts.lines()));
+        assertEquals(0, init.answerWaits);
     }
 
     /** A re-run reads what is built, so a host with a template is not led to a first one (#2598). */

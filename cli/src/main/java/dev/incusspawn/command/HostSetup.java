@@ -58,7 +58,8 @@ class HostSetup {
     }
 
     private void restartProxyService() {
-        init.restartProxyService();
+        // completeWithProxyService waits for this restart's proxy to answer, as for its own (#2619)
+        if (init.restartProxyService()) init.proxyRestartedEarlier = true;
     }
 
     private String captureOutput(String... command) {

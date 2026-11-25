@@ -90,12 +90,8 @@ public class ProxyStartCommand extends BaseCommand {
                     return ProxyService.answeringIsTheService()
                             ? CommandResult.SUCCESS : CommandResult.FAILURE;
                 }
-                if (ProxyService.failedWithConfigError()) {
-                    BuildOutput.error("Proxy failed due to a configuration problem (exit " + ProxyService.EXIT_CONFIG + ").",
-                            ProxyService.CHECK_LOGS);
-                } else {
-                    BuildOutput.error("Proxy is still not responding after restart.", ProxyService.notResponding());
-                }
+                var why = ProxyService.notAnsweringAfterRestart();
+                BuildOutput.error(why.message(), why.details());
                 return CommandResult.FAILURE;
             }
             BuildOutput.stepStart("Starting proxy via service manager");

@@ -534,10 +534,13 @@ public class ProxyCommand extends BaseCommand {
             }
             if (!ProxyService.restart()) return CommandResult.valueOf(1);
             // A healthy answer may be another proxy's, which this restart did not reach (#1570).
-            if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())
-                    && !ProxyService.answeringIsTheService()) {
+            // A unit systemd is still starting counts as restarted, so only an answer tells (#2619).
+            if (!ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
+                var why = ProxyService.notAnsweringAfterRestart();
+                BuildOutput.error(why.message(), why.details());
                 return CommandResult.valueOf(1);
             }
+            if (!ProxyService.answeringIsTheService()) return CommandResult.valueOf(1);
             return CommandResult.SUCCESS;
         }
     }
@@ -569,9 +572,8 @@ public class ProxyCommand extends BaseCommand {
                 if (ProxyService.upgradeIfNeeded()) {
                     info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
                 }
-                if (ProxyService.reinstallIfChanged(incus, info)) {
-                    BuildOutput.success("Proxy service restarted with updated binary");
-                } else {
+                var reinstalled = ProxyService.reinstallIfChanged(incus, info);
+                if (!reinstalled) {
                     BuildOutput.step("Proxy service is already installed and running.");
                     // Drift it declined to restart for would otherwise go unexplained here.
                     var futile = ProxyHealthCheck.assessDrift(info).futileReason();
@@ -582,8 +584,10 @@ public class ProxyCommand extends BaseCommand {
                     return CommandResult.FAILURE;
                 }
                 // Something answering is not enough: it may be another proxy on the ports (#1570).
-                return ProxyService.answeringIsTheService()
-                        ? CommandResult.SUCCESS : CommandResult.FAILURE;
+                if (!ProxyService.answeringIsTheService()) return CommandResult.FAILURE;
+                // Only an answer says the restart took: a unit systemd is still starting counts as restarted (#2619)
+                if (reinstalled) BuildOutput.success("Proxy service restarted with updated binary");
+                return CommandResult.SUCCESS;
             }
             if (!ProxyService.install()) {
                 return CommandResult.FAILURE;
