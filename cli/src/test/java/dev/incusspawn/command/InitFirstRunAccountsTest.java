@@ -39,6 +39,11 @@ class InitFirstRunAccountsTest {
     /** The questions for {@code agent}, chosen from the list, then answered with {@code answers} and end of input. */
     private static List<String> ask(String agent, ScriptedPrompts answers, Init init) {
         init.credentials = new Host();
+        return askWith(agent, answers, init);
+    }
+
+    /** As {@link #ask}, with the credential steps the test gave {@code init}. */
+    private static List<String> askWith(String agent, ScriptedPrompts answers, Init init) {
         // As the list shows them with no agent found on this computer
         var agents = InitCommand.agentsInListOrder(init.codingAgentTools(), java.util.Set.of());
         var number = agents.indexOf(agents.stream().filter(a -> a.name().equals(agent)).findFirst().orElseThrow()) + 1;
@@ -116,6 +121,68 @@ class InitFirstRunAccountsTest {
         assertEquals(0, count(lines, "Pi Account"), String.join("\n", lines));
         assertEquals(0, count(lines, "Which kind of"), String.join("\n", lines));
         assertEquals(java.util.Map.of("provider", "openrouter"), init.agentParams);
+        // The recap names the provider as typed, and says no account is needed for it (#2528)
+        assertEquals(1, count(lines, "Coding agent   Pi (openrouter)"), String.join("\n", lines));
+        assertEquals(1, count(lines, "Its account    not needed for that provider"), String.join("\n", lines));
+    }
+
+    /** The recap shows the provider by the label the person picked from the list, not the parameter's value. */
+    @Test
+    void theRecapNamesTheProviderByItsLabel() {
+        var init = new Init();
+        var lines = ask("pi", ScriptedPrompts.lines("2"), init);
+
+        assertEquals(java.util.Map.of("provider", "openai"), init.agentParams);
+        assertTrue(count(lines, "Coding agent   Pi (OpenAI)") >= 1, String.join("\n", lines));
+        assertEquals(0, count(lines, "Pi (openai)"), String.join("\n", lines));
+
+        IsolatedHome.configFile().toFile().delete();
+        var byDefault = ask("pi", ScriptedPrompts.lines(""), new Init());
+        assertTrue(count(byDefault, "Coding agent   Pi (Claude)") >= 1, String.join("\n", byDefault));
+    }
+
+    /**
+     * The recap's account line goes by the account the step set up, never by what the agent
+     * could use (#2528): a Pi user who chose OpenAI, with a Claude subscription saved before,
+     * reads that the account is saved, not "Claude subscription".
+     */
+    @Test
+    void theRecapNamesTheAccountTheStepSetUpNotOneSavedBefore() throws Exception {
+        IsolatedHome.seed("""
+                claude:
+                  accounts:
+                    default:
+                      type: oauth
+                      oauthToken: sk-ant-oat01-%s
+                  default: default
+                """.formatted("a".repeat(95)));
+        var init = new Init();
+        init.credentials = new Host() {
+            @Override AuthResult checkSecret(dev.incusspawn.tool.SecretCheck.Request check) {
+                return new AuthResult(true, "Verified.");
+            }
+        };
+        // OpenAI, its API key, then end of input at the GitHub question, whose header holds the recap
+        var lines = askWith("pi", new ScriptedPrompts().line("2", "1").secret("sk-proj-" + "b".repeat(40)), init);
+
+        assertTrue(count(lines, "Coding agent   Pi (OpenAI)") >= 1, String.join("\n", lines));
+        assertTrue(count(lines, "Its account    saved") >= 1, String.join("\n", lines));
+        assertEquals(0, count(lines, "Claude subscription"), String.join("\n", lines));
+    }
+
+    /** With Claude as the provider, the account the step set up is a Claude one, and the recap names its kind. */
+    @Test
+    void theRecapNamesTheKindOfAClaudeAccountTheStepSetUp() {
+        var init = new Init();
+        init.credentials = new Host() {
+            @Override AuthResult verifyAnthropicCredential(String headerName, String headerValue, String label) {
+                return new AuthResult(true, label + " verified.");
+            }
+        };
+        // Claude by Enter, an API key, then end of input at the GitHub question
+        var lines = askWith("pi", new ScriptedPrompts().line("", "1").secret("sk-ant-api03-" + "c".repeat(90)), init);
+
+        assertTrue(count(lines, "Its account    Anthropic API key") >= 1, String.join("\n", lines));
     }
 
     /** Copilot spends GitHub's account: skipped at its step, the GitHub question is not asked a second time. */

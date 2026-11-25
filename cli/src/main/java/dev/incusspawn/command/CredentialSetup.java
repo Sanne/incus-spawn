@@ -2325,7 +2325,9 @@ class CredentialSetup {
                 }
                 continue;
             }
-            if (token.equalsIgnoreCase("u")) {
+            // c with no clipboard to copy to shows the address too: the guide did not offer it,
+            // but a person who types it means the address, never a one-letter token
+            if (token.equalsIgnoreCase("u") || token.equalsIgnoreCase("c")) {
                 // The whole address, on a line of its own, to copy by hand
                 BuildOutput.step(GH_PAT_NEW_URL);
                 continue;

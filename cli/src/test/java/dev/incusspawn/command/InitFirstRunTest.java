@@ -193,7 +193,7 @@ class InitFirstRunTest {
     /** A person who types that they do not want to begin leaves, and is told how to come back. */
     @Test
     void sayingNoAtTheWelcomeLeavesWithNothingAsked() {
-        for (var no : List.of("n", "No", " q ", "quit")) {
+        for (var no : List.of("n", "No", " q ", "quit", "exit")) {
             var init = new FirstRunInit();
             init.prompts = ScriptedPrompts.lines(no);
             var recorded = RecordingOutput.during(() -> assertFalse(init.waitToBegin(), no));
