@@ -1437,7 +1437,7 @@ public class InitCommand extends BaseCommand {
      * Waits for the person after the welcome (#2528): the first question's header would
      * otherwise be drawn straight under it, and a person answers what is asked before reading
      * what is above. Enter begins, as does end of input, which every later question answers
-     * for itself; a person who types that they do not want to (n, no, q, quit) leaves with
+     * for itself; a person who types that they do not want to (n, no, q, quit, exit) leaves with
      * nothing asked. A re-run, which shows its own banner and no welcome, does not wait.
      *
      * @return false when the person chose to leave
@@ -1616,7 +1616,7 @@ public class InitCommand extends BaseCommand {
             // With the answer to the agent's own question, such as Pi's provider (#2536)
             recap.add(chosenAgent == null ? new Answered("Coding agent", "none for now", false)
                     : new Answered("Coding agent", ExampleTemplate.title(chosenAgent)
-                            + (agentParams.isEmpty() ? "" : " (" + String.join(", ", new java.util.TreeMap<>(agentParams).values()) + ")"), true));
+                            + (agentAnswer == null ? "" : " (" + agentAnswer + ")"), true));
             if (chosenAgent != null) startDownloadsAhead(chosenAgent);
             // Counted again for the agent chosen, before the next header shows it
             totalSteps = questionsFor(chosenAgent, needsGitHub).count() + extra;
@@ -1651,13 +1651,17 @@ public class InitCommand extends BaseCommand {
                 } else {
                     noGitHub = true;
                 }
+                dev.incusspawn.config.GitIdentity identity = null;
                 if (noGitHub) {
                     offerAgentGitIdentity();
-                    noIdentity = SpawnConfig.load().gitIdentity() == null;
+                    identity = SpawnConfig.load().gitIdentity();
+                    noIdentity = identity == null;
                 }
                 // Asked in a step of its own; as the agent's account (Copilot), that line says it
                 if (!gitHubAsked) recap.add(noGitHub ? new Answered("GitHub", "none for now", false)
                         : new Answered("GitHub", gitHubAnswer(), true));
+                // The answer to the question a skipped GitHub account leads to, so the banner shows every answer
+                if (identity != null) recap.add(new Answered("Commits as", identity.toString(), true));
             } else if (!all && !gitHubAsked) {
                 // Not after the agent's own step, which asked for it and said it was saved
                 BuildOutput.note("A GitHub account is set up already.");
@@ -1709,17 +1713,15 @@ public class InitCommand extends BaseCommand {
 
     /**
      * What the recap says of the agent's account once it is set up: GitHub's when that is the
-     * account the agent uses (Copilot), the kind of Claude account when the agent uses one and
-     * config.yaml holds a single one, else that it is saved. Never a credential.
+     * account the agent uses (Copilot), the kind of Claude account when the step set one up and
+     * config.yaml holds a single one, else that it is saved. It goes by the namespace the step
+     * filled ({@link #accountNamespaces}), so a Pi user who chose OpenAI and has a Claude
+     * account from before never reads "Claude subscription". Never a credential.
      */
     String accountAnswer() {
         if (gitHubAsked) return "GitHub, " + gitHubAnswer();
         try {
-            var agent = templateAgent();
-            // The account of the provider the person chose for the agent, not of its default one (#2536)
-            var namespaces = agent == null ? java.util.Set.<String>of()
-                    : agent == chosenAgent ? agent.credentialNamespaces(agentParams) : agent.credentialNamespaces();
-            if (namespaces.contains(SpawnConfig.ClaudeConfig.NAMESPACE)) {
+            if (accountNamespaces.contains(SpawnConfig.ClaudeConfig.NAMESPACE)) {
                 var accounts = SpawnConfig.load().getClaude().allAccounts();
                 var type = accounts.size() == 1 ? accounts.values().iterator().next().effectiveType() : null;
                 if (type != null) {
@@ -1829,12 +1831,20 @@ public class InitCommand extends BaseCommand {
     private boolean agentQuestionAsked;
 
     /**
+     * The answer to the agent's own question as the person gave it, for the recap: the label of
+     * the choice they picked ("OpenAI"), or the name they typed. Null when nothing was asked or
+     * answered. Not the parameter's value, which the person never saw.
+     */
+    private String agentAnswer;
+
+    /**
      * Asks the chosen agent's own question (Pi's provider), which decides the account the next
      * step sets up. Not for a kept tpl-agent, which init does not write: its tools say already.
      */
     private void askAgentQuestion(Prompts prompts) {
         agentParams = Map.of();
         agentQuestionAsked = false;
+        agentAnswer = null;
         var question = chosenAgent.firstRunQuestion();
         if (question == null || prompts == null || trustedTemplates().containsKey(ExampleTemplate.NAME)) return;
         agentQuestionAsked = true;
@@ -1851,8 +1861,11 @@ public class InitCommand extends BaseCommand {
                 continue;
             }
             if (n >= 1 && n <= question.choices().size()) {
-                var value = question.choices().get(n - 1).value();
+                var choice = question.choices().get(n - 1);
+                var value = choice.value();
                 if (value != null) agentParams = Map.of(question.parameter(), value);
+                // The label the person picked from the list, its first line
+                agentAnswer = choice.label().lines().findFirst().orElse(null);
                 return;
             }
             if (question.other() != null && n == options.size()) {
@@ -1860,6 +1873,8 @@ public class InitCommand extends BaseCommand {
                 if (value == null) return;
                 if (!value.isEmpty()) {
                     agentParams = Map.of(question.parameter(), value);
+                    // A name the person typed is shown as typed
+                    agentAnswer = value;
                     return;
                 }
             }
@@ -2017,9 +2032,11 @@ public class InitCommand extends BaseCommand {
 
     private void setUpAgentCredential(ToolSetup agent, Map<String, ToolSetup> tools) throws Exception {
         var ran = new java.util.HashSet<String>();
+        accountNamespaces.clear();
         for (var gap : agentGaps().keySet()) {
             var step = CredentialCheck.stepTool(gap, tools);
             if (step != null && !ran.add(step)) continue;
+            if (step != null) accountNamespaces.add(namespaceOf(tools.get(step), step));
             if (step != null && !step.equals(agent.name())) sayWhoseAccount(agent, tools.get(step), step, agentQuestionAsked);
             if (step == null) {
                 BuildOutput.note(OutputFormat.oneLine(gap.credential()) + ": " + CredentialCheck.remedy(List.of(gap)));
@@ -2038,6 +2055,19 @@ public class InitCommand extends BaseCommand {
 
     /** Whether the GitHub question was asked as the agent's own account, so it is not asked again. */
     private boolean gitHubAsked;
+
+    /**
+     * The credential namespaces the account step asked for in this run, for the recap: what the
+     * step filled, never what the agent could use. Pi can use three providers' accounts and
+     * the step sets up one.
+     */
+    private final Set<String> accountNamespaces = new java.util.LinkedHashSet<>();
+
+    /** The namespace {@code step}'s tool keeps its credential in, the step's own name when it declares none. */
+    private static String namespaceOf(ToolSetup owner, String step) {
+        var proxy = owner == null ? null : owner.proxy();
+        return proxy == null || proxy.getConfigNamespace().isBlank() ? step : proxy.getConfigNamespace();
+    }
 
     /**
      * Before the step of an account that is not the agent's own: whose it is, since the questions

@@ -271,6 +271,22 @@ class GitHubAuthFlowTest {
         assertNothingSaved();
     }
 
+    /**
+     * Where no clipboard command exists the guide does not offer c, and a c typed anyway shows
+     * the address as u does: it is never received and checked as a one-letter token.
+     */
+    @Test
+    void cWithNoClipboardShowsTheAddressAndIsNeverAToken() {
+        var init = new FakeInit();
+        var out = reported(() -> run(init, new ScriptedPrompts().secret("c").secret("")));
+
+        assertTrue(out.contains(CredentialSetup.GH_PAT_NEW_URL), out);
+        assertFalse(out.contains("Received"), out);
+        assertEquals(List.of(), init.verified, "c is never checked as a token");
+        assertEquals(List.of(), init.copied);
+        assertNothingSaved();
+    }
+
     /** A copy that fails still gives the person the address. */
     @Test
     void aCopyThatFailsShowsTheAddress() {

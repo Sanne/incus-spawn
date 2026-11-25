@@ -18,7 +18,7 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    The stages are sentences with isx as the actor: an earlier form labelled its rows "You answer", "isx then" and "You get", which read as orders.
    It is kept to seven lines of text, so it leaves out what isx installs (the Linux VM, Incus, the proxy) and what a template is for, which the setup block and the closing box say where they happen; on Linux it keeps the sudo password, which the person must be ready for.
    It then waits at `Press Enter to begin, or Ctrl+C to leave:` (`waitToBegin`), since the first question's header would otherwise be drawn straight under the welcome, and a person answers what is asked before reading what is above it.
-   Enter begins, and so does end of input; `n`, `no`, `q` or `quit` leaves before the first question.
+   Enter begins, and so does end of input; `n`, `no`, `q`, `quit` or `exit` leaves before the first question.
    A re-run, which shows its own banner, does not wait, and neither does a run without a terminal.
    The pause costs every first run one keypress.
    Before it waits, it starts the downloads of `tpl-minimal`'s build in the background (`BackgroundDownloads`, `BuildDownloads.plan` with nothing counted as built).
@@ -126,6 +126,7 @@ The agent's own account gets a guide that starts from being signed in as that ac
 So isx neither opens the pre-filled token page nor prints a link to it: a click opens the browser that is signed in as the person.
 The guide's second step names the page where it is used, GitHub's page for a new token, and says isx has an address for it that fills in the permissions.
 At the token prompt `c` copies that address to the clipboard, to paste in the window signed in as the agent, and `u` prints it.
+Where no clipboard command exists the guide does not offer `c`, and a `c` typed anyway prints the address as `u` does, so it is never taken for a token.
 `c` is offered only where a clipboard command reaches the person's own screen (`CredentialSetup.clipboardCommand`: `pbcopy`, `wl-copy`, `xclip` or `xsel`, and never over SSH), which gives up clicking for everyone and copying for a person on a remote terminal.
 Enter at that prompt goes back to the three options.
 A token that verified asks which email the agent's commits carry: GitHub's private address, `<id>+<login>@users.noreply.github.com`, or the account's primary one, Enter taking the private one.
@@ -145,7 +146,9 @@ A step header shows its number once, as `[2/3]`.
 Each header after the first also recaps the answers so far, above its title (`InitCommand.Answered`, `recapLine`): "Coding agent", "Its account" and "GitHub", each with a tick and what was chosen, or a hyphen and "left for later" or "none for now".
 By the third question a person has scrolled past a token guide and another program's output, and the count alone does not say what was decided.
 The account's line names the kind of Claude account or the GitHub login the token belongs to, never a credential, and an answer too long for the box is cut.
-The agent's line carries the answer to the agent's own question, such as Pi's provider, and the account's line then speaks of that provider's account, or says that none is needed for a provider isx does not manage.
+The agent's line carries the answer to the agent's own question as the person gave it: the label they picked, "Pi (OpenAI)", or the name they typed.
+The account's line goes by the namespace the account step filled, never by what the agent could use, since Pi can use three providers' accounts and the step sets up one; a provider isx does not manage reads "not needed for that provider".
+After a skipped GitHub account, the Git identity the person agreed to has a line of its own, "Commits as".
 The recap is the questions' own: it is cleared when they end, so a header the setup shows later has none, and it costs each header two to four lines.
 When the questions end, a banner titled "Questions done" shows every answer with its mark, the last one included, which no header showed, and one sentence saying that isx now sets up the computer and builds the template (`printQuestionsDone`).
 Without it the setup's first line, on a Mac the VM starting, followed straight on the last answer, and nothing said the questions were over.

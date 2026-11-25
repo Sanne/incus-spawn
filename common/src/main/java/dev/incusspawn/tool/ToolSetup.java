@@ -163,7 +163,7 @@ public interface ToolSetup {
      * A first-run question about one of this tool's parameters.
      *
      * @param parameter the parameter the answer sets, one of {@link #parameters()}
-     * @param question  what is asked, without "Choose one"
+     * @param question  what is asked, shown as given above the numbered choices
      * @param choices   what may be answered, the first the parameter's default
      * @param other     the last choice, a value the person types, or null for none
      */
