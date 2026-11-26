@@ -37,7 +37,7 @@ Two jobs rather than two steps because steps of one job share a runner and a use
 The app's commits carry its login and noreply address, resolved from the public user id, since the ruleset asks an extra approval for unattributed changes.
 Issues are opened with the run's own token: one per judgement item and version, one when a `within: series` item's publisher lists a newer series, one when a pinned version's values no longer match what the publisher gives for it (a republished or tampered release, never a silent re-pin; a publisher that cannot be read while the pin is checked fails the run instead, #2261), the kernel's `[upstream] kernel: series <s> is EOL`, and `[upstream] watch failing` from a final `track` job that judges both jobs' results once, after both, so a plan that passed never closes the issue a failed publish is about to open; the next run where both pass closes it.
 The kernel source reads the next major's signed sums file as well once kernel.org publishes it (a missing file is no release yet; one that does not verify fails the run), and an EOL issue of a series no longer pinned or no longer ended is closed by the next run, the retired job's `[kernel] <s> is EOL` title included.
-The `github-asset`, `signed-file`, `maven-central`, `jetbrains`, `antigravity` and `model-deprecations` source types download through `fetch` in `lib.sh`, and so does the kernel source's `releases.json` (#2461).
+The `github-asset`, `signed-file`, `rpm-repo`, `maven-central`, `jetbrains`, `antigravity` and `model-deprecations` source types download through `fetch` in `lib.sh`, and so does the kernel source's `releases.json` (#2461).
 `fetch` tries a failed download six more times, waiting a second doubling each time, or the `Retry-After` the server names.
 Its waits stay within two minutes in all, and the time a transfer takes does not count, so a large download that drops after minutes is tried again.
 Three retries waited seven seconds in all, and Maven Central's rate limit answered all four attempts at a listing with HTTP 429.
@@ -88,6 +88,7 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `alpine-minirootfs` | `appliance/build.sh` (`ALPINE_VERSION`, both `ALPINE_SHA256`) | Alpine's `v3.24/releases/<arch>/` listing, the `.asc` of each tarball | `signed-file`, `upstream/keys/alpine-ncopa.asc` | mechanical | `series` (3.24) | 24h | a new minor, seen in the latest-stable feed (`go:design`); gate `kernel-mac-verified` |
 | `arch-cloud-image` | `scripts/distro-images.env` (`ARCH_IMAGE_URL`, `ARCH_IMAGE_SHA256`) | the Arch mirror's `images/` listing, the signed `.SHA256` of the image | `signed-file`, `upstream/keys/arch-linux.asc` | mechanical | `any` | 24h | none |
 | `ubuntu-cloud-image` | `scripts/distro-images.env` (`UBUNTU_IMAGE_URL`, `UBUNTU_IMAGE_SHA256`) | Canonical's `releases/noble/` listing, the `SHA256SUMS` signed by `SHA256SUMS.gpg` | `signed-file`, `upstream/keys/ubuntu-cloud-images.asc` | mechanical | `any` | 24h | none |
+| `rex` | `common/src/main/resources/tools/rex.yaml` (`description`, both rpm URLs and sums) | Superlogical's `rex/rpm/preview/<arch>/` repository: the signed `repomd.xml`, then the primary metadata it hashes | `signed-file`, `upstream/keys/superlogical-rex.asc` | review | `any` | 24h | none |
 | `models` | `common/src/main/resources/models.yaml` (every model ID isx ships) | each vendor's keyless markdown deprecations page (Anthropic, OpenAI, Google) | none: a findings source pins nothing | judgement | none | none | a deprecated or retired ID, or a successor (`go:build`) |
 | `maven-plugins` | the four poms (`compiler-plugin.version`, `surefire-plugin.version`, which failsafe shares, and the exec, jandex and assertj versions) | Maven Central's listing of each artifact | `central-exists` | review | `series` (each member's major) | 72h | a member's new major (`go:build`) |
 | `aesh` | `pom.xml` (`aesh.version`, for aesh and its processor) | Maven Central's listings | `central-exists` | review | `series` (the major) | 72h | a new major (`go:build`) |
@@ -210,6 +211,32 @@ A tree whose fields cannot be read counts as changed, so it fails closed.
 What this gives up: Maven 4, a different Apache line, is not watched, so a release of it opens no issue (the listing is `maven-3/`).
 Maven 3.10.0 is in the listing, so the first run opens an issue for the new series.
 The 3.9 line is bumped by the watch, and a person decides on 3.10.
+
+## The rpm-repo source type
+
+The `rex` tool installs Superlogical's Rex from rpms of its preview channel, pinned in `rex.yaml` by URL and sha256 for each arch, and an `rpm-repo` item moves the pin (#2653).
+Superlogical signs no rpm list and no sums file, but it signs each arch's `repodata/repomd.xml` (`repomd.xml.asc`).
+That file gives the sha256 of the primary metadata, which gives the sha256 of every rpm: the chain dnf itself follows.
+
+**Chosen:** the engine follows that chain for each arch and pins the rpm's sha256 from it, never downloading the rpm.
+`verify_signed` checks `repomd.xml` against `upstream/keys/superlogical-rex.asc` with the primary fingerprint pinned, as for `signed-file`, so the verifier is `signed-file`.
+The primary metadata must hash to what the signed file gives, and its location must have createrepo's shape (`repodata/<hex>-primary.xml.gz`), so nothing the repository sends picks what is read (`rpm-repo.pl`).
+A version is a candidate only when every arch lists it, and each arch pins the highest release it lists for that version.
+Each rpm's URL is built from the manifest, the version and that release, and a package whose location is not that name fails the run.
+The version is written `0.1.0-preview.25`, rpm's `~` turned into `-`, the form the description shows and a branch or commit title can hold; `src_order` puts a release after its previews, as rpm does and `sort -V` would not.
+The release date is the latest build time of the two rpms, so the 24h floor counts from the later one.
+A pinned version the repository no longer lists is a pin-mismatch issue (`src_confirms`), not a run that fails, so a pruned preview stops only this item.
+
+**Alternatives:** a `signed-file` item, which needs a signature of each file or a signed sums file, and the repository has neither beside the rpms.
+Downloading each rpm and checking its own OpenPGP signature, which costs two 15 MB downloads per run and needs rpm's tooling on the runner, for a proof the signed metadata already gives.
+
+**Why:** the signed metadata is what every dnf install of Rex trusts, so the pin follows exactly what Superlogical gives its users.
+The item is `class: review`: Rex is a preview, and isx reads what its CLI prints and registers each instance with the host's Rex, which no CI job runs.
+It is `within: any`, since a person merges every bump anyway, so a 0.2 preview is proposed like a 0.1 one.
+
+What this gives up: only the preview channel is watched; moving the tool to the stable channel, once it has packages, is a person's change.
+A new release of the version already pinned (`-2` after `-1`) is not proposed: the check reads it as a pin the repository no longer confirms and opens a pin-mismatch issue.
+Superlogical publishes a preview every day or two, and the candidate is always the newest, so a run of releases each less than a day apart proposes nothing until one stands a day.
 
 ## The github-action source type
 
