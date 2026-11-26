@@ -583,13 +583,13 @@ Without a terminal there is nothing to wait on and no TUI to cover anything, so 
 
 The main screen has four tabs: Overview, Templates, Instances and Work.
 Overview is the screen as it was before tabs: templates above, instances below.
-Templates and Instances each give one list the whole height, and Work is the instance list with the overview's columns ("The overview of what each instance did").
+Templates and Instances each give one list the whole height, and Work is the instance list with columns of its own and a preview of the selected instance ("The overview of what each instance did").
 
 **Why tabs.**
 The stacked screen was designed for short lists.
 With many templates and many instances the two panels each get half the height, so both scroll and neither shows much.
 A split that follows the focus was considered and rejected: rows would move on every Tab, and it has no place for a third list.
-The overview of what was done in each instance (#2241) became the fourth, Work, without a new layout.
+The overview of what was done in each instance (#2241) became the fourth, Work, which later got a layout of its own: a table to scan and a preview to read.
 
 **The Overview is split in its middle.**
 Each panel gets half of the height, and an odd row goes to the instances (`Tui.templatePanelHeight`, `PanelSplitTest`).
@@ -684,7 +684,25 @@ With many instances running, a person cannot tell from the list which ones hold 
 That is the tokens its model calls spent, the first and last day it was active, the branches it pushed and kept, and the pull requests it opened.
 Beside it they show what only the instance and GitHub know: what its clones hold, and whether each pull request is still open.
 The TUI's view is the instance table with other columns, so the rows, the marks and F8 are the table's own, and marked rows are destroyed together as anywhere else.
-The Work tab is that view in a tab, and `o` stays for a person already on the instance table (Sanne on #2264).
+The Work tab is that view in a tab, beside a preview of the selected instance, and `o` stays for a person already on the instance table (Sanne on #2264).
+
+**The Work tab is a table to scan and a preview to read.**
+With one column per fact, a row held nine columns, and each was cut to a stub: a closing message to twenty cells, the GitHub references to what fit beside them.
+So the table keeps what a person scans to find the instance to look at: NAME, IDLE, WORK and TOKENS.
+IDLE is the time since the newer of the last start (`last_used_at`) and the last line the event log holds of the instance (`44m`, `22h`, `3d`, `4w`), so an instance whose agent is still at work does not read as idle.
+WORK is a symbol: `✓` clean, `±3` changes not committed, `↑1` commits not pushed, `±3↑1` both, `≡2` stashes alone, `?` unknown and `–` not read, so it reads with colour off (`WorkTable.work`).
+A trailing `?` says a clone could not be read beside the work counted; stashes beside other work are in the preview alone.
+Under a row, a second line holds the purpose, dim, and then the pull requests and pushed branches, only when there is one of them (`WorkTable.secondLine`).
+The two lines are one row: the selection fills both, a mark is on the first, and the table's offset stays at a row's first line, so the whole selected instance is on screen (`MainScreen.alignedOffset`).
+Tamboui clips a cell's second line to its column, so the second line is drawn across the table after it renders, in the row's own style.
+NAME is the one column that gives width up: past 38 cells, or where the table is narrower, a name is cut in its middle (`WorkTable.middleCut`), so the end that tells `mcp-isx-agent-2458-companion-y27vl` from its siblings stays.
+The Instances tab still never cuts a name, since there every column but the name can be left out instead.
+
+The preview shows the selected instance in full (`WorkPreview`): its state and parent, the purpose wrapped, how long it has been idle and since what, the days it was active, the tokens and model calls, each clone that holds work, every pull request with its state, every pushed branch, and what its sessions said they did.
+From 110 columns it stands beside the table, which keeps 64 cells until the preview reaches its cap of 90; on a wider terminal the table takes the rest.
+A divider runs between them from the title rule, which names the instance, to the footer rule.
+Narrower, `p` shows it under the table, and on a wide terminal `p` hides it; on the Work tab F6 edits the purpose, which `p` does elsewhere.
+What this gives up: a closing message, the active days and the state of each pull request are read one instance at a time, by moving the cursor, where the old columns showed a stub of each for every row at once.
 
 `EventLogReader` (`common`) reads the sums of what rolled out and then the log's five files, oldest first, and matches a line to an instance by its incarnation, the listing's `created_at` (#1063).
 A rename keeps an instance's lines, and a name branched again starts with none.
@@ -696,7 +714,8 @@ The guests and GitHub are asked on the same occasions, never on a live refresh.
 In the TUI each row is shown as soon as what it needs has arrived, never held back by the slowest guest (#2625).
 The log, the running guests and the host's config are read at once, and GitHub is asked as soon as the log is in.
 A stopped instance's row is shown at once, as `not read` with its last merged summary from the disk.
-A running one shows its WORK and DONE as soon as its guest answers, with its merged summary when the cache holds it; a merge the model must make is asked for then.
+A running one shows its WORK as soon as its guest answers, and its merged summary when the cache holds it.
+A merge the model must make waits until the preview shows that instance ("Several sessions are merged by one model call").
 The reads of the guests whose rows are on screen are started first, so they take the first read slots.
 A cell says `…` only while nothing was read for it yet: a refresh, on `r` or on coming back to the Work tab, keeps the last read's values until each is read again, and the title counts the guests still being read (`Work since Nov 1, reading 3/12 instances`).
 What that gives up: for a moment a row shows the previous reading beside newer ones, and only the title says the refresh is still under way.
@@ -754,13 +773,15 @@ In the TUI, a pull request GitHub answered merged is not asked about again for t
 One GitHub could not see, or a failed request, leaves its state unknown, and the cell shows the pull request without one.
 Branch and repository names are the guest's text, so they are shown through `OutputFormat.oneLine`, and the newest 50 of each are kept per instance.
 A pull request is shown as its `owner/repo#number`, never cut through, since a cut name does not say which pull request it is (Sanne on #2292).
-The GITHUB cell holds whole references only: a pull request without room for its state shows without it, and the ones after the last that fits are counted as `+3`.
+`isx overview`'s GITHUB cell holds whole references only: a pull request without room for its state shows without it, and the ones after the last that fits are counted as `+3`.
 Only a first reference wider than the whole cell is cut.
-The TUI's GITHUB column is as wide as its widest row needs, up to 40 cells and what the other columns leave at their least.
-There a pull request links to its page with an OSC 8 hyperlink, so a click opens it in a terminal that supports links.
+The Work tab's second line holds whole references the same way (`WorkTable.fitReferences`), after the purpose, which keeps at least 24 cells.
+There the first pull request of a repository is `owner/repo#12` and a later one of the same repository `#14`, an open one in the link colour and a merged or closed one dimmed, and a pushed branch is `⇡ name`, which alone may be cut when it comes first and does not fit.
+The preview lists every pull request whole, with its state in a word.
+In the TUI a pull request links to its page with an OSC 8 hyperlink, its short form included, so a click opens it in a terminal that supports links.
 The link is made only when the name has GitHub's shape (`EventLogReader.PullRequest.url()`), the shape `PullRequestStates` asks about, so no other guest text becomes a link.
 The TUI has no hint for `o` on its context line, which has no room left at 80 columns; the F1 dialog lists it, and the Work tab shows the same columns without a key to learn.
-At 80 columns ACTIVE gives way to WORK; it is drawn from 100 columns, DONE from 120, and PURPOSE from 150.
+The Work table has the same four columns at every width; what a wider terminal adds is the preview beside it, from 110 columns, and room for longer names.
 
 **What was done is the agents' own closing messages, read in the same exec** (#2241, part 3).
 `GuestRead` runs one script per running guest, in sections: the work state's first, then one per agent reader (`AgentSessions.GuestReader`), each in its own subshell and parsed on its own.
@@ -803,7 +824,8 @@ A check that answered is not a reader that answered, so when every reader failed
 When the newest candidate does not parse, cut at the bound or not JSON, the closing message is unreadable, and an older message is never shown in its place.
 The ask is the same: when the first candidate does not parse, none is shown, never a later message.
 The text is scrubbed as a guest's output is (`SecretRedactor.scrubGuest`), cut to 4,000 code points (500 for the ask), and shown a line at a time through `OutputFormat.oneLine`.
-The DONE column shows the newest session's first line that says something, `newest of 3:` before it when there were several, and the instance details show the ask and up to 20 lines of the closing message with the session count and the newest one's age.
+`isx overview`'s DONE column shows the newest session's first line that says something, `newest of 3:` before it when there were several.
+The Work tab's preview shows the session count and the newest one's agent, then its whole closing message, wrapped, and the instance details show the ask and up to 20 lines of the closing message with the session count and the newest one's age.
 In the instance details these are sections of their own, a blank line before each, every label at one indent and a long value wrapped under its start, since a value wider than the dialog was cut off at its edge (Sanne on #2292).
 The details also list the instance's pull requests, each by its full URL as a link with its state, and its pushed branches, from the overview's last read of the log.
 One session's message is shown as it is, with no model call.
@@ -813,9 +835,10 @@ One session's message is shown as it is, with no model call.
 It asks for four labelled lines: a headline, what was done, where the work stands, and what looks pending.
 The call goes from the host through `AiHelpClient`'s transport to the account the proxy would use for the instance: its `account.claude` stamp, else the namespace's default.
 The instance's sessions and code already go to that account, so no content reaches another one.
-A pin to a missing account, `inherit`, or a Pro/Max subscription (whose token serves Claude Code alone) means no call, and DONE keeps the newest session's message; the AI Help account is never used.
+A pin to a missing account, `inherit`, or a Pro/Max subscription (whose token serves Claude Code alone) means no call, and DONE and the preview keep the newest session's message; the AI Help account is never used.
 The answer is the guest's text at one remove, so it is read only in that exact shape, scrubbed and cut like a closing message, and shown through `OutputFormat.oneLine`; an answer in another shape is not shown and not kept.
-DONE puts the session count and age before the headline, `merged from 3 sessions 2h ago: …`, so a cut cell keeps them, and `from 6 of 12` when only six of the twelve sessions were read with a closing message.
+`isx overview`'s DONE puts the session count and age before the headline, `merged from 3 sessions 2h ago: …`, so a cut cell keeps them, and `from 6 of 12` when only six of the twelve sessions were read with a closing message.
+The preview shows the same label, then the headline, what was done, where the work stands and what is left.
 The instance details add the clones it saw: `from 3 sessions, 1 repository, 2h ago`.
 The instance details show the other three lines, pending labelled as inferred.
 
@@ -827,11 +850,16 @@ A commit that leaves the counts as they were, such as one pushed at once, does n
 A stopped instance shows its last cached summary with its age, and nothing starts it to make a new one.
 An overview of every instance removes the files of instances no longer listed; one filtered by `--status` removes none.
 Files are written whole through a rename and readable by the host user alone.
-At most four calls run at once, and in the TUI the exact columns are shown before any call ends.
+At most four calls run at once in `isx overview`, which merges every instance that needs it before it prints.
+The TUI asks for a merge only for the instance its preview shows, since DONE is shown nowhere else there, and makes one call at a time (`Tui.mergePreviewed`).
+Before, opening the Work tab made a call for every instance with several sessions whose cache missed, most of them for rows nobody looked at.
+While the call runs the preview says `merging 3 sessions` with the spinner; a cursor that moves on starts no second call, the answer is still kept in the cache, and the instance then previewed is asked for next.
+A summary the cache holds is shown at once for every instance, as before.
+The cost and the wait of the lazy merge were not measured against a real Incus or a real account.
 What this gives up: the first overview after an instance's work changed waits for its call, up to the transport's two minutes; a model's summary can be wrong, and the exact columns beside it are the check.
 `untouched` is shown only when no session was found, every clone was read and holds nothing, the event log saw no activity, and every agent's sessions were read.
 So a read that failed, a stopped instance, or an opencode database that could not be read never reads as untouched.
-Beside the newest message, DONE names such an agent as not read, since it may have worked since.
+Beside the newest message, DONE and the preview name such an agent as not read, since it may have worked since.
 What this gives up: a closing message can overstate what the agent finished, and WORK beside it is the check; a person's work outside an agent is not described.
 
 ## Interface text has rules of its own

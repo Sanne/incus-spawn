@@ -525,9 +525,17 @@ When their sessions are in an instance, DONE names those agents as not read, and
 
 The session text is scrubbed of anything shaped like a credential and cut to a bound.
 
-In the TUI, the Work tab and `o` on the instance list show the same columns.
-There Space marks rows and F8 destroys the marked ones.
-DONE is shown from 120 columns, and F3 on a row shows what was asked and the closing message, and the merged lines when there are some.
+In the TUI, the Work tab shows a shorter table: NAME, IDLE, WORK and TOKENS.
+IDLE is the time since the instance last started, or since its last model call, push or pull request if that came later.
+WORK is a symbol, such as `✓` for clean or `±3↑1` for 3 changes not committed and 1 commit not pushed.
+A second line under a row shows its purpose and its pull requests, each a link to its page.
+
+The selected instance's preview shows the rest in full, including its whole closing message.
+It stands beside the table from 110 columns, and `p` shows or hides it.
+With several sessions, the TUI merges them only for the instance its preview shows.
+
+In the Work tab, Space marks rows and F8 destroys the marked ones.
+`o` on the instance list shows the same table.
 
 F3 also lists each pull request by its full address, as a link, and the branches the instance pushed.
 
