@@ -387,6 +387,8 @@ A tool's `mcp:` entries are a stdio `command` or an HTTPS `url`, with nothing sp
 A credential reaches a server only as `bearer-token-env`, a variable each agent reads when it connects, and the loader requires it to be one of the tool's own `proxy.placeholders`, sent to one of its `proxy.auth` domains, or for a `for-each` server, to the host a `for-each` auth entry over the same list serves.
 `${isx_repo_paths}` names the template's clones (design/mcp.md "Tools declare MCP servers for every agent", `.claude/rules/tools-env.md`).
 
+Bob Shell's turn limit and compaction threshold go under `session` in its user settings (design/templates.md "Bob Shell session settings").
+
 **Tools declare the memory they need (#2355).**
 A tool's `resources.memory` gives `resident` and `peak`, a size or a parameter's size plus one, from a measurement in `docs/dev/PERFORMANCE-NOTES.md`.
 The build stamps the chain's sum of `resident` plus the largest `peak` as `Metadata.MEMORY_NEED`; a branch reads it from the source it already read, so it adds no request.
