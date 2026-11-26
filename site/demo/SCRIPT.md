@@ -158,6 +158,7 @@ Gotchas learned the hard way:
 - **sudo logs the credential hunt into the journal**, so the grep finds its own audit trail — search for `'sk-ant-ap[i]'` so the pattern can't match its own literal.
 - **Containers remember rehearsals** (`.bash_history`, journal) — the creds cast needs a fresh branch per take.
 - **Broad env patterns surface host details** (e.g. the Vertex project id) — probe `env | grep TOKEN`, not `ANTHROPIC|KEY`.
+- **A fresh recording user has no git identity**, so the hero's on-camera `git cherry-pick` fails and git's error prints the machine's hostname. `record-in-vm.sh` gives the isx-demo checkout a neutral one (`Demo User`).
 - Nothing on the *host* side of a recording may touch credentials: no `cat config.yaml`, no `isx proxy logs`.
 
 ## Editing the cast

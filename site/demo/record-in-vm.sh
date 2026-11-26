@@ -74,6 +74,10 @@ if $ready; then
   step "Cloning isx-demo"
   mkdir -p "$HOME/sources"
   [ -d "$HOME/sources/isx-demo/.git" ] || git clone -q https://github.com/Sanne/isx-demo.git "$HOME/sources/isx-demo"
+  # The hero cherry-picks the agent's commit on camera: without an identity git refuses, and its
+  # error names this machine's hostname.
+  git -C "$HOME/sources/isx-demo" config user.name "Demo User"
+  git -C "$HOME/sources/isx-demo" config user.email demo@example.com
 
   # Only the branching cast forks 'workbench'; record-all.sh refuses to record it without one.
   wants_branching=false
