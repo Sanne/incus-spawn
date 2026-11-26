@@ -110,7 +110,7 @@ final class WorkPreview {
             }
             var branches = effort.branches();
             for (int i = 0; i < branches.size(); i++) {
-                row(out, i == 0 ? "Pushed" : "", "⇡ " + OutputFormat.oneLine(branches.get(i).name()), dim, width, theme);
+                row(out, i == 0 ? "Pushed" : "", Glyphs.PUSHED + " " + OutputFormat.oneLine(branches.get(i).name()), dim, width, theme);
             }
         }
         out.add(Line.from(""));
@@ -210,9 +210,10 @@ final class WorkPreview {
         if (merge != null) {
             paragraph(out, merge.label(LocalDateTime.ofInstant(s.now(), ZoneId.systemDefault())), dim, width);
             paragraph(out, merge.headline(), Style.EMPTY.bold(), width);
-            paragraph(out, merge.done(), Style.EMPTY, width);
-            paragraph(out, "Now: " + merge.current(), Style.EMPTY, width);
-            paragraph(out, "Left: " + merge.pending(), Style.EMPTY, width);
+            // The labels F3's details give the same fields
+            paragraph(out, "Finished: " + merge.done(), Style.EMPTY, width);
+            paragraph(out, "State: " + merge.current(), Style.EMPTY, width);
+            paragraph(out, "Pending: " + merge.pending() + " (inferred)", Style.EMPTY, width);
             return;
         }
         var newest = sessions.sessions().isEmpty() ? null : sessions.sessions().getFirst();

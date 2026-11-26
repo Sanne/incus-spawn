@@ -20,6 +20,15 @@ final class Glyphs {
     /** Work that ended well, and work that failed. */
     static final String DONE = "✓";
     static final String FAILED = "✗";
+    /** On the Work tab: changes not committed ({@code ±3}), commits not pushed ({@code ↑1}), stashes alone ({@code ≡2}), not read ({@code –}). */
+    static final String UNCOMMITTED = "±";
+    static final String UNPUSHED = "↑";
+    static final String STASHED = "≡";
+    static final String NOT_READ = "–";
+    /** A pushed branch, on a Work row's second line and in the preview. */
+    static final String PUSHED = "⇡";
+    /** Between a Work row's purpose and its references. */
+    static final String BETWEEN_PARTS = "·";
     /** Something the person should look at. */
     static final String WARNING = "⚠";
 

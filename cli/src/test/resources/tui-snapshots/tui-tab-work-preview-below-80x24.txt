@@ -10,9 +10,6 @@
 
 
 
-
-
-
  ─ mine ───────────────────────────────────────────────────────────────────────
   ● Running   from tpl-minimal
 
@@ -22,9 +19,6 @@
            app: 2 unpushed
 
   Done     1 session, Claude Code
-    Ported the parser
-
-
 ────────────────────────────────────────────────────────────────────────────────
  mine  from tpl-minimal  p Hide preview  Space Mark
  F1Info F2Shell F3Detai F4Branc F5Build F6Edit… F7Stop  F8Destr F9Actio F10Quit

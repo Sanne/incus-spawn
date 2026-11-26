@@ -110,7 +110,8 @@ An action that opens a dialog ends in `…`, and one that acts at once does not.
 A glyph has one meaning, and `Glyphs` holds them.
 An instance's state is the glyph before its name, in its state's colour, and no table has a STATUS column.
 A dimmed word follows the name only where the glyph does not say enough: an operation under way (`stopping`), or a status neither running nor stopped (`frozen`, `error`).
-No two meanings share a glyph: a marked row is `◆`, since the running instance's `●` now sits right beside the gutter.
+A marked row is `◆`, since the running instance's `●` sits right beside the gutter.
+Where two meanings still share a glyph, the column tells them apart: `↑` is a rebuilt parent in BUILT and commits not pushed in WORK, and `✓` is work that ended well on the context line and a clean instance in WORK.
 
 | Glyph | Meaning | Where |
 |---|---|---|
