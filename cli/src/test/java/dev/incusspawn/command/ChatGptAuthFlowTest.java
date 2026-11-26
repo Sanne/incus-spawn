@@ -529,6 +529,54 @@ class ChatGptAuthFlowTest {
         assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
     }
 
+    /**
+     * What OpenAI's sign-in server answers when asked for a code, through the real sign-in: an
+     * answer isx cannot use is the server's answer, never a server isx could not reach (#2650).
+     */
+    private static String askedForACode(int status, String answer, ScriptedPrompts prompts) throws Exception {
+        var stub = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/api/accounts/deviceauth/usercode", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            var bytes = answer.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status, bytes.length == 0 ? -1 : bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            var issuer = "http://127.0.0.1:" + stub.getAddress().getPort();
+            var init = new FakeInit() {
+                @Override
+                dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
+                    return new ChatGptSignIn(issuer);
+                }
+            };
+            // The warning wraps at the frame's width, so it is read as one line
+            return String.join(" ", run(init, new SpawnConfig(), prompts).lines()).replaceAll("\\s+", " ");
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    void anUnreadableIntervalIsTheServersAnswer() throws Exception {
+        var said = askedForACode(200, "{\"device_auth_id\":\"d\",\"user_code\":\"X\",\"interval\":\"5s\"}",
+                new ScriptedPrompts().line("2", "s"));
+
+        assertTrue(said.contains("OpenAI's sign-in server did not give a code isx can use:"
+                + " its answer gives a poll interval that is not a number"), said);
+        assertFalse(said.contains("could not reach"), said);
+        assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
+    }
+
+    @Test
+    void aServerErrorIsTheServersAnswer() throws Exception {
+        var said = askedForACode(503, "", new ScriptedPrompts().line("2", "s"));
+
+        assertTrue(said.contains("did not give a code isx can use: it answered HTTP 503"), said);
+        assertFalse(said.contains("could not reach"), said);
+    }
+
     /** A sign-in whose one-time code always expires, or is interrupted. */
     private static FakeInit failingCodes(java.util.concurrent.atomic.AtomicInteger codes, boolean interrupted) {
         return new FakeInit() {
