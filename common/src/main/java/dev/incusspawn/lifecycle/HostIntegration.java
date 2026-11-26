@@ -50,8 +50,15 @@ public interface HostIntegration {
     default void stopFailed(String name, Output out) {
     }
 
-    /** After the instance was deleted, whatever its template: its config is gone. Never throws. */
-    void destroyed(String name, Output out);
+    /** How the tool is named in what isx prints, such as {@code Rex}. */
+    String shownName();
+
+    /**
+     * After the instance was deleted, whatever its template: its config is gone. Never throws.
+     * Returns whether it removed the instance from the tool, which the caller says once its own
+     * live step has ended, as the first start said it added it; a warning goes to {@code out}.
+     */
+    boolean destroyed(String name, Output out);
 
     /**
      * Whether this integration registered the instance with its tool and has not removed it: what
@@ -125,9 +132,13 @@ public interface HostIntegration {
         }
     }
 
-    /** {@link #destroyed} of every integration. */
-    static void destroyedAll(String name, Output out) {
-        for (var integration : BUILT_IN) integration.destroyed(name, out);
+    /** {@link #destroyed} of every integration; returns the {@link #shownName}s of those that removed the instance. */
+    static List<String> destroyedAll(String name, Output out) {
+        var removedFrom = new java.util.ArrayList<String>();
+        for (var integration : BUILT_IN) {
+            if (integration.destroyed(name, out)) removedFrom.add(integration.shownName());
+        }
+        return List.copyOf(removedFrom);
     }
 
     /**

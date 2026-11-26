@@ -233,7 +233,8 @@ final class IncusInstanceBackend implements InstanceBackend {
             return InstanceDestroyer.deleteHeldIf(incus, name,
                     instance -> session.equals(instance.path("config").path(Metadata.MCP_SESSION).asText(null))
                             // Started since the caller saw it stopped: someone may be in it now.
-                            && (!onlyIfStopped || "Stopped".equals(instance.path("status").asText())));
+                            && (!onlyIfStopped || "Stopped".equals(instance.path("status").asText())))
+                    .isPresent();
         } catch (IncusException e) {
             throw new ToolError(ToolError.Code.UNAVAILABLE, "cannot remove '" + name + "': " + e.getMessage());
         }

@@ -420,9 +420,24 @@ class HerdrIntegrationTest {
     void aDestroyRemovesOnlyTheMachineIsxAdded() throws Exception {
         var host = new FakeHost(true);
         Files.writeString(records.resolve("ws"), ID + "\n");
-        var recorded = RecordingOutput.during(() -> herdr(host).destroyed("ws", BuildOutput.bound()));
+        var removed = new boolean[1];
+        var recorded = RecordingOutput.during(() -> removed[0] = herdr(host).destroyed("ws", BuildOutput.bound()));
         assertEquals(List.of("herdr machine list --json", "herdr machine remove " + ID), host.ran);
         assertEquals(List.of(), recorded.events(RecordingOutput.Kind.WARN));
+        assertTrue(removed[0], "the destroy reports that it removed the machine, for isx destroy to say so");
+        assertFalse(Files.exists(records.resolve("ws")));
+    }
+
+    @Test
+    void aDestroyOfAMachineTheUserRemovedAlreadySaysNothing() throws Exception {
+        var host = new FakeHost(true);
+        host.answers.put("herdr machine list --json", new HostCommands.Result(0, "[]"));
+        Files.writeString(records.resolve("ws"), ID + "\n");
+        var removed = new boolean[] {true};
+        var recorded = RecordingOutput.during(() -> removed[0] = herdr(host).destroyed("ws", BuildOutput.bound()));
+        assertEquals(List.of("herdr machine list --json"), host.ran);
+        assertEquals(List.of(), recorded.events(RecordingOutput.Kind.WARN));
+        assertFalse(removed[0], "nothing was removed, so nothing is said");
         assertFalse(Files.exists(records.resolve("ws")));
     }
 

@@ -4,9 +4,13 @@ import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.ProxyService;
 
+import java.util.List;
+import java.util.Optional;
 import java.util.function.Predicate;
 
 /**
@@ -25,10 +29,21 @@ public final class InstanceDestroyer {
      * Mark the instance as being deleted, delete it and remove its host integration. On failure
      * the pending-operation mark is cleared again and the exception propagates. Does not signal
      * the proxy: a caller deleting several instances calls {@link #refreshProxy()} once after.
+     * Returns the host tools it was removed from, for the caller to say after its step
+     * ({@link #saidRemoved}).
      */
-    public static void deleteHeld(IncusClient incus, String name) {
+    public static List<String> deleteHeld(IncusClient incus, String name) {
         incus.setPendingOperation(name, Metadata.OP_DELETING);
-        deleteMarked(incus, name);
+        return deleteMarked(incus, name);
+    }
+
+    /**
+     * Say which host tools {@code name} was removed from, as its first start said it was added:
+     * after the caller's live step, which a step printed inside it would break.
+     */
+    public static void saidRemoved(String name, List<String> removedFrom, Output out) {
+        var shown = OutputFormat.oneLine(name);
+        for (var tool : removedFrom) out.step("Removed " + shown + " from " + tool + ".");
     }
 
     /**
@@ -39,12 +54,12 @@ public final class InstanceDestroyer {
      * written strictly -- one that did not land could not be seen, so a mark Incus refuses,
      * as it does for an instance already gone, throws. A failed read takes the mark back and
      * fails the delete; so does taking it back, strictly, since a mark left behind would leave
-     * the instance busy for good. Returns whether the instance was deleted.
+     * the instance busy for good. Returns empty when the instance was not deleted, else the
+     * host tools it was removed from, as {@link #deleteHeld} does.
      */
-    public static boolean deleteHeldIf(IncusClient incus, String name, Predicate<JqValue> stillWanted) {
-        if (!markIf(incus, name, Metadata.OP_DELETING, stillWanted)) return false;
-        deleteMarked(incus, name);
-        return true;
+    public static Optional<List<String>> deleteHeldIf(IncusClient incus, String name, Predicate<JqValue> stillWanted) {
+        if (!markIf(incus, name, Metadata.OP_DELETING, stillWanted)) return Optional.empty();
+        return Optional.of(deleteMarked(incus, name));
     }
 
     /**
@@ -90,10 +105,10 @@ public final class InstanceDestroyer {
         return true;
     }
 
-    private static void deleteMarked(IncusClient incus, String name) {
+    private static List<String> deleteMarked(IncusClient incus, String name) {
         try {
             incus.delete(name, true);
-            InstanceLifecycle.removeHostIntegration(name, BuildOutput.bound());
+            return InstanceLifecycle.removeHostIntegration(name, BuildOutput.bound());
         } catch (RuntimeException e) {
             incus.clearPendingOperation(name);
             throw e;

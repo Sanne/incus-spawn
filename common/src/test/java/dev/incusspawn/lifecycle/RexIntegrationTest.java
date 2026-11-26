@@ -238,8 +238,10 @@ class RexIntegrationTest {
         var rex = rex(host);
         started(rex, daemon, "ws");
 
-        var recorded = RecordingOutput.during(() -> rex.destroyed("ws", BuildOutput.bound()));
+        var removed = new boolean[1];
+        var recorded = RecordingOutput.during(() -> removed[0] = rex.destroyed("ws", BuildOutput.bound()));
         assertEquals(List.of(), recorded.events(RecordingOutput.Kind.WARN));
+        assertTrue(removed[0], "the destroy reports that it removed the host, for isx destroy to say so");
         assertFalse(host.hosts.containsKey("ws"));
         assertFalse(Files.exists(records.resolve("ws")));
 
@@ -247,7 +249,8 @@ class RexIntegrationTest {
         started(rex, daemon, "ws");
         host.hosts.remove("ws");
         host.add("ws", "ssh://me@elsewhere");
-        RecordingOutput.during(() -> rex.destroyed("ws", BuildOutput.bound()));
+        RecordingOutput.during(() -> removed[0] = rex.destroyed("ws", BuildOutput.bound()));
+        assertFalse(removed[0], "nothing was removed, so nothing is said");
         assertEquals("ssh://me@elsewhere", host.hosts.get("ws")[1]);
         assertFalse(Files.exists(records.resolve("ws")));
 

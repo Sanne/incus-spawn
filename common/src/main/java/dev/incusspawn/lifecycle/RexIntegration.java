@@ -86,6 +86,11 @@ public final class RexIntegration implements HostIntegration {
     }
 
     @Override
+    public String shownName() {
+        return "Rex";
+    }
+
+    @Override
     public boolean done(String name) {
         var first = firstLine(name);
         return first != null && !RETRY.equals(first);
@@ -171,14 +176,14 @@ public final class RexIntegration implements HostIntegration {
     }
 
     @Override
-    public void destroyed(String name, Output out) {
+    public boolean destroyed(String name, Output out) {
         Path record;
         try {
             record = record(name);
         } catch (IllegalArgumentException e) {
-            return;
+            return false;
         }
-        if (!Files.exists(record)) return;
+        if (!Files.exists(record)) return false;
         var shown = OutputFormat.oneLine(name);
         try {
             var id = recordedId(name);
@@ -193,9 +198,10 @@ public final class RexIntegration implements HostIntegration {
                 out.warn("could not remove " + shown + " from Rex: " + (host.onPath(TOOL)
                                 ? "the rex on the PATH did not answer as Superlogical's Rex." : "Superlogical's rex is not on the PATH."),
                         "Remove it yourself: rex hosts remove " + shown);
-                return;
+                return false;
             }
             if (rex) removeOrphans(out);
+            var removedHost = false;
             if (id != null) {
                 var label = listedLabel(id);
                 if (label != null) {
@@ -203,13 +209,16 @@ public final class RexIntegration implements HostIntegration {
                     if (!removed.ok()) {
                         out.warn("could not remove " + shown + " from Rex: " + lastLine(removed.output()),
                                 "Remove it yourself: rex hosts remove " + OutputFormat.oneLine(label));
-                        return;
+                        return false;
                     }
+                    removedHost = true;
                 }
             }
             Files.deleteIfExists(record);
+            return removedHost;
         } catch (IOException | RuntimeException e) {
             out.warn("could not remove " + shown + " from Rex: " + e.getMessage());
+            return false;
         }
     }
 
