@@ -389,7 +389,37 @@ class RepoCloner {
 
             assertNoStepFailures(repos, states, "prepare");
             if (!hostSources.isEmpty()) HostRepoSources.record(incus, container.name(), hostSources);
+            settleIndexes(container, repos);
         }
+    }
+
+    /**
+     * Refreshes each clone's index once the clock has left the second it was written in (#2627).
+     * A clone writes its index in the second it checks out most of its files, so Git holds those
+     * entries racily clean and hashes every one of them again on each {@code git status} that
+     * cannot write the index back, as the overview's read ({@link WorkState}) never does. Once
+     * refreshed here, every branch of the template starts with an index that matches its files.
+     * It waits at most a second and a half for the whole build, and its failure only costs the speed.
+     */
+    private static void settleIndexes(Container container, List<ImageDef.RepoEntry> repos) {
+        try {
+            container.shAsUser("agentuser", settleIndexScript(repos.stream().map(r -> expandHome(r.getPath())).toList()));
+        } catch (RuntimeException e) {
+            BuildOutput.note("Git indexes not refreshed: " + failureText(e));
+        }
+    }
+
+    /** {@link #settleIndexes}'s script: the wait is bounded, should the clock be behind an index. */
+    static String settleIndexScript(List<String> paths) {
+        var dirs = String.join(" ", paths.stream().map(Container::shellQuote).toList());
+        return """
+                m=0
+                for d in %s; do t=$(stat -c %%Y "$d/.git/index" 2>/dev/null) && [ "$t" -gt "$m" ] && m=$t; done
+                i=0
+                while [ "$(date +%%s)" -le "$m" ] && [ "$i" -lt 15 ]; do sleep 0.1; i=$((i+1)); done
+                for d in %s; do [ -f "$d/.git/index" ] && git -C "$d" update-index -q --refresh >/dev/null 2>&1; done
+                true
+                """.formatted(dirs, dirs);
     }
 
     /** Clone a repo and, on success, immediately prime it — recording progress/failure
