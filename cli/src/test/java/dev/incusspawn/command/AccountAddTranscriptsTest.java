@@ -110,13 +110,25 @@ class AccountAddTranscriptsTest {
         if (Files.isDirectory(OUT)) try (var old = Files.list(OUT)) { for (var f : old.toList()) Files.delete(f); }
         Files.createDirectories(OUT);
         var faults = new ArrayList<String>();
+        // The Mac's pass answers from a script of its own: the first pass reads each to its end
+        var onAMac = branches();
         for (var branch : branches()) {
+            var macBranch = onAMac.removeFirst();
             IsolatedHome.configFile().toFile().delete();
             if (branch.config() != null) IsolatedHome.seed(branch.config());
-            var text = transcript(branch);
+            // Linux's words, even when the test runs on a Mac (#2588)
+            var text = dev.incusspawn.Platform.wordedAs(false, () -> transcript(branch));
             Files.writeString(OUT.resolve(branch.name() + ".txt"), text);
             assertFalse(text.contains("⟪the run threw"), branch.name() + ":\n" + text);
             faults.addAll(TranscriptGate.faults(branch.name(), text, NEVER, null));
+            // The same path on a Mac, in its words whatever OS runs the test (#2588)
+            IsolatedHome.configFile().toFile().delete();
+            if (branch.config() != null) IsolatedHome.seed(branch.config());
+            var mac = dev.incusspawn.Platform.wordedAs(true, () -> transcript(macBranch));
+            Files.writeString(OUT.resolve(branch.name() + ".mac.txt"), mac);
+            faults.addAll(TranscriptGate.faults(branch.name() + ".mac", mac, NEVER, null));
+            if (mac.substring(mac.indexOf('\n') + 1).contains("this computer")) faults.add(branch.name() + ".mac: says \"this computer\"");
+            if (text.contains("this Mac")) faults.add(branch.name() + ": says \"this Mac\"");
         }
         Files.writeString(OUT.resolve("faults.txt"), String.join("\n", faults) + "\n");
         assertEquals(List.of(), faults, "against .claude/rules/interface-text.md");
