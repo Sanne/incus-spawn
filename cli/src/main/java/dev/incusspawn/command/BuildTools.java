@@ -252,7 +252,7 @@ public final class BuildTools {
         var parameterDefs = tool.parameters();
         if (!parameterDefs.isEmpty()) {
             var validation = dev.incusspawn.tool.ParameterResolver.resolve(
-                parameterDefs, resolvedParams);
+                parameterDefs, resolvedParams, tool::parameterErrorHint);
             if (validation.hasErrors()) {
                 throw new IllegalArgumentException(
                     "Error in tool '" + name + "' parameters:\n" +
@@ -291,7 +291,7 @@ public final class BuildTools {
                     // Explicit config replaces a prior transitive-dep resolution
                     if (!quiet) {
                         var defaultOnly = dev.incusspawn.tool.ParameterResolver.resolve(
-                            tool.parameters(), Map.of());
+                            parameterDefs, Map.of());
                         if (defaultOnly.hasErrors() ||
                                 !defaultOnly.resolvedValues().equals(existing.parameters())) {
                             report.accept(new Problem(Problem.Kind.OVERRIDDEN, name, requiredBy, "Tool '" + name + "'" + in +

@@ -17,6 +17,7 @@ import java.util.regex.Pattern;
 public class BobSetup implements ToolSetup {
 
     private static final String PLACEHOLDER_API_KEY = "bob-placeholder";
+    private static final String UNLIMITED_TURNS_HINT = "Use 0 for unlimited turns.";
     private static final String NPM_PACKAGE = "@ibm/bob";
     private static final Pattern COMPRESSION_THRESHOLD = Pattern.compile("^(0?\\.\\d+|1\\.0)$");
 
@@ -80,6 +81,7 @@ public class BobSetup implements ToolSetup {
 
         var maxTurns = new ToolDef.ParameterDef();
         maxTurns.setType("integer");
+        maxTurns.setMin(0);
         maxTurns.setDescription("Maximum session turns (0 for unlimited)");
         maxTurns.setOptional(true);
         maxTurns.setReconfigurable(true);
@@ -94,6 +96,15 @@ public class BobSetup implements ToolSetup {
         params.put("compression-threshold", compression);
 
         return params;
+    }
+
+    @Override
+    public String parameterErrorHint(String parameter) {
+        return switch (parameter) {
+            case "max-session-turns" -> UNLIMITED_TURNS_HINT;
+            case "checkpointing" -> "Bob Shell 2.1 does not support checkpointing. Remove it from the bob tool parameters.";
+            default -> "";
+        };
     }
 
     @Override
@@ -156,15 +167,6 @@ public class BobSetup implements ToolSetup {
 
     static String buildUserSettings(Map<String, String> params,
                                     SpawnConfig.BobConfig bobConfig) {
-        for (var parameter : params.keySet()) {
-            switch (parameter) {
-                case "max-session-turns", "compression-threshold" -> { }
-                case "checkpointing" -> throw new IllegalArgumentException(
-                        "Bob Shell does not support checkpointing. Remove checkpointing from the bob tool parameters.");
-                default -> throw new IllegalArgumentException("Unknown Bob tool parameter '" + parameter + "'");
-            }
-        }
-
         var security = JqObject.builder(2)
                 .put("auth", JqObject.builder(1)
                         .put("selectedType", "api-key").build())
@@ -188,7 +190,7 @@ public class BobSetup implements ToolSetup {
             int turns = Integer.parseInt(maxTurns);
             if (turns < 0) {
                 throw new IllegalArgumentException(
-                        "Bob max-session-turns must be nonnegative. Use 0 for unlimited turns.");
+                        "Bob max-session-turns must be nonnegative. " + UNLIMITED_TURNS_HINT);
             }
             session.put("maxTurns", turns);
         }

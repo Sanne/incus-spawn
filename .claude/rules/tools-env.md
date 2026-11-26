@@ -23,7 +23,7 @@ paths:
   Declare env vars via `envEntries(Map<String,String>)` method.
   Tools can declare a `feature()` to gate themselves behind an opt-in feature flag in `SpawnConfig.features` (no built-in tool does today -- `codex` graduated out of the `openai` flag).
 - Bob Shell 2.1 reads `session.maxTurns` and `session.compactionThresholdPercent` in its user settings.
-  Reject the legacy `checkpointing` parameter because Bob Shell 2.1 has no reader for it (design/templates.md "Bob Shell session settings").
+  Parameter resolution rejects negative turn limits and the legacy `checkpointing` parameter with migration guidance (design/templates.md "Bob Shell session settings").
 - npm CLIs install through `NpmGlobalInstall`.
   `CodexSetup` and `CopilotSetup` declare a `PlatformSplitCli`: their real binaries are optional platform packages, which npm silently skips on a failed download (exit 0, launcher only -- #808).
   After install, and after `npm update -g` in `update-all`/`project update` (`NpmUpdate`), the platform package is resolved with node as root, reinstalled if missing, then the step fails.
