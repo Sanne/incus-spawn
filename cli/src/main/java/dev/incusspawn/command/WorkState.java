@@ -115,34 +115,57 @@ public record WorkState(State state, List<Repo> repos, String why) {
 
     public static final String HEADER = "isx-work-state 1";
 
+    /** At most this many clones are read at once, fewer when the guest has fewer CPUs. */
+    static final int PARALLEL = 4;
+
     /**
      * The script the guest runs. One line per clone, {@code repo <uncommitted> <unpushed> <stashes>
      * <path>}, {@code x} for a count Git would not give, then {@code more} if there were more
      * clones than it reads, then {@code end}: a read without it was cut short.
+     *
+     * <p>Every branch of a template has its clones' files on another device than the one their
+     * index recorded, so {@code core.checkStat=minimal} keeps {@code git status} from hashing each
+     * file again on every read, which it cannot write back (#2627). The clones are read
+     * {@link #PARALLEL} at a time, each line tagged with its clone's place and put back in order;
+     * a line lost on the way makes the answer one {@link #parse} refuses. A clone whose {@code .git}
+     * is a plain directory, not a worktree's and not reftable, is read without asking Git where its
+     * directory is, and asked for its stashes only when it holds a {@code refs/stash}.
      */
     static final String SCRIPT = """
             export GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 LC_ALL=C
             echo '%s'
-            n=0
             probe() {
-              n=$((n+1))
-              if [ "$n" -gt %d ]; then echo more; echo end; exit 0; fi
-              if s=$(git -C "$1" status --porcelain 2>/dev/null); then c=$(printf '%%s' "$s" | grep -c '^'); else c=x; fi
-              h=; git -C "$1" rev-parse -q --verify HEAD >/dev/null 2>&1 && h=HEAD
-              t=; for r in $(git -C "$1" config --get-regexp '^remote[.].*[.]fetch$' 2>/dev/null | sed -n 's|.*:\\(refs/tags/[^*?[[:space:]]*\\)$|\\1|p'); do
-                git -C "$1" rev-parse -q --verify "$r" >/dev/null 2>&1 && t="$t $r"
+              if s=$(git -C "$2" -c core.checkStat=minimal status --porcelain 2>/dev/null); then c=$(printf '%%s' "$s" | grep -c '^'); else c=x; fi
+              h=; git -C "$2" rev-parse -q --verify HEAD >/dev/null 2>&1 && h=HEAD
+              t=; for r in $(git -C "$2" config --get-regexp '^remote[.].*[.]fetch$' 2>/dev/null | sed -n 's|.*:\\(refs/tags/[^*?[[:space:]]*\\)$|\\1|p'); do
+                git -C "$2" rev-parse -q --verify "$r" >/dev/null 2>&1 && t="$t $r"
               done
-              g=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) && o=$(sed -n '1s/^[0-9a-f]* \\([0-9a-f]\\{40,64\\}\\) .*[[:blank:]]clone: .*/\\1/p' "$g/logs/HEAD" 2>/dev/null) || o=
-              [ -n "$o" ] && git -C "$1" cat-file -e "$o^{commit}" 2>/dev/null && t="$t $o"
-              u=$(git -C "$1" rev-list --count $h --branches --not --remotes --glob=refs/isx/host/\\* $t 2>/dev/null) || u=x
-              if s=$(git -C "$1" stash list 2>/dev/null); then k=$(printf '%%s' "$s" | grep -c '^'); else k=x; fi
-              p=${1#"$HOME"/}
-              printf 'repo %%s %%s %%s %%s\\n' "$c" "$u" "$k" "${p%%/}"
+              if [ -d "$2.git" ] && [ ! -e "$2.git/commondir" ] && [ ! -e "$2.git/reftable" ]; then g=$2.git f=1; else f=; g=$(git -C "$2" rev-parse --absolute-git-dir 2>/dev/null) || g=; fi
+              o=; [ -n "$g" ] && o=$(sed -n '1s/^[0-9a-f]* \\([0-9a-f]\\{40,64\\}\\) .*[[:blank:]]clone: .*/\\1/p' "$g/logs/HEAD" 2>/dev/null) || o=
+              [ -n "$o" ] && git -C "$2" cat-file -e "$o^{commit}" 2>/dev/null && t="$t $o"
+              u=$(git -C "$2" rev-list --count $h --branches --not --remotes --glob=refs/isx/host/\\* $t 2>/dev/null) || u=x
+              if [ -n "$f" ] && [ ! -e "$g/refs/stash" ] && ! grep -q ' refs/stash$' "$g/packed-refs" 2>/dev/null; then k=0
+              elif s=$(git -C "$2" stash list 2>/dev/null); then k=$(printf '%%s' "$s" | grep -c '^'); else k=x; fi
+              p=${2#"$HOME"/}
+              printf '%%s repo %%s %%s %%s %%s\\n' "$1" "$c" "$u" "$k" "${p%%/}"
             }
-            for d in "$HOME"/*/; do [ -e "$d.git" ] && probe "$d"; done
-            for d in "$HOME"/*/*/; do [ -e "$d.git" ] && [ ! -e "${d%%/*/}/.git" ] && probe "$d"; done
+            set --
+            for d in "$HOME"/*/; do [ -e "$d.git" ] && set -- "$@" "$d"; done
+            for d in "$HOME"/*/*/; do [ -e "$d.git" ] && [ ! -e "${d%%/*/}/.git" ] && set -- "$@" "$d"; done
+            m=$#; [ "$m" -gt %d ] && m=%d
+            j=$(nproc 2>/dev/null) || j=1; [ "$j" -ge 1 ] 2>/dev/null || j=1; [ "$j" -gt %d ] && j=%d
+            r=$(i=0; for d; do
+                  i=$((i+1)); [ "$i" -gt "$m" ] && break
+                  probe "$i" "$d" &
+                  [ $((i %% j)) -eq 0 ] && wait
+                done; wait) || r=
+            r=$(printf '%%s\\n' "$r" | sort -n -k1,1 | sed 's/^[0-9]* //')
+            if [ "$m" -gt 0 ]; then
+              [ "$(printf '%%s\\n' "$r" | grep -c '^repo ')" -eq "$m" ] && printf '%%s\\n' "$r" || echo lost
+            fi
+            [ "$#" -gt "$m" ] && echo more
             echo end
-            """.formatted(HEADER, MAX_REPOS);
+            """.formatted(HEADER, MAX_REPOS, MAX_REPOS, PARALLEL, PARALLEL);
 
     private static final Pattern REPO_LINE = Pattern.compile("repo (\\d{1,9}|x) (\\d{1,9}|x) (\\d{1,9}|x) (.+)");
 
