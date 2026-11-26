@@ -217,6 +217,12 @@ The transcripts are how a branch nobody walks at a terminal is read and reviewed
 A branch on a Mac says "this Mac" on any OS that writes it: the test runs it under `Platform.wordedAs`, which changes `Platform.thisComputer` for that run alone and never the platform role (#2588, #1800).
 It fails a branch that says the other platform's words, so text that writes "this computer" itself is caught.
 Only the host is the test's: what is found, what a check answers, and markers where the plumbing, the build and the branch run.
+The whole runs are the exception for the setup (#2588): on Linux with `--no-sudo`, on Linux from a computer with no Incus, and on a Mac, the setup's own steps run.
+They run over a host of the test's: its files under a temporary root, its commands recorded and answered as a host that runs them would, and Incus a `FakeIncusDaemon`.
+So the block of setup is read and gated like the questions, and each branch writes the host commands it asked for beside its transcript.
+What cannot be faked honestly is a marker that names it: sudo's password, systemd or launchd starting the services, and the Mac's VM, whose appliance a first run downloads and boots.
+The branches run under `Privilege.forbid()`, so a sudo that escapes the seams fails the transcript instead of running.
+The build is still a marker: no test drives a whole build over `FakeIncusDaemon` yet, which needs seams for the base image's and the tools' downloads.
 
 ## The continuation under `sg` asks nothing
 

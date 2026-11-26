@@ -142,10 +142,12 @@ An explanation, a list of steps and the question are three blocks, with a blank 
 Two gates read interface text's string literals for its form alone: `StepLabelGateTest` holds a label bare, with no `...` and, for a live step, an `ok` or a `success`, no period, and `RawOutputGateTest` fails a print literal indented by hand.
 `TranscriptGate` (cli tests) reads what a text says, in the transcripts of the main flows as a terminal draws them, since a message is assembled from several literals.
 `InitTranscriptsTest` runs it over every branch of the first run, and `AccountAddTranscriptsTest` over every path of `isx account add`; each writes its transcripts to `cli/target/` for a person to read.
+Each is worded for its platform through `Platform.wordedAs`, the paths of `isx account add` once as each, so a Mac's text is read on Linux; a branch that says the other platform's "this Mac" or "this computer" fails (#2588).
 It checks what is mechanical: the line width, the words a flow must not use (the first run's "Never" column above, before the closing message's line) and a step number shown once.
 It also flags a negated noun ("none", "nothing", "nobody", "no one", and "no" before a word other than "longer", "more" or "less").
 It does not flag what `writing.md` "Negate the verb" keeps, in any tense: "has no", "needs no", "there is no", "nothing" at the start of a sentence, "costs nothing" and "does nothing".
 It reads a line together with the line whose sentence it continues, since the flows wrap a sentence by hand; a blank line, a box's edge or the person's answer ends a sentence.
+So "isx" ending one line and "machines" starting the next are read as the term.
 A use that is meant, such as the option label "None for now", is listed in `TranscriptGate.MEANT` with what it labels, and matches only a whole line where it is that label.
 A new flow with a transcript test runs the same gate, with the words that flow never uses.
 Terms used before they are introduced need a reviewer, and so does every flow without a transcript test.

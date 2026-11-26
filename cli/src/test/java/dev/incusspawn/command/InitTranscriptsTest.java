@@ -34,6 +34,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * on, then reduced to what the terminal draws (a link is its label). The answers typed are shown
  * after each question, a secret as {@code ••••}. Only the host is the test's: what is found on
  * it, what a verification answers, and the plumbing, build and branch, which print a marker.
+ * The whole runs ({@code 34}, {@code 34b}, {@code 34c}) run the setup's own steps over a host of
+ * the test's instead, and mark only what cannot be faked (#2588). Each branch is worded for its
+ * platform through {@link dev.incusspawn.Platform#wordedAs}, whatever OS runs the test.
  *
  * <p>Each transcript is written to {@code target/init-transcripts/<branch>.txt}, for a person to
  * read, and every line is held to the frame's width (rule 8 of the review on #2528).
@@ -233,14 +236,26 @@ class InitTranscriptsTest {
 
         /** The terminal, for a line of the test's own where the run's lines go to the log. */
         PrintStream screen;
+        /** Whether the branch is a Mac's. */
+        boolean macOs;
         /** In a whole run, whether it is {@code --no-sudo}. */
         boolean noSudoRun = true;
+
+        @Override
+        boolean startIncusVm() {
+            // The VM's appliance and its boot are macOS's, so a transcript says where they happen
+            screen.println("⟪the Incus VM starts here: a first run downloads its appliance, then boots it⟫");
+            return true;
+        }
+
+        @Override boolean macOsServicesInstalled() { return false; }
 
         @Override int validateSudo() { screen.println("⟪sudo asks for the password here⟫"); return 0; }
 
         @Override
         boolean installProxyService() {
-            screen.println("⟪systemd installs and starts the proxy service here⟫");
+            screen.println(macOs ? "⟪launchd installs and starts the VM and proxy services here⟫"
+                    : "⟪systemd installs and starts the proxy service here⟫");
             return true;
         }
 
@@ -331,6 +346,12 @@ class InitTranscriptsTest {
             return secret;
         }
     }
+
+    /**
+     * Whether the Linux setup's own steps can run here: only in Linux's role, since they read
+     * {@code Platform.isMacOS()} themselves. The Mac's run is the one that runs on either (#2588).
+     */
+    static final boolean LINUX_ROLE = dev.incusspawn.Platform.isLinux();
 
     static List<Branch> branches() {
         var b = new ArrayList<Branch>();
@@ -474,14 +495,18 @@ class InitTranscriptsTest {
                 i -> { i.wholeRun = true; i.failingStep = "storage-network"; }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.none()), "2", ""), false, true));
         b.add(new Branch("34-whole-run-linux-no-sudo", "The whole run on Linux with --no-sudo; Claude Code; everything given",
+                i -> { i.wholeRun = true; i.realSetup = LINUX_ROLE; i.found = sub; }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
+                false, true));
+        if (LINUX_ROLE) b.add(new Branch("34b-whole-run-linux-clean", "The whole run on Linux, from a computer with no Incus; Claude Code; everything given",
+                i -> { i.wholeRun = true; i.realSetup = true; i.noSudoRun = false; i.found = sub;
+                    i.hostCommandsInstalled = new HashSet<>(Set.of("dnf", "sg")); i.daemon = new FakeIncusDaemon().noStoragePool(); }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
+                false, true));
+        b.add(new Branch("34c-whole-run-mac", "The whole run on a Mac, from a Mac with no isx; Claude Code; everything given",
                 i -> { i.wholeRun = true; i.realSetup = true; i.found = sub; }, claudeHere,
                 new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
-                false, true));
-        b.add(new Branch("34b-whole-run-linux-clean", "The whole run on Linux, from a computer with no Incus; Claude Code; everything given",
-                i -> { i.wholeRun = true; i.realSetup = true; i.noSudoRun = false; i.found = sub;
-                    i.hostCommandsInstalled = new HashSet<>(Set.of("dnf", "sg")); i.daemon = new FakeIncusDaemon(); }, claudeHere,
-                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
-                false, true));
+                true, true));
         b.add(new Branch("35-continuation-under-sg", "Linux; the end of the run, in the continuation under sg",
                 i -> { i.found = sub; i.continuation = true; }, claudeHere,
                 new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line(""),
@@ -559,6 +584,33 @@ class InitTranscriptsTest {
         IsolatedHome.configFile().toFile().delete();
         Files.deleteIfExists(ExampleTemplate.file());
         return transcript(branches().stream().filter(b -> b.name().equals(name)).findFirst().orElseThrow());
+    }
+
+    /**
+     * A whole run shows the setup's own lines, from a computer with no Incus and from a Mac
+     * (#2588): what can be faked runs, and the rest is named where it happens.
+     */
+    @Test
+    void aWholeRunShowsTheSetupItRan() throws Exception {
+        var mac = transcriptOf("34c-whole-run-mac");
+        for (var line : List.of("⟪the Incus VM starts here: a first run downloads its appliance, then boots it⟫",
+                "▸ Installing what isx needs on this Mac", "This Mac's own traffic", "✓ SSH access to isx machines ready",
+                "⟪launchd installs and starts the VM and proxy services here⟫")) {
+            assertTrue(mac.contains(line), line + "\n" + mac);
+        }
+        assertFalse(mac.contains("sudo"), mac);
+        if (!LINUX_ROLE) return;
+
+        var linux = transcriptOf("34b-whole-run-linux-clean");
+        assertFalse(linux.contains("⟪the host's setup runs here⟫"), linux);
+        for (var line : List.of("▸ Installing what isx needs on this computer", "✓ Installing Incus",
+                "✓ Adding you to the incus-admin group", "✓ Letting isx machines through the firewall",
+                "✓ Creating the isx proxy's certificate", "✓ SSH access to isx machines ready",
+                "⟪sudo asks for the password here⟫", "⟪systemd installs and starts the proxy service here⟫")) {
+            assertTrue(linux.contains(line), line + "\n" + linux);
+        }
+        // One tick for the certificate: the live step's
+        assertFalse(linux.contains("Certificate created"), linux);
     }
 
     @Test
@@ -711,7 +763,12 @@ class InitTranscriptsTest {
             out.println("⟪the run threw: " + e + "⟫");
         } finally {
             dev.incusspawn.util.Privilege.allow();
-            if (init.realSetup) Files.write(OUT.resolve(branch.name() + ".host-commands.txt"), init.hostCommands);
+            if (init.root != null) dev.incusspawn.FileTrees.deleteQuietly(init.root);
+            if (init.realSetup) {
+                // A test may read one branch before the test that writes them all made the directory
+                Files.createDirectories(OUT);
+                Files.write(OUT.resolve(branch.name() + ".host-commands.txt"), init.hostCommands);
+            }
         }
         out.flush();
         return drawn(bytes.toString(StandardCharsets.UTF_8));
@@ -727,14 +784,19 @@ class InitTranscriptsTest {
             dev.incusspawn.FileTrees.deleteQuietly(IsolatedHome.configFile().getParent());
             Files.createDirectories(init.root.resolve("etc"));
             for (var file : List.of("etc/subuid", "etc/subgid")) Files.writeString(init.root.resolve(file), "jdoe:524288:65536\n");
+            // And what a fresh Fedora has that the setup looks at: NetworkManager's settings, and KSM off
+            Files.createDirectories(init.root.resolve("etc/NetworkManager/conf.d"));
+            Files.createDirectories(init.root.resolve("sys/kernel/mm/ksm"));
+            Files.writeString(init.root.resolve("sys/kernel/mm/ksm/run"), "0\n");
             if (init.daemon == null) init.daemon = new FakeIncusDaemon().pool("default", "btrfs")
                     .network("incusbr0", Map.of("ipv4.address", "10.1.2.1/24"));
             init.incus = init.daemon.client();
         }
         init.screen = out;
+        init.macOs = branch.macOs();
         if (init.wholeRun) {
-            init.noSudo = init.noSudoRun;
-            init.runFirstRun(false);
+            init.noSudo = !branch.macOs() && init.noSudoRun;
+            init.runFirstRun(branch.macOs());
         } else {
             init.printFirstRunIntro(branch.macOs());
             init.waitToBegin();
