@@ -524,6 +524,10 @@ class InitTranscriptsTest {
         assertTrue(later.contains("│  \u2713 Coding agent   Pi (Claude)"), later);
         assertTrue(later.contains("│  - Its account    left for later"), later);
 
+        // Saved after a check that could not run: never ticked (#2587)
+        var unverified = transcriptOf("06-claude-vertex-fails-saved-anyway");
+        assertTrue(unverified.contains("│  \u26a0 Its account    Vertex AI, not checked"), unverified);
+
         var chatGpt = transcriptOf("12b-codex-found-chatgpt");
         assertTrue(chatGpt.contains("│  \u2713 Its account    ChatGPT"), chatGpt);
 

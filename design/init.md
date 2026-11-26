@@ -182,6 +182,10 @@ The account's line names the kind of account set up (Claude subscription, Anthro
 The agent's line carries the answer to the agent's own question as the person gave it: the label they picked, "Pi (OpenAI)", or the name they typed.
 The account's line goes by the namespace the account step filled, never by what the agent could use, since Pi can use three providers' accounts and the step sets up one; a local provider or another gateway reads "not managed here".
 After a skipped GitHub account, the Git identity the person agreed to has a line of its own, "Commits as".
+An account saved without a check that passed reads `⚠` and "not checked" after its kind, never a tick (`InitCommand.Mark`, #2587).
+That is a key saved unverified because its check could not run or reach the service, or a key whose tool declares no check (`CredentialSetup.savedUnchecked`).
+The step's own "unverified" line says so too, but a later question may have pushed it off the screen, and a tick there would claim a check that did not happen.
+The closing box does not repeat it: the account is saved and a build uses it, and the step's line already named the command that replaces it.
 The recap is the questions' own: it is cleared when they end, so a header the setup shows later has none, and it costs each header two to four lines.
 When the questions end, a banner titled "Questions done" shows every answer with its mark, the last one included, which no header showed, and one sentence saying what comes next: isx installs what it needs on the computer, and will then build the template (`printQuestionsDone`).
 The sentence, the welcome's second stage and the title of the setup block say "installs what it needs": "sets up this Mac" named nothing that happens to the computer.

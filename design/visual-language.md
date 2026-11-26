@@ -119,7 +119,7 @@ Where two meanings share a glyph, the column tells them apart, as with the marke
 | `●` | A marked row | The cursor gutter's second cell |
 | `▸` | The cursor, and a dialog's focused field | The cursor gutter's first cell |
 | `✓` `✗` | Work that ended well, or failed | The context line, the status line |
-| `⚠` | Something to look at | The header |
+| `⚠` | Something to look at | The header, and an account the first run saved unchecked in its recap |
 | `!` `△` `↑` `◌` | A template that is outdated, changed, behind its parent, or without a definition | The BUILT column, with a legend under the table |
 | `━` `─` | The used and the unused part of the storage gauge | The header |
 

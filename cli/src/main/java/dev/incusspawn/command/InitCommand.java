@@ -259,9 +259,26 @@ public class InitCommand extends BaseCommand {
      *
      * @param question what was asked, in two or three words
      * @param answer   what the person chose, or that they left it for later
-     * @param done     false when the question was left for later, which the mark shows
+     * @param mark     whether it was answered, answered with an account saved unchecked, or left for later
      */
-    record Answered(String question, String answer, boolean done) {}
+    record Answered(String question, String answer, Mark mark) {}
+
+    /**
+     * The recap's mark for an answer: a tick only for one whose account, if it saved one, a check
+     * verified (#2565, #2587). Each is a glyph that reads the same with no colour.
+     */
+    enum Mark {
+        DONE("\u2713"),
+        /** An account saved without a check that passed: its check could not run, or the tool declares none. */
+        UNCHECKED("\u26a0"),
+        LATER("-");
+
+        final String glyph;
+
+        Mark(String glyph) {
+            this.glyph = glyph;
+        }
+    }
 
     /** The first run's answers so far, in the order asked; empty outside its questions, so no other header shows one. */
     private final List<Answered> recap = new ArrayList<>();
@@ -270,13 +287,12 @@ public class InitCommand extends BaseCommand {
     private static final int RECAP_QUESTION = 15;
 
     /**
-     * One recap line as the box holds it: a tick for an answer, a hyphen for a question left for
-     * later, the question in a column and the answer after it, cut to the box when a login or a
-     * name is long. The answer is the person's or an account's text, so it is shown through
-     * {@code oneLine}.
+     * One recap line as the box holds it: its {@link Mark}, the question in a column and the
+     * answer after it, cut to the box when a login or a name is long. The answer is the person's
+     * or an account's text, so it is shown through {@code oneLine}.
      */
     static String recapLine(Answered answered) {
-        var line = "  " + (answered.done() ? "\u2713" : "-") + " "
+        var line = "  " + answered.mark().glyph + " "
                 + String.format("%-" + RECAP_QUESTION + "s", answered.question())
                 + OutputFormat.oneLine(answered.answer());
         var room = BOX_WIDTH - 2;
@@ -1752,12 +1768,13 @@ public class InitCommand extends BaseCommand {
         totalKnown = !all;
         var noCredential = false;
         recap.clear();
+        credentials.savedUnchecked.clear();
         try {
             begin(agentStep());
             // With the answer to the agent's own question, such as Pi's provider (#2536)
-            recap.add(chosenAgent == null ? new Answered("Coding agent", "none for now", false)
+            recap.add(chosenAgent == null ? new Answered("Coding agent", "none for now", Mark.LATER)
                     : new Answered("Coding agent", ExampleTemplate.title(chosenAgent)
-                            + (agentAnswer == null ? "" : " (" + agentAnswer + ")"), true));
+                            + (agentAnswer == null ? "" : " (" + agentAnswer + ")"), Mark.DONE));
             if (chosenAgent != null) startDownloadsAhead(chosenAgent);
             // Counted again for the agent chosen, before the next header shows it
             totalSteps = questionsFor(chosenAgent, needsGitHub).count() + extra;
@@ -1771,16 +1788,16 @@ public class InitCommand extends BaseCommand {
                     Lines.step("If " + provider + " uses an API key, keep it on " + dev.incusspawn.Platform.thisComputer()
                             + ". A custom isx tool can add it to each request from there:");
                     BuildOutput.step(TerminalLink.link("https://isx.run/docs/tools#proxy-credentials"));
-                    recap.add(new Answered("Its account", "not managed here", true));
+                    recap.add(new Answered("Its account", "not managed here", Mark.DONE));
                 } else if (chosenAgent != null) {
                     BuildOutput.note(ExampleTemplate.title(templateAgent()) + "'s account is set up already.");
-                    recap.add(new Answered("Its account", "set up already", true));
+                    recap.add(new Answered("Its account", "set up already", Mark.DONE));
                 }
             } else {
                 begin(agentCredentialStep(templateAgent()));
                 noCredential = !agentGaps().isEmpty();
-                recap.add(noCredential ? new Answered("Its account", "left for later", false)
-                        : new Answered("Its account", accountAnswer(), true));
+                recap.add(noCredential ? new Answered("Its account", "left for later", Mark.LATER)
+                        : checkedAnswer("Its account", accountAnswer(), accountNamespaces));
             }
             var noGitHub = false;
             var noIdentity = false;
@@ -1803,14 +1820,14 @@ public class InitCommand extends BaseCommand {
                     noIdentity = identity == null;
                 }
                 // Asked in a step of its own; as the agent's account (Copilot), that line says it
-                if (!gitHubAsked) recap.add(noGitHub ? new Answered("GitHub", "none for now", false)
-                        : new Answered("GitHub", gitHubAnswer(), true));
+                if (!gitHubAsked) recap.add(noGitHub ? new Answered("GitHub", "none for now", Mark.LATER)
+                        : checkedAnswer("GitHub", gitHubAnswer(), Set.of(dev.incusspawn.tool.GhSetup.NAMESPACE)));
                 // The answer to the question a skipped GitHub account leads to, so the banner shows every answer
-                if (identity != null) recap.add(new Answered("Commits as", identity.toString(), true));
+                if (identity != null) recap.add(new Answered("Commits as", identity.toString(), Mark.DONE));
             } else if (!all && !gitHubAsked) {
                 // Not after the agent's own step, which asked for it and said it was saved
                 BuildOutput.note("A GitHub account is set up already.");
-                recap.add(new Answered("GitHub", "set up already", true));
+                recap.add(new Answered("GitHub", "set up already", Mark.DONE));
             }
             if (all) {
                 for (var step : credentialSteps()) {
@@ -1894,6 +1911,17 @@ public class InitCommand extends BaseCommand {
             // A recap line is never worth a failed run
         }
         return "saved";
+    }
+
+    /**
+     * The recap line of an account just saved in one of {@code namespaces}: a tick when a check
+     * verified it, else the warning mark and words that say it was not checked (#2587). The step's
+     * own "unverified" line said so above it, but a later question's screen may no longer show it.
+     */
+    Answered checkedAnswer(String question, String answer, Set<String> namespaces) {
+        var unchecked = namespaces.stream().anyMatch(credentials.savedUnchecked::contains);
+        return unchecked ? new Answered(question, answer + ", not checked", Mark.UNCHECKED)
+                : new Answered(question, answer, Mark.DONE);
     }
 
     /** What the recap says of the GitHub account saved in this run: whose it is, when GitHub named it. */

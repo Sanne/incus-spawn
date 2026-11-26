@@ -570,6 +570,7 @@ class CredentialSetup {
         }
         config.save();
         endChatGptSessions(replaced);
+        savedChecked("openai", true);
         BuildOutput.ok("Signed in to ChatGPT");
         BuildOutput.stepNote("The sign-in is saved on " + Platform.thisComputer() + ".");
     }
@@ -637,6 +638,7 @@ class CredentialSetup {
         }
         config.save();
         endChatGptSessions(leaving);
+        savedChecked("openai", verified);
         if (verified) {
             BuildOutput.ok("API key verified and saved on " + Platform.thisComputer());
         } else {
@@ -755,6 +757,7 @@ class CredentialSetup {
             if (result.verified()) {
                 if (!askYesNo(prompts, envAccountPrompt(config, target, "Use them for " + machines() + "?"), true)) return false;
                 saveVertexConfig(config, target, region, projectId);
+                savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, true);
                 BuildOutput.ok("Vertex AI settings verified and saved on " + here);
                 return true;
             }
@@ -766,6 +769,7 @@ class CredentialSetup {
             Lines.step(couldNotCheck("them", result.message()));
             if (!askYesNo(prompts, "Save them unverified?", false)) return false;
             saveVertexConfig(config, target, region, projectId);
+            savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, false);
             BuildOutput.ok("Vertex AI settings saved on " + here + ", unverified");
             BuildOutput.stepNote("If they fail, 'isx account add claude' replaces them.");
             return true;
@@ -800,12 +804,14 @@ class CredentialSetup {
                 Lines.step(couldNotCheck("it", result.message()));
                 if (!askYesNo(prompts, envAccountPrompt(config, target, "Save it unverified, and check it later?"), false)) return false;
                 saveDirectConfig(config, target, envApiKey);
+                savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, false);
                 BuildOutput.ok("API key saved on " + here + ", unverified");
                 BuildOutput.stepNote("If it fails, 'isx account add claude' replaces it.");
                 return true;
             }
             if (!askYesNo(prompts, envAccountPrompt(config, target, "Use it for " + machines() + "?"), true)) return false;
             saveDirectConfig(config, target, envApiKey);
+            savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, true);
             BuildOutput.ok("API key verified and saved on " + here);
             return true;
         }
@@ -828,6 +834,7 @@ class CredentialSetup {
             var result = verifyVertexConfig(region, projectId);
             if (result.verified()) {
                 saveVertexConfig(config, target, region, projectId);
+                savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, true);
                 BuildOutput.ok("Vertex AI settings verified and saved on " + here);
                 return Outcome.DONE;
             }
@@ -838,6 +845,7 @@ class CredentialSetup {
                 }
                 case SAVE_UNVERIFIED -> {
                     saveVertexConfig(config, target, region, projectId);
+                    savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, false);
                     BuildOutput.ok("Vertex AI settings saved on " + here + ", unverified");
                     BuildOutput.stepNote("If they fail, 'isx account add claude' replaces them.");
                     return Outcome.DONE;
@@ -1022,6 +1030,7 @@ class CredentialSetup {
             var result = verifyAnthropicApiKey(key);
             if (result.verified()) {
                 saveDirectConfig(config, target, key);
+                savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, true);
                 BuildOutput.ok("API key verified and saved on " + here);
                 return Outcome.DONE;
             }
@@ -1032,6 +1041,7 @@ class CredentialSetup {
                 }
                 case SAVE_UNVERIFIED -> {
                     saveDirectConfig(config, target, key);
+                    savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, false);
                     BuildOutput.ok("API key saved on " + here + ", unverified");
                     BuildOutput.stepNote("If it fails, 'isx account add claude' replaces it.");
                     return Outcome.DONE;
@@ -1432,6 +1442,7 @@ class CredentialSetup {
                                  boolean verified) {
         saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofOauth(oauthToken));
         var here = Platform.thisComputer();
+        savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, verified);
         BuildOutput.ok(verified ? "Token verified and saved on " + here : "Token saved on " + here + ", unverified");
         if (!verified) BuildOutput.stepNote("If it fails, 'isx account add claude' replaces it.");
         // What 'claude setup-token' advises is for a token used by hand: isx answers it (#2528)
@@ -1595,6 +1606,7 @@ class CredentialSetup {
             var result = verifyOauthToken(token);
             if (result.verified()) {
                 saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofOauth(token));
+                savedChecked(SpawnConfig.ClaudeConfig.NAMESPACE, true);
                 BuildOutput.ok("Token received, verified and saved on " + Platform.thisComputer());
                 // What 'claude setup-token' advises is for a token used by hand: isx answers it (#2528)
                 BuildOutput.stepNote("You do not need to store or export it. isx keeps it.");
@@ -1804,6 +1816,7 @@ class CredentialSetup {
                 dev.incusspawn.config.AccountResolver.shapeOf(config, GhSetup.NAMESPACE), target, values);
         config.save();
         var here = Platform.thisComputer();
+        savedChecked(GhSetup.NAMESPACE, verified);
         BuildOutput.ok(verified ? "Token verified and saved on " + here : "Token saved on " + here + ", unverified");
         if (result != null && result.login() != null) {
             BuildOutput.stepNote((noAgent ? "isx machines act" : "The agent acts") + " on GitHub as " + OutputFormat.oneLine(result.login()) + ".");
@@ -2608,6 +2621,19 @@ class CredentialSetup {
     String savedGitHubLogin;
 
     /**
+     * The namespaces whose account this run last saved without a check that passed: saved
+     * unverified when the check could not run or reach the service, or a key the tool declares no
+     * check for. The first run's recap marks them (#2587), since its tick says a check passed.
+     */
+    final java.util.Set<String> savedUnchecked = new java.util.HashSet<>();
+
+    /** Records how the account just saved in {@code namespace} was checked, the last save winning. */
+    void savedChecked(String namespace, boolean checked) {
+        if (checked) savedUnchecked.remove(namespace);
+        else savedUnchecked.add(namespace);
+    }
+
+    /**
      * The GitHub question and its first option, an account apart from the person's own. The
      * step's hint gave the reason of identity; this gives the one of access (#2528). It does not
      * say a separate account is the only way to limit access: a restricted token of the person's
@@ -3275,7 +3301,10 @@ class CredentialSetup {
         if (savedAny && (secretEntered || (!secretHeld && !secretSkipped))) {
             // The one outcome line says how the key was checked, and what to do when it was not (#2528, #2566)
             // "verified" only when a check passed, "unverified" only when the person chose to save a key a check could not judge
-            if (secretVerified && !secretUnchecked && !secretUnverified) {
+            var checked = secretVerified && !secretUnchecked && !secretUnverified;
+            // Under the name the first run's recap reads it by: the step's own when the tool declares no namespace
+            savedChecked(namespace.isBlank() ? toolName : namespace, checked);
+            if (checked) {
                 BuildOutput.ok(secret + " verified and saved on " + here);
                 return;
             }
