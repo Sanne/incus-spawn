@@ -81,10 +81,20 @@ public class ChatGptSignIn {
         this.issuer = issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer;
     }
 
+    /**
+     * OpenAI's auth server answered, but not with a device code isx can use: the server was
+     * reached, so the caller must not say it could not be. The message names what was wrong.
+     */
+    public static class DeviceCodeRefused extends IOException {
+        public DeviceCodeRefused(String what) {
+            super(what);
+        }
+    }
+
     /** OpenAI's auth server does not offer the one-time code sign-in (it answered 404). */
-    public static final class DeviceCodeUnavailable extends IOException {
+    public static final class DeviceCodeUnavailable extends DeviceCodeRefused {
         public DeviceCodeUnavailable() {
-            super("OpenAI's auth server does not offer the one-time code sign-in");
+            super("it does not offer the one-time code sign-in");
         }
     }
 
@@ -110,21 +120,32 @@ public class ChatGptSignIn {
             // codex-rs request_user_code reads a 404 so: the server does not offer the flow
             throw new DeviceCodeUnavailable();
         }
-        if (response.statusCode() != 200) {
-            throw new IOException("OpenAI's auth server answered HTTP " + response.statusCode());
+        // codex-rs takes any success status, as it does any status but 404 as a refusal
+        if (response.statusCode() < 200 || response.statusCode() > 299) {
+            throw new DeviceCodeRefused("it answered HTTP " + response.statusCode());
         }
-        var answer = parse(response.body(), "the auth server's answer");
+        JqValue answer;
+        try {
+            answer = parse(response.body(), "its answer");
+        } catch (IllegalArgumentException e) {
+            throw new DeviceCodeRefused(e.getMessage());
+        }
         var deviceAuthId = answer.pathText("device_auth_id", "");
         // codex-rs UserCodeResp takes the code under either name
         var userCode = answer.pathText("user_code", "");
         if (userCode.isEmpty()) userCode = answer.pathText("usercode", "");
         if (deviceAuthId.isEmpty() || userCode.isEmpty()) {
-            throw new IOException("OpenAI's auth server answered without a device code");
+            throw new DeviceCodeRefused("its answer holds no device code");
         }
         var interval = answer.path("interval");
         // The server sends the interval as a string (codex-rs deserialises it so); a number is read too
-        long seconds = interval instanceof JqString s && !s.stringValue().isBlank()
-                ? Long.parseLong(s.stringValue().strip()) : interval.asLong(5);
+        long seconds;
+        try {
+            seconds = interval instanceof JqString s && !s.stringValue().isBlank()
+                    ? Long.parseLong(s.stringValue().strip()) : interval.asLong(5);
+        } catch (NumberFormatException e) {
+            throw new DeviceCodeRefused("its answer gives a poll interval that is not a number");
+        }
         return new DeviceCode(deviceAuthId, userCode, Math.max(1, seconds), verificationUrl());
     }
 

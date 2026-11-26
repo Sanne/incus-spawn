@@ -135,6 +135,14 @@ class ChatGptSignInTest {
     }
 
     @Test
+    void anIntervalThatIsNotANumberIsTheServersAnswerNotAnUnreachableServer() {
+        userCodeAnswer = "{\"device_auth_id\":\"dev-123\",\"user_code\":\"ABCD-EFGH\",\"interval\":\"5s\"}";
+
+        var e = assertThrows(ChatGptSignIn.DeviceCodeRefused.class, () -> signIn.requestDeviceCode());
+        assertTrue(e.getMessage().contains("poll interval"), e.getMessage());
+    }
+
+    @Test
     void aServerWithoutTheDeviceFlowIsToldApart() {
         userCodeAnswer = null;
 

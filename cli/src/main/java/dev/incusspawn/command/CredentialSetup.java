@@ -517,8 +517,12 @@ class CredentialSetup {
             } catch (dev.incusspawn.proxy.ChatGptSignIn.DeviceCodeUnavailable e) {
                 // A new code would be refused the same way, so no retry is offered
                 Lines.warnWrapped("OpenAI's sign-in server does not offer the one-time code, so a new code"
-                        + " would be refused too. Sign in with a browser on " + Platform.thisComputer() + " instead.");
+                        + " would be refused too. To sign in with a browser on " + Platform.thisComputer()
+                        + " instead, run 'isx account add openai' and choose the browser sign-in.");
                 unavailable = true;
+            } catch (dev.incusspawn.proxy.ChatGptSignIn.DeviceCodeRefused e) {
+                // The server was reached: say what it answered, never that it could not be reached
+                Lines.warnWrapped("OpenAI's sign-in server did not give a code isx can use: " + reason(e));
             } catch (Exception e) {
                 Lines.warnWrapped("isx could not reach OpenAI's sign-in server: " + reason(e));
             }
