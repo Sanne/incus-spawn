@@ -15,6 +15,7 @@ parameters:
 # repomd.xml signed by Superlogical's package key (E28636AC71905C6DDE40C1EDFAA6B80F641307A7,
 # signing subkey E032B88AE0C279B9EA9BDF27C00363666EE29BCE, from https://pkgs.superlogical.com/rex/keys/rex.asc).
 # The stable channel had no packages yet.
+# The upstream watch's rex item (upstream/manifest.yaml) proposes each newer preview the same way.
 downloads:
   - url: https://pkgs.superlogical.com/rex/rpm/preview/x86_64/rex-0.1.0~preview.25-1.x86_64.rpm
     sha256: 746580e6ad8d7bf6f221b9de55cfc7d6c2e1bbfbe397448612d6948c99018e63

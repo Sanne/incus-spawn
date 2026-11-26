@@ -567,3 +567,28 @@ items:
     files:
       - common/src/main/java/dev/incusspawn/tool/AntigravitySetup.java
     fields: [version, build, sha256.x86_64, sha256.aarch64]
+  rex:
+    # A person merges it: Rex is a preview, and isx reads what its CLI prints (rex ls --json) and
+    # registers each instance with the host's Rex, which no CI job runs. Superlogical publishes a
+    # preview every day or two; the 24h floor counts from the latest build time of the two rpms.
+    # Any series: a 0.2 preview is proposed like a 0.1 one, since a person merges each anyway.
+    class: review
+    within: any
+    cooling: 24h
+    judgement: build
+    source:
+      type: rpm-repo
+      repo: https://pkgs.superlogical.com/rex/rpm/preview/{arch}/
+      package: rex
+      title: Rex
+      arches: [x86_64, aarch64]
+    verify:
+      type: signed-file
+      # Superlogical's package key, from https://pkgs.superlogical.com/rex/keys/rex.asc; its subkey
+      # E032B88AE0C279B9EA9BDF27C00363666EE29BCE signs each repomd.xml.
+      key: upstream/keys/superlogical-rex.asc
+      fingerprints:
+        - E28636AC71905C6DDE40C1EDFAA6B80F641307A7
+    files:
+      - common/src/main/resources/tools/rex.yaml
+    fields: [version, sha256.x86_64, sha256.aarch64]

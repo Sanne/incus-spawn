@@ -66,6 +66,7 @@ The same applies to a tool download added to `ToolDef` or a tool YAML, to the ap
 The `idea-backend` pin (`common/src/main/resources/tools/idea-backend.yaml`) is bumped by the watch the same way, from JetBrains' products API and the `.sha256` beside each tarball.
 The `jasolo` pin (`common/src/main/resources/tools/jasolo.yaml`) is proposed by the watch from the release asset's GitHub digest, re-hashed; jasolo ships no sums, so it is a `review` item that Sanne merges (design/upstream.md).
 The `agy` pin (`AntigravitySetup.java`) is proposed by the watch's `antigravity` item from Google's stable Linux manifests, the tarballs checked against their sha512 and re-hashed; it is a `review` item, since isx parses what agy prints (design/upstream.md "The antigravity source type").
+The `rex` pin (`common/src/main/resources/tools/rex.yaml`) is proposed by the watch's `rex` item from Superlogical's preview rpm repository, each sha256 from the primary metadata that a `repomd.xml` signed by the pinned key hashes; it is a `review` item (design/upstream.md "The rpm-repo source type").
 
 **The upstream watch is the one place a pin moves by itself** (#2036).
 `upstream/manifest.yaml` declares each watched item, `upstream/engine` proposes a bump PR as the `isx-upstream[bot]` app for a `mechanical` or `review` item and an issue for a `judgement` one, `upstream-verify` re-derives every PR's pins from the publisher and requires an app PR to be exactly the engine's regeneration, and only such a PR of a `mechanical` item may the bot merge.
