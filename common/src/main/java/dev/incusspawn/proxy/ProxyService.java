@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 public final class ProxyService {
@@ -472,8 +473,18 @@ public final class ProxyService {
      * error, and a restart that did not take, or launchd's refusal of one, as a warning.
      */
     public static boolean restart(Output out) {
+        return restart(out, () -> new String[0]);
+    }
+
+    /**
+     * As {@link #restart(Output)}, the warning of a restart that did not take carrying {@code
+     * advice} as its details: what a caller that adds no advice of its own tells the person to
+     * run next ({@link #notRestartedAdvice}, #2620). Asked only once the restart failed, so it
+     * reads the unit as the restart left it, and a restart that worked spawns nothing for it.
+     */
+    public static boolean restart(Output out, Supplier<String[]> advice) {
         try (var ignored = acquireProxyLock()) {
-            return restartLocked(out);
+            return restartLocked(out, false, advice);
         }
     }
 
@@ -513,6 +524,10 @@ public final class ProxyService {
         return restartLocked(out, false);
     }
 
+    private static boolean restartLocked(Output out, boolean forceReload) {
+        return restartLocked(out, forceReload, () -> new String[0]);
+    }
+
     /**
      * @param forceReload the caller already knows the loaded job may not match disk — a drift
      *                     repair ({@link #reinstallIfChanged}) or an upgrade ({@link
@@ -524,7 +539,7 @@ public final class ProxyService {
      *                     the plist but before this restart) would otherwise last until the next
      *                     login (review on #916).
      */
-    private static boolean restartLocked(Output out, boolean forceReload) {
+    private static boolean restartLocked(Output out, boolean forceReload, Supplier<String[]> advice) {
         // Under the lock, after restartIfUnhealthy's recheck: a healthy proxy is never refused.
         if (!initComplete(out)) return false;
         ProxyLog.info("Service restarting");
@@ -560,8 +575,28 @@ public final class ProxyService {
             out.note("Proxy service restarted.");
             return true;
         }
-        out.warn("Proxy service did not restart.");
+        warnNotRestarted(out, advice.get());
         return false;
+    }
+
+    /** The warning of a restart that left the service down. */
+    public static final String NOT_RESTARTED = "Proxy service did not restart.";
+
+    /** Warns that a restart left the service down, {@code advice} under it. */
+    public static void warnNotRestarted(Output out, String... advice) {
+        out.warn(NOT_RESTARTED, advice);
+    }
+
+    /**
+     * What to run after a restart left the service down: where to see why and, unless systemd
+     * stopped it for a configuration error that would stop it again, how to start it (#2620).
+     */
+    public static String[] notRestartedAdvice() {
+        return notRestartedAdvice(failedWithConfigError());
+    }
+
+    public static String[] notRestartedAdvice(boolean configError) {
+        return configError ? new String[] {CHECK_LOGS} : new String[] {CHECK_LOGS, START_AGAIN};
     }
 
     /**
@@ -802,7 +837,8 @@ public final class ProxyService {
                 // Forcing the reload here is also what lets restartLocked skip asking
                 // needsMacOsPlistUpdate() a second time: it already answered yes, right above.
                 if (!needsMacOsPlistUpdate()) return false;
-                var restarted = restartLocked(BuildOutput.bound(), true);
+                // Its callers, init and the install command, add no advice of their own (#2620)
+                var restarted = restartLocked(BuildOutput.bound(), true, ProxyService::notRestartedAdvice);
                 if (restarted) DriftRestartRecord.write(proxyBin);
                 return restarted;
             }
@@ -1305,6 +1341,9 @@ public final class ProxyService {
 
     /** Where to look when the service does not do what it was asked. */
     public static final String CHECK_LOGS = "Check logs with: isx proxy logs";
+
+    /** How to start the service again after a restart left it down, beside {@link #CHECK_LOGS} (#2620). */
+    public static final String START_AGAIN = "Start it again with: isx proxy start";
 
     /** Why a restarted service did not answer, and where to look: the message and its details. */
     public record NotAnswering(String message, String[] details) {}

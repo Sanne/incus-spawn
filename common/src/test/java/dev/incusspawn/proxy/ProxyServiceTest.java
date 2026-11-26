@@ -685,4 +685,11 @@ class ProxyServiceTest {
         assertEquals("Proxy is still not responding after restart.", silent.message());
         assertTrue(java.util.List.of(silent.details()).contains(ProxyService.CHECK_LOGS));
     }
+
+    /** A restart that left the service down says what to run next, but not to start again what a config error stops (#2620). */
+    @Test
+    void aRestartThatLeftTheServiceDownSaysWhatToRunNext() {
+        assertArrayEquals(new String[] {ProxyService.CHECK_LOGS, ProxyService.START_AGAIN}, ProxyService.notRestartedAdvice(false));
+        assertArrayEquals(new String[] {ProxyService.CHECK_LOGS}, ProxyService.notRestartedAdvice(true));
+    }
 }

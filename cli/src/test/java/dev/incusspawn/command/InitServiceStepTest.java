@@ -68,9 +68,16 @@ class InitServiceStepTest {
         }
 
         @Override
-        boolean restartProxyService() {
+        boolean restartProxyService(java.util.function.Supplier<String[]> advice) {
             record("restart");
+            // As ProxyService.restart: the advice is asked only for a restart that failed
+            if (restartFails) ProxyService.warnNotRestarted(BuildOutput.bound(), advice.get());
             return !restartFails;
+        }
+
+        @Override
+        String[] notRestartedAdvice() {
+            return ProxyService.notRestartedAdvice(false);
         }
 
         @Override
@@ -145,9 +152,14 @@ class InitServiceStepTest {
         Files.writeString(Environment.initCompleteMarker(), String.valueOf(Environment.INIT_VERSION - 1));
         init.serviceActive = true;
         init.restartFails = true;
-        assertFalse(init.completeWithProxyService(null));
+        var output = RecordingOutput.during(() -> assertFalse(init.completeWithProxyService(null)));
         assertEquals(List.of("upgrade", "restart"), init.serviceActions);
         assertEquals("the proxy service", init.failedService());
+        // The warning names where to see why and how to start it again (#2620)
+        var warns = output.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warns.size());
+        assertEquals(ProxyService.NOT_RESTARTED, warns.get(0).msg());
+        assertEquals(List.of(ProxyService.CHECK_LOGS, ProxyService.START_AGAIN), warns.get(0).details());
         var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
         assertFalse(box.contains("Setup complete"), box);
     }
@@ -163,7 +175,12 @@ class InitServiceStepTest {
         assertEquals(List.of("upgrade"), init.serviceActions);
         assertEquals("the proxy service", init.failedService());
         assertEquals(List.of(), output.events(RecordingOutput.Kind.STEP));
-        assertEquals(1, output.events(RecordingOutput.Kind.WARN).size());
+        var warns = output.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warns.size());
+        var warn = warns.get(0);
+        assertEquals(ProxyService.NOT_RESTARTED, warn.msg());
+        // The warning names where to see why and how to start it again (#2620)
+        assertEquals(List.of(ProxyService.CHECK_LOGS, ProxyService.START_AGAIN), warn.details());
         var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
         assertFalse(box.contains("Setup complete"), box);
     }
