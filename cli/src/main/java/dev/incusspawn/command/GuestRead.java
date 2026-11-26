@@ -30,11 +30,43 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
 
     static final String SCRIPT = script();
 
+    /**
+     * The work section and the readers' run at once (#2627), so the clones' read, the slow part,
+     * no longer waits for the sessions' or they for it. The work section is written straight
+     * out; the readers' sections go, in their order, to a file removed as soon as it is open, so
+     * a probe killed at any point leaves nothing behind, and at most the whole output's bound plus
+     * a byte of them is kept there, so readers past their room still read as cut. Once both ended
+     * the readers' are written after the work section, the output in the same order as one at a
+     * time, so the output bound cuts the same section. When no such file can be made, the
+     * sections run one after another as before.
+     */
     private static String script() {
         // The exit is the work section's: each reader's section is judged by its own end line
-        var sb = new StringBuilder("(\n").append(WorkState.SCRIPT).append(")\nw=$?\n");
+        var sb = new StringBuilder("work() (\n").append(WorkState.SCRIPT).append(")\nreaders() {\n");
         for (var reader : READERS) sb.append("(\n").append(reader.script()).append(")\n");
-        return sb.append("exit $w\n").toString();
+        return sb.append("""
+                }
+                w=
+                if f=$(mktemp "${TMPDIR:-/tmp}/isx-guest-read.XXXXXX" 2>/dev/null); then
+                  {
+                    rm -f "$f"
+                    readers </dev/null 2>/dev/null | head -c %d >&3 &
+                    b=$!
+                    trap 'kill "$b" 2>/dev/null; exit 143' TERM
+                    work
+                    w=$?
+                    wait "$b"
+                    cat <&4
+                  } 3>"$f" 4<"$f"
+                  rm -f "$f"
+                fi
+                if [ -z "$w" ]; then
+                  work
+                  w=$?
+                  readers
+                fi
+                exit $w
+                """.formatted(MAX_OUTPUT + 1)).toString();
     }
 
     public static final GuestRead NOT_READ = new GuestRead(WorkState.NOT_READ, AgentSessions.NOT_READ);
