@@ -185,6 +185,7 @@ public final class RexIntegration implements HostIntegration {
         }
         if (!Files.exists(record)) return false;
         var shown = OutputFormat.oneLine(name);
+        var removedHost = false;
         try {
             var id = recordedId(name);
             var rex = Boolean.TRUE.equals(superlogical());
@@ -201,7 +202,6 @@ public final class RexIntegration implements HostIntegration {
                 return false;
             }
             if (rex) removeOrphans(out);
-            var removedHost = false;
             if (id != null) {
                 var label = listedLabel(id);
                 if (label != null) {
@@ -217,6 +217,13 @@ public final class RexIntegration implements HostIntegration {
             Files.deleteIfExists(record);
             return removedHost;
         } catch (IOException | RuntimeException e) {
+            if (removedHost) {
+                // The tool no longer lists it, so asking the user to remove it there would be wrong;
+                // the record left behind would keep a new instance of the name from being added
+                out.warn("removed " + shown + " from Rex, but could not delete isx's record of it: " + e.getMessage(),
+                        "Delete it yourself, or a new instance named " + shown + " is not added to Rex: " + record);
+                return true;
+            }
             out.warn("could not remove " + shown + " from Rex: " + e.getMessage());
             return false;
         }
