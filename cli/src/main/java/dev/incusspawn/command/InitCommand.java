@@ -2597,7 +2597,7 @@ public class InitCommand extends BaseCommand {
 
     /** Builds {@code template} as {@code isx build} does, asking for no account: the run just asked. Tests record it instead. */
     int buildTemplate(String template) throws Exception {
-        var build = new BuildCommand();
+        var build = newBuild();
         build.names = List.of(template);
         build.askForAccounts = false;
         build.warnMissingAccounts = false;
@@ -2608,6 +2608,11 @@ public class InitCommand extends BaseCommand {
         } finally {
             dev.incusspawn.proxy.ProxyLog.setSuppressStderr(quiet);
         }
+    }
+
+    /** The build {@link #buildTemplate} runs; a transcript's runs over a host of the test's. */
+    BuildCommand newBuild() {
+        return new BuildCommand();
     }
 
     /** Branches the first instance of {@code template}, which opens its agent; tests record it instead. */

@@ -222,7 +222,13 @@ They run over a host of the test's: its files under a temporary root, its comman
 So the block of setup is read and gated like the questions, and each branch writes the host commands it asked for beside its transcript.
 What cannot be faked honestly is a marker that names it: sudo's password, systemd or launchd starting the services, and the Mac's VM, whose appliance a first run downloads and boots.
 The branches run under `Privilege.forbid()`, so a sudo that escapes the seams fails the transcript instead of running.
-The build is still a marker: no test drives a whole build over `FakeIncusDaemon` yet, which needs seams for the base image's and the tools' downloads.
+Those whole runs, and one whose Incus refuses the DNF cache's volume, also run the real `isx build tpl-agent` (#2588).
+It builds `tpl-minimal` and then `tpl-agent` over the same `FakeIncusDaemon`, whose guest answers every command with nothing.
+Its downloads come from files of the test's (`OfflineDownloads`), so the base image says it is cached where a first run downloads it, and a marker says so.
+The proxy's health check is skipped there, since its service is a marker too.
+The third run shows a build that warns: the build goes on without the DNF cache, and its warning is held to the frame like the rest.
+The other branches keep a marker for the build, since their build is the same one.
+The Mac's build runs in the role of the OS that runs the test: on Linux it is worded as a Mac's, and it takes the Linux path where the build itself reads the platform.
 
 ## The continuation under `sg` asks nothing
 

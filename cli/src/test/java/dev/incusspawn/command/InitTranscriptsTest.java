@@ -35,7 +35,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * after each question, a secret as {@code ••••}. Only the host is the test's: what is found on
  * it, what a verification answers, and the plumbing, build and branch, which print a marker.
  * The whole runs ({@code 34}, {@code 34b}, {@code 34c}) run the setup's own steps over a host of
- * the test's instead, and mark only what cannot be faked (#2588). Each branch is worded for its
+ * the test's instead, and mark only what cannot be faked (#2588); they, and {@code 34d}, also run
+ * the real build over that Incus, its downloads answered offline. Each branch is worded for its
  * platform through {@link dev.incusspawn.Platform#wordedAs}, whatever OS runs the test.
  *
  * <p>Each transcript is written to {@code target/init-transcripts/<branch>.txt}, for a person to
@@ -285,9 +286,38 @@ class InitTranscriptsTest {
         @Override String firstInstanceName() { return "my-first"; }
 
         @Override
-        int buildTemplate(String template) {
+        int buildTemplate(String template) throws Exception {
+            if (realSetup) {
+                // What the offline downloads change in what the build shows
+                screen.println("⟪the build runs over the test's Incus, its downloads answered offline:"
+                        + " a first run downloads the base image where this says cached⟫");
+                return super.buildTemplate(template);
+            }
             BuildOutput.step("⟪isx build " + template + " runs here" + (buildFails ? ", and fails" : "") + "⟫");
             return buildFails ? 1 : 0;
+        }
+
+        /** Where a whole run's build finds its downloads: files of the test's, never the network. */
+        dev.incusspawn.tool.OfflineDownloads downloads;
+
+        /**
+         * The real {@code isx build} of a whole run (#2588), over this host's Incus, its base image
+         * and Claude Code answered by {@link #downloads}.
+         */
+        @Override
+        BuildCommand newBuild() {
+            var build = new BuildCommand() {
+                @Override dev.incusspawn.incus.IncusClient incusClient() { return daemon.client(); }
+                // The run marked isx set up; the real check would also start a Mac's VM
+                @Override boolean requireInit() { return InitCommand.hasBeenInitialized(); }
+                // The proxy's service is one the test cannot start, and says so where it starts
+                @Override void requireProxy() { }
+                @Override dev.incusspawn.tool.DownloadCache newDownloadCache() { return downloads; }
+                // The base image the release pins: the newest release is a question for GitHub
+                @Override dev.incusspawn.baseimage.BaseImageReleases baseImageReleases(String imageUrl) { return null; }
+            };
+            build.toolSetups = dev.incusspawn.tool.OfflineDownloads.over(build.toolSetups, downloads);
+            return build;
         }
 
         @Override
@@ -503,6 +533,13 @@ class InitTranscriptsTest {
                     i.hostCommandsInstalled = new HashSet<>(Set.of("dnf", "sg")); i.daemon = new FakeIncusDaemon().noStoragePool(); }, claudeHere,
                 new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
                 false, true));
+        // A build that warns (#2588): the pool refuses the DNF cache's volume, and the build goes on without it
+        if (LINUX_ROLE) b.add(new Branch("34d-whole-run-linux-build-warns", "The whole run on Linux with --no-sudo; Claude Code; the build cannot mount the DNF cache",
+                i -> { i.wholeRun = true; i.realSetup = true; i.found = sub;
+                    i.daemon = new FakeIncusDaemon().pool("default", "btrfs").network("incusbr0", Map.of("ipv4.address", "10.1.2.1/24"))
+                            .refuseVolumeCreation(507, "Not enough space in pool default"); }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
+                false, true));
         b.add(new Branch("34c-whole-run-mac", "The whole run on a Mac, from a Mac with no isx; Claude Code; everything given",
                 i -> { i.wholeRun = true; i.realSetup = true; i.found = sub; }, claudeHere,
                 new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
@@ -611,6 +648,39 @@ class InitTranscriptsTest {
         }
         // One tick for the certificate: the live step's
         assertFalse(linux.contains("Certificate created"), linux);
+    }
+
+    /**
+     * A whole run's build is the real one, over the test's Incus (#2588): both templates of the
+     * chain, the agent's tools, and the outcome, on Linux from no Incus and on a Mac.
+     */
+    @Test
+    void aWholeRunShowsTheBuildItRan() throws Exception {
+        var runs = new ArrayList<String>(List.of("34c-whole-run-mac"));
+        if (LINUX_ROLE) runs.add("34b-whole-run-linux-clean");
+        for (var run : runs) {
+            var text = transcriptOf(run);
+            assertFalse(text.contains("⟪isx build"), text);
+            for (var line : List.of("● Building tpl-minimal", "✓ Importing base image fedora-45-base into Incus",
+                    "✓ tpl-minimal built", "● Building tpl-agent", "✓ Starting from tpl-minimal",
+                    "▸ Tools  claude, gh", "✓ Installing Claude Code", "✓ tpl-agent built")) {
+                assertTrue(text.contains(line), run + ": " + line + "\n" + text);
+            }
+            // The build comes after the setup and before the closing box
+            assertTrue(text.indexOf("● Building tpl-minimal") < text.indexOf("Setup complete"), text);
+            assertFalse(text.contains("Error:"), text);
+        }
+    }
+
+    /** A build that warns goes on, and its warning fits the build's frame (#2588). */
+    @Test
+    void aBuildThatWarnsShowsItsWarningInTheFrame() throws Exception {
+        if (!LINUX_ROLE) return;
+        var text = transcriptOf("34d-whole-run-linux-build-warns");
+        assertTrue(text.contains("⚠ Could not mount the DNF cache, so builds are slower."), text);
+        assertTrue(text.contains("✓ tpl-agent built"), text);
+        assertTrue(text.contains("Setup complete"), text);
+        assertEquals(List.of(), TranscriptGate.faults("34d", text, NEVER, "isx commands and docs call"));
     }
 
     @Test
@@ -790,7 +860,10 @@ class InitTranscriptsTest {
             Files.writeString(init.root.resolve("sys/kernel/mm/ksm/run"), "0\n");
             if (init.daemon == null) init.daemon = new FakeIncusDaemon().pool("default", "btrfs")
                     .network("incusbr0", Map.of("ipv4.address", "10.1.2.1/24"));
+            // The guest answers the build's readiness probe, and every other command with nothing
+            init.daemon.servesExecs().execOutput("echo ready", "ready\n");
             init.incus = init.daemon.client();
+            init.downloads = new dev.incusspawn.tool.OfflineDownloads(init.root.resolve("downloads"));
         }
         init.screen = out;
         init.macOs = branch.macOs();
