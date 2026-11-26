@@ -322,9 +322,20 @@ The alternative, a long-lived `--ephemeral` runner re-registered by itself, stil
 **The template holds what the job would download.**
 The server's connection is slow, so `tpl-isx-ci-linux` bakes in GraalVM, the packages the tests look for (zsh, sqlite, git-daemon), the runner, a clone of the repository at the job's workspace and a `~/.m2` primed by a build.
 On it, `unit-tests` skips `setup-graalvm`, the apt installs and `actions/cache` (`runner.environment`), `actions/checkout` fetches into the existing clone, and Maven goes through the proxy's Maven cache.
-Its parent is `tpl-minimal`, not `tpl-java`, whose parent `tpl-dev` installs `gh`: the template installs no tool with a credential, so the proxy gives its jobs no account.
+Its parent is `tpl-minimal`, not `tpl-java`, whose parent `tpl-dev` installs `gh`.
 The definitions live in `.github/linux-runner/` beside the hook, and the server reads them through `searchPaths`; the template's prime installs the hook and the trusted-heads list as root from its clone of `main`, never from a PR.
 The upload of the build for the later jobs still crosses the server's link.
+
+**The job holds no credential proof, so the proxy gives it none of the server's accounts.**
+Every isx start gives an instance a proof for each credential namespace the host's proxy serves, whatever tools its template installed (`ProofToken.declaredWithConfig`).
+They are in `/run/isx/proof-tokens`, readable by `agentuser`, beside the credential secret they derive from and the per-start instance secret, and a system Git helper presents the GitHub proof.
+With any of them, a job's code could have the proxy inject the server's default GitHub or Claude account, so the template's tool list keeps nothing out.
+So the supervisor's exec first runs `drop-credentials.sh` as root, installed by the template's prime from `main`, which removes the three files and the helper and fails when any is left.
+Only then does it start the runner, in a login environment cleared of the exec's own variables (`env -i`).
+Nothing delivers them again: the instance is never started a second time, and for a container a later `isx exec` or `ssh` reads the host's boot stamp rather than the guest's files (`giveSecretIfMissing`), so it gives none; a VM is asked, which is why the template is a container.
+Its requests then carry no proof, and the proxy passes them on with no credential added, as for any caller it cannot prove.
+It gives up nothing a job needs: the job's own `GITHUB_TOKEN` comes from the runner.
+A way to branch an instance that receives no proofs at all would be cleaner than removing them, and isx has none today.
 
 **The routing is the Mini's, with one more runner.**
 `linux-route` (`.github/scripts/runner-route.sh linux`) takes the same trusted code from the same list, `.github/self-hosted/trusted-heads`, and reads `linux-heartbeat.yml`'s runs and the jobs on the `isx-linux` label as `mac-route` reads the Mini's.

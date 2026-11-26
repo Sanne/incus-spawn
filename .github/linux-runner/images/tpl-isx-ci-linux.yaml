@@ -3,12 +3,15 @@
 # branches one instance of this per job, hands it a just-in-time runner configuration and destroys
 # it after the job. It holds what unit-tests would otherwise download on every run: GraalVM, the
 # packages its tests look for, a clone of the repository where actions/checkout updates it, and a
-# ~/.m2 primed by a build. It installs no tool with a credential, so the proxy injects nothing for
-# it: its parent is tpl-minimal, since tpl-java's parent tpl-dev installs gh, and with it the host's
-# GitHub account.
+# ~/.m2 primed by a build. Its parent is tpl-minimal, since tpl-java's parent tpl-dev installs gh.
+# What keeps the server's accounts from a job is not the tool list: isx gives every instance a proof
+# for each namespace the host's proxy serves, and drop-credentials.sh, run as root before the runner
+# starts, removes them all (isx-ci-runner.sh).
 name: tpl-isx-ci-linux
 description: incus-spawn's Linux CI runner, one instance per unit-tests job
 parent: tpl-minimal
+# A container: a later isx exec gives a VM its proofs back, a container not (drop-credentials.sh)
+type: container
 tools:
   - maven-3
   - graalvm
@@ -35,5 +38,6 @@ repos:
     path: ~/actions-runner/_work/incus-spawn/incus-spawn
     prime:
       - sudo install -D -o root -g root -m 0755 .github/linux-runner/job-started.sh /opt/isx-ci/job-started.sh
+      - sudo install -o root -g root -m 0755 .github/linux-runner/drop-credentials.sh /opt/isx-ci/drop-credentials.sh
       - sudo install -o root -g root -m 0644 .github/self-hosted/trusted-heads /opt/isx-ci/trusted-heads
       - mvn -B -ntp package -DskipTests
