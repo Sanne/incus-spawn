@@ -112,7 +112,7 @@ class InitFirstRunAccountsTest {
         }
     }
 
-    /** A local or custom-proxied provider is typed, checked, and warns to keep keys on the computer (#2536). */
+    /** A local provider or another gateway is typed, checked, and warns to keep keys on the computer (#2536). */
     @Test
     void aProviderIsxDoesNotManageNeedsNoAccount() {
         var init = new Init();
@@ -120,7 +120,7 @@ class InitFirstRunAccountsTest {
         var joined = String.join(" ", lines);
 
         assertEquals(1, count(lines, "Use lowercase letters, digits"), String.join("\n", lines));
-        assertTrue(joined.contains("with a custom tool proxy rule:"), String.join("\n", lines));
+        assertTrue(joined.contains("A custom isx tool can add it to each request from there:"), String.join("\n", lines));
         assertEquals(0, count(lines, "Pi Account"), String.join("\n", lines));
         assertEquals(0, count(lines, "Which kind of"), String.join("\n", lines));
         assertEquals(java.util.Map.of("provider", "ollama"), init.agentParams);

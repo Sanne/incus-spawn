@@ -372,7 +372,7 @@ class InitFirstRunTest {
     private static InitCommand.Closing closing(InitCommand.Services services, boolean built, boolean buildFailed,
                                                String agent, List<String> accountCommands, List<String> firstStart) {
         return new InitCommand.Closing(services, agent == null ? "tpl-minimal" : "tpl-agent", built, buildFailed, agent,
-                accountCommands, null, firstStart, true, "my-first-12", true);
+                accountCommands, List.of(), firstStart, true, "my-first-12", true);
     }
 
     private static List<String> plain(List<String> lines) {
@@ -432,6 +432,35 @@ class InitFirstRunTest {
 
         assertTrue(box.contains("1. Add Pi's accounts:\n        isx account add gemini\n        isx account add github\n"), box);
         assertTrue(box.contains("2. Open Pi in a new isx machine:"), box);
+    }
+
+    /** A key only in the environment is not taken for Codex's own sign-in, which its step would claim (#2528). */
+    @Test
+    void aKeyInTheEnvironmentIsNotTheAgentsSignIn() {
+        var fromEnvironment = new FirstRunInit();
+        fromEnvironment.found = List.of(new HostAgentProbe.HostAgent("codex", true, HostAgentProbe.Kind.API_KEY,
+                "openai", null, null, null, "$OPENAI_API_KEY"));
+        assertFalse(fromEnvironment.localAgentSignIn("codex", HostAgentProbe.Kind.API_KEY));
+
+        var fromItsFile = new FirstRunInit();
+        fromItsFile.found = List.of(new HostAgentProbe.HostAgent("codex", true, HostAgentProbe.Kind.API_KEY,
+                "openai", null, null, null, "~/.codex/auth.json"));
+        assertTrue(fromItsFile.localAgentSignIn("codex", HostAgentProbe.Kind.API_KEY));
+    }
+
+    /** Another tool's account is not called the agent's, and GitHub's command is given once (#2528). */
+    @Test
+    void anotherToolsAccountIsNamedApartFromTheAgents() {
+        var message = InitCommand.firstRunNextSteps(new InitCommand.Closing(InitCommand.Services.INSTALLED, "tpl-agent", true, false,
+                "Claude Code", List.of("isx account add claude"), List.of("isx account add acme", "isx account add github"),
+                List.of(), true, "my-first-12", true));
+        var box = String.join("\n", plain(message.box()));
+
+        assertTrue(box.contains("1. Add Claude Code's account:\n        isx account add claude\n"), box);
+        assertTrue(box.contains("2. Add the accounts tpl-agent's other tools need:\n        isx account add acme\n        isx account add github\n"), box);
+        assertTrue(box.contains("name: a GitHub account gives it one."), box);
+        assertEquals(1, box.split("isx account add github", -1).length - 1, box);
+        for (var line : plain(message.box())) assertTrue(line.length() <= InitCommand.BOX_WIDTH, "too wide: '" + line + "'");
     }
 
     /** No line is wider than the box, on any path: a wider one breaks its right border. */

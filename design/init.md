@@ -31,9 +31,9 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    "None for now" is a choice, and stores nothing.
    The answer starts the agent's own pinned downloads, less those already started.
    An agent with a question of its own (`ToolSetup.firstRunQuestion`) is asked it next, unless a `tpl-agent` is kept (#2536).
-   Pi and opencode ask which provider: Claude, OpenAI, Gemini, or a local or custom-proxied one, typed and checked against the parameter's pattern, with no vendor chosen on bare Enter.
+   Pi and opencode ask which provider: Claude, OpenAI, Gemini, or a local provider or another gateway, typed and checked against the parameter's pattern, with no vendor chosen on bare Enter.
    The answer is the agent's parameter in the `tpl-agent.yaml` init writes (`- pi: {provider: openai}`), and Claude's writes none, being the default.
-   So the next step finds that provider's account through the template, and a local or custom-proxied provider gets a note pointing to custom proxy rules rather than encouraging keys inside the guest.
+   So the next step finds that provider's account through the template, and a local provider or another gateway gets a note that a custom isx tool can add its key from the host, rather than encouraging keys inside the guest.
    The question belongs to the tool, so init names no agent.
 3. It sets up the account the agent spends (`setUpAgentCredential`).
    Which one is not named in init: `agentGaps` runs `CredentialCheck.missingByCredential` over the example template for the agent, as a build of it would, and each gap runs the credential step `isx account add` runs for it.
@@ -56,7 +56,8 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    The build shows its live steps, outcomes and warnings, its details in the log, as the block of setup does.
    It does not print the build's missing-account warning (`BuildCommand.warnMissingAccounts`), since `isx branch` has not been introduced yet.
    The completion message right after lists every account the template lacks, in order, so none goes unnamed (`InitCommand.finishFirstRun`).
-   A GitHub account a kept `tpl-agent` lists, which the GitHub step owns, is a step of its own there, "Add a GitHub account", and init then does not offer to open the agent (`InitCommand.gitHubGapCommand`).
+   An account another tool of a kept `tpl-agent` needs, GitHub's included when it is not the agent's own, is a step of its own there, never called the agent's (`InitCommand.otherAccountCommands`), and init then does not offer to open the agent.
+   A local sign-in's step warns of keys isx does not read in its namespace, as the full menu does, once per run; a key found only in the environment is not taken for the agent's own sign-in.
    Sanne had first chosen the warning over saying it once; this run takes the review's recommendation of one place in order (#2528, PR #2609).
    Its step labels name no container or image ("Starting from tpl-minimal", "Restarting the build", "Stopping the build"), as every build's now do.
    A `tpl-agent` already there is said to be kept only when it installs another agent than the one chosen.
@@ -177,7 +178,7 @@ Each header after the first also recaps the answers so far, above its title (`In
 By the third question a person has scrolled past a token guide and another program's output, and the count alone does not say what was decided.
 The account's line names the kind of account set up (Claude subscription, Anthropic API key, Vertex AI, ChatGPT, OpenAI API key, Gemini API key, Google account, IBM Bob API key, or the GitHub login), never a credential, and an answer too long for the box is cut.
 The agent's line carries the answer to the agent's own question as the person gave it: the label they picked, "Pi (OpenAI)", or the name they typed.
-The account's line goes by the namespace the account step filled, never by what the agent could use, since Pi can use three providers' accounts and the step sets up one; a local or custom-proxied provider reads "not managed here".
+The account's line goes by the namespace the account step filled, never by what the agent could use, since Pi can use three providers' accounts and the step sets up one; a local provider or another gateway reads "not managed here".
 After a skipped GitHub account, the Git identity the person agreed to has a line of its own, "Commits as".
 The recap is the questions' own: it is cleared when they end, so a header the setup shows later has none, and it costs each header two to four lines.
 When the questions end, a banner titled "Questions done" shows every answer with its mark, the last one included, which no header showed, and one sentence saying what comes next: isx installs what it needs on the computer, and will then build the template (`printQuestionsDone`).
