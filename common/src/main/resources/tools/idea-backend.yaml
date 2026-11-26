@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://isx.run/schema/tool.json
 name: idea-backend
-description: JetBrains IntelliJ IDEA Remote Development backend 2026.3
+description: JetBrains IntelliJ IDEA Remote Development backend 2026.3.0.1
 requires:
   - sshd
 
@@ -26,13 +26,13 @@ resources:
     resident: { parameter: memory, plus: 1GiB }
 
 downloads:
-  - url: https://download.jetbrains.com/idea/idea-2026.3.tar.gz
-    sha256: 6a53ff71f4a06add4c97edc4efe86c83119ff82e5b5e9f1db62fc95995bd6b25
+  - url: https://download.jetbrains.com/idea/idea-2026.3.0.1.tar.gz
+    sha256: def869cc0109273f5a144ac669c739029e9bd5178d137213b8d15298c0055858
     extract: /opt
     extract_in_container: true
     arch: x86_64
-  - url: https://download.jetbrains.com/idea/idea-2026.3-aarch64.tar.gz
-    sha256: 19c8ff6e144185ae4961080984a65b11c492f2820e975007b4276fe0deeffe52
+  - url: https://download.jetbrains.com/idea/idea-2026.3.0.1-aarch64.tar.gz
+    sha256: 72cd5618cece2d06e4cfa6fb4b692fcdc7e6d59aaf811e67e9ba4871e02495b6
     extract: /opt
     extract_in_container: true
     arch: aarch64
