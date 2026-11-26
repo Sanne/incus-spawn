@@ -600,9 +600,8 @@ public class GuestProvisioning {
     }
 
     static void warnDnfCacheUnavailable(String reason) {
-        if (reason != null) {
-            BuildOutput.warn("Could not mount the DNF cache (builds will be slower): " + reason);
-        }
+        // Incus's reason runs long, so it is its own detail, wrapped to the build's frame (#2588)
+        if (reason != null) Lines.warnWrapped("Could not mount the DNF cache, so builds are slower.", OutputFormat.oneLine(reason));
     }
 
     void unmountDnfCache(String container, MachineType machineType) {
