@@ -7,8 +7,10 @@ package dev.incusspawn.tui;
 final class Glyphs {
     private Glyphs() {}
 
-    /** An instance that is running; in the cursor gutter, a marked row. */
+    /** An instance that is running, before its name. */
     static final String RUNNING = "●";
+    /** A marked row, in the second cell of the cursor gutter: a shape apart from {@link #RUNNING}, which sits beside it. */
+    static final String MARKED = "◆";
     /** An instance that is stopped. */
     static final String STOPPED = "○";
     /** An instance between states that isx did not put there (frozen, in error). */

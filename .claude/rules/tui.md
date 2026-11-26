@@ -149,7 +149,7 @@ F8 on marked templates (`confirmDestroyMarkedTemplates`) destroys the built ones
 A batch is refused while any marked row is busy, and launching one clears its table's marks; Esc clears both sets.
 With instance marks set, the key bar enables F7 only while a marked instance is running (`Tui.anyMarkedInstanceRunning`), since then F7 ignores the cursor row.
 A mark must not move anything (Sanne, #1482).
-`MainScreen.renderMarks` draws `●` after the table renders, into the second cell of the cursor gutter (`▸ `), which `HighlightSpacing.ALWAYS` reserves on every row.
+`MainScreen.renderMarks` draws `Glyphs.MARKED` (`◆`, apart from the running `●` beside it) after the table renders, into the second cell of the cursor gutter (`▸ `), which `HighlightSpacing.ALWAYS` reserves on every row.
 `TuiInstanceMarksTest.markingMovesNothingElseOnTheScreen` pins it.
 The key bar has no room left at 80 columns, so `Space Mark` is hinted at the end of both tables' context lines.
 The count of marks comes after it, so a mark only adds to the end of the line.

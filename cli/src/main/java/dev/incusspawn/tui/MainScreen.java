@@ -365,7 +365,7 @@ final class MainScreen {
     }
 
     /**
-     * Draws {@code ●} on each visible marked row (#1131, #1482) in the second cell of the cursor's
+     * Draws {@link Glyphs#MARKED} on each visible marked row (#1131, #1482) in the second cell of the cursor's
      * gutter, which is always reserved and otherwise blank, so marking a row moves nothing else.
      * The table has one header line and single-line rows.
      */
@@ -378,7 +378,7 @@ final class MainScreen {
             if (y >= tableArea.bottom()) break;
             if (!marked.test(row)) continue;
             var style = buffer.get(x, y).style().patch(Style.EMPTY.fg(tui.theme.contextAccentFg()));
-            buffer.setString(x, y, "\u25cf", style);
+            buffer.setString(x, y, Glyphs.MARKED, style);
         }
     }
 
@@ -920,7 +920,7 @@ final class MainScreen {
         spans.add(Span.styled("  Space", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(bg)));
         spans.add(Span.styled(" Mark", Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
         if (marked > 0) {
-            spans.add(Span.styled("  ● " + marked + " marked, Esc clears", Style.EMPTY.fg(tui.theme.contextAccentFg()).bg(bg)));
+            spans.add(Span.styled("  " + Glyphs.MARKED + " " + marked + " marked, Esc clears", Style.EMPTY.fg(tui.theme.contextAccentFg()).bg(bg)));
         }
     }
 
