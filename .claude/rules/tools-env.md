@@ -236,6 +236,9 @@ herdr is asked only when `ssh <name>` reaches the instance through isx's SSH con
 `stopping` runs before every stop isx makes, under its mark (`HostIntegration.stoppingAll`, or `stopAll` around a bare stop: `StopCommand`, the TUI's `stopInBackground` and its stop before a rename, `IncusInstanceBackend.stop` and `stopIfHeldBy`), and `stopFailed` after one that failed while the instance still runs (#2041).
 herdr's disables the recorded machine and adds `disabled` as the record's third line, so herdr does not reconnect and start the instance again; `done` is then false, and the next start's `started` enables it once and drops the line.
 A new stop path calls the same hook, and its cost with nothing to do is one read of the record.
+Rex's (`RexIntegration`, #2647, records in `Environment.rexHostsDir()`) runs `rex hosts add <name> ssh://<name>` and records the id `rex hosts list --json` gives it, `-` or `retry`.
+Its endpoint is the instance's own Host block, never the start alias, since Rex cannot be told to leave a stopped instance alone, so it has no `stopping`.
+A label the user already has is recorded `-` and never touched, a destroy removes the host listed under the recorded id by its label, and a destroy without rex on the PATH keeps the id in `.orphaned/<uuid>` as herdr's does.
 `registered(name)` reads the same host state, never a command or Incus, and the TUI's instance details (F3) list the tools that answer yes (`HostIntegration.registeredWith`), read once when they open.
 Host programs go through `HostCommands` (`HostPath.isOnPath`, and a run bounded in time, its output read included, so a daemon it leaves holding the pipe cannot hold isx), which tests replace.
 A run past its time reports the last line the command printed before the kill, never what the kill made it print, such as macOS sh's `Killed: 9` (#2070).

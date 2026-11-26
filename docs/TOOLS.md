@@ -33,6 +33,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `tmux` | Terminal multiplexer with isx session integration |
 | `zmx` | zmx: session attach/detach for the terminal |
 | `herdr` | herdr terminal workspace manager, with each instance added to the host's herdr |
+| `rex` | Rex terminal multiplexer, with each instance added to the host's Rex |
 | `orca` | What the Orca agent orchestrator needs to run its server over SSH |
 | `headroom` | Headroom context optimization for Claude Code |
 
@@ -654,6 +655,28 @@ Its next start through isx enables it.
 isx never adds an instance of a template built from project-local definitions.
 
 See [Driving isx from other tools](INTEGRATIONS.md#herdr).
+
+### Rex sessions from the host's Rex
+
+[Rex](https://pkgs.superlogical.com/rex/) is a terminal multiplexer whose client reaches servers on other machines over SSH.
+The `rex` tool installs Rex in the template and starts its server in each instance at boot.
+It also adds `sshd`, which the host's Rex connects through.
+
+```yaml
+name: tpl-rex
+parent: tpl-minimal
+tools:
+  - rex
+```
+
+The server starts a session named `main` when it has none, so the host's Rex finds one to attach to.
+Set `session: false` to start no session.
+
+When `rex` is installed on the host too, on Linux or macOS, isx adds each instance to the host's Rex hosts on its first start.
+`rex -S <name>` then reaches the instance, and isx removes the host when it destroys the instance.
+A stopped instance stays stopped when Rex tries to reach it: start it with `isx start <name>`.
+
+See [Driving isx from other tools](INTEGRATIONS.md#rex).
 
 ### Orca workspaces
 

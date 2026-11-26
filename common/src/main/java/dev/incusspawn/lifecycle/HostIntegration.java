@@ -73,7 +73,9 @@ public interface HostIntegration {
     }
 
     /** The built-in host integrations; the directory is looked up per call, never at image build time. */
-    List<HostIntegration> BUILT_IN = List.of(new HerdrIntegration(HostCommands.SYSTEM, dev.incusspawn.Environment::herdrMachinesDir));
+    List<HostIntegration> BUILT_IN = List.of(
+            new HerdrIntegration(HostCommands.SYSTEM, dev.incusspawn.Environment::herdrMachinesDir),
+            new RexIntegration(HostCommands.SYSTEM, dev.incusspawn.Environment::rexHostsDir));
 
     /** {@link #started} of every integration whose tool the instance's build installed. */
     static void startedAll(IncusClient incus, String name, JqValue instance, Output out) {

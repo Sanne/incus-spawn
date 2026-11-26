@@ -1,0 +1,62 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
+name: rex
+description: Rex 0.1.0-preview.25 – terminal multiplexer, with each instance added to the host's Rex
+requires:
+  - sshd
+
+parameters:
+  session:
+    type: boolean
+    default: "true"
+    description: "Start a Rex session at boot when the instance's Rex server has none, so the host's Rex finds one"
+
+# The host half (adding each instance to the host's Rex hosts) is built into isx: RexIntegration.
+# Checksums: the sha256 of each rpm in the preview channel's primary.xml, whose own sha256 is in a
+# repomd.xml signed by Superlogical's package key (E28636AC71905C6DDE40C1EDFAA6B80F641307A7,
+# signing subkey E032B88AE0C279B9EA9BDF27C00363666EE29BCE, from https://pkgs.superlogical.com/rex/keys/rex.asc).
+# The stable channel had no packages yet.
+downloads:
+  - url: https://pkgs.superlogical.com/rex/rpm/preview/x86_64/rex-0.1.0~preview.25-1.x86_64.rpm
+    sha256: 746580e6ad8d7bf6f221b9de55cfc7d6c2e1bbfbe397448612d6948c99018e63
+    destination_file: /tmp/rex-dl/rex.rpm
+    arch: x86_64
+  - url: https://pkgs.superlogical.com/rex/rpm/preview/aarch64/rex-0.1.0~preview.25-1.aarch64.rpm
+    sha256: 9d33b236ba6bd445be313c3d4fddab915a8601926d8f867e981ef03115482b77
+    destination_file: /tmp/rex-dl/rex.rpm
+    arch: aarch64
+
+# The server runs in agentuser's systemd user manager: systemd-pam and dbus-broker let logind start it
+# in a container, and lingering starts it at boot, so it outlives every login.
+packages:
+  - systemd-pam
+  - dbus-broker
+
+run:
+  - dnf install -y /tmp/rex-dl/rex.rpm
+  - rm -rf /tmp/rex-dl
+  # Same effect as "loginctl enable-linger agentuser", which needs logind running during the build
+  - mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/agentuser
+  # The package's socket unit starts the server on the first connection, the host's Rex over SSH included
+  - systemctl --global enable rex.socket
+  - |
+    if [ "${param_session}" = "true" ]; then
+      cat > /etc/systemd/user/isx-rex-session.service <<'EOF'
+    # Written by isx's rex tool: a Rex session for the host's Rex to find, created at boot only
+    # when the server has none. The server keeps its sessions across its restarts.
+    [Unit]
+    Description=Default Rex session
+    Requires=rex.socket
+    After=rex.socket
+
+    [Service]
+    Type=oneshot
+    Environment=GODEBUG=
+    ExecStart=/bin/sh -c 'rex --autostart=false ls --json | grep -q "\"session_id\"" || exec rex --autostart=false new main'
+
+    [Install]
+    WantedBy=default.target
+    EOF
+      systemctl --global enable isx-rex-session.service
+    fi
+
+verify: rex version

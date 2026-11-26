@@ -10,9 +10,9 @@ Which way a tool connects depends on what it can do, not on a choice you make.
 | The tool | What isx does | Example |
 |----------|---------------|---------|
 | Runs a command to create a machine and another to destroy it | The tool drives isx through ordinary commands | Orca |
-| Only keeps a list of SSH machines | isx adds each instance to the tool's list, and removes it when you destroy the instance | herdr |
+| Only keeps a list of SSH machines | isx adds each instance to the tool's list, and removes it when you destroy the instance | herdr, Rex |
 
-Either way, you add the matching isx tool (`herdr` or `orca`) to a template and build that template, as the sections below show.
+Either way, you add the matching isx tool (`herdr`, `rex` or `orca`) to a template and build that template, as the sections below show.
 Agents still get no credentials in their instance: the proxy on your host adds the credentials to their requests, as for any branch.
 
 ## herdr
@@ -51,6 +51,33 @@ So does enabling it in herdr, and herdr's connection then starts the instance.
 If the instance stops without isx, for example when its guest shuts down, the machine stays enabled and an open herdr starts the instance again.
 
 In the TUI, the instance's details (F3) say isx added it to herdr.
+
+## Rex
+
+[Rex](https://pkgs.superlogical.com/rex/) is a terminal multiplexer whose client lists hosts and reaches their sessions over SSH.
+
+1. Install Rex on your host, Linux or macOS.
+2. Add the `rex` tool to a template and build it:
+
+   ```yaml
+   name: tpl-rex
+   parent: tpl-minimal
+   tools:
+     - rex
+   ```
+
+3. Branch it: `isx branch agent-1 --from tpl-rex`.
+
+isx adds `agent-1` to your Rex hosts when the instance first starts.
+The instance's Rex server starts at boot with a session named `main`, so `rex -S agent-1 ls` lists it.
+
+When you destroy the instance, isx removes the host from Rex.
+A host you added to Rex yourself is never removed or replaced by isx, even one with the instance's name.
+
+Rex does not start a stopped instance.
+Start it with `isx start agent-1` or `isx shell agent-1`, and Rex reaches it again.
+
+In the TUI, the instance's details (F3) say isx added it to Rex.
 
 ## Orca
 

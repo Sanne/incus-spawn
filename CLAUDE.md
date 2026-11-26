@@ -457,6 +457,7 @@ An orchestrator with hooks (Orca) needs no isx code: `integrations/orca/isx-orca
 An orchestrator with no hooks (herdr) is served by a tool's host half instead: a built-in `HostIntegration` keyed on the tool being in the instance's build, which registers the instance on its first start and removes it on destroy, never for a project-local or untrusted build (`.claude/rules/tools-env.md`).
 herdr's machine targets the instance's `<name>.start.isx` alias, whose Host block runs `isx ssh-proxy --start`, so herdr reconnecting starts a stopped instance while `ssh <name>` still never does (#2038).
 Every stop isx makes disables that machine first (`HostIntegration.stoppingAll`), so an open herdr does not start the instance again, and the next start enables it (#2041).
+The `rex` tool's host half (`RexIntegration`, #2647) adds the instance to the host's Rex hosts at `ssh://<name>`, its own Host block, never the start alias: Rex has no way to leave a host alone, so a stopped instance stays stopped.
 See `.claude/rules/commands.md` and design/mcp.md "External orchestrators: owners, start, stop and destroy".
 
 **Native image: host paths belong in the run-time-initialized classes.**
