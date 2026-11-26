@@ -208,6 +208,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The VM image's boot chain (#1255)
   - The VM base image's own kernel (#1255)
   - A VM's hostname is set at each start (#2334)
+  - GUI on macOS: the waypipe prototype
   - Considered and deferred
 - [Testing](design/testing.md)
   - Waiting for another thread or process

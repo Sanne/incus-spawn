@@ -28,6 +28,7 @@ Some come from isx at build time, some from the `tpl-minimal` template, and some
 | With Antigravity CLI on a Google account, a login script keeps its token file holding placeholders | Antigravity CLI reads its sign-in from a file when there is no keyring, and the proxy holds the session | `/etc/profile.d/isx-zz-antigravity.sh`, written by the `antigravity` tool |
 | With Gemini CLI, an isx extension | Gemini CLI loads the extension's context beside your own `~/.gemini/GEMINI.md`, which stays yours | `~/.gemini/extensions/isx/`, a manifest and a copy written by the `gemini-cli` tool |
 | With Claude Code, its managed policy | Claude Code loads it before your own `CLAUDE.md` files, which stay yours | `/etc/claude-code/CLAUDE.md`, a link from the `claude` tool |
+| After `isx gui`, a login script points shells at the display it holds open | Applications started from a shell find the display while `isx gui` runs, and are left alone otherwise | `/etc/profile.d/isx-gui.sh`, written by `isx gui` |
 | With `git-identity` in `config.yaml`, a system Git identity | Agents with no GitHub account have a name to commit under; a GitHub account's identity in `~/.gitconfig` overrides it | `/etc/gitconfig`, written by the build |
 | A VM's `dnf` refuses kernel packages | The VM boots the image's own kernel | `/etc/dnf/libdnf5.conf.d/isx-kernel.conf` |
 

@@ -752,6 +752,112 @@ A boot unit in the base image that read the name from `/dev/incus` would cover t
 The alternative was a file in `/run/isx` that every consumer reads instead of the hostname.
 It would leave `hostname` and every `gethostname()` saying `fedora`, and every consumer would have to change.
 
+## GUI on macOS: the waypipe prototype
+
+`isx gui <instance> [-- <command>]` shows a guest's Wayland windows on a Mac.
+It is a prototype: it exists to find out whether the approach is good enough to build properly, and every shortcut it takes is listed below.
+
+GUI passthrough on Linux (design/instances.md "GUI and Audio Passthrough") bind-mounts the host compositor's socket into the container.
+Wayland passes its buffers as file descriptors, so that needs one kernel on both sides, and a Mac has neither a Wayland compositor nor the guest's kernel.
+The prototype carries the protocol as a byte stream instead.
+[Cocoa-Way](https://github.com/J-x-Z/cocoa-way) is a Wayland compositor for macOS that maps each Linux window to a native macOS window.
+[waypipe](https://gitlab.freedesktop.org/mstoeckl/waypipe) serializes the protocol, buffers included, between a `waypipe client` beside the compositor and a `waypipe server` beside the application.
+
+The pieces, in the order a window's bytes cross them:
+
+1. The application in the guest connects to a display socket under `/run/isx-gui`, which the guest's `waypipe server` made.
+2. That server connects to a Unix socket in the guest's `/tmp`, which the guest's sshd forwards to the host (`ssh -R`).
+3. The ssh connection is the instance's own Host block: `isx ssh-proxy` over an Incus exec, through the VM's vsock tunnel.
+4. On the Mac, `waypipe client` (the `waypipe-darwin` port) accepts it and speaks Wayland to Cocoa-Way's socket.
+
+isx runs one host command for all of it, `waypipe --no-gpu --display <guest display> ssh -F <isx's ssh config> <instance> bash -lc <script>` (`GuiBridge.waypipeCommand`), after one exec as root that makes `/run/isx-gui` and writes `/etc/profile.d/isx-gui.sh` (`GuiBridge.prepareScript`).
+With a command, the display is the run's own (`wayland-<run id>`) and the bridge ends with the command.
+Without one, the display is `wayland-0`, held open by a wait in the guest, and the login script points every new shell at it while its socket exists.
+When the host command ends, however it ends, isx ends the guest's `waypipe server` by its display and removes the socket (`GuiBridge.cleanupScript`).
+
+What this gives up against the Linux passthrough: no GPU, so the guest renders in software; no audio; and only Wayland clients, no X11.
+What it gains: the guest holds no host socket and no device, so it is a narrower grant than `--gui` on Linux, and it works on a Linux host too, which is how it is tested without a Mac.
+
+To try it on a Mac:
+
+```shell
+brew tap J-x-Z/tap && brew install cocoa-way waypipe-darwin
+open -a Cocoa-Way                                  # or run: cocoa-way
+isx exec my-box -- sudo dnf install -y waypipe firefox
+isx gui my-box -- firefox                          # one application
+isx gui my-box                                     # or hold a display for new shells, until Ctrl+C
+```
+
+The instance must be running and have been opened once with `isx shell`, which writes its Host block.
+If Cocoa-Way's socket is not found, set `COCOA_WAY_RUNTIME_DIR` to the directory that holds its `wayland-*` socket.
+
+**Tested so far**, on Linux only: the guest half and the ssh hop, with headless weston standing in for Cocoa-Way and Fedora's waypipe 0.11.2 on both ends.
+A display held open served several clients, a display at an absolute path needed no `XDG_RUNTIME_DIR`, and a Unix socket path longer than 107 bytes was silently truncated.
+Nothing has run against Cocoa-Way or `waypipe-darwin` yet: that is the first thing to do on a Mac.
+
+### Shortcuts taken, each to be decided before this is a feature
+
+**Transport and lifecycle**
+
+- **ssh is the transport.**
+  Every byte of every frame is encrypted by ssh, framed into an Incus exec WebSocket by `isx ssh-proxy`, and relayed over vsock.
+  A real version gives the launcher a relay the guest connects out through (`IsxRelay` only connects from the host today), one per instance so no instance reaches another's display; waypipe can speak vsock itself (`--vsock`).
+  Measure latency and throughput on a Mac before deciding, since the ssh path may be enough.
+- **`waypipe ssh` does the wiring.**
+  It picks the socket names in both `/tmp`s, checks the two versions against each other and runs ssh.
+  isx does not check that `waypipe-darwin` accepts the options it passes (`--no-gpu`, `--display`) or that its version matches the guest's.
+- **A foreground command holds the bridge.**
+  It lasts as long as `isx gui` runs in a terminal, and a held display dies with it.
+  A real version ties it to the instance: started with it, restarted when the compositor restarts, stopped with it, and shown in `isx list` and the TUI.
+- **The guest's side is ended by pattern.**
+  Cleanup is a `pkill -f` on the display's path, and an application is expected to exit when its display goes.
+  One that does not is left running; `isx exec` ends a process tree by run id (`ExecScript`), and this should too.
+- **One held display per instance.**
+  A second `isx gui <name>` without a command takes `wayland-0` from the first, ending it: that is also how a socket left by a hold that was killed is cleared.
+- **Shells opened before the bridge do not see it.**
+  The login script is read at login, so only a new shell has `WAYLAND_DISPLAY`.
+  Agents started by `isx mcp` or a default action get nothing.
+
+**Setup**
+
+- **Nothing is installed for the person.**
+  Cocoa-Way and `waypipe-darwin` come from a third-party Homebrew tap, and Cocoa-Way must be started by hand.
+  The guest's waypipe is a `dnf install` away, not part of a template or a tool.
+  A real version makes it a tool (so `gui: true` in a template installs the guest half), and `isx doctor` and `isx init` cover the host half.
+- **Cocoa-Way's socket is found by a simple search.**
+  `GuiBridge.hostDisplay` takes the first `wayland-*` socket in the directories Cocoa-Way's `run_waypipe.sh` searches.
+  That script also checks owner and permissions of the directory and its parents, that the Cocoa-Way process is alive, and it knows display slots; isx checks none of it.
+- **`--gui` and `gui: true` are untouched.**
+  On a Mac a template's `gui: true` is still off with a note, and `isx gui` is a separate command.
+  A real version decides whether a branch with GUI on a Mac means this bridge, with the same rules: off for `isx mcp`'s branches, never a default from a project-local definition.
+- **The command is hidden and undocumented.**
+  It is in `IncusSpawn.HIDDEN_COMMANDS`, so `isx --help`, completion, the README's table and `docs/CLI.md` do not name it.
+  That list was for plumbing only; a feature gets its row and its page, and the README is at its 450-line limit, so a row there needs a line freed.
+- **`isx gui` on a Linux host is allowed.**
+  It is there so the flow can be tested end to end without a Mac, and it refuses to hold a display for an instance that has the passthrough.
+
+**Safety, not yet reviewed**
+
+- **No trust rule decides which instance may show windows.**
+  A person names the instance, and that is the whole gate: an `isx mcp` instance or one from a project-local template is served like any other.
+- **Windows are not marked.**
+  A window from an instance looks like any other, so a guest can draw a dialog that imitates a host one.
+  waypipe has `--title-prefix`, which the prototype does not pass because `waypipe-darwin`'s support is unverified.
+- **The clipboard.**
+  Cocoa-Way syncs text and PNG both ways, so a focused guest application may read what the person copied on the Mac.
+  What exactly a guest can read, and when, is unread; waypipe's `--secctx` and Cocoa-Way's settings are where to look.
+- **Cocoa-Way and `waypipe-darwin` parse what the guest sends.**
+  They are a new host-side attack surface fed by untrusted instances, GPL v3, not notarized, and maintained by one person.
+  Depending on them is a product decision as well as a security one.
+- **The guest's output is printed as notes.**
+  Each line is scrubbed with `OutputFormat.oneLine`, but the application's stdout and stderr are merged and go to stderr, and stdin is closed.
+
+**Code**
+
+- **No test drives `GuiCommand`.**
+  `GuiBridgeTest` covers the socket search and every script's text; the command's flow against `FakeIncusDaemon` and a recorded `HostCommands` is unwritten.
+- **The toolkit variables are copied** from `GuiPassthrough.WAYLAND_ENV` rather than shared.
+
 ## Considered and deferred
 
 ### Address-based caller identity on macOS

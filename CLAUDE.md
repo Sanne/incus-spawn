@@ -353,6 +353,9 @@ Commands that act need only clean stdout: `BuildOutput.ansi()` is the one gate f
 A status report goes to stdout in every state, its exit code saying which (#1037).
 See `.claude/rules/commands.md` and design/terminal.md "Output for scripts".
 
+**`isx gui` is a prototype** of GUI windows on a Mac: `waypipe ssh` through the instance's own Host block, to Cocoa-Way on the host (`GuiCommand`, `GuiBridge`).
+It takes shortcuts on purpose, and design/macos-and-vms.md "GUI on macOS: the waypipe prototype" lists each one; read that list before building on it, and strike an entry when it is resolved.
+
 **A cache that confirms every serve** (#2518): `confirmed-cache:` in `config.yaml` (`ConfirmedCache`) lists HTTPS domains, exact or `*.` wildcards, whose downloads the proxy keeps on the host (`ConfirmedCacheHandler`, `ConfirmedCacheStore`).
 Each GET goes upstream as the client sent it plus `If-None-Match` for the stored `ETag` (keyed by host, path and the query less its signing parameters), and only a `304` serves the copy, whole or one range.
 Anything else is relayed, a whole `200` with a strong `ETag` replacing the copy, and nothing is served while upstream cannot be asked.

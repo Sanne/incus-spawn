@@ -27,8 +27,13 @@ import dev.incusspawn.util.VirtualThreadPollers;
 @QuarkusMain
 public class IncusSpawn implements QuarkusApplication {
 
+    /**
+     * Runnable, but in neither {@code isx --help}, completion nor the docs' command lists: the
+     * plumbing other programs call, and {@code gui}, a prototype until its design page's
+     * shortcuts are decided (design/macos-and-vms.md "GUI on macOS: the waypipe prototype").
+     */
     public static final Set<String> HIDDEN_COMMANDS = Set.of(
-            "git-remote-helper", "ssh-proxy"
+            "git-remote-helper", "ssh-proxy", "gui"
     );
     /**
      * The commands shell completion never offers: the hidden ones, and {@code completion}, which
@@ -203,7 +208,7 @@ public class IncusSpawn implements QuarkusApplication {
             description = "Manage isolated Incus development environments",
             groupCommands = {
                 InitCommand.class, BuildCommand.class, ProjectCommand.class,
-                BranchCommand.class, ShellCommand.class, StartCommand.class, StopCommand.class, ExecCommand.class, PurposeCommand.class,
+                BranchCommand.class, ShellCommand.class, StartCommand.class, StopCommand.class, ExecCommand.class, GuiCommand.class, PurposeCommand.class,
                 RunCommand.class, ListCommand.class, OverviewCommand.class,
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
@@ -230,7 +235,7 @@ public class IncusSpawn implements QuarkusApplication {
             description = "Manage isolated Incus development environments",
             groupCommands = {
                 InitCommand.class, BuildCommand.class, ProjectCommand.class,
-                BranchCommand.class, ShellCommand.class, StartCommand.class, StopCommand.class, ExecCommand.class, PurposeCommand.class,
+                BranchCommand.class, ShellCommand.class, StartCommand.class, StopCommand.class, ExecCommand.class, GuiCommand.class, PurposeCommand.class,
                 RunCommand.class, ListCommand.class, OverviewCommand.class,
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
