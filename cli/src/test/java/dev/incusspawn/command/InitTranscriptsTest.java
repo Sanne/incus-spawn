@@ -429,6 +429,27 @@ class InitTranscriptsTest {
                         default-action: claude
                         """); },
                 claudeHere, new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("2", "")));
+        // A kept tpl-agent sets the agent's parameters, which the run does not ask again (#2528 review)
+        b.add(new Branch("39-kept-pi-on-openai", "A tpl-agent.yaml from an earlier run with Pi on OpenAI; Pi chosen; its account None for now",
+                i -> seedTemplate("""
+                        name: tpl-agent
+                        description: Pi on a minimal Fedora machine
+                        parent: tpl-minimal
+                        tools:
+                          - pi: {provider: openai}
+                        default-action: pi
+                        """), h -> { },
+                new ScriptedPrompts().line(String.valueOf(probe.number("pi")), "2", "2", "")));
+        b.add(new Branch("40-kept-copilot-claude-chosen", "A tpl-agent.yaml from an earlier run with Copilot; Claude chosen; a subscription token; GitHub None for now",
+                i -> { i.found = sub; seedTemplate("""
+                        name: tpl-agent
+                        description: GitHub Copilot CLI on a minimal Fedora machine
+                        parent: tpl-minimal
+                        tools:
+                          - copilot
+                        default-action: copilot
+                        """); },
+                claudeHere, new ScriptedPrompts().line("", "", "2", "")));
         b.add(new Branch("30-linux-no-sudo", "Linux with --no-sudo; no agent; GitHub None for now",
                 i -> i.noSudo = true, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.none()), "2", ""),
@@ -529,6 +550,24 @@ class InitTranscriptsTest {
         assertTrue(text.contains("name: a GitHub account gives it one."), text);
         assertFalse(text.contains("Setup complete"), text);
         assertFalse(text.contains("now? (Y/n)"), text);
+    }
+
+    /** A kept Pi on OpenAI: its missing OpenAI account is Pi's own, not another tool's. */
+    @Test
+    void aKeptAgentsAccountIsNamedAsTheAgents() throws Exception {
+        var text = transcriptOf("39-kept-pi-on-openai");
+        assertTrue(text.contains("Add Pi's account:"), text);
+        assertTrue(text.contains("isx account add openai"), text);
+        assertFalse(text.contains("other tools need"), text);
+    }
+
+    /** A kept Copilot, whatever agent was chosen: its missing GitHub account is Copilot's own. */
+    @Test
+    void aKeptCopilotsGitHubAccountIsNamedAsItsOwn() throws Exception {
+        var text = transcriptOf("40-kept-copilot-claude-chosen");
+        assertTrue(text.contains("Add GitHub Copilot CLI's account:"), text);
+        assertFalse(text.contains("other tools need"), text);
+        assertFalse(text.contains("Add a GitHub account:"), text);
     }
 
     /** {@code yaml} as the person's own tpl-agent.yaml, as an earlier run writes it. */

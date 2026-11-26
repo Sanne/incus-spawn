@@ -57,6 +57,7 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
    It does not print the build's missing-account warning (`BuildCommand.warnMissingAccounts`), since `isx branch` has not been introduced yet.
    The completion message right after lists every account the template lacks, in order, so none goes unnamed (`InitCommand.finishFirstRun`).
    An account another tool of a kept `tpl-agent` needs, GitHub's included when it is not the agent's own, is a step of its own there, never called the agent's (`InitCommand.otherAccountCommands`), and init then does not offer to open the agent.
+   The agent's accounts are those of the agent the template installs, with the parameters the template sets for it, since a kept `tpl-agent` asks no agent question (`InitCommand.templateAgentNamespaces`).
    A local sign-in's step warns of keys isx does not read in its namespace, as the full menu does, once per run; a key found only in the environment is not taken for the agent's own sign-in.
    Sanne had first chosen the warning over saying it once; this run takes the review's recommendation of one place in order (#2528, PR #2609).
    Its step labels name no container or image ("Starting from tpl-minimal", "Restarting the build", "Stopping the build"), as every build's now do.

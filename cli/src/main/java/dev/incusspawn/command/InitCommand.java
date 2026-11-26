@@ -1697,6 +1697,28 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
+     * The namespaces {@code agent}, the {@link #templateAgent}, spends, with the parameters the
+     * first template sets for it: a kept tpl-agent's ({@code - pi: {provider: openai}}), never this run's answers, which a
+     * kept template leaves unasked, or another agent's (#2528).
+     */
+    java.util.Set<String> templateAgentNamespaces(ToolSetup agent) {
+        if (agent == null) return java.util.Set.of();
+        var trusted = trustedTemplates();
+        var own = trusted.get(ExampleTemplate.NAME);
+        if (own == null) return agent.credentialNamespaces(agentParams);
+        // Leaf first, as a build resolves them: a child's params win over an ancestor's
+        Map<String, String> given = Map.of();
+        for (var layer : ImageDef.chain(own, trusted).reversed()) {
+            var ref = layer.getTools().stream().filter(t -> t.getName().equals(agent.name())).findFirst();
+            if (ref.isPresent()) {
+                given = ref.get().getParams();
+                break;
+            }
+        }
+        return agent.credentialNamespaces(dev.incusspawn.tool.ParameterResolver.resolve(agent.parameters(), given).resolvedValues());
+    }
+
+    /**
      * The first run's questions, before any work: the agent, its account, a GitHub account (and,
      * when it is skipped, the Git identity). With {@code --all} the steps a first run leaves for
      * later follow, and a step whose answer flag was given runs with that answer.
@@ -2381,7 +2403,7 @@ public class InitCommand extends BaseCommand {
         if (chosenAgent != null) {
             try {
                 // The agent's own accounts apart from those another tool of a kept tpl-agent needs, GitHub's included
-                var namespaces = chosenAgent.credentialNamespaces(agentParams);
+                var namespaces = templateAgentNamespaces(agent);
                 var own = new ArrayList<String>();
                 var other = new ArrayList<String>();
                 for (var gap : agentGaps().keySet()) {
@@ -2391,7 +2413,10 @@ public class InitCommand extends BaseCommand {
                     if (!list.contains(command)) list.add(command);
                 }
                 var gitHub = gitHubGapCommand();
-                if (gitHub != null && !other.contains(gitHub)) other.add(gitHub);
+                // GitHub's is the agent's own when the template's agent spends it (a kept Copilot), whichever agent was chosen
+                var gitHubList = gitHub != null && gitHub.startsWith(ACCOUNT_ADD)
+                        && namespaces.contains(gitHub.substring(ACCOUNT_ADD.length())) ? own : other;
+                if (gitHub != null && !own.contains(gitHub) && !other.contains(gitHub)) gitHubList.add(gitHub);
                 agentAccountCommands = List.copyOf(own);
                 otherAccountCommands = List.copyOf(other);
             } catch (RuntimeException e) {
