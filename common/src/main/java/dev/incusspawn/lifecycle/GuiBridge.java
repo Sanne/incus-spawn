@@ -99,6 +99,14 @@ public final class GuiBridge {
         return null;
     }
 
+    /** The first {@code wayland-*} socket in {@code dir} alone, or null: a compositor whose directory isx chose. */
+    static HostDisplay displayIn(String dir) {
+        for (var name : names(dir).stream().sorted().toList()) {
+            if (name.startsWith("wayland-") && isSocket(dir + "/" + name)) return new HostDisplay(dir, name);
+        }
+        return null;
+    }
+
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
     }

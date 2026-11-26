@@ -1,10 +1,12 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.Platform;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiBridge;
+import dev.incusspawn.lifecycle.HostCompositor;
 import dev.incusspawn.lifecycle.HostCommands;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
@@ -62,15 +64,22 @@ public class GuiCommand extends BaseCommand {
 
         if (!host.onPath("waypipe")) {
             BuildOutput.error("waypipe is not installed on this computer.",
-                    "On a Mac: brew install J-x-Z/tap/cocoa-way J-x-Z/tap/waypipe-darwin",
+                    "On a Mac: brew install J-x-Z/tap/waypipe-darwin",
                     "On Linux: install your distribution's waypipe package.");
             return CommandResult.valueOf(ISX_FAILED);
         }
-        var display = GuiBridge.hostDisplay(env);
+        GuiBridge.HostDisplay display;
+        try {
+            display = hostDisplay(env);
+        } catch (IOException | RuntimeException e) {
+            BuildOutput.abandonStep();
+            BuildOutput.error("could not start the compositor that shows the windows: " + OutputFormat.oneLine(failure(e)));
+            return CommandResult.valueOf(ISX_FAILED);
+        }
         if (display == null) {
             BuildOutput.error("found no Wayland compositor on this computer to show the windows.",
-                    "On a Mac: start Cocoa-Way, then run this again.",
-                    "If it is running, set COCOA_WAY_RUNTIME_DIR to the directory of its wayland-* socket.");
+                    "Run this from a Wayland session, or with COCOA_WAY_RUNTIME_DIR set to the directory",
+                    "of a running Cocoa-Way's wayland-* socket.");
             return CommandResult.valueOf(ISX_FAILED);
         }
 
@@ -166,6 +175,24 @@ public class GuiCommand extends BaseCommand {
             }
         }
         return CommandResult.valueOf(exit);
+    }
+
+    /**
+     * The compositor's display. On a Mac it is isx's own Cocoa-Way, downloaded at its first use and
+     * started when it is not running, unless {@code COCOA_WAY_RUNTIME_DIR} names the person's own.
+     * Elsewhere it is the session's.
+     */
+    private static GuiBridge.HostDisplay hostDisplay(Map<String, String> env) throws IOException, InterruptedException {
+        var own = env.get("COCOA_WAY_RUNTIME_DIR");
+        if (!Platform.isMacOS() || (own != null && !own.isBlank())) return GuiBridge.hostDisplay(env);
+        var running = HostCompositor.running();
+        if (running != null) return running;
+        if (!HostCompositor.installed()) {
+            BuildOutput.step("Downloading Cocoa-Way, which shows the windows on this Mac");
+            HostCompositor.install();
+        }
+        BuildOutput.step("Starting Cocoa-Way");
+        return HostCompositor.start();
     }
 
     /** A run id no other run in the guest has had, as {@code isx exec}'s. */

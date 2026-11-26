@@ -781,15 +781,16 @@ What it gains: the guest holds no host socket and no device, so it is a narrower
 To try it on a Mac:
 
 ```shell
-brew tap J-x-Z/tap && brew install cocoa-way waypipe-darwin
-open -a Cocoa-Way                                  # or run: cocoa-way
+brew tap J-x-Z/tap && brew install waypipe-darwin
 isx exec my-box -- sudo dnf install -y waypipe firefox
 isx gui my-box -- firefox                          # one application
 isx gui my-box                                     # or hold a display for new shells, until Ctrl+C
 ```
 
 The instance must be running and have been opened once with `isx shell`, which writes its Host block.
-If Cocoa-Way's socket is not found, set `COCOA_WAY_RUNTIME_DIR` to the directory that holds its `wayland-*` socket.
+On a Mac isx runs the compositor itself (`HostCompositor`): at the first `isx gui` it downloads Cocoa-Way's pinned release, checks it against the sum of the release's own `SHA256SUMS`, and unpacks it with `ditto` under `~/.local/share/incus-spawn/gui/cocoa-way-<version>`.
+It starts the bundle's `cocoa-way` in a session of its own, in Rootless mode, with `~/.local/state/incus-spawn/gui` as its runtime directory, and waits for its socket; a later `isx gui` finds it running.
+A Cocoa-Way the person runs themselves has another runtime directory and is not touched; `COCOA_WAY_RUNTIME_DIR` set to its directory makes `isx gui` use that one instead.
 
 **Tested so far**, on Linux only: the guest half and the ssh hop, with headless weston standing in for Cocoa-Way and Fedora's waypipe 0.11.2 on both ends.
 A display held open served several clients, a display at an absolute path needed no `XDG_RUNTIME_DIR`, and a Unix socket path longer than 107 bytes was silently truncated.
@@ -841,10 +842,22 @@ That is the shape isx would want for a compositor it starts itself, but it is Co
 
 **Setup**
 
-- **Nothing is installed for the person.**
-  Cocoa-Way and `waypipe-darwin` come from a third-party Homebrew tap, and Cocoa-Way must be started by hand, in Rootless mode.
-  The guest's waypipe is a `dnf install` away, not part of a template or a tool.
-  A real version makes it a tool (so `gui: true` in a template installs the guest half), and `isx doctor` and `isx init` cover the host half.
+- **`waypipe-darwin` is still installed by hand.**
+  It publishes no binary: its one release has no assets, and its Homebrew formula builds it from source with Rust, so there is nothing to pin and download.
+  A real version builds it in `release.yml`'s macOS job from the pinned source tarball, with lz4 and zstd linked statically, and ships it beside `isx-vm`; it is GPL-3.0-or-later, so the release then offers its source too.
+- **The Mac's waypipe and the guest's are pinned apart.**
+  Both are 0.11.2 today, the Mac's by `waypipe-darwin`'s tag and the guest's by whatever Fedora ships, and waypipe's two ends must speak the same protocol version.
+  A Fedora update can move the guest's ahead of the Mac's.
+- **The guest's waypipe is a `dnf install` away**, not part of a template, a tool or the base image.
+  It depends only on glibc, libgcc, lz4 and zstd, and is 1.9 MiB installed, so the base image can carry it: then the branch dialog's GUI box works for any template, as it does on Linux, where the guest needs nothing.
+- **The Cocoa-Way pin is two constants in `HostCompositor`**, moved by hand.
+  A real version makes it an item of the upstream watch (`github-asset`, `review`, like `jasolo`, with the release's `SHA256SUMS`), which needs the pin somewhere the engine writes.
+- **isx's compositor is started and never stopped.**
+  It stays, with its menu bar item, until the person quits it there or logs out; nothing ties it to the instances that use it, and `isx doctor` does not know it.
+- **One compositor serves every instance.**
+  Cocoa-Way's own isolated displays are worker processes with no menu bar item that exit with their parent, which is the shape for one compositor per instance, but their start is its internal contract.
+- **The compositor's start relies on two undocumented variables**, `COCOA_WAY_PRESENTATION` and `COCOA_WAY_DISPLAY_RUNTIME_DIR`, read from its source at the pinned release.
+- **Not run on a Mac yet**: the download, the unpack and the start are written from Cocoa-Way's source and tested only as text.
 - **Cocoa-Way's socket is found by a simple search.**
   `GuiBridge.hostDisplay` takes the first `wayland-*` socket in the directories Cocoa-Way's `run_waypipe.sh` searches.
   That script also checks owner and permissions of the directory and its parents, that the Cocoa-Way process is alive, and it knows display slots; isx checks none of it.
