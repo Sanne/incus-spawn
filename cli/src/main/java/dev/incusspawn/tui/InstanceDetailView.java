@@ -92,6 +92,9 @@ public final class InstanceDetailView {
      * Render the details of {@code selected}, with the credential accounts the TUI resolved for it,
      * and what the overview's last read said it did on GitHub and in its agent sessions.
      */
+    /** How many sessions are being merged for the instance shown, or wait their turn; 0 for none. */
+    int merging;
+
     void render(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen, InstanceInfo selected,
                 List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses, List<String> registeredWith,
                 BaseImageAge.Assessment baseImage, dev.incusspawn.config.McpScope mcpScope,
@@ -214,11 +217,22 @@ public final class InstanceDetailView {
      * {@link OutputFormat#oneLine}.
      */
     public static List<DetailRow> summaryRows(dev.incusspawn.command.AgentSessions.Summary summary, java.time.LocalDateTime now) {
+        return summaryRows(summary, now, 0, "");
+    }
+
+    /**
+     * As {@link #summaryRows(dev.incusspawn.command.AgentSessions.Summary, java.time.LocalDateTime)},
+     * saying {@code merging N sessions} after {@code spinner} while a merge of {@code merging}
+     * sessions is under way or waits its turn.
+     */
+    static List<DetailRow> summaryRows(dev.incusspawn.command.AgentSessions.Summary summary, java.time.LocalDateTime now,
+                                       int merging, String spinner) {
         var rows = new ArrayList<DetailRow>();
         if (summary == null) return rows;
         // Every label at the same indent, and a blank line between the sections (#2292)
         rows.add(new DetailRow("Done:", OutputFormat.oneLine(summary.cell())));
         var merge = summary.merged();
+        if (merge == null && merging > 0) rows.add(new DetailRow(null, spinner + " merging " + merging + " sessions"));
         if (merge != null) {
             rows.add(BLANK);
             rows.add(new DetailRow(null, "a model's merge of the agents' own words, " + merge.sources(now)));
@@ -374,7 +388,7 @@ public final class InstanceDetailView {
             rows.add(BLANK);
             rows.addAll(github);
         }
-        var sessions = summaryRows(summary, clock.get());
+        var sessions = summaryRows(summary, clock.get(), merging, modal.spinner());
         if (!sessions.isEmpty()) {
             rows.add(BLANK);
             rows.addAll(sessions);

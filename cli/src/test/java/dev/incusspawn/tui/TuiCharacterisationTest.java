@@ -329,6 +329,31 @@ class TuiCharacterisationTest {
         assertEquals("b-1", tui.selectedInstance().name(), "the last row gone, the cursor goes to the one above");
     }
 
+    /** A lasting state's word after the widest name is whole, and so is an operation's, which moves no column. */
+    @Test
+    void theWordAfterTheWidestNameIsNeverCutToAStub() {
+        var daemon = new FakeIncusDaemon()
+                .instance("broken-with-the-longest-name", "container", "Error", branch("tpl-minimal", 60));
+        var tui = tui(true, daemon);
+        press(tui, TAB);
+        var shown = TuiSnapshot.toText(TuiSnapshot.render(120, 24, tui::render));
+        assertTrue(shown.contains("◐ broken-with-the-longest-name error "), shown);
+
+        var stopping = new FakeIncusDaemon()
+                .instance("stopping-with-the-longest-name", "container", "Running",
+                        withOp(branch("tpl-minimal", 60), dev.incusspawn.incus.Metadata.OP_RESTARTING));
+        var busy = tui(true, stopping);
+        press(busy, TAB);
+        var rows = TuiSnapshot.toText(TuiSnapshot.render(120, 24, busy::render));
+        assertTrue(rows.contains("stopping-with-the-longest-name restarting "), rows);
+    }
+
+    private static Map<String, String> withOp(Map<String, String> config, String op) {
+        var with = new java.util.HashMap<>(config);
+        with.put(dev.incusspawn.incus.Metadata.PENDING_OP, op);
+        return with;
+    }
+
     /** The widths come from every row, not the search's: a narrower listing moved the columns on a keystroke. */
     @Test
     void theColumnsHoldStillWhileASearchNarrowsTheLists() {

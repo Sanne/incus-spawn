@@ -701,7 +701,9 @@ The Instances tab still never cuts a name, since there every column but the name
 The preview shows the selected instance in full (`WorkPreview`): its state and parent, the purpose wrapped, how long it has been idle and since what, the days it was active, the tokens and model calls, each clone that holds work, every pull request with its state, every pushed branch, and what its sessions said they did.
 From 110 columns it stands beside the table, which keeps 64 cells until the preview reaches its cap of 90; on a wider terminal the table takes the rest.
 A divider runs between them from the title rule, which names the instance, to the footer rule.
-Narrower, `p` shows it under the table, and on a wide terminal `p` hides it; on the Work tab F6 edits the purpose, which `p` does elsewhere.
+Narrower, `p` shows it under the table when the panel has eight rows for it, and on a wide terminal `p` hides it; on the Work tab F6 edits the purpose, which `p` does elsewhere.
+Whether the preview is drawn is one test (`Tui.previewDrawn`), which the context line's hint and the merge follow, so a terminal too short for it offers no key for it.
+A title longer than the table keeps all it says, and the instance's name follows it on the rule.
 What this gives up: a closing message, the active days and the state of each pull request are read one instance at a time, by moving the cursor, where the old columns showed a stub of each for every row at once.
 
 `EventLogReader` (`common`) reads the sums of what rolled out and then the log's five files, oldest first, and matches a line to an instance by its incarnation, the listing's `created_at` (#1063).
@@ -851,9 +853,9 @@ A stopped instance shows its last cached summary with its age, and nothing start
 An overview of every instance removes the files of instances no longer listed; one filtered by `--status` removes none.
 Files are written whole through a rename and readable by the host user alone.
 At most four calls run at once in `isx overview`, which merges every instance that needs it before it prints.
-The TUI asks for a merge only for the instance its preview shows, since DONE is shown nowhere else there, and makes one call at a time (`Tui.mergePreviewed`).
+The TUI asks for a merge only for the instance whose merged summary is on screen: the one its preview shows, or the one whose F3 details are open, the only two places it shows one, and it makes one call at a time (`Tui.mergePreviewed`).
 Before, opening the Work tab made a call for every instance with several sessions whose cache missed, most of them for rows nobody looked at.
-While the call runs the preview says `merging 3 sessions` with the spinner; a cursor that moves on starts no second call, the answer is still kept in the cache, and the instance then previewed is asked for next.
+While the call runs the preview and F3 say `merging 3 sessions` with the spinner; a cursor that moves on starts no second call, the answer is still kept in the cache, and the instance then previewed is asked for next.
 A summary the cache holds is shown at once for every instance, as before.
 The cost and the wait of the lazy merge were not measured against a real Incus or a real account.
 What this gives up: the first overview after an instance's work changed waits for its call, up to the transport's two minutes; a model's summary can be wrong, and the exact columns beside it are the check.

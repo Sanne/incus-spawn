@@ -11,8 +11,8 @@
              │ Template is not built yet. Build it first?         │
  Instances ──│                                                    │─────────────
      NAME    │  y/Enter Build   any key Cancel                    │        DISK
-   ● work-1  ╰────────────────────────────────────────────────────╯o       -
-   ○ vm-1                     tpl-minimal   virtual-machine   2 days ago   -
+   ● work-1  ╰────────────────────────────────────────────────────╯go      -
+   ○ vm-1                        tpl-minimal  virtual-machine  2 days ago  -
 
 
 

@@ -774,7 +774,6 @@ public final class FakeIncusDaemon implements IncusTransport {
         return List.copyOf(execStdinFrames);
     }
 
-    /** An exec, started: an operation whose fds' sockets carry {@code stdout} and then close. */
     /** The instance an exec's path names, {@code /1.0/instances/<name>/exec}. */
     private static String instanceOfExec(String path) {
         var bare = path.contains("?") ? path.substring(0, path.indexOf('?')) : path;
@@ -782,6 +781,7 @@ public final class FakeIncusDaemon implements IncusTransport {
         return parts.length >= 2 ? parts[parts.length - 2] : "";
     }
 
+    /** An exec, started: an operation whose fds' sockets carry {@code stdout} and then close. */
     private RawResponse startExec(String instance, String commandLine) {
         var id = "exec-" + nextExec++;
         var stdout = execOutputsIn.entrySet().stream()
