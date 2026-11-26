@@ -1514,7 +1514,17 @@ No run printed a lost-operation warning.
 Each admitted exec held four of the relay's connections at its peak, and 31 reads took two waves at 18 or 24 slots, so 128 gained nothing over 96 below 37 instances.
 An `isx list` started 1.5 s into an overview answered in 0.07-0.08 s at 96 and at 128, against 0.06-0.11 s alone.
 Two overviews at once, as two processes, took 4 s each and lost nothing: at 96 they held 144 of the 192 at their peak, at 128 all 192 with one connection waiting.
-The cap chosen is 150, which with four connections an exec since #2626 gives 36 execs at once; its own run on a Mac is to come.
+The cap chosen is 150, which with four connections an exec since #2626 gives 36 execs at once.
+It was measured on 2026-11-26 on the same Mac runner, with the same 31 instances, on a native build of the change itself, which carries 150:
+
+| Processes at once | Wall time of each, three runs | `unknown` reads | Peak guest connections held | Waiting | Refused |
+|---|---|---|---|---|---|
+| 1 | 1.2 s, 1.2 s, 1.2 s | 0 of 31 | 99, 96, 96 | 0 | 0 |
+| 2 | 1.4 s and 1.4 s in each run | 0 of 31 in each | 191, 191, 190 | 0 | 0 |
+
+No process printed a lost-operation warning.
+Two processes together came within one or two connections of the relay's 192 and lost nothing, each 0.2 s slower than alone.
+An `isx list` started 1.5 s or 0.5 s into the two answered in 0.06-0.09 s, against 0.06-0.08 s alone.
 
 ## Probe batches on one operation subscription, on Linux (issue #2626)
 
