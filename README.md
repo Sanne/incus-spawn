@@ -318,7 +318,7 @@ It signs in through the proxy with an account you configured in `isx init`, whos
 | Agent | Tool | Signs in with |
 |-------|------|---------------|
 | Claude Code | `claude` | an Anthropic API key, Claude Pro/Max, or Vertex AI |
-| Codex CLI | `codex` | an OpenAI API key |
+| Codex CLI | `codex` | an OpenAI API key, or a ChatGPT plan ([experimental](docs/AGENTS.md#a-chatgpt-plan-experimental)) |
 | Pi | `pi` | Claude's credentials, the OpenAI key or the Gemini key |
 | opencode | `opencode` | Claude's credentials, the OpenAI key or the Gemini key |
 | Gemini CLI | `gemini-cli` | a Gemini API key |

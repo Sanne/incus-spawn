@@ -69,7 +69,7 @@ The default action (`default-action: claude` above) resumes your most recent ses
 
 ## Codex CLI
 
-Codex CLI is OpenAI's coding agent, and signs in with an OpenAI API key.
+Codex CLI is OpenAI's coding agent, and signs in with an OpenAI API key or, experimentally, a ChatGPT plan.
 Add it to any template with `tools: [codex]`:
 
 ```yaml
@@ -85,9 +85,24 @@ tools:
 default-action: codex
 ```
 
-Codex needs an OpenAI API key ([create one here](https://platform.openai.com/api-keys)).
+To sign Codex in with an OpenAI API key, [create one here](https://platform.openai.com/api-keys).
 API usage needs billing credits, even on free accounts.
 Run `isx init` to configure the key: it stays on the host, and the proxy adds it to Codex's requests as they leave the instance.
+
+### A ChatGPT plan, experimental
+
+With a ChatGPT plan, you can sign Codex in with ChatGPT instead of an API key.
+Run `isx account add openai` on the host, choose one of the ChatGPT options, and answer yes after its notice.
+The notice says what the next three paragraphs say, so you can read it before you run `isx init`.
+
+The sign-in is experimental, and it may stop working when Codex or OpenAI changes.
+isx signs in as Codex's own client, which OpenAI has not endorsed.
+
+The sign-in and its tokens stay on the host, which also renews them.
+Your instances never see them: Codex there holds placeholders, which the proxy swaps for the real tokens.
+
+The browser sign-in has been tested with a real ChatGPT Enterprise plan.
+The sign-in with a code on another device has not been tested with OpenAI yet.
 
 ### Parameters
 

@@ -978,7 +978,13 @@ The browser sign-in is verified against a real ChatGPT Enterprise workspace's SS
 Passing these tests does not establish that OpenAI supports the integration; feedback is welcome on #1332.
 
 **Sign-in:** `isx init`'s OpenAI step (and `isx account add openai`) offers signing in with ChatGPT beside pasting an API key, for a user who cannot mint one.
-isx drives the two flows Codex's own login drives (`ChatGptSignIn`, built from codex-rs `login/src`): the browser flow, which the step offers first, and the device-code flow for a host whose browser is elsewhere.
+isx drives the two flows Codex's own login drives (`ChatGptSignIn`, built from codex-rs `login/src`): the browser flow, which the step offers before the code, and the device-code flow for a host whose browser is elsewhere.
+The step lists the API key first and the two ChatGPT kinds after it, each marked experimental, and either kind is chosen only past a notice (#2651).
+The notice says that the sign-in is experimental and may break when Codex or OpenAI changes, that isx signs in as Codex's own client, which OpenAI has not endorsed, that the session and its renewal stay on the host, and what was tested against the real service.
+It ends in `Sign in with ChatGPT? (y/N)`, where Enter and end of input decline, so neither a person pressing Enter nor `isx init </dev/null` ends up with a ChatGPT account.
+The first run's step for Codex already signed in with ChatGPT on the host shows the same notice before its question, whose Enter asks again; signing an existing ChatGPT account in again shows none, since that account was already chosen.
+What this gives up: a person with only a ChatGPT plan reads the notice and answers once more on every new account.
+The user pages say the same in docs/AGENTS.md "A ChatGPT plan, experimental", so it can be read before `isx init`.
 isx runs the sign-in itself, which replaces the #1332 design's plan to run the host's `codex login` into a private `CODEX_HOME`.
 What that keeps: no Codex install on the host, no dependency on how Codex stores its session, and a sign-in the tests drive against a stub, in plain Java.
 What it costs: isx speaks to OpenAI's auth server under a client id the published pages document for Codex, not for a third program, so a change to the scopes, the callback ports or the endpoints breaks sign-in until an isx release, and OpenAI has not said how it regards this.
