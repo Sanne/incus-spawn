@@ -796,7 +796,14 @@ A display held open served several clients, a display at an absolute path needed
 
 **First run on a Mac** (2026-11-26, Sanne): `isx gui <instance> -- firefox` showed Firefox in a native window through Cocoa-Way and `waypipe-darwin`, which accepted `--no-gpu` and `--display`.
 Two things were wrong with what the person saw, both listed under "What the person sees" below.
-Latency, HiDPI, input and the clipboard are not judged yet.
+Latency over the ssh transport was noticeable but usable.
+HiDPI, input and the clipboard are not judged yet.
+
+Cocoa-Way must run in its Rootless mode, or every guest window sits inside one Cocoa-Way window that holds a Linux desktop.
+A waypipe connection lands on Cocoa-Way's default display, whose mode is read once at startup from `COCOA_WAY_PRESENTATION` (its `src/presentation.rs`, not in its README): `COCOA_WAY_PRESENTATION=rootless cocoa-way`.
+With that, Firefox had a macOS window of its own.
+Cocoa-Way starts its own isolated displays as worker processes of the same binary, told by environment variables their slot, runtime directory, mode and parent pid (`COCOA_WAY_DISPLAY_*` in its `src/main.rs`); a worker has no menu bar item and exits with its parent.
+That is the shape isx would want for a compositor it starts itself, but it is Cocoa-Way's internal contract, not an interface.
 
 ### Shortcuts taken, each to be decided before this is a feature
 
@@ -835,7 +842,7 @@ Latency, HiDPI, input and the clipboard are not judged yet.
 **Setup**
 
 - **Nothing is installed for the person.**
-  Cocoa-Way and `waypipe-darwin` come from a third-party Homebrew tap, and Cocoa-Way must be started by hand.
+  Cocoa-Way and `waypipe-darwin` come from a third-party Homebrew tap, and Cocoa-Way must be started by hand, in Rootless mode.
   The guest's waypipe is a `dnf install` away, not part of a template or a tool.
   A real version makes it a tool (so `gui: true` in a template installs the guest half), and `isx doctor` and `isx init` cover the host half.
 - **Cocoa-Way's socket is found by a simple search.**
