@@ -39,14 +39,20 @@ public final class CredentialCheck {
      * A credential that is not configured, and the command that configures it: {@code isx
      * account add <namespace>} when one step owns it (#1469), else {@code isx init}. {@code
      * notes} are what the tools needing it say of it ({@link ToolSetup#credentialNote}), each once.
+     * {@code asked} is false for a tool's own {@linkplain ToolSetup#credentialRemedy remedy}, which
+     * a branch or a build never runs as a step: it is only named (#2525).
      *
      * <p>Its identity is the credential and its command: notes only add to what is said of it, so
      * one credential is one entry however many tools and templates need it.
      */
-    public record Missing(String credential, String command, List<String> notes) {
+    public record Missing(String credential, String command, List<String> notes, boolean asked) {
         public Missing {
             // A blank note says nothing, and must not count as one
             notes = notes.stream().filter(n -> !n.isBlank()).distinct().toList();
+        }
+
+        public Missing(String credential, String command, List<String> notes) {
+            this(credential, command, notes, true);
         }
 
         public Missing(String credential, String command) {
@@ -55,7 +61,7 @@ public final class CredentialCheck {
 
         /** This credential, said of with {@code notes} instead. */
         Missing withNotes(List<String> notes) {
-            return new Missing(credential, command, notes);
+            return new Missing(credential, command, notes, asked);
         }
 
         @Override
@@ -133,12 +139,13 @@ public final class CredentialCheck {
 
     /**
      * The tool among {@code allTools} whose credential step configures {@code missing}, as
-     * {@code isx account add} would run it; {@code null} when its command is {@code isx init} or
+     * {@code isx account add} would run it; {@code null} when it is not {@linkplain Missing#asked
+     * asked} for, or its command is {@code isx init} or
      * names no step there. The caller chooses {@code allTools}, so a step is taken only from tools
      * it trusts, whatever tools found the gap.
      */
     public static String stepTool(Missing missing, Map<String, ToolSetup> allTools) {
-        if (!missing.command().startsWith(ACCOUNT_ADD)) return null;
+        if (!missing.asked() || !missing.command().startsWith(ACCOUNT_ADD)) return null;
         return credentialTool(missing.command().substring(ACCOUNT_ADD.length()), allTools);
     }
 
@@ -336,7 +343,9 @@ public final class CredentialCheck {
             if (own.isEmpty() && !namespaces.isEmpty()) continue;
             var problem = tool.credentialProblem(config, params, selection);
             if (problem.isEmpty()) continue;
-            var gap = missing(problem, own, name, allTools, tool.credentialNote(params));
+            var remedy = tool.credentialRemedy(config, params, selection);
+            var gap = remedy != null ? new Missing(problem, remedy.command(), remedy.notes(), false)
+                    : missing(problem, own, name, allTools, tool.credentialNote(params));
             problems.add(Map.entry(gap, own));
             if (gap.notes().isEmpty() && !own.isEmpty()) needed.add(own);
         }
@@ -345,7 +354,8 @@ public final class CredentialCheck {
         for (var problem : problems) {
             var gap = problem.getKey();
             missing.computeIfAbsent(gap, g -> new ArrayList<>())
-                    .addAll(needed.contains(problem.getValue()) ? List.of() : gap.notes());
+                    // A remedy's notes are part of how to apply it, never a provider's aside to drop
+                    .addAll(gap.asked() && needed.contains(problem.getValue()) ? List.of() : gap.notes());
             namespaceOf.putIfAbsent(gap, problem.getValue());
         }
         for (var secret : ToolProxyResolver.missingSecrets(tree, served, secretsOf, selection)) {

@@ -199,7 +199,20 @@ public class PiSetup implements ToolSetup {
                         && account.effectiveType() == SpawnConfig.ClaudeAccountType.VERTEX
                         ? "" : "Vertex AI configuration";
             }
-            case OPENAI, GEMINI, NONE -> "";
+            case OPENAI -> ApiKeyAccounts.openaiKeyProblem(config, selection);
+            case GEMINI -> ApiKeyAccounts.geminiKeyProblem(config, selection);
+            case NONE -> "";
+        };
+    }
+
+    /** An {@code openai} or {@code gemini} sign-in in use is fixed by a default, not another account. */
+    @Override
+    public Remedy credentialRemedy(SpawnConfig config, java.util.Map<String, String> resolvedParams,
+                                   java.util.Map<String, String> selection) {
+        return switch (credentialFor(resolvedParams)) {
+            case OPENAI -> ApiKeyAccounts.openaiKeyRemedy(config, selection);
+            case GEMINI -> ApiKeyAccounts.geminiKeyRemedy(config, selection);
+            default -> null;
         };
     }
 
