@@ -39,6 +39,8 @@ final class OutputSchemas {
     private static Schema delegateAgent() {
         return Schema.object().choice("agent", null, true, "claude", "codex", "pi", "opencode", "antigravity")
                 .string("model", "Template configured model", false)
+                .string("effort", "Template configured effort", false)
+                .stringList("efforts", "The efforts delegate and send_message take for this agent", true)
                 .bool("supports_model_preflight", null, true)
                 .string("permission_mode", PERMISSION_MODE, false)
                 .string("approval_policy", null, false);
@@ -176,7 +178,8 @@ final class OutputSchemas {
                 .integer("run", "The run (turn of the conversation) now going: 1 for the first", true)
                 .string("permission_mode", PERMISSION_MODE, true)
                 .string("approval_policy", "Codex always uses never", false)
-                .string("model", null, false);
+                .string("model", null, false)
+                .string("effort", null, false);
     }
 
     static JqObject taskStatus() {
@@ -198,6 +201,7 @@ final class OutputSchemas {
                 .string("started_at", "ISO-8601: when the current run started", false)
                 .string("last_activity", "ISO-8601: when the current run last wrote output", false)
                 .string("model", null, false)
+                .string("effort", null, false)
                 .integer("assistant_messages", null, false)
                 .number("cost_usd", "Once an agent has finished", false)
                 .stringList("permission_denials", "Tools the agent's permission mode refused", false)

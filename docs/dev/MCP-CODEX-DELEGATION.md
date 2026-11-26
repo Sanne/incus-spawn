@@ -49,12 +49,12 @@ A missing executable or incompatible CLI produces `refused` with rebuild or upgr
 There is no fallback to another agent.
 
 `send_message` always uses the task's recorded agent.
-It accepts model overrides as today, but cannot switch a conversation between Claude and Codex.
+It accepts model and effort overrides, but cannot switch a conversation between Claude and Codex.
 One agent task per instance remains the rule, across both agent types.
 
 Add the following discovery fields to `list_templates` and the corresponding instance descriptions:
 
-- `delegate_agents`: descriptors with `agent`, optional template `model`, and `supports_model_preflight`.
+- `delegate_agents`: descriptors with `agent`, optional template `model` and `effort`, the `efforts` a task may choose, and `supports_model_preflight`.
   Each descriptor also reports its permission settings, which are fixed at full access inside the instance.
 - `default_delegate_agent`: the selection from the table, omitted when neither agent is available.
 - `supports_ask`: whether this instance can provide the current tool-free summarization service.
@@ -222,7 +222,7 @@ The first release had `codex.sandbox-mode` and `codex.sandbox-modes` in `mcp.yam
 The template's credentials remain the external authority boundary.
 
 `model` defaults to the Codex template's configuration, with no model slug baked into MCP.
-Template reasoning effort remains in effect; a separate per-task effort override can be added later.
+A task's `effort` is passed as `-c model_reasoning_effort="<effort>"`, one of `minimal`, `low`, `medium`, `high` or `xhigh`; without one, the template's reasoning effort in `config.toml` applies (#2547).
 Generalize credential selection from the hard-coded `ModelCheck.NAMESPACE` to the selected adapter: `claude` or `openai`.
 Any preflight cache includes agent, template, effective account, and model.
 

@@ -33,13 +33,17 @@ opencode prints its help on stderr, so every agent's probe reads both streams; r
 `mcp/opencode-runner.cjs` runs inside the worker under Node, which `OpencodeSetup` installs, and shares `mcp/runner-io.cjs` with the other runners.
 
 ```sh
-opencode run --format json --auto [--session "$session"] [--model "$provider/$model"] < prompt
+opencode run --format json --auto [--session "$session"] [--model "$provider/$model"] [--variant "$effort"] < prompt
 ```
 
 The prompt goes on stdin, which opencode reads when no message is on the command line, so nothing the coordinator wrote is parsed as an option.
 opencode has no option to add to the system prompt, so the delegation brief opens run 1's prompt, as for Codex.
 The isx primer needs no delivery: the build's `opencode.json` names `/AGENTS.md` in `instructions`, which opencode adds to every request (verified against the local model server).
 `--auto` answers every permission opencode would ask about, since nobody is there to; what `run` itself denies (questions, entering and leaving plan mode) stays denied.
+
+A task's `effort` is the model's variant, one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, which `run --variant` takes.
+The template's `effort` is the variant of the build and plan agents, which opencode applies only while they run the template's own model.
+So a task given no effort is given the template's as `--variant`, and keeps it on another model too (#2547).
 
 opencode takes a model as `provider/model`.
 A bare model ID, the form the tool's `model` parameter and the other agents use, gets the provider of the `model` in `opencode.json`, which the template's `provider` decided at build.

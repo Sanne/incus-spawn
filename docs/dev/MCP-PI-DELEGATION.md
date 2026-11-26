@@ -40,12 +40,13 @@ It shares `mcp/runner-io.cjs` with the Codex runner: bounded no-FIFO, no-symlink
 Both are included in native resources by the `mcp/*.cjs` pattern.
 
 ```sh
-pi -p --mode json --session-id "$session" --append-system-prompt "$brief" [--model "$model"] < prompt-<run>.md
+pi -p --mode json --session-id "$session" --append-system-prompt "$brief" [--model "$model"] [--thinking "$effort"] < prompt-<run>.md
 ```
 
 The prompt goes on stdin, which Pi treats as the first message, so nothing the coordinator wrote is parsed as an option or an `@file`.
 The delegation brief goes to `--append-system-prompt` on every run, as Claude's does, since Pi rebuilds its system prompt each time.
 The isx primer needs no delivery: Pi loads `/AGENTS.md`, the build's hardlink to `/etc/isx/agent-instructions.md`, from every working directory.
+A task's `effort` is Pi's `--thinking` level, one of `off`, `minimal`, `low`, `medium`, `high` or `xhigh`; without one, the template's `defaultThinkingLevel` applies.
 The runner passes no `--provider`, so Pi looks for the model under every provider it knows.
 So `list_templates` reports Pi's model as `<provider>/<model>`, with the template's `provider` under Pi's own name (`google-vertex` for `vertex`), which Pi's `--model` reads as that provider's model.
 A gateway's `anthropic/claude-sonnet-5-5` passed back alone would reach Pi's own `anthropic` provider instead of the gateway.

@@ -3,7 +3,7 @@
 // saves the first event's sessionID, as the Codex runner saves its thread ID. opencode refuses a
 // --session it cannot find ("Session not found", exit 1) rather than opening a new one, so a resume
 // needs no check of its own beyond the events naming the same session.
-const [model] = process.argv.slice(3);
+const [model, effort] = process.argv.slice(3);
 // A tool's output (a file it read) can be large, and a record that large is not needed: dropped.
 const RECORD_LIMIT = 8 * LIMIT;
 // opencode.json, which OpencodeSetup writes: its model names the provider a bare model ID is for.
@@ -49,6 +49,8 @@ try {
     }
     argv.push('--model', provider ? provider + '/' + model : model);
   }
+  // A task's own effort, as the model's variant; without one, the agent's, which the template's effort wrote.
+  if (effort) argv.push('--variant', effort);
   const events = output('events-' + run + '.jsonl');
   const stderr = output('stderr-' + run + '.log');
   const child = spawn('opencode', argv, {stdio: ['pipe', 'pipe', stderr]});

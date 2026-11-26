@@ -290,7 +290,15 @@ class TaskScriptsTest {
         var args = Files.readString(home.resolve("claude-args"));
         assertTrue(args.contains("--model claude-haiku-4-5 "), args);
         // An adopting session learns the profile with the task.
-        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc agent 1 done claude-haiku-4-5 - "));
+        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc agent 1 done claude-haiku-4-5 - - "));
+
+        // An effort is passed and recorded beside the model.
+        sh(TaskScripts.launch("t3-abc", 1, Tasks.AGENT, TaskScripts.agentRun("t3-abc", 1, work.toString(),
+                new Tasks.Profile(null, "max"))), "design");
+        awaitFinished("t3-abc");
+        var third = Files.readString(home.resolve("claude-args")).lines().reduce((a, b) -> b).orElseThrow();
+        assertTrue(third.contains("--effort max ") && !third.contains("--model"), third);
+        assertTrue(sh(TaskScripts.list(), "").contains("t3-abc agent 1 done - max - "));
 
         // Without one, the template's model (no --model).
         sh(TaskScripts.launch("t2-abc", 1, Tasks.AGENT, TaskScripts.agentRun("t2-abc", 1, work.toString(),
@@ -298,7 +306,7 @@ class TaskScriptsTest {
         awaitFinished("t2-abc");
         var second = Files.readString(home.resolve("claude-args")).lines().reduce((a, b) -> b).orElseThrow();
         assertFalse(second.contains("--model"), second);
-        assertTrue(sh(TaskScripts.list(), "").contains("t2-abc agent 1 done - - "));
+        assertTrue(sh(TaskScripts.list(), "").contains("t2-abc agent 1 done - - - "));
     }
 
     @Test
@@ -585,8 +593,8 @@ class TaskScriptsTest {
                 TaskScripts.commandRun("t2-abc", work.toString(), Map.of(), "sleep 300")), "");
         var listing = sh(TaskScripts.list(), "");
         var physical = work.toRealPath().toString();
-        assertTrue(listing.contains("t1-abc agent 1 done - - " + physical + "\n"), listing);
-        assertTrue(listing.contains("t2-abc command 1 running - - " + physical + "\n"), listing);
+        assertTrue(listing.contains("t1-abc agent 1 done - - - " + physical + "\n"), listing);
+        assertTrue(listing.contains("t2-abc command 1 running - - - " + physical + "\n"), listing);
         sh(TaskScripts.cancel("t2-abc"), "");
         assertEquals("", sh("HOME=" + home.resolve("empty") + "; " + TaskScripts.list(), ""), "no tasks, no output");
     }
@@ -859,7 +867,7 @@ class TaskScriptsTest {
         Files.writeString(command.resolve("exit-1"), "0\n");
         sh("mkfifo " + command.resolve("stdout") + " " + command.resolve("stderr"), "");
 
-        assertEquals("t32-abc agent 1 done - - \nt33-abc command 1 done - - \n", sh(TaskScripts.list(), "", 5));
+        assertEquals("t32-abc agent 1 done - - - \nt33-abc command 1 done - - - \n", sh(TaskScripts.list(), "", 5));
         var status = Tasks.parse(sh(TaskScripts.status("t32-abc", 1000), "", 5));
         assertEquals("finished", status.state());
         assertEquals(0, status.exit());
@@ -1101,7 +1109,7 @@ class TaskScriptsTest {
                 TaskScripts.commandRun("t1-abc", work.toString(), Map.of(), "true"), "issue-1011:impl.v2_x"), "");
         awaitFinished("t1-abc");
         var physical = work.toRealPath().toString();
-        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc command 1 done - =issue-1011:impl.v2_x " + physical + "\n"));
+        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc command 1 done - - =issue-1011:impl.v2_x " + physical + "\n"));
         // A later run does not write it again; the first one's stays.
         sh(TaskScripts.launch("t1-abc", 2, Tasks.COMMAND, "true", "other"), "");
         assertEquals("issue-1011:impl.v2_x", Files.readString(home.resolve(".isx-mcp/tasks/t1-abc/key")));
@@ -1114,6 +1122,7 @@ class TaskScriptsTest {
         recordedTask("t1-abc", Tasks.AGENT, false);
         var planted = "a key\nwith  spaces $(touch pwned)" + "x".repeat(100);
         Files.writeString(home.resolve(".isx-mcp/tasks/t1-abc/key"), planted);
+        Files.writeString(home.resolve(".isx-mcp/tasks/t1-abc/effort"), "hi gh\n" + "x".repeat(100));
         recordedTask("t2-abc", Tasks.AGENT, false);
         var fifo = home.resolve(".isx-mcp/tasks/t2-abc/key");
         new ProcessBuilder("mkfifo", fifo.toString()).start().waitFor();
@@ -1124,11 +1133,12 @@ class TaskScriptsTest {
         var lines = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).lines().toList();
         assertFalse(Files.exists(home.resolve("pwned")));
         var hostile = lines.stream().filter(l -> l.startsWith("t1-abc ")).findFirst().orElseThrow();
-        var fields = hostile.split(" ", 7);
-        assertEquals(7, fields.length, hostile);
-        assertEquals("=" + planted.substring(0, 64).replaceAll("[ \n]", ""), fields[5], "at most 64 bytes, no space or newline");
-        assertNull(McpSession.keyOf(fields[5].substring(1)), "and not a key");
-        assertTrue(lines.stream().anyMatch(l -> l.startsWith("t2-abc agent 1 done - - ")), lines.toString());
+        var fields = hostile.split(" ", 8);
+        assertEquals(8, fields.length, hostile);
+        assertEquals("high" + "x".repeat(26), fields[5], "the effort: at most 32 bytes, no space or newline");
+        assertEquals("=" + planted.substring(0, 64).replaceAll("[ \n]", ""), fields[6], "at most 64 bytes, no space or newline");
+        assertNull(McpSession.keyOf(fields[6].substring(1)), "and not a key");
+        assertTrue(lines.stream().anyMatch(l -> l.startsWith("t2-abc agent 1 done - - - ")), lines.toString());
     }
 
     /** Codex ships as a Node script, so its stand-ins are too; a box without Node skips them (#1363). */
@@ -1621,6 +1631,43 @@ class TaskScriptsTest {
         assertEquals("follow up with $HOME and `literal`", Files.readString(home.resolve("opencode-prompt")),
                 "the brief only once, in the first message");
         assertEquals("The report: follow up with $HOME and `literal`", Files.readString(d.resolve("result-2.txt")));
+    }
+
+    @Test
+    void eachRunnerPassesATasksEffortTheWayItsAgentTakesIt() throws Exception {
+        // A task's effort reaches each agent by its own flag (#2547), after the model.
+        var chosen = new Tasks.Profile("m", "high");
+        codexStub("""
+                console.log(JSON.stringify({type:'thread.started', thread_id:'codex-session-123'}));
+                fs.writeFileSync(report, 'done');
+                console.log(JSON.stringify({type:'turn.completed'}));
+                """);
+        sh(TaskScripts.launch("t6-codex", 1, Tasks.AGENT, TaskScripts.agentRun("t6-codex", 1, work.toString(), chosen,
+                DelegateAgent.CODEX), null, DelegateAgent.CODEX), "go");
+        assertEquals(0, awaitFinished("t6-codex").exit());
+        var codex = args(home.resolve("codex-args"));
+        assertEquals(List.of("--model", "m", "-c", "model_reasoning_effort=\"high\""),
+                codex.subList(codex.indexOf("--model"), codex.indexOf("--model") + 4));
+
+        piStub(PI_SUCCESS);
+        sh(TaskScripts.launch("t6-pi", 1, Tasks.AGENT, TaskScripts.agentRun("t6-pi", 1, work.toString(), chosen,
+                DelegateAgent.PI), null, DelegateAgent.PI), "go");
+        assertEquals(0, awaitFinished("t6-pi").exit());
+        var pi = args(home.resolve("pi-args"));
+        assertEquals(List.of("--model", "m", "--thinking", "high"), pi.subList(pi.indexOf("--model"), pi.indexOf("--model") + 4));
+
+        opencodeStub(OPENCODE_SUCCESS);
+        launchOpencode("t6-oc", 1, "go", new Tasks.Profile("openai/m", "high"));
+        assertEquals(0, awaitFinished("t6-oc").exit());
+        var opencode = args(home.resolve("opencode-args"));
+        assertEquals(List.of("--model", "openai/m", "--variant", "high"), opencode.subList(opencode.size() - 4, opencode.size()));
+
+        antigravityStub(ANTIGRAVITY_SUCCESS);
+        launchAntigravity("t6-agy", 1, "go", chosen);
+        assertEquals(0, awaitFinished("t6-agy").exit());
+        var agy = args(home.resolve("agy-args"));
+        assertEquals(List.of("--model", "m", "--effort", "high"), agy.subList(agy.size() - 4, agy.size()));
+        assertTrue(sh(TaskScripts.list(), "").contains("t6-agy agent 1 done m high - "), "an adopting session learns the effort");
     }
 
     @Test

@@ -134,7 +134,9 @@ Every run and every joined agent starts under `TaskScripts.CONVERSATION_LOCK` (`
 Codex resume parsing skips options and their values before reading the positional session ID, even when the person launches from another directory.
 Pi overwrites its command line with its title, so `Presence` finds a person's Pi by name and working directory only; that is enough, as Pi's sessions belong to their directory.
 A person's opencode is found by its directory and its `--session`/`-s` argument, and a person's agy by its directory and its `--conversation` (one dash or two, the value apart or after `=`).
-A delegate's `model` (`Tasks.Profile`) lives on the task and in its directory, so later runs and adopting sessions keep it; a `max-turns` file an older isx left there is no longer read.
+A delegate's `model` and `effort` (`Tasks.Profile`) live on the task and in its directory, so later runs and adopting sessions keep them; a `max-turns` file an older isx left there is no longer read.
+An `effort` must be one of `DelegateAgent.efforts()` for the task's agent; a Claude or opencode task given none takes the template's (`DelegateAgent.keepsEffortPerModel`, `McpTools.forAgent`), since both keep a template's effort per model (#2547).
+`TaskScripts.list()` prints `<id> <kind> <run> <state> <model> <effort> <key> <cwd>`, which `Tasks.adopt` splits into eight fields.
 A chosen model passes `ModelCheck` in the instance once the run's slot is reserved, before it launches (`Tasks.launch`'s `check`; under `timeout`; cached per template, the account `InstanceBackend.effectiveAccount` resolves the pin to now, and model; refusals not cached; only a `result`/`success` event with exit 0 passes, and a turn naming a model is checked even if it is the task's).
 The permission mode is never a tool argument.
 `ask` (`AskScript`) runs the producer and a tool-less `claude -p --model <summary-model>` in the instance, never on the host.

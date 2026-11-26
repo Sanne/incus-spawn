@@ -56,6 +56,14 @@ class FakeBackend implements InstanceBackend {
         return this;
     }
 
+    /** Gives {@code template} the definition {@code yaml}, which its tools' parameters are read from. */
+    FakeBackend definition(String template, String yaml) throws java.io.IOException {
+        var def = dev.incusspawn.config.ImageDef.parseYaml(yaml);
+        templates.replaceAll(t -> t.name().equals(template) ? new TemplateInfo(t.name(), t.description(), t.built(),
+                t.stale(), t.tools(), t.delegateModel(), t.projectLocal(), Map.of(template, def)) : t);
+        return this;
+    }
+
     /** The account pins a created instance gets, as its template's accounts would give. */
     final Map<String, String> createdAccounts = new ConcurrentHashMap<>();
     /** The configured default account of every namespace, which an unpinned instance uses. */

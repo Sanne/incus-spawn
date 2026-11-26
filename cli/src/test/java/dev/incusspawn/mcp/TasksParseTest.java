@@ -49,4 +49,13 @@ class TasksParseTest {
         assertEquals(1, summary.assistantMessages());
         assertEquals("success", summary.result().path("subtype").asText());
     }
+
+    @Test
+    void aRecordedEffortIsKeptOnlyWhenTheTasksAgentTakesIt() {
+        // Written in the guest: anything a coordinator could not have chosen for that agent is dropped.
+        assertEquals(new Tasks.Profile("opus", "max"), Tasks.recordedProfile("opus", "max", DelegateAgent.CLAUDE));
+        assertEquals(new Tasks.Profile(null, null), Tasks.recordedProfile("-", "max", DelegateAgent.PI));
+        assertEquals(new Tasks.Profile(null, "off"), Tasks.recordedProfile("-", "off", DelegateAgent.PI));
+        assertEquals(new Tasks.Profile(null, null), Tasks.recordedProfile("-", "--x", DelegateAgent.CODEX));
+    }
 }

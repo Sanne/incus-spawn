@@ -42,15 +42,27 @@ final class Tasks {
     static final int RESULT_TAIL = 256 * 1024;
 
     /**
-     * What a delegated agent runs under, as the coordinator chose it: a {@code --model}, null
-     * when not chosen (the template's model). Later runs keep it until one replaces it.
+     * What a task's runs use: its {@code model} and its {@code effort}, each null when the
+     * coordinator chose none. For Claude and opencode, an effort not chosen is the template's,
+     * filled in by {@link #withDefaultEffort} ({@code McpTools.forAgent}), and {@code task_status}
+     * reports it as the task's. A later turn keeps what it does not choose again.
      */
-    record Profile(String model) {
-        static final Profile NONE = new Profile(null);
+    record Profile(String model, String effort) {
+        static final Profile NONE = new Profile(null, null);
+
+        Profile(String model) {
+            this(model, null);
+        }
 
         Profile with(Profile override) {
-            if (override == null || override.model == null) return this;
-            return override;
+            if (override == null) return this;
+            return new Profile(override.model != null ? override.model : model,
+                    override.effort != null ? override.effort : effort);
+        }
+
+        /** This, with {@code fallback} as its effort when it has none. */
+        Profile withDefaultEffort(String fallback) {
+            return effort != null || fallback == null ? this : new Profile(model, fallback);
         }
     }
 
@@ -391,7 +403,7 @@ final class Tasks {
             if (p.length >= 2) identities.put(p[1], p.length == 3 ? recordedAgent(p[2]) : DelegateAgent.UNKNOWN);
         }
         for (var line : listing) {
-            var parts = line.strip().split(" ", 7);
+            var parts = line.strip().split(" ", 8);
             if (parts.length < 4 || !TASK_ID.matcher(parts[0]).matches()) continue;
             var kind = parts[1];
             if (!AGENT.equals(kind) && !COMMAND.equals(kind)) continue;
@@ -401,14 +413,14 @@ final class Tasks {
             } catch (NumberFormatException e) {
                 continue;
             }
-            var cwd = parts.length > 6 && !parts[6].isBlank() ? parts[6] : IncusInstanceBackend.AGENT_HOME;
-            var profile = parts.length > 4 ? recordedProfile(parts[4]) : Profile.NONE;
+            var cwd = parts.length > 7 && !parts[7].isBlank() ? parts[7] : IncusInstanceBackend.AGENT_HOME;
+            var agent = AGENT.equals(kind) ? identities.getOrDefault(parts[0], DelegateAgent.CLAUDE) : null;
+            var profile = parts.length > 5 ? recordedProfile(parts[4], parts[5], agent) : Profile.NONE;
             // Written in the guest: a key only if it reads as one, and matched only in this instance.
-            var key = parts.length > 5 && parts[5].startsWith("=") ? McpSession.keyOf(parts[5].substring(1)) : null;
+            var key = parts.length > 6 && parts[6].startsWith("=") ? McpSession.keyOf(parts[6].substring(1)) : null;
             // An exit recorded is finished (attached, if a person is in it, is read by task_status).
             var state = "running".equals(parts[3]) ? TaskWatcher.RUNNING : "finished";
-            var task = new Task(parts[0], instance, kind, cwd, profile, runs, state, false, key,
-                    AGENT.equals(kind) ? identities.getOrDefault(parts[0], DelegateAgent.CLAUDE) : null);
+            var task = new Task(parts[0], instance, kind, cwd, profile, runs, state, false, key, agent);
             synchronized (this) {
                 // Once reported released, a task this session takes back is reported again.
                 if (tasks.putIfAbsent(task.id(), task) == null) watcher.revive(task.id());
@@ -433,12 +445,13 @@ final class Tasks {
     }
 
     /**
-     * The profile an instance recorded for a task ({@code -} for a model never chosen). Read
-     * from inside the instance, so only what a coordinator could have chosen is taken: anything
-     * else is dropped, never passed to the next run.
+     * The profile an instance recorded for a task ({@code -} for a model or an effort never
+     * chosen). Read from inside the instance, so only what a coordinator could have chosen for
+     * {@code agent} is taken: anything else is dropped, never passed to the next run.
      */
-    static Profile recordedProfile(String model) {
-        return new Profile(McpConfig.isModelName(model) ? model : null);
+    static Profile recordedProfile(String model, String effort, DelegateAgent agent) {
+        return new Profile(McpConfig.isModelName(model) ? model : null,
+                agent != null && agent.efforts().contains(effort) ? effort : null);
     }
 
     /**

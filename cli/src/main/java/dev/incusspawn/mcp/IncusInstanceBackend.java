@@ -124,10 +124,7 @@ final class IncusInstanceBackend implements InstanceBackend {
      * parameters alone, the others at their defaults, never merged with an ancestor's.
      */
     static String delegateModel(ImageDef def, Map<String, ImageDef> defs, String agent) {
-        return ImageDef.chain(def, defs).reversed().stream()
-                .flatMap(d -> d.getTools().stream())
-                .filter(ref -> agent.equals(ref.getName()))
-                .findFirst().map(ref -> {
+        return nearestEntry(def, defs, agent).map(ref -> {
                     var model = ref.getParams().get("model");
                     if (model == null) return model;
                     if (DelegateAgent.OPENCODE.id.equals(agent))
@@ -136,6 +133,23 @@ final class IncusInstanceBackend implements InstanceBackend {
                         return PiSetup.piProvider(ref.getParams().getOrDefault("provider", PiSetup.DEFAULT_PROVIDER)) + "/" + model;
                     return model;
                 }).orElse(null);
+    }
+
+    /**
+     * The {@code effort} of {@code agent}'s tool, from the same layer as
+     * {@link #delegateModel(ImageDef, Map, String)}'s model: a layer listing the tool never
+     * carries an ancestor's effort over.
+     */
+    static String delegateEffort(ImageDef def, Map<String, ImageDef> defs, String agent) {
+        return nearestEntry(def, defs, agent).map(ref -> ref.getParams().get("effort")).orElse(null);
+    }
+
+    /** The entry for {@code agent}'s tool in the nearest layer of {@code def}'s chain that lists it. */
+    private static java.util.Optional<dev.incusspawn.tool.ToolDef.ToolRef> nearestEntry(ImageDef def, Map<String, ImageDef> defs, String agent) {
+        return ImageDef.chain(def, defs).reversed().stream()
+                .flatMap(d -> d.getTools().stream())
+                .filter(ref -> agent.equals(ref.getName()))
+                .findFirst();
     }
 
     @Override

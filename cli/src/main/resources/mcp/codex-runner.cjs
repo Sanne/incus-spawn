@@ -1,5 +1,5 @@
 // Appended to runner-io.cjs. Node is already installed by CodexSetup.
-const [sandbox, model] = process.argv.slice(3);
+const [sandbox, model, effort] = process.argv.slice(3);
 try {
   scratch = fs.mkdtempSync(path.join(dir, '.codex-'));
   const saved = read(path.join(dir, 'session_id'), 128, true);
@@ -37,6 +37,8 @@ try {
   argv.push('--json', '--skip-git-repo-check', '-c', 'approval_policy="never"',
     '-c', 'sandbox_mode=' + JSON.stringify(sandbox), '--output-last-message', reportFile);
   if (model) argv.push('--model', model);
+  // A task's own effort; without one, config.toml's, which the template's effort wrote.
+  if (effort) argv.push('-c', 'model_reasoning_effort=' + JSON.stringify(effort));
   if (run !== '1') argv.push(session);
   argv.push('-');
   const events = output('events-' + run + '.jsonl');

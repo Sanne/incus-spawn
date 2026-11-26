@@ -504,9 +504,20 @@ Two bounds:
   A chosen model stays chosen for the task's later turns: Claude Code has no flag meaning "the template's own", so going back to it is naming it or a new task.
 - *The permission mode is not part of it* (#858): what a delegate may do stays the template's.
 
+`effort` is the other half of a profile (#2547), checked against the levels the selected agent's own flag takes (`DelegateAgent.efforts`) and refused with that list.
+Each agent gets it its own way: Claude Code's `--effort`, Codex's `-c model_reasoning_effort=`, Pi's `--thinking`, opencode's `--variant` and agy's `--effort`.
+Claude's list holds `max`, which Claude Code keeps for a session alone: a template cannot set it, and a task is one session.
+Without one, the agent's own configuration applies, which the template's `effort` wrote.
+Claude Code keeps that per model, under `modelSettings.<template model>`, so a task on another model or an alias would find no entry and run at Claude Code's default without saying so.
+opencode does the same: the build writes the effort as the variant of agents that name the template's model, and opencode applies it only while an agent runs that model (`OpencodeSetup.agentLine`).
+So a Claude or opencode task given no effort takes the template's into its profile, at `delegate` and at a `send_message` to a task that has none (`DelegateAgent.keepsEffortPerModel`, `McpTools.forAgent`).
+Codex, Pi and agy keep the template's effort whatever the model, so theirs is left to their configuration.
+`list_templates.delegate_agents` reports each agent's template `effort` (`IncusInstanceBackend.delegateEffort`, the same layer as its model) and its `efforts`.
+Rejected: one shared list of levels, which would accept for one agent what its flag refuses, so the task would fail instead of the call.
+
 The model passes `McpConfig.isModelName()` (also what `summary-model` must match; it starts with a letter or digit, so it cannot read as an option) and is shell-quoted.
-A task's profile is recorded with the task, in `~/.isx-mcp/tasks/<id>/model`, where all its state lives, and `TaskScripts.list()` reports it, so an adopting session keeps it.
-Read back from the instance, it is taken only if it is still a model name.
+A task's profile is recorded with the task, in `~/.isx-mcp/tasks/<id>/model` and `effort`, where all its state lives, and `TaskScripts.list()` reports it, so an adopting session keeps it.
+Read back from the instance, the model is taken only if it is still a model name, and the effort only if the task's agent takes it.
 Once adopted, the recorded profile is advisory: the delegate could have rewritten those files, so a later turn that names no model may run on one the coordinator did not choose, shown by `task_status` as the task's.
 A turn that names one is always checked, even when it names the recorded one (the account may have changed too); the cache makes the repeat free.
 That is no escalation: the guest can run `claude --model` itself through the same account.

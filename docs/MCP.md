@@ -149,6 +149,10 @@ For opencode the call names it as `provider/model`.
 A bare model ID also works when the template sets a model, and gets that model's provider.
 The template's model is listed for opencode and Pi with its provider in front, so passing it back keeps that provider.
 
+The effort is the template's unless the call names one of the levels `list_templates` lists for the agent.
+A Claude or opencode task keeps the template's effort when the call names another model.
+Later turns keep a chosen effort, as they keep a chosen model.
+
 `delegate` and `send_message` take an optional `activity`, a short tag of the agent's own, such as `implement` or `review-fixes`.
 isx records it in its event log beside the run's start and end, so a report can say what each kind of work cost.
 Each tag belongs to the one run it was given with.

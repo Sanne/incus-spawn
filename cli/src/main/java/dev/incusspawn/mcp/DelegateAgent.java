@@ -47,6 +47,42 @@ enum DelegateAgent {
         return agent;
     }
 
+    /**
+     * The efforts a task may choose, the levels the agent's own flag takes: Claude Code's
+     * {@code --effort} (with {@code max}, which it keeps for a session alone, so a template
+     * cannot set it), Codex's {@code model_reasoning_effort}, Pi's {@code --thinking},
+     * opencode's {@code --variant} and agy's {@code --effort}. Each is the tool's own
+     * {@code effort} parameter's list otherwise.
+     */
+    java.util.List<String> efforts() {
+        return switch (this) {
+            case CLAUDE -> java.util.List.of("low", "medium", "high", "xhigh", "max");
+            case CODEX -> java.util.List.of("minimal", "low", "medium", "high", "xhigh");
+            case PI -> java.util.List.of("off", "minimal", "low", "medium", "high", "xhigh");
+            case OPENCODE -> java.util.List.of("none", "minimal", "low", "medium", "high", "xhigh", "max");
+            case ANTIGRAVITY -> java.util.List.of("low", "medium", "high", "xhigh", "max");
+            case UNKNOWN -> java.util.List.of();
+        };
+    }
+
+    /**
+     * Whether the agent keeps a template's effort for the template's model alone: Claude Code
+     * under {@code modelSettings.<model>}, opencode as the variant of agents that name the
+     * model. A task on another model would run at that model's default, so it is given the
+     * template's effort ({@code McpTools.forAgent}). Codex, Pi and agy keep it whatever the model.
+     */
+    boolean keepsEffortPerModel() {
+        return this == CLAUDE || this == OPENCODE;
+    }
+
+    /** Refuses an {@code effort} this agent does not take, naming the ones it does; null passes. */
+    void requireEffort(String effort) {
+        if (effort != null && !efforts().contains(effort)) {
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, label + " takes effort " + String.join(", ", efforts())
+                    + "; choose one of them, or omit effort.");
+        }
+    }
+
     /** Whether a chosen model is tried before launch ({@link ModelCheck}); for the others an access error is the task's. */
     boolean supportsModelPreflight() {
         return this == CLAUDE;
