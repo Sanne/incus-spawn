@@ -155,6 +155,70 @@ class WorkStateTest {
         assertEquals(index, Files.getLastModifiedTime(dirty.resolve(".git/index")), "the read wrote nothing");
     }
 
+    /**
+     * The shortcuts that spare a fork per clone (#2627) never hide a stash: one packed into
+     * {@code packed-refs} is counted, and so is one a worktree's clone shares, whose {@code .git}
+     * is a file, and one in a reftable clone, which keeps no {@code refs/stash} file.
+     */
+    @Test
+    void stashesAreCountedWhereverGitKeepsThem(@TempDir Path home) throws Exception {
+        assumeTrue(run(home, "git", "--version") == 0, "needs git");
+        var packed = Files.createDirectories(home.resolve("packed"));
+        git(packed, "init", "-q");
+        Files.writeString(packed.resolve("f"), "x");
+        git(packed, "add", "f");
+        git(packed, "commit", "-q", "-m", "a");
+        Files.writeString(packed.resolve("f"), "y");
+        git(packed, "stash", "-q");
+        git(packed, "pack-refs", "--all");
+        assertFalse(Files.exists(packed.resolve(".git/refs/stash")), "the stash is packed");
+        git(packed, "worktree", "add", "-q", "--detach", home.resolve("tree").toString());
+        boolean reftable = run(home, "git", "init", "-q", "--ref-format=reftable", home.resolve("reftable").toString()) == 0;
+        if (reftable) {
+            var r = home.resolve("reftable");
+            Files.writeString(r.resolve("f"), "x");
+            git(r, "add", "f");
+            git(r, "commit", "-q", "-m", "a");
+            Files.writeString(r.resolve("f"), "y");
+            git(r, "stash", "-q");
+        }
+
+        var state = read(home);
+
+        var expected = new java.util.ArrayList<>(List.of(new WorkState.Repo("packed", 0, 1, 1)));
+        if (reftable) expected.add(new WorkState.Repo("reftable", 0, 1, 1));
+        expected.add(new WorkState.Repo("tree", 0, 1, 1));
+        assertEquals(expected, state.repos());
+    }
+
+    /** More clones than are read at once come back in the order they were found, and past the cap say so. */
+    @Test
+    void manyClonesAreReadInOrderAndTheCapIsSaid(@TempDir Path home) throws Exception {
+        assumeTrue(run(home, "git", "--version") == 0, "needs git");
+        var names = new java.util.ArrayList<String>();
+        for (int i = 0; i <= WorkState.MAX_REPOS; i++) {
+            var name = String.format("r%02d", i);
+            git(home, "init", "-q", home.resolve(name).toString());
+            names.add(name);
+        }
+
+        var state = read(home);
+
+        assertEquals(State.UNKNOWN, state.state());
+        assertEquals("more than " + WorkState.MAX_REPOS + " clones", state.why());
+        assertEquals(names.subList(0, WorkState.MAX_REPOS), state.repos().stream().map(WorkState.Repo::path).toList());
+    }
+
+    private static WorkState read(Path home) throws Exception {
+        var out = new ByteArrayOutputStream();
+        var process = new ProcessBuilder("sh", "-c", WorkState.SCRIPT).directory(home.toFile());
+        process.environment().put("HOME", home.toString());
+        var p = process.redirectErrorStream(true).start();
+        p.getInputStream().transferTo(out);
+        assertTrue(p.waitFor(30, TimeUnit.SECONDS));
+        return WorkState.parse(p.exitValue(), out.toString(StandardCharsets.UTF_8), false);
+    }
+
     @Test
     void gitHubIsAskedWithVariablesNeverWithTheGuestsTextInTheQuery() throws Exception {
         var body = JqValues.parseStrict(PullRequestStates.body(List.of(
