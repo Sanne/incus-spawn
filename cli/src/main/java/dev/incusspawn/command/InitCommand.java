@@ -773,8 +773,8 @@ public class InitCommand extends BaseCommand {
      */
     boolean sudoFirst() {
         if (firstRun) {
-            BuildOutput.step("isx asks for your sudo password now. It installs packages,");
-            BuildOutput.step("and configures the firewall and the user IDs of isx machines.");
+            Lines.step("isx asks for your sudo password now. It installs packages,"
+                    + " and configures the firewall and the user IDs of isx machines.");
         } else {
             BuildOutput.step("Some steps run with sudo, which may ask for your password:");
             BuildOutput.step("packages, the firewall and the user IDs of instances.");

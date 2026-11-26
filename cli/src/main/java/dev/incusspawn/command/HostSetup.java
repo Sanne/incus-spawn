@@ -183,7 +183,8 @@ class HostSetup {
         var missing = missingDependencies(has);
         var cmd = dependencyCommand(has, missing);
         if (missing.isEmpty() || cmd == null) return;
-        var label = "Installing what isx needs: " + String.join(", ", missing);
+        // A live step's label does not wrap: the packages alone, so it fits the frame (#2588)
+        var label = "Installing " + String.join(", ", missing);
         install(label, cmd);
     }
 
@@ -628,7 +629,7 @@ class HostSetup {
                     () -> ran(FWD_MASQUERADE));
         }
         if (!hasForwardIn || !hasForwardOut) {
-            ok &= BuildOutput.liveStep("Keeping Docker's firewall rules from blocking " + init.machines(), () -> {
+            ok &= BuildOutput.liveStep("Keeping Docker's rules from blocking " + init.machines(), () -> {
                 // Both rules, even when the first fails: the step reports what it did
                 boolean added = true;
                 if (!hasForwardIn) {
@@ -1955,7 +1956,7 @@ class HostSetup {
     }
 
     void checkBridgeSubnet() {
-        BuildOutput.stepStart("Checking the network of " + init.machines() + " against VPN routes");
+        BuildOutput.stepStart("Checking the network of " + init.machines() + " against VPNs");
         try {
             var result = BridgeSubnetCheck.detectAndFix(init.incus, init.hostRoutes());
             BuildOutput.stepDone();
