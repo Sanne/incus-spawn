@@ -54,6 +54,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -2985,6 +2986,11 @@ public class InitCommand extends BaseCommand {
         return ProxyService.isActive();
     }
 
+    /** What to run after a restart left the proxy service down (#2620). */
+    String[] notRestartedAdvice() {
+        return ProxyService.notRestartedAdvice();
+    }
+
     /** Whether the proxy service runs or systemd is still bringing it up (#2619). */
     boolean proxyServiceStarting() {
         return ProxyService.isActiveOrStarting();
@@ -3019,7 +3025,12 @@ public class InitCommand extends BaseCommand {
      * {@link #proxyServiceAnswers} confirms (#2619).
      */
     boolean restartProxyService() {
-        return ProxyService.restart();
+        return restartProxyService(this::notRestartedAdvice);
+    }
+
+    /** {@link #restartProxyService()}, its warning's advice asked only when the restart failed (#2620). */
+    boolean restartProxyService(Supplier<String[]> advice) {
+        return ProxyService.restart(BuildOutput.bound(), advice);
     }
 
     /** Installs and starts the proxy service; on macOS, the VM launch agent with it. */
@@ -3764,8 +3775,10 @@ public class InitCommand extends BaseCommand {
      * A running service found with an outdated marker is restarted once the marker is written,
      * unless the upgrade did it: the firewall step leaves its restart here, and nothing else could
      * make one while the marker was stale (#1048). Read from the marker rather than remembered, so
-     * a restart owed by an earlier run that stopped before this step is still made. Either restart
-     * counts only once the proxy answers (#2619).
+     * a restart owed by an earlier run that stopped before this step is still made. The upgrade's
+     * restart is checked like an owed one: either fails the step when it leaves the service down
+     * (#2604), with a warning that says what to run next (#2620), and counts only once the proxy
+     * answers (#2619).
      */
     boolean completeWithProxyService(Prompts prompts) throws IOException {
         var active = proxyServiceActive();
@@ -3783,7 +3796,7 @@ public class InitCommand extends BaseCommand {
             // The upgrade says only that it restarted; a unit it left down fails at once, unwaited.
             // One still coming up, systemd waiting out RestartSec included, is waited on below.
             if (upgraded && !proxyServiceStarting()) {
-                BuildOutput.warn("Proxy service did not restart.");
+                ProxyService.warnNotRestarted(BuildOutput.bound(), notRestartedAdvice());
                 failed.add("proxy-service");
                 return false;
             }
