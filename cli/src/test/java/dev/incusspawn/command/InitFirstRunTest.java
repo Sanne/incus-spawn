@@ -227,12 +227,12 @@ class InitFirstRunTest {
     /** A recap line fits the box whatever the answer, and shows an account's text on one line. */
     @Test
     void aRecapLineFitsTheBox() {
-        assertEquals("  \u2713 Coding agent   Claude Code", InitCommand.recapLine(new InitCommand.Answered("Coding agent", "Claude Code", true)));
-        assertEquals("  - GitHub         none for now", InitCommand.recapLine(new InitCommand.Answered("GitHub", "none for now", false)));
-        var longLogin = InitCommand.recapLine(new InitCommand.Answered("GitHub", "acts as " + "a".repeat(80), true));
+        assertEquals("  \u2713 Coding agent   Claude Code", InitCommand.recapLine(new InitCommand.Answered("Coding agent", "Claude Code", InitCommand.Mark.DONE)));
+        assertEquals("  - GitHub         none for now", InitCommand.recapLine(new InitCommand.Answered("GitHub", "none for now", InitCommand.Mark.LATER)));
+        var longLogin = InitCommand.recapLine(new InitCommand.Answered("GitHub", "acts as " + "a".repeat(80), InitCommand.Mark.DONE));
         assertEquals(InitCommand.BOX_WIDTH - 2, longLogin.length());
         assertTrue(longLogin.endsWith("..."), longLogin);
-        var hostile = InitCommand.recapLine(new InitCommand.Answered("GitHub", "acts as a\nb\u001b[2J", true));
+        var hostile = InitCommand.recapLine(new InitCommand.Answered("GitHub", "acts as a\nb\u001b[2J", InitCommand.Mark.DONE));
         assertFalse(hostile.contains("\n") || hostile.contains("\u001b"), hostile);
     }
 

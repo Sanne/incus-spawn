@@ -188,6 +188,26 @@ class InitFirstRunAccountsTest {
         assertTrue(count(lines, "Its account    Anthropic API key") >= 1, String.join("\n", lines));
     }
 
+    /**
+     * A key saved unverified, since its check could not reach the service, is not ticked in the
+     * recap (#2587): the tick is for a credential a check verified, and the step's own
+     * "unverified" line may be off the screen by the next question.
+     */
+    @Test
+    void theRecapSaysAnAccountSavedUnverifiedWasNotChecked() {
+        var init = new Init();
+        init.credentials = new Host() {
+            @Override AuthResult verifyAnthropicCredential(String headerName, String headerValue, String label) {
+                return AuthResult.unchecked("isx could not reach the service.");
+            }
+        };
+        // Claude (1), an API key (1), the key, save it unverified, then end of input at the GitHub question
+        var lines = askWith("pi", new ScriptedPrompts().line("1", "1").secret("sk-ant-api03-" + "c".repeat(90)).line("u"), init);
+
+        assertTrue(count(lines, "\u26a0 Its account    Anthropic API key, not checked") >= 1, String.join("\n", lines));
+        assertEquals(0, count(lines, "\u2713 Its account"), String.join("\n", lines));
+    }
+
     /** Copilot spends GitHub's account: skipped at its step, the GitHub question is not asked a second time. */
     @Test
     void anAgentSpendingGitHubIsAskedForItOnceWhenSkipped() {
