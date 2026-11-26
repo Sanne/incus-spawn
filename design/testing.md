@@ -329,10 +329,18 @@ The upload of the build for the later jobs still crosses the server's link.
 **The job holds no credential proof, so the proxy gives it none of the server's accounts.**
 Every isx start gives an instance a proof for each credential namespace the host's proxy serves, whatever tools its template installed (`ProofToken.declaredWithConfig`).
 They are in `/run/isx/proof-tokens`, readable by `agentuser`, beside the credential secret they derive from and the per-start instance secret, and a system Git helper presents the GitHub proof.
-With any of them, a job's code could have the proxy inject the server's default GitHub or Claude account, so the template's tool list keeps nothing out.
-So the supervisor's exec first runs `drop-credentials.sh` as root, installed by the template's prime from `main`, which removes the three files and the helper and fails when any is left.
+When the server's `openai` account is a ChatGPT sign-in, every branch also gets that session's look-alikes in `/run/isx/chatgpt-auth` (`ChatGptStart.stampBranchInto`), which a login profile copies to Codex's `~/.codex/auth.json`.
+The proxy checks those against the host's stamps, not the guest's instance secret, so removing the secret does not revoke them.
+With any of them, a job's code could have the proxy serve it the server's default GitHub, Claude or ChatGPT account, so the template's tool list keeps nothing out.
+So the supervisor's exec first runs `drop-credentials.sh` as root, installed by the template's prime from `main`.
+It removes the proofs, both secrets, the ChatGPT look-alikes with their profile and Codex's copy, and the GitHub helper.
+It treats `/run/isx` as an allowlist: anything there but `proof-generation` and `proof-version`, which prove nothing, fails it, so a file a later isx delivers stops the runner rather than reaching the job.
 Only then does it start the runner, in a login environment cleared of the exec's own variables (`env -i`).
-Nothing delivers them again: the instance is never started a second time, and for a container a later `isx exec` or `ssh` reads the host's boot stamp rather than the guest's files (`giveSecretIfMissing`), so it gives none; a VM is asked, which is why the template is a container.
+A container's later `isx exec` or `ssh` reads the host's boot stamp rather than the guest's files (`giveSecretIfMissing`), so it delivers none of them again.
+A VM's guest is asked instead, which is why the template is a container.
+`isx account reset-proofs` on the running instance does deliver again: it writes the proofs and the Git helper back while the job runs, and the drop does not run a second time.
+So a CI instance suspected of a leak is destroyed, never reset (docs/dev/LINUX-CI-SETUP.md).
+Running the job as a user outside the guest's group 1000 and without sudo would make such a delivery unreadable to it; it is not done, since the template's clone, its `~/.m2` and the runner are `agentuser`'s.
 Its requests then carry no proof, and the proxy passes them on with no credential added, as for any caller it cannot prove.
 It gives up nothing a job needs: the job's own `GITHUB_TOKEN` comes from the runner.
 A way to branch an instance that receives no proofs at all would be cleaner than removing them, and isx has none today.

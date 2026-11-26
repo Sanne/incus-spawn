@@ -207,23 +207,60 @@ class LinuxRunnerTest {
     @Test
     void theProofsIsxDeliveredAreRemovedBeforeTheRunnerStarts(@TempDir Path dir) throws Exception {
         var run = Files.createDirectories(dir.resolve("root/run/isx"));
-        for (var f : List.of("proof-tokens", "credential-secret", "instance-secret", "proof-generation")) {
+        for (var f : List.of("proof-tokens", "credential-secret", "instance-secret", "chatgpt-auth",
+                "proof-generation", "proof-version")) {
             Files.writeString(run.resolve(f), "x\n");
         }
-        var gitconfig = Files.createDirectories(dir.resolve("root/etc")).resolve("gitconfig");
-        Files.writeString(gitconfig, "[credential \"https://github.com\"]\n\thelper = !isx_github_credential\n[core]\n\tpager = less\n");
+        var chatGptProfile = Files.createDirectories(dir.resolve("root/etc/profile.d")).resolve("isx-zz-codex-chatgpt.sh");
+        Files.writeString(chatGptProfile, "cp /run/isx/chatgpt-auth ~/.codex/auth.json\n");
+        var codexAuth = Files.createDirectories(dir.resolve("root/home/agentuser/.codex")).resolve("auth.json");
+        Files.writeString(codexAuth, "{\"tokens\":\"look-alike\"}\n");
+        var gitconfig = dir.resolve("root/etc/gitconfig");
+        Files.writeString(gitconfig, "[credential \"https://github.com\"]\n\thelper = !isx_github_credential\n"
+                + "[credential]\n\tuseHttpPath = true\n[core]\n\tpager = less\n");
         var result = run(new ProcessBuilder("bash", "--norc", "--noprofile", DROP.toString(), dir.resolve("root").toString())
                 .redirectErrorStream(true));
         assertEquals(0, result.exit(), result.output());
         try (var left = Files.list(run)) {
-            assertEquals(List.of("proof-generation"), left.map(p -> p.getFileName().toString()).toList(),
-                    "the proofs and both secrets are gone; the public generation is no credential");
+            assertEquals(List.of("proof-generation", "proof-version"),
+                    left.map(p -> p.getFileName().toString()).sorted().toList(),
+                    "the proofs, both secrets and the ChatGPT look-alikes are gone; the public generation and version prove nothing");
         }
+        assertFalse(Files.exists(chatGptProfile), "the profile that copies the ChatGPT session to Codex");
+        assertFalse(Files.exists(codexAuth), "Codex's copy of the ChatGPT session");
         var config = Files.readString(gitconfig);
         assertFalse(config.contains("helper"), config);
+        assertTrue(config.contains("useHttpPath = true"), "a credential setting that is no helper stays, and does not stop the runner");
         assertTrue(config.contains("pager = less"), "the rest of the system config stays");
         assertEquals(0, run(new ProcessBuilder("bash", "--norc", "--noprofile", DROP.toString(), dir.resolve("root").toString())
                 .redirectErrorStream(true)).exit(), "nothing to remove is no failure");
+    }
+
+    /** A file a later isx delivers to /run/isx stops the runner, whatever its name. */
+    @Test
+    void anyOtherFileInRunIsxStopsTheRunner(@TempDir Path dir) throws Exception {
+        var run = Files.createDirectories(dir.resolve("root/run/isx"));
+        Files.writeString(run.resolve("proof-version"), "4");
+        Files.writeString(run.resolve("some-new-session"), "a look-alike\n");
+        var result = run(new ProcessBuilder("bash", "--norc", "--noprofile", DROP.toString(), dir.resolve("root").toString())
+                .redirectErrorStream(true));
+        assertEquals(1, result.exit(), result.output());
+        assertTrue(result.output().contains("some-new-session"), result.output());
+    }
+
+    /** What isx delivers to the guest, by its own constants: each is removed, and none is on the allowlist. */
+    @Test
+    void theDropRemovesEveryPathIsxDelivers() throws IOException {
+        var drop = Files.readString(DROP);
+        for (var path : List.of(dev.incusspawn.proxy.InstanceSecret.GUEST_PATH, dev.incusspawn.proxy.InstanceSecret.PROOFS_PATH,
+                dev.incusspawn.proxy.InstanceSecret.CHATGPT_GUEST_PATH, dev.incusspawn.proxy.CredentialProof.GUEST_PATH)) {
+            assertTrue(path.startsWith("/run/isx/"), path);
+            assertTrue(drop.contains("\"$run/" + path.substring("/run/isx/".length()) + "\""), "drop-credentials.sh removes " + path);
+        }
+        assertTrue(drop.contains("\"$root" + dev.incusspawn.proxy.InstanceSecret.CHATGPT_PROFILE_PATH + "\""),
+                "drop-credentials.sh removes " + dev.incusspawn.proxy.InstanceSecret.CHATGPT_PROFILE_PATH);
+        assertTrue(drop.contains("\"$root/home/agentuser/.codex/auth.json\""), "and Codex's copy of the ChatGPT session");
+        assertTrue(drop.contains("case \"${f##*/}\" in proof-generation|proof-version) ;;"), "the allowlist is the public two alone");
     }
 
     @Test
