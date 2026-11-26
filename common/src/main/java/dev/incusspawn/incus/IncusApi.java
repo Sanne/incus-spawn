@@ -297,6 +297,65 @@ class IncusApi {
         };
     }
 
+    // The operation watcher bounded execs share while a probe batch is open, and how many batches
+    // hold it (#2626). Guarded by this.
+    private OperationWatcher operations;
+    private int operationsUsers;
+
+    /**
+     * Open a probe batch: until it is closed, every bounded exec of this client learns its end from
+     * one {@code /1.0/events?type=operation} subscription instead of a {@code /wait} of its own.
+     * Batches open at once share it. A subscription that cannot be opened leaves the execs on
+     * {@code /wait}, as does one that ends while they wait.
+     */
+    AutoCloseable openProbeBatch() {
+        boolean open;
+        synchronized (this) {
+            operationsUsers++;
+            open = operations == null || operations.lost();
+        }
+        // The handshake runs outside the lock, so no bounded exec of this client waits behind it
+        OperationWatcher opened = null;
+        if (open) {
+            try {
+                opened = new OperationWatcher(openEvents("operation"));
+            } catch (IOException | RuntimeException e) {
+                dev.incusspawn.ClientLog.debug("operation events unavailable, execs wait on /wait: " + e.getMessage());
+            }
+        }
+        if (opened != null) {
+            OperationWatcher replaced = null;
+            synchronized (this) {
+                if (operations == null || operations.lost()) {
+                    replaced = operations;
+                    operations = opened;
+                    opened = null;
+                }
+            }
+            if (replaced != null) replaced.close();
+            if (opened != null) opened.close(); // another batch opened one meanwhile
+        }
+        var closed = new java.util.concurrent.atomic.AtomicBoolean();
+        return () -> {
+            if (closed.compareAndSet(false, true)) releaseProbeBatch();
+        };
+    }
+
+    private void releaseProbeBatch() {
+        OperationWatcher released;
+        synchronized (this) {
+            if (--operationsUsers > 0 || operations == null) return;
+            released = operations;
+            operations = null;
+        }
+        released.close();
+    }
+
+    /** The watcher an exec posted now registers with, or null: wait on {@code /wait}. */
+    private synchronized OperationWatcher operations() {
+        return operations;
+    }
+
     ApiResponse get(String path) {
         return request("GET", path, null);
     }
@@ -523,7 +582,7 @@ class IncusApi {
         }
     }
 
-    private static boolean isUnfinished(String status) {
+    static boolean isUnfinished(String status) {
         return status.equals("Running") || status.equals("Pending");
     }
 
@@ -795,8 +854,12 @@ class IncusApi {
             // does not extend it.
             long deadline = System.nanoTime() + limit.toNanos();
             return retryOnNotRunning(() -> {
+                var watcher = operations();
                 var exec = postExec(instance, command, uid, gid, cwd, env, false, 0, 0);
-                return execWebSocket(exec, stdout, stderr, null, deadline);
+                // Registered before its sockets open: the command starts only once they have
+                try (var end = watcher != null ? watcher.register(exec.opId()) : null) {
+                    return execWebSocket(exec, stdout, stderr, null, deadline, end);
+                }
             });
         } finally {
             BOUNDED_EXECS.release();
@@ -888,7 +951,7 @@ class IncusApi {
                     joinQuietly(dataThread);
                 });
 
-                int exitCode = waitForExecOp(exec, 0, null);
+                int exitCode = waitForExecOp(exec, 0, null, null);
                 keepalive.stop();
                 return exitCode;
             } catch (IOException e) {
@@ -1168,7 +1231,9 @@ class IncusApi {
      * connections in all, so a lost operation can say how much of its time went to that wait, the
      * post's own included.
      */
-    private record ExecOp(String instance, String opPath, JqValue fds, long postedAt, long permitWaitAtPost) {}
+    private record ExecOp(String instance, String opPath, JqValue fds, long postedAt, long permitWaitAtPost) {
+        String opId() { return opPath.substring(opPath.lastIndexOf('/') + 1); }
+    }
 
     private ExecOp postExec(String instance, List<String> command,
                             Integer uid, Integer gid, String cwd, Map<String, String> env,
@@ -1202,18 +1267,24 @@ class IncusApi {
      * @param stdin null → stdin is closed immediately; non-null → forwarded to the container.
      */
     private int execWebSocket(ExecOp exec, OutputStream stdout, OutputStream stderr, InputStream stdin) {
-        return execWebSocket(exec, stdout, stderr, stdin, 0);
+        return execWebSocket(exec, stdout, stderr, stdin, 0, null);
     }
 
-    /** {@link #execWebSocket}, killing the process at {@code deadline} ({@link System#nanoTime}; 0 for none). */
+    /**
+     * {@link #execWebSocket}, killing the process at {@code deadline} ({@link System#nanoTime}; 0 for
+     * none), its end told by {@code end} when it is not null.
+     */
     private int execWebSocket(ExecOp exec, OutputStream stdout, OutputStream stderr, InputStream stdin,
-                              long deadline) {
+                              long deadline, OperationWatcher.Waiter end) {
         var outDst = stdout != null ? stdout : OutputStream.nullOutputStream();
         var errDst = stderr != null ? stderr : OutputStream.nullOutputStream();
         var stdinSocket = stdin != null ? new StdinSocket() : null;
-        try (var controlWs = transport.openWebSocket(wsUrl(exec, "control"));
-             var stdoutWs  = transport.openWebSocket(wsUrl(exec, "1"));
-             var stderrWs  = transport.openWebSocket(wsUrl(exec, "2"))) {
+        // Opened at once (#2626): over the macOS tunnel each handshake is a vsock connect, and the
+        // command waits for all of them. A stdin nothing is sent to is connected and closed beside them.
+        var sockets = openExecSockets(exec, stdin == null);
+        try (var controlWs = sockets[0];
+             var stdoutWs  = sockets[1];
+             var stderrWs  = sockets[2]) {
 
             // Control fd is connected only to satisfy wait-for-websocket and kept alive
             // with pings; it is no longer used as the termination signal.
@@ -1231,21 +1302,21 @@ class IncusApi {
             // Timestamp of the last byte received on either data fd, for the adaptive drain.
             var lastData = new java.util.concurrent.atomic.AtomicLong(drainClock.nanoTime());
             var stdoutThread = Thread.ofVirtual().start(() -> wsWriteTo(stdoutWs, outDst, lastData));
-            var stderrThread = Thread.ofVirtual().start(() -> wsWriteTo(stderrWs, errDst, lastData));
+            // A discarded stderr's data does not hold stdout's drain open (drainThenClose)
+            var stderrData = stderr == null ? new java.util.concurrent.atomic.AtomicLong() : lastData;
+            var stderrThread = Thread.ofVirtual().start(() -> wsWriteTo(stderrWs, errDst, stderrData));
 
             Thread stdinThread = null;
             if (stdin != null) {
                 // The forwarder opens the stdin fd off this thread, so no handshake is added here.
                 stdinThread = Thread.ofVirtual().start(() -> wsForward(wsUrl(exec, "0"), stdin, stdinSocket));
-            } else {
-                wsCloseOnly(exec.opPath, exec.fds.pathText("0", ""));
             }
             assertAllFdsConnected(exec.fds, Set.of("0", "1", "2", "control"));
 
             // Authoritative completion + exit code (HTTP, reliable over vsock).
             int exitCode;
             try {
-                exitCode = waitForExecOp(exec, deadline, controlWs);
+                exitCode = waitForExecOp(exec, deadline, controlWs, end);
             } catch (IncusException timedOut) {
                 // Given up on: stop every helper now, the sockets close on the way out.
                 stdoutAlive.stop();
@@ -1258,7 +1329,7 @@ class IncusApi {
             // reader threads unblock even if no close frame arrives.
             stdoutAlive.stop();
             stderrAlive.stop();
-            drainThenClose(lastData, stdoutThread, stderrThread, stdoutWs, stderrWs);
+            drainThenClose(lastData, stdoutThread, stderrThread, stdoutWs, stderrWs, stderr == null);
 
             keepalive.stop();
             controlWs.close();
@@ -1272,13 +1343,41 @@ class IncusApi {
                 }
             }
             return exitCode;
-        } catch (IOException e) {
-            throw new IncusException("Failed to open exec WebSocket", e);
         } finally {
             // However the exec ends, its stdin ends with it: a read still blocked is abandoned,
             // but its socket, keepalive and pong drain need not outlive the exec.
             if (stdinSocket != null) stdinSocket.close();
         }
+    }
+
+    /**
+     * Open an exec's control, stdout and stderr sockets at once, and with {@code closeStdin} connect
+     * and close its stdin beside them. If any of them fails, the others are closed once their
+     * handshakes end, so no connection outlives the failure.
+     */
+    private IncusTransport.WsConnection[] openExecSockets(ExecOp exec, boolean closeStdin) {
+        var fds = List.of("control", "1", "2");
+        var opened = new ArrayList<java.util.concurrent.Future<IncusTransport.WsConnection>>();
+        try (var handshakes = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (var fd : fds) opened.add(handshakes.submit(() -> transport.openWebSocket(wsUrl(exec, fd))));
+            if (closeStdin) handshakes.submit(() -> wsCloseOnly(exec.opPath, exec.fds.pathText("0", "")));
+        } // waits for every handshake
+        var sockets = new IncusTransport.WsConnection[fds.size()];
+        Throwable failed = null;
+        for (int i = 0; i < sockets.length; i++) {
+            try {
+                sockets[i] = opened.get(i).get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                if (failed == null) failed = e.getCause();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                if (failed == null) failed = e;
+            }
+        }
+        if (failed == null) return sockets;
+        for (var socket : sockets) if (socket != null) socket.close();
+        if (failed instanceof RuntimeException runtime) throw runtime;
+        throw new IncusException("Failed to open exec WebSocket", failed);
     }
 
     private String wsUrl(ExecOp exec, String fd) {
@@ -1371,11 +1470,21 @@ class IncusApi {
     /** A data fd's socket and the thread reading it. */
     private record DataReader(Thread thread, IncusTransport.WsConnection socket) {}
 
+    /**
+     * Wait for the output to drain, then close what is still open. With {@code discardStderr} only
+     * stdout is waited for (#2626): stderr is read only because Incus wants every fd connected, so
+     * its socket is closed as soon as stdout is done, rather than held for a close frame that may
+     * come late or never.
+     */
     private void drainThenClose(java.util.concurrent.atomic.AtomicLong lastData,
                                 Thread stdoutThread, Thread stderrThread,
                                 IncusTransport.WsConnection stdoutWs,
-                                IncusTransport.WsConnection stderrWs) {
-        awaitDrain(lastData, new DataReader(stdoutThread, stdoutWs), new DataReader(stderrThread, stderrWs));
+                                IncusTransport.WsConnection stderrWs, boolean discardStderr) {
+        if (discardStderr) {
+            awaitDrain(lastData, new DataReader(stdoutThread, stdoutWs));
+        } else {
+            awaitDrain(lastData, new DataReader(stdoutThread, stdoutWs), new DataReader(stderrThread, stderrWs));
+        }
         if (stdoutThread.isAlive() || stderrThread.isAlive()) {
             stdoutWs.close();
             stderrWs.close();
@@ -1468,7 +1577,8 @@ class IncusApi {
      * one instance read of at most the grace. (Starting the exec and opening its
      * sockets, before this, are bounded by the transport's own timeouts.)
      */
-    private int waitForExecOp(ExecOp exec, long limit, IncusTransport.WsConnection control) {
+    private int waitForExecOp(ExecOp exec, long limit, IncusTransport.WsConnection control,
+                              OperationWatcher.Waiter end) {
         var instance = exec.instance;
         var opPath = exec.opPath;
         long deadline = System.nanoTime() + MAX_EXEC_WAIT_SECONDS * 1_000_000_000L;
@@ -1492,6 +1602,18 @@ class IncusApi {
                     // Incus takes whole seconds: rounded down, so the kill is late by less than one;
                     // never below one, or the long-poll would spin.
                     pollSeconds = Math.clamp(left / 1_000_000_000L, 1, WAIT_TIMEOUT_SECONDS);
+                    // Killed, the end is asked of /wait: a subscription silently gone would
+                    // otherwise keep a command that did finish from being reported (#2626).
+                    if (killed) end = null;
+                    else if (end != null) {
+                        var ended = end.await(left);
+                        if (ended == null) continue; // the limit: killed on the next turn
+                        if (ended != OperationWatcher.LOST) {
+                            finished = true;
+                            return exitCode(ended.status(), ended.metadata());
+                        }
+                        end = null; // the subscription is gone: /wait from here on
+                    }
                 }
                 // Unbounded, the request may take its slack on a slow tunnel; bounded, it must not
                 // outlast the time left by much more than the poll itself.
@@ -1512,9 +1634,7 @@ class IncusApi {
                 }
                 finished = true;
                 if (killed) throw new IncusException("exec " + opPath + " was killed: it ran past its time limit");
-                // Failure or Cancelled: the command may never have run, so there is no exit code to report.
-                if (!"Success".equals(status)) return -1;
-                return meta.getField("metadata").getField("return").asInt(0);
+                return exitCode(status, meta.getField("metadata"));
             }
             BuildOutput.warn("exec operation timed out after "
                     + MAX_EXEC_WAIT_SECONDS + "s on " + opPath + " — exit code unknown");
@@ -1525,6 +1645,13 @@ class IncusApi {
             // killed, never running on unowned in the guest.
             if (limit != 0 && !killed && !finished) kill(control);
         }
+    }
+
+    /** A finished exec's exit code from its operation's status and metadata. */
+    private static int exitCode(String status, JqValue metadata) {
+        // Failure or Cancelled: the command may never have run, so there is no exit code to report.
+        if (!"Success".equals(status)) return -1;
+        return metadata == null ? 0 : metadata.getField("return").asInt(0);
     }
 
     /**

@@ -1495,3 +1495,21 @@ The native CLI at the cap of 256 took 1.7 s, three runs, reading all 40.
 Without the sleep each read is about 0.1 s, and both took 0.9 s, so the cap only shows once reads are slow.
 Forty execs at once lost nothing and left incusd answering: no warning, no `unknown`.
 The nested box could not show a read slowed by the host's own load rather than a sleep.
+
+## Probe batches on one operation subscription, on Linux (issue #2626)
+
+Measured 2026-11-26 on a Linux box (Fedora, x86_64, 32 cores), JVM, nested Incus 6.23, with 30 running Alpine containers.
+A harness ran one `IncusClient.execProbe` in each at once (`echo ok`, a line on stderr, exit 3), ten rounds per run, two runs each, alternated.
+Every probe in every mode read its exit code and its output.
+
+| Build | Mode | Median of each run |
+|---|---|---|
+| `main` | one `/wait` per exec, sockets opened in turn | 92 ms, 93 ms |
+| this change | no batch: `/wait`, sockets opened at once | 92 ms, 152 ms |
+| this change | in a probe batch: one subscription | 92 ms, 234 ms |
+
+The second runs were noisy in every mode, up to 370 ms for a round, so the medians differ by the box's load, not by the mode.
+On Linux all 30 fit in one wave either way, and a handshake on incusd's own socket takes well under a millisecond, so the change has nothing to save here.
+What it saves is on macOS: three vsock connects that no longer follow one another, one connection and one request less per exec, and ten execs at once instead of eight.
+That is still to be measured on a Mac.
+A batch of twelve probes of `sleep 30` with a 2 s limit were all killed and reported at 2.0 s, their ends asked of `/wait` once killed.

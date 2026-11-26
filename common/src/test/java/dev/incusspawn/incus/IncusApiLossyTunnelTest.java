@@ -601,6 +601,109 @@ class IncusApiLossyTunnelTest {
         assertTrue(elapsedMs < 6000, "the diagnosis must use the probe timeout: " + elapsedMs + "ms");
     }
 
+    // #2626: a probe batch's execs learn their ends from one operation-event subscription.
+    private int probe(IncusApi api, OutputStream out) {
+        return api.execStreamWithin("c1", List.of("true"), null, null, null, null, out, null, Duration.ofSeconds(10));
+    }
+
+    @Test
+    @Timeout(10)
+    void aBatchedExecEndsOnItsOperationEventWithoutAWait() throws Exception {
+        server.stdout = "out";
+        server.exitCode = 4;
+        var api = api();
+        try (var batch = api.openProbeBatch()) {
+            var out = new ByteArrayOutputStream();
+            assertEquals(4, probe(api, out), "the exit code comes from the event");
+            assertEquals("out", out.toString(StandardCharsets.UTF_8));
+            var again = new ByteArrayOutputStream();
+            assertEquals(4, probe(api, again), "a second exec shares the subscription");
+        }
+        assertEquals(0, server.waits.get(), "no exec of the batch waited on /wait");
+        assertEquals(1, server.eventSubscriptions.get(), "one subscription for the whole batch");
+    }
+
+    @Test
+    @Timeout(10)
+    void aBatchedExecWhoseSubscriptionDropsAsksWaitInstead() throws Exception {
+        server.runMillis = 300;
+        server.exitCode = 6;
+        var api = api();
+        try (var batch = api.openProbeBatch()) {
+            // Dropped while the command runs: the exec has registered and waits on the event.
+            server.afterFdRegistered = () -> {
+                if (server.eventSubscriptions.get() > 0) server.dropEvents();
+            };
+            assertEquals(6, probe(api, new ByteArrayOutputStream()));
+        }
+        assertEquals(1, server.waits.get(), "the exec fell back to /wait once the subscription was gone");
+    }
+
+    @Test
+    @Timeout(10)
+    void aBatchWithoutOperationEventsWaitsAsBefore() throws Exception {
+        server.fault = LossyIncusServer.Fault.REJECT_UPGRADE;
+        var api = api();
+        try (var batch = api.openProbeBatch()) {
+            // Every upgrade is refused, so the exec fails; what matters is the batch opened without one.
+            assertThrows(IncusException.class, () -> probe(api, new ByteArrayOutputStream()));
+        }
+        assertEquals(0, server.eventSubscriptions.get());
+    }
+
+    @Test
+    @Timeout(10)
+    void anExecOpensItsSocketsAtOnce() {
+        // No upgrade is answered until all four handshakes have arrived: one after the other, the
+        // first would wait out the latch alone.
+        var arrived = new CountDownLatch(4);
+        var together = new AtomicBoolean(true);
+        server.beforeUpgrade = () -> {
+            arrived.countDown();
+            try {
+                if (!arrived.await(2, TimeUnit.SECONDS)) together.set(false);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        assertEquals(0, probe(api(), new ByteArrayOutputStream()));
+        assertTrue(together.get(), "the four handshakes must be in flight together");
+    }
+
+    @Test
+    @Timeout(10)
+    void aSocketRefusedAmongTheExecsClosesTheOthers() {
+        server.rejectsFd = "2";
+        var e = assertThrows(IncusException.class, () -> probe(api(), new ByteArrayOutputStream()));
+        assertTrue(e.getMessage().contains("WebSocket"), e.getMessage());
+        // The connections the others opened are closed: stop() checks the count is back to its baseline.
+    }
+
+    @Test
+    @Timeout(10)
+    void aDiscardedStderrIsNotWaitedForOnceStdoutIsDone() {
+        server.closesStderr = false; // its close frame never comes, as over a lossy tunnel
+        server.stdout = "out";
+        var clock = new CountingClock();
+        var out = new ByteArrayOutputStream();
+        assertEquals(0, probe(api(clock), out));
+        assertEquals("out", out.toString(StandardCharsets.UTF_8));
+        assertEquals(0, clock.sleeps, "the drain must not poll for a stderr nobody reads");
+    }
+
+    /** The system clock, counting the drain's polls. */
+    private static final class CountingClock implements IncusApi.DrainClock {
+        volatile int sleeps;
+
+        @Override public long nanoTime() { return System.nanoTime(); }
+
+        @Override
+        public void sleep(long millis) throws InterruptedException {
+            sleeps++;
+            Thread.sleep(millis);
+        }
+    }
+
     /** #2555: a full VM disk stops Incus, and the diagnosis says that and what brings it back. */
     @Test
     @Timeout(15)

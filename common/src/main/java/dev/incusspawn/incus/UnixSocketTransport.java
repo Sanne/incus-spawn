@@ -73,7 +73,8 @@ class UnixSocketTransport implements IncusTransport {
     // (GuestRoom), so 48 stays until it is derived from that room and measured on a Mac. On
     // Linux the socket is incusd's own and nothing sits between: the cap only stops a runaway
     // from taking the descriptors, and 256 leaves most of the 1024 a process's soft limit
-    // commonly allows. It gives 50 concurrent execs, so the overview reads 50 instances at once.
+    // commonly allows. It gives 62 concurrent execs (10 on macOS), so the overview reads 62
+    // instances at once.
     // A Linux isx reaches an appliance's socket only in the appliance tests, through
     // isx-vsock-bridge, which bounds its guest connections only when told to (--most).
     private static final int MAX_CONCURRENT_CONNECTIONS = dev.incusspawn.Platform.isMacOS() ? 48 : 256;
@@ -86,11 +87,21 @@ class UnixSocketTransport implements IncusTransport {
     // with their sockets, and a finished command's /wait then waits for one past the 5 s Incus
     // keeps a finished operation. So a bounded exec is admitted first, and only as many run at
     // once as fit beside the pool's idle connections, each with all of its connections.
-    /** The connections one exec holds at most: control, stdin, stdout and stderr, and its {@code /wait}. */
-    static final int EXEC_CONNECTIONS = 5;
+    //
+    // An exec opens its sockets at once and closes stdin as soon as it is connected (#2626), and its
+    // /wait comes after that, so it holds at most four at a time; within a probe batch the batch's
+    // one operation subscription replaces the /wait, which comes back only if that subscription is
+    // lost or the command was killed.
+    /**
+     * The connections one exec holds at most: control, stdout and stderr, and either stdin's
+     * handshake or its {@code /wait}.
+     */
+    static final int EXEC_CONNECTIONS = 4;
+    /** The connections that are no exec's: a probe batch's operation subscription. */
+    static final int BATCH_CONNECTIONS = 1;
     /** How many admitted execs one process runs at once, each with every connection it needs. */
     static final int CONCURRENT_EXECS =
-            (MAX_CONCURRENT_CONNECTIONS - ConnectionPool.MAX_IDLE) / EXEC_CONNECTIONS;
+            (MAX_CONCURRENT_CONNECTIONS - ConnectionPool.MAX_IDLE - BATCH_CONNECTIONS) / EXEC_CONNECTIONS;
 
     // How long this thread has waited for permits, in total: an exec reads it before and after,
     // so a lost operation says whether starvation lost it.
