@@ -52,14 +52,24 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
      * first line is sent too, for where the session ran ({@link #cwd}). With {@code strangeIsUnread},
      * a directory that holds files but no session this layout knows answers {@code unread}: the
      * agent may keep its sessions another way, so they are named as not read, never as none.
+     * With a {@code glob}, a shell pattern under {@code root} that ends in {@code name}, only the
+     * files it matches are looked at, not every directory {@code depth} levels down (#2627).
      */
     record Layout(String agent, String header, String root, int depth, String name, String notName,
                   List<String> askHas, List<String> askLacks, List<String> closeHas, boolean meta,
-                  boolean strangeIsUnread) {
+                  boolean strangeIsUnread, String glob) {
         Layout {
-            for (var s : concat(List.of(root, name), notName == null ? List.of() : List.of(notName), askHas, askLacks, closeHas)) {
+            for (var s : concat(List.of(root, name), notName == null ? List.of() : List.of(notName),
+                    glob == null ? List.of() : List.of(glob), askHas, askLacks, closeHas)) {
                 if (s.indexOf('\'') >= 0 || s.indexOf('\n') >= 0) throw new IllegalArgumentException("not quotable: " + s);
             }
+            if (glob != null && !glob.endsWith("/" + name)) throw new IllegalArgumentException("a glob ends in its name: " + glob);
+        }
+
+        Layout(String agent, String header, String root, int depth, String name, String notName,
+               List<String> askHas, List<String> askLacks, List<String> closeHas, boolean meta,
+               boolean strangeIsUnread) {
+            this(agent, header, root, depth, name, notName, askHas, askLacks, closeHas, meta, strangeIsUnread, null);
         }
 
         @SafeVarargs
@@ -90,6 +100,12 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
         var closes = new StringBuilder();
         for (var has : l.closeHas()) closes.append(" | grep -F '").append(has).append('\'');
         var notName = l.notName() == null ? "" : " ! -name '" + l.notName() + "'";
+        // A glob's paths start with ./, so find never takes one for an option; the name drops it
+        var list = l.glob() == null
+                ? "find \"$d\" -mindepth %d -maxdepth %d -name '%s'%s -type f -printf '%%T@ %%P\\n'"
+                        .formatted(l.depth(), l.depth(), l.name(), notName)
+                : "cd \"$d\" && set -- ./%s && if [ -e \"$1\" ] || [ -L \"$1\" ]; then find \"$@\" -maxdepth 0 -name '%s'%s -type f -printf '%%T@ %%p\\n'; fi"
+                        .formatted(l.glob(), l.name(), notName);
         // No session found where the directory holds files: the agent may keep them another way
         var unread = !l.strangeIsUnread() ? "" : """
                     [ -n "$l" ] || [ -z "$(find "$d" -type f -print -quit 2>/dev/null)" ] || echo unread
@@ -101,12 +117,12 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
                 echo '%s'
                 d=%s
                 if [ -d "$d" ]; then
-                  if l=$(find "$d" -mindepth %d -maxdepth %d -name '%s'%s -type f -printf '%%T@ %%P\\n' 2>/dev/null); then
+                  if l=$({ %s; } 2>/dev/null); then
                     echo "total $(printf '%%s' "$l" | grep -c '^')"
                 %s    printf '%%s\\n' "$l" | sort -rn | head -n %d | while IFS= read -r e; do
                       [ -n "$e" ] || continue
-                      f=$d/${e#* }
-                      echo "session ${e%%%% *} $(printf '%%s' "${e#* }" | base64 -w0)"
+                      n=${e#* }; n=${n#./}; f=$d/$n
+                      echo "session ${e%%%% *} $(printf '%%s' "$n" | base64 -w0)"
                 %s      head -n %d "$f" 2>/dev/null%s | head -n %d | cut -b1-%d \\
                         | while IFS= read -r x; do echo "ask $(printf '%%s' "$x" | base64 -w0)"; done
                       tac "$f" 2>/dev/null | head -n %d%s | head -n %d | cut -b1-%d \\
@@ -119,7 +135,7 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
                   echo 'total 0'
                 fi
                 echo end
-                """.formatted(l.header(), l.root(), l.depth(), l.depth(), l.name(), notName, unread, MAX_SESSIONS,
+                """.formatted(l.header(), l.root(), list, unread, MAX_SESSIONS,
                 meta, HEAD_LINES, asks, ASKS, ASK_BYTES, TAIL_LINES, closes, CLOSES, CLOSE_BYTES);
     }
 

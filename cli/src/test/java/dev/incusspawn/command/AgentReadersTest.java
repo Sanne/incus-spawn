@@ -236,6 +236,18 @@ class AgentReadersTest {
         assertEquals(DONE, session.closing());
         assertTrue(sessions.otherAgents().isEmpty(), "its one conversation was read");
 
+        // Its step artifacts are never walked (#2627): one the read could not open would fail the list
+        var steps = Files.createDirectories(agy.resolve("brain/" + id + "/.system_generated/steps"));
+        Files.writeString(Files.createDirectories(steps.resolve("1")).resolve("output.txt"), "a step");
+        Files.setPosixFilePermissions(steps, java.util.Set.of());
+        try {
+            var walked = AgentSessionsTest.run(home).sessions();
+            assertEquals(AgentSessions.State.READ, walked.state(), walked.why());
+            assertEquals(1, walked.total());
+        } finally {
+            Files.setPosixFilePermissions(steps, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        }
+
         Files.writeString(agy.resolve("conversations/94739f6c-d0df-4ecd-9113-4ec4a007e331.db"), "not a database");
         var some = AgentSessionsTest.run(home).sessions();
         assertEquals(1, some.total());
