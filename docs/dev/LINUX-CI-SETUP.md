@@ -43,7 +43,7 @@ The token never enters an instance: each job gets a just-in-time runner configur
    ```
 
    It downloads GraalVM and the Actions runner once into isx's download cache, clones the repository and primes `~/.m2` with a build.
-   isx gives every instance a proof for each of the server's accounts, whatever its tools.
+   isx gives every instance a proof for each of the server's accounts, whatever its tools, and a ChatGPT sign-in's look-alikes when the default `openai` account is one.
    Before the runner starts, the template's `drop-credentials.sh` removes them, and the runner does not start while one is left.
 3. Rebuild it now and then, weekly or after a dependency bump, so each job's checkout and Maven have little to fetch.
    Rebuild it after the runner's pin moves (`tools/github-actions-runner.yaml`), or each job downloads the new runner first.
@@ -77,6 +77,11 @@ While the runner waits for a job, this must list no `proof-tokens`, `credential-
 ```shell
 isx exec isx-ci-linux-1 -- sh -c 'ls /run/isx; git config --system --get-regexp "^credential\." ; echo end'
 ```
+
+Two things would undo that, so keep them away from the runner:
+
+- **`isx account reset-proofs` on a CI instance.** It writes the proofs back into the running instance, and the job could then use the server's accounts. If you suspect a runner's instance, destroy it (`isx destroy isx-ci-linux-1 --skip-confirmation`); the supervisor makes a fresh one.
+- **`exposed-host-ports:` in the server's `config.yaml`.** Every instance with network reaches a listed host port with no caller identity, a CI job's included. List none on the server.
 
 ## 4. Turn the heartbeat on
 
