@@ -102,6 +102,17 @@ class TuiOverviewTest {
             boolean showProxyError() {
                 return false;
             }
+
+            // The header lays out around the version: a snapshot holds still across builds
+            @Override
+            String displayVersion() {
+                return "1.2.3";
+            }
+
+            @Override
+            String currentVersion() {
+                return "1.2.3";
+            }
         };
         tui.eventLogReader = () -> EventLogReader.read(file);
         tui.overviewExecutor = reads::add;
@@ -279,6 +290,22 @@ class TuiOverviewTest {
 
         press(tui, KeyEvent.ofChar('p'));
         assertEquals(without, screen(tui), "p again hides it");
+    }
+
+    @Test
+    void theWorkTabsSnapshots() throws Exception {
+        height = 30;
+        var tui = tui(120);
+        workTab(tui);
+        readsFinish();
+        press(tui, KeyEvent.ofKey(KeyCode.DOWN));
+        TuiSnapshot.assertMatches("tui-tab-work-120x30", render(tui));
+        runner.close();
+        tui = tui(80);
+        workTab(tui);
+        readsFinish();
+        press(tui, KeyEvent.ofChar('p'));
+        TuiSnapshot.assertMatches("tui-tab-work-preview-below-80x30", render(tui));
     }
 
     @Test
