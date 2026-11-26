@@ -2,9 +2,9 @@
 # Record the isx.run homepage casts in a clean, disposable VM instead of on this machine (#2054).
 #
 # On this host: branches a VM from tpl-demo-recorder (.incus-spawn/images/demo-recorder.yaml, built
-# when missing or stale), copies site/demo and scripts/local-incus.sh into it, and runs this script
+# when missing or stale), copies site/demo, scripts/local-incus.sh and git's isx remote helper into it, and runs this script
 # there with --inside. The recorded casts are then copied back into site/demo/ and the VM destroyed.
-# In the VM (--inside): installs the pinned isx release from COPR, writes a fresh config.yaml whose
+# In the VM (--inside): installs the pinned isx release from COPR (or ISX_RECORD_BINARIES), writes a fresh config.yaml whose
 # claude and github accounts are 'inherit', brings Incus up with scripts/local-incus.sh, starts
 # the proxy, builds tpl-demo, seeds 'workbench', clones isx-demo and runs record-all.sh.
 #
@@ -17,6 +17,8 @@
 #   --keep  leave the VM running afterwards, to look inside (isx destroy it when done)
 # Environment:
 #   ISX_RECORD_VERSION  the isx release to record with (default 0.5.0)
+#   ISX_RECORD_BINARIES  a directory holding an isx and an isx-proxy to record with instead of a
+#                        release, such as a native build of this checkout (SCRIPT.md)
 #   ISX_RECORDER        the VM's name (default demo-recorder)
 #   ISX_RECORDER_MEMORY  its memory (default 8GB); ISX_RECORDER_DISK  its disk (default the template's)
 #
@@ -26,6 +28,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 VERSION=${ISX_RECORD_VERSION:-0.5.0}
+BINARIES=${ISX_RECORD_BINARIES:-}
 VM=${ISX_RECORDER:-demo-recorder}
 CASTS="hero branching realmachine creds tui"
 ROOT=$(cd "$HERE/../.." && pwd)
@@ -105,13 +108,25 @@ if $inside; then
   # Only ever in the fresh recording VM: on a real host this would replace its config.yaml.
   [ ! -e "$HOME/.config/incus-spawn/config.yaml" ] \
     || die "--inside is for the fresh recording VM, and $HOME/.config/incus-spawn/config.yaml already exists"
-  step "Installing isx $VERSION"
-  sudo dnf install -y -q "incus-spawn-$VERSION"
-  installed=$(isx --version | head -n 1)
-  case "$installed" in
-    "isx $VERSION "*) ;;
-    *) die "asked for isx $VERSION, but isx --version says: $installed" ;;
-  esac
+  if [ -n "$BINARIES" ]; then
+    step "Installing the isx in $BINARIES"
+    for b in isx isx-proxy; do [ -x "$BINARIES/$b" ] || die "$BINARIES/$b is missing or not executable"; done
+    # With the remote helper the release installs beside them, or the hero's 'git fetch fix-bug' fails.
+    sudo install -m 755 "$BINARIES/isx" "$BINARIES/isx-proxy" "$ROOT/common/src/main/resources/git-remote-isx" /usr/local/bin/
+    # Another isx earlier on PATH would record silently in its place.
+    installed=$(isx --version | head -n 1)
+    given=$("$BINARIES/isx" --version | head -n 1)
+    [ "$installed" = "$given" ] || die "installed $given, but the isx on PATH says: $installed"
+    echo "$installed"
+  else
+    step "Installing isx $VERSION"
+    sudo dnf install -y -q "incus-spawn-$VERSION"
+    installed=$(isx --version | head -n 1)
+    case "$installed" in
+      "isx $VERSION "*) ;;
+      *) die "asked for isx $VERSION, but isx --version says: $installed" ;;
+    esac
+  fi
 
   # Written before 'isx init' runs, which keeps what it finds: borrowed accounts, so no
   # credential is asked for or stored here, the host path the casts' git remotes are added in,
@@ -144,6 +159,9 @@ fi
 [ "$(uname -s)" = Linux ] || die "Linux only: the recording VM needs KVM, and on macOS isx's own Incus already runs in a VM"
 command -v isx >/dev/null || die "isx is not on PATH"
 command -v incus >/dev/null || die "the incus client is not on PATH"
+if [ -n "$BINARIES" ]; then
+  for b in isx isx-proxy; do [ -x "$BINARIES/$b" ] || die "ISX_RECORD_BINARIES: $BINARIES/$b is missing or not executable"; done
+fi
 # tpl-demo-recorder is a project-local template, so isx finds it from the checkout.
 cd "$ROOT"
 
@@ -180,11 +198,17 @@ in_vm() { incus exec "$VM" -- su - agentuser -c "$1"; }
 
 step "Copying the recording kit into '$VM'"
 tar -C "$ROOT" --exclude='*.take.cast' --exclude=__pycache__ --exclude=preview.html \
-    -cf - site/demo scripts/local-incus.sh \
+    -cf - site/demo scripts/local-incus.sh common/src/main/resources/git-remote-isx \
   | in_vm "rm -rf '$VM_KIT' && mkdir -p '$VM_KIT' && tar -xf - -C '$VM_KIT'"
+inside_env=(ISX_RECORD_VERSION="$VERSION")
+if [ -n "$BINARIES" ]; then
+  step "Copying the isx in $BINARIES into '$VM'"
+  tar -C "$BINARIES" -chf - isx isx-proxy | in_vm "mkdir -p '$VM_KIT/bin' && tar -xf - -C '$VM_KIT/bin'"
+  inside_env+=(ISX_RECORD_BINARIES="$VM_KIT/bin")
+fi
 
 recorded=true
-in_vm "$(printf '%q ' env ISX_RECORD_VERSION="$VERSION" bash "$VM_KIT/site/demo/record-in-vm.sh" --inside ${casts[@]+"${casts[@]}"})" \
+in_vm "$(printf '%q ' env "${inside_env[@]}" bash "$VM_KIT/site/demo/record-in-vm.sh" --inside ${casts[@]+"${casts[@]}"})" \
   || recorded=false
 
 # Whatever was recorded, a failed take's scratch file included: record-all.sh only replaces the

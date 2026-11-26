@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class DemoRecordingScriptsTest {
 
     private static final Path DEMO = Path.of("..", "site", "demo");
+    private static final String REMOTE_HELPER = "common/src/main/resources/git-remote-isx";
 
     @TempDir
     Path dir;
@@ -85,6 +86,8 @@ class DemoRecordingScriptsTest {
         Files.createDirectories(dir.resolve("kit/scripts"));
         for (var f : files) Files.copy(DEMO.resolve(f), demo.resolve(f));
         Files.writeString(dir.resolve("kit/scripts/local-incus.sh"), "");
+        Files.writeString(Files.createDirectories(dir.resolve("kit/" + REMOTE_HELPER).getParent())
+                .resolve("git-remote-isx"), "");
         return demo;
     }
 
@@ -235,6 +238,35 @@ class DemoRecordingScriptsTest {
         var pushed = new ProcessBuilder("tar", "-tf", dir.resolve("pushed.tar").toString()).start();
         var names = new String(pushed.getInputStream().readAllBytes());
         assertTrue(names.contains("site/demo/record-in-vm.sh"), names);
+        assertTrue(names.contains(REMOTE_HELPER), names);
+    }
+
+    @Test
+    void recordInVmCopiesTheBinariesItIsGivenAndRecordsWithThem() throws Exception {
+        var demo = hostKit(BUILT, 0);
+        var bin = Files.createDirectories(dir.resolve("build"));
+        for (var b : List.of("isx", "isx-proxy")) {
+            Files.writeString(bin.resolve(b), "#!/bin/sh\n");
+            Files.setPosixFilePermissions(bin.resolve(b), PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+        var run = run(Map.of("ISX_RECORD_BINARIES", bin.toString()), demo.resolve("record-in-vm.sh"), "hero");
+
+        assertEquals(0, run.exit(), run.err());
+        var vm = run.log().stream().filter(l -> l.startsWith("incus")).toList();
+        assertEquals(List.of("incus push", "incus push"), vm.subList(0, 2), "the kit, then the binaries");
+        assertTrue(vm.get(2).contains("ISX_RECORD_BINARIES=/home/agentuser/incus-spawn/bin"), vm.get(2));
+        var pushed = new ProcessBuilder("tar", "-tf", dir.resolve("pushed.tar").toString()).start();
+        assertEquals("isx\nisx-proxy\n", new String(pushed.getInputStream().readAllBytes()));
+    }
+
+    @Test
+    void recordInVmRefusesBinariesThatAreNotThere() throws Exception {
+        var demo = hostKit(BUILT, 0);
+        var run = run(Map.of("ISX_RECORD_BINARIES", dir.resolve("nowhere").toString()), demo.resolve("record-in-vm.sh"));
+
+        assertNotEquals(0, run.exit());
+        assertTrue(run.err().contains("nowhere/isx is missing"), run.err());
+        assertTrue(run.log().stream().noneMatch(l -> l.startsWith("isx branch")), "no VM is made for a run that cannot record");
     }
 
     @Test
@@ -302,6 +334,39 @@ class DemoRecordingScriptsTest {
         assertEquals(List.of("shell-status-bar"), config.getFeatures());
         assertTrue(run.log().get(2).startsWith("sg incus-admin -c ") && run.log().get(2).endsWith("--inside-ready creds "),
                 run.log().get(2));
+    }
+
+    @Test
+    void insideTheVmItInstallsTheBinariesItIsGivenInsteadOfARelease() throws Exception {
+        var demo = insideKit("0.6.0+82");
+        var bin = Files.createDirectories(dir.resolve("build"));
+        for (var b : List.of("isx", "isx-proxy")) {
+            Files.writeString(bin.resolve(b), "#!/bin/sh\necho 'isx 0.6.0+82 (0123abc)'\n");
+            Files.setPosixFilePermissions(bin.resolve(b), PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+        var run = run(Map.of("ISX_RECORD_BINARIES", bin.toString()), demo.resolve("record-in-vm.sh"), "--inside", "tui");
+
+        assertEquals(0, run.exit(), run.err());
+        assertEquals("sudo install -m 755 " + bin.resolve("isx") + " " + bin.resolve("isx-proxy") + " "
+                + demo.resolve("../../" + REMOTE_HELPER).normalize() + " /usr/local/bin/", run.log().get(0),
+                "with git's remote helper, which the hero's git fetch runs");
+        assertTrue(run.log().stream().noneMatch(l -> l.contains("dnf")), "no release is installed beside them");
+        assertEquals("local-incus", run.log().get(1));
+    }
+
+    @Test
+    void insideTheVmAnotherIsxEarlierOnPathThanTheGivenOneStopsTheRecording() throws Exception {
+        var demo = insideKit("0.5.0");
+        var bin = Files.createDirectories(dir.resolve("build"));
+        for (var b : List.of("isx", "isx-proxy")) {
+            Files.writeString(bin.resolve(b), "#!/bin/sh\necho 'isx 0.6.0+82 (0123abc)'\n");
+            Files.setPosixFilePermissions(bin.resolve(b), PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+        var run = run(Map.of("ISX_RECORD_BINARIES", bin.toString()), demo.resolve("record-in-vm.sh"), "--inside", "tui");
+
+        assertNotEquals(0, run.exit());
+        assertTrue(run.err().contains("the isx on PATH says: isx 0.5.0"), run.err());
+        assertTrue(run.log().stream().noneMatch(l -> l.equals("local-incus")), "nothing is recorded with the wrong isx");
     }
 
     @Test
