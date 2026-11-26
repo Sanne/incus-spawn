@@ -83,12 +83,17 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** Each pool's {@code space} as its {@code /resources} answers it, {used, total}; unset is a 404. */
     private final Map<String, long[]> poolSpace = new LinkedHashMap<>();
     private final java.util.Set<String> customVolumes = new java.util.LinkedHashSet<>();
+    private RawResponse volumeCreationRefusal;
     private RawResponse customVolumeFailure;
     private String subvolumeListing;
     private final java.util.Set<String> images = new java.util.LinkedHashSet<>();
     /** Local image aliases, and the image a remote alias was last fetched as. */
     private final Map<String, String> aliases = new LinkedHashMap<>();
     private final Map<String, String> fetched = new LinkedHashMap<>();
+    /** Each local image's properties, as {@code GET /1.0/images/<fingerprint>} shows them. */
+    private final Map<String, Map<String, String>> imageProperties = new LinkedHashMap<>();
+    /** What an operation's result carries in its {@code metadata}, by operation id: an import's fingerprint. */
+    private final Map<String, JqValue> operationResults = new LinkedHashMap<>();
     /** Images whose /sbin/init cannot run: an instance created from one fails to start. */
     private final java.util.Set<String> brokenInit = new java.util.LinkedHashSet<>();
     private final Map<String, String> lxcLogs = new LinkedHashMap<>();
@@ -194,13 +199,13 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
-    /** A local image under {@code alias}. */
     /** A fresh Incus, before {@code incus admin init}: no storage pool until {@link #pool} adds one. */
     public synchronized FakeIncusDaemon noStoragePool() {
         poolless = true;
         return this;
     }
 
+    /** A local image under {@code alias}. */
     public synchronized FakeIncusDaemon imageAlias(String alias, String fingerprint) {
         images.add(fingerprint);
         aliases.put(alias, fingerprint);
@@ -284,6 +289,12 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** Answer every read or delete of a custom volume with this error, as a busy or broken server does. */
     public synchronized FakeIncusDaemon customVolumesFail(int status, String error) {
         customVolumeFailure = error(status, error);
+        return this;
+    }
+
+    /** Refuse to create a custom volume, as a pool out of space or quota does. */
+    public synchronized FakeIncusDaemon refuseVolumeCreation(int status, String error) {
+        volumeCreationRefusal = error(status, error);
         return this;
     }
 
@@ -694,17 +705,40 @@ public final class FakeIncusDaemon implements IncusTransport {
     public synchronized RawResponse request(String method, String path, String contentType,
                                Map<String, String> extraHeaders, Path bodyFile) {
         requests.add(method + " " + path);
+        if (path.equals("/1.0/images") && method.equals("POST")) return importImage(bodyFile);
         var name = instanceName(path);
         if (name == null || !instances.containsKey(name) || !path.contains("/files?")) return notFound();
         var file = java.net.URLDecoder.decode(path.substring(path.indexOf("path=") + 5),
                 java.nio.charset.StandardCharsets.UTF_8);
         try {
             pushed.put(name + file, new Pushed(extraHeaders.getOrDefault("X-Incus-mode", ""),
-                    java.nio.file.Files.readString(bodyFile)));
+                    // A binary, such as a tool's, is kept as text too: what a test reads is a script's
+                    new String(java.nio.file.Files.readAllBytes(bodyFile), java.nio.charset.StandardCharsets.UTF_8)));
         } catch (IOException e) {
             throw new java.io.UncheckedIOException(e);
         }
         return sync(JqObject.EMPTY);
+    }
+
+    /**
+     * Import a one-tarball image, as Incus does: its fingerprint is the tarball's SHA-256, and the
+     * operation's result names it. Incus refuses a second import of the same file.
+     */
+    private RawResponse importImage(Path tarball) {
+        String fingerprint;
+        try (var in = java.nio.file.Files.newInputStream(tarball)) {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            in.transferTo(new java.security.DigestOutputStream(java.io.OutputStream.nullOutputStream(), digest));
+            fingerprint = java.util.HexFormat.of().formatHex(digest.digest());
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+        if (!images.add(fingerprint)) return error(409, "Image with same fingerprint already exists");
+        var id = "op-" + nextOperation++;
+        operationResults.put(id, JqObject.of("fingerprint", fingerprint));
+        return async(id, null);
     }
 
     @Override
@@ -844,6 +878,10 @@ public final class FakeIncusDaemon implements IncusTransport {
         if (path.startsWith("/1.0/operations/") && method.equals("GET")) {
             var status = operationStatuses.poll();
             var id = path.substring("/1.0/operations/".length()).split("[/?]", 2)[0];
+            var result = operationResults.get(id);
+            if (result != null) {
+                return sync(JqObject.ofEntries("status", status != null ? status : "Success", "metadata", result));
+            }
             var exit = execReturns.get(id);
             if (exit != null) {
                 return sync(JqObject.ofEntries("status", status != null ? status : "Success",
@@ -866,6 +904,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             return customVolumes.remove(key) ? sync(JqObject.EMPTY) : notFound();
         }
         if (path.startsWith("/1.0/storage-pools/") && path.endsWith("/volumes") && method.equals("POST")) {
+            if (volumeCreationRefusal != null) return volumeCreationRefusal;
             var pool = path.substring("/1.0/storage-pools/".length(), path.length() - "/volumes".length());
             customVolumes.add(pool + "/" + parse(body).path("name").asText(""));
             return sync(JqObject.EMPTY);
@@ -904,7 +943,38 @@ public final class FakeIncusDaemon implements IncusTransport {
         if (path.startsWith("/1.0/images/") && !path.startsWith("/1.0/images/aliases") && method.equals("DELETE")) {
             var fingerprint = path.substring("/1.0/images/".length());
             aliases.values().removeIf(fingerprint::equals);
+            imageProperties.remove(fingerprint);
             return images.remove(fingerprint) ? async() : notFound();
+        }
+        if (path.startsWith("/1.0/images/aliases/")) {
+            var alias = path.substring("/1.0/images/aliases/".length());
+            if (method.equals("GET")) {
+                var target = aliases.get(alias);
+                return target == null ? notFound() : sync(JqObject.ofEntries("name", alias, "target", target));
+            }
+            if (method.equals("DELETE")) return aliases.remove(alias) == null ? notFound() : sync(JqObject.EMPTY);
+        }
+        if (path.equals("/1.0/images/aliases") && method.equals("POST")) {
+            var request = parse(body);
+            var target = request.path("target").asText("");
+            if (!images.contains(target)) return notFound();
+            // Incus refuses an alias that already exists
+            if (aliases.putIfAbsent(request.path("name").asText(""), target) != null) return error(409, "Alias already exists");
+            return sync(JqObject.EMPTY);
+        }
+        if (path.startsWith("/1.0/images/") && !path.substring("/1.0/images/".length()).contains("/")) {
+            var fingerprint = path.substring("/1.0/images/".length());
+            if (!images.contains(fingerprint)) return notFound();
+            if (method.equals("GET")) {
+                var names = aliases.entrySet().stream().filter(e -> e.getValue().equals(fingerprint))
+                        .<JqValue>map(e -> JqObject.of("name", e.getKey())).toList();
+                return sync(JqObject.ofEntries("fingerprint", fingerprint, "type", "container",
+                        "aliases", JqArray.of(names), "properties", tree(imageProperties.getOrDefault(fingerprint, Map.of()))));
+            }
+            if (method.equals("PATCH") || method.equals("PUT")) {
+                imageProperties.put(fingerprint, new LinkedHashMap<>(strings(parse(body).path("properties"))));
+                return sync(JqObject.EMPTY);
+            }
         }
         if (path.startsWith("/1.0/profiles/") && method.equals("GET")) {
             var profile = profiles.get(path.substring("/1.0/profiles/".length()));

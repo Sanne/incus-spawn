@@ -244,11 +244,26 @@ public class BuildCommand extends BaseCommand {
         BuildOutput.success(name + " built");
     }
 
+    /** The Incus a build talks to; a test's build answers its own. */
+    IncusClient incusClient() {
+        return RuntimeServices.incus();
+    }
+
+    /** Exits unless the proxy answers, since the bridge's DNS sends the build's traffic to it; a test's build has none. */
+    void requireProxy() {
+        ProxyHealthCheck.requireProxy(incus);
+    }
+
+    /** Whether isx is set up to build, running {@code isx init} first when it is not; a test's build is. */
+    boolean requireInit() {
+        return InitCommand.requireInit();
+    }
+
     @Override
     protected CommandResult doExecute() throws Exception {
-        this.incus = RuntimeServices.incus();
+        this.incus = incusClient();
         this.toolDefLoader = RuntimeServices.toolDefLoader();
-        if (!InitCommand.requireInit()) return CommandResult.valueOf(1);
+        if (!requireInit()) return CommandResult.valueOf(1);
         buildTotal = 1;
         buildIndex = 1;
 
@@ -761,9 +776,7 @@ public class BuildCommand extends BaseCommand {
     private void build(List<ImageDef> targets, Map<String, ImageDef> defs) {
         if (targets.isEmpty()) return;
         var dnsOverrides = ProxyConfig.getDnsOverrides(incus);
-        if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
-            ProxyHealthCheck.requireProxy(incus);
-        }
+        if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) requireProxy();
 
         if (targets.size() == 1) {
             buildChain(targets.getFirst(), defs);
