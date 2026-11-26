@@ -48,6 +48,18 @@ final class Lines {
         return lines;
     }
 
+    /**
+     * Warns at the width of the frame, so a long message or detail never overflows it: under a
+     * step header, and in a build's block, whose warnings sit at the same indent.
+     */
+    static void warnWrapped(String first, String... more) {
+        var lines = new ArrayList<>(wrap(dev.incusspawn.util.OutputFormat.oneLine(first), WIDTH - 2));
+        for (var detail : more) lines.addAll(wrap(detail, WIDTH - 2));
+        if (!lines.isEmpty()) {
+            dev.incusspawn.util.BuildOutput.warn(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
+        }
+    }
+
     /** Each line of {@code text} as a step of the bound output. */
     static void step(String text) {
         for (var line : wrap(text)) dev.incusspawn.util.BuildOutput.step(line);

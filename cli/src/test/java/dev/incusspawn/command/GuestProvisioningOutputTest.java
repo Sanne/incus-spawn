@@ -64,6 +64,6 @@ class GuestProvisioningOutputTest {
             GuestProvisioning.warnDnfCacheUnavailable(null);
         });
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
-                "Could not mount the DNF cache (builds will be slower): no pool")), recorded.events());
+                "Could not mount the DNF cache, so builds are slower.", List.of("no pool"))), recorded.events());
     }
 }

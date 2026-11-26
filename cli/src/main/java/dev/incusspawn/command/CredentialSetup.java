@@ -462,7 +462,7 @@ class CredentialSetup {
                 });
             } catch (Exception e) {
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-                warnWrapped(Thread.currentThread().isInterrupted() ? "The ChatGPT sign-in was interrupted."
+                Lines.warnWrapped(Thread.currentThread().isInterrupted() ? "The ChatGPT sign-in was interrupted."
                         : "The ChatGPT sign-in did not finish: " + reason(e));
             }
             if (tokens != null) {
@@ -509,12 +509,12 @@ class CredentialSetup {
                 } catch (InterruptedException e) {
                     // An interrupt ends the step: it is never answered with a new code
                     Thread.currentThread().interrupt();
-                    warnWrapped("The ChatGPT sign-in was interrupted.");
+                    Lines.warnWrapped("The ChatGPT sign-in was interrupted.");
                 } catch (Exception e) {
-                    warnWrapped("The ChatGPT sign-in did not finish: " + reason(e));
+                    Lines.warnWrapped("The ChatGPT sign-in did not finish: " + reason(e));
                 }
             } catch (Exception e) {
-                warnWrapped("isx could not reach OpenAI's sign-in server: " + reason(e));
+                Lines.warnWrapped("isx could not reach OpenAI's sign-in server: " + reason(e));
             }
             if (tokens != null) {
                 saveChatGptSession(config, target, tokens);
@@ -1328,15 +1328,6 @@ class CredentialSetup {
         return Optional.empty();
     }
 
-    /** Warns at the width of init's frame, so a long message or detail never overflows it. */
-    private static void warnWrapped(String first, String... more) {
-        var lines = new ArrayList<>(Lines.wrap(OutputFormat.oneLine(first), Lines.WIDTH - 2));
-        for (var detail : more) lines.addAll(Lines.wrap(detail, Lines.WIDTH - 2));
-        if (!lines.isEmpty()) {
-            BuildOutput.warn(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
-        }
-    }
-
     /**
      * Warns of a token's shape before it is checked, at the width of the frame. Its length only
      * when it was {@code pasted}: a token read from the environment was never pasted, so a short
@@ -1346,7 +1337,7 @@ class CredentialSetup {
     private static void warnOfShape(String token, boolean pasted) {
         var shape = oauthTokenShapeWarning(token);
         if (!pasted && token != null && token.startsWith(SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX)) shape = Optional.empty();
-        shape.ifPresent(CredentialSetup::warnWrapped);
+        shape.ifPresent(Lines::warnWrapped);
     }
 
     private static final Pattern WHITESPACE_RUN = Pattern.compile("\\s+");
@@ -1490,7 +1481,7 @@ class CredentialSetup {
 
     AuthResult verifyAnthropicApiKey(String key) {
         if (!key.startsWith("sk-ant-")) {
-            warnWrapped("The key does not start with 'sk-ant-', as Anthropic's keys do.");
+            Lines.warnWrapped("The key does not start with 'sk-ant-', as Anthropic's keys do.");
         }
         return verifyAnthropicCredential("x-api-key", key, "API key");
     }
@@ -1909,11 +1900,11 @@ class CredentialSetup {
      */
     static void warnIfCopilotCannotUse(String token) {
         if (token.startsWith("ghp_")) {
-            warnWrapped("Copilot CLI does not take this gh login's token: it is a classic token.",
+            Lines.warnWrapped("Copilot CLI does not take this gh login's token: it is a classic token.",
                     "Replace it with 'isx account add github': with gh's token once gh signs in through the browser"
                             + " ('gh auth login --web'), or with a fine-grained token that has the 'Copilot Requests' permission.");
         } else if (token.startsWith("github_pat_")) {
-            warnWrapped("Copilot CLI runs on this gh login's token only if it has the 'Copilot Requests' permission.",
+            Lines.warnWrapped("Copilot CLI runs on this gh login's token only if it has the 'Copilot Requests' permission.",
                     "Add it to the token on GitHub, under Permissions.");
         }
     }
@@ -1925,7 +1916,7 @@ class CredentialSetup {
      */
     static void warnIfCopilotCannotUsePasted(String token) {
         if (token.startsWith("ghp_")) {
-            warnWrapped("Copilot CLI does not take this token: it is a classic token.",
+            Lines.warnWrapped("Copilot CLI does not take this token: it is a classic token.",
                     "Give the agent a fine-grained token with the 'Copilot Requests' permission ('isx account add github').");
         }
     }
@@ -2789,7 +2780,7 @@ class CredentialSetup {
      * the flow rather than the seam, which tests replace, so the warning stays testable.
      */
     private GitHubVerifyResult verifyPastedGitHubToken(String token, Prompts prompts, Predicate<String> keepLogin) {
-        githubTokenShapeWarning(token).ifPresent(CredentialSetup::warnWrapped);
+        githubTokenShapeWarning(token).ifPresent(Lines::warnWrapped);
         return verifyGitHubToken(token, prompts, keepLogin);
     }
 
