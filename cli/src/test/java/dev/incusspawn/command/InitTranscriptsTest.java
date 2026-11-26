@@ -525,6 +525,8 @@ class InitTranscriptsTest {
         // Named on its own, since the build inside init does not warn of it, and the agent is not offered before it
         assertTrue(text.contains("Add a GitHub account:"), text);
         assertTrue(text.contains("isx account add github"), text);
+        // Given once, in its step: the identity paragraph does not repeat it
+        assertTrue(text.contains("name: a GitHub account gives it one."), text);
         assertFalse(text.contains("Setup complete"), text);
         assertFalse(text.contains("now? (Y/n)"), text);
     }

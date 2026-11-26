@@ -313,6 +313,25 @@ class CredentialPromptsTest {
         assertEquals("sk-handwritten", saved("openai.token"));
     }
 
+    /**
+     * A local sign-in's step names a hand-written key too, once, even when its 'o' opens the full
+     * menu, which warns of the same keys (#1733, #2528).
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"s", "o"})
+    void aLocalSignInStepNamesAHandWrittenKeyOnce(String choice) throws Exception {
+        var config = seed("openai:\n   token: sk-handwritten\n");
+        // 's' skips without the full menu; 'o' opens it, and "None for now" leaves it
+        var prompts = choice.equals("s") ? new ScriptedPrompts().line("s") : new ScriptedPrompts().line("o", "4");
+        var recorded = RecordingOutput.during(() -> new Checked().setupCodexLocalApiKey(config, prompts));
+        prompts.assertFullyConsumed();
+
+        var warnings = recorded.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warnings.size(), recorded.lines().toString());
+        assertTrue(warnings.getFirst().msg().startsWith("config.yaml has openai.token, which isx does not read"), warnings.toString());
+        assertEquals("sk-handwritten", saved("openai.token"));
+    }
+
     /** A configured tool opens on the account menu, whose Enter leaves everything as it is. */
     @Test
     void enterOnReRunLeavesEverythingAsItIs() throws Exception {

@@ -361,6 +361,7 @@ class CredentialSetup {
      * full account-kind menu.
      */
     void setupCodexLocalChatGpt(SpawnConfig config, Prompts prompts) {
+        warnUnreadKeys(config, "openai");
         if (hasAccountsToPreserve(config, "openai")) {
             setupCodexAuth(config, prompts);
             return;
@@ -401,6 +402,7 @@ class CredentialSetup {
 
     /** The first run's OpenAI step when Codex CLI on this computer is signed in with an API key. */
     void setupCodexLocalApiKey(SpawnConfig config, Prompts prompts) {
+        warnUnreadKeys(config, "openai");
         if (hasAccountsToPreserve(config, "openai")) {
             setupCodexAuth(config, prompts);
             return;
@@ -2497,14 +2499,20 @@ class CredentialSetup {
         }
     }
 
+    /** The namespaces whose unread keys {@link #warnUnreadKeys} has named in this run, so it names them once. */
+    private final java.util.Set<String> unreadKeysWarned = new java.util.HashSet<>();
+
     /**
      * Name the keys in {@code namespace} that isx does not read before asking for its credential,
      * so a hand-written {@code openai.token} is not taken for one this step skipped (#1733). They
      * are the user's: this step does not move them to the key isx reads.
      */
     void warnUnreadKeys(SpawnConfig config, String namespace) {
+        // Once per namespace: a local sign-in's step warns before it hands over to the full menu, which would warn again
+        if (unreadKeysWarned.contains(namespace)) return;
         var note = dev.incusspawn.config.UnreadConfigKeys.note(config.tree(), namespace, toolsOf(config));
         if (note.isEmpty()) return;
+        unreadKeysWarned.add(namespace);
         BuildOutput.warn(note, "isx does not use them: rename or remove them in config.yaml.");
     }
 
@@ -3305,6 +3313,7 @@ class CredentialSetup {
     void setupAntigravityLocalGoogle(SpawnConfig config, Prompts prompts) {
         var tool = toolsOf(config).get("gemini-cli");
         if (tool == null) return;
+        warnUnreadKeys(config, "gemini");
         if (hasAccountsToPreserve(config, "gemini")) {
             setupGenericToolCredentials("gemini-cli", tool, config, prompts);
             return;

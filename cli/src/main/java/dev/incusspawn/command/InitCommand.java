@@ -1392,8 +1392,9 @@ public class InitCommand extends BaseCommand {
 
     /** The command that adds the account the chosen agent still lacks, or null when it has one. */
     List<String> agentAccountCommands = List.of();
-    /** The GitHub account a kept tpl-agent lists and none was given for, when it is not the agent's own. */
-    String gitHubAccountCommand;
+    /** The accounts the first template's other tools lack, GitHub's when it is not the agent's own (#2528). */
+    List<String> otherAccountCommands = List.of();
+    private static final String ACCOUNT_ADD = "isx account add ";
 
     private final List<BackgroundDownloads> downloadsAhead = new ArrayList<>();
 
@@ -1734,10 +1735,11 @@ public class InitCommand extends BaseCommand {
             var gaps = chosenAgent == null ? Map.<CredentialCheck.Missing, List<String>>of() : agentGaps();
             if (gaps.isEmpty()) {
                 if (chosenAgent != null && agentQuestionAsked && chosenAgent.credentialNamespaces(agentParams).isEmpty()) {
-                    // A local or custom-proxied provider: warn against pasting keys inside the machine
+                    // A local provider or another gateway: warn against pasting keys inside the machine
                     var provider = OutputFormat.oneLine(agentParams.getOrDefault("provider", "that provider"));
+                    // In plain words: the first run has not introduced the proxy (#2528)
                     Lines.step("If " + provider + " uses an API key, keep it on " + dev.incusspawn.Platform.thisComputer()
-                            + " with a custom tool proxy rule:");
+                            + ". A custom isx tool can add it to each request from there:");
                     BuildOutput.step(TerminalLink.link("https://isx.run/docs/tools#proxy-credentials"));
                     recap.add(new Answered("Its account", "not managed here", true));
                 } else if (chosenAgent != null) {
@@ -2279,6 +2281,13 @@ public class InitCommand extends BaseCommand {
 
     /** Whether {@link #probeAgents} found {@code agent} signed in on this computer with {@code kind}. */
     boolean localAgentSignIn(String agent, HostAgentProbe.Kind kind) {
+        // A key in the environment is not a sign-in of the agent's: its step would say so falsely
+        return probed().stream().anyMatch(a -> a.agent().equals(agent) && a.signedIn() && a.kind() == kind
+                && (a.foundIn() == null || !a.foundIn().startsWith("$")));
+    }
+
+    /** Whether {@link #probeAgents} found {@code agent} signed in with {@code kind}, its environment included. */
+    private boolean agentSignedIn(String agent, HostAgentProbe.Kind kind) {
         return probed().stream().anyMatch(a -> a.agent().equals(agent) && a.signedIn() && a.kind() == kind);
     }
 
@@ -2289,7 +2298,7 @@ public class InitCommand extends BaseCommand {
         // The agent the build installs decides the Copilot guidance, not the one chosen
         var agent = templateAgent();
         credentials.forCopilot = isCopilot(agent);
-        credentials.copilotSignedInHere = credentials.forCopilot && localAgentSignIn("copilot", HostAgentProbe.Kind.SUBSCRIPTION);
+        credentials.copilotSignedInHere = credentials.forCopilot && agentSignedIn("copilot", HostAgentProbe.Kind.SUBSCRIPTION);
         try {
             return prompts != null && credentials.offerGitHubForAgent(firstRunConfig(), prompts, ghLogin());
         } finally {
@@ -2371,8 +2380,20 @@ public class InitCommand extends BaseCommand {
         // Every account the template lacks, not only the one skipped: the build inside init does not warn of them (#2528)
         if (chosenAgent != null) {
             try {
-                agentAccountCommands = agentGaps().keySet().stream().map(CredentialCheck.Missing::command).distinct().toList();
-                gitHubAccountCommand = gitHubGapCommand();
+                // The agent's own accounts apart from those another tool of a kept tpl-agent needs, GitHub's included
+                var namespaces = chosenAgent.credentialNamespaces(agentParams);
+                var own = new ArrayList<String>();
+                var other = new ArrayList<String>();
+                for (var gap : agentGaps().keySet()) {
+                    var command = gap.command();
+                    // A remedy that is not an account step (isx init) stays with the agent's
+                    var list = !command.startsWith(ACCOUNT_ADD) || namespaces.contains(command.substring(ACCOUNT_ADD.length())) ? own : other;
+                    if (!list.contains(command)) list.add(command);
+                }
+                var gitHub = gitHubGapCommand();
+                if (gitHub != null && !other.contains(gitHub)) other.add(gitHub);
+                agentAccountCommands = List.copyOf(own);
+                otherAccountCommands = List.copyOf(other);
             } catch (RuntimeException e) {
                 // Only advice, as the build's own check is: the branch reports a missing account itself
                 ClientLog.warn("Missing-credential check skipped: " + e);
@@ -2413,7 +2434,7 @@ public class InitCommand extends BaseCommand {
         // The name the offer branches, so the command printed is the one that works
         var instance = firstInstanceName();
         var message = firstRunNextSteps(new Closing(services, template, built || shownBuilt, buildFailed,
-                agent == null ? null : ExampleTemplate.title(agent), agentAccountCommands, gitHubAccountCommand,
+                agent == null ? null : ExampleTemplate.title(agent), agentAccountCommands, otherAccountCommands,
                 agent == null ? List.of() : agent.firstStartNote(SpawnConfig.load()),
                 answers.noIdentity(), instance, !all));
         var lines = new ArrayList<>(message.box());
@@ -2431,7 +2452,7 @@ public class InitCommand extends BaseCommand {
         if (continued) lines.addAll(GROUP_PENDING);
         printClosing(message.title(), lines, message.later());
         var prompts = prompts();
-        if (built && chosenAgent != null && agentAccountCommands.isEmpty() && gitHubAccountCommand == null && !automatic && prompts != null
+        if (built && chosenAgent != null && agentAccountCommands.isEmpty() && otherAccountCommands.isEmpty() && !automatic && prompts != null
                 && askYesNo(prompts, "Run 'isx branch " + instance + " --from " + template + "' now?", true)) {
             return CommandResult.valueOf(openAgent(template, instance));
         }
@@ -2539,7 +2560,7 @@ public class InitCommand extends BaseCommand {
 
     /** What a first run's closing message is told of the run. */
     record Closing(Services services, String template, boolean built, boolean buildFailed, String agent,
-                   List<String> accountCommands, String gitHubCommand, List<String> firstStart, boolean noIdentity, String instance, boolean listLater) {}
+                   List<String> accountCommands, List<String> otherCommands, List<String> firstStart, boolean noIdentity, String instance, boolean listLater) {}
 
     /** The closing message: the box's title and lines, then the lines under it, for later. */
     record ClosingMessage(String title, List<String> box, List<String> later) {}
@@ -2570,7 +2591,13 @@ public class InitCommand extends BaseCommand {
             add.addAll(c.accountCommands());
             steps.add(add);
         }
-        if (c.gitHubCommand() != null) steps.add(List.of("Add a GitHub account:", c.gitHubCommand()));
+        var gitHubStep = c.otherCommands().equals(List.of(ACCOUNT_ADD + "github"));
+        if (!c.otherCommands().isEmpty()) {
+            var add = new ArrayList<>(List.of(gitHubStep ? "Add a GitHub account:"
+                    : "Add the " + (c.otherCommands().size() == 1 ? "account " : "accounts ") + c.template() + "'s other tools need:"));
+            add.addAll(c.otherCommands());
+            steps.add(add);
+        }
         var open = new ArrayList<>(List.of(plain ? "Open a new isx machine:" : "Open " + c.agent() + " in a new isx machine:",
                 "isx branch " + c.instance() + " --from " + c.template()));
         open.addAll(c.firstStart());
@@ -2602,7 +2629,9 @@ public class InitCommand extends BaseCommand {
         if (c.noIdentity()) {
             box.add("");
             box.add("   Git in isx machines refuses to commit until it has a");
-            box.add("   name: 'isx account add github' gives it one.");
+            // A step above already gives the command
+            box.add(c.otherCommands().contains(ACCOUNT_ADD + "github") || c.accountCommands().contains(ACCOUNT_ADD + "github") ? "   name: a GitHub account gives it one."
+                    : "   name: 'isx account add github' gives it one.");
         }
 
         var later = new ArrayList<String>();
