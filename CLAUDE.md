@@ -79,7 +79,7 @@ Every AI model ID isx sends or suggests is declared in `common/src/main/resource
 The mechanics and the threat model are in design/upstream.md, the CI jobs in `.claude/rules/ci.md`, and what Sanne sets up by hand in [docs/dev/UPSTREAM-SETUP.md](docs/dev/UPSTREAM-SETUP.md).
 
 **The project's Mac Mini runs the macOS jobs of trusted code** (#2298).
-`mac-route` sends `unit-tests-macos` and `launcher-macos` to it for this repository's own events and for PRs from this repository or the bot's fork (`.github/mac-runner/trusted-heads`), while `mac-heartbeat.yml` shows it up and free; everything else runs on `macos-15`.
+`mac-route` sends `unit-tests-macos` and `launcher-macos` to it for this repository's own events and for PRs from this repository or the bot's fork (`.github/self-hosted/trusted-heads`), while `mac-heartbeat.yml` shows it up and free; everything else runs on `macos-15`.
 The Mini's job-started hook, not the route, keeps other code off it, since a PR's workflow names its own `runs-on`.
 It is shared with the agent runner through one lock: a job the agent holds it against gives itself up to its `-fallback` twin on `macos-15`.
 It is not thrown away after a job: `~/.m2`, the Swift and Xcode caches and the hook's turn files stay there between jobs.

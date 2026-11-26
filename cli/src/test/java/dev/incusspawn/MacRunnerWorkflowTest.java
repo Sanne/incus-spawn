@@ -56,22 +56,22 @@ class MacRunnerWorkflowTest {
                 + String.join("\n", offenders));
     }
 
-    /** A workflow with a job that can hold the Mini must be one mac-route.sh lists runs of when it asks if the Mini is free. */
+    /** A workflow with a job that can hold the Mini must be one runner-route.sh lists runs of when it asks if the Mini is free. */
     @Test
     void macRouteListsExactlyTheWorkflowsWithAJobForTheMini() throws IOException {
         var users = new java.util.TreeSet<String>();
         for (var file : workflows()) {
             for (var job : jobs(file).values()) {
                 var runsOn = runsOn(job);
-                if (runsOn.contains("self-hosted") || runsOn.contains("isx-mac") || runsOn.contains("mac-route")) {
+                if (runsOn.contains("isx-mac") || runsOn.contains("mac-route")) {
                     users.add(file.getFileName().toString());
                 }
             }
         }
-        var m = Pattern.compile("(?m)^MINI_WORKFLOWS=\"([^\"]*)\"").matcher(Files.readString(Path.of("../.github/scripts/mac-route.sh")));
-        assertTrue(m.find(), "mac-route.sh declares MINI_WORKFLOWS");
+        var m = Pattern.compile("(?m)^\\s*MAC_WORKFLOWS=\"([^\"]*)\"").matcher(Files.readString(Path.of("../.github/scripts/runner-route.sh")));
+        assertTrue(m.find(), "runner-route.sh declares MAC_WORKFLOWS");
         assertEquals(users, new java.util.TreeSet<>(List.of(m.group(1).split(" "))),
-                "mac-route.sh lists runs of exactly the workflows with a job that can run on the Mini");
+                "runner-route.sh lists runs of exactly the workflows with a job that can run on the Mini");
     }
 
     @Test
@@ -96,9 +96,9 @@ class MacRunnerWorkflowTest {
         assertTrue(String.join("\n", job).contains("vars.MAC_RUNNER_ENABLED == 'true'"),
                 "the repository variable is the Mac runner's off switch");
         assertTrue(Files.readString(file).contains("'Mac runner heartbeat'"),
-                "mac-route.sh counts runs by this title");
-        assertTrue(Files.readString(Path.of("../.github/scripts/mac-route.sh"))
-                .contains("select(.display_title == \"Mac runner heartbeat\")"));
+                "runner-route.sh counts runs by this title");
+        assertTrue(Files.readString(Path.of("../.github/scripts/runner-route.sh"))
+                .contains("HEARTBEAT_TITLE=\"Mac runner heartbeat\""));
     }
 
     @Test
@@ -151,14 +151,14 @@ class MacRunnerWorkflowTest {
         assertTrue(offenders.isEmpty(), String.join("\n", offenders));
     }
 
-    private static List<Path> workflows() throws IOException {
+    static List<Path> workflows() throws IOException {
         try (var files = Files.list(WORKFLOWS)) {
             return files.filter(f -> f.toString().endsWith(".yml")).sorted().toList();
         }
     }
 
     /** Each job's lines, without the comments and blank lines that introduce the next one. */
-    private static Map<String, List<String>> jobs(Path file) throws IOException {
+    static Map<String, List<String>> jobs(Path file) throws IOException {
         var lines = Files.readAllLines(file);
         var jobs = new LinkedHashMap<String, List<String>>();
         int start = lines.indexOf("jobs:");
@@ -189,7 +189,7 @@ class MacRunnerWorkflowTest {
     }
 
     /** The job's runs-on, with the items of a block list joined to it, so a list cannot hide a label. */
-    private static String runsOn(List<String> job) {
+    static String runsOn(List<String> job) {
         int at = -1;
         for (int i = 0; i < job.size(); i++) {
             if (job.get(i).startsWith("    runs-on:")) {
@@ -207,7 +207,7 @@ class MacRunnerWorkflowTest {
         return runsOn.toString();
     }
 
-    private static List<String> steps(List<String> job) {
+    static List<String> steps(List<String> job) {
         return job.subList(job.indexOf("    steps:"), job.size());
     }
 }

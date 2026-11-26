@@ -75,7 +75,7 @@ jobs:
           retention-days: 1
 
   # Where the macOS jobs run: the project's Mac Mini for trusted code while it is up and free,
-  # else GitHub's macos-15 (#2298, .github/scripts/mac-route.sh). The Mini's own hook, not this
+  # else GitHub's macos-15 (#2298, .github/scripts/runner-route.sh). The Mini's own hook, not this
   # job, keeps untrusted code off it, since a pull request's copy of this workflow decides its runs-on.
   mac-route:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
@@ -99,7 +99,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           ACTOR: ${{ github.event.pull_request.user.login || github.actor }}
-        run: .github/scripts/mac-route.sh
+        run: .github/scripts/runner-route.sh mac
 
   # Unit tests on a macOS host, arm64 only (#970, #974; see .claude/rules/ci.md). macos-15 is a
   # standard label, free on a public repository; -xlarge is billed and would only buy speed. Not in

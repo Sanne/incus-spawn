@@ -33,12 +33,12 @@ Key jobs:
 
 - **`unit-tests`**: `mvn package` (no Incus required), with zsh and sqlite3 installed so `ZshCompletionTest` and `AgentReadersTest`'s opencode read run rather than skip
 - **`mac-route`**: picks where the two macOS jobs run, the project's Mac Mini or `macos-15` (#2298, design/testing.md "The Mac Mini runs the trusted macOS jobs").
-  `.github/scripts/mac-route.sh` picks the Mini only for trusted code (a push, schedule or dispatch, or a pull request whose head is in `.github/mac-runner/trusted-heads`, not opened by Dependabot) while `mac-heartbeat.yml` shows the Mini up and no job of another run is queued for it or running on it (listing only the runs of `MINI_WORKFLOWS`, the workflows with a job for the Mini), both read through the public API with the run's read-only token.
+  `.github/scripts/runner-route.sh mac` picks the Mini only for trusted code (a push, schedule or dispatch, or a pull request whose head is in `.github/self-hosted/trusted-heads`, not opened by Dependabot) while `mac-heartbeat.yml` shows the Mini up and no job of another run is queued for it or running on it (listing only the runs of `MAC_WORKFLOWS`, the workflows with a job for the Mini), both read through the public API with the run's read-only token.
   The Mini's own job-started hook refuses untrusted code, since a PR's copy of the workflow decides its `runs-on`; the route is not the protection.
   Each routed job's first step, `gate`, reads the turn that hook recorded, and every later step runs only when it passed.
   A job the agent runner held the Mini against gives itself up, and its `-fallback` twin runs the same steps on `macos-15`.
   A rerun of failed jobs keeps the first attempt's route, the Mini included, whatever the heartbeat says; "Re-run all jobs" routes again (docs/dev/MAC-CI-SETUP.md).
-  `MacRouteScriptTest` holds the routing and `MacRunnerWorkflowTest` the rest: only routed jobs and the heartbeat reach the Mini, each routed job has a twin with its steps word for word, the gate guards every step, and only GitHub's runners change the System keychain.
+  `RunnerRouteScriptTest` holds the routing and `MacRunnerWorkflowTest` the rest: only routed jobs and the heartbeat reach the Mini, each routed job has a twin with its steps word for word, the gate guards every step, and only GitHub's runners change the System keychain.
 - **`mac-heartbeat.yml`**: a run on the Mini every 10 minutes while the repository variable `MAC_RUNNER_ENABLED` is `true`, titled `Mac runner heartbeat` only then; clearing the variable sends every macOS job to `macos-15`.
   It checks nothing out and runs no action, on `schedule` and `workflow_dispatch` alone.
 - **`unit-tests-macos`**: `mvn test` on the Mac Mini or `macos-15` (a standard arm64 runner), as `mac-route` picks, so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970).
