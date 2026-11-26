@@ -526,7 +526,8 @@ A subscription that goes silent without ending is not noticed before the probe's
 The batch is short, one read of the overview, and its subscription is pinged like the TUI's, so both are rare.
 A `/wait` for each exec was the alternative, and costs one connection and one request per exec, as well as the 404 when a finished command's `/wait` waits for a connection.
 Unbatched execs, the task status poll and builds, keep their `/wait`.
-On Linux the batch measured no faster, since incusd's own socket makes a handshake cheap and 30 probes fit in one wave (docs/dev/PERFORMANCE-NOTES.md "Probe batches on one operation subscription, on Linux"); the gain is the Mac's, still to be measured there.
+On Linux the batch measured no faster, since incusd's own socket makes a handshake cheap and 30 probes fit in one wave (docs/dev/PERFORMANCE-NOTES.md "Probe batches on one operation subscription, on Linux").
+The gain is the Mac's: with 31 guests whose reads take about 1.5 s each, `isx overview` went from 6.7 s to 5.1 s (docs/dev/PERFORMANCE-NOTES.md "Probe batches on one operation subscription, on a Mac").
 
 The framework's objects are used on the main queue alone, the queue the machine is made on.
 A relay's thread reaches the guest through `dial`, which asks the main queue and waits for it; nothing on the main queue waits for a relay.
