@@ -74,6 +74,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     private JqValue listingOverride;
     /** Storage pools by name, with their driver; empty means one btrfs pool, {@code default}. */
     private final Map<String, String> pools = new LinkedHashMap<>();
+    /** Whether the pool listing is empty until {@link #pool} adds one, rather than a default pool's. */
+    private boolean poolless;
     /** Each pool's config, as the listing and a pool PATCH see it. */
     private final Map<String, Map<String, String>> poolConfigs = new LinkedHashMap<>();
     private boolean poolListingFails;
@@ -193,6 +195,12 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** A local image under {@code alias}. */
+    /** A fresh Incus, before {@code incus admin init}: no storage pool until {@link #pool} adds one. */
+    public synchronized FakeIncusDaemon noStoragePool() {
+        poolless = true;
+        return this;
+    }
+
     public synchronized FakeIncusDaemon imageAlias(String alias, String fingerprint) {
         images.add(fingerprint);
         aliases.put(alias, fingerprint);
@@ -865,7 +873,7 @@ public final class FakeIncusDaemon implements IncusTransport {
         if (path.equals("/1.0/storage-pools") && method.equals("GET")) {
             if (poolListingFails) return error(500, "pool listing failed");
             var list = new ArrayList<JqValue>();
-            (pools.isEmpty() ? Map.of("default", "btrfs") : pools).keySet()
+            (pools.isEmpty() && !poolless ? Map.of("default", "btrfs") : pools).keySet()
                     .forEach(name -> list.add(JqString.of("/1.0/storage-pools/" + name)));
             return sync(JqArray.of(list));
         }
