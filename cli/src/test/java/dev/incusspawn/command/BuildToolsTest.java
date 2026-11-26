@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.tool.BobSetup;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -18,6 +19,40 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class BuildToolsTest {
+
+    @Test
+    void rejectsNegativeBobTurnsWithMigrationGuidance() {
+        var image = new ImageDef();
+        image.setName("tpl-bob");
+        image.setTools(List.of(new ToolDef.ToolRef("bob", Map.of("max-session-turns", "-1"))));
+
+        var error = assertThrows(IllegalArgumentException.class,
+                () -> BuildTools.resolveTools(image, mock(ToolDefLoader.class), List.of(new BobSetup()), true));
+
+        assertEquals("""
+                Error in tool 'bob' parameters:
+                  Parameter 'max-session-turns' value -1 is less than minimum: 0. Use 0 for unlimited turns.""",
+                error.getMessage());
+    }
+
+    @Test
+    void rejectsBobCheckpointingWithRemovalGuidance() {
+        var image = new ImageDef();
+        image.setName("tpl-bob");
+        var loader = mock(ToolDefLoader.class);
+        var tools = List.<ToolSetup>of(new BobSetup());
+        for (var value : List.of("true", "false")) {
+            image.setTools(List.of(new ToolDef.ToolRef("bob", Map.of("checkpointing", value))));
+
+            var error = assertThrows(IllegalArgumentException.class,
+                    () -> BuildTools.resolveTools(image, loader, tools, true));
+
+            assertEquals("""
+                    Error in tool 'bob' parameters:
+                      Unknown parameter: checkpointing. Bob Shell 2.1 does not support checkpointing. Remove it from the bob tool parameters.""",
+                    error.getMessage());
+        }
+    }
 
     // --- collectEffectiveTools ---
 

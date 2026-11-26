@@ -31,6 +31,7 @@ A `deprecated:` definition (#1195) still builds, but `ImageDef.deprecationWarnin
 `deprecated` is not fingerprinted.
 `tpl-dev` and `tpl-java` are deprecated, to be removed; their copies live in `incus-spawn-templates` under the same names.
 Building an image auto-builds missing parents.
+Tool parameter validation runs before provisioning and includes any migration guidance from the tool.
 Each definition can set `type` (`container`, `vm`, or `kvm` -- the last is a *container* that branches get `/dev/kvm` passed into, not a VM) which inherits through the parent chain via `inheritTypes()` at `ImageDef.loadAll()` time.
 VM definitions also support `vm_image_url` and `vm_image_sha256` for a pre-baked VM base image.
 

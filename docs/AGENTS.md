@@ -483,8 +483,8 @@ The build trusts the home directory and turns off auto-update and the update rem
 
 | Parameter | Default | What it does |
 | --- | --- | --- |
-| `max-session-turns` | Bob's default (100 in 2.1) | A positive integer limits turns per session. Use `0` for unlimited turns |
-| `compression-threshold` | Bob's default (0.9 in 2.1) | The share of the context window, `0.0` to `1.0`, at which Bob compresses the conversation |
+| `max-session-turns` | Bob's own default (100 in 2.1) | A positive integer limits turns per session. Use `0` for unlimited turns |
+| `compression-threshold` | Bob's own default (0.9 in 2.1) | The share of the context window, `0.0` to `1.0`, at which Bob compresses the conversation |
 
 Replace negative `max-session-turns` with `0` for unlimited turns.
 Remove `checkpointing` from existing Bob tool parameters because Bob Shell 2.1 does not support it.

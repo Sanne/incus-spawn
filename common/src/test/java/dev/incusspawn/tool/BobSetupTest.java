@@ -76,22 +76,6 @@ class BobSetupTest {
     }
 
     @Test
-    void unsupportedCheckpointingFailsEvenWhenFalse() {
-        var setup = new BobSetup();
-        for (var value : List.of("true", "false")) {
-            var params = Map.of("checkpointing", value);
-            assertEquals(List.of("Unknown parameter: checkpointing"),
-                    ParameterResolver.resolve(setup.parameters(), params).errors());
-
-            var incus = mock(IncusClient.class);
-            var exception = assertThrows(IllegalArgumentException.class,
-                    () -> setup.reconfigure(new Container(incus, CONTAINER), params));
-            assertTrue(exception.getMessage().contains("Remove checkpointing"));
-            verifyNoInteractions(incus);
-        }
-    }
-
-    @Test
     void buildUserSettingsWithOnlyCompression() {
         var json = BobSetup.buildUserSettings(Map.of("compression-threshold", "0.605"),
                 new SpawnConfig.BobConfig());

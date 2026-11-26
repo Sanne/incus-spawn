@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /**
@@ -34,13 +35,21 @@ public class ParameterResolver {
             Map<String, ToolDef.ParameterDef> definitions,
             Map<String, String> providedValues) {
 
+        return resolve(definitions, providedValues, name -> "");
+    }
+
+    /** Resolve parameters and append tool-specific guidance to validation errors. */
+    public static Result resolve(
+            Map<String, ToolDef.ParameterDef> definitions,
+            Map<String, String> providedValues,
+            Function<String, String> errorHint) {
         var errors = new ArrayList<String>();
         var resolved = new LinkedHashMap<String, String>();
 
         // Check for unknown parameters (ERROR)
         for (var key : providedValues.keySet()) {
             if (!definitions.containsKey(key)) {
-                errors.add("Unknown parameter: " + key);
+                errors.add(withHint("Unknown parameter: " + key, errorHint.apply(key)));
             }
         }
 
@@ -62,7 +71,7 @@ public class ParameterResolver {
             // Validate based on type
             var validation = validateValue(name, value, def);
             if (!validation.isEmpty()) {
-                errors.add(validation);
+                errors.add(withHint(validation, errorHint.apply(name)));
                 continue;
             }
 
@@ -71,6 +80,10 @@ public class ParameterResolver {
         }
 
         return new Result(errors, resolved);
+    }
+
+    private static String withHint(String error, String hint) {
+        return hint.isEmpty() ? error : error + ". " + hint;
     }
 
     /** Why {@code value} is not one {@code def} takes, or empty when it is. */

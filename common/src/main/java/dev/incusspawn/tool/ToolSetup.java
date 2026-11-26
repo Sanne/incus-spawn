@@ -393,6 +393,11 @@ public interface ToolSetup {
         return java.util.Map.of();
     }
 
+    /** Tool-specific guidance appended when a parameter name or value fails validation. */
+    default String parameterErrorHint(String parameter) {
+        return "";
+    }
+
     /** What this tool needs of the instance it runs in, memory alone so far (#2355, {@link MemoryNeed}). */
     default ToolDef.Resources resources() {
         return ToolDef.Resources.NONE;
