@@ -110,6 +110,25 @@ class WorkTableTest {
     }
 
     @Test
+    void theCountIsReservedAsItIsDrawnAtEveryWidth() {
+        var many = new java.util.ArrayList<EventLogReader.PullRequest>();
+        for (int i = 0; i < 11; i++) many.add(new EventLogReader.PullRequest(IS, 2600 + i));
+        var branchFirst = WorkTable.references(effort(List.of(), List.of(new EventLogReader.Branch(IS, "a-long-branch-name"),
+                new EventLogReader.Branch(IS, "b"), new EventLogReader.Branch(IS, "c"))), List.of());
+        for (var refs : List.of(WorkTable.references(effort(many, List.of()), List.of()), branchFirst)) {
+            for (int room = 3; room <= 120; room++) {
+                var fitted = WorkTable.fitReferences(refs, room);
+                assertTrue(fitted.width() <= room, room + " cells: " + fitted);
+                assertEquals(refs.size(), fitted.shown().size() + fitted.more(), "every reference shown or counted");
+            }
+        }
+        var one = WorkTable.fitReferences(WorkTable.references(effort(many, List.of()), List.of()), 26);
+        assertEquals(1, one.shown().size());
+        assertEquals(10, one.more());
+        assertEquals(26, one.width(), "Sanne/incus-spawn#2600 +10");
+    }
+
+    @Test
     void aBranchAloneAndFirstIsCutAtItsEnd() {
         var refs = WorkTable.references(effort(List.of(), List.of(new EventLogReader.Branch(IS, "issue-2651-chatgpt-opus-routing"))), List.of());
         var fitted = WorkTable.fitReferences(refs, 20);

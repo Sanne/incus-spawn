@@ -435,7 +435,7 @@ final class MainScreen {
      * a row with an operation under way turns its still glyph into the spinner and shimmers.
      */
     private void renderRowMotion(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect tableArea, int offset,
-                                 List<Row> rows) {
+                                 List<Row> rows, int nameColumn, boolean work) {
         var buffer = frame.buffer();
         var tops = rowTops(rows, offset, tableArea);
         for (int row = 0; row < tops.length; row++) {
@@ -451,10 +451,32 @@ final class MainScreen {
                 var cell = buffer.get(x, y);
                 if (Motion.SPINNER_STILL.equals(cell.symbol())) buffer.set(x, y, cell.symbol(tui.motion.spinner()));
             }
-            // The name, which is what the operation is about: past the cursor gutter and the state glyph
+            // The name as drawn, which is what the operation is about: past the cursor gutter and the
+            // state glyph, and never past the NAME cell, onto the word after it or the next column
             tui.motion.shimmer(new dev.tamboui.layout.Rect(area.left() + 4, y,
-                    Math.min(instance.name().length(), Math.max(0, area.width() - 4)), 1));
+                    shimmerWidth(instance, nameColumn, work, area.width()), 1));
         }
+    }
+
+    /** The cells the shimmer crosses: the name as its NAME cell of {@code nameColumn} cells draws it. */
+    static int shimmerWidth(InstanceInfo instance, int nameColumn, boolean work, int rowWidth) {
+        int drawn = CharWidth.of(drawnName(instance, nameColumn, work));
+        return Math.max(0, Math.min(drawn, Math.min(nameColumn - 2, rowWidth - 4)));
+    }
+
+    /**
+     * The name a NAME cell {@code nameColumn} cells wide draws after its glyph: on the Work tab cut
+     * in its middle to leave room for an unusual state's word, on the Instances tab whole, or cut
+     * at the cell's end where even that table has no room.
+     */
+    static String drawnName(InstanceInfo instance, int nameColumn, boolean work) {
+        if (work) {
+            var word = Tui.unusualState(instance);
+            int room = nameColumn - 2 - (word == null ? 0 : 1 + CharWidth.of(word));
+            return WorkTable.middleCut(instance.name(), Math.max(1, room));
+        }
+        int room = Math.max(0, nameColumn - 2);
+        return CharWidth.of(instance.name()) <= room ? instance.name() : CharWidth.substringByWidth(instance.name(), room);
     }
 
     /** No instance yet: the logo, and the one thing to do next, in the middle of the panel. */
@@ -635,8 +657,10 @@ final class MainScreen {
         List<Constraint> widths;
         List<String> headers;
         List<Row> shownRows;
+        int nameColumn;
         if (work != null) {
             var fitted = work.fit(actualArea.width() - HIGHLIGHT_WIDTH);
+            nameColumn = fitted.widths()[0];
             widths = ColumnFit.constraints(fitted.widths());
             headers = fitted.headers();
             shownRows = fitted.rows();
@@ -673,6 +697,7 @@ final class MainScreen {
             columns.set(0, columns.getFirst().reserving(tui.widestName + Tui.OPERATION_WORD));
             var cells = shown.stream().map(source::get).toList();
             var fitted = ColumnFit.widths(columns, actualArea.width() - HIGHLIGHT_WIDTH);
+            nameColumn = fitted[0];
             widths = ColumnFit.constraints(fitted);
             headers = columns.stream().map(ColumnFit.Column::header).toList();
             var kept = cells.size() == tui.tableRows.get(0).cells().size() ? tui.tableRows
@@ -718,7 +743,7 @@ final class MainScreen {
         tui.instanceFirstRow = first;
         if (work != null) renderSecondLines(frame, actualArea, tops, work);
         renderMarks(frame, actualArea, offset, shownRows, tui::instanceRowMarked);
-        renderRowMotion(frame, actualArea, offset, shownRows);
+        renderRowMotion(frame, actualArea, offset, shownRows, nameColumn, work != null);
 
         if (scrollArea != null) {
             var scrollbar = Scrollbar.builder()
@@ -804,7 +829,10 @@ final class MainScreen {
          */
         Fitted fit(int width) {
             var columns = List.of(
-                    new ColumnFit.Column("NAME", Math.min(nameNatural, 2 + WorkTable.NAME_LEAST), nameNatural, 1, false),
+                    // Spare room is kept for an operation's word, as on the Instances tab, so a name
+                    // shown whole is not cut while F7 runs
+                    new ColumnFit.Column("NAME", Math.min(nameNatural, 2 + WorkTable.NAME_LEAST), nameNatural, 1, false)
+                            .reserving(nameNatural + Tui.OPERATION_WORD),
                     ColumnFit.Column.fixed("IDLE", WorkTable.IDLE_WIDTH),
                     ColumnFit.Column.fixed("WORK", workNatural),
                     ColumnFit.Column.fixed("TOKENS", WorkTable.TOKENS_WIDTH));
@@ -851,10 +879,9 @@ final class MainScreen {
      */
     Line nameLine(InstanceInfo instance, int width) {
         var word = Tui.unusualState(instance);
-        int room = width - 2 - (word == null ? 0 : 1 + CharWidth.of(word));
         var nameStyle = Tui.isRunning(instance) && instance.pendingOp().isEmpty() ? Style.EMPTY : Style.EMPTY.fg(tui.theme.textDim());
         var spans = new ArrayList<Span>(List.of(tui.stateGlyph(instance),
-                Span.styled(WorkTable.middleCut(instance.name(), Math.max(1, room)), nameStyle)));
+                Span.styled(drawnName(instance, width, true), nameStyle)));
         if (word != null) spans.add(Span.styled(" " + word, Style.EMPTY.fg(tui.theme.textDim())));
         return Line.from(spans);
     }

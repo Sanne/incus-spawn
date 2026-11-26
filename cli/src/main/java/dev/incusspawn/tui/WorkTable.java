@@ -194,20 +194,35 @@ final class WorkTable {
         var shown = new ArrayList<Ref>();
         int used = 0;
         for (int k = 0; k < refs.size(); k++) {
-            int after = refs.size() - k - 1;
-            int reserve = after > 0 ? (" +" + after).length() : 0;
             var ref = refs.get(k);
             int add = (shown.isEmpty() ? 0 : 1) + CharWidth.of(ref.text());
+            // Room for the count this reference leaves: those after it, or, when it is the last, none
+            int after = refs.size() - k - 1;
+            int reserve = after > 0 ? (" +" + after).length() : 0;
             if (used + add + reserve > room) {
                 if (shown.isEmpty() && ref.branch() && room - reserve > 2) {
                     shown.add(new Ref(endCut(ref.text(), room - reserve), null, true, null));
                 }
-                return new Fitted(List.copyOf(shown), refs.size() - shown.size());
+                return counted(shown, refs.size(), room);
             }
             shown.add(ref);
             used += add;
         }
         return new Fitted(List.copyOf(shown), 0);
+    }
+
+    /**
+     * {@code shown} with the count of the rest, the count reported as it will be drawn: a
+     * reference gives way to it when both do not fit, so the line never runs past {@code room}.
+     */
+    private static Fitted counted(List<Ref> shown, int total, int room) {
+        var kept = new ArrayList<>(shown);
+        var fitted = new Fitted(List.copyOf(kept), total - kept.size());
+        while (!kept.isEmpty() && fitted.width() > room) {
+            kept.removeLast();
+            fitted = new Fitted(List.copyOf(kept), total - kept.size());
+        }
+        return fitted;
     }
 
     /** {@code text} within {@code width} cells, its last one an ellipsis when cut. */

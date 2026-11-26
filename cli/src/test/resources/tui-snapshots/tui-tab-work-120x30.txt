@@ -1,9 +1,9 @@
  isx   1.2.3  ● 1 container running
  Overview   Templates 0   Instances 2   Work                                                            ←/→ Switch view
  Work since Nov 1 ──────────────────────────────────────────────┬─ ws ──────────────────────────────────────────────────
-     NAME            IDLE    WORK    TOKENS                     │ ○ Stopped   from tpl-minimal
-   ● mine               -    ↑2           -                     │
- ▸ ○ ws                3d    –        42.0k                     │ Purpose  Port the parser to the new grammar
+     NAME                       IDLE    WORK    TOKENS          │ ○ Stopped   from tpl-minimal
+   ● mine                          -    ↑2           -          │
+ ▸ ○ ws                           3d    –        42.0k          │ Purpose  Port the parser to the new grammar
        Port the parser to the new gra… · Sanne/incus-spawn#2287 │ Idle     3 days since its last logged activity, last
                                                                 │          start 4 days ago
                                                                 │ Active   Nov 1–Nov 4

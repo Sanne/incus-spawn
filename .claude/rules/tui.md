@@ -118,6 +118,7 @@ NAME is measured with the word of a lasting state (`error`, `frozen`) and withou
 
 **The overview** (#2241): `o` on the instance table sets `Tui.overview`, the Work tab shows the same (`Tui.overviewShown()`), and `MainScreen.workColumns` draws NAME, IDLE, WORK and TOKENS at every width, the cells made by `WorkTable` and `OverviewCommand`'s cell methods from the parked `Tui.overviewLog` and `Tui.overviewReading`.
 NAME is cut in its middle in the Work table alone (`WorkTable.middleCut`, past `NAME_MOST`, 38 cells); IDLE counts from `Tui.overviewClock`, which tests fix.
+Its NAME reserves spare room for `Tui.OPERATION_WORD` too, and the shimmer of an operation under way covers the name as its cell draws it on either tab (`MainScreen.drawnName`, `shimmerWidth`), never the word, IDLE or WORK.
 A row with a purpose or a reference is two lines tall (`Row.height(2)`): the second line is drawn across the table after it renders (`MainScreen.renderSecondLines`, `WorkTable.secondLine`), since tamboui clips a cell's second line to its column.
 The table's offset then counts lines: `rowTops` places marks, row motion and second lines from the offset the table used, a row the offset cuts drawn from the top as tamboui draws it, `alignedOffset` keeps the offset at a row's first line and the whole selected row on screen, and `Tui.instanceFirstRow` is the first row shown, for `viewportFirst`.
 `ColumnFit.clipped` keeps a row's height.

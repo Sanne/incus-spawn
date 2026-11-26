@@ -46,6 +46,8 @@ class TuiOverviewTest {
     private final List<Runnable> reads = new ArrayList<>();
     private final List<Runnable> merges = new ArrayList<>();
     private final AtomicInteger modelCalls = new AtomicInteger();
+    /** What the model answers a merge with. */
+    private String answer = "Headline: Ported and tested the parser\nDone: The parser is ported.\nState: Its tests pass.\nPending: nothing reported";
 
     @AfterEach
     void close() {
@@ -121,7 +123,7 @@ class TuiOverviewTest {
         tui.overviewConfig = TuiOverviewTest::config;
         tui.overviewModel = (config, target, system, question) -> {
             modelCalls.incrementAndGet();
-            return "Headline: Ported and tested the parser\nDone: The parser is ported.\nState: Its tests pass.\nPending: nothing reported";
+            return answer;
         };
         tui.overviewCache = () -> new dev.incusspawn.command.SessionMerge.Cache(dir.resolve("summaries"));
         tui.overviewZone = java.time.ZoneOffset.UTC;
@@ -525,6 +527,55 @@ class TuiOverviewTest {
         assertArrayEquals(new int[] {-1, 1}, MainScreen.rowTops(rows, 3, area), "as tamboui draws the second row, from the top");
         assertArrayEquals(new int[] {1, -1}, MainScreen.rowTops(rows, 0, area));
         assertArrayEquals(new int[] {1, -1}, MainScreen.rowTops(rows, 1, area), "the offset inside the first row still shows it");
+    }
+
+    @Test
+    void theMergedSummaryIsShownALineAtATime() throws Exception {
+        answer = "Headline: Ported\tand tested\nDone: The parser\tis ported.\nState: Its tests\tpass.\nPending: nothing\treported";
+        var tui = tui(120, daemon -> daemon.execOutput(dev.incusspawn.command.WorkState.HEADER, TWO_SESSIONS));
+        workTab(tui);
+        readsFinish();
+        press(tui, KeyEvent.ofKey(KeyCode.HOME));
+        merges.removeFirst().run();
+        var shown = screen(tui);
+        assertTrue(shown.contains("Ported and tested") && shown.contains("Finished: The parser is ported.")
+                && shown.contains("State: Its tests pass.") && shown.contains("Pending: nothing reported (inferred)"), shown);
+        assertFalse(shown.contains("\t"), "a tab the model echoed is a space: " + shown);
+    }
+
+    @Test
+    void aMergesAgeIsCountedInTheGivenZone() {
+        var merge = new dev.incusspawn.command.SessionMerge.Merged("h", "d", "s", "p", 2, 2, 1, NOW.minus(java.time.Duration.ofHours(2)));
+        for (var zone : List.of(java.time.ZoneOffset.UTC, java.time.ZoneId.of("Pacific/Kiritimati"), java.time.ZoneId.of("America/Adak"))) {
+            assertEquals("merged from 2 sessions 2h ago", merge.label(NOW, zone), "both times in " + zone);
+        }
+    }
+
+    @Test
+    void aNameShownWholeOnTheWorkTabStaysWholeWhileAnOperationRuns() throws Exception {
+        var tui = tui(80, daemon -> daemon.instance("quarkus-feature-x", "container", "Running", Map.of(Metadata.TYPE, "branch",
+                Metadata.PARENT, "tpl-minimal", Metadata.PROFILE, "tpl-minimal", Metadata.PENDING_OP, Metadata.OP_STOPPING)));
+        workTab(tui);
+        readsFinish();
+        assertTrue(screen(tui).contains("quarkus-feature-x stopping"), screen(tui));
+    }
+
+    @Test
+    void theShimmerStaysOnTheNameAsItsCellDrawsIt() throws Exception {
+        var long38 = "mcp-isx-agent-2458-companion-y27vl-abc";
+        var daemon = new FakeIncusDaemon().instance(long38, "container", "Running", Map.of(Metadata.TYPE, "branch",
+                Metadata.PARENT, "tpl-minimal", Metadata.PENDING_OP, Metadata.OP_STOPPING));
+        var instance = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
+        // A NAME cell of 16 cells: the glyph, the name cut in its middle, then " stopping"
+        var drawn = MainScreen.drawnName(instance, 25, true);
+        assertTrue(drawn.contains("…") && dev.tamboui.text.CharWidth.of(drawn) == 25 - 2 - " stopping".length(), drawn);
+        assertEquals(dev.tamboui.text.CharWidth.of(drawn), MainScreen.shimmerWidth(instance, 25, true, 80),
+                "the shimmer ends where the cut name does, before the word, IDLE and WORK");
+        assertEquals(14, MainScreen.shimmerWidth(instance, 16, false, 80), "never past the NAME cell on the Instances tab");
+        var wide = new FakeIncusDaemon().instance("名前名前", "container", "Running", Map.of(Metadata.TYPE, "branch",
+                Metadata.PARENT, "tpl-minimal", Metadata.PENDING_OP, Metadata.OP_STOPPING));
+        var named = InstanceListing.collectEntries(wide.client().listJson()).getFirst();
+        assertEquals(8, MainScreen.shimmerWidth(named, 30, false, 80), "measured in cells, not chars");
     }
 
     @Test

@@ -73,6 +73,12 @@ public final class SessionMerge {
             return "merged from " + from() + " " + age(now);
         }
 
+        /** The same, with its age counted in {@code zone}, as the caller's other times are. */
+        public String label(Instant now, ZoneId zone) {
+            var at = LocalDateTime.ofInstant(made, zone).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            return "merged from " + from() + " " + Metadata.ageDescription(at, LocalDateTime.ofInstant(now, zone));
+        }
+
         private String from() {
             return sessions == total ? sessions + " sessions" : sessions + " of " + total + " sessions";
         }
