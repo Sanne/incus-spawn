@@ -317,7 +317,8 @@ public class GuestProvisioning {
 
         resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");
         resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
-        resolver.add(EnvEntry.set("ISX_VERSION", BuildInfo.instance().version()), "built-in");
+        // The agents' footers show it, so a snapshot names its commit as isx --version does, not 0.0.0-SNAPSHOT.
+        resolver.add(EnvEntry.set("ISX_VERSION", BuildInfo.instance().displayVersion()), "built-in");
         for (var layer : ImageDef.chain(imageDef, defs)) {
             resolver.addAll(layer.getEnv(), "template " + layer.getName());
         }
