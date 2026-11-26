@@ -140,8 +140,9 @@ class TaskScriptsTest {
             p.destroyForcibly();
             throw new AssertionError("still waiting after " + seconds + " s: " + script);
         }
-        var out = Files.readString(outFile);
-        var err = Files.readString(errFile);
+        // Decoded as Tasks decodes an exec's output: a tail cut inside a character is no error.
+        var out = new String(Files.readAllBytes(outFile), StandardCharsets.UTF_8);
+        var err = new String(Files.readAllBytes(errFile), StandardCharsets.UTF_8);
         Files.delete(outFile);
         Files.delete(errFile);
         assertEquals(0, p.exitValue(), "script failed: " + err + "\n" + script);
