@@ -62,6 +62,13 @@ final class DoctorExplain {
                 throws Exception;
     }
 
+    /** Sends a question to one account, as {@link AiHelpClient#askStreaming} does. */
+    @FunctionalInterface
+    interface AccountSender {
+        AiHelpClient.StreamEnd send(String question, List<String> systemBlocks, SpawnConfig config,
+                                    AiHelpClient.Target target, Consumer<String> chunks) throws Exception;
+    }
+
     private DoctorExplain() {}
 
     /** The bundle's files as the model reads them, all but the archive's guide for a person. */
@@ -91,6 +98,12 @@ final class DoctorExplain {
      * {@code config} that last answered (#2607); false once a failure is reported.
      */
     static boolean run(SupportBundle bundle, SpawnConfig config, String selection, Supplier<Prompts> terminal) throws Exception {
+        return run(bundle, config, selection, terminal, AiHelpClient::askStreaming, CredentialSetup::new);
+    }
+
+    /** As above, sending through {@code sender}, with {@code credentials} adding an account when the one asked failed. */
+    static boolean run(SupportBundle bundle, SpawnConfig config, String selection, Supplier<Prompts> terminal,
+                       AccountSender sender, Supplier<CredentialSetup> credentials) throws Exception {
         SpawnConfig answering;
         AiHelpClient.Target target;
         if (selection != null) {
@@ -107,17 +120,43 @@ final class DoctorExplain {
             if (answering == null) return false;
             target = AiHelpChoice.preferred(AiHelpClient.targets(answering)).orElseThrow();
         }
-        // Recorded only once the account answered: declining to send leaves the record alone
-        return run(bundle, target.label(), terminal, (question, blocks, chunks) -> {
-                    var answered = new boolean[1];
-                    var end = AiHelpClient.askStreaming(question, blocks, answering, target, chunks.andThen(chunk -> {
+        var question = question(material(bundle.files()));
+        var sending = confirmed(question, target.label(), terminal);
+        if (sending != null) return sending;
+        var systemBlocks = HelpContext.systemBlocks(false);
+        // Every account that failed before it answered, so none is offered twice (#2605)
+        var tried = new java.util.ArrayList<AiHelpClient.Target>();
+        while (true) {
+            var asked = target;
+            var with = answering;
+            var answered = new boolean[1];
+            try {
+                // Recorded only once the account answered: declining to send leaves the record alone
+                explain(asked.label(), chunks -> {
+                    var end = sender.send(question, systemBlocks, with, asked, chunks.andThen(chunk -> {
                         if (!chunk.isBlank()) answered[0] = true;
                     }));
                     // Only an answer with text makes this the account asked first next time
-                    if (answered[0]) AiHelpChoice.answered(target);
+                    if (answered[0]) AiHelpChoice.answered(asked);
                     return end;
-                },
-                AiHelpChoice.others(AiHelpClient.targets(answering), target));
+                });
+                return true;
+            } catch (Exception e) {
+                if (selection != null || answered[0] || !AiHelpRecovery.accountFailed(e)) {
+                    // Only the provider's answer is the account's; a network error is not blamed on it
+                    reportFailure(e, e instanceof AiHelpClient.ApiError ? AiHelpRecovery.failed(asked, e)
+                            : "could not explain the findings: " + BaseCommand.failure(e),
+                            AiHelpRecovery.others(with, asked, tried));
+                    return false;
+                }
+                // The account failed, not the findings: ask before another one is billed for them
+                tried.add(asked);
+                var next = AiHelpRecovery.after(with, asked, e, tried, terminal.get(), credentials);
+                if (next.isEmpty()) return false;
+                answering = next.get().config();
+                target = next.get().target();
+            }
+        }
     }
 
     /** {@link #run(SupportBundle, SpawnConfig, String, Supplier)} sending through {@code sender}, to the account {@code account}. */
@@ -129,6 +168,24 @@ final class DoctorExplain {
     static boolean run(SupportBundle bundle, String account, Supplier<Prompts> terminal, Sender sender,
                        String[] others) throws Exception {
         var question = question(material(bundle.files()));
+        var sending = confirmed(question, account, terminal);
+        if (sending != null) return sending;
+        var systemBlocks = HelpContext.systemBlocks(false);
+        try {
+            explain(account, chunks -> sender.send(question, systemBlocks, chunks));
+        } catch (Exception e) {
+            reportFailure(e, "could not explain the findings: " + BaseCommand.failure(e), others);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Null once the person agreed to send {@code question} to {@code account}, or it is small
+     * enough to send with a note; else what {@code run} returns: true when they declined, false
+     * when there is no terminal to ask on.
+     */
+    private static Boolean confirmed(String question, String account, Supplier<Prompts> terminal) {
         long bytes = question.getBytes(StandardCharsets.UTF_8).length;
         var what = size(bytes) + " of redacted findings, logs and configuration";
         if (bytes > LARGE_BYTES) {
@@ -145,24 +202,32 @@ final class DoctorExplain {
         } else {
             BuildOutput.note("Sending " + what + " to " + account + ", which is billed for it.");
         }
+        return null;
+    }
 
+    /** The failure as the command's error, with what replaces a rejected key and, when the provider refused, the other accounts. */
+    private static void reportFailure(Exception e, String message, String[] others) {
+        var advice = AiHelpClient.advice(e);
+        // Only the provider's refusal says this account failed; a network error fails any
+        if (e instanceof AiHelpClient.ApiError) advice = AskCommand.joined(advice, others);
+        BuildOutput.error(message, advice);
+    }
+
+    /** One request's answer, streamed to its consumer. */
+    @FunctionalInterface
+    private interface Request {
+        AiHelpClient.StreamEnd send(Consumer<String> chunks) throws Exception;
+    }
+
+    /** Asks {@code account} through {@code request}, streaming the answer, then notes what it cost. */
+    private static void explain(String account, Request request) throws Exception {
         var usage = new AiHelpClient.Usage[] {AiHelpClient.Usage.NONE};
-        try {
-            var systemBlocks = HelpContext.systemBlocks(false);
-            AskCommand.answer("Asking " + account + " to explain the findings", chunks -> {
-                var end = sender.send(question, systemBlocks, chunks);
-                usage[0] = end.usage();
-                return end.note();
-            });
-        } catch (Exception e) {
-            var advice = AiHelpClient.advice(e);
-            // Only the provider's refusal says this account failed; a network error fails any
-            if (e instanceof AiHelpClient.ApiError) advice = AskCommand.joined(advice, others);
-            BuildOutput.error("could not explain the findings: " + BaseCommand.failure(e), advice);
-            return false;
-        }
+        AskCommand.answer("Asking " + account + " to explain the findings", chunks -> {
+            var end = request.send(chunks);
+            usage[0] = end.usage();
+            return end.note();
+        });
         var summary = usage[0].summary();
         if (summary != null) BuildOutput.note(summary);
-        return true;
     }
 }

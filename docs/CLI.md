@@ -1100,8 +1100,13 @@ isx ask <question...>
 isx asks the account that last answered, so an account you name once with `--account` is asked from then on.
 With no answer yet, it asks a Claude account with an API key or Vertex AI first, your default if it is one, then OpenAI's, then Gemini's.
 
-An account named with `--account` that is missing or cannot answer is an error, and isx does not ask another one instead.
-When the account fails, the error names the other accounts that can answer.
+An account named with `--account` that is missing, cannot answer or fails is an error, and isx does not ask another one instead.
+That error names the other accounts that can answer.
+
+Without `--account`, isx names an account that fails, such as one whose quota is used up.
+At a terminal, it then offers to ask another account, or to add one when there is no other.
+It asks another account only after your yes, since that account is billed.
+Without a terminal, the error names the `--account` to pass, or `isx account add`.
 
 An answer is AI-generated and can be wrong, so isx asks the AI to end the answer with the documentation sections the answer relies on: check the answer against them.
 A note on stderr says so after every answer, and stdout holds only the answer.

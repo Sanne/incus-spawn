@@ -128,7 +128,11 @@ public final class AiHelpChoice {
      * accounts to pass it, one line; else none.
      */
     public static String[] others(List<AiHelpClient.Target> targets, AiHelpClient.Target asked) {
-        var rest = targets.stream().filter(t -> !t.equals(asked)).toList();
+        return others(targets.stream().filter(t -> !t.equals(asked)).toList());
+    }
+
+    /** The option and {@code rest}, the accounts still to try, one line; none when {@code rest} is empty. */
+    public static String[] others(List<AiHelpClient.Target> rest) {
         return rest.isEmpty() ? new String[0]
                 : new String[] {"Ask another account with --account " + selections(rest, "or") + "."};
     }

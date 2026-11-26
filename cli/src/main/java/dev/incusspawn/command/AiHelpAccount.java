@@ -11,6 +11,7 @@ import dev.incusspawn.util.TerminalLink;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Asks for an account that can answer AI Help where it is first needed (#2541): {@code isx ask},
@@ -42,8 +43,18 @@ final class AiHelpAccount {
             BuildOutput.error(why.cause(), why.advice().toArray(String[]::new));
             return Optional.empty();
         }
-        var subscription = !AiHelpClient.subscriptionAccounts(config).isEmpty();
         Lines.step(why.cause());
+        return offer(config, prompts, credentials, Set.of(), NOT_SENT);
+    }
+
+    /**
+     * The menu of kinds, on a terminal, until an account other than {@code failed} can answer
+     * or the person declines (#2605). Returns the config read again from disk, else empty with
+     * {@code declined} reported as the error.
+     */
+    static Optional<SpawnConfig> offer(SpawnConfig config, Prompts prompts, CredentialSetup credentials,
+                                       java.util.Collection<AiHelpClient.Target> failed, String declined) {
+        var subscription = !AiHelpClient.subscriptionAccounts(config).isEmpty();
         while (true) {
             var answer = prompts.choose("Which kind of account should answer?", List.of(
                     "An Anthropic API key\nFrom the Claude Console, billed by use."
@@ -67,10 +78,10 @@ final class AiHelpAccount {
             };
             if (outcome == CredentialSetup.Outcome.BACK) continue;
             var now = SpawnConfig.load();
-            if (!AiHelpClient.targets(now).isEmpty()) return Optional.of(now);
+            if (AiHelpClient.targets(now).stream().anyMatch(t -> !failed.contains(t))) return Optional.of(now);
             // One error, whatever ended it: the callers report nothing more (doctor --explain
             // returns false once a failure is reported), and a skipped step said why already
-            BuildOutput.error(NOT_SENT);
+            BuildOutput.error(declined);
             return Optional.empty();
         }
     }

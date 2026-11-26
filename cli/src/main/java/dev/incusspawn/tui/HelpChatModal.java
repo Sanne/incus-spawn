@@ -80,6 +80,13 @@ final class HelpChatModal {
     private volatile String endNote;
     private volatile String error;
     private int scrollOffset;
+    /** Accounts that failed this question before they answered, so none is offered twice (#2605). */
+    private final List<Target> failed = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** After an account failed: the next one {@code a} asks, or null; then {@link #offerAdd} says whether {@code a} adds one. */
+    private volatile Target retryWith;
+    private volatile boolean offerAdd;
+    /** The dialog closed with {@code a} to add an account, which the TUI does outside it. */
+    private boolean addRequested;
 
     /**
      * @param targets accounts that can answer, at least one; {@code initial} is preselected when present
@@ -107,6 +114,47 @@ final class HelpChatModal {
     /** Whether an answer or an error is showing, rather than the question form. */
     private boolean hasResult() {
         return responseLines != null || error != null;
+    }
+
+    /** Whether the dialog closed with {@code a} to add an account, since every account it has failed. */
+    boolean addRequested() {
+        return addRequested;
+    }
+
+    /** The question as typed, to ask again once an account was added. */
+    String question() {
+        return input.text().strip();
+    }
+
+    boolean attached() {
+        return attachCheck.isChecked();
+    }
+
+    /** The accounts that failed the question, which an added account answers in place of. */
+    List<Target> failed() {
+        return List.copyOf(failed);
+    }
+
+    /**
+     * Asks {@code question} of {@code target} at once, as a person would by typing it and
+     * pressing the ask key: the account they just added, after {@code failed} did not answer.
+     */
+    void askAgain(String question, boolean attach, Target target, List<Target> failed) {
+        input = new TextAreaState(question);
+        if (attachCheck.isChecked() != attach) attachCheck.toggle();
+        this.failed.addAll(failed);
+        accountSelect.selectIndex(Math.max(0, targets.indexOf(target)));
+        ask();
+    }
+
+    private void clearResult() {
+        retryWith = null;
+        offerAdd = false;
+        responseLines = null;
+        usage = Usage.NONE;
+        endNote = null;
+        error = null;
+        scrollOffset = 0;
     }
 
     /** The account currently selected, so the next opening can preselect it. */
@@ -140,13 +188,24 @@ final class HelpChatModal {
                 scrollOffset = Integer.MAX_VALUE;
                 return true;
             }
+            if (key.isCharIgnoreCase('a') && !key.hasCtrl() && !loading) {
+                // A key press is the person's choice: another account is never asked by itself
+                var next = retryWith;
+                if (next != null) {
+                    accountSelect.selectIndex(targets.indexOf(next));
+                    clearResult();
+                    ask();
+                    return true;
+                }
+                if (offerAdd) {
+                    addRequested = true;
+                    return false;
+                }
+            }
             if (key.isCharIgnoreCase('n') && !key.hasCtrl()) {
+                failed.clear();
                 input = new TextAreaState();
-                responseLines = null;
-                usage = Usage.NONE;
-                endNote = null;
-                error = null;
-                scrollOffset = 0;
+                clearResult();
                 field = Field.QUESTION;
                 return true;
             }
@@ -212,17 +271,23 @@ final class HelpChatModal {
             }
             AiResponse response = null;
             String failure = null;
+            var accountFailed = false;
             try {
                 response = asker.ask(target, question, attach);
             } catch (Exception e) {
                 // Whatever wrote the message (a provider, gcloud), it must not drive the terminal.
                 failure = e.getMessage() != null ? OutputFormat.oneLine(e.getMessage()) : e.getClass().getSimpleName();
-                // A rejected key says what replaces it here too: nothing asks for one again (#2541)
+                // The account failed, not the question: named, so the person knows which to replace
+                accountFailed = e instanceof AiHelpClient.ApiError api && api.accountFailed();
+                if (accountFailed) failure = "The" + target.named().substring("the".length()) + " did not answer: " + failure;
+                // A rejected key says what replaces it here too (#2541)
                 for (var advice : AiHelpClient.advice(e)) failure += " " + advice;
             }
             synchronized (this) {
                 if (requestId != id) return; // cancelled while running: drop the result
                 thread = null;
+                // Recorded only for the request still current: a cancelled one's failure is dropped with it
+                if (accountFailed && !failed.contains(target)) failed.add(target);
                 if (response != null) {
                     usage = response.usage();
                     endNote = response.note();
@@ -230,6 +295,9 @@ final class HelpChatModal {
                 } else {
                     error = failure;
                 }
+                retryWith = accountFailed
+                        ? targets.stream().filter(t -> !failed.contains(t)).findFirst().orElse(null) : null;
+                offerAdd = accountFailed && retryWith == null;
                 loading = false;
             }
             onAnswer.run();
@@ -241,6 +309,8 @@ final class HelpChatModal {
         if (thread != null) thread.interrupt();
         thread = null;
         loading = false;
+        retryWith = null;
+        offerAdd = false;
         error = "Cancelled.";
     }
 
@@ -315,6 +385,9 @@ final class HelpChatModal {
         frame.renderWidget(Paragraph.from(Text.from(footer)), rows.get(1));
 
         var hintSpans = new ArrayList<Span>();
+        var next = retryWith;
+        if (next != null) modal.addKey(hintSpans, "a", "Ask " + next.label());
+        else if (offerAdd) modal.addKey(hintSpans, "a", "Add an account");
         modal.addKey(hintSpans, "n", "New question");
         modal.addKey(hintSpans, "q/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(2));
