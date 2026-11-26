@@ -36,8 +36,6 @@ import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.YELLOW;
 import static dev.incusspawn.util.BuildOutput.styled;
 import static dev.incusspawn.command.BaseCommand.askYesNo;
-import static dev.incusspawn.command.InitCommand.runHost;
-import static dev.incusspawn.command.InitCommand.runHostCapturingExit;
 
 /**
  * The Linux host configuration steps of {@code isx init}: packages, Incus itself, user namespace
@@ -314,20 +312,20 @@ class HostSetup {
             }
 
             install("Installing Incus", installCommand(init::hostHasCommand, "incus"));
-            BuildOutput.liveStep("Starting Incus", () -> runHost("sudo", "systemctl", "enable", "--now", "incus") == 0);
+            BuildOutput.liveStep("Starting Incus", () -> init.runShown("sudo", "systemctl", "enable", "--now", "incus") == 0);
             BuildOutput.liveStep("Adding you to the incus-admin group",
-                    () -> runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0);
+                    () -> init.runShown("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0);
             if (!init.firstRun) {
                 BuildOutput.step("You may need to log out and back in for group membership to take effect, or run:");
                 BuildOutput.stepNote("newgrp incus-admin");
             }
         } else {
             BuildOutput.step("Incus is installed.");
-            var serviceActive = runHost("systemctl", "is-active", "--quiet", "incus");
+            var serviceActive = init.runShown("systemctl", "is-active", "--quiet", "incus");
             if (serviceActive != 0) {
                 BuildOutput.step("Incus service is not running.");
                 if (!BuildOutput.liveStep("Starting Incus",
-                        () -> runHost("sudo", "systemctl", "enable", "--now", "incus") == 0)) {
+                        () -> init.runShown("sudo", "systemctl", "enable", "--now", "incus") == 0)) {
                     BuildOutput.error("Failed to start the Incus service.",
                             "Run 'sudo systemctl enable --now incus' manually, then re-run 'isx init'.");
                     System.exit(1);
@@ -338,14 +336,13 @@ class HostSetup {
         // Always ensure current user is in incus-admin group, as the group database has it: a
         // membership added since this login counts, and the continuation under sg takes it up
         try {
-            var pb = new ProcessBuilder("id", "-nG", System.getProperty("user.name"));
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var groups = new String(process.getInputStream().readAllBytes()).strip();
-            process.waitFor();
-            if (!groups.contains("incus-admin")) {
+            var groups = init.captureOutput("id", "-nG", System.getProperty("user.name"));
+            // captureOutput answers nothing when id could not run: that is not a missing membership
+            if (groups.isEmpty()) {
+                BuildOutput.warn("Could not check group membership: 'id -nG' printed nothing.");
+            } else if (!groups.contains("incus-admin")) {
                 if (BuildOutput.liveStep("Adding you to the incus-admin group",
-                        () -> runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0)) {
+                        () -> init.runShown("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0)) {
                     BuildOutput.stepNote("Active after the next login.");
                 }
             }
@@ -551,7 +548,7 @@ class HostSetup {
                 if (fwd.needsStart()) {
                     BuildOutput.step("firewalld is installed but not running.");
                     if (!BuildOutput.liveStep("Starting and enabling firewalld",
-                            () -> runHost(ENABLE_FIREWALLD) == 0)) {
+                            () -> init.runShown(ENABLE_FIREWALLD) == 0)) {
                         BuildOutput.warn("Failed to start firewalld.",
                                 "Run manually: sudo systemctl enable --now firewalld", "Then re-run: isx init");
                         return;
@@ -587,7 +584,7 @@ class HostSetup {
                             "Install firewalld or UFW, then run 'isx init' again."));
                     return;
                 }
-                if (!BuildOutput.liveStep("Starting firewalld", () -> runHost(ENABLE_FIREWALLD) == 0)) {
+                if (!BuildOutput.liveStep("Starting firewalld", () -> init.runShown(ENABLE_FIREWALLD) == 0)) {
                     BuildOutput.warn(networkAtRisk(), fit("firewalld did not start.",
                             "'sudo systemctl status firewalld' says why.", "Then run 'isx init' again."));
                     return;
@@ -754,7 +751,7 @@ class HostSetup {
     }
 
     private void configureNetworkManager() {
-        configureNetworkManager(Path.of(NM_CONF_DIR));
+        configureNetworkManager(init.hostFile(NM_CONF_DIR), Path.of(NM_CONF_DIR));
     }
 
     /**
@@ -780,9 +777,14 @@ class HostSetup {
     }
 
     void configureNetworkManager(Path confDir) {
-        if (!Files.isDirectory(confDir)) return;
+        configureNetworkManager(confDir, confDir);
+    }
+
+    /** Reads what is in place in {@code readDir}, the host's directory or a test's copy of it, and installs into {@code confDir}. */
+    private void configureNetworkManager(Path readDir, Path confDir) {
+        if (!Files.isDirectory(readDir)) return;
         var confFile = confDir.resolve(NM_CONF_FILE);
-        if (Files.exists(confFile)) return;
+        if (Files.exists(readDir.resolve(NM_CONF_FILE))) return;
         Path tempFile = null;
         try {
             tempFile = Files.createTempFile("isx-nm-veth-", ".conf");
@@ -829,7 +831,7 @@ class HostSetup {
     private static final String SYSCTL_CONF = "/etc/sysctl.d/99-incus-spawn.conf";
 
     private void configureHostSysctls() {
-        configureHostSysctls(Path.of(SYSCTL_CONF));
+        configureHostSysctls(init.hostFile(SYSCTL_CONF), SYSCTL_CONF);
     }
 
     /** What {@link #configureHostSysctls(Path)} would write and apply. */
@@ -841,7 +843,11 @@ class HostSetup {
     }
 
     void configureHostSysctls(Path sysctlPath) {
-        var sysctlConf = sysctlPath.toString();
+        configureHostSysctls(sysctlPath, sysctlPath.toString());
+    }
+
+    /** Reads what is in place at {@code sysctlPath}, the host's file or a test's copy of it, and installs {@code sysctlConf}. */
+    private void configureHostSysctls(Path sysctlPath, String sysctlConf) {
         var content = SYSCTL_CONTENT;
         try {
             if (content.equals(readIfReadable(sysctlPath))) {
@@ -910,7 +916,8 @@ class HostSetup {
      * a tmpfiles.d {@code w} line, which only writes when the file exists.
      */
     private void configureKsm() {
-        if (!Files.exists(Path.of(KSM_RUN))) {
+        var run = init.hostFile(KSM_RUN);
+        if (!Files.exists(run)) {
             return; // kernel built without CONFIG_KSM
         }
         if ("active".equals(captureOutput("systemctl", "is-active", "ksmtuned"))) {
@@ -918,12 +925,12 @@ class HostSetup {
             return;
         }
         var content = KSM_CONTENT;
-        var confPath = Path.of(KSM_TMPFILES);
+        var confPath = init.hostFile(KSM_TMPFILES);
         Path tempFile = null;
         try {
             // Also check the live value: a written config whose apply failed must be retried
             if (content.equals(readIfReadable(confPath))
-                    && "1".equals(Files.readString(Path.of(KSM_RUN)).strip())) {
+                    && "1".equals(Files.readString(run).strip())) {
                 return;
             }
             tempFile = Files.createTempFile("isx-ksm-", ".conf");
@@ -1328,7 +1335,7 @@ class HostSetup {
             for (var entry : SUBID_ENTRIES) changed |= ensureSubidEntry(path, entry[0], entry[1]);
         }
         if (changed) {
-            BuildOutput.liveStep("Restarting Incus with user IDs for " + init.machines(), () -> runHost("sudo", "systemctl", "restart", "incus") == 0);
+            BuildOutput.liveStep("Restarting Incus with user IDs for " + init.machines(), () -> init.runShown("sudo", "systemctl", "restart", "incus") == 0);
         }
         BuildOutput.step("The user IDs of " + init.machines() + " are set up.");
     }
@@ -1381,7 +1388,7 @@ class HostSetup {
     private boolean ensureSubidEntry(String path, String entry, String oldEntry) {
         String content;
         try {
-            content = Files.readString(java.nio.file.Path.of(path));
+            content = Files.readString(init.hostFile(path));
         } catch (IOException e) {
             BuildOutput.warn("Could not read " + path + ": " + BaseCommand.failure(e));
             return false;
@@ -1417,17 +1424,17 @@ class HostSetup {
         var tmpPath = path + ".isx-tmp";
         // Its sudo runs inside sh, beyond sudo -n's reach, so an expired sudo asks first, with the
         // terminal released (#2528): runHost captures the script's output, and a live step goes on drawing
-        if (!InitCommand.sudoReady()) {
+        if (!init.sudoIsReady()) {
             BuildOutput.warn("Failed to write " + path);
             return false;
         }
-        int exitCode = runHost("sh", "-c",
+        int exitCode = init.runShown("sh", "-c",
                 "printf '%s' '" + content.replace("'", "'\\''") + "' | sudo tee " + tmpPath + " > /dev/null"
                         + " && sudo chmod --reference=" + path + " " + tmpPath
                         + " && sudo mv " + tmpPath + " " + path);
         if (exitCode != 0) {
             BuildOutput.warn("Failed to write " + path);
-            runHostCapturingExit("sudo", "rm", "-f", tmpPath);
+            init.runForExit("sudo", "rm", "-f", tmpPath);
             return false;
         }
         return true;
@@ -1476,7 +1483,7 @@ class HostSetup {
             throw new IllegalStateException("Incus has no storage pool, though the root script was to make one."
                     + " Run '" + ADMIN_INIT + "' yourself, then '" + InitCommand.NO_SUDO_COMMAND + "' again.");
         } else {
-            var exitCode = runHost("sudo", "incus", "admin", "init", "--minimal");
+            var exitCode = init.runShown("sudo", "incus", "admin", "init", "--minimal");
             if (exitCode == 0) {
                 BuildOutput.step("isx gave Incus a storage pool and a network.");
             } else {
@@ -1775,8 +1782,8 @@ class HostSetup {
         var content = btrfsSudoersContent(pool);
 
         try {
-            if (Files.exists(Path.of(BTRFS_SUDOERS))
-                    && content.equals(Files.readString(Path.of(BTRFS_SUDOERS)))) {
+            var installed = init.hostFile(BTRFS_SUDOERS);
+            if (Files.exists(installed) && content.equals(Files.readString(installed))) {
                 return;                                             // already installed, up to date
             }
         } catch (IOException ignored) {

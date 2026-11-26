@@ -763,13 +763,18 @@ public class InitCommand extends BaseCommand {
             BuildOutput.step("Some steps run with sudo, which may ask for your password:");
             BuildOutput.step("packages, the firewall and the user IDs of instances.");
         }
-        if (runHost("sudo", "-v") == 0) return true;
+        if (validateSudo() == 0) return true;
         BuildOutput.error("sudo refused, so isx init stopped.",
                 firstRun ? "It did not set up " + Platform.thisComputer() + "." : "It had not started its steps.",
                 "Run it again as a user who may use sudo.",
                 "Or run '" + NO_SUDO_COMMAND + "', which writes the steps",
                 "that need root as a script for an administrator.");
         return false;
+    }
+
+    /** Asks sudo for the password at the terminal, its exit code; tests answer it. */
+    int validateSudo() {
+        return runHost("sudo", "-v");
     }
 
     /** Whether this run is {@code --no-sudo}: the privileged steps are the person's script (#2074). */
@@ -3886,6 +3891,16 @@ public class InitCommand extends BaseCommand {
             config.save();
             BuildOutput.step("Added to search paths.");
         }
+    }
+
+    /** {@link #runHostCapturingExit}, for a step of this init; tests record it instead. */
+    int runForExit(String... command) {
+        return runHostCapturingExit(command);
+    }
+
+    /** {@link #sudoReady}, for a step of this init; tests answer it. */
+    boolean sudoIsReady() {
+        return sudoReady();
     }
 
     static int runHostCapturingExit(String... command) {

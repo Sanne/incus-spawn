@@ -9,6 +9,8 @@ import dev.incusspawn.util.TerminalOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import dev.incusspawn.incus.FakeIncusDaemon;
+
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -170,12 +172,81 @@ class InitTranscriptsTest {
 
         @Override Prompts prompts() { return prompts; }
         @Override Set<String> projectToolsHere() { return inAProject ? Set.of("claude") : Set.of(); }
-        @Override InitStep gitRemoteHelper() { return faked("git-remote-helper"); }
-        @Override InitStep dnsStep() { return faked("dns"); }
-        @Override List<InitStep> linuxSetup() { return List.of(faked("subids"), faked("storage-network"), faked("mitm-proxy")); }
+        @Override InitStep gitRemoteHelper() { return realSetup ? super.gitRemoteHelper() : faked("git-remote-helper"); }
+        @Override InitStep dnsStep() { return realSetup ? super.dnsStep() : faked("dns"); }
+        @Override List<InitStep> linuxSetup() {
+            return realSetup ? super.linuxSetup() : List.of(faked("subids"), faked("storage-network"), faked("mitm-proxy"));
+        }
+
+        /**
+         * The setup's own steps in place of markers (#2588), over a host of the test's: its files
+         * under {@link #root}, its commands recorded and answered, Incus a {@link FakeIncusDaemon}.
+         */
+        boolean realSetup;
+        Path root;
+        final List<String> hostCommands = new ArrayList<>();
+        /** The host's Incus: on a computer with no Incus, it has no pool and no network until 'incus admin init'. */
+        FakeIncusDaemon daemon;
+        Set<String> hostCommandsInstalled = new HashSet<>(Set.of("dnf", "incus", "openssl", "ssh-keygen", "btrfs", "firewall-cmd", "sg"));
+        /** What a package installs, by the command it is known by. */
+        private static final Map<String, String> PACKAGE_COMMANDS = Map.of("incus", "incus", "openssl", "openssl",
+                "openssh-clients", "ssh-keygen", "btrfs-progs", "btrfs", "firewalld", "firewall-cmd");
+        private boolean inIncusAdmin;
+
+        @Override boolean hostHasCommand(String command) { return realSetup ? hostCommandsInstalled.contains(command) : super.hostHasCommand(command); }
+        @Override Path hostFile(String path) { return realSetup ? root.resolve(path.substring(1)) : super.hostFile(path); }
+
+        /** A command of the host, recorded and answered as a host that runs it would: it succeeds, and what it installs is there. */
+        int ranOnHost(String... command) {
+            var line = String.join(" ", command);
+            hostCommands.add(line);
+            if (line.startsWith("sudo dnf install")) {
+                for (var word : command) if (PACKAGE_COMMANDS.containsKey(word)) hostCommandsInstalled.add(PACKAGE_COMMANDS.get(word));
+            }
+            if (line.startsWith("sudo usermod -aG incus-admin")) inIncusAdmin = true;
+            // What a fresh Incus gets from it: a storage pool on btrfs and its bridge
+            if (line.equals("sudo incus admin init --minimal")) daemon.pool("default", "btrfs").network("incusbr0", Map.of("ipv4.address", "10.1.2.1/24"));
+            return 0;
+        }
+
+        @Override int runShown(String... command) { return ranOnHost(command); }
+        @Override int runHostQuiet(String... command) { return ranOnHost(command); }
+        @Override int runSilently(String... command) { return ranOnHost(command); }
+        @Override int runForExit(String... command) { return ranOnHost(command); }
+        @Override boolean sudoIsReady() { return true; }
+        @Override String captureOutput(String... command) {
+            ranOnHost(command);
+            return command[0].equals("id") ? "agentuser" + (inIncusAdmin ? " incus-admin" : "") : "";
+        }
+        @Override Query query(String... command) { hostCommands.add(String.join(" ", command)); return new Query(1, ""); }
+        @Override dev.incusspawn.incus.FirewallDetector.DetectionResult runningFirewall() {
+            return new dev.incusspawn.incus.FirewallDetector.DetectionResult.UseFirewalld(false);
+        }
+        @Override boolean incusReachable() { return true; }
+        @Override String incusConnectivity() { return null; }
+        @Override List<String> hostRoutes() { return List.of(); }
+        @Override boolean polkitAllows(String action) { return true; }
+        @Override String filesystemOf(Path path) { return "btrfs"; }
+        @Override String claudeConfigDirEnv() { return null; }
+        @Override boolean proxyServiceActive() { return false; }
+        @Override void installGitRemoteShim() { }
+
+        /** The terminal, for a line of the test's own where the run's lines go to the log. */
+        PrintStream screen;
+        /** In a whole run, whether it is {@code --no-sudo}. */
+        boolean noSudoRun = true;
+
+        @Override int validateSudo() { screen.println("⟪sudo asks for the password here⟫"); return 0; }
+
+        @Override
+        boolean installProxyService() {
+            screen.println("⟪systemd installs and starts the proxy service here⟫");
+            return true;
+        }
 
         @Override
         InitStep proxyServiceStep(AtomicBoolean installed) {
+            if (realSetup) return super.proxyServiceStep(installed);
             return new InitStep("proxy-service", "Proxy Service", new String[0], () -> {
                 BuildOutput.step("⟪the proxy service is installed here⟫");
                 installed.set(true);
@@ -403,7 +474,12 @@ class InitTranscriptsTest {
                 i -> { i.wholeRun = true; i.failingStep = "storage-network"; }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.none()), "2", ""), false, true));
         b.add(new Branch("34-whole-run-linux-no-sudo", "The whole run on Linux with --no-sudo; Claude Code; everything given",
-                i -> { i.wholeRun = true; i.found = sub; }, claudeHere,
+                i -> { i.wholeRun = true; i.realSetup = true; i.found = sub; }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
+                false, true));
+        b.add(new Branch("34b-whole-run-linux-clean", "The whole run on Linux, from a computer with no Incus; Claude Code; everything given",
+                i -> { i.wholeRun = true; i.realSetup = true; i.noSudoRun = false; i.found = sub;
+                    i.hostCommandsInstalled = new HashSet<>(Set.of("dnf", "sg")); i.daemon = new FakeIncusDaemon(); }, claudeHere,
                 new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", ""),
                 false, true));
         b.add(new Branch("35-continuation-under-sg", "Linux; the end of the run, in the continuation under sg",
@@ -629,6 +705,9 @@ class InitTranscriptsTest {
             dev.incusspawn.Platform.wordedAs(branch.macOs(), () -> run(branch, init, out));
         } catch (Exception | AssertionError e) {
             out.println("⟪the run threw: " + e + "⟫");
+        } finally {
+            dev.incusspawn.util.Privilege.allow();
+            if (init.realSetup) Files.write(OUT.resolve(branch.name() + ".host-commands.txt"), init.hostCommands);
         }
         out.flush();
         return drawn(bytes.toString(StandardCharsets.UTF_8));
@@ -636,8 +715,21 @@ class InitTranscriptsTest {
 
     private static Void run(Branch branch, Init init, PrintStream out) throws Exception {
         out.println("⟪" + branch.about() + (branch.macOs() ? ", on a Mac" : ", on Linux") + "⟫");
+        if (init.realSetup) {
+            // Every host command goes through the test's seams: one that escapes them and elevates fails the run
+            dev.incusspawn.util.Privilege.forbid();
+            init.root = Files.createTempDirectory("init-transcript-host");
+            // A clean state: no certificate or SSH key an earlier branch made, and the user IDs a fresh Fedora gives
+            dev.incusspawn.FileTrees.deleteQuietly(IsolatedHome.configFile().getParent());
+            Files.createDirectories(init.root.resolve("etc"));
+            for (var file : List.of("etc/subuid", "etc/subgid")) Files.writeString(init.root.resolve(file), "jdoe:524288:65536\n");
+            if (init.daemon == null) init.daemon = new FakeIncusDaemon().pool("default", "btrfs")
+                    .network("incusbr0", Map.of("ipv4.address", "10.1.2.1/24"));
+            init.incus = init.daemon.client();
+        }
+        init.screen = out;
         if (init.wholeRun) {
-            init.noSudo = true;
+            init.noSudo = init.noSudoRun;
             init.runFirstRun(false);
         } else {
             init.printFirstRunIntro(branch.macOs());
