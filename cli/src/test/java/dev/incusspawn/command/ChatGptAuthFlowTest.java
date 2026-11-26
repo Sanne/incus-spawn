@@ -577,6 +577,30 @@ class ChatGptAuthFlowTest {
         assertFalse(said.contains("could not reach"), said);
     }
 
+    /** An interrupt while asking for a code ends the step: no new code, and the server is not blamed. */
+    @Test
+    void anInterruptWhileAskingForACodeEndsTheStep() {
+        var init = new FakeInit() {
+            @Override
+            dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
+                return new ChatGptSignIn("http://127.0.0.1:1") {
+                    @Override
+                    public DeviceCode requestDeviceCode() throws InterruptedException {
+                        throw new InterruptedException();
+                    }
+                };
+            }
+        };
+        try {
+            var said = String.join(" ", run(init, new SpawnConfig(), chooseDeviceCode()).lines());
+
+            assertTrue(said.contains("The ChatGPT sign-in was interrupted."), said);
+            assertFalse(said.contains("could not reach"), said);
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
     /** A sign-in whose one-time code always expires, or is interrupted. */
     private static FakeInit failingCodes(java.util.concurrent.atomic.AtomicInteger codes, boolean interrupted) {
         return new FakeInit() {
