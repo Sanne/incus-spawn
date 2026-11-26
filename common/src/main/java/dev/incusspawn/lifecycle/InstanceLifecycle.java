@@ -1110,13 +1110,14 @@ public final class InstanceLifecycle {
     /**
      * Remove host-side integration for a destroyed or renamed instance, reporting to {@code out}
      * a git remote it could not clean up. The progress (each remote removed) stays unsaid, as it
-     * always was, under the caller's live step.
+     * always was, under the caller's live step. Returns the host tools the instance was removed
+     * from ({@link HostIntegration#destroyedAll}), which a caller may say once its step has ended.
      */
-    public static void removeHostIntegration(String name, Output out) {
+    public static List<String> removeHostIntegration(String name, Output out) {
         AutoRemoteService.removeRemotes(name, Output.diagnosticsTo(out::warn));
         SshKeyManager.cleanupInstance(name);
         ZmxSocketForward.cleanup(name, out);
-        HostIntegration.destroyedAll(name, out);
+        return HostIntegration.destroyedAll(name, out);
     }
 
     /**

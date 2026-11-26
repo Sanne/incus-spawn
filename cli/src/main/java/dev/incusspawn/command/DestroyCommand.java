@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 
 @CommandDefinition(
         name = "destroy",
@@ -124,7 +125,7 @@ public class DestroyCommand extends BaseCommand {
         try (var lock = lockOpt.get()) {
             // Read again under the mark: whether it was there to judge, and whether it still is the tool's
             var judged = new boolean[1];
-            boolean deleted;
+            Optional<List<String>> deleted;
             try {
                 deleted = InstanceDestroyer.deleteHeldIf(incus, target, current -> {
                     judged[0] = true;
@@ -139,8 +140,9 @@ public class DestroyCommand extends BaseCommand {
                 BuildOutput.success(judged[0] ? "Destroyed " + shown : shown + " is already gone");
                 return CommandResult.SUCCESS;
             }
-            if (deleted) {
+            if (deleted.isPresent()) {
                 InstanceDestroyer.refreshProxy();
+                InstanceDestroyer.saidRemoved(target, deleted.get(), BuildOutput.bound());
                 BuildOutput.success("Destroyed " + shown);
                 return CommandResult.SUCCESS;
             }
@@ -196,9 +198,10 @@ public class DestroyCommand extends BaseCommand {
             }
 
             BuildOutput.stepStart("Destroying " + target);
-            InstanceDestroyer.deleteHeld(incus, target);
+            var removedFrom = InstanceDestroyer.deleteHeld(incus, target);
             InstanceDestroyer.refreshProxy();
             BuildOutput.stepDone();
+            InstanceDestroyer.saidRemoved(target, removedFrom, BuildOutput.bound());
 
             BuildOutput.success("Destroyed " + target);
         }
@@ -352,8 +355,9 @@ public class DestroyCommand extends BaseCommand {
                 try (var lock = lockOpt.get()) {
                     BuildOutput.stepStart("Destroying " + n);
                     try {
-                        InstanceDestroyer.deleteHeld(incus, n);
+                        var removedFrom = InstanceDestroyer.deleteHeld(incus, n);
                         BuildOutput.stepDone();
+                        InstanceDestroyer.saidRemoved(n, removedFrom, BuildOutput.bound());
                         destroyed++;
                     } catch (Exception e) {
                         BuildOutput.stepFail(e.getMessage());

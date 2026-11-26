@@ -114,6 +114,11 @@ public final class HerdrIntegration implements HostIntegration {
     }
 
     @Override
+    public String shownName() {
+        return "herdr";
+    }
+
+    @Override
     public boolean done(String name) {
         var record = record(name);
         if (!Files.exists(record)) return false;
@@ -305,9 +310,9 @@ public final class HerdrIntegration implements HostIntegration {
     }
 
     @Override
-    public void destroyed(String name, Output out) {
+    public boolean destroyed(String name, Output out) {
         var record = record(name);
-        if (!Files.exists(record)) return;
+        if (!Files.exists(record)) return false;
         var shown = OutputFormat.oneLine(name);
         try {
             var id = recordedId(name);
@@ -321,20 +326,24 @@ public final class HerdrIntegration implements HostIntegration {
                 Files.deleteIfExists(record);
                 out.warn("could not remove " + shown + " from herdr: herdr is not on the PATH.",
                         "Remove it yourself: herdr machine remove " + id);
-                return;
+                return false;
             }
             if (host.onPath(TOOL)) removeOrphans(out);
+            var removedMachine = false;
             if (HERDR_ID_PATTERN.matcher(id).matches() && listed(id)) {
                 var removed = host.run(QUICK, List.of(TOOL, "machine", "remove", id));
                 if (!removed.ok()) {
                     out.warn("could not remove " + shown + " from herdr: " + lastLine(removed.output()),
                             "Remove it yourself: herdr machine remove " + id);
-                    return;
+                    return false;
                 }
+                removedMachine = true;
             }
             Files.deleteIfExists(record);
+            return removedMachine;
         } catch (IOException | RuntimeException e) {
             out.warn("could not remove " + shown + " from herdr: " + e.getMessage());
+            return false;
         }
     }
 
