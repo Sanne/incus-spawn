@@ -3094,11 +3094,11 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * The certificate's one outcome line, and what it is for, once, where it is made (#2528): under
-     * the line, in the block of setup, two levels in.
+     * What the certificate is for, once, where it is made (#2528): under the live step's tick that
+     * {@link CertificateAuthority#loadOrCreate} leaves, which is its one outcome line (#2588), in
+     * the block of setup, two levels in.
      */
     void reportCertificateCreated() {
-        BuildOutput.ok("Certificate created for the isx proxy");
         var computer = dev.incusspawn.Platform.thisComputer();
         for (var line : Lines.wrap("The proxy uses it to open the HTTPS requests that " + machines()
                 + " send to your accounts' services, and adds your credentials. "
