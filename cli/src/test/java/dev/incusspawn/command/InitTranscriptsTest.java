@@ -427,16 +427,16 @@ class InitTranscriptsTest {
                 new ScriptedPrompts().line(String.valueOf(probe.number("claude")), "4", "2", "")));
         b.add(new Branch("11-several-agents-found-another-chosen", "Claude Code and Codex found; Codex chosen from the list; an OpenAI API key",
                 i -> i.found = List.of(CLAUDE_SUBSCRIPTION, CODEX_FOUND), claudeHere,
-                new ScriptedPrompts().line("o", String.valueOf(probe.number("codex", java.util.Set.of("claude", "codex"))), "o", "3").secret(openaiKey).line("2", "")));
-        b.add(new Branch("12-codex-chatgpt-browser", "Codex chosen; ChatGPT in the browser",
+                new ScriptedPrompts().line("o", String.valueOf(probe.number("codex", java.util.Set.of("claude", "codex"))), "o", "1").secret(openaiKey).line("2", "")));
+        b.add(new Branch("12-codex-chatgpt-browser", "Codex chosen; ChatGPT in the browser, past its notice",
                 i -> { }, h -> { },
-                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "1", "2", "")));
-        b.add(new Branch("12b-codex-found-chatgpt", "Codex CLI signed in with ChatGPT on this computer; Enter signs in for isx",
+                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "2", "y", "2", "")));
+        b.add(new Branch("12b-codex-found-chatgpt", "Codex CLI signed in with ChatGPT on this computer; Enter re-asks, y signs in for isx",
                 i -> i.found = List.of(CODEX_FOUND), h -> { },
-                new ScriptedPrompts().line("", "", "2", "")));
+                new ScriptedPrompts().line("", "", "y", "2", "")));
         b.add(new Branch("13-codex-chatgpt-code-fails", "Codex chosen; ChatGPT with a one-time code, which expires; tried again, then skipped",
                 i -> { }, h -> h.chatGptSignsIn = false,
-                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "2", "", "s", "2", "")));
+                new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "3", "y", "", "s", "2", "")));
         b.add(new Branch("14-codex-none-for-now", "Codex chosen; None for now",
                 i -> { }, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.number("codex")), "4", "2", "")));
