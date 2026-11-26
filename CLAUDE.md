@@ -284,6 +284,7 @@ The helper reads the current proof file per request, including outside login she
 A placeholder token in the guest is read when the tool runs, never fixed by a build (#1108): where a tool reads a file instead of its variable, a login script in `/etc/profile.d/isx-zz-*` rewrites the file from the variable.
 An isx running inside an instance shares that instance's grant for a namespace only when its account there is the reserved `inherit` (#1110): its proxy swaps the instance's proofs for the parent's, derived from `/run/isx/credential-secret` (`InheritedProof`).
 An `openai` account may be `type: chatgpt` (#1332, experimental): the ChatGPT session stays on the host, and `ChatGptRoute` serves an explicit allowlist of Codex operations.
+It is chosen only past a notice of what it is, whose `(y/N)` Enter and end of input decline, after the API key in the menu (`CredentialSetup.confirmChatGpt`, #2651).
 It is signed in by the browser flow Codex's own login uses (the device-code flow beside it, for a host whose browser is elsewhere) and delivered as proof-bearing look-alikes on every start.
 See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 

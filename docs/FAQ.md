@@ -5,7 +5,7 @@ Each answer says what to do first, then why.
 
 ### How do I use my ChatGPT subscription for Codex without paying API charges?
 
-On the host, run `isx account add openai` and choose **ChatGPT**.
+On the host, run `isx account add openai`, choose a **ChatGPT** option, and answer yes after its notice.
 During first-time setup, choose Codex in `isx init` to get the same sign-in options.
 Open the sign-in link in a browser on the host, or choose the device-code option if your browser is on another computer.
 
@@ -17,7 +17,8 @@ If your instance already uses an API key, add the ChatGPT account under a separa
 For an instance named `dev`, run `isx account set dev openai=oss-pro` on the host, then stop and start the instance.
 
 Open a fresh shell in the instance, start `codex`, and enter `/status` to check the account before sending a prompt.
-isx keeps the ChatGPT session on the host and treats this sign-in as experimental.
+This sign-in is experimental, and isx signs in as Codex's own client, which OpenAI has not endorsed.
+Read [A ChatGPT plan, experimental](AGENTS.md#a-chatgpt-plan-experimental) before you choose it.
 
 ### Why does clicking a URL in Codex fail with "No valid browsers detected"?
 

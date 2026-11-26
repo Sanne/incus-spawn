@@ -605,6 +605,7 @@ Key design:
   On macOS the address names no instance, so `InstanceRegistry.chatGptCaller` finds the caller by the verifier of the proof it presents, only for a running instance and a binding made with its current secret (#2497).
   Sign-in is the browser flow Codex's own login uses by default (`ChatGptSignIn`, offered by init's OpenAI step), which is what an SSO-only organisation needs.
   The device-code flow is beside it, for a host whose browser is elsewhere.
+  Init's OpenAI step lists the API key first, and either ChatGPT kind is chosen only past a notice of what it is, whose `(y/N)` Enter and end of input decline (`CredentialSetup.confirmChatGpt`, #2651).
   Every start's secret rotation derives the verifiers and the guest's `~/.codex/auth.json` placeholders in the same locked write (`ChatGptStart`).
   An instance served no session is left with no binding and no chatgpt `auth.json`, and a branch is served its session from the copy request on (`stampBranchInto`), never its source's stamps.
   The session file is the one file the proxy writes, under `ChatGptSessionStore`'s lock, and only to the session and generation a refresh started from; it never creates one.
