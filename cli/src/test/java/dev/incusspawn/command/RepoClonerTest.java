@@ -167,8 +167,47 @@ class RepoClonerTest {
                 "git clone -- 'https://github.com/quarkusio/quarkus.git' '/home/agentuser/quarkus'");
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/quarkus' remote set-branches origin '*'");
-        verify(incus).execInContainer("test", "agentuser",
+        var inOrder = inOrder(incus);
+        inOrder.verify(incus).execInContainer("test", "agentuser",
                 "cd '/home/agentuser/quarkus' && mvn -B dependency:go-offline");
+        inOrder.verify(incus).execInContainer("test", "agentuser",
+                RepoCloner.settleIndexScript(List.of("/home/agentuser/quarkus")));
+    }
+
+    /**
+     * A clone's index written in the same second as its files leaves them racily clean, which
+     * every branch's read hashes again, since it never writes the index back (#2627). Once the
+     * build settled it, the index is newer than every file it records.
+     */
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.LINUX)
+    void theBuildLeavesNoCloneRacilyClean(@org.junit.jupiter.api.io.TempDir Path dir) throws Exception {
+        var repo = java.nio.file.Files.createDirectories(dir.resolve("app"));
+        sh(repo, "git init -q && for i in 1 2 3; do echo $i > f$i; done && git add . "
+                + "&& git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m a && touch -r f1 f2 f3 .git/index");
+        assertTrue(newestFileSecond(repo) >= indexSecond(repo), "the files are racily clean to begin with");
+
+        assertEquals(0, sh(dir, RepoCloner.settleIndexScript(List.of(repo.toString(), dir.resolve("absent").toString()))));
+
+        assertTrue(indexSecond(repo) > newestFileSecond(repo), "the index is newer than every file");
+    }
+
+    private static long indexSecond(Path repo) throws Exception {
+        return java.nio.file.Files.getLastModifiedTime(repo.resolve(".git/index")).toInstant().getEpochSecond();
+    }
+
+    private static long newestFileSecond(Path repo) throws Exception {
+        long newest = 0;
+        for (var f : List.of("f1", "f2", "f3")) {
+            newest = Math.max(newest, java.nio.file.Files.getLastModifiedTime(repo.resolve(f)).toInstant().getEpochSecond());
+        }
+        return newest;
+    }
+
+    private static int sh(Path dir, String script) throws Exception {
+        var p = new ProcessBuilder("sh", "-c", script).directory(dir.toFile()).redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+        return p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS) ? p.exitValue() : -1;
     }
 
     @Test
@@ -242,8 +281,8 @@ class RepoClonerTest {
         var cmd = cloner(incus);
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
-        // Clone call + refspec restore, but no prime
-        verify(incus, times(2)).execInContainer(eq("test"), anyString(), anyString());
+        // Clone call + refspec restore + the index settle, but no prime
+        verify(incus, times(3)).execInContainer(eq("test"), anyString(), anyString());
     }
 
     @Test
