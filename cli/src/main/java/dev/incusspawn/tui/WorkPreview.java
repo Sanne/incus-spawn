@@ -14,7 +14,6 @@ import dev.tamboui.text.Span;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
@@ -186,12 +185,12 @@ final class WorkPreview {
         if (summary.sessions() == null) {
             // A stopped instance may still have its last merged summary on the host
             if (merge == null) {
-                row(out, "Done", "not read".equals(summary.cell()) ? "not read: the instance is stopped" : summary.cell(),
+                row(out, "Done", "not read".equals(summary.cell()) ? "not read: the instance is stopped" : OutputFormat.oneLine(summary.cell()),
                         faint, width, theme);
                 return;
             }
         } else if (summary.sessions() == 0) {
-            row(out, "Done", summary.cell(), faint, width, theme);
+            row(out, "Done", OutputFormat.oneLine(summary.cell()), faint, width, theme);
             return;
         }
         int total = summary.sessions() == null ? merge.total() : summary.sessions();
@@ -208,12 +207,13 @@ final class WorkPreview {
             return;
         }
         if (merge != null) {
-            paragraph(out, merge.label(LocalDateTime.ofInstant(s.now(), ZoneId.systemDefault())), dim, width);
-            paragraph(out, merge.headline(), Style.EMPTY.bold(), width);
+            // The model's answer is the guest's text at one remove: one line each, as F3 shows it
+            paragraph(out, merge.label(s.now(), s.zone()), dim, width);
+            paragraph(out, OutputFormat.oneLine(merge.headline()), Style.EMPTY.bold(), width);
             // The labels F3's details give the same fields
-            paragraph(out, "Finished: " + merge.done(), Style.EMPTY, width);
-            paragraph(out, "State: " + merge.current(), Style.EMPTY, width);
-            paragraph(out, "Pending: " + merge.pending() + " (inferred)", Style.EMPTY, width);
+            paragraph(out, "Finished: " + OutputFormat.oneLine(merge.done()), Style.EMPTY, width);
+            paragraph(out, "State: " + OutputFormat.oneLine(merge.current()), Style.EMPTY, width);
+            paragraph(out, "Pending: " + OutputFormat.oneLine(merge.pending()) + " (inferred)", Style.EMPTY, width);
             return;
         }
         var newest = sessions.sessions().isEmpty() ? null : sessions.sessions().getFirst();
