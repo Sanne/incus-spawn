@@ -182,6 +182,50 @@ class AgentSessionsTest {
         assertEquals("report " + (ClaudeSessions.MAX_SESSIONS + 2), sessions.sessions().getFirst().closing());
     }
 
+    /**
+     * The clones and the sessions are read at once (#2627) and still answer in their order: the
+     * work section first, each reader's after it. The readers' file is gone once the read ends,
+     * and with no place for it they are read one after another, to the same answer.
+     */
+    @Test
+    @EnabledOnOs(value = OS.LINUX, disabledReason = GNU_GUEST)
+    void theClonesAndTheSessionsAreReadAtOnceInTheirOrder(@TempDir Path home, @TempDir Path tmp) throws Exception {
+        var git = new ProcessBuilder("git", "init", "-q", home.resolve("app").toString()).start();
+        assertTrue(git.waitFor(30, TimeUnit.SECONDS) && git.exitValue() == 0);
+        var projects = Files.createDirectories(home.resolve(".claude/projects/p"));
+        Files.writeString(projects.resolve("s.jsonl"), USER.formatted("Fix it") + "\n" + ASSISTANT.formatted("false", "Fixed") + "\n");
+
+        for (var dir : List.of(tmp.toString(), tmp.resolve("absent").toString())) {
+            var out = output(home, dir);
+            var lines = out.lines().toList();
+            assertEquals(WorkState.HEADER, lines.getFirst(), dir);
+            var headers = GuestRead.READERS.stream().map(r -> lines.indexOf(r.header())).toList();
+            assertEquals(headers.stream().sorted().toList(), headers, "each reader's section in its place: " + dir);
+            assertTrue(lines.indexOf("end") < headers.getFirst(), "the work section comes whole before them");
+            var read = GuestRead.parse(0, out, false);
+            assertEquals(List.of(new WorkState.Repo("app", 0, 0, 0)), read.work().repos(), dir);
+            assertEquals("Fixed", read.sessions().sessions().getFirst().closing(), dir);
+            try (var left = Files.list(tmp)) {
+                assertEquals(List.of(), left.toList(), "the readers' file is gone");
+            }
+        }
+    }
+
+    private static String output(Path home, String tmpdir) throws Exception {
+        var out = new ByteArrayOutputStream();
+        var process = new ProcessBuilder("sh", "-c", GuestRead.SCRIPT).directory(home.toFile());
+        process.environment().put("HOME", home.toString());
+        process.environment().put("TMPDIR", tmpdir);
+        for (var override : List.of("CLAUDE_CONFIG_DIR", "CODEX_HOME", "PI_CODING_AGENT_DIR", "XDG_DATA_HOME", "GEMINI_CLI_HOME", "COPILOT_HOME")) {
+            process.environment().remove(override);
+        }
+        var p = process.redirectError(ProcessBuilder.Redirect.DISCARD).start();
+        p.getInputStream().transferTo(out);
+        assertTrue(p.waitFor(30, TimeUnit.SECONDS));
+        assertEquals(0, p.exitValue());
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
     record Read(WorkState work, AgentSessions sessions) {
         Summary summary(boolean active) {
             return Summary.of(sessions, work, active);
