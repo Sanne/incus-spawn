@@ -401,8 +401,9 @@ final class MainScreen {
                 if (Motion.SPINNER_STILL.equals(cell.symbol())) buffer.set(x, y, cell.symbol(tui.motion.spinner()));
             }
             // The name, which is what the operation is about: the cursor gutter is not text
-            tui.motion.shimmer(new dev.tamboui.layout.Rect(area.left() + 2, y,
-                    Math.min(instance.name().length(), Math.max(0, area.width() - 2)), 1));
+            // Past the cursor gutter and the state glyph
+            tui.motion.shimmer(new dev.tamboui.layout.Rect(area.left() + 4, y,
+                    Math.min(instance.name().length(), Math.max(0, area.width() - 4)), 1));
         }
     }
 
@@ -524,30 +525,29 @@ final class MainScreen {
             shownRows = columns.rows();
         } else {
             var natural = tui.instanceNatural;
-            // The name is never cut (Sanne, review of the column widths). Where the table does
-            // not fit, the purpose is cut first, then whole columns are left out: RUNTIME, IP,
-            // DISK and PARENT in that order, then OWNER, PURPOSE and AGE. Only then is the status
-            // cut, and the name when nothing else is left.
+            // The name is never cut (Sanne, review of the column widths), and its state glyph is
+            // before it, so there is no STATUS column. Where the table does not fit, the purpose
+            // is cut first, then whole columns are left out: RUNTIME, IP, DISK and PARENT in that
+            // order, then OWNER, PURPOSE and AGE. Only then is the name cut.
             var all = new ArrayList<>(List.of(
                     new ColumnFit.Column("NAME", 10, natural[0], 0, false),
-                    new ColumnFit.Column("STATUS", 9, natural[1], 8, false),
                     // Room for an address is kept once the columns stand apart, so they
                     // hold still when an instance starts and gets one
-                    new ColumnFit.Column("IP", 7, natural[2], 6, false).reserving(IP_WIDTH).dropping(2),
-                    new ColumnFit.Column("PARENT", 8, natural[3], 3, false).dropping(4),
-                    new ColumnFit.Column("RUNTIME", 9, natural[4], 2, false).dropping(1),
-                    new ColumnFit.Column("AGE", 6, natural[5], 5, false).dropping(7),
-                    ColumnFit.Column.fixed("DISK", Math.max(4, natural[6])).dropping(3)));
-            // The cells of the columns drawn, from each row's: OWNER is the eighth, PURPOSE the ninth
+                    new ColumnFit.Column("IP", 7, natural[1], 6, false).reserving(IP_WIDTH).dropping(2),
+                    new ColumnFit.Column("PARENT", 8, natural[2], 3, false).dropping(4),
+                    new ColumnFit.Column("RUNTIME", 9, natural[3], 2, false).dropping(1),
+                    new ColumnFit.Column("AGE", 6, natural[4], 5, false).dropping(7),
+                    ColumnFit.Column.fixed("DISK", Math.max(4, natural[5])).dropping(3)));
+            // The cells of the columns drawn, from each row's: OWNER is the seventh, PURPOSE the eighth
             var source = new java.util.ArrayList<>(IntStream.range(0, all.size()).boxed().toList());
             boolean showOwner = tui.anyOwner && actualArea.width() >= OWNER_COLUMN_MIN_WIDTH;
             if (showOwner) {
-                all.add(new ColumnFit.Column("OWNER", 9, natural[7], 4, false).dropping(5));
-                source.add(7);
+                all.add(new ColumnFit.Column("OWNER", 9, natural[6], 4, false).dropping(5));
+                source.add(6);
             }
             if (tui.anyPurpose && actualArea.width() >= (showOwner ? PURPOSE_COLUMN_MIN_WIDTH : PURPOSE_ALONE_MIN_WIDTH)) {
-                all.add(new ColumnFit.Column("PURPOSE", 12, natural[8], 1, true).dropping(6));
-                source.add(8);
+                all.add(new ColumnFit.Column("PURPOSE", 12, natural[7], 1, true).dropping(6));
+                source.add(7);
             }
             var shown = ColumnFit.kept(all, actualArea.width() - HIGHLIGHT_WIDTH);
             var columns = shown.stream().map(all::get).toList();
@@ -559,8 +559,11 @@ final class MainScreen {
                     : tui.tableRows.stream().map(row -> Row.from(cells.stream().map(row.cells()::get).toList()).style(row.style())).toList();
             shownRows = ColumnFit.clipped(kept, fitted);
         }
+        // NAME stands over the name, past its state glyph
+        var labels = new ArrayList<>(headers);
+        if (!labels.isEmpty()) labels.set(0, "  " + labels.getFirst());
         var tableBuilder = Table.builder()
-                .header(Row.from(headers.toArray(String[]::new))
+                .header(Row.from(labels.toArray(String[]::new))
                         .style(headerStyle()))
                 .rows(shownRows)
                 .widths(widths)
@@ -632,8 +635,6 @@ final class MainScreen {
         var columns = new ArrayList<>(List.of(
                 // Never cut: GITHUB takes its width from what the name leaves
                 new ColumnFit.Column("NAME", Math.max(10, natural[0]), natural[0], 0, false),
-                // Down to 7 as before, so a pull request stays whole at 80 columns (#2292)
-                new ColumnFit.Column("STATUS", 7, natural[1], 6, false),
                 ColumnFit.Column.fixed("LAST USED", 12),
                 new ColumnFit.Column("WORK", 12, 12, 4, false),
                 ColumnFit.Column.fixed("TOKENS", 7)));
@@ -679,7 +680,7 @@ final class MainScreen {
         for (int i = 0; i < pool.size(); i++) {
             var instance = pool.get(i);
             var row = instanceRows.get(instance);
-            var cells = new ArrayList<>(List.of(row.cells().get(0), row.cells().get(1)));
+            var cells = new ArrayList<>(List.of(row.cells().get(0)));
             cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.lastUsedCell(instance)));
             boolean awaits = reading == null || tui.overviewAwaits(instance);
             cells.add(dev.tamboui.widgets.table.Cell.from(awaits ? "\u2026" : reading.workOf(instance).cell()));
@@ -697,7 +698,7 @@ final class MainScreen {
                 cells.add(dev.tamboui.widgets.table.Cell.from(summary == null || log == null && "untouched".equals(summary.from())
                         ? "\u2026" : OverviewCommand.doneCell(summary, 120)));
             }
-            if (purpose) cells.add(row.cells().get(8));
+            if (purpose) cells.add(row.cells().get(7));
             var overviewRow = Row.from(cells).style(row.style());
             every.add(overviewRow);
             made.put(instance, overviewRow);
@@ -710,7 +711,7 @@ final class MainScreen {
         }
         for (int c = 0; c < columns.size(); c++) {
             var column = columns.get(c);
-            if (column.give() == 0 || c < 2) continue;
+            if (column.give() == 0 || c < 1) continue;
             columns.set(c, column.holding(Math.max(column.floor(), ColumnFit.natural(every, c))));
         }
         var fitted = ColumnFit.widths(columns, width - HIGHLIGHT_WIDTH);

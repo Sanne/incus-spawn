@@ -10,9 +10,9 @@
              ╭ Rename 'work-1' ───────────────────────────────────╮
              │ Instance is running. Stop it to rename it?         │
  Instances ──│                                                    │─────────────
-   NAME    ST│  y Stop & rename   any key Cancel                  │        DISK
- ▸ work-1  ● ╰────────────────────────────────────────────────────╯go      -
-   vm-1    ○ Stopped             tpl-minimal  virtual-machine  2 days ago  -
+     NAME    │  y Stop & rename   any key Cancel                  │        DISK
+ ▸ ● work-1  ╰────────────────────────────────────────────────────╯o       -
+   ○ vm-1                     tpl-minimal   virtual-machine   2 days ago   -
 
 
 

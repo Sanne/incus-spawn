@@ -52,6 +52,8 @@ import dev.incusspawn.tool.YamlToolAction;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.style.Style;
+import dev.tamboui.text.Line;
+import dev.tamboui.text.Span;
 import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
@@ -3558,8 +3560,10 @@ public class Tui {
         for (var entry : allEntries != null ? allEntries : entries) rows.put(entry, instanceRow(entry));
         for (var entry : entries) rows.computeIfAbsent(entry, this::instanceRow);
         var natural = new int[INSTANCE_COLUMNS];
-        for (var row : rows.values()) {
-            for (int c = 0; c < natural.length; c++) natural[c] = Math.max(natural[c], row.cells().get(c).width());
+        for (var measured : rows.entrySet()) {
+            var row = measured.getValue();
+            for (int c = 1; c < natural.length; c++) natural[c] = Math.max(natural[c], row.cells().get(c).width());
+            natural[0] = Math.max(natural[0], nameWidth(measured.getKey()));
         }
         instanceNatural = natural;
         measuredRows = rows;
@@ -3586,7 +3590,7 @@ public class Tui {
     volatile java.util.Map<InstanceInfo, Row> measuredRows = Map.of();
 
     /** The cells of an instance's row, and the widest of each over every instance (see {@link ColumnFit}). */
-    static final int INSTANCE_COLUMNS = 9;
+    static final int INSTANCE_COLUMNS = 8;
     volatile int[] instanceNatural = new int[INSTANCE_COLUMNS];
 
     /** An instance's row: OWNER and PURPOSE last, since MainScreen keeps the cells of the columns it has room for. */
@@ -3594,8 +3598,6 @@ public class Tui {
         var age = entry.created().isEmpty() ? "-" : Metadata.ageDescription(entry.created());
         var parent = entry.parent().isEmpty() ? "-" : OutputFormat.oneLine(entry.parent());
         boolean running = isRunning(entry);
-        boolean stopped = "STOPPED".equalsIgnoreCase(entry.status());
-        boolean busy = !entry.pendingOp().isEmpty();
         // A row's own style holds only what an operation under way adds; each cell has its colour
         var rowStyle = Style.EMPTY;
         if (Metadata.OP_DELETING.equals(entry.pendingOp())) {
@@ -3604,22 +3606,47 @@ public class Tui {
         } else if (Metadata.OP_STOPPING.equals(entry.pendingOp()) || Metadata.OP_RESTARTING.equals(entry.pendingOp())) {
             rowStyle = rowStyle.addModifier(dev.tamboui.style.Modifier.DIM);
         }
-        var stateColor = busy ? theme.statusWarning() : running ? theme.statusRunning()
-                : stopped ? theme.statusStopped() : theme.statusWarning();
-        var glyph = busy ? Motion.SPINNER_STILL : running ? Glyphs.RUNNING : stopped ? Glyphs.STOPPED : Glyphs.BETWEEN;
-        var status = dev.tamboui.widgets.table.Cell.from(dev.tamboui.text.Line.from(
-                dev.tamboui.text.Span.styled(glyph + " ", Style.EMPTY.fg(stateColor)),
-                dev.tamboui.text.Span.styled(busy ? entry.pendingOp() : entry.status(),
-                        Style.EMPTY.fg(running || busy ? stateColor : theme.textDim()))));
-        var nameStyle = running ? Style.EMPTY : Style.EMPTY.fg(theme.textDim());
+        var name = Line.from(stateGlyph(entry), Span.styled(entry.name(), running ? Style.EMPTY : Style.EMPTY.fg(theme.textDim())));
+        var word = unusualState(entry);
+        if (word != null) name = Line.from(name.spans().getFirst(), name.spans().get(1), Span.styled(" " + word, Style.EMPTY.fg(theme.textDim())));
         var quiet = Style.EMPTY.fg(theme.textDim());
 
         // OWNER and PURPOSE last: MainScreen keeps the cells of the columns it has room for
-        return Row.from(cell(entry.name(), nameStyle), status, cell(entry.ipv4(), quiet),
+        return Row.from(dev.tamboui.widgets.table.Cell.from(name), cell(entry.ipv4(), quiet),
                 cell(parent, quiet), cell(entry.runtime(), quiet), cell(age, quiet),
                 cell(diskCell(entry.diskUsage()), quiet),
                 cell(dev.incusspawn.command.ListCommand.ownerCell(entry), quiet),
                 cell(dev.incusspawn.command.ListCommand.purposeCell(entry), quiet)).style(rowStyle);
+    }
+
+    /**
+     * The state glyph before an instance's name, and the space after it, in the state's colour
+     * (design/visual-language.md "Glyphs"): its shape says the state where there is no colour.
+     */
+    Span stateGlyph(InstanceInfo entry) {
+        boolean busy = !entry.pendingOp().isEmpty();
+        boolean running = isRunning(entry);
+        boolean stopped = "STOPPED".equalsIgnoreCase(entry.status());
+        var color = busy ? theme.statusWarning() : running ? theme.statusRunning()
+                : stopped ? theme.statusStopped() : theme.statusWarning();
+        var glyph = busy ? Motion.SPINNER_STILL : running ? Glyphs.RUNNING : stopped ? Glyphs.STOPPED : Glyphs.BETWEEN;
+        return Span.styled(glyph + " ", Style.EMPTY.fg(color));
+    }
+
+    /**
+     * The word after an instance's name, only for a state the glyph alone does not say: the
+     * operation under way ({@code stopping}), or a status neither running nor stopped
+     * ({@code frozen}, {@code error}). Null for a running or a stopped instance.
+     */
+    static String unusualState(InstanceInfo entry) {
+        if (!entry.pendingOp().isEmpty()) return entry.pendingOp();
+        if (isRunning(entry) || "STOPPED".equalsIgnoreCase(entry.status())) return null;
+        return OutputFormat.oneLine(entry.status()).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** The cells an instance's name takes with its glyph, the word after it left out, so an operation starting moves no column. */
+    static int nameWidth(InstanceInfo entry) {
+        return 2 + dev.tamboui.text.CharWidth.of(entry.name());
     }
 
     /** Each instance's status and operation as the rows last showed them: a change flashes its row. */

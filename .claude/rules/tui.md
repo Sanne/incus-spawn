@@ -26,7 +26,7 @@ The theme is written in RGB and `TuiTheme.of` fits each colour to the terminal's
 `ColorFit` is the last step of every frame the runner draws and fits what a blend left, so `Tui.drawUntilQuit` is the one place a runner is made.
 `TuiThemeTest` fails on an RGB colour below truecolor and on two surfaces that fit to the same palette entry.
 **A table's column widths come from `ColumnFit`**, never from `Constraint.min` or `fill`: each column is as wide as its widest cell (`Tui.instanceNatural`, over every instance, not the search's), gives width up in its `give` order down to its `floor`, and a cut cell ends in `…` (`ColumnFit.clipped`).
-An instance's name is never cut (`give` 0): where the Instances table does not fit, `ColumnFit.kept` leaves whole columns out in their `dropping` order, RUNTIME, IP, DISK, PARENT, OWNER, PURPOSE, then AGE.
+An instance's name is never cut on the Instances tab (`give` 0): where the table does not fit, `ColumnFit.kept` leaves whole columns out in their `dropping` order, RUNTIME, IP, DISK, PARENT, OWNER, PURPOSE, then AGE.
 An empty panel says whether a search emptied it (`MainScreen.searchHidesAll`).
 Every table measures over every row, the search's or not: `Tui.templateNatural`, `instanceNatural`, and `measuredRows` for the Work tab's columns.
 A column's `reserving` width counts in `kept`, and `widths` grants it from the content's width, so content arriving moves no column where the table has room.
@@ -111,8 +111,10 @@ A failed existence check lets the action proceed rather than blocking the UI.
 A purpose is one metadata write on a running or a stopped one (empty text unsets it), and none when unchanged; only a new name asks to stop a running instance (`CONFIRM_STOP_FOR_RENAME`), after both fields passed their checks, and Esc there writes neither.
 F3's details always show a Purpose row, `-` when unset, so a person finds where it goes.
 The branch dialog's Purpose field, right after the name, goes to the copy request as `Metadata.PURPOSE` in `extraConfig`.
-The instance table's PURPOSE column (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`, 118, or `PURPOSE_ALONE_MIN_WIDTH`, 108, when OWNER is not shown) is drawn only when some instance has a purpose, from the ninth cell of each row, `ListCommand.purposeCell`.
-`Tui.buildRowData` always makes nine cells and `MainScreen` keeps those of the columns it draws.
+The instance table's PURPOSE column (`MainScreen.PURPOSE_COLUMN_MIN_WIDTH`, 118, or `PURPOSE_ALONE_MIN_WIDTH`, 108, when OWNER is not shown) is drawn only when some instance has a purpose, from the eighth cell of each row, `ListCommand.purposeCell`.
+`Tui.buildRowData` always makes eight cells and `MainScreen` keeps those of the columns it draws.
+Neither table has a STATUS column: the state glyph is before the name, in its state's colour (`Tui.stateGlyph`), and a dimmed word follows the name only for an operation under way or a status neither running nor stopped (`Tui.unusualState`).
+NAME's width is measured without that word (`Tui.nameWidth`), so an operation starting moves no column.
 
 **The overview** (#2241): `o` on the instance table sets `Tui.overview`, the Work tab shows the same (`Tui.overviewShown()`), and `MainScreen.overviewColumns` draws NAME, STATUS, LAST USED, WORK, TOKENS, from 100 columns ACTIVE, GITHUB, from 120 DONE and, from 150, PURPOSE, the cells made by `OverviewCommand`'s cell methods from the parked `Tui.overviewLog` and `Tui.overviewReading`.
 GITHUB is `OverviewCommand.githubParts` fitted by `fitGithub` (each reference whole, the rest counted), as wide as its widest row needs within what the other columns leave, and each pull request a hyperlink span to `PullRequest.url()` (#2292).
