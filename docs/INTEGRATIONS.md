@@ -57,6 +57,7 @@ In the TUI, the instance's details (F3) say isx added it to herdr.
 [Rex](https://pkgs.superlogical.com/rex/) is a terminal multiplexer whose client lists hosts and reaches their sessions over SSH.
 
 1. Install Rex on your host, Linux or macOS.
+   isx works only with Superlogical's Rex, and leaves the unrelated Perl tool also named `rex` alone.
 2. Add the `rex` tool to a template and build it:
 
    ```yaml

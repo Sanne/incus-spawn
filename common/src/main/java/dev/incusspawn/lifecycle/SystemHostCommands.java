@@ -16,10 +16,11 @@ class SystemHostCommands implements HostCommands {
     }
 
     @Override
-    public Result run(Duration timeout, List<String> command) {
+    public Result run(Duration timeout, List<String> command, java.nio.file.Path directory) {
         try {
             var builder = new ProcessBuilder(command).redirectErrorStream(true)
                     .redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
+            if (directory != null) builder.directory(directory.toFile());
             builder.environment().put(dev.incusspawn.ssh.SshKeyManager.NO_START_ENV, "1");
             var process = builder.start();
             // Read while it runs, so a chatty command cannot fill the pipe and stall

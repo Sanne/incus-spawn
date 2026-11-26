@@ -49,6 +49,13 @@ public final class RexIntegration implements HostIntegration {
     private static final String UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
     private static final Pattern HOST_ID = Pattern.compile("host:" + UUID);
     private static final Pattern ORPHAN = Pattern.compile(UUID);
+    private static final Pattern REX_VERSION = Pattern.compile("rex \\S+");
+    /** The directory under the records every rex runs in, empty but for what Rex itself writes. */
+    static final String WORKING_DIRECTORY = ".cwd";
+    private static final Pattern REX_API = Pattern.compile("api: revision \\d+.*");
+
+    /** {@link #superlogical}, once answered: null until then. */
+    private volatile Boolean superlogical;
 
     private final HostCommands host;
     private final Supplier<Path> records;
@@ -92,26 +99,46 @@ public final class RexIntegration implements HostIntegration {
     @Override
     public void started(IncusClient incus, String name, JqValue instance, Output out) {
         if (!host.onPath(TOOL)) return;
-        removeOrphans(out);
         var shown = OutputFormat.oneLine(name);
+        // Decided before any rex runs, so a start that adds nothing yet costs no host command
+        if (!HostIntegration.trusted(instance)) {
+            out.step("Not adding " + shown + " to Rex: its template is project-local or untrusted.");
+            recordQuietly(name, NOT_ADDED, shown, out);
+            return;
+        }
+        // Nothing recorded, so a later start, once the Host block is in place, adds it
+        if (!reachable.test(name, instance.path("config").pathText(Metadata.STATIC_IP, ""))) {
+            out.step("Not adding " + shown + " to Rex yet: ssh " + shown + " does not reach it through isx's SSH config.");
+            return;
+        }
+        var rex = superlogical();
+        if (rex == null) {
+            // rex version timed out or could not run: nothing is decided, so the next start asks again
+            out.step("Not adding " + shown + " to Rex yet: rex version did not answer; isx tries again on its next start.");
+            return;
+        }
+        if (!rex) {
+            // Another program of that name, such as the Perl deployment tool: never asked anything again
+            out.step("Not adding " + shown + " to Rex: the rex on the PATH is not Superlogical's Rex.");
+            recordQuietly(name, NOT_ADDED, shown, out);
+            return;
+        }
+        removeOrphans(out);
         // One first start at a time: a branch and an orchestrator's start must not both add it
         try (var lock = HostLock.acquire(records.get().resolve(".lock"), "adding " + shown + " to Rex", out::step)) {
             if (done(name)) return;
-            if (!HostIntegration.trusted(instance)) {
-                out.step("Not adding " + shown + " to Rex: its template is project-local or untrusted.");
-                record(name, NOT_ADDED);
-                return;
-            }
-            // Nothing recorded, so a later start, once the Host block is in place, adds it
-            if (!reachable.test(name, instance.path("config").pathText(Metadata.STATIC_IP, ""))) {
-                out.step("Not adding " + shown + " to Rex yet: ssh " + shown + " does not reach it through isx's SSH config.");
-                return;
-            }
             var retrying = RETRY.equals(firstLine(name));
             var endpoint = endpoint(name);
-            var added = host.run(QUICK, List.of(TOOL, "hosts", "add", name, endpoint));
+            var added = rex("hosts", "add", "--", name, endpoint);
             if (!added.ok()) {
                 if (added.output().contains("already exists")) {
+                    // A first add that timed out after Rex saved the host: isx's own, at its endpoint
+                    var earlier = retrying ? listedIdOrNull(name, endpoint) : null;
+                    if (earlier != null) {
+                        record(name, earlier);
+                        out.step("Added " + shown + " to Rex.");
+                        return;
+                    }
                     // The user's own host of that label, which isx never replaces or removes
                     out.step("Not adding " + shown + " to Rex: it already has a host of that name.");
                     record(name, NOT_ADDED);
@@ -129,12 +156,7 @@ public final class RexIntegration implements HostIntegration {
             }
             // Rex added it: a list that fails now must not leave it unrecorded, or the next
             // start's add would find the label taken and take isx's own host for the user's
-            String id;
-            try {
-                id = listedId(name, endpoint);
-            } catch (RuntimeException e) {
-                id = null;
-            }
+            var id = listedIdOrNull(name, endpoint);
             if (id == null) {
                 out.warn("added " + shown + " to Rex, but could not read the id Rex gave it.",
                         "isx does not remove it when the instance is destroyed: rex hosts remove " + shown);
@@ -160,22 +182,24 @@ public final class RexIntegration implements HostIntegration {
         var shown = OutputFormat.oneLine(name);
         try {
             var id = recordedId(name);
-            if (id != null && !host.onPath(TOOL)) {
+            var rex = Boolean.TRUE.equals(superlogical());
+            if (id != null && !rex) {
                 // Kept so a later isx with Rex removes it, but not under the name: a new instance
                 // of that name must not be taken as already added
                 var orphan = orphans().resolve(id.substring("host:".length()));
                 Files.createDirectories(orphan.getParent());
                 Files.writeString(orphan, name + "\n");
                 Files.deleteIfExists(record);
-                out.warn("could not remove " + shown + " from Rex: rex is not on the PATH.",
+                out.warn("could not remove " + shown + " from Rex: " + (host.onPath(TOOL)
+                                ? "the rex on the PATH did not answer as Superlogical's Rex." : "Superlogical's rex is not on the PATH."),
                         "Remove it yourself: rex hosts remove " + shown);
                 return;
             }
-            if (host.onPath(TOOL)) removeOrphans(out);
+            if (rex) removeOrphans(out);
             if (id != null) {
                 var label = listedLabel(id);
                 if (label != null) {
-                    var removed = host.run(QUICK, List.of(TOOL, "hosts", "remove", label));
+                    var removed = rex("hosts", "remove", "--", label);
                     if (!removed.ok()) {
                         out.warn("could not remove " + shown + " from Rex: " + lastLine(removed.output()),
                                 "Remove it yourself: rex hosts remove " + OutputFormat.oneLine(label));
@@ -204,7 +228,7 @@ public final class RexIntegration implements HostIntegration {
             var hosts = listed();
             for (var orphan : orphaned) {
                 var label = labelOf(hosts, "host:" + orphan.getFileName());
-                if (label != null && !host.run(QUICK, List.of(TOOL, "hosts", "remove", label)).ok()) continue;
+                if (label != null && !rex("hosts", "remove", "--", label).ok()) continue;
                 Files.deleteIfExists(orphan);
             }
         } catch (IOException | RuntimeException e) {
@@ -212,9 +236,48 @@ public final class RexIntegration implements HostIntegration {
         }
     }
 
+    /**
+     * Run {@code rex} with {@code args} in the records directory, which isx owns: never in the
+     * directory isx was started in, which may be a cloned repository's.
+     */
+    private HostCommands.Result rex(String... args) {
+        // A dot name of its own, which no record is: a record of an instance named Rexfile is never in it
+        var dir = records.get().resolve(WORKING_DIRECTORY);
+        try {
+            Files.createDirectories(dir);
+        } catch (IOException e) {
+            return new HostCommands.Result(-1, "could not create " + dir + ": " + e.getMessage());
+        }
+        var command = new java.util.ArrayList<String>();
+        command.add(TOOL);
+        command.addAll(List.of(args));
+        return host.run(QUICK, command, dir);
+    }
+
+    /**
+     * Whether the {@code rex} on the PATH is Superlogical's: {@code rex version} prints
+     * {@code rex <version>} and an {@code api: revision} line. Debian, Ubuntu and CPAN ship an
+     * unrelated {@code rex}, a Perl deployment tool that loads {@code ./Rexfile} as code on every
+     * command, which isx must not run as if it were Rex. Asked once per process, while
+     * {@code rex} is on the PATH; null when {@code rex version} timed out or could not run.
+     */
+    private Boolean superlogical() {
+        if (!host.onPath(TOOL)) return false;
+        var known = superlogical;
+        if (known != null) return known;
+        var version = rex("version");
+        // Killed for its time or never started: no answer, so not remembered either way
+        if (version.exit() < 0) return null;
+        var lines = version.output().strip().lines().toList();
+        known = version.ok() && !lines.isEmpty() && REX_VERSION.matcher(lines.getFirst()).matches()
+                && lines.stream().anyMatch(line -> REX_API.matcher(line).matches());
+        superlogical = known;
+        return known;
+    }
+
     /** The hosts {@code rex hosts list --json} lists, each a {@code {host, from, held}} object. */
     private List<JqValue> listed() {
-        var listed = host.run(QUICK, List.of(TOOL, "hosts", "list", "--json"));
+        var listed = rex("hosts", "list", "--json");
         if (!listed.ok()) throw new IllegalStateException("rex hosts list: " + lastLine(listed.output()));
         return Jjq.parseForeign(listed.output(), "rex hosts list --json").path("hosts").asList().stream()
                 .map(entry -> entry.path("host")).toList();
@@ -228,6 +291,15 @@ public final class RexIntegration implements HostIntegration {
                 .map(h -> h.pathText("id", ""))
                 .filter(id -> HOST_ID.matcher(id).matches())
                 .findFirst().orElse(null);
+    }
+
+    /** {@link #listedId}, or null when Rex could not list its hosts. */
+    private String listedIdOrNull(String name, String endpoint) {
+        try {
+            return listedId(name, endpoint);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** The label of the host Rex lists with {@code id}, or null when it lists none: the user may have removed it. */
@@ -265,6 +337,15 @@ public final class RexIntegration implements HostIntegration {
         // Incus validates instance names, so this only guards against a caller's mistake
         if (!dir.equals(file.getParent()) || name.startsWith(".")) throw new IllegalArgumentException("not an instance name: " + name);
         return file;
+    }
+
+    /** {@link #record(String, String)}, a failure warned. */
+    private void recordQuietly(String name, String value, String shown, Output out) {
+        try {
+            record(name, value);
+        } catch (IOException | IllegalArgumentException e) {
+            out.warn("could not record that " + shown + " is not added to Rex: " + e.getMessage());
+        }
     }
 
     private void record(String name, String value) throws IOException {

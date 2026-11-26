@@ -51,7 +51,7 @@ run:
     [Service]
     Type=oneshot
     Environment=GODEBUG=
-    ExecStart=/bin/sh -c 'rex --autostart=false ls --json | grep -q "\"session_id\"" || exec rex --autostart=false new main'
+    ExecStart=/bin/sh -c 'rex --autostart=false ls --json | grep -q session_id || exec rex --autostart=false new main'
 
     [Install]
     WantedBy=default.target

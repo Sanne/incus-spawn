@@ -23,7 +23,17 @@ public interface HostCommands {
      * Run {@code command} with no stdin, killed after {@code timeout}, and with
      * {@link dev.incusspawn.ssh.SshKeyManager#NO_START_ENV} set, so no ssh it runs starts an instance.
      */
-    Result run(Duration timeout, List<String> command);
+    default Result run(Duration timeout, List<String> command) {
+        return run(timeout, command, null);
+    }
+
+    /**
+     * {@link #run(Duration, List)} in {@code directory}, never the directory isx was started in: a
+     * program that reads a file from its working directory, as the Perl tool also named {@code rex}
+     * reads {@code ./Rexfile}, then reads only what isx put there. Null runs it where isx runs.
+     * Every implementation honours it, so no caller's directory is silently dropped.
+     */
+    Result run(Duration timeout, List<String> command, java.nio.file.Path directory);
 
     /** The real host. */
     HostCommands SYSTEM = new SystemHostCommands();
