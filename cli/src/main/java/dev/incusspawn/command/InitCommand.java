@@ -772,6 +772,13 @@ public class InitCommand extends BaseCommand {
         return false;
     }
 
+    /** On macOS, starts the VM that runs Incus and takes this init's client to it; whether it runs. Tests answer it. */
+    boolean startIncusVm() {
+        if (!requireIncusHost()) return false;
+        this.incus = RuntimeServices.incus();
+        return true;
+    }
+
     /** Asks sudo for the password at the terminal, its exit code; tests answer it. */
     int validateSudo() {
         return runHost("sudo", "-v");
@@ -1441,10 +1448,7 @@ public class InitCommand extends BaseCommand {
                 if (!waitToBegin()) return CommandResult.valueOf(0);
                 askFirstRunQuestions();
                 printQuestionsDone(macOs);
-                if (macOs) {
-                    if (!requireIncusHost()) return CommandResult.valueOf(1);
-                    this.incus = RuntimeServices.incus();
-                }
+                if (macOs && !startIncusVm()) return CommandResult.valueOf(1);
                 if (!macOs && !noSudo) {
                     // The one sudo prompt the intro promised, said before it asks (#2528)
                     BuildOutput.gap();
