@@ -1,0 +1,34 @@
+name: Linux runner heartbeat
+# runner-route.sh counts only runs of this title: with the switch off, the job is skipped, and a run
+# whose jobs were all skipped can still conclude as a success.
+run-name: ${{ vars.LINUX_RUNNER_ENABLED == 'true' && 'Linux runner heartbeat' || 'Linux runner heartbeat (off)' }}
+
+# The project's Linux server runs test-integration.yml's unit-tests for trusted code, in a fresh isx
+# instance per job, while its runner is up and free (#2519). This run is how runner-route.sh knows:
+# a heartbeat completed within 25 minutes, with none waiting more than 5 for the runner, sends the
+# job to the server; anything else sends it to GitHub's ubuntu-26.04. Fork pull requests get no
+# secret, so the route reads these runs through the public API instead of asking about the runner.
+# The runner is ephemeral, so each heartbeat takes one instance, and the server makes the next.
+#
+# It runs only while the repository variable LINUX_RUNNER_ENABLED is 'true'. Clearing it is the off
+# switch: the heartbeat goes stale, and unit-tests runs on GitHub's runners again.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+# One run at a time and one waiting: a waiting run is how the route sees the runner busy or gone.
+concurrency:
+  group: linux-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    if: vars.LINUX_RUNNER_ENABLED == 'true' && github.repository == 'Sanne/incus-spawn'
+    runs-on: [self-hosted, Linux, X64, isx-linux]
+    timeout-minutes: 2
+    steps:
+      - name: The Linux runner is up
+        run: echo "The Linux runner is up"

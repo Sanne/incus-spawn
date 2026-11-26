@@ -1,0 +1,19 @@
+# incus-spawn's self-hosted Linux runner, slot %i: one fresh isx instance per job (#2519).
+# A systemd user unit of the user that runs isx, installed by docs/dev/LINUX-CI-SETUP.md:
+#   systemctl --user enable --now isx-ci-runner@1
+[Unit]
+Description=incus-spawn's Linux CI runner, slot %i
+After=network-online.target
+
+[Service]
+Environment=ISX_CI_SLOT=%i
+# Environment=ISX_CI_CPUS=8
+# Environment=ISX_CI_MEMORY=16GiB
+ExecStart=%h/.local/bin/isx-ci-runner run
+Restart=on-failure
+RestartSec=60
+# Stopping ends the job in the instance, then destroys the instance and its runner
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

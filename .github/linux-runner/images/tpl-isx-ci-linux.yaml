@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://isx.run/schema/template.json
+# incus-spawn's self-hosted Linux CI runner (#2519, docs/dev/LINUX-CI-SETUP.md): isx-ci-runner.sh
+# branches one instance of this per job, hands it a just-in-time runner configuration and destroys
+# it after the job. It holds what unit-tests would otherwise download on every run: GraalVM, the
+# packages its tests look for, a clone of the repository where actions/checkout updates it, and a
+# ~/.m2 primed by a build. It installs no tool with a credential, so the proxy injects nothing for
+# it: its parent is tpl-minimal, since tpl-java's parent tpl-dev installs gh, and with it the host's
+# GitHub account.
+name: tpl-isx-ci-linux
+description: incus-spawn's Linux CI runner, one instance per unit-tests job
+parent: tpl-minimal
+tools:
+  - maven-3
+  - graalvm
+  - github-actions-runner
+packages:
+  # The JDK tpl-java installs, for the prime's build; the job itself runs on GraalVM
+  - java-25-openjdk-devel
+  # Test suite: GitPreparationTest serves git:// fetches with `git daemon`; ZshCompletionTest drives
+  # zsh; AgentReadersTest reads opencode's sessions with sqlite3; the others what GitHub's image ships
+  - git-daemon
+  - zsh
+  - sqlite
+  - perl
+  - procps-ng
+  - util-linux
+  - gnupg2
+  - tar
+env:
+  - name: JAVA_HOME
+    value: /usr/lib/jvm/java-25-openjdk
+repos:
+  # actions/checkout reuses a clone of the same URL at the job's workspace, and fetches only what is new
+  - url: https://github.com/Sanne/incus-spawn
+    path: ~/actions-runner/_work/incus-spawn/incus-spawn
+    prime:
+      - sudo install -D -o root -g root -m 0755 .github/linux-runner/job-started.sh /opt/isx-ci/job-started.sh
+      - sudo install -o root -g root -m 0644 .github/self-hosted/trusted-heads /opt/isx-ci/trusted-heads
+      - mvn -B -ntp package -DskipTests

@@ -304,3 +304,42 @@ There it gets the host-only, read-only `/health`, `/activity` and `/credential-p
 That is accepted for trusted code.
 The Mini is to stay on macOS 15, the version of `macos-15`, so a routed job tests what the hosted one does; the gate step prints the version in every routed job's log, so a run on another one shows.
 `release.yml` and `native-keychain-smoke` stay on GitHub's runners, so no shipped binary is built on a machine an agent also uses.
+
+## A fresh isx instance runs unit-tests for trusted code
+
+`unit-tests` took about 16 minutes on GitHub's runner, and the Linux jobs that wait for it were what a PR's checks waited for (#2519).
+The project's Linux server, which also runs the agents' boxes, now runs it for trusted code while its runner is up and free, and GitHub's `ubuntu-26.04` runs it otherwise.
+The setup is docs/dev/LINUX-CI-SETUP.md.
+
+**Each job gets an isx instance of its own, destroyed after it.**
+A host-side loop (`.github/linux-runner/isx-ci-runner.sh`, a systemd user unit) registers a just-in-time runner, branches `isx-ci-linux-<slot>` from `tpl-isx-ci-linux`, runs the runner in it for one job and destroys both.
+A just-in-time runner takes one job and GitHub then removes it, so a bad PR cannot leave anything for the next job, and the server keeps nothing of it but the proxy's caches.
+Its configuration is a credential for that one job, so it reaches the instance on the exec's standard input, never on the host's command line.
+The token that registers runners (Administration and Actions write, on this repository alone) stays on the host and never enters an instance.
+It gives up the Mac Mini's warm state: each job starts from the template's copy, so the template is rebuilt now and then to keep the checkout and `~/.m2` close to `main`.
+The alternative, a long-lived `--ephemeral` runner re-registered by itself, still runs every job in one machine; it is what the Mini's "What this does not close" asks for.
+
+**The template holds what the job would download.**
+The server's connection is slow, so `tpl-isx-ci-linux` bakes in GraalVM, the packages the tests look for (zsh, sqlite, git-daemon), the runner, a clone of the repository at the job's workspace and a `~/.m2` primed by a build.
+On it, `unit-tests` skips `setup-graalvm`, the apt installs and `actions/cache` (`runner.environment`), `actions/checkout` fetches into the existing clone, and Maven goes through the proxy's Maven cache.
+Its parent is `tpl-minimal`, not `tpl-java`, whose parent `tpl-dev` installs `gh`: the template installs no tool with a credential, so the proxy gives its jobs no account.
+The definitions live in `.github/linux-runner/` beside the hook, and the server reads them through `searchPaths`; the template's prime installs the hook and the trusted-heads list as root from its clone of `main`, never from a PR.
+The upload of the build for the later jobs still crosses the server's link.
+
+**The routing is the Mini's, with one more runner.**
+`linux-route` (`.github/scripts/runner-route.sh linux`) takes the same trusted code from the same list, `.github/self-hosted/trusted-heads`, and reads `linux-heartbeat.yml`'s runs and the jobs on the `isx-linux` label as `mac-route` reads the Mini's.
+It answers a fork's PR without a request, and both routes now do.
+`unit-tests` waits for it, which costs a fork's PR the start of one small job before unit-tests.
+The route is `continue-on-error` and `unit-tests` runs on `!cancelled()`, so a route that fails sends unit-tests to `ubuntu-26.04` and does not make `cancel-on-unit-failure`, which follows unit-tests' ancestors, cancel the run.
+Each heartbeat takes one instance, a branch the server makes in a few seconds.
+`LinuxRunnerTest` holds the workflow side, the hook and the loop; `RunnerRouteScriptTest` the routing of both runners.
+
+**The instance's job-started hook refuses untrusted code.**
+A PR's own copy of the workflow decides its `runs-on`, so `job-started.sh`, which the runner's `.env` names, refuses a job before any step unless it is this repository's push, schedule or dispatch, or a PR into it from a trusted head that Dependabot did not open.
+It reads the event GitHub wrote and its own root-owned list in `/opt/isx-ci`, never the PR's and never one a variable names.
+Unlike the Mini's, it takes no lock and records no turn: nothing shares the instance, so no job gives itself up, and `unit-tests` has no `-fallback` twin.
+
+**A quiet window pauses the runner rather than stopping its instance.**
+`isx-ci-runner pause` lets a running job finish, destroys an idle runner, and queues a heartbeat that no runner takes, which the route reads as busy, so new jobs go to `ubuntu-26.04` at once.
+Stopping the instance with `isx stop` would leave a job the route had just sent there waiting until the window closed.
+The coordinator runs in a box and cannot reach the host's loop, so how it opens and closes the pause is a later step of #2519.
