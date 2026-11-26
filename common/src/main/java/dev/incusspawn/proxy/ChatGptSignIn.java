@@ -146,7 +146,9 @@ public class ChatGptSignIn {
         } catch (NumberFormatException e) {
             throw new DeviceCodeRefused("its answer gives a poll interval that is not a number");
         }
-        return new DeviceCode(deviceAuthId, userCode, Math.max(1, seconds), verificationUrl());
+        // Polled at least once a second, and never slept past the code's whole wait
+        seconds = Math.min(Math.max(1, seconds), MAX_WAIT.toSeconds());
+        return new DeviceCode(deviceAuthId, userCode, seconds, verificationUrl());
     }
 
     /**
@@ -178,8 +180,10 @@ public class ChatGptSignIn {
                 // 403 and 404 are the server saying "not yet" (codex-rs poll_for_token)
                 case 403, 404 -> {
                     if (note != null) note.accept("waiting for the sign-in to finish");
-                    Thread.sleep(Duration.ofSeconds(code.intervalSeconds())
-                            .toMillis());
+                    // Never past the deadline, however long an interval the server gave (codex-rs
+                    // poll_for_token sleeps the same way)
+                    var left = Math.max(0, deadline - System.nanoTime());
+                    Thread.sleep(Math.min(Duration.ofSeconds(code.intervalSeconds()).toNanos(), left) / 1_000_000);
                 }
                 case 200 -> {
                     var answer = parse(response.body(), "the auth server's answer");
