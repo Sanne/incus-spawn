@@ -5,7 +5,7 @@
 // read that message, so it cannot be stopped before it works: --conversation with an ID it cannot
 // find only warns and opens a new conversation. A resume therefore first checks that the
 // conversation's file is still there, then stops agy if init names another one.
-const [model] = process.argv.slice(3);
+const [model, effort] = process.argv.slice(3);
 const os = require('node:os');
 // A tool's output (a file it read) can be large, and a record that large is not needed: dropped.
 const RECORD_LIMIT = 8 * LIMIT;
@@ -45,10 +45,11 @@ try {
   // permission agy would ask about, as nobody is there to.
   const argv = ['-p=', '--input-format', 'stream-json', '--output-format', 'stream-json', '--dangerously-skip-permissions'];
   if (run !== '1') argv.push('--conversation', session);
-  // A task's own model wins; else the template's (tool parameters, as login variables).
+  // A task's own model and effort win; else the template's (tool parameters, as login variables).
   const useModel = model || process.env.ISX_AGY_MODEL;
   if (useModel) argv.push('--model', useModel);
-  if (process.env.ISX_AGY_EFFORT) argv.push('--effort', process.env.ISX_AGY_EFFORT);
+  const useEffort = effort || process.env.ISX_AGY_EFFORT;
+  if (useEffort) argv.push('--effort', useEffort);
   const events = output('events-' + run + '.jsonl');
   const stderr = output('stderr-' + run + '.log');
   const child = spawn('agy', argv, {stdio: ['pipe', 'pipe', stderr]});

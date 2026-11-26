@@ -887,7 +887,7 @@ class DelegationToolsTest {
         assertTrue(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"ls\"}").path("isError").asBoolean(false),
                 "not held until adopted");
 
-        taskListing = "t3-old agent 2 done claude-haiku-4-5 - /home/agentuser/repo dir\nnot a task line\n";
+        taskListing = "t3-old agent 2 done claude-haiku-4-5 high - /home/agentuser/repo dir\nnot a task line\n";
         var adopted = text(call("adopt_instance", "{\"instance\":\"mcp-agent-870-impl-abcde\"}"));
         assertTrue(adopted.contains("\"t3-old\""), adopted);
         taskState = "finished";
@@ -896,7 +896,7 @@ class DelegationToolsTest {
         var run = runScript(3);
         assertTrue(run.contains("cd -- '/home/agentuser/repo dir'"), "resumed where it worked: " + run);
         assertTrue(run.contains("--resume"), run);
-        assertTrue(run.contains("--model 'claude-haiku-4-5'"), "an adopted task keeps its profile: " + run);
+        assertTrue(run.contains("--model 'claude-haiku-4-5' --effort 'high'"), "an adopted task keeps its profile: " + run);
         assertEquals(0, modelChecks(), "a turn naming no model runs on the recorded one");
         assertFalse(call("send_message", "{\"task_id\":\"t3-old\",\"message\":\"m\",\"model\":\"claude-haiku-4-5\"}")
                 .path("isError").asBoolean(false));
@@ -936,7 +936,7 @@ class DelegationToolsTest {
         assertEquals("2026-09-30T10:00:00Z", listed.path("dormant_since").asText());
         assertEquals("2026-10-07T10:00:00Z", listed.path("dormant_until").asText());
 
-        taskListing = "t3-old agent 1 running - - /home/agentuser/repo\n";
+        taskListing = "t3-old agent 1 running - - - /home/agentuser/repo\n";
         taskState = "lost";
         var adopted = structured(call("adopt_instance", "{\"instance\":\"" + name + "\"}"));
         assertFalse(backend.stopped.contains(name), "started again");
@@ -1053,6 +1053,68 @@ class DelegationToolsTest {
         assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"again\"}").path("isError").asBoolean(false));
         assertTrue(runScript(2).contains(" --model 'claude-haiku-4-5'"), "a later turn keeps the task's profile: " + runScript(2));
         assertEquals(1, modelChecks(), "a model checked once is not checked again");
+    }
+
+    @Test
+    void aTaskRunsAtItsOwnEffortAndLaterTurnsKeepItUnlessToldOtherwise() throws Exception {
+        var task = structured(call("delegate", "{\"instruction\":\"rebase\",\"template\":\"tpl-agent\",\"effort\":\"max\"}"));
+        assertEquals("max", task.path("effort").asText());
+        var id = task.path("task_id").asText();
+        assertTrue(runScript(1).contains(" --effort 'max'"), runScript(1));
+        assertTrue(text(call("task_status", "{\"task_id\":\"" + id + "\"}")).contains("effort: max"));
+
+        taskState = "finished";
+        structured(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"again\",\"model\":\"haiku\"}"));
+        assertTrue(runScript(2).contains(" --model 'haiku' --effort 'max'"), "a new model keeps the task's effort: " + runScript(2));
+        structured(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"again\",\"effort\":\"low\"}"));
+        assertTrue(runScript(3).contains(" --model 'haiku' --effort 'low'"), runScript(3));
+    }
+
+    @Test
+    void anEffortTheAgentDoesNotTakeIsRefusedWithTheOnesItDoes() throws Exception {
+        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"effort\":\"off\"}");
+        assertTrue(r.path("isError").asBoolean(false));
+        assertTrue(text(r).contains("Claude Code takes effort low, medium, high, xhigh, max"), text(r));
+        assertEquals(0, instancesMade(), "refused before an instance is made for it");
+
+        var id = delegateFresh();
+        taskState = "finished";
+        r = call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"m\",\"effort\":\"--model x\"}");
+        assertTrue(r.path("isError").asBoolean(false), text(r));
+        assertEquals(1, backend.scripts.stream().filter(sc -> sc.contains("systemd-run")).count(), "no second run");
+    }
+
+    @Test
+    void anOpencodeTaskOnAnotherModelKeepsTheTemplatesEffort() throws Exception {
+        // opencode applies the template's variant only while an agent runs the template's model.
+        backend.template("tpl-opencode", true, "opencode")
+                .definition("tpl-opencode", "name: tpl-opencode\ntools:\n  - opencode: {model: m1, effort: high}\n");
+        config.setTemplates(List.of("tpl-agent", "tpl-opencode"));
+        var task = structured(call("delegate", "{\"template\":\"tpl-opencode\",\"instruction\":\"go\",\"model\":\"anthropic/m2\"}"));
+        assertEquals("high", task.path("effort").asText());
+        assertTrue(runScript(1).contains(" 'anthropic/m2' 'high' 2>&4"), runScript(1));
+
+        // Codex keeps its config.toml's effort whatever the model: nothing is filled in.
+        backend.template("tpl-codex", true, "codex")
+                .definition("tpl-codex", "name: tpl-codex\ntools:\n  - codex: {model: m1, effort: high}\n");
+        config.setTemplates(List.of("tpl-agent", "tpl-codex"));
+        var codex = structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\",\"model\":\"m2\"}"));
+        assertTrue(codex.path("effort").isMissingNode(), codex.toString());
+    }
+
+    @Test
+    void aClaudeTaskOnAnotherModelKeepsTheTemplatesEffort() throws Exception {
+        // Claude Code keeps the template's effort for the template's model alone (#2547).
+        backend.definition("tpl-agent", "name: tpl-agent\ntools:\n  - claude: {model: claude-opus-5-5, effort: high}\n");
+        var task = structured(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}"));
+        assertTrue(runScript(1).contains(" --model 'haiku' --effort 'high'"), runScript(1));
+        assertEquals("high", task.path("effort").asText());
+
+        var listed = structured(call("list_templates", "{}")).path("templates").getElement(0).path("delegate_agents").getElement(0);
+        assertEquals("claude-opus-5-5", listed.path("model").asText());
+        assertEquals("high", listed.path("effort").asText());
+        assertEquals(List.of("low", "medium", "high", "xhigh", "max"),
+                listed.path("efforts").asList().stream().map(v -> v.asText()).toList());
     }
 
     @Test
@@ -1262,9 +1324,9 @@ class DelegationToolsTest {
                 dev.incusspawn.incus.Metadata.PARENT, "tpl-agent",
                 dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
                 dev.incusspawn.incus.Metadata.MCP_OWNER, "alice"));
-        taskListing = "t3-old agent 1 done - =issue-870 /home/agentuser\n"
-                + "t4-old command 1 done - =$(reboot) /home/agentuser\n"
-                + "t5-old command 1 done - - /home/agentuser\n";
+        taskListing = "t3-old agent 1 done - - =issue-870 /home/agentuser\n"
+                + "t4-old command 1 done - - =$(reboot) /home/agentuser\n"
+                + "t5-old command 1 done - - - /home/agentuser\n";
         structured(call("adopt_instance", "{\"instance\":\"mcp-agent-870-impl-abcde\"}"));
         taskState = "finished";
         var r = structured(call("delegate", "{\"instruction\":\"x\",\"instance\":\"mcp-agent-870-impl-abcde\","
@@ -1390,7 +1452,7 @@ class DelegationToolsTest {
         assertEquals("unavailable", code(r), text(r));
         assertEquals(0, launches());
         failListing = false;
-        taskListing = "t3-old agent 1 done - =issue-1011 /home/agentuser\n";
+        taskListing = "t3-old agent 1 done - - =issue-1011 /home/agentuser\n";
         taskState = "finished";
         var again = structured(call("delegate", args));
         assertEquals("t3-old", again.path("task_id").asText());
@@ -1494,7 +1556,7 @@ class DelegationToolsTest {
         assertEquals("codex", structured(call("delegate", args)).path("agent").asText());
         assertEquals(1, backend.mcpInstances().size());
         // Versioned records reconstruct the adapter; old versionless rows remain Claude.
-        taskListing = "identity t7-old 1 codex\nt7-old agent 1 done - =old-key /work\nt8-old agent 1 done - - /other\n";
+        taskListing = "identity t7-old 1 codex\nt7-old agent 1 done - - =old-key /work\nt8-old agent 1 done - - - /other\n";
         tasks.adopt("mcp-both-task-abcde");
         assertEquals(DelegateAgent.CODEX, tasks.all().stream().filter(t -> t.id().equals("t7-old")).findFirst().orElseThrow().agent());
         assertEquals(DelegateAgent.CLAUDE, tasks.all().stream().filter(t -> t.id().equals("t8-old")).findFirst().orElseThrow().agent());
@@ -1712,12 +1774,12 @@ class DelegationToolsTest {
                 "{\"template\":\"tpl-claude-pi\",\"instruction\":\"go\",\"idempotency_key\":\"pi-made\"}")).path("agent").asText());
 
         // An adopting session rebuilds a Pi task from its identity record.
-        taskListing = "identity t9-old 1 pi\nt9-old agent 1 done - - /work\n";
+        taskListing = "identity t9-old 1 pi\nt9-old agent 1 done - - - /work\n";
         tasks.adopt("mcp-claude-pi-task-abcde");
         assertEquals(DelegateAgent.PI, tasks.all().stream().filter(t -> t.id().equals("t9-old")).findFirst().orElseThrow().agent());
 
         // One a newer isx recorded is never continued as a guess, now that no policy refuses agents.
-        taskListing = "identity t10-new 2 pi\nt10-new agent 1 done - - /work\n";
+        taskListing = "identity t10-new 2 pi\nt10-new agent 1 done - - - /work\n";
         tasks.adopt("mcp-claude-pi-task-abcde");
         taskState = "finished";
         var sent = call("send_message", "{\"task_id\":\"t10-new\",\"message\":\"go on\"}");

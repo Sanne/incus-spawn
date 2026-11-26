@@ -44,6 +44,17 @@
                     "description" : "Template configured model",
                     "type" : "string"
                   },
+                  "effort" : {
+                    "description" : "Template configured effort",
+                    "type" : "string"
+                  },
+                  "efforts" : {
+                    "description" : "The efforts delegate and send_message take for this agent",
+                    "type" : "array",
+                    "items" : {
+                      "type" : "string"
+                    }
+                  },
                   "supports_model_preflight" : {
                     "type" : "boolean"
                   },
@@ -55,7 +66,7 @@
                     "type" : "string"
                   }
                 },
-                "required" : [ "agent", "supports_model_preflight" ],
+                "required" : [ "agent", "efforts", "supports_model_preflight" ],
                 "additionalProperties" : false
               }
             },
@@ -150,6 +161,17 @@
               "description" : "Template configured model",
               "type" : "string"
             },
+            "effort" : {
+              "description" : "Template configured effort",
+              "type" : "string"
+            },
+            "efforts" : {
+              "description" : "The efforts delegate and send_message take for this agent",
+              "type" : "array",
+              "items" : {
+                "type" : "string"
+              }
+            },
             "supports_model_preflight" : {
               "type" : "boolean"
             },
@@ -161,7 +183,7 @@
               "type" : "string"
             }
           },
-          "required" : [ "agent", "supports_model_preflight" ],
+          "required" : [ "agent", "efforts", "supports_model_preflight" ],
           "additionalProperties" : false
         }
       },
@@ -251,6 +273,17 @@
                     "description" : "Template configured model",
                     "type" : "string"
                   },
+                  "effort" : {
+                    "description" : "Template configured effort",
+                    "type" : "string"
+                  },
+                  "efforts" : {
+                    "description" : "The efforts delegate and send_message take for this agent",
+                    "type" : "array",
+                    "items" : {
+                      "type" : "string"
+                    }
+                  },
                   "supports_model_preflight" : {
                     "type" : "boolean"
                   },
@@ -262,7 +295,7 @@
                     "type" : "string"
                   }
                 },
-                "required" : [ "agent", "supports_model_preflight" ],
+                "required" : [ "agent", "efforts", "supports_model_preflight" ],
                 "additionalProperties" : false
               }
             },
@@ -346,6 +379,17 @@
               "description" : "Template configured model",
               "type" : "string"
             },
+            "effort" : {
+              "description" : "Template configured effort",
+              "type" : "string"
+            },
+            "efforts" : {
+              "description" : "The efforts delegate and send_message take for this agent",
+              "type" : "array",
+              "items" : {
+                "type" : "string"
+              }
+            },
             "supports_model_preflight" : {
               "type" : "boolean"
             },
@@ -357,7 +401,7 @@
               "type" : "string"
             }
           },
-          "required" : [ "agent", "supports_model_preflight" ],
+          "required" : [ "agent", "efforts", "supports_model_preflight" ],
           "additionalProperties" : false
         }
       },
@@ -497,6 +541,9 @@
       "model" : {
         "type" : "string"
       },
+      "effort" : {
+        "type" : "string"
+      },
       "replayed" : {
         "description" : "true when an earlier call with this idempotency_key made it, and this one made nothing",
         "type" : "boolean"
@@ -566,6 +613,9 @@
         "type" : "string"
       },
       "model" : {
+        "type" : "string"
+      },
+      "effort" : {
         "type" : "string"
       },
       "assistant_messages" : {
@@ -803,6 +853,9 @@
         "type" : "string"
       },
       "model" : {
+        "type" : "string"
+      },
+      "effort" : {
         "type" : "string"
       }
     },

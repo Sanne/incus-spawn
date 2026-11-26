@@ -6,7 +6,7 @@
 // has a conversation on disk to continue, and one cancelled before it has none and is not
 // resumable. Pi creates a session it cannot find under that ID, so a resume checks that the
 // session header is run 1's, and stops Pi before it starts a new conversation in place of the old one.
-const [model] = process.argv.slice(3);
+const [model, effort] = process.argv.slice(3);
 const crypto = require('node:crypto');
 // Pi's agent_end repeats the whole conversation: a record that large is not needed, and dropped.
 const RECORD_LIMIT = 8 * LIMIT;
@@ -27,6 +27,8 @@ try {
   const argv = ['-p', '--mode', 'json', '--session-id', session,
     '--append-system-prompt', read(path.join(dir, 'brief.md'), 16384).text];
   if (model) argv.push('--model', model);
+  // A task's own thinking level; without one, settings.json's, which the template's effort wrote.
+  if (effort) argv.push('--thinking', effort);
   const events = output('events-' + run + '.jsonl');
   const stderr = output('stderr-' + run + '.log');
   // Run 1 creates its session on purpose, so Pi's warning that it is creating one would only read,

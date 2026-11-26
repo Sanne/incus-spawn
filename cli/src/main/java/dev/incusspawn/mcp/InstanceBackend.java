@@ -79,6 +79,12 @@ interface InstanceBackend {
             if (def != null) return IncusInstanceBackend.delegateModel(def, definitions, agent.id);
             return agent == defaultAgent() ? delegateModel : null;
         }
+
+        /** The {@code effort} {@code agent}'s tool is configured with, null when unset or unknown. */
+        String effort(DelegateAgent agent) {
+            var def = definitions.get(name);
+            return def == null ? null : IncusInstanceBackend.delegateEffort(def, definitions, agent.id);
+        }
     }
 
     /**

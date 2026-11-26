@@ -193,6 +193,9 @@ final class TaskScripts {
         if (chosen.model() != null) {
             sb.append("printf '%s' ").append(ExecScript.quote(chosen.model())).append(" > \"$D/model\"\n");
         }
+        if (chosen.effort() != null) {
+            sb.append("printf '%s' ").append(ExecScript.quote(chosen.effort())).append(" > \"$D/effort\"\n");
+        }
         if (agent == DelegateAgent.PI && run > 1) {
             // Checked here too, not only by send_message: an adopting session or a file removed since
             // must not let Pi write the message into a new session.
@@ -202,12 +205,13 @@ final class TaskScripts {
         }
         if (agent.usesRunner()) {
             var model = ExecScript.quote(chosen.model() == null ? "" : chosen.model());
+            var effort = ExecScript.quote(chosen.effort() == null ? "" : chosen.effort());
             sb.append(requireFlock("echo '" + NO_FLOCK + "' >&4; " + recordExit(String.valueOf(run), "127") + "; exit 0")).append('\n');
             sb.append(CONVERSATION_LOCK).append("node -e ").append(ExecScript.quote(WorkerRunners.of(agent)))
                     .append(" \"$D\" ").append(run);
-            // Pi, opencode and agy have no permission modes: their runs differ only by model.
+            // Pi, opencode and agy have no permission modes: their runs differ only by model and effort.
             if (agent == DelegateAgent.CODEX) sb.append(' ').append(ExecScript.quote(permissionMode));
-            sb.append(' ').append(model);
+            sb.append(' ').append(model).append(' ').append(effort);
             sb.append(" 2>&4\n");
             sb.append("rc=$?\n").append(TAKEN_NOTE).append(" >&4\n").append(recordExit(String.valueOf(run), "$rc")).append('\n');
             return sb.toString();
@@ -227,6 +231,7 @@ final class TaskScripts {
         sb.append(CONVERSATION_LOCK).append("claude -p --output-format stream-json --verbose")
                 .append(" --append-system-prompt \"$(cat \"$D/brief.md\")\"");
         if (chosen.model() != null) sb.append(" --model ").append(ExecScript.quote(chosen.model()));
+        if (chosen.effort() != null) sb.append(" --effort ").append(ExecScript.quote(chosen.effort()));
         // Always explicit: a headless agent that meets a permission prompt has nobody to answer it.
         sb.append(" --permission-mode ").append(ExecScript.quote(permissionMode));
         if (run > 1) sb.append(" --resume \"$sid\"");
@@ -449,7 +454,7 @@ final class TaskScripts {
 
     /**
      * Every task recorded in the instance, one per line: {@code <id> <kind> <run> <running|done>
-     * <model> <key> <cwd>}, with {@code -} for a model never chosen; the key
+     * <model> <effort> <key> <cwd>}, with {@code -} for a model or an effort never chosen; the key
      * is {@code =<key>}, or {@code -} for a task started without one ({@code -} is a key too). How an
      * adopting session learns the tasks the previous one started; whether a {@code running} one
      * really is, it then asks systemd with {@link #states}.
@@ -459,12 +464,13 @@ final class TaskScripts {
                 + "n=$(" + readFile("$d/current") + "); [ -n \"$n\" ] || continue; "
                 + "if [ -f \"$d/exit-$n\" ]; then r=done; else r=running; fi; "
                 + "m=$(" + ifFile("$d/model", "head -c 200") + " | tr -d ' \\n'); "
+                + "e=$(" + ifFile("$d/effort", "head -c 32") + " | tr -d ' \\n'); "
                 // '=' marks a key: '-' is one too, so it cannot also mean none.
                 + "k=-; [ -f \"$d/key\" ] && k==$(" + ifFile("$d/key", "head -c 64") + " | tr -d ' \\n'); "
                 + "{ [ ! -e \"$d/identity\" ] && [ ! -L \"$d/identity\" ]; } || { printf 'identity %s ' \"$(basename \"$d\")\"; "
                 + ifFile("$d/identity", "head -c 200") + "; echo; }; "
-                + "printf '%s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(" + readFile("$d/kind") + ")\" \"$n\" \"$r\" "
-                + "\"${m:--}\" \"$k\" \"$(" + readFile("$d/cwd") + ")\"; done; exit 0";
+                + "printf '%s %s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(" + readFile("$d/kind") + ")\" \"$n\" \"$r\" "
+                + "\"${m:--}\" \"${e:--}\" \"$k\" \"$(" + readFile("$d/cwd") + ")\"; done; exit 0";
     }
 
     /**

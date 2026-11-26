@@ -52,6 +52,9 @@ final class McpTools {
             + "and a bare ID gets the provider of the model its template configured; list_templates gives opencode's and Pi's "
             + "models as provider/model, to pass back whole; Antigravity CLI takes an ID agy models lists). "
             + "Default: the template's. Claude checks access before launch; Codex reports access failures in task_result. Later turns keep it.";
+    private static final String EFFORT = "Reasoning effort for the selected agent, one of the efforts list_templates.delegate_agents "
+            + "lists for it (Claude low to max; Codex minimal to xhigh; Pi off to xhigh; opencode none to max, as the model's variant; "
+            + "Antigravity CLI low to max). Default: the template's effort, which a Claude or opencode task keeps on another model too. Later turns keep it.";
     private static final String ACTIVITY = "A tag of your own for the kind of work this run is (1-16 chars of a-z, 0-9, '-'), "
             + "e.g. 'implement', 'pr-review', 'review-fixes': isx gives it no meaning and records it in the host's event log "
             + "beside the run's start and end, so a report can say what each kind of work cost.";
@@ -193,6 +196,7 @@ final class McpTools {
                         .string("purpose", "For a fresh instance: what it is for (see create_instance)", false)
                         .string("cwd", "Directory to work in (default: the template's workdir; a leading ~ is the agent user's home)", false)
                         .string("model", MODEL, false)
+                        .string("effort", EFFORT, false)
                         .string("activity", ACTIVITY, false)
                         .string("idempotency_key", IDEMPOTENCY_KEY + " (the same instance, or the same "
                                 + "template: then the fresh instance carries the key too, as create_instance's "
@@ -249,6 +253,7 @@ final class McpTools {
                         .string("task_id", "Task id of a delegated agent", true)
                         .string("message", "Your message to the agent", true)
                         .string("model", "Run this turn and later ones on this model instead (see delegate)", false)
+                        .string("effort", "Run this turn and later ones at this effort instead (see delegate)", false)
                         .string("activity", ACTIVITY + " Not carried over from earlier runs.", false)
                         .build(),
                 OutputSchemas.runStarted(),
@@ -456,6 +461,11 @@ final class McpTools {
             entry.put("supports_model_preflight", agent.supportsModelPreflight());
             var model = template.model(agent);
             if (model != null) entry.put("model", model);
+            var effort = template.effort(agent);
+            if (effort != null) entry.put("effort", effort);
+            var efforts = JqArray.arrayBuilder();
+            agent.efforts().forEach(efforts::add);
+            entry.put("efforts", efforts.build());
             if (agent == DelegateAgent.CODEX) entry.put("approval_policy", "never");
             var mode = agent.permissionMode();
             entry.put("permission_mode", mode);
@@ -1062,6 +1072,7 @@ final class McpTools {
                 try (var held = backend.holdTemplate(template)) {
                     var info = policy.require(template);
                     var agent = DelegateAgent.select(info, requested);
+                    var chosen = forAgent(profile, info, agent);
                     tasks.checkCapacityForNewAgent();
                     var hint = java.util.Objects.requireNonNullElse(args.string("name_hint"), "task");
                     var created = provision(info, hint, args.string("purpose"), key, listing, ctx,
@@ -1071,7 +1082,7 @@ final class McpTools {
                                 return backend.create(info, name, withAgent);
                             });
                     return new Made(created, () -> startDelegate(created.name(), info.name(),
-                            created.accounts().get(agent.namespace), cwd, created.workdir(), prompt, profile, true, key, agent,
+                            created.accounts().get(agent.namespace), cwd, created.workdir(), prompt, chosen, true, key, agent,
                             new Tasks.RunNote(activity, null)));
                 }
             });
@@ -1096,12 +1107,13 @@ final class McpTools {
         var info = policy.requireLineage(template);
         var agent = DelegateAgent.select(info, requested);
         return startDelegate(name, template, metadata.get(Metadata.accountKey(agent.namespace)), cwd,
-                IncusInstanceBackend.workdir(metadata), prompt, profile, false, key, agent,
+                IncusInstanceBackend.workdir(metadata), prompt, forAgent(profile, info, agent), false, key, agent,
                 new Tasks.RunNote(activity, metadata.get(InstanceBackend.CREATED_AT)));
     }
 
     /**
-     * The {@code model} a call chose, checked as far as can be without the instance. A
+     * The {@code model} and {@code effort} a call chose, checked as far as can be without the
+     * instance (the effort against the agent later, by {@code forAgent}). A
      * {@code max_turns}, which delegates no longer take (#1857), is refused rather than ignored,
      * so a caller relying on it learns that its runs are unlimited.
      */
@@ -1113,7 +1125,27 @@ final class McpTools {
         var model = args.string("model");
         if (model != null && model.isBlank()) model = null;
         ModelCheck.requireName(model);
-        return new Tasks.Profile(model);
+        var effort = args.string("effort");
+        if (effort != null && effort.isBlank()) effort = null;
+        return new Tasks.Profile(model, effort);
+    }
+
+    /**
+     * {@code chosen} for a task of {@code agent} made from {@code template}: its effort refused
+     * unless the agent takes it, and, given none, the template's for an agent that keeps it per
+     * model ({@link DelegateAgent#keepsEffortPerModel}: Claude Code and opencode), where a task
+     * on another model would run at that model's default without it. The other agents'
+     * configuration holds it whatever the model.
+     */
+    private static Tasks.Profile forAgent(Tasks.Profile chosen, InstanceBackend.TemplateInfo template, DelegateAgent agent) {
+        return forAgent(chosen, template, agent, true);
+    }
+
+    /** As {@link #forAgent(Tasks.Profile, InstanceBackend.TemplateInfo, DelegateAgent)}, the template's effort only when {@code fill}. */
+    private static Tasks.Profile forAgent(Tasks.Profile chosen, InstanceBackend.TemplateInfo template, DelegateAgent agent,
+                                          boolean fill) {
+        agent.requireEffort(chosen.effort());
+        return fill && agent.keepsEffortPerModel() ? chosen.withDefaultEffort(template.effort(agent)) : chosen;
     }
 
     /** The instruction, or {@code /<skill> <args>}: exactly one of them. */
@@ -1183,6 +1215,7 @@ final class McpTools {
         node.put("permission_mode", task.agent().permissionMode());
         if (task.agent() == DelegateAgent.CODEX) node.put("approval_policy", "never");
         if (task.profile().model() != null) node.put("model", task.profile().model());
+        if (task.profile().effort() != null) node.put("effort", task.profile().effort());
         return node;
     }
 
@@ -1190,7 +1223,8 @@ final class McpTools {
 
     /** The chosen parts of a profile, for the audit log. */
     private static String describe(Tasks.Profile profile) {
-        return profile.model() != null ? " model=" + profile.model() : "";
+        return (profile.model() != null ? " model=" + profile.model() : "")
+                + (profile.effort() != null ? " effort=" + profile.effort() : "");
     }
 
     private ToolResult taskStatus(McpTool.Args args, ToolContext ctx) throws InterruptedException {
@@ -1236,6 +1270,10 @@ final class McpTools {
             if (task.profile().model() != null) {
                 sb.append("\nmodel: ").append(task.profile().model());
                 node.put("model", task.profile().model());
+            }
+            if (task.profile().effort() != null) {
+                sb.append("\neffort: ").append(task.profile().effort());
+                node.put("effort", task.profile().effort());
             }
             sb.append("\nassistant_messages: ").append(summary.assistantMessages());
             node.put("assistant_messages", summary.assistantMessages());
@@ -1459,7 +1497,7 @@ final class McpTools {
         var owned = tasks.require(args.requireString("task_id"));
         var task = owned.task();
         var message = args.requireString("message");
-        var override = profile(args);
+        var chosen = profile(args);
         var activity = McpSession.checkActivity(args.string("activity"));
         var template = session.instances().stream().filter(o -> o.name().equals(task.instance()))
                 .map(McpSession.Owned::template).findFirst()
@@ -1470,7 +1508,10 @@ final class McpTools {
         var agent = task.agent();
         if (agent == null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "send_message needs an agent task");
         agent.requireKnown();
-        DelegateAgent.select(policy.requireLineage(template), agent.id);
+        var info = policy.requireLineage(template);
+        DelegateAgent.select(info, agent.id);
+        // A Claude or opencode task recorded with no effort (from before efforts, or a template without one) gets the template's now.
+        var override = forAgent(chosen, info, agent, task.profile().effort() == null);
         var account = owned.metadata().get(Metadata.accountKey(agent.namespace));
         var updated = tasks.sendMessage(task, message, override,
                 () -> checkAgent(task.instance(), template, account, override.model(), agent),

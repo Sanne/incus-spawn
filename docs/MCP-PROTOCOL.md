@@ -42,10 +42,13 @@ Neither changes the state: a task leaves `attached` only when that agent exits, 
 |-------|---------------|
 | `agent` | `claude`, `codex`, `pi`, `opencode` or `antigravity`. |
 | `model` | The template's configured model. |
+| `effort` | The template's configured effort. |
+| `efforts` | The levels `delegate` and `send_message` accept as `effort` for this agent. |
 | `supports_model_preflight` | Whether a chosen `model` is checked against the account before launch. Claude only; Codex, Pi, opencode and Antigravity CLI report model-access errors in the task result. |
 | `permission_mode`, `approval_policy` | Always full access inside the instance: `bypassPermissions` for Claude, `danger-full-access` with approval policy `never` for Codex, `full-access` for Pi, for opencode, which runs with `--auto`, and for Antigravity CLI, which runs with `--dangerously-skip-permissions`. |
 
-A task's `model` override persists across `send_message` and adoption.
+A task's `model` and `effort` overrides persist across `send_message` and adoption.
+An `effort` the agent does not take is refused with `invalid_argument`, and the message lists the ones it does.
 A Pi task has a `session_id` only once Pi has saved its session; before that, or once that session is gone, `send_message` is refused with `wrong_state`.
 
 An opencode task saves the session opencode names in its first event; a resume of a session opencode no longer has fails the run, and opens no new one.

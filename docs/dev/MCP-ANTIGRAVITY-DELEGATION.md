@@ -37,7 +37,7 @@ agy itself is one Go binary, so the `antigravity` tool installs `nodejs` for the
 
 ```sh
 agy -p= --input-format stream-json --output-format stream-json --dangerously-skip-permissions \
-    [--conversation "$id"] [--model "$model"] < message
+    [--conversation "$id"] [--model "$model"] [--effort "$effort"] < message
 ```
 
 The prompt goes on stdin as one stream-json message, `{"event":"user","message":{"role":"user","content":"..."}}`.
@@ -79,7 +79,7 @@ A failed model call shows in `recent` as "a model call failed", since its `error
 A free-tier Gemini key has no quota for agy's default model, so a task given no `model` and no template `model` fails with Google's 429 in its result.
 `agy models` lists the IDs `model` takes.
 The tool's `model` and `effort` parameters reach the runner as `ISX_AGY_MODEL` and `ISX_AGY_EFFORT` in the login environment (#2474).
-A task's own `model` wins, and the task's recorded model stays what the task chose.
+A task's own `model` and `effort` win, and the task's recorded profile stays what the task chose.
 
 ## Human takeover
 
