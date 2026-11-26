@@ -1529,3 +1529,23 @@ The relay's counts are the guest port 8443 line of `vm.control.sock`'s `counts`,
 The change is 24% faster here.
 Neither build printed a warning that an exec's exit code was unknown, and neither lost an operation.
 During a read with the change, `isx vm status` showed 35 vsock forwarder connections in each of 13 samples, within the 41 its ten execs may hold (four each, plus one).
+
+## The overview's guest read, on Linux (issue #2627)
+
+Measured 2026-11-26 in an isx instance on a Linux host (Fedora 45, x86_64, 32 cores, btrfs), branched from a template that cloned eight repositories, quarkus among them.
+`GuestRead.SCRIPT` ran under `sh` as agentuser, the build before the change (`origin/main` at `200456d6`) and the change, alternated, three runs each.
+Both printed the same answer every time.
+
+In the instance as it was branched, 23,532 of quarkus's files share its index's whole-second mtime, and the index records device 85 where the files are on 5242925.
+One `git status --porcelain` there takes 476 ms with or without `core.checkStat=minimal`: 298 ms of it refreshes the index, since Git hashes every entry the racy check cannot vouch for.
+
+The same eight clones, copied with their mtimes, their indexes refreshed after a second (as the build now does), then copied again for new inodes, as a branch gets a new device:
+
+| Read | Wall time, 32 CPUs | Wall time, 2 CPUs (`taskset`) | CPU time |
+|---|---|---|---|
+| before the change | 1.03 s | 1.05 to 1.08 s | 1.1 s |
+| this change | 0.21 s | 0.28 s | 0.37 s |
+
+Quarkus alone: 657 ms by default, 184 ms with `core.checkStat=minimal`, of which the index refresh is 9 ms.
+In the instance as branched, with no settled index, the change takes the read from 0.82 s to 0.52 s on 32 CPUs and to 0.78 s on two, by its overlap alone, at the same CPU time.
+
