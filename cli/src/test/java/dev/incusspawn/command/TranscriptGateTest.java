@@ -66,6 +66,16 @@ class TranscriptGateTest {
         assertFalse(TranscriptGate.negatesANoun("    Saved:", "    Nothing else changed."));
     }
 
+    /** "isx" ending a line and "machines" starting the next are the term, not "machines" alone (#2588). */
+    @Test
+    void aTermSplitAcrossALineBreakIsReadAsOneTerm() {
+        var never = Pattern.compile("(?i)(?<!isx )\\bmachines?\\b");
+        assertEquals(List.of(), TranscriptGate.faults("f", "    requests that isx\n    machines send", never, null));
+        assertEquals(1, TranscriptGate.faults("f", "    requests that\n    machines send", never, null).size());
+        // A word of the previous line alone is that line's fault, reported once
+        assertEquals(1, TranscriptGate.faults("f", "    the machine\n    sends", never, null).size());
+    }
+
     @Test
     void aStepNumberShownTwiceIsFlagged() {
         var never = Pattern.compile("\\bcontainer\\b");

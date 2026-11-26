@@ -80,7 +80,7 @@ final class TranscriptGate {
             var at = flow + ":" + lineNo + " ";
             var limit = inBox(shown) ? InitTranscriptsTest.BOX : InitTranscriptsTest.WIDTH;
             if (shown.codePointCount(0, shown.length()) > limit) faults.add(at + "wider than the frame: " + line);
-            if (wordsHold && never.matcher(shown).find()) faults.add(at + "a word this flow never uses: " + line);
+            if (wordsHold && usesANeverWord(never, previous, shown)) faults.add(at + "a word this flow never uses: " + line);
             if (COUNTER.matcher(shown).find() && NUMBERED_TITLE.matcher(shown).find())
                 faults.add(at + "a step number shown twice: " + line);
             if (negatesANoun(previous, shown)) faults.add(at + "a negated noun, where the verb should be negated: " + line);
@@ -96,6 +96,20 @@ final class TranscriptGate {
         var body = FRAME.matcher(line).replaceAll("");
         for (var meant : MEANT) if (meant.matcher(body).matches()) return "";
         return body;
+    }
+
+    /**
+     * Whether {@code line} says a word of {@code never}, read after {@code previous}, so that
+     * "isx" ending one line and "machines" starting the next read as the term they are (#2588).
+     */
+    static boolean usesANeverWord(Pattern never, String previous, String line) {
+        var body = FRAME.matcher(line).replaceAll("");
+        var before = body(previous);
+        var text = before.isEmpty() ? body : before + " " + body;
+        var from = text.length() - body.length();
+        var m = never.matcher(text);
+        while (m.find()) if (m.end() > from) return true;
+        return false;
     }
 
     static boolean negatesANoun(String line) {
