@@ -838,7 +838,7 @@ The instance's sessions and code already go to that account, so no content reach
 A pin to a missing account, `inherit`, or a Pro/Max subscription (whose token serves Claude Code alone) means no call, and DONE and the preview keep the newest session's message; the AI Help account is never used.
 The answer is the guest's text at one remove, so it is read only in that exact shape, scrubbed and cut like a closing message, and shown through `OutputFormat.oneLine`; an answer in another shape is not shown and not kept.
 `isx overview`'s DONE puts the session count and age before the headline, `merged from 3 sessions 2h ago: …`, so a cut cell keeps them, and `from 6 of 12` when only six of the twelve sessions were read with a closing message.
-The preview shows the same label, then the headline, what was done, where the work stands and what is left.
+The preview shows the same label, then the headline and the three lines under the labels the instance details give them: Finished, State and Pending, inferred.
 The instance details add the clones it saw: `from 3 sessions, 1 repository, 2h ago`.
 The instance details show the other three lines, pending labelled as inferred.
 

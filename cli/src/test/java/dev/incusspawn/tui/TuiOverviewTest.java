@@ -301,11 +301,12 @@ class TuiOverviewTest {
         press(tui, KeyEvent.ofKey(KeyCode.DOWN));
         TuiSnapshot.assertMatches("tui-tab-work-120x30", render(tui));
         runner.close();
+        height = 24;
         tui = tui(80);
         workTab(tui);
         readsFinish();
         press(tui, KeyEvent.ofChar('p'));
-        TuiSnapshot.assertMatches("tui-tab-work-preview-below-80x30", render(tui));
+        TuiSnapshot.assertMatches("tui-tab-work-preview-below-80x24", render(tui));
     }
 
     @Test

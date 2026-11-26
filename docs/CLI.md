@@ -527,6 +527,7 @@ The session text is scrubbed of anything shaped like a credential and cut to a b
 
 In the TUI, the Work tab shows a shorter table: NAME, IDLE, WORK and TOKENS.
 IDLE is the time since the instance last started, or since its last model call, push or pull request if that came later.
+
 WORK is a symbol, such as `✓` for clean or `±3↑1` for 3 changes not committed and 1 commit not pushed.
 A second line under a row shows its purpose and its pull requests, each a link to its page.
 

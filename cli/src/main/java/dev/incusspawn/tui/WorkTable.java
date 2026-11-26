@@ -126,16 +126,16 @@ final class WorkTable {
     static Work work(WorkState state, boolean awaits) {
         if (awaits) return new Work(ColumnFit.ELLIPSIS, Tone.DIM);
         return switch (state.state()) {
-            case NOT_READ -> new Work("–", Tone.FAINT);
+            case NOT_READ -> new Work(Glyphs.NOT_READ, Tone.FAINT);
             case UNKNOWN -> new Work("?", Tone.WARN);
             case NO_REPOS -> new Work(Glyphs.DONE, Tone.DIM);
             case CLEAN -> new Work(Glyphs.DONE, Tone.OK);
             case UNSAVED -> {
                 var text = new StringBuilder();
-                if (state.uncommitted() > 0) text.append('±').append(state.uncommitted());
-                if (state.unpushed() > 0) text.append('↑').append(state.unpushed());
+                if (state.uncommitted() > 0) text.append(Glyphs.UNCOMMITTED).append(state.uncommitted());
+                if (state.unpushed() > 0) text.append(Glyphs.UNPUSHED).append(state.unpushed());
                 // Stashes are lost with the instance too: never shown as clean
-                if (text.isEmpty()) text.append('≡').append(state.stashes());
+                if (text.isEmpty()) text.append(Glyphs.STASHED).append(state.stashes());
                 if (state.why() != null || state.repos().stream().anyMatch(r -> r.uncommitted() < 0
                         || r.unpushed() < 0 || r.stashes() < 0)) text.append('?');
                 yield new Work(text.toString(), Tone.WARN);
@@ -170,7 +170,7 @@ final class WorkTable {
             refs.add(new Ref(text, pull.url(), false, done ? PullState.DONE : PullState.OPEN));
         }
         for (var branch : effort.branches()) {
-            refs.add(new Ref("⇡ " + OutputFormat.oneLine(branch.name()), null, true, null));
+            refs.add(new Ref(Glyphs.PUSHED + " " + OutputFormat.oneLine(branch.name()), null, true, null));
         }
         return refs;
     }
@@ -219,7 +219,7 @@ final class WorkTable {
 
     /** The least a purpose is given beside references, when it is that long. */
     static final int PURPOSE_LEAST = 24;
-    private static final String SEPARATOR = " · ";
+    private static final String SEPARATOR = " " + Glyphs.BETWEEN_PARTS + " ";
 
     /**
      * The second line of a row, {@code width} cells from its indent: the purpose, dim, then
