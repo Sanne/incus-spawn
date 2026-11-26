@@ -39,6 +39,8 @@ class HerdrIntegrationTest {
         final boolean hasHerdr;
         final List<String> ran = new ArrayList<>();
         final Map<String, Result> answers = new HashMap<>();
+        /** Run after a remove succeeded, before isx deletes its record. */
+        Runnable afterRemove = () -> {};
 
         FakeHost(boolean hasHerdr) {
             this.hasHerdr = hasHerdr;
@@ -56,6 +58,7 @@ class HerdrIntegrationTest {
         public Result run(Duration timeout, List<String> command, java.nio.file.Path directory) {
             var line = String.join(" ", command);
             ran.add(line);
+            if (line.startsWith("herdr machine remove")) afterRemove.run();
             return answers.entrySet().stream().filter(e -> line.startsWith(e.getKey())).map(Map.Entry::getValue)
                     .findFirst().orElse(new Result(127, "not scripted: " + line));
         }
@@ -426,6 +429,33 @@ class HerdrIntegrationTest {
         assertEquals(List.of(), recorded.events(RecordingOutput.Kind.WARN));
         assertTrue(removed[0], "the destroy reports that it removed the machine, for isx destroy to say so");
         assertFalse(Files.exists(records.resolve("ws")));
+    }
+
+    /**
+     * herdr removed the machine, but isx's record of it could not be deleted: the destroy still
+     * says it removed the machine, and warns only about the record.
+     */
+    @Test
+    void aRecordLeftAfterHerdrRemovedTheMachineIsWarnedAboutAlone() throws Exception {
+        var host = new FakeHost(true);
+        Files.writeString(records.resolve("ws"), ID + "\n");
+        // A non-empty directory where the record was, so deleting the record fails
+        host.afterRemove = () -> {
+            try {
+                Files.delete(records.resolve("ws"));
+                Files.createDirectories(records.resolve("ws").resolve("stuck"));
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+        var removed = new boolean[1];
+        var recorded = RecordingOutput.during(() -> removed[0] = herdr(host).destroyed("ws", BuildOutput.bound()));
+        assertTrue(removed[0], "herdr no longer lists it, so the destroy says it removed it");
+        var warnings = recorded.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.getFirst().msg().startsWith("removed ws from herdr, but could not delete isx's record of it"),
+                warnings.getFirst().msg());
+        assertFalse(warnings.getFirst().text().contains("herdr machine remove"), "no advice to remove a machine that is gone");
     }
 
     @Test

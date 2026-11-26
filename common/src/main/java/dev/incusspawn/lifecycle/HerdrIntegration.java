@@ -314,6 +314,7 @@ public final class HerdrIntegration implements HostIntegration {
         var record = record(name);
         if (!Files.exists(record)) return false;
         var shown = OutputFormat.oneLine(name);
+        var removedMachine = false;
         try {
             var id = recordedId(name);
             if (id == null) id = "";
@@ -329,7 +330,6 @@ public final class HerdrIntegration implements HostIntegration {
                 return false;
             }
             if (host.onPath(TOOL)) removeOrphans(out);
-            var removedMachine = false;
             if (HERDR_ID_PATTERN.matcher(id).matches() && listed(id)) {
                 var removed = host.run(QUICK, List.of(TOOL, "machine", "remove", id));
                 if (!removed.ok()) {
@@ -342,6 +342,13 @@ public final class HerdrIntegration implements HostIntegration {
             Files.deleteIfExists(record);
             return removedMachine;
         } catch (IOException | RuntimeException e) {
+            if (removedMachine) {
+                // The tool no longer lists it, so asking the user to remove it there would be wrong;
+                // the record left behind would keep a new instance of the name from being added
+                out.warn("removed " + shown + " from herdr, but could not delete isx's record of it: " + e.getMessage(),
+                        "Delete it yourself, or a new instance named " + shown + " is not added to herdr: " + record);
+                return true;
+            }
             out.warn("could not remove " + shown + " from herdr: " + e.getMessage());
             return false;
         }

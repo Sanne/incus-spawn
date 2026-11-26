@@ -37,6 +37,8 @@ class RexIntegrationTest {
         /** An add that saves the host and still reports this, as one killed for its time after saving does. */
         HostCommands.Result savedThenFailed;
         final List<String> ran = new ArrayList<>();
+        /** Run after a remove succeeded, before isx deletes its record. */
+        Runnable afterRemove = () -> {};
         /** Label to {id, endpoint}. */
         final Map<String, String[]> hosts = new LinkedHashMap<>();
         private int next = 1;
@@ -90,8 +92,9 @@ class RexIntegrationTest {
                 return new Result(0, "Added " + args.get(2) + ".");
             }
             if (args.size() == 3 && args.subList(0, 2).equals(List.of("hosts", "remove"))) {
-                return hosts.remove(args.get(2)) != null ? new Result(0, "Removed " + args.get(2) + ".")
-                        : new Result(1, "Error: no host has that label: \"" + args.get(2) + "\"");
+                if (hosts.remove(args.get(2)) == null) return new Result(1, "Error: no host has that label: \"" + args.get(2) + "\"");
+                afterRemove.run();
+                return new Result(0, "Removed " + args.get(2) + ".");
             }
             return new Result(127, "not scripted: " + command);
         }
@@ -257,6 +260,38 @@ class RexIntegrationTest {
         host.ran.clear();
         RecordingOutput.during(() -> rex.destroyed("other", BuildOutput.bound()));
         assertEquals(List.of(), host.ran, "a destroy with no record runs nothing");
+    }
+
+    /**
+     * Rex removed the host, but isx's record of it could not be deleted: the destroy still says
+     * it removed the host, and warns only about the record, never asking the user to remove a
+     * host Rex no longer lists.
+     */
+    @Test
+    void aRecordLeftAfterRexRemovedTheHostIsWarnedAboutAlone() throws Exception {
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("rex", false)));
+        var host = new FakeRex();
+        var rex = rex(host);
+        started(rex, daemon, "ws");
+        // A non-empty directory where the record was, so deleting the record fails
+        host.afterRemove = () -> {
+            try {
+                Files.delete(records.resolve("ws"));
+                Files.createDirectories(records.resolve("ws").resolve("stuck"));
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+
+        var removed = new boolean[1];
+        var recorded = RecordingOutput.during(() -> removed[0] = rex.destroyed("ws", BuildOutput.bound()));
+        assertTrue(removed[0], "Rex no longer lists it, so the destroy says it removed it");
+        assertFalse(host.hosts.containsKey("ws"));
+        var warnings = recorded.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.getFirst().msg().startsWith("removed ws from Rex, but could not delete isx's record of it"),
+                warnings.getFirst().msg());
+        assertFalse(warnings.getFirst().text().contains("rex hosts remove"), "no advice to remove a host that is gone");
     }
 
     /** Destroyed while rex is not on the PATH: kept apart from the name, and removed by a later isx with Rex. */
