@@ -180,6 +180,8 @@ Both arches run it: x86_64 under KVM, aarch64 (the arch Apple Silicon runs) unde
 **The macOS roles, tested on Linux** (#1800).
 Both binaries take their platform role from the OS they run on, and the role decides what the proxy trusts: on macOS a credential proof identifies a caller whose address names no instance, on Linux the address check stays.
 A runtime switch that selected macOS's role on Linux would be a switch that turns that check off, so released binaries have none, and CI runs a test-only build instead.
+The wording of the role is apart from it: `Platform.wordedAs` binds what `Platform.thisComputer` says, "this Mac" or "this computer", for one call's scope, and nothing it decides (#2588).
+The transcript tests use it to show a Mac's text from a Linux job.
 `scripts/macos-role-build.sh` copies the `-Prelease` uber-jars and replaces their `Platform.class` with one compiled from `Platform.java` with its one `OS_NAME` line pinned to macOS, marked in the class and the manifest.
 `appliance/test-macos-role.sh` boots the appliance as isx boots it on macOS and runs those jars against it, with stand-ins for what only macOS has.
 QEMU stands in for the launcher: `vm.pid` names it (`VmManager.isRunning()` accepts `qemu` for that alone) and the launcher's relay bridges its vsock ports (`isx-vsock-bridge`, #2031; socat in a run by hand without it), and a tap device with DHCP, DNS and NAT stands in for the Mac's network.

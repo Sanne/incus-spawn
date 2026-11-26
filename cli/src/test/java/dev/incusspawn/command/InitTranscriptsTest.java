@@ -106,7 +106,7 @@ class InitTranscriptsTest {
         AuthResult verifyVertexConfig(String region, String projectId) {
             // As the real check answers with no gcloud on this computer: it could not run
             return vertexAccepts ? new AuthResult(true, "Vertex AI configuration verified.")
-                    : AuthResult.unchecked("gcloud is not installed on this computer. Install it from"
+                    : AuthResult.unchecked("gcloud is not installed on " + dev.incusspawn.Platform.thisComputer() + ". Install it from"
                     + " https://cloud.google.com/sdk/docs/install, then run 'gcloud auth login'.");
         }
 
@@ -470,6 +470,9 @@ class InitTranscriptsTest {
             Files.writeString(OUT.resolve(branch.name() + ".txt"), text);
             // The closing message's bridging line is the one place "instance" is said
             faults.addAll(TranscriptGate.faults(branch.name(), text, NEVER, "isx commands and docs call"));
+            // Worded for the branch's platform, not the one running the test (#2588); the header line is the test's
+            var other = branch.macOs() ? "this computer" : "this Mac";
+            if (text.substring(text.indexOf('\n') + 1).contains(other)) faults.add(branch.name() + ": says \"" + other + "\"");
         }
         Files.writeString(OUT.resolve("faults.txt"), String.join("\n", faults) + "\n");
         assertEquals(List.of(), faults, "against .claude/rules/interface-text.md");
@@ -626,24 +629,30 @@ class InitTranscriptsTest {
             @Override public void say(String line) { branch.answers().say(line); }
         };
         try (var ansi = ForcedAnsi.on(); var bound = BuildOutput.bind(TerminalOutput.to(out, out))) {
-            out.println("⟪" + branch.about() + (branch.macOs() ? ", on a Mac" : ", on Linux") + "⟫");
-            if (init.wholeRun) {
-                init.noSudo = true;
-                init.runFirstRun(false);
-            } else {
-                init.printFirstRunIntro(branch.macOs());
-                init.waitToBegin();
-                init.askFirstRunQuestions();
-                init.printQuestionsDone(branch.macOs());
-                out.println();
-                out.println("⟪the host's setup runs here⟫");
-                init.finishFirstRun(branch.macOs(), branch.servicesInstalled(), init.continuation);
-            }
+            // The branch's platform in its words, whatever OS the test runs on: the role stays this OS's
+            dev.incusspawn.Platform.wordedAs(branch.macOs(), () -> run(branch, init, out));
         } catch (Exception | AssertionError e) {
             out.println("⟪the run threw: " + e + "⟫");
         }
         out.flush();
         return drawn(bytes.toString(StandardCharsets.UTF_8));
+    }
+
+    private static Void run(Branch branch, Init init, PrintStream out) throws Exception {
+        out.println("⟪" + branch.about() + (branch.macOs() ? ", on a Mac" : ", on Linux") + "⟫");
+        if (init.wholeRun) {
+            init.noSudo = true;
+            init.runFirstRun(false);
+        } else {
+            init.printFirstRunIntro(branch.macOs());
+            init.waitToBegin();
+            init.askFirstRunQuestions();
+            init.printQuestionsDone(branch.macOs());
+            out.println();
+            out.println("⟪the host's setup runs here⟫");
+            init.finishFirstRun(branch.macOs(), branch.servicesInstalled(), init.continuation);
+        }
+        return null;
     }
 
     /** What a terminal draws of {@code text}: no colour, an OSC 8 link as its label, a carriage return's last write. */

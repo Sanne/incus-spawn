@@ -58,7 +58,23 @@ public final class Platform {
      * never "host" (#2528).
      */
     public static String thisComputer() {
-        return isMacOS() ? "this Mac" : "this computer";
+        return WORDED_AS.orElse(computer(isMacOS()));
+    }
+
+    /** The wording {@link #wordedAs} gives this thread, which only {@link #thisComputer()} reads. */
+    private static final ScopedValue<String> WORDED_AS = ScopedValue.newInstance();
+
+    /**
+     * Runs {@code body} with {@link #thisComputer()} worded as macOS's or as Linux's, so a test
+     * shows a Mac's text on Linux, and the reverse (#2588). Only the word: {@link #isMacOS()},
+     * which decides what isx does, stays this OS's, and nothing outside {@code body} sees it.
+     */
+    public static <T, X extends Throwable> T wordedAs(boolean macOs, ScopedValue.CallableOp<T, X> body) throws X {
+        return ScopedValue.where(WORDED_AS, computer(macOs)).call(body);
+    }
+
+    private static String computer(boolean macOs) {
+        return macOs ? "this Mac" : "this computer";
     }
 
     /**

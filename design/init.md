@@ -214,6 +214,8 @@ A namespace with a hosted sign-in (Gemini's Google account) offers its kinds as 
 No line under a step header, its indent included, is wider than 62 columns (.claude/rules/interface-text.md "A line fits its frame"): text built from names breaks through `Lines.wrap`.
 `InitTranscriptsTest` renders every branch of the first run through the terminal's own output, escapes on, and reduces it to what a terminal draws; it writes one transcript per branch to `cli/target/init-transcripts/` and fails a line wider than the frame, or a word of the rule file's "Never" column before the closing message's line.
 The transcripts are how a branch nobody walks at a terminal is read and reviewed.
+A branch on a Mac says "this Mac" on any OS that writes it: the test runs it under `Platform.wordedAs`, which changes `Platform.thisComputer` for that run alone and never the platform role (#2588, #1800).
+It fails a branch that says the other platform's words, so text that writes "this computer" itself is caught.
 Only the host is the test's: what is found, what a check answers, and markers where the plumbing, the build and the branch run.
 
 ## The continuation under `sg` asks nothing
