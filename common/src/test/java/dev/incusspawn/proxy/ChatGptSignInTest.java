@@ -31,6 +31,8 @@ class ChatGptSignInTest {
     static volatile boolean refuseExchange;
     /** The answer of a poll the stub already granted, as OpenAI's auth server answers a grant asked for twice. */
     static volatile boolean granted;
+    /** The device-code answer, which codex-rs also reads with the code under {@code usercode}. */
+    static volatile String userCodeAnswer;
 
     HttpServer stub;
     String issuer;
@@ -43,6 +45,7 @@ class ChatGptSignInTest {
         pollsUntilGranted = 1;
         refuseExchange = false;
         granted = false;
+        userCodeAnswer = "{\"device_auth_id\":\"dev-123\",\"user_code\":\"ABCD-EFGH\",\"interval\":\"1\"}";
         // A dead "browser" thread must fail the test in seconds, not hang for the sign-in's
         // full fifteen-minute patience
         ChatGptSignIn.testBrowserWait = java.time.Duration.ofSeconds(20);
@@ -54,7 +57,12 @@ class ChatGptSignInTest {
             var out = exchange.getResponseBody();
             switch (exchange.getRequestURI().getPath()) {
                 case "/api/accounts/deviceauth/usercode" -> {
-                    var answer = "{\"device_auth_id\":\"dev-123\",\"user_code\":\"ABCD-EFGH\",\"interval\":\"1\"}";
+                    var answer = userCodeAnswer;
+                    if (answer == null) {
+                        exchange.sendResponseHeaders(404, -1);
+                        out.close();
+                        return;
+                    }
                     exchange.sendResponseHeaders(200, answer.length());
                     out.write(answer.getBytes(StandardCharsets.UTF_8));
                 }
@@ -117,6 +125,20 @@ class ChatGptSignInTest {
         assertEquals(issuer + "/codex/device", device.verificationUrl());
         assertEquals(List.of("POST /api/accounts/deviceauth/usercode {\"client_id\":\""
                 + ChatGptAccounts.CODEX_CLIENT_ID + "\"}"), List.copyOf(seen));
+    }
+
+    @Test
+    void theCodeIsReadUnderEitherNameCodexReads() throws Exception {
+        userCodeAnswer = "{\"device_auth_id\":\"dev-123\",\"usercode\":\"WXYZ-1234\",\"interval\":\"1\"}";
+
+        assertEquals("WXYZ-1234", signIn.requestDeviceCode().userCode());
+    }
+
+    @Test
+    void aServerWithoutTheDeviceFlowIsToldApart() {
+        userCodeAnswer = null;
+
+        assertThrows(ChatGptSignIn.DeviceCodeUnavailable.class, () -> signIn.requestDeviceCode());
     }
 
     @Test

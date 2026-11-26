@@ -986,6 +986,8 @@ It is accepted because the account type is experimental and opt-in, the sign-in 
 Delivery and the proxy do not depend on how the session was obtained, so the sign-in can later be replaced -- by `codex login`, or by a documented flow -- without touching the rest.
 The browser flow is what an organisation's SSO needs: the sign-in happens in the person's browser, at their IdP, and isx only listens on loopback for the redirect -- so that browser must be on the host -- on Codex's own callback ports (1455, 1457), which OpenAI's auth server allow-lists, with the PKCE pair and the parameters Codex's authorize URL carries.
 The device-code flow is the one-time code at `auth.openai.com/codex/device`, entered on any device (the code carries the sign-in, so the browser need not be the host's) and polled until the person entered it; an organisation that disables device authentication refuses it, which is why it is not the default, and it is not yet tested against the real service.
+It reads the server's answer as codex-rs `device_code_auth.rs` does: the code under `user_code` or `usercode`, and a 404 for the code as a server that does not offer the flow (#2650).
+The step then says so and points to the browser sign-in, and it does not offer a new code, which the server would refuse the same way.
 Both end at the same `/oauth/token` the proxy later refreshes at, and every request names Codex's OAuth client id, so the session is one the proxy can answer refreshes for.
 The tokens go to the session store alone, never a file in an instance, and `config.yaml` records only `type: chatgpt` for the account.
 A sign-in again replaces the session, and its new `session_id` invalidates every proof made for the previous one.

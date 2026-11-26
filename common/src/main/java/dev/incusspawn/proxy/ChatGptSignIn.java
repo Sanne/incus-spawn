@@ -81,6 +81,13 @@ public class ChatGptSignIn {
         this.issuer = issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer;
     }
 
+    /** OpenAI's auth server does not offer the one-time code sign-in (it answered 404). */
+    public static final class DeviceCodeUnavailable extends IOException {
+        public DeviceCodeUnavailable() {
+            super("OpenAI's auth server does not offer the one-time code sign-in");
+        }
+    }
+
     /** A one-time code the person enters at {@link DeviceCode#verificationUrl()}. */
     public record DeviceCode(String deviceAuthId, String userCode, long intervalSeconds,
                              String verificationUrl) {}
@@ -98,9 +105,19 @@ public class ChatGptSignIn {
         var body = JqObject.builder(1)
                 .put("client_id", JqString.of(ChatGptAccounts.CODEX_CLIENT_ID))
                 .build().toJsonString();
-        var answer = postJson(issuer + "/api/accounts/deviceauth/usercode", body);
+        var response = post(issuer + "/api/accounts/deviceauth/usercode", body);
+        if (response.statusCode() == 404) {
+            // codex-rs request_user_code reads a 404 so: the server does not offer the flow
+            throw new DeviceCodeUnavailable();
+        }
+        if (response.statusCode() != 200) {
+            throw new IOException("OpenAI's auth server answered HTTP " + response.statusCode());
+        }
+        var answer = parse(response.body(), "the auth server's answer");
         var deviceAuthId = answer.pathText("device_auth_id", "");
+        // codex-rs UserCodeResp takes the code under either name
         var userCode = answer.pathText("user_code", "");
+        if (userCode.isEmpty()) userCode = answer.pathText("usercode", "");
         if (deviceAuthId.isEmpty() || userCode.isEmpty()) {
             throw new IOException("OpenAI's auth server answered without a device code");
         }
@@ -465,14 +482,6 @@ public class ChatGptSignIn {
         } catch (RuntimeException e) {
             return "";
         }
-    }
-
-    private JqValue postJson(String url, String json) throws IOException, InterruptedException {
-        var response = post(url, json);
-        if (response.statusCode() != 200) {
-            throw new IOException("OpenAI's auth server answered HTTP " + response.statusCode());
-        }
-        return parse(response.body(), "the auth server's answer");
     }
 
     private HttpResponse<String> post(String url, String json) throws IOException, InterruptedException {

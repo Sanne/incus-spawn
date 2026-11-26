@@ -502,6 +502,33 @@ class ChatGptAuthFlowTest {
         assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
     }
 
+    /** A server that does not offer the one-time code is said so, and a new code is not offered (#2650). */
+    @Test
+    void aServerWithoutTheOneTimeCodeIsNotAskedAgain() {
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        var init = new FakeInit() {
+            @Override
+            dev.incusspawn.proxy.ChatGptSignIn chatGptSignIn() {
+                return new ChatGptSignIn("http://127.0.0.1:1") {
+                    @Override
+                    public DeviceCode requestDeviceCode() throws java.io.IOException {
+                        asked.incrementAndGet();
+                        throw new ChatGptSignIn.DeviceCodeUnavailable();
+                    }
+                };
+            }
+        };
+
+        var out = run(init, new SpawnConfig(), chooseDeviceCode());
+
+        // The warning wraps at the frame's width, so it is read as one line
+        var said = String.join(" ", out.lines()).replaceAll("\\s+", " ");
+        assertEquals(1, asked.get());
+        assertTrue(said.contains("does not offer the one-time code"), said);
+        assertFalse(said.contains("could not reach"), said);
+        assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
+    }
+
     /** A sign-in whose one-time code always expires, or is interrupted. */
     private static FakeInit failingCodes(java.util.concurrent.atomic.AtomicInteger codes, boolean interrupted) {
         return new FakeInit() {
