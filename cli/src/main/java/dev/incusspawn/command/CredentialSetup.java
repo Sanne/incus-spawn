@@ -2584,9 +2584,14 @@ class CredentialSetup {
             }
             if (login == null) {
                 prompts.say("");
-                prompts.say(forCopilot ? "To use your own account, sign in with 'gh auth login --web'"
-                        : "To use your own account, sign in with 'gh auth login'");
-                prompts.say("first, then run 'isx account add github'.");
+                // Within the frame: the longer command wraps on a line of its own
+                if (forCopilot) {
+                    prompts.say("To use your own account, sign in first with");
+                    prompts.say("'gh auth login --web', then run 'isx account add github'.");
+                } else {
+                    prompts.say("To use your own account, sign in with 'gh auth login'");
+                    prompts.say("first, then run 'isx account add github'.");
+                }
             }
             prompts.say("");
             var answer = prompts.ask(Prompts.choice());
