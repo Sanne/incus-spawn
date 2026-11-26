@@ -726,6 +726,17 @@ A clone isx prepared from a host checkout (`repos[].host-source`) keeps each exp
 So it counts only the commits made in the guest since the copy.
 An instance built before that has no such refs until rebuilt, and counts the commits of its other exported branches that HEAD did not hold at the copy.
 It fetches nothing, and `GIT_OPTIONAL_LOCKS=0` keeps `git status` from rewriting the index under an agent at work.
+So the read never refreshes an index, and Git would hash every file it cannot vouch for again on each read (#2627).
+Two things made that every file of a pre-cloned repository.
+A clone writes its index in the second it checks out most of its files, and Git holds an entry as unproven while the file is not older than the index.
+So the build refreshes each clone's index once the clock has left that second (`RepoCloner.settleIndexes`), waiting at most a second and a half for the whole build.
+And every branch is a copy-on-write copy whose files are on another device than the index recorded, so the read runs `git status` with `core.checkStat=minimal`.
+That compares only the size and the whole seconds of mtime and ctime, since `core.trustCtime` stays on.
+What that gives up: a file replaced by one of the same size, within the same seconds of mtime and ctime as the index recorded, is not seen as changed.
+An instance built before the change keeps its unproven entries until an agent's own `git status` refreshes the index, and gains only from the second fix.
+The clones are read four at a time, fewer on fewer CPUs, each line tagged with its place and put back in order, and a line lost on the way makes the answer `unknown`.
+A plain `.git` directory, not a worktree's or a reftable one, is read without asking Git where it is, and `git stash list` runs only when it holds a `refs/stash`, loose or packed.
+The agents' sessions are read at the same time as the clones, into a file removed as soon as it is open, and written after the work section, so the output keeps its order and the 64 KiB bound cuts the same section.
 The state is `unsaved` when any clone holds work, and `clean` only when every clone was read and holds none.
 A timeout, a failed exit, an answer cut short, a line that is not the script's, a count Git would not give or a 51st clone make it `unknown`.
 A stopped instance is `not read`: starting it would cost its boot and change its last use, for a question the person did not ask of it.
