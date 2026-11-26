@@ -500,8 +500,9 @@ Refusing it at once was the alternative, and lost: a burst of short requests bey
 **One isx process also caps its own connections, at 150 on macOS** (`UnixSocketTransport`).
 The cap predates the launcher: it was 48, to keep one process from piling streams onto vfkit's forwarder, and it fails open after 10 s rather than wedge a burst.
 It was set well above one operation's need, which stopped being true once the overview ran an exec in every running instance (#2527).
-Each exec holds five connections, so with 30 instances running the execs took every permit, and a finished command's `/wait` waited past the 5 s Incus keeps a finished operation.
-So a bounded exec is now admitted before it is posted, and only as many run at once as fit in the cap with all five connections each (`IncusApi.BOUNDED_EXECS`).
+Each exec then held five connections, so with 30 instances running the execs took every permit, and a finished command's `/wait` waited past the 5 s Incus keeps a finished operation.
+So a bounded exec is now admitted before it is posted, and only as many run at once as fit in the cap with all their connections each (`IncusApi.BOUNDED_EXECS`).
+Since #2626 an exec holds four, so the window below is (150 − 4 − 1) / 4 = 36.
 What this gives up: the reads run in a rolling window of 36 on macOS, so N reads take about N/36 times one read, not the time of the slowest one.
 For 30 instances whose reads all time out, that is one wave of 13 s (the 10 s limit and the 3 s kill grace).
 Only probes wait in the window: the overview's reads, and `isx mcp`'s probes of instances other sessions hold (`probeElsewhere`) and of the task a person joins (`TaskJoin`).
