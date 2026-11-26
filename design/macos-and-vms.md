@@ -793,7 +793,10 @@ If Cocoa-Way's socket is not found, set `COCOA_WAY_RUNTIME_DIR` to the directory
 
 **Tested so far**, on Linux only: the guest half and the ssh hop, with headless weston standing in for Cocoa-Way and Fedora's waypipe 0.11.2 on both ends.
 A display held open served several clients, a display at an absolute path needed no `XDG_RUNTIME_DIR`, and a Unix socket path longer than 107 bytes was silently truncated.
-Nothing has run against Cocoa-Way or `waypipe-darwin` yet: that is the first thing to do on a Mac.
+
+**First run on a Mac** (2026-11-26, Sanne): `isx gui <instance> -- firefox` showed Firefox in a native window through Cocoa-Way and `waypipe-darwin`, which accepted `--no-gpu` and `--display`.
+Two things were wrong with what the person saw, both listed under "What the person sees" below.
+Latency, HiDPI, input and the clipboard are not judged yet.
 
 ### Shortcuts taken, each to be decided before this is a feature
 
@@ -805,7 +808,7 @@ Nothing has run against Cocoa-Way or `waypipe-darwin` yet: that is the first thi
   Measure latency and throughput on a Mac before deciding, since the ssh path may be enough.
 - **`waypipe ssh` does the wiring.**
   It picks the socket names in both `/tmp`s, checks the two versions against each other and runs ssh.
-  isx does not check that `waypipe-darwin` accepts the options it passes (`--no-gpu`, `--display`) or that its version matches the guest's.
+  The options isx passes (`--no-gpu`, `--display`) worked with the `waypipe-darwin` of the first Mac run, but isx checks neither that nor that its version matches the guest's.
 - **A foreground command holds the bridge.**
   It lasts as long as `isx gui` runs in a terminal, and a held display dies with it.
   A real version ties it to the instance: started with it, restarted when the compositor restarts, stopped with it, and shown in `isx list` and the TUI.
@@ -817,6 +820,17 @@ Nothing has run against Cocoa-Way or `waypipe-darwin` yet: that is the first thi
 - **Shells opened before the bridge do not see it.**
   The login script is read at login, so only a new shell has `WAYLAND_DISPLAY`.
   Agents started by `isx mcp` or a default action get nothing.
+
+**What the person sees**
+
+- **A new window opens behind the terminal.**
+  The person typed the command in a terminal, so the terminal is the active application, and macOS does not put another application's new window in front of it.
+  The first run looked like a failure until Alt+Tab found the window.
+  Either Cocoa-Way activates itself when a client maps its first window, or isx activates Cocoa-Way when it starts a bridge; which one works is untested.
+- **The window has Cocoa-Way's icon, not the application's.**
+  The Dock and the application switcher show one icon per macOS application, and every guest window belongs to Cocoa-Way.
+  A fix is Cocoa-Way's: a process per guest application that sets its own icon, from the client's `xdg-toplevel-icon` or its desktop file.
+  Nothing isx passes can change it today.
 
 **Setup**
 
