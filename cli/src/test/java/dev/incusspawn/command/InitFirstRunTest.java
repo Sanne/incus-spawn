@@ -852,8 +852,9 @@ class InitFirstRunTest {
         var recorded = RecordingOutput.during(() -> assertEquals("tpl-agent", init.prepareFirstTemplate()));
 
         assertEquals("codex", init.templateAgent().name());
-        assertTrue(recorded.events().stream().anyMatch(e -> e.text().contains("it installs Codex CLI, not Claude Code")),
-                recorded.events().toString());
+        // Wrapped to the frame, so read as the lines join
+        var said = String.join(" ", recorded.events().stream().map(e -> e.text()).toList());
+        assertTrue(said.contains("it installs Codex CLI, not Claude Code"), recorded.events().toString());
     }
 
     /** Init never writes over a template of the person's own. */

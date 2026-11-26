@@ -2512,8 +2512,10 @@ public class InitCommand extends BaseCommand {
             var agent = templateAgent();
             // Said only when it changes what the person gets: one that installs the agent chosen goes unsaid (#2528)
             if (agent != chosenAgent) {
-                BuildOutput.note("Kept your own " + ExampleTemplate.NAME + " as it is; it installs "
+                // Within the frame, as every line of the first run (#2528)
+                var lines = Lines.wrap("Kept your own " + ExampleTemplate.NAME + " as it is; it installs "
                         + ExampleTemplate.title(agent) + ", not " + ExampleTemplate.title(chosenAgent) + ".");
+                lines.forEach(BuildOutput::note);
             }
         } else {
             // The closing box says what it is and how to change it (#2528); it lists gh with a GitHub account (#2535)
