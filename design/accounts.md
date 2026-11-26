@@ -649,7 +649,20 @@ When the check fails, the offer shows the menu every credential step shows (`Cre
 Saving the key unverified is offered only when the check could not run: the provider was not reached, or its answer said nothing of the key (a 403, a retired model's 404, a 5xx).
 A key the provider refused (a 401, a 429 with no quota left, Gemini's 400 `API_KEY_INVALID`) is not saved there, and `isx account add <ns>` still saves one on purpose.
 The key is put in a copy of the config for the check, so a key nobody keeps never reaches `config.yaml`, and the offer comes back the next time.
-Once a key is saved nothing offers again, so a key the provider refuses (401, and at Gemini also a 400 whose reason is `API_KEY_INVALID`) is reported with its account and the `isx account add <ns>` that replaces it; a 403 is left out, since a permission, a model or a disabled API gives it more often than the key (`AiHelpClient.ApiError`, `rejectedKeyAdvice`).
+A key the provider refuses (401, and at Gemini also a 400 whose reason is `API_KEY_INVALID`) is reported with its account and the `isx account add <ns>` that replaces it; a 403 is left out, since a permission, a model or a disabled API gives it more often than the key (`AiHelpClient.ApiError`, `rejectedKeyAdvice`).
+
+**A failing account is not a dead end** (#2605).
+A saved key that fails still counts as a target, so the offer above never runs again for it: a free Gemini key whose quota was used up failed every question with a 429 and no advice.
+So when the account asked fails before any answer came (`ApiError.accountFailed`: a 401, a 403, a 429 or Gemini's 400 `API_KEY_INVALID`), the error names it as `the <ns> account '<name>'` (`Target.named`).
+At a terminal, `AiHelpRecovery.after` then asks `Ask <account> instead?` of the next account that can answer, Enter declining, and a yes sends the same question to it.
+With no other account, it asks `Add another account to answer?` and runs the same menu of kinds (`AiHelpAccount.offer`), until an account other than those that failed can answer, and asks the added one.
+Each account that failed is offered once per question, and the one that answers is recorded as the account asked first next time (#2607).
+isx never sends the question to another account by itself, since that bills an account the person did not choose (Sanne, 2026-11-25).
+Off a terminal the error names the `--account` to pass, or the `isx account add` commands when there is no other.
+An account named with `--account` is never replaced, so its failure is only the error, and a 5xx, any other 400 or a network error offers nothing, since another account would not fix the request.
+`isx doctor --explain` recovers the same way, its size confirmation given once for the findings.
+In the TUI's AI Help, the failure shows `a` to ask the next account with the same question, a key press standing for the yes.
+With no other account, `a` closes the dialog for the same menu (`ADD_AI_HELP_ACCOUNT` with the failed accounts, `AskCommand.answeringInstead`), and on return the account added is asked the question at once (`HelpChatModal.askAgain`).
 `isx ask` and `--explain` run the offer under `withStdoutOnStderr`, so stdout still holds only the answer; the TUI lends the terminal to it as a pending action (`ADD_AI_HELP_ACCOUNT`) and opens AI Help on return once an account answers.
 When none was added, the offer ends with one error, which the TUI's log keeps, and the TUI waits for Enter before it draws over the offer's last lines.
 **A Gemini API key** answers through `streamGenerateContent` at `generativelanguage.googleapis.com`, the documentation as its `systemInstruction`, its thinking at `thinkingLevel: LOW` like Claude's effort and its thought parts not shown (`AiHelpClient.processGeminiStream`).

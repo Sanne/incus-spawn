@@ -282,6 +282,10 @@ public class Tui {
     // AI Help modal state
     /** Kept after closing, so reopening preselects the account used last. */
     private volatile HelpChatModal helpChat;
+    /** A question every account failed, to ask the one added outside the TUI; null otherwise. */
+    private HelpRetry helpRetry;
+
+    private record HelpRetry(String question, boolean attach, List<AiHelpClient.Target> failed) {}
     // Actions cache (computed once per data refresh, not per render)
     java.util.Map<String, java.util.List<ToolAction>> actionsCache = new java.util.HashMap<>();
     // Default action reference per instance (from ImageDef default-action field)
@@ -728,7 +732,10 @@ public class Tui {
                     }
                     case ADD_AI_HELP_ACCOUNT -> {
                         try {
-                            if (AskCommand.answering(SpawnConfig.load(), Prompts.terminal()) == null) {
+                            var config = SpawnConfig.load();
+                            var added = helpRetry == null ? AskCommand.answering(config, Prompts.terminal())
+                                    : AskCommand.answeringInstead(config, Prompts.terminal(), helpRetry.failed());
+                            if (added == null) {
                                 // The offer said why and the log keeps its error: the TUI waits,
                                 // or it would draw over the offer's last lines at once
                                 PreTuiOutput.waitForEnter("Press Enter to continue...");
@@ -780,9 +787,21 @@ public class Tui {
         }
         returnToTemplate = null;
 
+        // The question to ask again belongs to this return alone, whether or not the reload worked
+        var retry = previousAction == PendingAction.ADD_AI_HELP_ACCOUNT ? helpRetry : null;
+        if (previousAction == PendingAction.ADD_AI_HELP_ACCOUNT) helpRetry = null;
         if (previousAction == PendingAction.ADD_AI_HELP_ACCOUNT && reloadError == null) {
             var config = SpawnConfig.load();
-            if (!AiHelpClient.targets(config).isEmpty()) openHelpChat(config);
+            var targets = AiHelpClient.targets(config);
+            if (retry == null) {
+                if (!targets.isEmpty()) openHelpChat(config);
+            } else {
+                // The account added answers the question the others failed, as isx ask asks it
+                targets.stream().filter(t -> !retry.failed().contains(t)).findFirst().ifPresent(added -> {
+                    openHelpChat(config);
+                    helpChat.askAgain(retry.question(), retry.attach(), added, retry.failed());
+                });
+            }
         }
         if (previousAction == PendingAction.BUILD_THEN_BRANCH) {
             var tpl = templateEntries.stream()
@@ -876,7 +895,15 @@ public class Tui {
                 yield true;
             }
             case HELP_CHAT -> {
-                if (!helpChat.handleKey(key)) mode = Mode.BROWSE;
+                if (!helpChat.handleKey(key)) {
+                    mode = Mode.BROWSE;
+                    if (helpChat.addRequested()) {
+                        // Every account failed the question: add one outside the TUI, then ask it again (#2605)
+                        helpRetry = new HelpRetry(helpChat.question(), helpChat.attached(), helpChat.failed());
+                        pendingAction = PendingAction.ADD_AI_HELP_ACCOUNT;
+                        tui.quit();
+                    }
+                }
                 yield true;
             }
             case ERROR -> { mode = Mode.BROWSE; yield true; }

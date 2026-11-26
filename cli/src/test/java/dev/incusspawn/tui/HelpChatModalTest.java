@@ -491,4 +491,55 @@ class HelpChatModalTest {
         assertEquals("900 tokens in · 40 out", new Usage(900, 0, 0, 40).summary());
         assertEquals(null, Usage.NONE.summary());
     }
+
+    // --- A failing account (#2605) ----------------------------------------------------------
+
+    /** Fails {@code failing} with a used-up quota, and answers every other account. */
+    private HelpChatModal failing(List<Target> targets, Target failing) {
+        return modal(targets, List.of(), (target, q, attach) -> {
+            askedTargets.add(target);
+            questions.add(q);
+            if (target.equals(failing)) throw dev.incusspawn.ai.TestApiErrors.of(429, "API error (429): quota");
+            return new AiResponse("Like this.", USAGE);
+        });
+    }
+
+    @Test
+    void aFailedAccountIsNamedAndAAsksTheOtherWithTheSameQuestion() {
+        var chat = failing(List.of(API_KEY, VERTEX), API_KEY);
+        type(chat, "how?");
+        chat.handleKey(CTRL_S);
+        var shown = renderedText(chat);
+        assertTrue(shown.contains("The claude account 'work' did not answer: API error (429): quota"), shown);
+        assertTrue(shown.contains("Ask gcp (Vertex AI)"), shown);
+
+        assertTrue(chat.handleKey(KeyEvent.ofChar('a')));
+        assertEquals(List.of(API_KEY, VERTEX), askedTargets);
+        assertEquals(List.of("how?", "how?"), questions);
+        assertEquals(VERTEX, chat.target());
+        assertTrue(renderedText(chat).contains("Like this."));
+    }
+
+    @Test
+    void withNoOtherAccountAClosesTheDialogToAddOne() {
+        var chat = failing(List.of(API_KEY), API_KEY);
+        type(chat, "how?");
+        chat.handleKey(CTRL_S);
+        assertTrue(renderedText(chat).contains("Add an account"));
+
+        assertFalse(chat.handleKey(KeyEvent.ofChar('a')));
+        assertTrue(chat.addRequested());
+        assertEquals("how?", chat.question());
+        assertEquals(List.of(API_KEY), chat.failed());
+    }
+
+    @Test
+    void anAnsweredQuestionOffersNoOtherAccount() {
+        var chat = answering(List.of(API_KEY, VERTEX), List.of(), "Like this.");
+        type(chat, "how?");
+        chat.handleKey(CTRL_S);
+        assertFalse(renderedText(chat).contains("Ask gcp"));
+        assertTrue(chat.handleKey(KeyEvent.ofChar('a')), "a does nothing after an answer");
+        assertEquals(List.of(API_KEY), askedTargets);
+    }
 }

@@ -59,32 +59,47 @@ public class AskCommand extends BaseCommand {
             if (config == null) return CommandResult.valueOf(1);
             target = AiHelpChoice.preferred(AiHelpClient.targets(config)).orElseThrow();
         }
-        var label = "Asking " + target.label() + (withTemplates ? " (with templates)" : "");
         var systemBlocks = HelpContext.systemBlocks(withTemplates);
-        // Only an answer with text makes this the account asked first next time
-        var answered = new boolean[1];
-        try {
-            answer(label, chunks -> send(question, systemBlocks, config, target, chunks.andThen(chunk -> {
-                if (!chunk.isBlank()) answered[0] = true;
-            })).note());
-        } catch (AiHelpClient.ApiError e) {
-            // A rejected key says what replaces it: nothing asks for one again once it is saved
-            BuildOutput.error(failure(e), withOthers(AiHelpClient.advice(e), config, target));
-            return CommandResult.valueOf(1);
+        // Every account that failed before it answered, so none is offered twice (#2605)
+        var tried = new java.util.ArrayList<AiHelpClient.Target>();
+        while (true) {
+            var label = "Asking " + target.label() + (withTemplates ? " (with templates)" : "");
+            // Only an answer with text makes this the account asked first next time
+            var answered = new boolean[1];
+            var asked = target;
+            var with = config;
+            try {
+                answer(label, chunks -> send(question, systemBlocks, with, asked, chunks.andThen(chunk -> {
+                    if (!chunk.isBlank()) answered[0] = true;
+                })).note());
+            } catch (AiHelpClient.ApiError e) {
+                if (account != null || answered[0] || !AiHelpRecovery.accountFailed(e)) {
+                    // A rejected key says what replaces it
+                    BuildOutput.error(AiHelpRecovery.failed(target, e), AiHelpRecovery.withOthers(AiHelpClient.advice(e), config, target, tried));
+                    return CommandResult.valueOf(1);
+                }
+                // The account failed, not the question: ask before another one is billed for it
+                tried.add(target);
+                var next = AiHelpRecovery.after(config, target, e, tried, prompts(), this::credentials);
+                if (next.isEmpty()) return CommandResult.valueOf(1);
+                config = next.get().config();
+                target = next.get().target();
+                continue;
+            }
+            if (answered[0]) AiHelpChoice.answered(target);
+            return CommandResult.SUCCESS;
         }
-        if (answered[0]) AiHelpChoice.answered(target);
-        return CommandResult.SUCCESS;
+    }
+
+    /** What adds an account when the one asked failed; overridden by tests. */
+    CredentialSetup credentials() {
+        return new CredentialSetup();
     }
 
     /** Sends the question; overridden by tests. */
     AiHelpClient.StreamEnd send(String question, List<String> systemBlocks, SpawnConfig config,
                                 AiHelpClient.Target target, Consumer<String> chunks) throws Exception {
         return AiHelpClient.askStreaming(question, systemBlocks, config, target, chunks);
-    }
-
-    /** {@code advice}, then the other accounts of {@code config} that can answer, for when {@code asked} failed. */
-    static String[] withOthers(String[] advice, SpawnConfig config, AiHelpClient.Target asked) {
-        return joined(advice, AiHelpChoice.others(AiHelpClient.targets(config), asked));
     }
 
     static String[] joined(String[] first, String[] then) {
@@ -108,6 +123,24 @@ public class AskCommand extends BaseCommand {
         var credentials = new CredentialSetup();
         try {
             return withStdoutOnStderr(() -> AiHelpAccount.ask(config, prompts, credentials).orElse(null));
+        } finally {
+            credentials.closeHttpClient();
+        }
+    }
+
+    /**
+     * The config once {@link AiHelpAccount} added an account other than {@code failed}, which
+     * all failed a question in the TUI, or null (#2605).
+     */
+    public static SpawnConfig answeringInstead(SpawnConfig config, Prompts prompts,
+                                               java.util.Collection<AiHelpClient.Target> failed) throws Exception {
+        if (prompts == null) return null;
+        var credentials = new CredentialSetup();
+        try {
+            return withStdoutOnStderr(() -> {
+                Lines.step("Add another account to answer the question.");
+                return AiHelpAccount.offer(config, prompts, credentials, failed, AiHelpRecovery.NOT_ASKED).orElse(null);
+            });
         } finally {
             credentials.closeHttpClient();
         }

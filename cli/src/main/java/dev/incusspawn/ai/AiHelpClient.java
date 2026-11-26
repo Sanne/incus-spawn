@@ -151,6 +151,11 @@ public class AiHelpClient {
             return named ? accountName + " (" + provider.credentialKind() + ")" : provider.credentialKind();
         }
 
+        /** The account as an error names it: {@code the gemini account 'free'} (#2605). */
+        public String named() {
+            return "the " + namespace(provider) + " account '" + accountName + "'";
+        }
+
         /** How a person names this account to {@code --account}: {@code <namespace>=<account>}, as {@code isx branch} takes it. */
         public String selection() {
             return namespace(provider) + "=" + accountName;
@@ -377,6 +382,15 @@ public class AiHelpClient {
             return status == 401 || status == 429 || (status == 400 && keyInvalid);
         }
 
+        /**
+         * The account asked failed, not the question (#2605): a 401, a 403, a 429 or Gemini's
+         * 400 naming {@code API_KEY_INVALID}. Another account may answer the same question. Any
+         * other 400 and a retired model's 404 are the request's, and a 5xx the provider's moment.
+         */
+        public boolean accountFailed() {
+            return status == 401 || status == 403 || status == 429 || (status == 400 && keyInvalid);
+        }
+
         ApiError withAdvice(String advice) {
             if (advice == null) return this;
             var withIt = new ApiError(status, getMessage(), keyInvalid, advice);
@@ -387,8 +401,7 @@ public class AiHelpClient {
 
     /**
      * What replaces the key behind {@code e}, one line, when it is an {@link ApiError} that a wrong
-     * or revoked key gives; else none. Once a key is saved nothing asks for one again (#2541), so
-     * the error is where the person learns how to replace it.
+     * or revoked key gives; else none. The error is where the person learns how to replace it (#2541).
      */
     public static String[] advice(Throwable e) {
         return e instanceof ApiError api && api.advice != null ? new String[] {api.advice} : new String[0];
