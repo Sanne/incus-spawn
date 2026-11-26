@@ -731,6 +731,20 @@ A stamp on the instance was the first version: a copy carries it, it is gone onc
 A host half is built-in Java, never a definition's: a cloned repository's tool must not make isx run host commands, and an instance built from a project-local definition gets none, since such a tool may share a built-in's name.
 zmx's host-side socket sharing predates the seam and could move onto it.
 
+**Rex: the same host half, with no start on connect.**
+Rex's client keeps a list of hosts and reaches each one's server over SSH, so the `rex` tool takes the same seam (#2647).
+`RexIntegration` runs `rex hosts add <name> ssh://<name>` on the first start and `rex hosts remove` on destroy, when the host has `rex`, on Linux and macOS alike.
+`rex hosts add` only writes to the user's home server and connects to nothing, so it costs a few milliseconds and never reaches the guest from a start.
+The endpoint is the instance's own Host block, which never starts it, rather than the start alias herdr gets.
+Rex has nothing like herdr's `machine disable`, so with the alias any Rex client that reached its hosts would start every stopped instance it lists, with no way for a stop to tell it otherwise.
+What this gives up: `rex -S <name>` fails on a stopped instance until `isx start` or `isx shell` starts it.
+Rex runs ssh with `BatchMode=yes`, so the add waits, like herdr's, until the instance's Host block, the Include and its pinned host key are in place.
+The record holds the id Rex gave the host (`host:<uuid>`), `-` or `retry`; a destroy removes the host Rex lists under that id, never the label alone, so a host the user added under the instance's name survives.
+An add Rex refuses because that label is taken is recorded as `-` and never retried.
+In the guest, the tool enables the package's `rex.socket` for every user and lingers agentuser, so the server starts with the user manager at boot and outlives every login.
+`isx-rex-session.service` then starts a session named `main` when the server has none, because a server with no session lists nothing for the host's Rex to attach to; the server keeps its sessions across its own restarts, so the session is made once.
+Rex comes from Superlogical's preview channel, pinned by the sha256 its signed repository metadata lists, since the stable channel holds no package yet.
+
 **Orca: a recipe over the commands, as a first version.**
 Orca's environment recipes are four host commands and a strict JSON contract: `create` prints one object naming an SSH target and a project root, and the others read a lifecycle payload on stdin.
 `integrations/orca/isx-orca-recipe` speaks that contract over `isx branch --owner orca --format=json`, `isx stop`, `isx start` and `isx destroy --owner orca`, translating with `jq`, so isx has no Orca code.

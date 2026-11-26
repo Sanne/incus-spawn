@@ -257,6 +257,14 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/herdr-machines");
     }
 
+    /**
+     * Where isx records, per instance, the host Rex host it added for it ({@code RexIntegration},
+     * #2647): one file per instance name.
+     */
+    public static Path rexHostsDir() {
+        return home().resolve(".local/state/incus-spawn/rex-hosts");
+    }
+
     /** {@code <name>.log} in {@code subdir} of the state directory, refusing a name that escapes it. */
     private static Path stateLogFile(String subdir, String what, String name) {
         var dir = home().resolve(".local/state/incus-spawn").resolve(subdir);

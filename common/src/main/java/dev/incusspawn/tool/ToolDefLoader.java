@@ -49,6 +49,7 @@ public class ToolDefLoader {
             "maven-3.yaml",
             "mvnd.yaml",
             "orca.yaml",
+            "rex.yaml",
             "sshd.yaml",
             "idea-backend.yaml",
             "jasolo.yaml",
