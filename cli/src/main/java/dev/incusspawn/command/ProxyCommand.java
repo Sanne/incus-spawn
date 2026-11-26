@@ -532,7 +532,8 @@ public class ProxyCommand extends BaseCommand {
                 BuildOutput.step("Proxy is not installed or running. Use 'isx proxy start' or 'isx proxy install'.");
                 return CommandResult.SUCCESS;
             }
-            if (!ProxyService.restart()) return CommandResult.valueOf(1);
+            // A restart that left the service down says where to see why and how to start it (#2620)
+            if (!ProxyService.restart(BuildOutput.bound(), ProxyService::notRestartedAdvice)) return CommandResult.valueOf(1);
             // A healthy answer may be another proxy's, which this restart did not reach (#1570).
             // A unit systemd is still starting counts as restarted, so only an answer tells (#2619).
             if (!ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
