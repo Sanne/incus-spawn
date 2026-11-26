@@ -119,6 +119,9 @@ No two meanings share a glyph: a marked row is `◆`, since the running instance
 | `◐` | Between states, or an operation under way while motion is off | Before an instance's name |
 | `⠋` and its frames | An operation under way | Before an instance's name, the context line, a progress dialog |
 | `◆` | A marked row | The cursor gutter's second cell |
+| `✓` `±` `↑` `≡` `?` `–` | Clean, changes not committed, commits not pushed, stashes alone, unknown, not read | The Work tab's WORK column |
+| `⇡` | A pushed branch | The second line of a Work row |
+| `·` | Between a row's purpose and its references | The second line of a Work row |
 | `▸` | The cursor, and a dialog's focused field | The cursor gutter's first cell |
 | `✓` `✗` | Work that ended well, or failed | The context line, the status line |
 | `⚠` | Something to look at | The header, and an account the first run saved unchecked in its recap |
@@ -211,6 +214,31 @@ Before, spare width was shared evenly whatever the cells held, so a name was cut
   Where the content alone fills the table, the address takes its room from the gaps between columns, and they shift.
 
 What this gives up is columns that line up between the two panels of the Overview, which they did not do before either.
+
+**A Work row may take two lines.**
+The second line is there only when the instance has a purpose or a pull request or branch to show, indented past the state glyph, the purpose dim and the references after a faint `·`.
+It is part of the row: the selection fills both lines, a mark is drawn on the first, and the cursor moves one instance at a time.
+A reference is never cut (Sanne on #2292): those that do not fit are counted as `+2`.
+The Work table cuts a long name in its middle with `…`, since the end of an agent's instance name is what tells it from its siblings.
+
+**The Work tab has a preview beside its table.**
+From 110 columns the selected instance's preview stands right of the table, behind a faint `│` that meets the title rule at `┬` and the footer rule at `┴`, and the title rule names the instance in the accent.
+The preview is quiet labels (`Purpose`, `Idle`, `Work`) at one indent and values wrapped under their start, as in a dialog, but it is not filled.
+Narrower, `p` shows it under the table behind a rule that names the instance, and the context line says so (`p Preview`).
+
+```
+ Work since Nov 24 ─────────────────────────────────────────────┬─ mcp-isx-agent-2458-companion-y27vl ────────
+     NAME                                 IDLE   WORK   TOKENS  │ ● Running   from tpl-claude
+   ◐ bench-native restarting               40m   ≡2          -  │
+   ● isx-coordinator-1                      2h   ±1       1.3G  │ Idle     2 days since its last logged
+       Sanne/isx-workflow#132 #135 Sanne/incus-spawn#2650       │          activity, last start 4 days ago
+ ▸ ● mcp-isx-agent-2458-companion-y27vl     2d   ↑22     16.8M  │ Active   Nov 24
+       ⇡ chatgpt-workspace-backfill                             │ Tokens   16.8M in 1 model call
+   ● quarkus-42871                         30m   ±3↑1     4.2M  │ Work     22 unpushed
+       Fix the dev-mode reload race · ⇡ fix-reload-race         │          incus-spawn: 22 unpushed
+   ● review-pr-2301                         2h   ✓       48.1M  │ Pushed   ⇡ chatgpt-workspace-backfill
+       Review of the proxy cache c… · Sanne/incus-spawn#2457 +3 │
+```
 
 **An empty panel says what to do next.**
 With no instance, the panel shows the logo, "No instances yet" and the key that makes one, in its middle.
