@@ -376,7 +376,7 @@ class CredentialSetup {
         prompts.say("  o  use another kind of OpenAI account");
         prompts.say("  s  skip for now");
         while (true) {
-            var answer = prompts.ask("Choice [Y]: ");
+            var answer = prompts.ask(Prompts.choiceEnterTakes("Y"));
             var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
             switch (choice) {
                 case "", "y", "yes" -> {
@@ -419,7 +419,7 @@ class CredentialSetup {
                 prompts.say("  s  skip for now");
                 ask = false;
             }
-            var answer = prompts.ask("Choice [Y]: ");
+            var answer = prompts.ask(Prompts.choiceEnterTakes("Y"));
             var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
             switch (choice) {
                 case "", "y", "yes" -> {
@@ -481,17 +481,6 @@ class CredentialSetup {
     static String reason(Exception e) {
         var message = e.getMessage();
         return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
-    }
-
-    /**
-     * A warning whose text ends in a reason another library words, broken to the frame under the
-     * warning's mark (.claude/rules/interface-text.md "A line fits its frame"), then {@code advice}.
-     */
-    private static void warnWrapped(String text, String... advice) {
-        var lines = new ArrayList<>(Lines.wrap(OutputFormat.oneLine(text), Lines.WIDTH - 2));
-        var first = lines.removeFirst();
-        lines.addAll(List.of(advice));
-        BuildOutput.warn(first, lines.toArray(String[]::new));
     }
 
     /**
@@ -909,7 +898,7 @@ class CredentialSetup {
                 prompts.say("  s  skip for now");
                 ask = false;
             }
-            var answer = prompts.ask("Choice [Y]: ");
+            var answer = prompts.ask(Prompts.choiceEnterTakes("Y"));
             var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
             switch (choice) {
                 case "", "y", "yes" -> {
@@ -1331,7 +1320,7 @@ class CredentialSetup {
 
     /** Warns at the width of init's frame, so a long message or detail never overflows it. */
     private static void warnWrapped(String first, String... more) {
-        var lines = new ArrayList<>(Lines.wrap(first, Lines.WIDTH - 2));
+        var lines = new ArrayList<>(Lines.wrap(OutputFormat.oneLine(first), Lines.WIDTH - 2));
         for (var detail : more) lines.addAll(Lines.wrap(detail, Lines.WIDTH - 2));
         if (!lines.isEmpty()) {
             BuildOutput.warn(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
@@ -3337,7 +3326,7 @@ class CredentialSetup {
         prompts.say("  o  use a Gemini API key instead");
         prompts.say("  s  skip for now");
         while (true) {
-            var answer = prompts.ask("Choice [Y]: ");
+            var answer = prompts.ask(Prompts.choiceEnterTakes("Y"));
             var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
             switch (choice) {
                 case "", "y", "yes" -> {
