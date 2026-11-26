@@ -404,7 +404,7 @@ class TuiInstanceMarksTest {
                         + before[y] + "\n" + after[y]);
                 continue;
             }
-            int markAt = after[y].indexOf("●" + row + " ");
+            int markAt = after[y].indexOf("◆" + row + " ");
             if (markAt >= 0) {
                 assertEquals(before[y].charAt(markAt), ' ', "the mark takes a blank cell:\n" + before[y]);
                 var unmarked = after[y].substring(0, markAt) + " " + after[y].substring(markAt + 1);
@@ -413,7 +413,7 @@ class TuiInstanceMarksTest {
                 assertEquals(before[y], after[y], "line " + y + " moved");
             }
         }
-        assertTrue(String.join("\n", after).contains("●" + row + " "), String.join("\n", after));
+        assertTrue(String.join("\n", after).contains("◆" + row + " "), String.join("\n", after));
     }
 
     @Test

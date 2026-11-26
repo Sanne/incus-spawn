@@ -108,15 +108,15 @@ An action that opens a dialog ends in `…`, and one that acts at once does not.
 ## Glyphs
 
 A glyph has one meaning, and `Glyphs` holds them.
-Where two meanings share a glyph, the column tells them apart, as with the marked row and the running instance.
+No two meanings share a glyph: a marked row is `◆`, since the running instance's `●` now sits right beside the gutter.
 
 | Glyph | Meaning | Where |
 |---|---|---|
-| `●` | Running | The STATUS column, the header's count |
-| `○` | Stopped | The STATUS column |
-| `◐` | Between states, or an operation under way while motion is off | The STATUS column |
-| `⠋` and its frames | An operation under way | The STATUS column, the context line, a progress dialog |
-| `●` | A marked row | The cursor gutter's second cell |
+| `●` | Running | Before an instance's name, the header's count |
+| `○` | Stopped | Before an instance's name |
+| `◐` | Between states, or an operation under way while motion is off | Before an instance's name |
+| `⠋` and its frames | An operation under way | Before an instance's name, the context line, a progress dialog |
+| `◆` | A marked row | The cursor gutter's second cell |
 | `▸` | The cursor, and a dialog's focused field | The cursor gutter's first cell |
 | `✓` `✗` | Work that ended well, or failed | The context line, the status line |
 | `⚠` | Something to look at | The header, and an account the first run saved unchecked in its recap |
