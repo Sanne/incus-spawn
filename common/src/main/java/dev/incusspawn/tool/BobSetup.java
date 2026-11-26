@@ -80,7 +80,7 @@ public class BobSetup implements ToolSetup {
 
         var maxTurns = new ToolDef.ParameterDef();
         maxTurns.setType("integer");
-        maxTurns.setDescription("Maximum session turns (positive integers override the default)");
+        maxTurns.setDescription("Maximum session turns (0 for unlimited)");
         maxTurns.setOptional(true);
         maxTurns.setReconfigurable(true);
         params.put("max-session-turns", maxTurns);
@@ -92,13 +92,6 @@ public class BobSetup implements ToolSetup {
         compression.setOptional(true);
         compression.setReconfigurable(true);
         params.put("compression-threshold", compression);
-
-        var checkpointing = new ToolDef.ParameterDef();
-        checkpointing.setType("boolean");
-        checkpointing.setDescription("Legacy checkpointing option accepted for compatibility");
-        checkpointing.setOptional(true);
-        checkpointing.setReconfigurable(true);
-        params.put("checkpointing", checkpointing);
 
         return params;
     }
@@ -130,8 +123,9 @@ public class BobSetup implements ToolSetup {
 
     @Override
     public void install(Container c, Map<String, String> resolvedParams) {
+        var settings = buildUserSettings(resolvedParams, SpawnConfig.load().getBob());
         installBinary(c);
-        configureSettings(c, resolvedParams);
+        writeSettings(c, settings);
     }
 
     @Override
@@ -146,12 +140,14 @@ public class BobSetup implements ToolSetup {
     }
 
     void configureSettings(Container c, Map<String, String> resolvedParams) {
+        writeSettings(c, buildUserSettings(resolvedParams, SpawnConfig.load().getBob()));
+    }
+
+    private void writeSettings(Container c, String settings) {
         BuildOutput.stepStart("Configuring Bob Shell");
-        var bobConfig = SpawnConfig.load().getBob();
 
         c.sh("mkdir -p /home/agentuser/.bob/settings");
-        c.writeFile(SETTINGS_PATH,
-                buildUserSettings(resolvedParams, bobConfig));
+        c.writeFile(SETTINGS_PATH, settings);
         c.writeFile("/home/agentuser/.bob/trustedFolders.json",
                 "{\"version\":1,\"folders\":{\"/home/agentuser\":\"TRUST_FOLDER\"}}");
         c.chown("/home/agentuser/.bob", "agentuser:agentuser");
@@ -160,6 +156,15 @@ public class BobSetup implements ToolSetup {
 
     static String buildUserSettings(Map<String, String> params,
                                     SpawnConfig.BobConfig bobConfig) {
+        for (var parameter : params.keySet()) {
+            switch (parameter) {
+                case "max-session-turns", "compression-threshold" -> { }
+                case "checkpointing" -> throw new IllegalArgumentException(
+                        "Bob Shell does not support checkpointing. Remove checkpointing from the bob tool parameters.");
+                default -> throw new IllegalArgumentException("Unknown Bob tool parameter '" + parameter + "'");
+            }
+        }
+
         var security = JqObject.builder(2)
                 .put("auth", JqObject.builder(1)
                         .put("selectedType", "api-key").build())
@@ -178,17 +183,21 @@ public class BobSetup implements ToolSetup {
         }
 
         var session = JqObject.builder(2);
-        var maxTurns = Long.parseLong(params.getOrDefault("max-session-turns", "-1"));
-        // Keep the effective Bob default for templates using the old nonpositive values.
-        if (maxTurns > 0) {
-            session.put("maxTurns", maxTurns);
+        var maxTurns = params.get("max-session-turns");
+        if (maxTurns != null) {
+            int turns = Integer.parseInt(maxTurns);
+            if (turns < 0) {
+                throw new IllegalArgumentException(
+                        "Bob max-session-turns must be nonnegative. Use 0 for unlimited turns.");
+            }
+            session.put("maxTurns", turns);
         }
         var compression = params.get("compression-threshold");
         if (compression != null) {
             var percent = new BigDecimal(compression).movePointRight(2);
             session.put("compactionThresholdPercent", JqNumber.of(percent));
         }
-        if (maxTurns > 0 || compression != null) {
+        if (maxTurns != null || compression != null) {
             root.put("session", session.build());
         }
 

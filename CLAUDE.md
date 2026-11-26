@@ -388,6 +388,7 @@ A credential reaches a server only as `bearer-token-env`, a variable each agent 
 `${isx_repo_paths}` names the template's clones (design/mcp.md "Tools declare MCP servers for every agent", `.claude/rules/tools-env.md`).
 
 Bob Shell's turn limit and compaction threshold go under `session` in its user settings (design/templates.md "Bob Shell session settings").
+Use zero for unlimited turns and reject the legacy `checkpointing` parameter.
 
 **Tools declare the memory they need (#2355).**
 A tool's `resources.memory` gives `resident` and `peak`, a size or a parameter's size plus one, from a measurement in `docs/dev/PERFORMANCE-NOTES.md`.
