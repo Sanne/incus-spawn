@@ -983,6 +983,23 @@ class GuestProvisioningTest {
     }
 
     @Test
+    void theEnvFileNamesTheVersionIsxVersionShows() {
+        // The agents' footers read it: a snapshot shows its commit's version, not 0.0.0-SNAPSHOT.
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        var container = new Container(incus, "test");
+        var image = new ImageDef();
+        image.setName("tpl-plain");
+
+        GuestProvisioning.writeEnvFile(container, image, Map.of(), List.of(), "tpl-plain");
+
+        var environment = capturedWrite(incus, "/etc/profile.d/isx-env.sh");
+        assertNotNull(environment);
+        assertTrue(environment.contains("export ISX_VERSION=\"" + dev.incusspawn.BuildInfo.instance().displayVersion() + "\""),
+                environment);
+    }
+
+    @Test
     void refreshInheritedToolsRewritesWhatInheritedClaudeAndCodexOwn() {
         // A parent built before #1108 has neither script, and a child that only inherits the
         // tools never runs their setup: without these its model calls present a stale token
