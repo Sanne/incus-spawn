@@ -454,12 +454,11 @@ Why: a merge of JSON is the general mechanism the Pi case needs, it needs nothin
 
 ### Bob Shell session settings
 
-`BobSetup` writes positive `max-session-turns` values to `session.maxTurns` in `~/.bob/settings/settings.json`.
+`BobSetup` writes nonnegative `max-session-turns` values to `session.maxTurns` in `~/.bob/settings/settings.json`.
 Bob Shell 2.1 reads this key and defaults to 100 turns.
-Existing templates can pass nonpositive values, in which case isx leaves the effective default in place.
+isx rejects negative values and tells the template author to use zero for unlimited turns.
 isx multiplies `compression-threshold` by 100 for Bob's `session.compactionThresholdPercent`, which defaults to 90.
-isx still accepts the legacy `checkpointing` parameter so existing templates build.
-The Bob Shell 2.1 runtime has no reader for the old checkpointing key.
+isx rejects the legacy `checkpointing` parameter because the Bob Shell 2.1 runtime has no reader for it.
 
 ## Tools declare the memory they need
 

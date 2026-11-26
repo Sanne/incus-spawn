@@ -38,8 +38,7 @@ class BobSetupTest {
     void buildUserSettingsWithAllOptions() {
         var json = BobSetup.buildUserSettings(Map.of(
                 "max-session-turns", "1000",
-                "compression-threshold", "0.6",
-                "checkpointing", "true"), new SpawnConfig.BobConfig());
+                "compression-threshold", "0.6"), new SpawnConfig.BobConfig());
 
         var settings = JqValues.parseStrict(json);
         assertEquals(JqValues.parseStrict("""
@@ -55,6 +54,41 @@ class BobSetupTest {
                 new SpawnConfig.BobConfig());
 
         assertEquals(JqValues.parseStrict("{\"maxTurns\":1000}"), JqValues.parseStrict(json).path("session"));
+    }
+
+    @Test
+    void buildUserSettingsPreservesZeroTurns() {
+        var json = BobSetup.buildUserSettings(Map.of("max-session-turns", "0"),
+                new SpawnConfig.BobConfig());
+
+        assertEquals(JqValues.parseStrict("{\"maxTurns\":0}"), JqValues.parseStrict(json).path("session"));
+    }
+
+    @Test
+    void negativeTurnsFailBeforeInstallingBob() {
+        var incus = mock(IncusClient.class);
+        var exception = assertThrows(IllegalArgumentException.class,
+                () -> new BobSetup().install(new Container(incus, CONTAINER), Map.of("max-session-turns", "-1")));
+
+        assertEquals("Bob max-session-turns must be nonnegative. Use 0 for unlimited turns.",
+                exception.getMessage());
+        verifyNoInteractions(incus);
+    }
+
+    @Test
+    void unsupportedCheckpointingFailsEvenWhenFalse() {
+        var setup = new BobSetup();
+        for (var value : List.of("true", "false")) {
+            var params = Map.of("checkpointing", value);
+            assertEquals(List.of("Unknown parameter: checkpointing"),
+                    ParameterResolver.resolve(setup.parameters(), params).errors());
+
+            var incus = mock(IncusClient.class);
+            var exception = assertThrows(IllegalArgumentException.class,
+                    () -> setup.reconfigure(new Container(incus, CONTAINER), params));
+            assertTrue(exception.getMessage().contains("Remove checkpointing"));
+            verifyNoInteractions(incus);
+        }
     }
 
     @Test
@@ -80,7 +114,7 @@ class BobSetupTest {
     void parametersDeclaresAllSettingsAsOptionalReconfigurable() {
         var params = new BobSetup().parameters();
 
-        for (var name : List.of("max-session-turns", "compression-threshold", "checkpointing")) {
+        for (var name : List.of("max-session-turns", "compression-threshold")) {
             assertTrue(params.containsKey(name), "Should declare parameter: " + name);
             var p = params.get(name);
             assertTrue(p.isOptional(), name + " should be optional");
@@ -116,14 +150,14 @@ class BobSetupTest {
 
     @Test
     void installWritesUserSettingsWithParams() {
-        System.setProperty("user.home", "/tmp/bob-test-home");
+        var originalHome = System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
             when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
             var setup = new BobSetup();
             setup.configureSettings(new Container(incus, CONTAINER),
-                    Map.of("max-session-turns", "1000", "checkpointing", "true"));
+                    Map.of("max-session-turns", "1000"));
 
             var captor = org.mockito.ArgumentCaptor.forClass(String.class);
             verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
@@ -139,13 +173,13 @@ class BobSetupTest {
             assertTrue(userWrite.contains("autoUpdate"),
                     "User settings should contain autoUpdate");
         } finally {
-            System.clearProperty("user.home");
+            System.setProperty("user.home", originalHome);
         }
     }
 
     @Test
     void reconfigureWritesUserSettingsWithParams() {
-        System.setProperty("user.home", "/tmp/bob-test-home");
+        var originalHome = System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
             when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
@@ -165,13 +199,13 @@ class BobSetupTest {
             assertTrue(userWrite.contains("compactionThresholdPercent"),
                     "User settings should contain compression threshold");
         } finally {
-            System.clearProperty("user.home");
+            System.setProperty("user.home", originalHome);
         }
     }
 
     @Test
     void installWithNoParamsWritesDefaultSettings() {
-        System.setProperty("user.home", "/tmp/bob-test-home");
+        var originalHome = System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
             when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
@@ -190,13 +224,13 @@ class BobSetupTest {
             assertFalse(userWrite.contains("maxTurns"),
                     "Should not contain maxTurns when param not set");
         } finally {
-            System.clearProperty("user.home");
+            System.setProperty("user.home", originalHome);
         }
     }
 
     @Test
     void noEtcBobshellSettingsWritten() {
-        System.setProperty("user.home", "/tmp/bob-test-home");
+        var originalHome = System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
             when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
@@ -212,7 +246,7 @@ class BobSetupTest {
                     .anyMatch(cmd -> cmd.contains("/etc/bobshell")),
                     "Should not write to /etc/bobshell (dead config)");
         } finally {
-            System.clearProperty("user.home");
+            System.setProperty("user.home", originalHome);
         }
     }
 }
