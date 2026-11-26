@@ -1,10 +1,10 @@
 name: Mac runner heartbeat
-# mac-route.sh counts only runs of this title: with the switch off, the job is skipped, and a run
+# runner-route.sh counts only runs of this title: with the switch off, the job is skipped, and a run
 # whose jobs were all skipped can still conclude as a success.
 run-name: ${{ vars.MAC_RUNNER_ENABLED == 'true' && 'Mac runner heartbeat' || 'Mac runner heartbeat (off)' }}
 
 # The project's Mac Mini runs test-integration.yml's macOS jobs for trusted code while it is up and
-# free (#2298). This run is how mac-route.sh knows: a heartbeat completed within 25 minutes, with
+# free (#2298). This run is how runner-route.sh knows: a heartbeat completed within 25 minutes, with
 # none waiting more than 5 for the runner, sends the jobs to the Mini; anything else sends them to
 # GitHub's macos-15. Fork pull requests get no secret, so the route reads these runs through the
 # public API instead of asking about the runner itself.

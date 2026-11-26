@@ -259,7 +259,7 @@ The project's Mac Mini, which is also the agents' Mac runner, now runs both for 
 A same-repository or bot PR gets its macOS checks as soon as the Mini is free, and a fork PR sees no change.
 
 **Trusted means the repository's own events and two head repositories.**
-`mac-route` (`.github/scripts/mac-route.sh`) picks the Mini for a push, schedule or dispatch of this repository, and for a pull request whose head is in `.github/mac-runner/trusted-heads`, unless Dependabot opened it.
+`mac-route` (`.github/scripts/runner-route.sh mac`) picks the Mini for a push, schedule or dispatch of this repository, and for a pull request whose head is in `.github/self-hosted/trusted-heads`, unless Dependabot opened it.
 The list holds this repository and the bot's fork, where every worker branch lives ("Site previews" above); the fork's only collaborator is the bot, which can already push here, so the list trusts nobody new.
 The route is a convenience, not the protection.
 A pull request's own copy of the workflow decides its `runs-on`, so a fork could name the Mini's labels and drop the route.
@@ -271,7 +271,7 @@ The runner's own status needs a token with administration rights, which the bot'
 `mac-heartbeat.yml` runs on the Mini every 10 minutes, and the route reads its runs through the public API with the run's read-only token.
 A heartbeat completed within 25 minutes, with none waiting more than 5 minutes for the runner, means up.
 No job of another run queued for the Mini or running on it, read through the same API, means free: it has one runner, so a second PR's jobs would wait behind the first's where `macos-15` runs them at once.
-The route lists runs only of the workflows with a job that can use the Mini (`test-integration.yml` and `mac-heartbeat.yml`, `MINI_WORKFLOWS`), each in progress and queued, and fetches the jobs of those runs alone.
+The route lists runs only of the workflows with a job that can use the Mini (`test-integration.yml` and `mac-heartbeat.yml`, `MAC_WORKFLOWS`), each in progress and queued, and fetches the jobs of those runs alone.
 A repository-wide listing read every workflow's runs, about eight per push, so the first 50 of a status held mostly runs that cannot use the Mini.
 A workflow with more than 50 runs of one status still shows only the first 50, and `waiting` and `pending` runs are not listed.
 `MacRunnerWorkflowTest` holds the list equal to the workflows whose jobs run on the Mini, so a newly routed workflow fails it until it is added.

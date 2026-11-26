@@ -14,18 +14,21 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Where test-integration.yml's macOS jobs run (#2298): the project's Mac Mini only for trusted code
- * while its heartbeat says it is up and free, and GitHub's macos-15 for everything else, so a
- * busy or missing Mini never leaves a pull request's checks queued. The Mini's own hook is what
- * keeps untrusted code off it; this holds the routing that keeps such jobs from being sent there.
+ * Where test-integration.yml's routed jobs run: the project's Mac Mini for the macOS jobs (#2298)
+ * and a fresh isx instance on its Linux server for unit-tests (#2519), each only for trusted code
+ * while its heartbeat says it is up and free, and GitHub's runners for everything else, so a
+ * busy or missing runner never leaves a pull request's checks queued. Each runner's own hook is
+ * what keeps untrusted code off it; this holds the routing that keeps such jobs from being sent there.
  */
-class MacRouteScriptTest {
+class RunnerRouteScriptTest {
 
-    private static final Path SCRIPT = Path.of("../.github/scripts/mac-route.sh").toAbsolutePath();
-    private static final Path TRUSTED = Path.of("../.github/mac-runner/trusted-heads");
+    private static final Path SCRIPT = Path.of("../.github/scripts/runner-route.sh").toAbsolutePath();
+    private static final Path TRUSTED = Path.of("../.github/self-hosted/trusted-heads");
 
     private static final String MINI = "[\"self-hosted\",\"macOS\",\"ARM64\",\"isx-mac\"]";
     private static final String HOSTED = "\"macos-15\"";
+    private static final String LINUX = "[\"self-hosted\",\"Linux\",\"X64\",\"isx-linux\"]";
+    private static final String UBUNTU = "\"ubuntu-26.04\"";
     private static final long NOW = 2_000_000_000L;
     private static final String FRESH = Long.toString(NOW - 600);
 
@@ -90,7 +93,7 @@ class MacRouteScriptTest {
         var heads = Files.readAllLines(TRUSTED).stream()
                 .map(l -> (l.indexOf('#') < 0 ? l : l.substring(0, l.indexOf('#'))).strip()).filter(l -> !l.isEmpty()).toList();
         assertEquals(List.of("Sanne/incus-spawn", "Sanne-ai-bot/incus-spawn"), heads,
-                "a new trusted head lets its code run on the Mac runner: change the Mini's hook's list too");
+                "a new trusted head lets its code run on the project's runners: change the Mini's hook's list too");
     }
 
     @Test
@@ -155,6 +158,49 @@ class MacRouteScriptTest {
                 run("Mac runner heartbeat", "queued", null, longWait, longWait)))));
     }
 
+    @Test
+    void theLinuxRunnerTakesTheSameTrustedCodeAndOtherwiseUbuntu() throws Exception {
+        assertEquals(LINUX, decide("linux", "pull_request", "Sanne-ai-bot/incus-spawn", "Sanne-ai-bot", FRESH, "", "0"));
+        assertEquals(LINUX, decide("linux", "push", "", "Sanne", FRESH, "", "0"));
+        assertEquals(UBUNTU, decide("linux", "pull_request", "someone/incus-spawn", "someone", FRESH, "", "0"));
+        assertEquals(UBUNTU, decide("linux", "pull_request", "Sanne/incus-spawn", "dependabot[bot]", FRESH, "", "0"));
+        assertEquals(UBUNTU, decide("linux", "push", "", "Sanne", "", "", "0"), "no heartbeat ever");
+        assertEquals(UBUNTU, decide("linux", "push", "", "Sanne", FRESH, "", "1"), "the runner has a job");
+    }
+
+    @Test
+    void anUnknownRunnerIsRefused() throws Exception {
+        var process = new ProcessBuilder("bash", "--norc", "--noprofile", SCRIPT.toString(), "windows", "decide",
+                "push", "", "Sanne", Long.toString(NOW), FRESH, "", "0").redirectErrorStream(true).start();
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS));
+        assertEquals(2, process.exitValue());
+    }
+
+    @Test
+    void theLinuxRouteReadsItsOwnHeartbeatAndCountsItsOwnLabel(@TempDir Path dir) throws Exception {
+        assertEquals("runner=" + LINUX + "\n",
+                route("linux", "Sanne/incus-spawn", dir, "echo \"$(( $(date +%s) - 60 ))\"", "111", "0"));
+        var calls = Files.readAllLines(dir.resolve("calls"));
+        assertTrue(calls.contains("repos/Sanne/incus-spawn/actions/workflows/linux-heartbeat.yml/runs?per_page=20"), calls.toString());
+        assertEquals(List.of(
+                "repos/Sanne/incus-spawn/actions/workflows/test-integration.yml/runs?status=in_progress&per_page=50",
+                "repos/Sanne/incus-spawn/actions/workflows/test-integration.yml/runs?status=queued&per_page=50",
+                "repos/Sanne/incus-spawn/actions/workflows/linux-heartbeat.yml/runs?status=in_progress&per_page=50",
+                "repos/Sanne/incus-spawn/actions/workflows/linux-heartbeat.yml/runs?status=queued&per_page=50"),
+                calls.stream().filter(c -> c.contains("status=")).toList());
+        assertTrue(Files.readString(SCRIPT).contains("select((.labels | index(\"'\"$LABEL\"'\"))"),
+                "a job is the runner's by its own label");
+    }
+
+    @Test
+    void aForksPullRequestIsRoutedWithoutARequest(@TempDir Path dir) throws Exception {
+        for (var target : List.of("mac", "linux")) {
+            var answer = route(target, "someone/incus-spawn", dir, "echo \"$(( $(date +%s) - 60 ))\"", "", "0");
+            assertEquals("runner=" + (target.equals("mac") ? HOSTED : UBUNTU) + "\n", answer, target);
+            assertFalse(Files.exists(dir.resolve("calls")), target + ": a fork's run asks GitHub nothing");
+        }
+    }
+
     private static String run(String title, String status, String conclusion, String created, String updated) {
         return "{\"display_title\":\"" + title + "\",\"status\":\"" + status + "\",\"conclusion\":"
                 + (conclusion == null ? "null" : "\"" + conclusion + "\"")
@@ -185,24 +231,29 @@ class MacRouteScriptTest {
         return route(dir, gh, "111", "0");
     }
 
+    private static String route(Path dir, String gh, String runIds, String miniJobs) throws Exception {
+        return route("mac", "Sanne/incus-spawn", dir, gh, runIds, miniJobs);
+    }
+
     /**
      * {@code gh} answers the heartbeat's runs with {@code gh}, the runs in progress and queued with
      * {@code runIds} (the route's own run is 222), and each run's jobs on the Mini with {@code miniJobs}.
      */
-    private static String route(Path dir, String gh, String runIds, String miniJobs) throws Exception {
+    private static String route(String target, String head, Path dir, String gh, String runIds, String miniJobs)
+            throws Exception {
         var bin = Files.createDirectories(dir.resolve("bin"));
         Files.writeString(bin.resolve("gh"), "#!/bin/bash\necho \"$2\" >> '" + dir.resolve("calls") + "'\ncase \"$2\" in\n*/jobs*) echo " + miniJobs
-                + " ;;\n*status=*) echo " + runIds + " ;;\n*mac-heartbeat*) " + gh + " ;;\nesac\n");
+                + " ;;\n*status=*) echo " + runIds + " ;;\n*-heartbeat.yml/runs?per*) " + gh + " ;;\nesac\n");
         bin.resolve("gh").toFile().setExecutable(true);
         var output = dir.resolve("output");
         Files.deleteIfExists(output);
         Files.deleteIfExists(dir.resolve("calls"));
-        var builder = new ProcessBuilder("bash", "--norc", "--noprofile", SCRIPT.toString()).redirectErrorStream(true);
+        var builder = new ProcessBuilder("bash", "--norc", "--noprofile", SCRIPT.toString(), target).redirectErrorStream(true);
         builder.environment().put("PATH", bin + ":" + System.getenv("PATH"));
         builder.environment().put("GITHUB_OUTPUT", output.toString());
         builder.environment().put("GITHUB_REPOSITORY", "Sanne/incus-spawn");
         builder.environment().put("EVENT_NAME", "pull_request");
-        builder.environment().put("HEAD_REPO", "Sanne/incus-spawn");
+        builder.environment().put("HEAD_REPO", head);
         builder.environment().put("ACTOR", "Sanne");
         builder.environment().put("GITHUB_RUN_ID", "222");
         var process = builder.start();
@@ -219,7 +270,12 @@ class MacRouteScriptTest {
 
     private static String decide(String event, String head, String actor, String completed, String queued,
                                  String miniJobs) throws Exception {
-        var process = new ProcessBuilder("bash", "--norc", "--noprofile", SCRIPT.toString(), "decide",
+        return decide("mac", event, head, actor, completed, queued, miniJobs);
+    }
+
+    private static String decide(String target, String event, String head, String actor, String completed,
+                                 String queued, String miniJobs) throws Exception {
+        var process = new ProcessBuilder("bash", "--norc", "--noprofile", SCRIPT.toString(), target, "decide",
                 event, head, actor, Long.toString(NOW), completed, queued, miniJobs).redirectErrorStream(true).start();
         var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertTrue(process.waitFor(30, TimeUnit.SECONDS), output);
