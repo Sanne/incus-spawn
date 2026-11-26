@@ -146,7 +146,7 @@ class ChatGptAuthFlowTest {
                 };
             }
         };
-        run(alwaysFailing, new SpawnConfig(), new ScriptedPrompts().line("2", "y", "s"));
+        run(alwaysFailing, new SpawnConfig(), chooseChatGpt().line("s"));
         assertNothingSaved();
     }
 
@@ -490,7 +490,7 @@ class ChatGptAuthFlowTest {
             }
         };
 
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("2", "y", "s"));
+        run(init, new SpawnConfig(), chooseChatGpt().line("s"));
 
         assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
     }
@@ -519,7 +519,7 @@ class ChatGptAuthFlowTest {
             }
         };
 
-        var out = run(init, new SpawnConfig(), new ScriptedPrompts().line("3", "y", ""));
+        var out = run(init, new SpawnConfig(), chooseDeviceCode().line(""));
 
         assertEquals(2, codes.get(), "a second try asks for a new code");
         assertTrue(String.join("\n", out.lines()).contains("CODE-0002"), String.join("\n", out.lines()));
@@ -546,7 +546,7 @@ class ChatGptAuthFlowTest {
             }
         };
 
-        var out = run(init, new SpawnConfig(), new ScriptedPrompts().line("3", "y", "s"));
+        var out = run(init, new SpawnConfig(), chooseDeviceCode().line("s"));
 
         assertTrue(String.join("\n", out.lines()).contains("Skipped. 'isx account add openai' adds one later."), String.join("\n", out.lines()));
         assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
@@ -611,7 +611,7 @@ class ChatGptAuthFlowTest {
     @Test
     void anUnreadableIntervalIsTheServersAnswer() throws Exception {
         var said = askedForACode(200, "{\"device_auth_id\":\"d\",\"user_code\":\"X\",\"interval\":\"5s\"}",
-                new ScriptedPrompts().line("2", "s"));
+                chooseDeviceCode().line("s"));
 
         assertTrue(said.contains("OpenAI's sign-in server did not give a code isx can use:"
                 + " its answer gives a poll interval that is not a number"), said);
@@ -621,10 +621,11 @@ class ChatGptAuthFlowTest {
 
     @Test
     void aServerErrorIsTheServersAnswer() throws Exception {
-        var said = askedForACode(503, "", new ScriptedPrompts().line("2", "s"));
+        var said = askedForACode(503, "", chooseDeviceCode().line("s"));
 
         assertTrue(said.contains("did not give a code isx can use: it answered HTTP 503"), said);
         assertFalse(said.contains("could not reach"), said);
+        assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
     }
 
     /** An interrupt while asking for a code ends the step: no new code, and the server is not blamed. */
@@ -698,7 +699,7 @@ class ChatGptAuthFlowTest {
     void anInterruptIsNotAnsweredWithANewCode() {
         var codes = new java.util.concurrent.atomic.AtomicInteger();
         try {
-            var out = run(failingCodes(codes, true), new SpawnConfig(), new ScriptedPrompts().line("3", "y"));
+            var out = run(failingCodes(codes, true), new SpawnConfig(), chooseDeviceCode());
 
             assertEquals(1, codes.get(), "one code, never a second");
             assertTrue(Thread.currentThread().isInterrupted(), "the interrupt is kept for the caller");
