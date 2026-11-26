@@ -86,6 +86,12 @@ It is not thrown away after a job: `~/.m2`, the Swift and Xcode caches and the h
 So `unit-tests-macos` runs there but skips `KeychainTrustMacTest`, which changes the System keychain, and `macos-keychain-trust.yml` runs that test on GitHub's runner.
 The setup is [docs/dev/MAC-CI-SETUP.md](docs/dev/MAC-CI-SETUP.md); the rationale is design/testing.md "The Mac Mini runs the trusted macOS jobs".
 
+**The project's Linux server runs `unit-tests` of trusted code, one fresh isx instance per job** (#2519).
+`linux-route` (`runner-route.sh linux`, the same trusted heads as the Mini) sends it there while `linux-heartbeat.yml` shows the runner up and free, and to `ubuntu-26.04` otherwise.
+The host's loop (`.github/linux-runner/isx-ci-runner.sh`) registers a just-in-time runner, branches `tpl-isx-ci-linux` for it, and destroys both after the job; the instance's root-owned job-started hook refuses untrusted code.
+The template has no tool with a credential (its parent is `tpl-minimal`), so CI jobs get no account through the proxy.
+The setup is [docs/dev/LINUX-CI-SETUP.md](docs/dev/LINUX-CI-SETUP.md); the rationale is design/testing.md "A fresh isx instance runs unit-tests for trusted code".
+
 **Latency on the branch/start/shell path is never noise.**
 A container starts in well under a second, so a few milliseconds or a handful of redundant Incus round trips are a real share of the wait.
 A read costs well under a millisecond, on Linux and over the macOS vsock tunnel alike (docs/dev/PERFORMANCE-NOTES.md "CLI latency on macOS"); a settings write costs about 10 ms: 6-10 ms on macOS, 11-13 ms on Linux btrfs.

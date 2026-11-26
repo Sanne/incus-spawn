@@ -30,21 +30,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  unit-tests:
+  # Where unit-tests runs: a fresh isx instance on the project's Linux server for trusted code while
+  # its runner is up and free, else GitHub's ubuntu-26.04 (#2519, .github/scripts/runner-route.sh).
+  # The instance's own job-started hook, not this job, keeps untrusted code off it. A route that
+  # fails leaves no output, and unit-tests then runs on GitHub's runner.
+  linux-route:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: read     # the heartbeat workflow's runs
+      contents: read
+    outputs:
+      runner: ${{ steps.route.outputs.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+
+      - name: Route unit-tests
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          ACTOR: ${{ github.event.pull_request.user.login || github.actor }}
+        run: .github/scripts/runner-route.sh linux
+
+  # On the project's Linux runner (#2519) the job runs in an isx instance made for it alone and
+  # destroyed after it, from a template that has GraalVM, zsh, sqlite3, a clone of this repository
+  # and a primed ~/.m2. So it skips the GraalVM download, the apt installs and GitHub's Maven cache:
+  # Maven goes through the isx proxy's cache on the server instead.
+  unit-tests:
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork) }}
+    needs: [linux-route]
+    runs-on: ${{ needs.linux-route.outputs.runner && fromJSON(needs.linux-route.outputs.runner) || 'ubuntu-26.04' }}
+    # About three times its usual run: a hung test must not hold the Linux runner for GitHub's 6 hours
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Oracle GraalVM 25.5
+        if: runner.environment == 'github-hosted'
         uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
         with:
           version: '25.5'
           java-version: '25'
           distribution: 'graalvm'
 
+      # The template's GraalVM, of the line setup-graalvm installs on GitHub's runner
+      - name: Use the instance's GraalVM
+        if: runner.environment != 'github-hosted'
+        run: |
+          echo "The project's Linux runner, in an isx instance of $(uname -n)"
+          case "${GRAALVM_HOME:-}" in
+            */graalvm-25.5.*) ;;
+            *) echo "::error::The runner's template has no GraalVM 25.5 (GRAALVM_HOME=${GRAALVM_HOME:-unset}): rebuild it (docs/dev/LINUX-CI-SETUP.md)"; exit 1 ;;
+          esac
+          echo "JAVA_HOME=$GRAALVM_HOME" >> "$GITHUB_ENV"
+          echo "$GRAALVM_HOME/bin" >> "$GITHUB_PATH"
+
       - name: Cache Maven dependencies
+        if: runner.environment == 'github-hosted'
         id: maven-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -54,7 +104,9 @@ jobs:
 
       # ZshCompletionTest drives a real zsh and skips without one, which the runner does not ship;
       # AgentReadersTest reads opencode's sessions with sqlite3, and skips that read without it.
+      # The Linux runner's template has both.
       - name: Install zsh and sqlite3
+        if: runner.environment == 'github-hosted'
         run: sudo .github/scripts/apt-install.sh zsh sqlite3
 
       - name: Build and test

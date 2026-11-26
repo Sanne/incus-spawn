@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
+# GitHub's Actions runner for incus-spawn's Linux CI runner (#2519, docs/dev/LINUX-CI-SETUP.md).
+# The sums are the publisher's: the release notes' "BEGIN SHA linux-x64" line, which GitHub's own
+# digest of the asset matches. A runner that GitHub has superseded updates itself on its first job,
+# a download every job until this pin moves and the template is rebuilt.
+name: github-actions-runner
+description: GitHub Actions runner 2.338.2, run once per instance with a just-in-time configuration
+
+# The runner's .NET needs ICU; jq reads the job's event in the job-started hook
+packages:
+  - libicu
+  - krb5-libs
+  - jq
+
+downloads:
+  - url: https://github.com/actions/runner/releases/download/v2.338.2/actions-runner-linux-x64-2.338.2.tar.gz
+    sha256: baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
+    extract: /home/agentuser/actions-runner
+    arch: x86_64
+
+# The runner writes its _diag and _work directories beside itself, as the user it runs as
+run:
+  - chown -R agentuser:agentuser /home/agentuser/actions-runner
+
+# The runner reads its environment's additions from .env when it starts. The hook is root's, installed
+# by tpl-isx-ci-linux's prime from its clone of main.
+files:
+  - path: /home/agentuser/actions-runner/.env
+    owner: agentuser:agentuser
+    content: |
+      ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/isx-ci/job-started.sh
+
+verify: test -x ~/actions-runner/run.sh && ~/actions-runner/bin/Runner.Listener --version

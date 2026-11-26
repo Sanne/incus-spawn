@@ -44,7 +44,8 @@ class MacRunnerWorkflowTest {
                     continue;
                 }
                 var where = file.getFileName() + " " + job.getKey();
-                if (file.getFileName().toString().equals("mac-heartbeat.yml")) {
+                // The Linux runner's own jobs are LinuxRunnerTest's
+                if (file.getFileName().toString().equals("mac-heartbeat.yml") || LinuxRunnerTest.reachesLinuxRunner(file, runsOn)) {
                     continue;
                 }
                 if (!file.getFileName().toString().equals("test-integration.yml") || !runsOn.equals(ROUTED)) {

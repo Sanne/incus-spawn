@@ -31,7 +31,14 @@ paths:
 On a push, root jobs are gated so feature-branch pushes only run on forks (not upstream, where the PR trigger covers them).
 Key jobs:
 
-- **`unit-tests`**: `mvn package` (no Incus required), with zsh and sqlite3 installed so `ZshCompletionTest` and `AgentReadersTest`'s opencode read run rather than skip
+- **`unit-tests`**: `mvn package` (no Incus required), with zsh and sqlite3 installed so `ZshCompletionTest` and `AgentReadersTest`'s opencode read run rather than skip.
+  It runs on the project's Linux server, in a fresh isx instance made for the job and destroyed after it, or on `ubuntu-26.04`, as `linux-route` picks (#2519, design/testing.md "A fresh isx instance runs unit-tests for trusted code").
+  There it skips `setup-graalvm`, the apt installs and the Maven cache (`runner.environment == 'github-hosted'`), since `tpl-isx-ci-linux` bakes them in, and its Maven goes through the proxy's cache; it fails at once when the template's GraalVM is not the 25.5 line
+- **`linux-route`**: picks where `unit-tests` runs, with `.github/scripts/runner-route.sh linux`: the same trusted code as `mac-route`, while `linux-heartbeat.yml` shows the runner up and no job of another run is on the `isx-linux` label (`LINUX_WORKFLOWS`).
+  It is `continue-on-error`, and `unit-tests` runs on `!cancelled()` and falls back to `ubuntu-26.04` without its output, so a failed route neither holds unit-tests up nor makes `cancel-on-unit-failure` cancel the run.
+  The instance's own job-started hook (`.github/linux-runner/job-started.sh`, installed root-owned by the template's prime from its clone of `main`) refuses untrusted code; `.github/linux-runner/isx-ci-runner.sh` is the host's loop, one just-in-time runner and one instance per job (docs/dev/LINUX-CI-SETUP.md).
+  `LinuxRunnerTest` holds it: only unit-tests and the heartbeat reach the runner, the skipped steps, the hook's refusals, and that the loop destroys the instance and its runner and never puts the runner's configuration on the host's command line
+- **`linux-heartbeat.yml`**: the Linux runner's heartbeat, as `mac-heartbeat.yml` is the Mini's, while `LINUX_RUNNER_ENABLED` is `true`; each run takes one instance
 - **`mac-route`**: picks where the two macOS jobs run, the project's Mac Mini or `macos-15` (#2298, design/testing.md "The Mac Mini runs the trusted macOS jobs").
   `.github/scripts/runner-route.sh mac` picks the Mini only for trusted code (a push, schedule or dispatch, or a pull request whose head is in `.github/self-hosted/trusted-heads`, not opened by Dependabot) while `mac-heartbeat.yml` shows the Mini up and no job of another run is queued for it or running on it (listing only the runs of `MAC_WORKFLOWS`, the workflows with a job for the Mini), both read through the public API with the run's read-only token.
   The Mini's own job-started hook refuses untrusted code, since a PR's copy of the workflow decides its `runs-on`; the route is not the protection.
@@ -147,6 +154,7 @@ The script also installs `virtiofsd`, which Fedora's `incus` package does not pu
 Nested inside an isx instance it also works around what a user namespace refuses (Incus's bridge firewall rules, the unmapped subordinate-ID range, the iptables redirect); the skill says what it cannot fix there.
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
+A routed unit-tests job on the Linux server runs in an isx instance destroyed after it (#2519), so it keeps that.
 The exception is a routed macOS job on the Mac Mini, which is not thrown away (#2298): the runner user's `~/.m2`, the Swift and Xcode caches and the hook's turn files in `~/.isx-ci/gate` stay between jobs.
 A job that changes state other jobs or the agent runner read, such as the System keychain (`KeychainTrustMacTest`), is not run there.
 
