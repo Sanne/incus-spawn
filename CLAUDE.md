@@ -475,6 +475,7 @@ On macOS the proxy identifies a caller by its credential proof without the Linux
 `Platform` takes macOS's role from `os.name` (which a JVM's `-Dos.name` or `JAVA_TOOL_OPTIONS` sets) only on a host with macOS's `SystemVersion.plist` and no Linux kernel (elsewhere it refuses to start), and native images fold it at build time, where `graal/PlatformRoleFeature` fails a build whose role is not its target OS's.
 CI tests the macOS roles on Linux with a test-only build instead: `scripts/macos-role-build.sh` swaps the uber-jars' `Platform.class` for one pinned to macOS, and `appliance/test-macos-role.sh` runs it against the appliance in the `macos-role` job.
 Never add a runtime switch, flag or variable for the role.
+`Platform.wordedAs` is not one: it changes only the word `Platform.thisComputer` says, for one scoped call, so a transcript test shows a Mac's text on Linux (#2588); `isMacOS()` stays the OS's.
 `release.yml` and `uber-jar-smoke` run `scripts/check-platform-role.sh` on the uber-jars, and `PlatformRoleBuildGuardTest` keeps the test build out of every other job and every install channel.
 
 Detailed architecture docs are in `.claude/rules/` and load automatically when you work on related files.
