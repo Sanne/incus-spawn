@@ -19,8 +19,9 @@ import java.util.regex.Pattern;
  * is read from the first {@link #MAX_RESPONSE} bytes of the answer. Both are logged only when
  * GitHub answered with success, so a call that failed or was refused costs the log nothing.
  *
- * <p>A push's success is the HTTP answer's: a rejected ref comes back inside a 200's report-status
- * and is not read, so the line records a push GitHub accepted, not that every ref moved.
+ * <p>GitHub answers a push with 200 even when it refuses a branch, and says so per ref in the
+ * answer's report-status ({@link ReceivePackReport}, #2266). So a push's line names only the
+ * branches the report says GitHub updated, and a push whose report updated none has no line.
  */
 final class GitHubCall implements ApiActivity.Ends {
 
@@ -61,6 +62,7 @@ final class GitHubCall implements ApiActivity.Ends {
     private int requestLength;
     private final byte[] response;
     private int responseLength;
+    private final ReceivePackReport report;
     private volatile int status;
 
     GitHubCall(EventLog log, String instance, String incarnation, Kind kind, String path, long startedAt) {
@@ -72,11 +74,7 @@ final class GitHubCall implements ApiActivity.Ends {
         this.startedAt = startedAt;
         this.request = kind == Kind.PULL_REST ? new byte[0] : new byte[MAX_REQUEST];
         this.response = kind == Kind.PUSH ? new byte[0] : new byte[MAX_RESPONSE];
-    }
-
-    /** Whether the answer is read, and so must arrive uncompressed. */
-    boolean readsResponse() {
-        return kind != Kind.PUSH;
+        this.report = kind == Kind.PUSH ? new ReceivePackReport() : null;
     }
 
     /** One chunk of the request being relayed; the first {@link #MAX_REQUEST} bytes are kept. */
@@ -87,8 +85,15 @@ final class GitHubCall implements ApiActivity.Ends {
         requestLength += take;
     }
 
-    /** One chunk of the response being relayed; the first {@link #MAX_RESPONSE} bytes are kept. */
+    /**
+     * One chunk of the response being relayed: a push's report-status is read from it, and of any
+     * other answer the first {@link #MAX_RESPONSE} bytes are kept.
+     */
     synchronized void response(Buffer chunk) {
+        if (report != null) {
+            report.feed(chunk);
+            return;
+        }
         var take = Math.min(chunk.length(), response.length - responseLength);
         if (take <= 0) return;
         chunk.getBytes(0, take, response, responseLength);
@@ -109,10 +114,12 @@ final class GitHubCall implements ApiActivity.Ends {
                 var m = PUSH.matcher(path);
                 if (!m.matches()) return;
                 var commands = pushCommands(request, requestLength);
-                if (commands.refs().isEmpty() && commands.deleted().isEmpty()) return;
+                var updated = report.updated();
+                var refs = commands.refs().stream().filter(updated::contains).map(GitHubCall::bound).toList();
+                var deleted = commands.deleted().stream().filter(updated::contains).map(GitHubCall::bound).toList();
+                if (refs.isEmpty() && deleted.isEmpty()) return;
                 log.push(new EventLog.Push(java.time.Instant.ofEpochMilli(now), instance, incarnation,
-                        bound(m.group(1)) + "/" + bound(m.group(2)), status, duration,
-                        commands.refs(), commands.deleted()));
+                        bound(m.group(1)) + "/" + bound(m.group(2)), status, duration, refs, deleted));
                 return;
             }
             if (kind == Kind.PULL_GRAPHQL && indexOf(request, requestLength, CREATE) < 0) return;
@@ -133,7 +140,8 @@ final class GitHubCall implements ApiActivity.Ends {
      * The commands at the head of a receive-pack body: pkt-lines of {@code <old> <new> <ref>}, the
      * first followed by a NUL and the capabilities, ended by a flush-pkt, with the pack after it.
      * Reads what is in {@code buf} and stops at the first line that is not whole or not a command,
-     * so a cut-off or garbage body gives what came before it.
+     * so a cut-off or garbage body gives what came before it. Names are whole: the log bounds them
+     * when it writes them, after they are matched against the report.
      */
     static Commands pushCommands(byte[] buf, int length) {
         var refs = new ArrayList<String>();
@@ -152,7 +160,7 @@ final class GitHubCall implements ApiActivity.Ends {
             while (nul < end && buf[nul] != 0 && buf[nul] != '\n') nul++;
             var command = new String(buf, at + 4, nul - (at + 4), StandardCharsets.UTF_8).split(" ", 3);
             if (command.length < 3 || command[2].isEmpty()) break;
-            var ref = bound(command[2]);
+            var ref = command[2];
             if (command[1].chars().allMatch(c -> c == '0')) deleted.add(ref);
             else refs.add(ref);
             at = end;

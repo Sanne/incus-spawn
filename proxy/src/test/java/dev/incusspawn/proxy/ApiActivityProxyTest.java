@@ -146,7 +146,7 @@ class ApiActivityProxyTest {
                     resp.putHeader("Content-Type", "application/json").end("{\"data\":{\"createPullRequest\":"
                             + "{\"pullRequest\":{\"url\":\"https://github.com/o/r/pull/77\"}}}}");
                 } else {
-                    resp.end("000eunpack ok\n0000");
+                    resp.end("000eunpack ok\n001aok refs/heads/feature\n0000");
                 }
             });
             return;
@@ -666,6 +666,7 @@ class ApiActivityProxyTest {
         assertEquals(200, postTo("github.com", "/o/r.git/git-receive-pack", pack, "application/x-git-receive-pack-request"));
         assertTrue(java.util.Arrays.equals(pack, received.get("/o/r.git/git-receive-pack")),
                 "the push reaches upstream byte for byte, past what the proxy reads");
+        assertEquals("identity", acceptEncodings.get("/o/r.git/git-receive-pack"), "its report-status is read");
 
         var mutation = "{\"query\":\"mutation { createPullRequest(input: {title: \\\"t\\\"}) { pullRequest { url } } }\"}";
         assertEquals(200, postTo("api.github.com", "/graphql", mutation.getBytes(java.nio.charset.StandardCharsets.UTF_8),

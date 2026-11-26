@@ -495,7 +495,8 @@ A line under the table says since when the log counts, and whether the proxy los
 That note goes to stderr in `plain` and `json`.
 
 The columns from the event log show only what went through the proxy.
-A branch can show as pushed even when GitHub refused it, such as a push to a protected branch.
+A branch shows as pushed only when GitHub reported it updated.
+A branch GitHub refused, such as a push to a protected branch, is left out.
 
 WORK does not see a clone outside the home directory, or files outside any clone.
 A clone isx copied from a checkout on the host has no remote, and the commits it was copied with count as saved.

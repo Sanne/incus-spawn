@@ -2271,13 +2271,13 @@ public class MitmProxy {
         var debug = debugExchange(clientReq, null);
         upstream.relayRequest(clientReq, domain, new Upstream.RelayHooks(
                 upReq -> prepareApiHead(clientReq, upReq, ctx, domain, false,
-                        exchange != null || (github != null && github.readsResponse())),
+                        exchange != null || github != null),
                 upResp -> {
                     if (github != null) github.respond(upResp.statusCode());
                     onApiResponse(ctx, upResp, exchange, debug);
                 },
                 tap(github == null ? null : github::request, debug == null ? null : chunk -> capture(debug.original, chunk)),
-                tap(github == null || !github.readsResponse() ? null : github::response, responseTap(exchange, debug))),
+                tap(github == null ? null : github::response, responseTap(exchange, debug))),
                 started);
     }
 
@@ -2288,7 +2288,7 @@ public class MitmProxy {
     private Future<Boolean> prepareApiHead(HttpServerRequest clientReq, HttpClientRequest upReq, RequestContext ctx,
                                            String upstreamHost, boolean isVertexRequest, boolean readsAnswer) {
         copyRequestHeaders(clientReq, upReq, ctx.domain());
-        // A compressed answer would hide what the proxy reads of it (token usage, a pull request's number)
+        // A compressed answer would hide what the proxy reads of it (token usage, a pull request's number, a push's report)
         if (readsAnswer) upReq.putHeader("Accept-Encoding", "identity");
         return injectHeaders(upReq, ctx, upstreamHost, isVertexRequest).map(ok -> {
             if (ok) {
