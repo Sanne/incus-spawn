@@ -709,8 +709,8 @@ A file made again can get a deleted one's inode, and so its file key, so the las
 A last line the proxy has not yet ended with its newline is left for the next read.
 
 The overview never shows a state nobody established.
-A branch shows as pushed even when GitHub refused it (a non-fast-forward, a protected branch): the proxy logs a push on a 2xx answer and does not read the per-ref report-status inside it (design/proxy.md "The event log").
-WORK does not have that gap, since it counts commits on no remote-tracking branch, and a refused push moves none.
+A branch shows as pushed only when GitHub's answer reported it updated (design/proxy.md "The event log", #2266).
+GitHub answers 200 even to a push whose branch it refused, a non-fast-forward or a protected one, so the proxy reads the per-branch report inside that answer.
 
 **The work state is read in the guest, and fails closed.**
 `WorkState` runs one fixed script in each running instance through `IncusClient.execProbe`: as agentuser, with no login shell, killed after 10 seconds, its output cut at 64 KiB.

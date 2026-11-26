@@ -1309,7 +1309,7 @@ A response header naming upstream as the source is left to a later change, since
 The proxy appends one JSON line to `~/.local/state/incus-spawn/events/events.jsonl` for each model call that ends, so what an instance did outlives a restart and the in-memory counts of `ApiActivity`.
 A line holds the time, the instance's name and incarnation, the domain, the model the response names, the HTTP status, the duration and the four token counts.
 It holds no request or response content.
-A GitHub operation an instance makes is a line too: a push (`op: push`, the repository, the branches its commands update in `refs` and delete in `deleted_refs`) or a pull request opened (`op: pull_request`, the repository and the number).
+A GitHub operation an instance makes is a line too: a push (`op: push`, the repository, the branches it updated in `refs` and deleted in `deleted_refs`) or a pull request opened (`op: pull_request`, the repository and the number).
 `isx overview` and the TUI's overview (`o`) read it back through `EventLogReader` in `common` (design/terminal.md "The overview of what each instance did").
 The log is an observation and never read back by the proxy to decide routing, so "The proxy holds no configuration of its own" stands.
 Writing costs the request path one `offer` onto a bounded queue; one platform thread does the file work, so a slow disk never delays a response.
@@ -1336,16 +1336,19 @@ It appends in one write to the file opened for append, so its line and the proxy
 `EventLogReader` books each model call to the run that encloses it (`Log.runs`); design/mcp.md "Task runs in the event log, with an activity" has the rules.
 A push is `POST github.com/<owner>/<repo>[.git]/git-receive-pack`, and its branches are the commands at the head of the body, before the pack: the proxy keeps at most the first 8 KiB as the body streams past and never holds or pauses it.
 A pull request is `POST api.github.com/repos/<owner>/<repo>/pulls` or the `createPullRequest` mutation that `gh pr create` sends to `/graphql`, and its number is read from the first 32 KiB of the answer.
-Reading an answer needs it uncompressed, so those two requests go upstream with `Accept-Encoding: identity`, as a model call does.
+GitHub answers a push with 200 even when it refuses a branch, a non-fast-forward or a protected one, and says so per branch in the answer's report-status (#2266).
+So the proxy reads that report as the answer streams past (`ReceivePackReport`), and a push's line names only the branches it reports `ok`.
+With side-band, which git asks for, the report is band 1 of the pkt-line stream; only its first 16 KiB are kept, and progress in band 2 is skipped unkept.
+Reading an answer needs it uncompressed, so these three requests go upstream with `Accept-Encoding: identity`, as a model call does.
 A GitHub line is written only when GitHub answered with success, so a refused or failed call costs the log nothing.
 It gives up two things.
-A push's success is the HTTP answer's: a ref GitHub rejected comes back inside a 200's report-status, which is not read, so the line says a push was accepted, not that every branch moved.
+A push whose report was not read, or reported no branch updated, has no line, so a branch is never shown as pushed on the HTTP status alone.
 A body with a `Content-Encoding` is not read, so such a push or GraphQL call has no line.
 The guest writes these requests itself, so it can add successful lines at the rate it can push, and a flood of them rolls older model calls out of the 80 MiB.
 Repository and branch names are the guest's text, cut at 255 characters and JSON-escaped.
 The incarnation is the listing's `created_at`, as for the counters (#1063), so a name branched again is a different instance in the log.
 Its cost on the request path is one queue offer and a JSON build at the call's end, which runs on the event loop and costs microseconds beside a model call that lasts seconds; it is not measured on a real Incus.
-A GitHub call costs more: each chunk of a push's body or a tapped answer copies up to 8 or 32 KiB on the event loop, every `/graphql` POST allocates about 40 KB of buffers whether or not it opens a pull request, and the end runs a regex over the head of the answer.
+A GitHub call costs more: each chunk of a push's body or a tapped answer copies up to 8, 16 or 32 KiB on the event loop, every `/graphql` POST allocates about 40 KB of buffers whether or not it opens a pull request, and the end runs a regex over the head of the answer.
 This too is not measured on a real Incus.
 
 ## The socket transport: epoll on Linux
