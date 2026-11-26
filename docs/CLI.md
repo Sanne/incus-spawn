@@ -258,7 +258,7 @@ isx branch <name> [options]
 | `--airgap` | No network devices: every NIC, InfiniBand device and outbound `proxy` device is masked, and `pci`/`usb` passthrough is refused |
 | `--proxy-only` | Restrict network to the host proxy only |
 | `--inbox <dir>` | Host directory to mount read-only at `~/inbox` inside the instance |
-| `--cpu <N>` | CPU core limit. Default: none for containers; for VMs the host's CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores |
+| `--cpu <N>` | CPU core limit; any count from 1 up to the host's CPUs, so `--cpu 16` gives a VM 16 on a host with at least 16. Default: none for containers; for VMs the host's CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores |
 | `--memory <size>` | Memory limit, such as `8GB`. Default: 60% of the host's RAM for a container; for a VM a quarter of it, between 4 GiB and 16 GiB |
 | `--disk <size>` | Disk size limit (default: `100GB`, a ceiling on a copy-on-write pool, not an allocation) |
 | `--no-start` | Do not start the instance after creation |
