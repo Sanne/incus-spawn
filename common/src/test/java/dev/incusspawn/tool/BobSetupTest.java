@@ -3,6 +3,7 @@ package dev.incusspawn.tool;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -28,7 +29,7 @@ class BobSetupTest {
         assertTrue(json.contains("\"folderTrust\""));
         assertTrue(json.contains("\"enabled\": false"));
         assertTrue(json.contains("\"selectedType\": \"api-key\""));
-        assertFalse(json.contains("\"model\""));
+        assertFalse(json.contains("\"session\""));
         assertFalse(json.contains("\"checkpointing\""));
         assertFalse(json.contains("licenseConsent"));
     }
@@ -36,45 +37,33 @@ class BobSetupTest {
     @Test
     void buildUserSettingsWithAllOptions() {
         var json = BobSetup.buildUserSettings(Map.of(
-                "max-session-turns", "-1",
+                "max-session-turns", "1000",
                 "compression-threshold", "0.6",
                 "checkpointing", "true"), new SpawnConfig.BobConfig());
 
-        assertTrue(json.contains("\"autoUpdate\": false"));
-        assertTrue(json.contains("\"maxSessionTurns\": -1"));
-        assertTrue(json.contains("\"contextPercentageThreshold\": 0.6"));
-        assertTrue(json.contains("\"enabled\": true"),
-                "checkpointing should be enabled");
+        var settings = JqValues.parseStrict(json);
+        assertEquals(JqValues.parseStrict("""
+                {"maxTurns":1000,"compactionThresholdPercent":60}
+                """), settings.path("session"));
+        assertFalse(json.contains("\"model\""));
+        assertFalse(json.contains("\"checkpointing\""));
     }
 
     @Test
     void buildUserSettingsWithOnlyTurns() {
-        var json = BobSetup.buildUserSettings(Map.of("max-session-turns", "50"),
+        var json = BobSetup.buildUserSettings(Map.of("max-session-turns", "1000"),
                 new SpawnConfig.BobConfig());
 
-        assertTrue(json.contains("\"maxSessionTurns\": 50"));
-        assertFalse(json.contains("\"chatCompression\""));
-        assertFalse(json.contains("\"checkpointing\""));
+        assertEquals(JqValues.parseStrict("{\"maxTurns\":1000}"), JqValues.parseStrict(json).path("session"));
     }
 
     @Test
     void buildUserSettingsWithOnlyCompression() {
-        var json = BobSetup.buildUserSettings(Map.of("compression-threshold", "0.8"),
+        var json = BobSetup.buildUserSettings(Map.of("compression-threshold", "0.605"),
                 new SpawnConfig.BobConfig());
 
-        assertTrue(json.contains("\"contextPercentageThreshold\": 0.8"));
-        assertFalse(json.contains("\"maxSessionTurns\""));
-        assertFalse(json.contains("\"checkpointing\""));
-    }
-
-    @Test
-    void buildUserSettingsCheckpointingDisabled() {
-        var json = BobSetup.buildUserSettings(Map.of("checkpointing", "false"),
-                new SpawnConfig.BobConfig());
-
-        assertTrue(json.contains("\"checkpointing\""));
-        assertFalse(json.contains("\"enabled\": true"),
-                "checkpointing should not be enabled");
+        assertEquals(JqValues.parseStrict("{\"compactionThresholdPercent\":60.5}"),
+                JqValues.parseStrict(json).path("session"));
     }
 
     @Test
@@ -134,7 +123,7 @@ class BobSetupTest {
 
             var setup = new BobSetup();
             setup.configureSettings(new Container(incus, CONTAINER),
-                    Map.of("max-session-turns", "-1", "checkpointing", "true"));
+                    Map.of("max-session-turns", "1000", "checkpointing", "true"));
 
             var captor = org.mockito.ArgumentCaptor.forClass(String.class);
             verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
@@ -144,10 +133,9 @@ class BobSetupTest {
                     .filter(cmd -> cmd.contains(".bob/settings/settings.json"))
                     .findFirst().orElseThrow(() ->
                             new AssertionError("Should write ~/.bob/settings/settings.json"));
-            assertTrue(userWrite.contains("maxSessionTurns"),
-                    "User settings should contain maxSessionTurns");
-            assertTrue(userWrite.contains("checkpointing"),
-                    "User settings should contain checkpointing");
+            assertTrue(userWrite.contains("maxTurns"),
+                    "User settings should contain maxTurns");
+            assertFalse(userWrite.contains("checkpointing"));
             assertTrue(userWrite.contains("autoUpdate"),
                     "User settings should contain autoUpdate");
         } finally {
@@ -174,7 +162,7 @@ class BobSetupTest {
                     .filter(cmd -> cmd.contains(".bob/settings/settings.json"))
                     .findFirst().orElseThrow(() ->
                             new AssertionError("reconfigure should write ~/.bob/settings/settings.json"));
-            assertTrue(userWrite.contains("contextPercentageThreshold"),
+            assertTrue(userWrite.contains("compactionThresholdPercent"),
                     "User settings should contain compression threshold");
         } finally {
             System.clearProperty("user.home");
@@ -199,8 +187,8 @@ class BobSetupTest {
                     .filter(cmd -> cmd.contains(".bob/settings/settings.json"))
                     .findFirst().orElseThrow();
             assertTrue(userWrite.contains("autoUpdate"));
-            assertFalse(userWrite.contains("maxSessionTurns"),
-                    "Should not contain maxSessionTurns when param not set");
+            assertFalse(userWrite.contains("maxTurns"),
+                    "Should not contain maxTurns when param not set");
         } finally {
             System.clearProperty("user.home");
         }

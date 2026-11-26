@@ -483,11 +483,12 @@ The build trusts the home directory and turns off auto-update and the update rem
 
 | Parameter | Default | What it does |
 | --- | --- | --- |
-| `max-session-turns` | Bob's own default | The most turns a session may take; `-1` for unlimited |
-| `compression-threshold` | Bob's own default | The share of the context window, `0.0` to `1.0`, at which Bob compresses the conversation |
-| `checkpointing` | Bob's own default | `true` or `false`: whether Bob keeps safety checkpoints |
+| `max-session-turns` | `100` | A positive integer limits turns per session. Nonpositive values leave Bob's default in place |
+| `compression-threshold` | `0.9` | The share of the context window, `0.0` to `1.0`, at which Bob compresses the conversation |
+| `checkpointing` | | A legacy boolean parameter that has no effect in Bob Shell 2.1 |
 
-A child template can set any of them again without reinstalling Bob.
+A child template can set the turn limit and compression threshold without reinstalling Bob.
+If you pass `--max-turns` to Bob, it takes precedence for that session.
 
 ## GitHub Copilot CLI
 

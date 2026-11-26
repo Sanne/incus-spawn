@@ -452,6 +452,15 @@ YAML and TOML (starship's config has the same shape), which need a writer that k
 A provider seam in `PiSetup`, like `McpServerRegistration`, which fits Pi alone.
 Why: a merge of JSON is the general mechanism the Pi case needs, it needs nothing in the guest, and an unknown value is refused, so a later format cannot silently fall back to replacing the file.
 
+### Bob Shell session settings
+
+`BobSetup` writes positive `max-session-turns` values to `session.maxTurns` in `~/.bob/settings/settings.json`.
+Bob Shell 2.1 reads this key and defaults to 100 turns.
+Existing templates can pass nonpositive values, in which case isx leaves the effective default in place.
+isx multiplies `compression-threshold` by 100 for Bob's `session.compactionThresholdPercent`, which defaults to 90.
+isx still accepts the legacy `checkpointing` parameter so existing templates build.
+The Bob Shell 2.1 runtime has no reader for the old checkpointing key.
+
 ## Tools declare the memory they need
 
 A tool's `resources.memory` says how much memory it needs (#2355): `resident`, held for as long as the tool runs, and `peak`, needed on top of that for a short while, such as an index.

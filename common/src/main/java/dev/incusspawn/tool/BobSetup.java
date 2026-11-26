@@ -5,16 +5,20 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
 
+import io.hyperfoil.tools.jjq.value.JqNumber;
 import io.hyperfoil.tools.jjq.value.JqObject;
 
-import java.util.List;
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 public class BobSetup implements ToolSetup {
 
     private static final String PLACEHOLDER_API_KEY = "bob-placeholder";
     private static final String NPM_PACKAGE = "@ibm/bob";
+    private static final Pattern COMPRESSION_THRESHOLD = Pattern.compile("^(0?\\.\\d+|1\\.0)$");
 
     @Override
     public boolean codingAgent() { return true; }
@@ -76,7 +80,7 @@ public class BobSetup implements ToolSetup {
 
         var maxTurns = new ToolDef.ParameterDef();
         maxTurns.setType("integer");
-        maxTurns.setDescription("Maximum session turns (-1 for unlimited)");
+        maxTurns.setDescription("Maximum session turns (positive integers override the default)");
         maxTurns.setOptional(true);
         maxTurns.setReconfigurable(true);
         params.put("max-session-turns", maxTurns);
@@ -84,14 +88,14 @@ public class BobSetup implements ToolSetup {
         var compression = new ToolDef.ParameterDef();
         compression.setType("string");
         compression.setDescription("Context compression threshold (0.0–1.0)");
-        compression.setPattern("^(0?\\.\\d+|1\\.0)$");
+        compression.setPattern(COMPRESSION_THRESHOLD.pattern());
         compression.setOptional(true);
         compression.setReconfigurable(true);
         params.put("compression-threshold", compression);
 
         var checkpointing = new ToolDef.ParameterDef();
         checkpointing.setType("boolean");
-        checkpointing.setDescription("Enable safety checkpoints");
+        checkpointing.setDescription("Legacy checkpointing option accepted for compatibility");
         checkpointing.setOptional(true);
         checkpointing.setReconfigurable(true);
         params.put("checkpointing", checkpointing);
@@ -173,28 +177,20 @@ public class BobSetup implements ToolSetup {
             root.put("licenseConsent", true);
         }
 
-        var checkpointing = params.get("checkpointing");
-        if (checkpointing != null) {
-            root.put("general", JqObject.builder(1)
-                    .put("checkpointing", JqObject.builder(1)
-                            .put("enabled", Boolean.parseBoolean(checkpointing)).build())
-                    .build());
-        }
-
-        var model = JqObject.builder(2);
-        boolean hasModel = false;
-        var maxTurns = params.get("max-session-turns");
-        if (maxTurns != null) {
-            model.put("maxSessionTurns", Long.parseLong(maxTurns));
-            hasModel = true;
+        var session = JqObject.builder(2);
+        var maxTurns = Long.parseLong(params.getOrDefault("max-session-turns", "-1"));
+        // Keep the effective Bob default for templates using the old nonpositive values.
+        if (maxTurns > 0) {
+            session.put("maxTurns", maxTurns);
         }
         var compression = params.get("compression-threshold");
         if (compression != null) {
-            model.put("chatCompression", JqObject.builder(1)
-                    .put("contextPercentageThreshold", Double.parseDouble(compression)).build());
-            hasModel = true;
+            var percent = new BigDecimal(compression).movePointRight(2);
+            session.put("compactionThresholdPercent", JqNumber.of(percent));
         }
-        if (hasModel) root.put("model", model.build());
+        if (maxTurns > 0 || compression != null) {
+            root.put("session", session.build());
+        }
 
         return io.hyperfoil.tools.jjq.value.JqValues.toPrettyJsonString(root.build()) + "\n";
     }
