@@ -523,6 +523,10 @@ class CredentialSetup {
             } catch (dev.incusspawn.proxy.ChatGptSignIn.DeviceCodeRefused e) {
                 // The server was reached: say what it answered, never that it could not be reached
                 Lines.warnWrapped("OpenAI's sign-in server did not give a code isx can use: " + reason(e));
+            } catch (InterruptedException e) {
+                // An interrupt ends the step, never answered with a new code or blamed on the server
+                Thread.currentThread().interrupt();
+                Lines.warnWrapped("The ChatGPT sign-in was interrupted.");
             } catch (Exception e) {
                 Lines.warnWrapped("isx could not reach OpenAI's sign-in server: " + reason(e));
             }
