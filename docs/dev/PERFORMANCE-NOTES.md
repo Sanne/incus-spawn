@@ -1496,6 +1496,26 @@ Without the sleep each read is about 0.1 s, and both took 0.9 s, so the cap only
 Forty execs at once lost nothing and left incusd answering: no warning, no `unknown`.
 The nested box could not show a read slowed by the host's own load rather than a sleep.
 
+## The overview's reads against the connection cap, on a Mac (issue #2527)
+
+Measured 2026-11-25 on the Mac runner (Apple silicon, the isx-vm launcher with 2 CPUs and 6.5 GB) at `88084cb2`, the JVM CLI, with 31 running `tpl-minimal` branches.
+Each held a clone with an uncommitted change and a `/usr/local/bin/git` that sleeps 0.25 s before running `/usr/bin/git`, so one read took about 1.5 s.
+The cap was read from an environment variable for the measurement only; the native image fixes it at build time, so the series ran on the JVM.
+This was before #2626, when an exec held five connections, so the slots were the cap less four, divided by five.
+The relay's counts are the guest port 8443 line of `vm.control.sock`'s `counts`, sampled every 0.2 s; `isx overview --format=json`, three runs each:
+
+| Cap | Execs at once | Wall time | `unknown` reads | Peak guest connections held | Refused |
+|---|---|---|---|---|---|
+| 48 | 8 | 7.1 s, 7.1 s, 7.1 s | 0 of 31 | 32 | 0 |
+| 96 | 18 | 3.9 s, 3.9 s, 3.9 s | 0 of 31 | 72 | 0 |
+| 128 | 24 | 3.9 s, 3.9 s, 3.9 s | 0 of 31 | 96 | 0 |
+
+No run printed a lost-operation warning.
+Each admitted exec held four of the relay's connections at its peak, and 31 reads took two waves at 18 or 24 slots, so 128 gained nothing over 96 below 37 instances.
+An `isx list` started 1.5 s into an overview answered in 0.07-0.08 s at 96 and at 128, against 0.06-0.11 s alone.
+Two overviews at once, as two processes, took 4 s each and lost nothing: at 96 they held 144 of the 192 at their peak, at 128 all 192 with one connection waiting.
+The cap chosen is 150, which with four connections an exec since #2626 gives 36 execs at once; its own run on a Mac is to come.
+
 ## Probe batches on one operation subscription, on Linux (issue #2626)
 
 Measured 2026-11-26 on a Linux box (Fedora, x86_64, 32 cores), JVM, nested Incus 6.23, with 30 running Alpine containers.

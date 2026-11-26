@@ -84,7 +84,7 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
   Any other exit before the command finished (a `/wait` overrunning its slack, a lost op, an interrupt) sends the kill too, from `waitForExecOp`'s `finally`.
   `IncusApiLossyTunnelTest` pins all three.
   A bounded exec (`execStreamWithin`) waits for a slot in `IncusApi.BOUNDED_EXECS` before it is posted (#2527, `ExecAdmissionTest`).
-  `UnixSocketTransport.CONCURRENT_EXECS` slots exist: the cap less the pool's idle connections and a probe batch's subscription, divided by the four connections one exec holds, which is 62 on Linux and 10 on macOS.
+  `UnixSocketTransport.CONCURRENT_EXECS` slots exist: the cap less the pool's idle connections and a probe batch's subscription, divided by the four connections one exec holds, which is 62 on Linux and 36 on macOS.
   An exec opens control, stdout and stderr at once and connects and closes stdin beside them (`IncusApi.openExecSockets`, #2626); a failed handshake closes the others, and its `/wait` comes only after, so it holds at most four.
   Inside an `IncusClient.probeBatch()` (the overview's `GuestRead.readEach`) a bounded exec takes its end from the batch's one `/1.0/events?type=operation` subscription (`OperationWatcher`), registered right after its post, and asks `/wait` only once the subscription is lost or the command was killed.
   A probe's discarded stderr is not drained: it is closed once stdout is done (`drainThenClose`).
@@ -92,7 +92,9 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
   Unadmitted, the overview's read of every running instance took every connection permit with its sockets, and a finished command's `/wait` waited for one past the 5 s Incus keeps a finished operation: a 404, `unknown` work state.
   So a lost operation's warning names the instance, the time since the post and the time spent waiting for a connection.
   Unbounded execs are not admitted: one may hold its slot for hours.
-  The cap is the platform's, fail-open after 10 s: 256 on Linux, where the socket is incusd's own and the cap only keeps a runaway off the descriptors, and 48 on macOS, still to be derived from the launcher's room and measured on a Mac.
+  The cap is the platform's, fail-open after 10 s: 256 on Linux, where the socket is incusd's own and the cap only keeps a runaway off the descriptors, and 150 on macOS, under the 192 guest connections the launcher holds for every process at once (`GuestRoom`).
+  Two fan-outs at once on a Mac can fill that room, and the next connection then waits in the launcher (docs/dev/PERFORMANCE-NOTES.md "The overview's reads against the connection cap, on a Mac").
+  With guests that answer, that only slows the second command; with hung guests a connection can wait past the 10 s Incus gives an exec's websockets to connect, and that read comes back `unknown`.
   `execPty` (`isx shell`) has no `/wait` to end it, so its control keepalive closes control at its first ping after `EXEC_SILENCE_LIMIT_MS` (50s) with nothing received, not even a pong, and returns as a lost connection, which the reconnect loop retries (#1996).
   Only control is watched: fd "0"'s reader also blocks on the terminal.
 - **Bulk exec streams are framed large (#1643).**

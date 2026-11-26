@@ -495,21 +495,32 @@ A connection that waits is counted as `waiting`, as one inside a dial is, and th
 One whose client left while it waited is closed without a dial and counted as `refused`: its request would otherwise reach the guest after its sender gave up on the answer.
 The relay notices within a second, while the room is still full, so callers that give up and try again do not each leave a thread and a descriptor behind.
 What the limit gives up: with 192 connections held, the next one waits for as long as they stay, whoever asks, the next `isx` command and `isx doctor` included.
-Refusing it at once was the alternative, and lost: a burst of short requests beyond the room would then fail where it now only takes longer, and isx holds nothing near 192 connections.
+Refusing it at once was the alternative, and lost: a burst of short requests beyond the room would then fail where it now only takes longer, and one isx process holds at most 150 of the 192 (its own cap, below).
 
-**One isx process also caps its own connections, at 48 on macOS** (`UnixSocketTransport`).
-The cap predates the launcher: it kept one process from piling streams onto vfkit's forwarder, and it fails open after 10 s rather than wedge a burst.
+**One isx process also caps its own connections, at 150 on macOS** (`UnixSocketTransport`).
+The cap predates the launcher: it was 48, to keep one process from piling streams onto vfkit's forwarder, and it fails open after 10 s rather than wedge a burst.
 It was set well above one operation's need, which stopped being true once the overview ran an exec in every running instance (#2527).
 Each exec holds five connections, so with 30 instances running the execs took every permit, and a finished command's `/wait` waited past the 5 s Incus keeps a finished operation.
 So a bounded exec is now admitted before it is posted, and only as many run at once as fit in the cap with all five connections each (`IncusApi.BOUNDED_EXECS`).
-What this gives up: the reads run in a rolling window of ten on macOS (eight before #2626), so N reads take about N/10 times one read, not the time of the slowest one.
-For 30 instances whose reads all time out, that is three waves of 13 s (the 10 s limit and the 3 s kill grace), about 40 s.
+What this gives up: the reads run in a rolling window of 36 on macOS, so N reads take about N/36 times one read, not the time of the slowest one.
+For 30 instances whose reads all time out, that is one wave of 13 s (the 10 s limit and the 3 s kill grace).
 Only probes wait in the window: the overview's reads, and `isx mcp`'s probes of instances other sessions hold (`probeElsewhere`) and of the task a person joins (`TaskJoin`).
-So with more instances to ask than there are slots (ten on macOS, 62 on Linux), a task start waits for the waves before its own.
+So with more instances to ask than there are slots (36 on macOS, 62 on Linux), a task start waits for the waves before its own.
 `isx mcp`'s task status poll runs an unbounded exec, which is not admitted and does not wait.
 On Linux there is no forwarder for the cap to protect: the socket is incusd's own, so its cap is 256, a brake on a runaway that leaves most of the 1024 descriptors a process's soft limit commonly allows.
 That was 50 execs at once, so the overview read 50 instances in one wave: with 40 instances whose reads took 1.5 s each, 2.5 s instead of 8.7 s (docs/dev/PERFORMANCE-NOTES.md "The overview's reads against the connection cap, on Linux").
-On a Mac the launcher's 192 is the real limit, so the cap's own value there is still to be derived from the launcher's room and measured on a Mac.
+On a Mac the launcher's 192 is the real limit, and it holds every process's connections at once.
+So the macOS cap is 150, which gives 36 execs at once: one process stays under the room, with 42 left for the next command.
+Those 42 are shared with what stays open meanwhile, an `isx shell`'s exec sockets and the proxy's connections included.
+At the old 48 the overview read 31 guests whose reads took 1.5 s each in 7.1 s; at 96 and at 128 it took 3.9 s, and neither lost a read (docs/dev/PERFORMANCE-NOTES.md "The overview's reads against the connection cap, on a Mac").
+At 150 the native build read them in 1.2 s, and two overviews at once took 1.4 s each, holding 191 of the 192 and losing nothing.
+What 150 gives up: two fan-outs at once, two overviews or an overview and a TUI refresh, can ask for more than 192 together.
+The connection past the room then waits in the launcher until another ends.
+When the guests answer, as in that run, the second command only takes longer.
+When they hang, each read holds its connections for its 10 s limit and the 3 s kill grace.
+Incus gives an exec 10 s for its websockets to connect, so a connection that waits in the launcher longer fails its exec, and that read comes back `unknown`.
+96, half the room, was the alternative that leaves room for two.
+It gives 22 execs at once since #2626, so 150 reads 23 to 36 instances in one wave where 96 takes two.
 
 **A batch of probes shares one operation subscription, and an exec opens its sockets at once** (#2626).
 An exec in a probe batch (`IncusClient.probeBatch`, opened by the overview's `GuestRead.readEach`) learns when its command ended from one `/1.0/events?type=operation` subscription the batch holds (`OperationWatcher`), not from a `/wait` of its own.
@@ -518,7 +529,7 @@ An operation that ends before anyone registered it is kept among the last 256 en
 The exec then opens control, stdout and stderr at once, and connects and closes stdin beside them (`IncusApi.openExecSockets`), so over the tunnel the four vsock connects overlap instead of following one another.
 If one handshake fails, the others are closed once theirs end, so no connection outlives the failure.
 An exec therefore holds at most four connections: control, stdout, stderr, and either stdin's handshake or a `/wait`.
-So `CONCURRENT_EXECS` is the cap less the pool's idle connections and the batch's subscription, divided by four: 10 on macOS and 62 on Linux, three waves instead of four for 30 instances on a Mac.
+So `CONCURRENT_EXECS` is the cap less the pool's idle connections and the batch's subscription, divided by four: 36 on macOS and 62 on Linux (at the old cap of 48 it was 10 on macOS, three waves instead of four for 30 instances).
 A probe discards its stderr, so its drain waits for stdout alone and closes stderr once stdout is done, rather than waiting up to `OutputDrain.IDLE_MS` for a close frame that never comes.
 
 What the subscription gives up: when it ends while execs wait, each of them asks `/wait` from then on, and one whose command ended more than 5 s earlier gets a 404 and no exit code.
