@@ -388,6 +388,15 @@ class TuiInstanceMarksTest {
         assertOnlyTheMarkAppears(tui, () -> press(tui, SPACE), "tpl-minimal");
     }
 
+    /** Where the mark of {@code row} is on {@code line}: right before its name, or before its state glyph and the name. */
+    private static int markAt(String line, String row) {
+        for (var lead : new String[] {"", "● ", "○ ", "◐ "}) {
+            int at = line.indexOf(Glyphs.MARKED + lead + row + " ");
+            if (at >= 0) return at;
+        }
+        return -1;
+    }
+
     private static void assertOnlyTheMarkAppears(Tui tui, Runnable mark, String row) {
         var before = screen(tui).split("\n", -1);
         mark.run();
@@ -404,7 +413,7 @@ class TuiInstanceMarksTest {
                         + before[y] + "\n" + after[y]);
                 continue;
             }
-            int markAt = after[y].indexOf("◆" + row + " ");
+            int markAt = markAt(after[y], row);
             if (markAt >= 0) {
                 assertEquals(before[y].charAt(markAt), ' ', "the mark takes a blank cell:\n" + before[y]);
                 var unmarked = after[y].substring(0, markAt) + " " + after[y].substring(markAt + 1);
@@ -413,7 +422,7 @@ class TuiInstanceMarksTest {
                 assertEquals(before[y], after[y], "line " + y + " moved");
             }
         }
-        assertTrue(String.join("\n", after).contains("◆" + row + " "), String.join("\n", after));
+        assertTrue(java.util.Arrays.stream(after).anyMatch(l -> markAt(l, row) >= 0), String.join("\n", after));
     }
 
     @Test

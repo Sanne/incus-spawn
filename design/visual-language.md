@@ -108,6 +108,8 @@ An action that opens a dialog ends in `…`, and one that acts at once does not.
 ## Glyphs
 
 A glyph has one meaning, and `Glyphs` holds them.
+An instance's state is the glyph before its name, in its state's colour, and no table has a STATUS column.
+A dimmed word follows the name only where the glyph does not say enough: an operation under way (`stopping`), or a status neither running nor stopped (`frozen`, `error`).
 No two meanings share a glyph: a marked row is `◆`, since the running instance's `●` now sits right beside the gutter.
 
 | Glyph | Meaning | Where |
@@ -137,9 +139,9 @@ The screen is read top to bottom: where am I, what is there, what is selected, w
  ▸ tpl-minimal     1 week ago     -       Minimal Fedora
 
  Instances ─────────────────────────────────────────────────────────────────────────────
-   NAME            STATUS         IP      PARENT        RUNTIME     AGE
-   quarkus-42871   ● Running              tpl-quarkus   container   1h ago
-   docs-site       ○ Stopped              tpl-minimal   container   2 days ago
+     NAME              IP      PARENT        RUNTIME     AGE
+   ● quarkus-42871           tpl-quarkus   container   1h ago
+   ○ docs-site               tpl-minimal   container   2 days ago
  ───────────────────────────────────────────────────────────────────────────────────────
  tpl-minimal  Minimal Fedora  Space Mark
  F1 Info   F2 Shell   F3 Details   F4 Branch…   F5 Build…   F6 Edit…   F7 Stop   …
@@ -182,7 +184,7 @@ A dialog that scrolls has no blank row, since its content fills what the screen 
 - **A state** in a dialog has the glyph it has in the table (`● Running`).
 - **A list to choose from** marks the current line with `▸` in the accent, and a line picked by a key shows that key as a key (`▸ 1  Rebuild tpl-dev`).
 - **Text that does not fit is wrapped**, never cut at the frame.
-- **Work under way** has the spinner in the caution colour, in a dialog as in the STATUS column.
+- **Work under way** has the spinner in the caution colour, in a dialog as before an instance's name.
 
 **The key bar fits the terminal in one of three forms.**
 From 100 columns each key stands apart from its label (`F1 Info`) and the bar is spread over the row.
@@ -200,7 +202,7 @@ Before, spare width was shared evenly whatever the cells held, so a name was cut
 - **Without room, the free text is cut first, and then whole columns are left out** (`ColumnFit.kept`).
   The Instances table leaves out RUNTIME, IP, DISK and PARENT in that order, then OWNER, PURPOSE and AGE.
   A column left out says less than three columns cut to stubs, and the instance details still show it.
-- **Only then is a column cut,** each down to its floor in a set order, the status before the name.
+- **Only then is a column cut,** each down to its floor in a set order, the name last.
 - **A cut cell ends in `…`,** so a cut value is never taken for a whole one.
   This holds in a table narrower than every floor too: the columns give the rest up from the right, and the table's own layout never narrows them unmarked.
 - **IP keeps room for an address.**
@@ -226,12 +228,12 @@ Motion says that something is happening or has just happened, and is never decor
 
 | What moves | When | How long |
 |---|---|---|
-| A spinner in the STATUS column, beside "Running:" and in a progress dialog | While an operation is under way | As long as it lasts |
+| A spinner before an instance's name, beside "Running:" and in a progress dialog | While an operation is under way | As long as it lasts |
 | A band of the caution colour crossing the name of what is being worked on | The same | One pass every 1.8 s |
 | A tint on a row, fading | The row's status changed, or the row is new | 0.9 s |
 
 **The shimmer's band is in the caution colour.**
-That colour already says "under way" in the STATUS cell beside the name, so the band adds no meaning of its own.
+That colour already says "under way" in the spinner before the name, so the band adds no meaning of its own.
 A band from grey to white was tried first, and at 256 colours it had four steps of the grey ramp to move through, which nobody saw.
 A change of hue survives the fitting.
 A row that is stopping or restarting is dimmed, and the band is not, or the terminal would dim the band with the row.

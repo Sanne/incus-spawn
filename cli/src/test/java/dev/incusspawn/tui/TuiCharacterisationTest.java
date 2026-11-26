@@ -334,7 +334,7 @@ class TuiCharacterisationTest {
     void theColumnsHoldStillWhileASearchNarrowsTheLists() {
         var tui = tui();
         var templates = header(tui, "DESCRIPTION");
-        var instances = header(tui, "STATUS");
+        var instances = header(tui, "PARENT");
         press(tui, KeyEvent.ofChar('/'));
         // Leaves tpl-dev, "not built", and no instance of its own
         typeText(tui, "dev");
@@ -343,7 +343,7 @@ class TuiCharacterisationTest {
         press(tui, KeyEvent.ofChar('/'));
         // Leaves the one instance with no address and the shorter age
         typeText(tui, "vm-1");
-        assertEquals(instances, header(tui, "STATUS"), "the Instances table");
+        assertEquals(instances, header(tui, "PARENT"), "the Instances table");
     }
 
     private static String header(Tui tui, String column) {

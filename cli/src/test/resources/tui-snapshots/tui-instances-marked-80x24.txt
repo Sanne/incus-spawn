@@ -10,10 +10,10 @@
 
                                       ! outdated   △ changed   ↑ parent rebuilt
  Instances ─────────────────────────────────────────────────────────────────────
-   NAME    STATUS      IP              PARENT        RUNTIME     AGE   DISK
-  ◆alpha   ● Running                   tpl-minimal   container   -     -
- ▸ beta    ● Running                   tpl-minimal   container   -     -
-  ◆gamma   ○ Stopped                   tpl-minimal   container   -     -
+     NAME     IP               PARENT         RUNTIME      AGE    DISK
+  ◆● alpha                     tpl-minimal    container    -      -
+ ▸ ● beta                      tpl-minimal    container    -      -
+  ◆○ gamma                     tpl-minimal    container    -      -
 
 
 
