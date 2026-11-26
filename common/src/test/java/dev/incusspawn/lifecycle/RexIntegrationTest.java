@@ -34,6 +34,8 @@ class RexIntegrationTest {
         boolean onPath = true;
         HostCommands.Result failAdd;
         HostCommands.Result failList;
+        /** An add that saves the host and still reports this, as one killed for its time after saving does. */
+        HostCommands.Result savedThenFailed;
         final List<String> ran = new ArrayList<>();
         /** Label to {id, endpoint}. */
         final Map<String, String[]> hosts = new LinkedHashMap<>();
@@ -50,10 +52,17 @@ class RexIntegrationTest {
             return onPath && command.equals("rex");
         }
 
+        /** What {@code rex version} prints: Superlogical's Rex unless a test swaps in another. */
+        HostCommands.Result version = new HostCommands.Result(0,
+                "rex 0.1.0-preview.25\ncommit: b070aae645f5cbfac65d65d031a8b712b2ebca36\napi: revision 24 (supports 0 to 24)\n");
+        final List<Path> directories = new ArrayList<>();
+
         @Override
-        public Result run(Duration timeout, List<String> command) {
+        public Result run(Duration timeout, List<String> command, Path directory) {
+            directories.add(directory);
+            var args = command.subList(1, command.size()).stream().filter(a -> !a.equals("--")).toList();
+            if (args.equals(List.of("version"))) return version;
             ran.add(String.join(" ", command));
-            var args = command.subList(1, command.size());
             if (args.equals(List.of("hosts", "list", "--json"))) {
                 if (failList != null) return failList;
                 var json = new StringBuilder("{\"home\":{\"this_machine\":true},\"hosts\":[");
@@ -68,6 +77,12 @@ class RexIntegrationTest {
             }
             if (args.size() == 4 && args.subList(0, 2).equals(List.of("hosts", "add"))) {
                 if (failAdd != null) return failAdd;
+                if (savedThenFailed != null) {
+                    var failed = savedThenFailed;
+                    savedThenFailed = null;
+                    add(args.get(2), args.get(3));
+                    return failed;
+                }
                 if (hosts.containsKey(args.get(2))) {
                     return new Result(1, "Error: a host named \"" + args.get(2) + "\" already exists (" + hosts.get(args.get(2))[1] + ").");
                 }
@@ -120,7 +135,7 @@ class RexIntegrationTest {
         var rex = rex(host);
 
         var first = started(rex, daemon, "ws");
-        assertEquals(List.of("rex hosts add ws ssh://ws", "rex hosts list --json"), host.ran);
+        assertEquals(List.of("rex hosts add -- ws ssh://ws", "rex hosts list --json"), host.ran);
         assertEquals("ssh://ws", host.hosts.get("ws")[1], "never the start alias: Rex must not start a stopped instance");
         assertEquals(host.hosts.get("ws")[0], recorded("ws"));
         assertEquals(List.of("Added ws to Rex."), steps(first));
@@ -252,7 +267,7 @@ class RexIntegrationTest {
         host.onPath = false;
         var recorded = RecordingOutput.during(() -> rex.destroyed("ws", BuildOutput.bound()));
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
-                "could not remove ws from Rex: rex is not on the PATH.", "Remove it yourself: rex hosts remove ws")),
+                "could not remove ws from Rex: Superlogical's rex is not on the PATH.", "Remove it yourself: rex hosts remove ws")),
                 recorded.events(RecordingOutput.Kind.WARN));
         assertFalse(Files.exists(records.resolve("ws")), "a new instance of the name is not taken as added");
         assertTrue(host.hosts.containsKey("ws"));
@@ -288,6 +303,84 @@ class RexIntegrationTest {
 
         started(rex, daemon, "ws");
         assertEquals(2, host.ran.stream().filter(l -> l.startsWith("rex hosts add")).count(), "no third try");
+    }
+
+    /**
+     * Debian's, Ubuntu's and CPAN's rex is a Perl deployment tool that loads ./Rexfile as code on
+     * every command: isx never runs a hosts command with it, and says so once.
+     */
+    @Test
+    void anotherProgramNamedRexIsNeverAskedToAddOrRemove() throws Exception {
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("rex", false)));
+        var host = new FakeRex();
+        host.version = new HostCommands.Result(1, "No Rexfile found.\nUsage: rex [<options>] [-H <host>] [-G <group>] <task> [<task-options>]");
+        var rex = rex(host);
+
+        var recorded = started(rex, daemon, "ws");
+        assertEquals(List.of(), host.ran, "only rex version ran");
+        assertEquals(List.of("Not adding ws to Rex: the rex on the PATH is not Superlogical's Rex."), steps(recorded));
+        assertEquals(RexIntegration.NOT_ADDED, recorded("ws"));
+        assertTrue(rex.done("ws"), "not asked again on the next start");
+
+        // An earlier record of a host isx added, destroyed while another rex is first on the PATH
+        Files.writeString(records.resolve("ws2"), "host:01a218e9-f7cd-7ec7-b9e3-5dd08f6481aa\n");
+        RecordingOutput.during(() -> rex.destroyed("ws2", BuildOutput.bound()));
+        assertEquals(List.of(), host.ran);
+        assertTrue(Files.exists(records.resolve(".orphaned/01a218e9-f7cd-7ec7-b9e3-5dd08f6481aa")), "kept for a later isx with Rex");
+    }
+
+    /**
+     * A Rexfile in the directory isx was started in is never read: every rex runs in an empty
+     * directory under isx's records, where not even the record of an instance named Rexfile is.
+     */
+    @Test
+    void everyRexCommandRunsInTheRecordsDirectory() {
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("rex", false)));
+        var host = new FakeRex();
+        var rex = rex(host);
+        started(rex, daemon, "ws");
+        RecordingOutput.during(() -> rex.destroyed("ws", BuildOutput.bound()));
+        assertFalse(host.directories.isEmpty());
+        var working = records.resolve(RexIntegration.WORKING_DIRECTORY);
+        assertTrue(host.directories.stream().allMatch(working::equals), host.directories.toString());
+    }
+
+    /** An add killed for its time after Rex saved the host: the retry takes it as isx's own, so a destroy removes it. */
+    @Test
+    void anAddThatTimedOutAfterSavingIsRecordedOnTheRetry() throws Exception {
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("rex", false)));
+        var host = new FakeRex();
+        host.savedThenFailed = new HostCommands.Result(-1, "timed out after 20 seconds");
+        var rex = rex(host);
+
+        started(rex, daemon, "ws");
+        assertEquals(RexIntegration.RETRY, recorded("ws"));
+
+        var second = started(rex, daemon, "ws");
+        assertEquals(List.of("Added ws to Rex."), steps(second));
+        assertEquals(host.hosts.get("ws")[0], recorded("ws"));
+
+        RecordingOutput.during(() -> rex.destroyed("ws", BuildOutput.bound()));
+        assertFalse(host.hosts.containsKey("ws"), "isx's own host is removed with the instance");
+    }
+
+    /** A rex version that did not answer decides nothing: the next start asks again and adds it. */
+    @Test
+    void aRexVersionThatTimedOutIsAskedAgain() throws Exception {
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("rex", false)));
+        var host = new FakeRex();
+        var answer = host.version;
+        host.version = new HostCommands.Result(-1, "timed out after 20 seconds");
+        var rex = rex(host);
+
+        started(rex, daemon, "ws");
+        assertFalse(Files.exists(records.resolve("ws")), "not recorded as another rex");
+        assertEquals(List.of(), host.ran);
+
+        host.version = answer;
+        started(rex, daemon, "ws");
+        assertTrue(host.hosts.containsKey("ws"));
+        assertTrue(rex.registered("ws"));
     }
 
     /** Only a template that installs rex is added, through the built-in list every start goes through. */

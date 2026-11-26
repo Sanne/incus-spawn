@@ -31,6 +31,13 @@ class HostCommandsTest {
         assertEquals("1", result.output().strip());
     }
 
+    /** So a program that reads its working directory, as the Perl rex reads ./Rexfile, reads only isx's (#2647). */
+    @Test
+    void aCommandRunsInTheDirectoryItIsGiven(@TempDir Path dir) throws Exception {
+        var result = HostCommands.SYSTEM.run(Duration.ofSeconds(10), List.of("pwd", "-P"), dir);
+        assertEquals(dir.toRealPath().toString(), result.output().strip());
+    }
+
     @Test
     void aCommandPastItsTimeIsKilled() {
         var start = System.nanoTime();

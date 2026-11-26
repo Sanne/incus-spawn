@@ -238,6 +238,7 @@ herdr's disables the recorded machine and adds `disabled` as the record's third 
 A new stop path calls the same hook, and its cost with nothing to do is one read of the record.
 Rex's (`RexIntegration`, #2647, records in `Environment.rexHostsDir()`) runs `rex hosts add <name> ssh://<name>` and records the id `rex hosts list --json` gives it, `-` or `retry`.
 Its endpoint is the instance's own Host block, never the start alias, since Rex cannot be told to leave a stopped instance alone, so it has no `stopping`.
+It runs `rex` only once `rex version` names Superlogical's Rex (`rex <version>` and an `api: revision` line), since Debian's and CPAN's `rex` is a Perl tool that loads `./Rexfile` as code, and always in `.cwd` under the records directory (`HostCommands.run(timeout, command, directory)`), never isx's own working directory.
 A label the user already has is recorded `-` and never touched, a destroy removes the host listed under the recorded id by its label, and a destroy without rex on the PATH keeps the id in `.orphaned/<uuid>` as herdr's does.
 `registered(name)` reads the same host state, never a command or Incus, and the TUI's instance details (F3) list the tools that answer yes (`HostIntegration.registeredWith`), read once when they open.
 Host programs go through `HostCommands` (`HostPath.isOnPath`, and a run bounded in time, its output read included, so a daemon it leaves holding the pipe cannot hold isx), which tests replace.

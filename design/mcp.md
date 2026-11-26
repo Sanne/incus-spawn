@@ -738,6 +738,9 @@ Rex's client keeps a list of hosts and reaches each one's server over SSH, so th
 The endpoint is the instance's own Host block, which never starts it, rather than the start alias herdr gets.
 Rex has nothing like herdr's `machine disable`, so with the alias any Rex client that reached its hosts would start every stopped instance it lists, with no way for a stop to tell it otherwise.
 What this gives up: `rex -S <name>` fails on a stopped instance until `isx start` or `isx shell` starts it.
+Debian, Ubuntu and CPAN ship an unrelated `rex`, the Perl deployment tool, whose every command loads `./Rexfile` as Perl code.
+So isx runs `rex` only after `rex version` printed Superlogical's `rex <version>` and `api: revision` lines, and runs every `rex` in an empty directory under its records, never the directory isx was started in (`HostCommands.run` with a directory).
+With another `rex` first on the PATH, the instance is recorded `-` with one note, and a destroy keeps a recorded id for a later isx with Rex.
 Rex runs ssh with `BatchMode=yes`, so the add waits, like herdr's, until the instance's Host block, the Include and its pinned host key are in place.
 The record holds the id Rex gave the host (`host:<uuid>`), `-` or `retry`; a destroy removes the host Rex lists under that id, never the label alone, so a host the user added under the instance's name survives.
 An add Rex refuses because that label is taken is recorded as `-` and never retried.

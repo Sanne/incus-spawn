@@ -53,7 +53,7 @@ class HerdrIntegrationTest {
         }
 
         @Override
-        public Result run(Duration timeout, List<String> command) {
+        public Result run(Duration timeout, List<String> command, java.nio.file.Path directory) {
             var line = String.join(" ", command);
             ran.add(line);
             return answers.entrySet().stream().filter(e -> line.startsWith(e.getKey())).map(Map.Entry::getValue)
