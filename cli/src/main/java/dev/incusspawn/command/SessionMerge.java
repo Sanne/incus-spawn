@@ -252,9 +252,14 @@ public final class SessionMerge {
      * One instance's merge as far as it is known without asking the model: {@code known}, the
      * summary to show (null for none), when {@code call} is null; otherwise the call to make,
      * which blocks for a turn among {@link #CONCURRENT_CALLS} and returns the summary or null.
+     * {@code sessions} is how many sessions that call merges.
      */
-    public record Step(Merged known, java.util.function.Supplier<Merged> call) {
+    public record Step(Merged known, java.util.function.Supplier<Merged> call, int sessions) {
         static final Step NONE = new Step(null, null);
+
+        Step(Merged known, java.util.function.Supplier<Merged> call) {
+            this(known, call, 0);
+        }
     }
 
     /**
@@ -316,7 +321,7 @@ public final class SessionMerge {
                 } finally {
                     calls.release();
                 }
-            });
+            }, sessions.size());
         }
     }
 

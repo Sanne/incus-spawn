@@ -455,6 +455,94 @@ public class Tui {
     java.time.ZoneId overviewZone = java.time.ZoneId.systemDefault();
     /** Where the read runs: never the UI thread, which a large log would stall; tests run it in place. */
     java.util.concurrent.Executor overviewExecutor = r -> Thread.ofVirtual().name("isx-overview").start(r);
+    /** Where the merge of the selected instance's sessions runs, one at a time; tests run it when they choose. */
+    java.util.concurrent.Executor overviewMergeExecutor = r -> Thread.ofVirtual().name("isx-merge").start(r);
+    /** The clock IDLE counts from; tests fix it. */
+    java.util.function.Supplier<java.time.Instant> overviewClock = java.time.Instant::now;
+
+    /**
+     * The person's choice of the Work tab's preview, {@code p}: null for the default, which is the
+     * preview beside the table from {@link WorkTable#SIDE_PREVIEW_MIN_WIDTH} columns and none
+     * narrower.
+     */
+    Boolean previewChoice;
+    /** The terminal's width at the last frame, for what the keys and the context line say of the preview. */
+    volatile int lastWidth = 80;
+    /** The first row of the instance table on screen at the last frame, whose offset counts lines (a Work row may take two). */
+    volatile int instanceFirstRow;
+
+    /** Whether the Work tab shows the preview on a terminal {@code width} columns wide. */
+    boolean previewShown(int width) {
+        return previewChoice != null ? previewChoice : width >= WorkTable.SIDE_PREVIEW_MIN_WIDTH;
+    }
+
+    /**
+     * A merge the selected instance's preview may ask for (#2241): its read, the merger made
+     * with that read's config, and the step the merger gave, whose call is not made until the
+     * instance is selected with the preview showing.
+     */
+    private record PendingMerge(long read, dev.incusspawn.command.SessionMerge.Merger merger, InstanceInfo instance,
+                                dev.incusspawn.command.GuestRead guest, dev.incusspawn.command.SessionMerge.Step step) {}
+
+    /** The merges not asked for yet, by instance name. */
+    private final java.util.Map<String, PendingMerge> pendingMerges = new java.util.concurrent.ConcurrentHashMap<>();
+    /** The instance whose merge is being made: at most one at a time, so moving the cursor never piles up model calls. */
+    private final java.util.concurrent.atomic.AtomicReference<String> mergingNow = new java.util.concurrent.atomic.AtomicReference<>();
+    /** The instance the preview shows, when it shows one: the only one a merge is asked for. */
+    private volatile String previewed;
+
+    /** How many sessions the preview says are being merged for {@code name}: waiting for its turn or asked; 0 for none. */
+    int mergingSessions(String name) {
+        var pending = pendingMerges.get(name);
+        if (pending != null) return pending.step().sessions();
+        var now = mergingNow.get();
+        return name.equals(now) ? mergingCount : 0;
+    }
+    private volatile int mergingCount;
+
+    /** Notes which instance the preview shows, on the UI thread, and asks for its merge. */
+    private void notePreviewed() {
+        var selected = instanceTableState == null || entries == null ? null : selectedEntry(instanceTableState);
+        previewed = view == View.WORK && previewShown(lastWidth) && selected != null ? selected.name() : null;
+        mergePreviewed();
+    }
+
+    /**
+     * Asks for the previewed instance's merge, when it needs one and no other is being made. When
+     * that ends, the cache holds its answer even if the cursor moved on, and the instance then
+     * previewed is asked for next.
+     */
+    private void mergePreviewed() {
+        var name = previewed;
+        if (name == null || !pendingMerges.containsKey(name) || !mergingNow.compareAndSet(null, name)) return;
+        var pending = pendingMerges.remove(name);
+        if (pending == null) {
+            mergingNow.set(null);
+            return;
+        }
+        mergingCount = pending.step().sessions();
+        needsRepaint.set(true);
+        overviewMergeExecutor.execute(() -> {
+            try {
+                var merged = pending.step().call().get();
+                if (merged != null) publishOverview(pending.read(), r -> r.withMerge(name, merged));
+                // A later read may have queued the same question: its answer is in the cache now
+                var later = pendingMerges.get(name);
+                if (later != null) {
+                    var again = later.merger().step(later.instance(), later.guest());
+                    if (again.call() == null && pendingMerges.remove(name, later)) {
+                        publishOverview(later.read(), r -> r.withMerge(name, again.known()));
+                    }
+                }
+            } catch (RuntimeException e) {
+                warningLog.add("Could not merge " + name + "'s sessions: " + e.getMessage());
+            } finally {
+                mergingNow.set(null);
+                needsRepaint.set(true);
+                mergePreviewed();
+            }
+        });
+    }
 
     // Storage-pool usage for the top gauge; refreshed in reloadData (not per-frame,
     // since it costs an API call). Null when no pool usage is available.
@@ -847,6 +935,13 @@ public class Tui {
     // --- Event handling ---
 
     private boolean handleEvent(Event event, TuiRunner tui, TableState tableState) {
+        boolean handled = dispatchEvent(event, tui, tableState);
+        // After the key moved the cursor or changed the tab: the merge follows the previewed instance
+        notePreviewed();
+        return handled;
+    }
+
+    private boolean dispatchEvent(Event event, TuiRunner tui, TableState tableState) {
         if (event instanceof TickEvent) {
             if (deferredBuildForBranch && !proxyRestartInProgress) {
                 deferredBuildForBranch = false;
@@ -1220,6 +1315,11 @@ public class Tui {
             else stopInBackground(selected);
             return true;
         }
+        // p: on the Work tab, the preview of the selected instance, shown or hidden; F6 edits the purpose there
+        if (key.isChar('p') && !key.hasCtrl() && view == View.WORK) {
+            previewChoice = !previewShown(lastWidth);
+            return true;
+        }
         if (key.isChar('p') && !key.hasCtrl()) {
             openEdit(selected, EditDialog.Field.PURPOSE, Mode.BROWSE);
             return true;
@@ -1369,7 +1469,7 @@ public class Tui {
     private boolean isInstanceActionKey(KeyEvent key, InstanceInfo selected) {
         return isDestroyKey(key) || key.isKey(KeyCode.F2) || key.isChar('n')
                 || key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4) || key.isKey(KeyCode.F6)
-                || key.isKey(KeyCode.F9) || key.isChar('a') || (key.isChar('p') && !key.hasCtrl()) || (key.isKey(KeyCode.F7) && isRunning(selected));
+                || key.isKey(KeyCode.F9) || key.isChar('a') || (key.isChar('p') && !key.hasCtrl() && view != View.WORK) || (key.isKey(KeyCode.F7) && isRunning(selected));
     }
 
     private void openNewTemplateModal(String parentName) {
@@ -1979,6 +2079,7 @@ public class Tui {
         }
 
         var area = frame.area();
+        lastWidth = area.width();
         boolean hasStatus = statusMessage != null;
         // A rule ends the last panel, so the messages and keys under it are not read as its rows
         int footerHeight = (hasStatus ? 3 : 2) + (area.height() >= MainScreen.FOOTER_RULE_MIN_HEIGHT ? 1 : 0);
@@ -3089,6 +3190,8 @@ public class Tui {
         }
         // Only the latest read is kept: an earlier one that ends later would show older values
         long read;
+        // A merge waiting from an earlier read is asked again by this one, if it is still needed
+        pendingMerges.clear();
         synchronized (overviewLock) {
             read = overviewReads.incrementAndGet();
             var pending = java.util.concurrent.ConcurrentHashMap.<String>newKeySet();
@@ -3161,11 +3264,16 @@ public class Tui {
                         needsRepaint.set(true);
                         var merger = setup.join().merger();
                         if (merger == null) return;
-                        // The exact columns are shown first: a model call never holds them back
+                        // A cached merge is shown at once; a model call waits until the preview shows the instance
                         try {
                             var step = merger.step(byName.get(name), guest);
-                            var merged = step.call() == null ? step.known() : step.call().get();
-                            publishOverview(read, r -> r.withMerge(name, merged));
+                            if (step.call() == null) {
+                                publishOverview(read, r -> r.withMerge(name, step.known()));
+                            } else {
+                                pendingMerges.put(name, new PendingMerge(read, merger, byName.get(name), guest, step));
+                                needsRepaint.set(true);
+                                mergePreviewed();
+                            }
                         } catch (RuntimeException e) {
                             warningLog.add("Could not merge " + name + "'s sessions: " + e.getMessage());
                         }
@@ -3206,7 +3314,7 @@ public class Tui {
         var wanted = new java.util.LinkedHashSet<>(running);
         var ordered = new java.util.LinkedHashSet<InstanceInfo>();
         int size = rowToEntry == null ? 0 : rowToEntry.size();
-        int first = instanceTableState == null ? 0 : Math.max(0, Math.min(instanceTableState.offset(), size));
+        int first = Math.max(0, Math.min(instanceFirstRow, size));
         for (int k = 0; k < size; k++) {
             var instance = rowToEntry.get((first + k) % size);
             if (instance != null && wanted.contains(instance)) ordered.add(instance);

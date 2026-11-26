@@ -34,6 +34,7 @@
   │   F10/0   Quit                                                           │
   │   a       Credential accounts                                            │
   │   p       Edit the purpose          o            Overview                │
+  │   p       On the Work tab: show or hide the preview                      │
   │   C       Clean pool storage                                             │
   │   r       Refresh                                                        │
   │   w       Warnings                                                       │
@@ -56,5 +57,4 @@
   │                                                                          │
   │  F1/Esc Close   ? AI-assisted help                                       │
   ╰──────────────────────────────────────────────────────────────────────────╯
-
 

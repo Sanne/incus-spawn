@@ -570,6 +570,15 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /** As {@link #execOutput}, for an exec in {@code instance} alone: it wins over one for every instance. */
+    public synchronized FakeIncusDaemon execOutputIn(String instance, String needle, String stdout) {
+        servesExecs = true;
+        execOutputsIn.put(instance + "\n" + needle, stdout);
+        return this;
+    }
+
+    private final Map<String, String> execOutputsIn = new LinkedHashMap<>();
+
     /** A served exec whose command line contains {@code needle} prints {@code stderr} on its stderr. */
     public synchronized FakeIncusDaemon execStderr(String needle, String stderr) {
         servesExecs = true;
@@ -696,7 +705,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             var command = new ArrayList<String>();
             exec.path("command").asList().forEach(arg -> command.add(arg.asText()));
             execs.add(new Exec(command, strings(exec.path("environment"))));
-            if (servesExecs) return startExec(String.join(" ", command));
+            if (servesExecs) return startExec(instanceOfExec(path), String.join(" ", command));
         }
         return handle(method, path, extraHeaders, body);
     }
@@ -766,10 +775,20 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** An exec, started: an operation whose fds' sockets carry {@code stdout} and then close. */
-    private RawResponse startExec(String commandLine) {
+    /** The instance an exec's path names, {@code /1.0/instances/<name>/exec}. */
+    private static String instanceOfExec(String path) {
+        var bare = path.contains("?") ? path.substring(0, path.indexOf('?')) : path;
+        var parts = bare.split("/");
+        return parts.length >= 2 ? parts[parts.length - 2] : "";
+    }
+
+    private RawResponse startExec(String instance, String commandLine) {
         var id = "exec-" + nextExec++;
-        var stdout = execOutputs.entrySet().stream().filter(e -> commandLine.contains(e.getKey()))
-                .map(Map.Entry::getValue).findFirst().orElse("");
+        var stdout = execOutputsIn.entrySet().stream()
+                .filter(e -> e.getKey().startsWith(instance + "\n") && commandLine.contains(e.getKey().substring(instance.length() + 1)))
+                .map(Map.Entry::getValue).findFirst()
+                .orElseGet(() -> execOutputs.entrySet().stream().filter(e -> commandLine.contains(e.getKey()))
+                        .map(Map.Entry::getValue).findFirst().orElse(""));
         var fds = JqObject.ofEntries("0", id + "-0", "1", id + "-1", "2", id + "-2", "control", id + "-control");
         execStdout.put(id + "-1", stdout.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         execStderrs.entrySet().stream().filter(e -> commandLine.contains(e.getKey())).findFirst()
