@@ -1513,3 +1513,18 @@ On Linux all 30 fit in one wave either way, and a handshake on incusd's own sock
 What it saves is on macOS: three vsock connects that no longer follow one another, one connection and one request less per exec, and ten execs at once instead of eight.
 That is still to be measured on a Mac.
 A batch of twelve probes of `sleep 30` with a 2 s limit were all killed and reported at 2.0 s, their ends asked of `/wait` once killed.
+
+## Probe batches on one operation subscription, on a Mac (issue #2626)
+
+Measured 2026-11-26 on the Mac runner (Apple silicon, the isx-vm launcher with 2 CPUs and 6.5 GB), native builds, appliance 0.6.0 with Incus 7.0.2, and 31 running containers.
+Thirty of them each held a repository with an uncommitted change and a `/usr/local/bin/git` that sleeps 0.25 s before running `/usr/bin/git`, so one guest read takes about 1.5 s.
+`isx overview --format=json` ran three times with each build, alternated: the change's merge base (`97f02806`) and the change (`af8aaff5`).
+The relay's counts are the guest port 8443 line of `vm.control.sock`'s `counts`, sampled every 0.2 s.
+
+| Build | Execs at once | Wall time of each run | Peak guest connections held | `unknown` reads |
+|---|---|---|---|---|
+| merge base | 8 | 6.7 s, 6.7 s, 6.6 s | 33, 33, 32 | 0 of 31 |
+| this change | 10 | 5.1 s, 5.1 s, 5.1 s | 36, 35, 35 | 0 of 31 |
+
+The change is 24% faster here. Neither build printed a warning that an exec's exit code was unknown, and neither lost an operation.
+During a read with the change, `isx vm status` showed 35 vsock forwarder connections in each of 13 samples, within the 41 its ten execs may hold (four each, plus one).
