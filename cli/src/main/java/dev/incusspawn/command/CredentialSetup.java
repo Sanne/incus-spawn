@@ -492,6 +492,7 @@ class CredentialSetup {
         var signIn = chatGptSignIn();
         while (true) {
             dev.incusspawn.proxy.ChatGptSessionStore.Tokens tokens = null;
+            var unavailable = false;
             try {
                 var device = signIn.requestDeviceCode();
                 // A report between questions, so through BuildOutput rather than the prompts'
@@ -513,6 +514,11 @@ class CredentialSetup {
                 } catch (Exception e) {
                     Lines.warnWrapped("The ChatGPT sign-in did not finish: " + reason(e));
                 }
+            } catch (dev.incusspawn.proxy.ChatGptSignIn.DeviceCodeUnavailable e) {
+                // A new code would be refused the same way, so no retry is offered
+                Lines.warnWrapped("OpenAI's sign-in server does not offer the one-time code, so a new code"
+                        + " would be refused too. Sign in with a browser on " + Platform.thisComputer() + " instead.");
+                unavailable = true;
             } catch (Exception e) {
                 Lines.warnWrapped("isx could not reach OpenAI's sign-in server: " + reason(e));
             }
@@ -520,7 +526,7 @@ class CredentialSetup {
                 saveChatGptSession(config, target, tokens);
                 return;
             }
-            if (Thread.currentThread().isInterrupted() || !tryAgain(prompts, "try again, with a new code")) {
+            if (unavailable || Thread.currentThread().isInterrupted() || !tryAgain(prompts, "try again, with a new code")) {
                 // A person who has accounts is not told to add one, as option 4 says (#2528)
                 BuildOutput.step(hasAccountsToPreserve(config, "openai") ? "Your OpenAI accounts stay as they were."
                         : "Skipped. 'isx account add openai' adds one later.");
