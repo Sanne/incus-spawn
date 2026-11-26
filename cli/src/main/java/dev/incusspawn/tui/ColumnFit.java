@@ -189,7 +189,7 @@ final class ColumnFit {
             }
             if (cells == null) continue;
             if (result == null) result = new ArrayList<>(rows);
-            result.set(r, Row.from(cells).style(row.style()));
+            result.set(r, Row.from(cells).style(row.style()).height(row.height()));
         }
         return result == null ? rows : result;
     }

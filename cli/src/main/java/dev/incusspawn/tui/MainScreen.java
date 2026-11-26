@@ -8,6 +8,7 @@ import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
+import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Text;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
@@ -57,6 +58,8 @@ final class MainScreen {
      * always stays.
      */
     void renderHeader(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+        // The first thing drawn in a frame: no preview divider until the Work tab draws one
+        previewDividerX = -1;
         if (area.width() <= 0) return;
         // The header is not a band: only the chip is filled
         var bg = Color.RESET;
@@ -348,7 +351,7 @@ final class MainScreen {
         }
 
         frame.renderStatefulWidget(tableBuilder.build(), actualTableArea, tui.templateTableState);
-        renderMarks(frame, actualTableArea, tui.templateTableState.offset(), tui.templateRows.size(), tui::templateRowMarked);
+        renderMarks(frame, actualTableArea, tui.templateTableState.offset(), tui.templateRows, tui::templateRowMarked);
 
         if (scrollArea != null) {
             var scrollbar = Scrollbar.builder()
@@ -367,41 +370,79 @@ final class MainScreen {
     /**
      * Draws {@link Glyphs#MARKED} on each visible marked row (#1131, #1482) in the second cell of the cursor's
      * gutter, which is always reserved and otherwise blank, so marking a row moves nothing else.
-     * The table has one header line and single-line rows.
+     * The table has one header line; a row of two lines is marked on its first.
      */
     private void renderMarks(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect tableArea, int offset,
-                             int rows, java.util.function.IntPredicate marked) {
+                             List<Row> rows, java.util.function.IntPredicate marked) {
         var buffer = frame.buffer();
         int x = tableArea.left() + 1;
-        for (int row = offset; row < rows; row++) {
-            int y = tableArea.top() + 1 + row - offset;
-            if (y >= tableArea.bottom()) break;
-            if (!marked.test(row)) continue;
+        var tops = rowTops(rows, offset, tableArea);
+        for (int row = 0; row < tops.length; row++) {
+            int y = tops[row];
+            if (y < 0 || !marked.test(row)) continue;
             var style = buffer.get(x, y).style().patch(Style.EMPTY.fg(tui.theme.contextAccentFg()));
             buffer.setString(x, y, Glyphs.MARKED, style);
         }
     }
 
     /**
+     * The screen line each row starts on below the header, or -1 for a row off screen: rows may be
+     * two lines tall, and the table's offset counts lines, from a row's first.
+     */
+    static int[] rowTops(List<Row> rows, int offset, dev.tamboui.layout.Rect tableArea) {
+        var tops = new int[rows.size()];
+        int line = 0;
+        for (int row = 0; row < rows.size(); row++) {
+            int y = tableArea.top() + 1 + line - offset;
+            tops[row] = line >= offset && y < tableArea.bottom() ? y : -1;
+            line += rows.get(row).height();
+        }
+        return tops;
+    }
+
+    /**
+     * The table's offset, in lines, at a row's first line: as near {@code offset} as keeps the whole
+     * selected row on screen, and no further down than the last rows need. The table draws a row
+     * cut by the offset whole, so an offset inside a row would push the selected row's second
+     * line off the screen.
+     */
+    static int alignedOffset(int offset, List<Row> rows, Integer selected, int visible) {
+        int n = rows.size();
+        var starts = new int[n + 1];
+        for (int i = 0; i < n; i++) starts[i + 1] = starts[i] + rows.get(i).height();
+        int total = starts[n];
+        int at = 0;
+        for (int i = 0; i < n; i++) if (starts[i] <= offset) at = i;
+        if (selected != null && selected >= 0 && selected < n) {
+            if (starts[selected] < starts[at]) at = selected;
+            while (at < selected && starts[selected + 1] > starts[at] + visible) at++;
+        }
+        while (at > 0 && total - starts[at - 1] <= visible) at--;
+        return n == 0 ? 0 : starts[at];
+    }
+
+    /**
      * What moves on the instance rows: each row says where it is, for a flash that follows it, and
      * a row with an operation under way turns its still glyph into the spinner and shimmers.
      */
-    private void renderRowMotion(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect tableArea, int offset) {
+    private void renderRowMotion(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect tableArea, int offset,
+                                 List<Row> rows) {
         var buffer = frame.buffer();
-        for (int row = offset; row < tui.tableRows.size(); row++) {
-            int y = tableArea.top() + 1 + row - offset;
-            if (y >= tableArea.bottom()) break;
+        var tops = rowTops(rows, offset, tableArea);
+        for (int row = 0; row < tops.length; row++) {
+            int y = tops[row];
+            if (y < 0) continue;
             var instance = tui.instanceOnRow(row);
             if (instance == null) continue;
-            var area = new dev.tamboui.layout.Rect(tableArea.left(), y, tableArea.width(), 1);
+            int height = Math.min(rows.get(row).height(), tableArea.bottom() - y);
+            var area = new dev.tamboui.layout.Rect(tableArea.left(), y, tableArea.width(), height);
             tui.motion.row(instanceKey(instance.name()), area);
             if (instance.pendingOp().isEmpty() || !tui.motion.on()) continue;
             for (int x = area.left(); x < area.right(); x++) {
                 var cell = buffer.get(x, y);
                 if (Motion.SPINNER_STILL.equals(cell.symbol())) buffer.set(x, y, cell.symbol(tui.motion.spinner()));
             }
-            // The name, which is what the operation is about: the cursor gutter is not text
-            // Past the cursor gutter and the state glyph
+            // The name, which is what the operation is about: past the cursor gutter and the state glyph
             tui.motion.shimmer(new dev.tamboui.layout.Rect(area.left() + 4, y,
                     Math.min(instance.name().length(), Math.max(0, area.width() - 4)), 1));
         }
@@ -499,9 +540,58 @@ final class MainScreen {
 
         var block = panel(frame, area, tui.overviewShown() ? overviewTitle() : " Instances ", focused);
         var inner = block.inner(area);
+        if (!tui.overviewShown()) {
+            renderRows(frame, inner, tableState, focused, null);
+            return;
+        }
 
+        // The Work tab: its table, and the selected instance's preview beside it or under it
+        var selected = tui.selectedEntry(tableState);
+        var tableArea = inner;
+        dev.tamboui.layout.Rect previewArea = null;
+        var border = Style.EMPTY.fg(tui.theme.panelBorderUnfocused());
+        var buffer = frame.buffer();
+        if (tui.view == Tui.View.WORK && tui.previewShown(area.width()) && selected != null) {
+            if (area.width() >= WorkTable.SIDE_PREVIEW_MIN_WIDTH) {
+                int previewWidth = WorkTable.previewWidth(inner.width());
+                int tableWidth = inner.width() - previewWidth - 1;
+                tableArea = new dev.tamboui.layout.Rect(inner.left(), inner.top(), tableWidth, inner.height());
+                int x = inner.left() + tableWidth;
+                previewDividerX = x;
+                previewArea = new dev.tamboui.layout.Rect(x + 1, inner.top(), previewWidth, inner.height());
+                // The title rule meets the divider, and the instance's name stands on it
+                buffer.setString(x, area.top(), "┬─ ", border);
+                buffer.setString(x + 3, area.top(), WorkTable.middleCut(selected.name(), Math.max(1, previewWidth - 6)) + " ",
+                        Style.EMPTY.bold().fg(tui.theme.accent()));
+                for (int y = inner.top(); y < inner.bottom(); y++) buffer.setString(x, y, "│", border);
+            } else if (inner.height() >= 8) {
+                int previewHeight = Math.min(WorkTable.PREVIEW_BELOW_MOST, inner.height() / 2);
+                tableArea = new dev.tamboui.layout.Rect(inner.left(), inner.top(), inner.width(), inner.height() - previewHeight);
+                int ruleY = tableArea.bottom();
+                buffer.setString(inner.left(), ruleY, "─".repeat(inner.width()), border);
+                buffer.setString(inner.left(), ruleY, "─ ", border);
+                buffer.setString(inner.left() + 2, ruleY, WorkTable.middleCut(selected.name(), Math.max(1, inner.width() - 6)) + " ",
+                        Style.EMPTY.bold().fg(tui.theme.accent()));
+                previewArea = new dev.tamboui.layout.Rect(inner.left(), ruleY + 1, inner.width(), previewHeight - 1);
+            }
+        }
+        renderRows(frame, tableArea, tableState, focused, workColumns());
+        if (previewArea != null) renderPreview(frame, previewArea, selected);
+    }
+
+    /**
+     * Where the Work tab's preview divider stands in this frame, for the footer rule's {@code ┴},
+     * or -1 with no preview beside the table.
+     */
+    int previewDividerX = -1;
+
+    /** The instance table's rows in {@code area}: the Instances tab's columns, or the Work tab's when {@code work} is given. */
+    private void renderRows(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect inner, TableState tableState,
+                            boolean focused, WorkColumns work) {
+        var heights = work != null ? work.rows() : tui.tableRows;
         int visibleRows = Math.max(inner.height() - 1, 1);
-        boolean needsScroll = tui.tableRows.size() > visibleRows;
+        int lines = heights.stream().mapToInt(Row::height).sum();
+        boolean needsScroll = lines > visibleRows;
         dev.tamboui.layout.Rect actualArea;
         dev.tamboui.layout.Rect scrollArea;
         if (needsScroll) {
@@ -518,11 +608,11 @@ final class MainScreen {
         List<Constraint> widths;
         List<String> headers;
         List<Row> shownRows;
-        if (tui.overviewShown()) {
-            var columns = overviewColumns(actualArea.width());
-            widths = columns.widths();
-            headers = columns.headers();
-            shownRows = columns.rows();
+        if (work != null) {
+            var fitted = work.fit(actualArea.width() - HIGHLIGHT_WIDTH);
+            widths = ColumnFit.constraints(fitted.widths());
+            headers = fitted.headers();
+            shownRows = fitted.rows();
         } else {
             var natural = tui.instanceNatural;
             // The name is never cut (Sanne, review of the column widths), and its state glyph is
@@ -567,7 +657,7 @@ final class MainScreen {
                         .style(headerStyle()))
                 .rows(shownRows)
                 .widths(widths)
-                .highlightSymbol(focused ? "\u25b8 " : "  ")
+                .highlightSymbol(focused ? "▸ " : "  ")
                 // Always reserved, so renderMarks can draw into it
                 .highlightSpacing(Table.HighlightSpacing.ALWAYS);
 
@@ -588,9 +678,17 @@ final class MainScreen {
             tableBuilder.highlightStyle(Style.EMPTY);
         }
 
+        // A row is drawn whole from its first line, so the whole selected instance stays on screen
+        tableState.setOffset(alignedOffset(tableState.offset(), shownRows, tableState.selected(), visibleRows));
         frame.renderStatefulWidget(tableBuilder.build(), actualArea, tableState);
-        renderMarks(frame, actualArea, tableState.offset(), tui.tableRows.size(), tui::instanceRowMarked);
-        renderRowMotion(frame, actualArea, tableState.offset());
+        int offset = tableState.offset();
+        var tops = rowTops(shownRows, offset, actualArea);
+        int first = 0;
+        while (first < tops.length && tops[first] < 0) first++;
+        tui.instanceFirstRow = first;
+        if (work != null) renderSecondLines(frame, actualArea, tops, work);
+        renderMarks(frame, actualArea, offset, shownRows, tui::instanceRowMarked);
+        renderRowMotion(frame, actualArea, offset, shownRows);
 
         if (scrollArea != null) {
             var scrollbar = Scrollbar.builder()
@@ -599,142 +697,190 @@ final class MainScreen {
                     .trackStyle(Style.EMPTY.fg(tui.theme.scrollbarTrack()))
                     .build();
             var scrollState = new ScrollbarState()
-                    .contentLength(tui.tableRows.size())
+                    .contentLength(lines)
                     .viewportContentLength(visibleRows)
-                    .position(tableState.offset());
+                    .position(offset);
             frame.renderStatefulWidget(scrollbar, scrollArea, scrollState);
         }
     }
 
-    /** The narrowest table that shows PURPOSE beside the overview's columns and DONE: a 150-column terminal. */
-    static final int OVERVIEW_PURPOSE_MIN_WIDTH = 146;
-    /** The narrowest table that shows DONE, what the newest agent session said it did: a 120-column terminal. */
-    static final int OVERVIEW_DONE_MIN_WIDTH = 116;
-    /** The narrowest table that shows ACTIVE beside WORK: a 100-column terminal. */
-    static final int OVERVIEW_ACTIVE_MIN_WIDTH = 96;
+    /**
+     * Each Work row's second line, under its first, from {@link WorkTable#SECOND_LINE_INDENT}:
+     * across the whole table, which a cell's second line could not be, in the row's own style, so
+     * the selection's fill covers it.
+     */
+    private void renderSecondLines(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, int[] tops, WorkColumns work) {
+        var buffer = frame.buffer();
+        int x = area.left() + WorkTable.SECOND_LINE_INDENT;
+        // One cell short of the edge, so a reference never touches the preview's divider
+        int room = area.right() - x - 1;
+        if (room <= 0) return;
+        for (int row = 0; row < tops.length; row++) {
+            if (tops[row] < 0 || tops[row] + 1 >= area.bottom()) continue;
+            var line = WorkTable.secondLine(work.purposes().get(row), work.refs().get(row), room, tui.theme);
+            if (line == null) continue;
+            int y = tops[row] + 1;
+            int at = x;
+            for (var span : line.spans()) {
+                if (at >= area.right()) break;
+                var text = CharWidth.substringByWidth(span.content(), area.right() - at);
+                buffer.setString(at, y, text, buffer.get(at, y).style().patch(span.style()));
+                at += CharWidth.of(text);
+            }
+        }
+    }
 
-    private record Columns(List<Constraint> widths, List<String> headers, List<Row> rows) {}
+    /** The selected instance's preview, as many of its lines as fit. */
+    private void renderPreview(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, InstanceInfo selected) {
+        var log = tui.overviewLog;
+        var reading = tui.overviewReading;
+        var subject = new WorkPreview.Subject(selected, tui.stateGlyph(selected), stateWord(selected),
+                log == null ? null : OverviewCommand.effortOf(log, selected), reading, tui.overviewAwaits(selected),
+                tui.mergingSessions(selected.name()), tui.motion.spinner(), tui.overviewClock.get(), tui.overviewZone);
+        var lines = WorkPreview.lines(subject, area.width(), tui.theme);
+        for (int i = 0; i < lines.size() && i < area.height(); i++) {
+            frame.buffer().setLine(area.left(), area.top() + i, lines.get(i), area.width());
+        }
+    }
 
-    /** The width of most IPv4 addresses on the bridge, {@code 10.166.11.123}. */
-    static final int IP_WIDTH = 13;
+    /** The instance's state in a word: {@code Running}, {@code Stopped}, the operation under way, or its status. */
+    private static String stateWord(InstanceInfo instance) {
+        var word = Tui.unusualState(instance);
+        if (word != null) return word;
+        return Tui.isRunning(instance) ? "Running" : "Stopped";
+    }
 
     /** The cells a table keeps at its left for the cursor and a row's mark. */
     static final int HIGHLIGHT_WIDTH = 2;
 
+    /** The width of most IPv4 addresses on the bridge, {@code 10.166.11.123}. */
+    static final int IP_WIDTH = 13;
+
     /**
-     * The overview's columns (#2241, {@code o} and the Work tab): NAME and STATUS from the table's
-     * rows, then what each guest's clones hold (WORK), what the proxy's event log says each
-     * instance did, and ACTIVE, DONE (what the newest agent session said it did) and PURPOSE where
-     * there is room. The cells are made from the last
-     * read, so they follow it without a reload; a cell says {@code …} while its read is under way.
+     * The Work tab's rows, before they are fitted to a width: one per row of the table, two lines
+     * tall where it has a purpose or a reference to show, with what each column needs measured
+     * over every instance, the search's or not, so the columns hold still while a search narrows
+     * the list (review of #2511).
      */
-    private Columns overviewColumns(int width) {
-        boolean active = width >= OVERVIEW_ACTIVE_MIN_WIDTH;
-        var natural = tui.instanceNatural;
-        // WORK, DONE and PURPOSE get their content's width once the rows are made, below
-        var columns = new ArrayList<>(List.of(
-                // Never cut: GITHUB takes its width from what the name leaves
-                new ColumnFit.Column("NAME", Math.max(10, natural[0]), natural[0], 0, false),
-                ColumnFit.Column.fixed("LAST USED", 12),
-                new ColumnFit.Column("WORK", 12, 12, 4, false),
-                ColumnFit.Column.fixed("TOKENS", 7)));
-        if (active) columns.add(ColumnFit.Column.fixed("ACTIVE", 13));
-        int githubColumn = columns.size();
-        boolean done = width >= OVERVIEW_DONE_MIN_WIDTH;
-        if (done) columns.add(new ColumnFit.Column("DONE", 20, 20, 1, true));
-        boolean purpose = tui.anyPurpose && width >= OVERVIEW_PURPOSE_MIN_WIDTH;
-        if (purpose) columns.add(new ColumnFit.Column("PURPOSE", 24, 24, 2, true));
-        var log = tui.overviewLog;
-        var reading = tui.overviewReading;
-        var zone = tui.overviewZone;
-        // GITHUB is as wide as its widest row needs, to show each reference whole (#2292), within
-        // what the other columns leave at their least: the highlight mark, one cell between columns
-        int room = width - HIGHLIGHT_WIDTH - columns.size();
-        for (var column : columns) room -= column.floor();
-        int githubMost = Math.max(GITHUB_MIN_WIDTH, Math.min(GITHUB_MAX_WIDTH, room));
-        var efforts = new ArrayList<dev.incusspawn.proxy.EventLogReader.Effort>();
-        var github = new ArrayList<List<OverviewCommand.GitHubPart>>();
-        int githubWidth = GITHUB_MIN_WIDTH;
-        // Every instance's row is made, the search's or not: the columns are as wide as the widest
-        // cell of them all, so they hold still while a search narrows the list (review of #2511)
-        var instanceRows = tui.measuredRows;
-        var pool = List.copyOf(instanceRows.keySet());
-        for (int i = 0; i < pool.size(); i++) {
-            var instance = pool.get(i);
-            if (log == null) {
-                efforts.add(null);
-                github.add(null);
-                continue;
+    private record WorkColumns(List<InstanceInfo> instances, List<Row> rows, List<WorkTable.Work> work,
+                               List<String> idle, List<String> tokens, List<String> purposes,
+                               List<List<WorkTable.Ref>> refs, int nameNatural, int workNatural, MainScreen screen) {
+
+        record Fitted(int[] widths, List<String> headers, List<Row> rows) {}
+
+        /**
+         * NAME, IDLE, WORK and TOKENS within {@code width}: NAME is cut in its middle, the one
+         * column that gives width up, so IDLE, WORK and TOKENS are never cut.
+         */
+        Fitted fit(int width) {
+            var columns = List.of(
+                    new ColumnFit.Column("NAME", Math.min(nameNatural, 2 + WorkTable.NAME_LEAST), nameNatural, 1, false),
+                    ColumnFit.Column.fixed("IDLE", WorkTable.IDLE_WIDTH),
+                    ColumnFit.Column.fixed("WORK", workNatural),
+                    ColumnFit.Column.fixed("TOKENS", WorkTable.TOKENS_WIDTH));
+            var widths = ColumnFit.widths(columns, width);
+            var theme = screen.tui.theme;
+            var shown = new ArrayList<Row>();
+            for (int i = 0; i < rows.size(); i++) {
+                var instance = instances.get(i);
+                if (instance == null) {
+                    shown.add(rows.get(i));
+                    continue;
+                }
+                var w = work.get(i);
+                var tone = switch (w.tone()) {
+                    case OK -> Style.EMPTY.fg(theme.statusSuccess());
+                    case WARN -> Style.EMPTY.fg(theme.statusWarning());
+                    case FAINT -> Style.EMPTY.fg(theme.textFaint());
+                    case DIM -> Style.EMPTY.fg(theme.textDim());
+                };
+                var spent = tokens.get(i);
+                var cells = List.of(
+                        dev.tamboui.widgets.table.Cell.from(screen.nameLine(instance, widths[0])),
+                        dev.tamboui.widgets.table.Cell.from(Span.styled(rightAligned(idle.get(i), WorkTable.IDLE_WIDTH),
+                                Style.EMPTY.fg(theme.textDim()))),
+                        dev.tamboui.widgets.table.Cell.from(Span.styled(w.text(), tone)),
+                        dev.tamboui.widgets.table.Cell.from(Span.styled(rightAligned(spent, WorkTable.TOKENS_WIDTH),
+                                "-".equals(spent) ? Style.EMPTY.fg(theme.textFaint()) : Style.EMPTY)));
+                shown.add(Row.from(cells).style(rows.get(i).style()).height(rows.get(i).height()));
             }
-            var effort = OverviewCommand.effortOf(log, instance);
-            efforts.add(effort);
-            var parts = OverviewCommand.githubParts(effort, reading == null
-                    ? List.of() : OverviewCommand.statesOf(reading, instance, effort));
-            github.add(parts);
-            githubWidth = Math.max(githubWidth, OverviewCommand.fitGithub(parts, githubMost).stream()
-                    .mapToInt(piece -> OverviewCommand.width(piece.text())).sum());
+            var headers = List.of("NAME", rightAligned("IDLE", WorkTable.IDLE_WIDTH), "WORK",
+                    rightAligned("TOKENS", WorkTable.TOKENS_WIDTH));
+            return new Fitted(widths, headers, shown);
         }
-        columns.add(githubColumn, ColumnFit.Column.fixed("GITHUB", githubWidth));
-        var every = new ArrayList<Row>();
-        var made = new java.util.IdentityHashMap<InstanceInfo, Row>();
-        for (int i = 0; i < pool.size(); i++) {
-            var instance = pool.get(i);
-            var row = instanceRows.get(instance);
-            var cells = new ArrayList<>(List.of(row.cells().get(0)));
-            cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.lastUsedCell(instance)));
-            boolean awaits = reading == null || tui.overviewAwaits(instance);
-            cells.add(dev.tamboui.widgets.table.Cell.from(awaits ? "\u2026" : reading.workOf(instance).cell()));
-            if (log == null) {
-                for (int c = active ? 0 : 1; c < 3; c++) cells.add(dev.tamboui.widgets.table.Cell.from("\u2026"));
-            } else {
-                var effort = efforts.get(i);
-                cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.tokensCell(effort)));
-                if (active) cells.add(dev.tamboui.widgets.table.Cell.from(OverviewCommand.activeCell(effort, zone)));
-                cells.add(dev.tamboui.widgets.table.Cell.from(githubLine(github.get(i), githubWidth)));
-            }
-            if (done) {
-                var summary = awaits ? null : reading.summaryOf(instance);
-                // Only the event log can say an instance with no session was not untouched
-                cells.add(dev.tamboui.widgets.table.Cell.from(summary == null || log == null && "untouched".equals(summary.from())
-                        ? "\u2026" : OverviewCommand.doneCell(summary, 120)));
-            }
-            if (purpose) cells.add(row.cells().get(7));
-            var overviewRow = Row.from(cells).style(row.style());
-            every.add(overviewRow);
-            made.put(instance, overviewRow);
-        }
-        var rows = new ArrayList<Row>();
-        for (int i = 0; i < tui.tableRows.size(); i++) {
-            var instance = tui.instanceOnRow(i);
-            var row = instance == null ? null : made.get(instance);
-            rows.add(row != null ? row : tui.tableRows.get(i));
-        }
-        for (int c = 0; c < columns.size(); c++) {
-            var column = columns.get(c);
-            if (column.give() == 0 || c < 1) continue;
-            columns.set(c, column.holding(Math.max(column.floor(), ColumnFit.natural(every, c))));
-        }
-        var fitted = ColumnFit.widths(columns, width - HIGHLIGHT_WIDTH);
-        return new Columns(ColumnFit.constraints(fitted), columns.stream().map(ColumnFit.Column::header).toList(),
-                ColumnFit.clipped(rows, fitted));
     }
 
-    /** The GITHUB column's least width, and the most it takes for the references of one row. */
-    static final int GITHUB_MIN_WIDTH = 16;
-    static final int GITHUB_MAX_WIDTH = 40;
+    private static String rightAligned(String text, int width) {
+        return " ".repeat(Math.max(0, width - CharWidth.of(text))) + text;
+    }
 
     /**
-     * A GITHUB cell: each reference whole within {@code width} (#2292), a pull request underlined
-     * and linked to its page, so a click in a terminal that supports links opens it.
+     * A Work row's NAME cell within {@code width} cells: the state glyph, the name cut in its
+     * middle where it does not fit, so its distinguishing end stays, and the word of an unusual
+     * state, which is never cut.
      */
-    private Line githubLine(List<OverviewCommand.GitHubPart> parts, int width) {
-        if (parts.isEmpty()) return Line.from("-");
-        var spans = new ArrayList<Span>();
-        for (var piece : OverviewCommand.fitGithub(parts, width)) {
-            spans.add(piece.url() == null ? Span.raw(piece.text())
-                    : Span.styled(piece.text(), Style.EMPTY.underlined().hyperlink(piece.url())));
-        }
+    Line nameLine(InstanceInfo instance, int width) {
+        var word = Tui.unusualState(instance);
+        int room = width - 2 - (word == null ? 0 : 1 + CharWidth.of(word));
+        var nameStyle = Tui.isRunning(instance) && instance.pendingOp().isEmpty() ? Style.EMPTY : Style.EMPTY.fg(tui.theme.textDim());
+        var spans = new ArrayList<Span>(List.of(tui.stateGlyph(instance),
+                Span.styled(WorkTable.middleCut(instance.name(), Math.max(1, room)), nameStyle)));
+        if (word != null) spans.add(Span.styled(" " + word, Style.EMPTY.fg(tui.theme.textDim())));
         return Line.from(spans);
+    }
+
+    /**
+     * The Work tab's rows (#2241): NAME, IDLE (since the newer of the last start and the last line
+     * the event log holds), WORK (what the clones hold) and TOKENS, and under them, where there is
+     * any, the purpose and the pull requests and pushed branches. The cells are made from the last
+     * read, so they follow it without a reload; a cell says {@code …} while its read is under way.
+     */
+    private WorkColumns workColumns() {
+        var log = tui.overviewLog;
+        var reading = tui.overviewReading;
+        var now = tui.overviewClock.get();
+        int nameNatural = 2 + WorkTable.NAME_LEAST;
+        int workNatural = CharWidth.of("WORK");
+        for (var instance : tui.measuredRows.keySet()) {
+            nameNatural = Math.max(nameNatural, Math.min(Tui.nameWidth(instance), 2 + WorkTable.NAME_MOST));
+            if (reading != null && !tui.overviewAwaits(instance)) {
+                workNatural = Math.max(workNatural, CharWidth.of(WorkTable.work(reading.workOf(instance), false).text()));
+            }
+        }
+        var instances = new ArrayList<InstanceInfo>();
+        var rows = new ArrayList<Row>();
+        var work = new ArrayList<WorkTable.Work>();
+        var idle = new ArrayList<String>();
+        var tokens = new ArrayList<String>();
+        var purposes = new ArrayList<String>();
+        var refs = new ArrayList<List<WorkTable.Ref>>();
+        for (int i = 0; i < tui.tableRows.size(); i++) {
+            var instance = tui.instanceOnRow(i);
+            var base = tui.tableRows.get(i);
+            instances.add(instance);
+            if (instance == null) {
+                rows.add(base);
+                work.add(null);
+                idle.add(null);
+                tokens.add(null);
+                purposes.add(null);
+                refs.add(List.of());
+                continue;
+            }
+            var effort = log == null ? null : OverviewCommand.effortOf(log, instance);
+            boolean awaits = reading == null || tui.overviewAwaits(instance);
+            work.add(WorkTable.work(awaits ? null : reading.workOf(instance), awaits));
+            var active = WorkTable.lastActive(instance, effort);
+            idle.add(active == null ? "-" : WorkTable.idle(java.time.Duration.between(active, now)));
+            tokens.add(effort == null ? ColumnFit.ELLIPSIS : OverviewCommand.tokensCell(effort));
+            var references = effort == null ? List.<WorkTable.Ref>of() : WorkTable.references(effort,
+                    reading == null ? List.of() : OverviewCommand.statesOf(reading, instance, effort));
+            refs.add(references);
+            purposes.add(instance.purpose());
+            boolean twoLines = !references.isEmpty() || instance.purpose() != null && !instance.purpose().isBlank();
+            rows.add(base.height(twoLines ? 2 : 1));
+        }
+        return new WorkColumns(instances, rows, work, idle, tokens, purposes, refs, nameNatural, workNatural, this);
     }
 
     /** How far the latest refresh has read the running guests, after {@code lead} ({@code , reading 3/12 instances}), or nothing once it has. */
@@ -797,6 +943,10 @@ final class MainScreen {
             frame.renderWidget(Block.builder().borders(java.util.EnumSet.of(Borders.TOP)).borderType(BorderType.PLAIN)
                     .borderStyle(Style.EMPTY.fg(tui.theme.panelBorderUnfocused())).build(),
                     new dev.tamboui.layout.Rect(area.left(), area.top(), area.width(), 1));
+            // The Work tab's preview divider ends on it
+            if (previewDividerX >= area.left() && previewDividerX < area.right()) {
+                frame.buffer().setString(previewDividerX, area.top(), "┴", Style.EMPTY.fg(tui.theme.panelBorderUnfocused()));
+            }
             area = new dev.tamboui.layout.Rect(area.left(), area.top() + 1, area.width(), area.height() - 1);
         }
 
@@ -906,6 +1056,12 @@ final class MainScreen {
             if (instance.mcp() != null) {
                 spans.add(Span.styled("  ⇧F2", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(bg)));
                 spans.add(Span.styled(" Join task", Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
+            }
+            if (tui.view == Tui.View.WORK) {
+                // p is the Work tab's own key for the preview, at every width
+                spans.add(Span.styled("  p", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(bg)));
+                spans.add(Span.styled(tui.previewShown(tui.lastWidth) ? " Hide preview" : " Preview",
+                        Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
             }
             addMarkHints(spans, tui.markedInstances().size(), bg);
             return Line.from(spans);

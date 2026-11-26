@@ -225,7 +225,7 @@ public class OverviewCommand extends BaseCommand {
     }
 
     /** When the instance last started, from the listing's {@code last_used_at}; null when never. */
-    static Instant lastUsed(InstanceInfo instance) {
+    public static Instant lastUsed(InstanceInfo instance) {
         if (instance.metadata() == null) return null;
         try {
             var at = Instant.parse(instance.metadata().pathText("last_used_at", ""));
