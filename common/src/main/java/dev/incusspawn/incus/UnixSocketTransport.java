@@ -70,14 +70,16 @@ class UnixSocketTransport implements IncusTransport {
     //
     // The value is the platform's (#2527). On macOS every connection is a vsock stream through
     // the launcher's relay, which holds at most 192 guest connections for all its relays
-    // (GuestRoom), so 48 stays until it is derived from that room and measured on a Mac. On
-    // Linux the socket is incusd's own and nothing sits between: the cap only stops a runaway
+    // (GuestRoom), whichever process opened them. 150 is Sanne's choice from the Mac measurement
+    // (96 and 128 both read 31 guests in 3.9 s, against 7.1 s at 48): one process stays under the
+    // room, two fan-outs at once can fill it, and the next connection then waits in the launcher.
+    // On Linux the socket is incusd's own and nothing sits between: the cap only stops a runaway
     // from taking the descriptors, and 256 leaves most of the 1024 a process's soft limit
-    // commonly allows. It gives 62 concurrent execs (10 on macOS), so the overview reads 62
+    // commonly allows. It gives 62 concurrent execs (36 on macOS), so the overview reads 62
     // instances at once.
     // A Linux isx reaches an appliance's socket only in the appliance tests, through
     // isx-vsock-bridge, which bounds its guest connections only when told to (--most).
-    private static final int MAX_CONCURRENT_CONNECTIONS = dev.incusspawn.Platform.isMacOS() ? 48 : 256;
+    private static final int MAX_CONCURRENT_CONNECTIONS = dev.incusspawn.Platform.isMacOS() ? 150 : 256;
     private static final long PERMIT_TIMEOUT_MS = 10_000;
     private static final java.util.concurrent.Semaphore CONNECTION_PERMITS =
             new java.util.concurrent.Semaphore(MAX_CONCURRENT_CONNECTIONS);

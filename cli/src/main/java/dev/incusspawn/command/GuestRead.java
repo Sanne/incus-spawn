@@ -118,9 +118,9 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
 
     /**
      * Every instance's read by name, in parallel, but only as many at once as the connection cap
-     * carries (#2527, {@code IncusApi.BOUNDED_EXECS}: 62 on Linux, 10 on macOS): a rolling window, so
-     * N reads take about N/slots times one read. On macOS that is up to about 40 s for 30 instances
-     * whose reads all time out (10 s and the 3 s kill grace, three waves).
+     * carries (#2527, {@code IncusApi.BOUNDED_EXECS}: 62 on Linux, 36 on macOS): a rolling window, so
+     * N reads take about N/slots times one read. For 30 instances whose reads all time out that is
+     * one wave on either platform, about 13 s (10 s and the 3 s kill grace).
      */
     public static Map<String, GuestRead> readAll(IncusClient incus, List<InstanceInfo> instances) {
         var done = new java.util.concurrent.ConcurrentHashMap<String, GuestRead>();

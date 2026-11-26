@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ExecAdmissionTest {
 
-    // More than the slots on either platform, as thirty instances were for the first cap of 48.
+    // More than the slots on either platform.
     private static final int INSTANCES = 3 * UnixSocketTransport.CONCURRENT_EXECS;
 
     /** Counts the execs posted and not yet seen finished, holding each {@code /wait} a while. */
