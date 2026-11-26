@@ -322,27 +322,33 @@ class CredentialSetup {
         }
 
         // A ChatGPT session serves Codex alone: a first run for Pi or opencode, which spend the
-        // account's API key, is offered only the key (#2536, #2525)
+        // account's API key, is offered only the key (#2536, #2525). The key comes first and the
+        // experimental ChatGPT kinds after it, each chosen only past its notice (#2651).
         var chatGpt = !firstRun || agent == null || agent.equals("codex");
         var options = new ArrayList<String>();
-        if (chatGpt) {
-            options.add("ChatGPT, signed in with a browser on " + Platform.thisComputer() + "\nFor a Plus, Pro, Business or Enterprise plan.\nEnterprise single sign-on works too.");
-            options.add("ChatGPT, signed in with a code on another device\nWith a browser on a phone or another computer.");
-        }
         options.add("An OpenAI API key\nFrom platform.openai.com, billed by use.");
+        if (chatGpt) {
+            options.add("ChatGPT, signed in with a browser on " + Platform.thisComputer() + "\nExperimental.\nFor a Plus, Pro, Business or Enterprise plan.\nEnterprise single sign-on works too.");
+            options.add("ChatGPT, signed in with a code on another device\nExperimental.\nWith a browser on a phone or another computer.");
+        }
         options.add("None for now\nAdd one later with 'isx account add openai'.");
         // Each option says what it is, and "None for now" is one of them: Enter asks again (#2528)
         while (true) {
             var answer = prompts.choose("Which kind of OpenAI account do you have?", options, null, null);
             var choice = answer == null ? "4" : answer.strip();
             // Numbered as the full list is, when the ChatGPT kinds are left out
-            if (!chatGpt) choice = switch (choice) { case "1" -> "3"; case "2" -> "4"; default -> answer == null ? "4" : ""; };
+            if (!chatGpt && choice.equals("2")) choice = "4";
+            else if (!chatGpt && !choice.equals("1")) choice = answer == null ? "4" : "";
             switch (choice) {
-                case "1" -> signInChatGptInBrowser(config, target, prompts);
-                case "2" -> signInChatGptWithDeviceCode(config, target, prompts);
-                case "3" -> {
+                case "1" -> {
                     // Enter at the key goes back to the kinds of account
                     if (!askAndSaveApiKey(config, target, prompts, true)) continue;
+                }
+                case "2", "3" -> {
+                    // Declining the experimental sign-in goes back to the kinds of account
+                    if (!confirmChatGpt(prompts)) continue;
+                    if (choice.equals("2")) signInChatGptInBrowser(config, target, prompts);
+                    else signInChatGptWithDeviceCode(config, target, prompts);
                 }
                 case "4" -> BuildOutput.note(hasAccountsToPreserve(config, "openai")
                         ? "Your OpenAI accounts stay as they were." : "Skipped the OpenAI account for now.");
@@ -355,10 +361,32 @@ class CredentialSetup {
     }
 
     /**
+     * The notice a person reads before a new ChatGPT sign-in starts, and their yes to it (#2651):
+     * the sign-in is experimental and opt-in, so Enter and a missing terminal both decline it.
+     */
+    boolean confirmChatGpt(Prompts prompts) {
+        chatGptNotice();
+        return askYesNo(prompts, "Sign in with ChatGPT?", false);
+    }
+
+    /** What a person opts into with a ChatGPT sign-in (#2651), apart from the questions around it. */
+    private void chatGptNotice() {
+        BuildOutput.gap();
+        Lines.step("Signing in with ChatGPT is experimental."
+                + " It may stop working when Codex or OpenAI changes.");
+        Lines.step("isx signs in as Codex's own client, which OpenAI has not endorsed.");
+        Lines.step("The sign-in and its tokens stay on " + Platform.thisComputer()
+                + ", which also renews them. Your " + machines() + " never see them.");
+        Lines.step("The browser sign-in was tested with a real ChatGPT Enterprise plan."
+                + " The sign-in with a code has not been tested with OpenAI yet.");
+        BuildOutput.gap();
+    }
+
+    /**
      * The first run's OpenAI step when Codex CLI on this computer is signed in with ChatGPT:
-     * acknowledges the local sign-in, explains why isx keeps a separate one, and lets Enter
-     * sign in through the browser while {@code c} uses a device code and {@code o} opens the
-     * full account-kind menu.
+     * acknowledges the local sign-in, explains why isx keeps a separate one and what the
+     * experimental sign-in is, and lets {@code y} sign in through the browser while {@code c}
+     * uses a device code and {@code o} opens the full account-kind menu. Enter asks again.
      */
     void setupCodexLocalChatGpt(SpawnConfig config, Prompts prompts) {
         warnUnreadKeys(config, "openai");
@@ -369,17 +397,20 @@ class CredentialSetup {
         var here = Platform.thisComputer();
         Lines.step("Codex CLI on " + here + " is signed in with ChatGPT.");
         Lines.step("isx uses a separate sign-in for " + machines() + ".");
-        BuildOutput.gap();
+        // The sign-in is experimental, so this step names what it is before asking, and Enter
+        // does not start it (#2651)
+        chatGptNotice();
         prompts.say("Sign in to ChatGPT now?");
-        prompts.say("  Y  get a sign-in link for a browser on " + here);
+        prompts.say("  y  get a sign-in link for a browser on " + here);
         prompts.say("  c  sign in with a code on another device");
         prompts.say("  o  use another kind of OpenAI account");
         prompts.say("  s  skip for now");
         while (true) {
-            var answer = prompts.ask(Prompts.choiceEnterTakes("Y"));
+            var answer = prompts.ask(Prompts.choice());
             var choice = answer == null ? "s" : answer.strip().toLowerCase(java.util.Locale.ROOT);
             switch (choice) {
-                case "", "y", "yes" -> {
+                case "" -> { }
+                case "y", "yes" -> {
                     signInChatGptInBrowser(config, AccountTarget.FRESH, prompts);
                     return;
                 }

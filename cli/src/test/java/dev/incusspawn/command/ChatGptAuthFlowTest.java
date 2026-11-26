@@ -77,14 +77,14 @@ class ChatGptAuthFlowTest {
         }
     }
 
-    /** The answers a first-time browser sign-in gives: the menu alone, for the flow opens the browser itself. */
+    /** The answers a first-time browser sign-in gives: the menu and the yes past its notice, for the flow opens the browser itself. */
     private static ScriptedPrompts chooseChatGpt() {
-        return new ScriptedPrompts().line("1");
+        return new ScriptedPrompts().line("2", "y");
     }
 
-    /** The one-time-code path: the menu alone, for the sign-in prints its address and code itself. */
+    /** The one-time-code path: the menu and the yes past its notice, for the sign-in prints its address and code itself. */
     private static ScriptedPrompts chooseDeviceCode() {
-        return new ScriptedPrompts().line("2");
+        return new ScriptedPrompts().line("3", "y");
     }
 
     /** Runs the step and answers it, recording what it reported: the address reports go through BuildOutput, not the prompts' conversation (#1703). */
@@ -131,7 +131,7 @@ class ChatGptAuthFlowTest {
                 };
             }
         };
-        run(failing, new SpawnConfig(), new ScriptedPrompts().line("1", ""));
+        run(failing, new SpawnConfig(), new ScriptedPrompts().line("2", "y", ""));
         assertEquals("chatgpt", saved("openai.accounts.default.type"));
 
         IsolatedHome.configFile().toFile().delete();
@@ -146,7 +146,7 @@ class ChatGptAuthFlowTest {
                 };
             }
         };
-        run(alwaysFailing, new SpawnConfig(), new ScriptedPrompts().line("1", "s"));
+        run(alwaysFailing, new SpawnConfig(), new ScriptedPrompts().line("2", "y", "s"));
         assertNothingSaved();
     }
 
@@ -206,9 +206,9 @@ class ChatGptAuthFlowTest {
         var conversation = prompts.conversation();
         var question = conversation.indexOf("Which kind of OpenAI account do you have?");
         assertTrue(question >= 0, "the question comes before its options, so they read as alternatives: " + conversation);
-        for (var option : List.of("  1. ChatGPT, signed in with a browser on " + dev.incusspawn.Platform.thisComputer(),
-                "  2. ChatGPT, signed in with a code on another device",
-                "  3. An OpenAI API key", "  4. None for now")) {
+        for (var option : List.of("  1. An OpenAI API key",
+                "  2. ChatGPT, signed in with a browser on " + dev.incusspawn.Platform.thisComputer(),
+                "  3. ChatGPT, signed in with a code on another device", "  4. None for now")) {
             assertTrue(conversation.indexOf(option) > question, option + " follows the question: " + conversation);
         }
         assertEquals(List.of("Choice: ", "Choice: "), prompts.questions(),
@@ -217,9 +217,59 @@ class ChatGptAuthFlowTest {
         assertNull(new ChatGptSessionStore().read("default"), "Enter signs nothing in");
     }
 
+    /**
+     * A ChatGPT account is chosen past a notice of what it is, never by Enter or a missing
+     * terminal (#2651): Enter at its question goes back to the kinds of account.
+     */
+    @Test
+    void enterAtTheNoticeSignsNothingInAndGoesBackToTheKindsOfAccount() {
+        var init = new FakeInit();
+        var prompts = new ScriptedPrompts().line("2", "", "3", "", "4");
+        var output = run(init, new SpawnConfig(), prompts);
+
+        assertEquals(0, init.signIn.browserSignIns + init.signIn.signIns, "Enter declines the sign-in");
+        assertNothingSaved();
+        assertNull(new ChatGptSessionStore().read("default"));
+        assertEquals(List.of("Choice: ", "Sign in with ChatGPT? (y/N): ", "Choice: ",
+                "Sign in with ChatGPT? (y/N): ", "Choice: "), prompts.questions());
+        var said = String.join(" ", output.lines());
+        for (var point : List.of("experimental", "may stop working when Codex or OpenAI changes",
+                "Codex's own client, which OpenAI has not endorsed", "never see them",
+                "browser sign-in was tested", "code has not been tested")) {
+            assertTrue(said.contains(point), "the notice says: " + point + "\n" + said);
+        }
+    }
+
+    @Test
+    void aMissingTerminalNeverChoosesChatGpt() {
+        var init = new FakeInit();
+        // The menu's answer, then end of input at the notice, as `isx init </dev/null` gives
+        var prompts = new ScriptedPrompts().line("2");
+        RecordingOutput.during(() -> init.setupCodexAuth(new SpawnConfig(), prompts));
+
+        assertEquals(List.of("Choice: ", "Sign in with ChatGPT? (y/N): ", "Choice: "), prompts.questions(),
+                "end of input declines the notice, then leaves the account for later");
+        assertEquals(0, init.signIn.browserSignIns);
+        assertNothingSaved();
+    }
+
+    @Test
+    void codexSignedInHereShowsTheNoticeAndEnterDoesNotSignIn() {
+        var init = new FakeInit();
+        var prompts = new ScriptedPrompts().line("", "");
+        var output = RecordingOutput.during(() -> init.setupCodexLocalChatGpt(new SpawnConfig(), prompts));
+
+        assertEquals(0, init.signIn.browserSignIns + init.signIn.signIns,
+                "Enter asks again, and end of input skips");
+        assertNothingSaved();
+        assertTrue(String.join(" ", output.lines()).contains("Signing in with ChatGPT is experimental."),
+                String.join("\n", output.lines()));
+        assertEquals(List.of("Choice: ", "Choice: ", "Choice: "), prompts.questions());
+    }
+
     @Test
     void anApiKeyIsStillThePlatformCredential() {
-        run(new FakeInit(), new SpawnConfig(), new ScriptedPrompts().line("3").secret(API_KEY));
+        run(new FakeInit(), new SpawnConfig(), new ScriptedPrompts().line("1").secret(API_KEY));
 
         assertEquals(API_KEY, saved("openai.accounts.default.apiKey"));
         assertNull(new ChatGptSessionStore().read("default"), "no session was signed in");
@@ -231,7 +281,7 @@ class ChatGptAuthFlowTest {
         var init = new FakeInit();
         init.checks = java.util.List.of(new CredentialSetup.AuthResult(false, "api.openai.com rejected it (HTTP 401)."),
                 new CredentialSetup.AuthResult(true, "Verified."));
-        var output = run(init, new SpawnConfig(), new ScriptedPrompts().line("3").secret("sk-mistyped")
+        var output = run(init, new SpawnConfig(), new ScriptedPrompts().line("1").secret("sk-mistyped")
                 .line("").secret(API_KEY));
 
         assertEquals(API_KEY, saved("openai.accounts.default.apiKey"));
@@ -248,7 +298,7 @@ class ChatGptAuthFlowTest {
     void aRejectedApiKeyThatIsSkippedIsNotSaved() {
         var init = new FakeInit();
         init.checks = java.util.List.of(new CredentialSetup.AuthResult(false, "api.openai.com rejected it (HTTP 401)."));
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("3").secret("sk-mistyped").line("s"));
+        run(init, new SpawnConfig(), new ScriptedPrompts().line("1").secret("sk-mistyped").line("s"));
 
         assertEquals("", saved("openai.accounts.default.apiKey"));
     }
@@ -258,7 +308,7 @@ class ChatGptAuthFlowTest {
     void aKeyThatCouldNotBeCheckedIsSavedUnverifiedOnRequest() {
         var init = new FakeInit();
         init.checks = java.util.List.of(CredentialSetup.AuthResult.unchecked("isx could not reach api.openai.com: timeout"));
-        var output = run(init, new SpawnConfig(), new ScriptedPrompts().line("3").secret(API_KEY).line("u"));
+        var output = run(init, new SpawnConfig(), new ScriptedPrompts().line("1").secret(API_KEY).line("u"));
 
         assertEquals(API_KEY, saved("openai.accounts.default.apiKey"));
         var said = String.join("\n", output.lines());
@@ -298,7 +348,7 @@ class ChatGptAuthFlowTest {
                   default: keyed
                 """);
 
-        run(new FakeInit(), config, new ScriptedPrompts().line("e", "keyed", "1"));
+        run(new FakeInit(), config, new ScriptedPrompts().line("e", "keyed", "2", "y"));
 
         assertEquals("chatgpt", saved("openai.accounts.keyed.type"));
         assertEquals("", saved("openai.accounts.keyed.apiKey"),
@@ -343,7 +393,7 @@ class ChatGptAuthFlowTest {
         new ChatGptSessionStore().create("sso",
                 new ChatGptSessionStore.Tokens("id", "access", "rt-real", "acct"));
 
-        run(new FakeInit(), config, new ScriptedPrompts().line("r", "3").secret(API_KEY));
+        run(new FakeInit(), config, new ScriptedPrompts().line("r", "1").secret(API_KEY));
 
         assertNull(new ChatGptSessionStore().read("sso"),
                 "the replaced account's session ended with it, nothing points at it anymore");
@@ -371,7 +421,7 @@ class ChatGptAuthFlowTest {
         Files.delete(stuck);
         Files.createDirectories(stuck.resolve("occupied"));
 
-        var output = run(new FakeInit(), config, new ScriptedPrompts().line("r", "3").secret(API_KEY));
+        var output = run(new FakeInit(), config, new ScriptedPrompts().line("r", "1").secret(API_KEY));
 
         assertNull(store.read("other"), "the removal after the failed one still ran");
         assertTrue(Files.exists(stuck), "the failed removal left the session behind, as warned");
@@ -404,7 +454,7 @@ class ChatGptAuthFlowTest {
         new ChatGptSessionStore().create("sso",
                 new ChatGptSessionStore.Tokens("id", "access", "rt-old", "acct-old"));
 
-        run(new FakeInit(), config, new ScriptedPrompts().line("r", "1"));
+        run(new FakeInit(), config, new ScriptedPrompts().line("r", "2", "y"));
 
         assertNull(new ChatGptSessionStore().read("sso"),
                 "the replaced account's session ended with it: no refresh token stays behind");
@@ -440,7 +490,7 @@ class ChatGptAuthFlowTest {
             }
         };
 
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("1", "s"));
+        run(init, new SpawnConfig(), new ScriptedPrompts().line("2", "y", "s"));
 
         assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
     }
@@ -469,7 +519,7 @@ class ChatGptAuthFlowTest {
             }
         };
 
-        var out = run(init, new SpawnConfig(), new ScriptedPrompts().line("2", ""));
+        var out = run(init, new SpawnConfig(), new ScriptedPrompts().line("3", "y", ""));
 
         assertEquals(2, codes.get(), "a second try asks for a new code");
         assertTrue(String.join("\n", out.lines()).contains("CODE-0002"), String.join("\n", out.lines()));
@@ -496,7 +546,7 @@ class ChatGptAuthFlowTest {
             }
         };
 
-        var out = run(init, new SpawnConfig(), new ScriptedPrompts().line("2", "s"));
+        var out = run(init, new SpawnConfig(), new ScriptedPrompts().line("3", "y", "s"));
 
         assertTrue(String.join("\n", out.lines()).contains("Skipped. 'isx account add openai' adds one later."), String.join("\n", out.lines()));
         assertEquals("", saved("openai.accounts.default.type"), "nothing was written");
@@ -536,7 +586,7 @@ class ChatGptAuthFlowTest {
                 """);
         var codes = new java.util.concurrent.atomic.AtomicInteger();
 
-        var out = run(failingCodes(codes, false), config, new ScriptedPrompts().line("a", "work", "2", "s"));
+        var out = run(failingCodes(codes, false), config, new ScriptedPrompts().line("a", "work", "3", "y", "s"));
 
         var said = String.join("\n", out.lines());
         assertTrue(said.contains("Your OpenAI accounts stay as they were."), said);
@@ -549,7 +599,7 @@ class ChatGptAuthFlowTest {
     void anInterruptIsNotAnsweredWithANewCode() {
         var codes = new java.util.concurrent.atomic.AtomicInteger();
         try {
-            var out = run(failingCodes(codes, true), new SpawnConfig(), new ScriptedPrompts().line("2"));
+            var out = run(failingCodes(codes, true), new SpawnConfig(), new ScriptedPrompts().line("3", "y"));
 
             assertEquals(1, codes.get(), "one code, never a second");
             assertTrue(Thread.currentThread().isInterrupted(), "the interrupt is kept for the caller");

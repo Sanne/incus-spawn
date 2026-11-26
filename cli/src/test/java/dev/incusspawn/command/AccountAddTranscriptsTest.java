@@ -52,7 +52,7 @@ class AccountAddTranscriptsTest {
                 "github:\n  accounts:\n    default:\n      token: " + InitTranscriptsTest.GITHUB_TOKEN + "\n  default: default\n", h -> { },
                 ScriptedPrompts.lines("")));
         b.add(new Branch("07-openai-key", "openai, an API key", "openai", null, h -> { },
-                new ScriptedPrompts().line("3").secret("sk-proj-" + "e".repeat(40))));
+                new ScriptedPrompts().line("1").secret("sk-proj-" + "e".repeat(40))));
         b.add(new Branch("08-gemini", "gemini, an API key", "gemini", null, h -> { },
                 new ScriptedPrompts().line("1").secret("AIza" + "f".repeat(35))));
         b.add(new Branch("09-unknown", "a name no step takes", "nope", null, h -> { }, new ScriptedPrompts()));
@@ -86,11 +86,11 @@ class AccountAddTranscriptsTest {
                     h.ghToken = "gho_" + "d".repeat(36);
                 }, new ScriptedPrompts().secret(InitTranscriptsTest.GITHUB_TOKEN).line("", "")));
         b.add(new Branch("23-openai-chatgpt-browser", "openai, ChatGPT in a browser here", "openai", null, h -> { },
-                ScriptedPrompts.lines("1", "")));
+                ScriptedPrompts.lines("2", "y", "")));
         b.add(new Branch("24-openai-chatgpt-device", "openai, ChatGPT with a code on another device", "openai", null, h -> { },
-                ScriptedPrompts.lines("2", "")));
+                ScriptedPrompts.lines("3", "y", "")));
         b.add(new Branch("25-openai-chatgpt-fails", "openai, a ChatGPT sign-in that is cancelled", "openai", null,
-                h -> h.chatGptSignsIn = false, ScriptedPrompts.lines("1", "", "")));
+                h -> h.chatGptSignsIn = false, ScriptedPrompts.lines("2", "y", "", "")));
         b.add(new Branch("26-gemini-google", "gemini, a Google account", "gemini", null, h -> { }, ScriptedPrompts.lines("2", "")));
         b.add(new Branch("27-bob", "bob, an API key", "bob", null, h -> { },
                 new ScriptedPrompts().secret("bob-" + "g".repeat(40)).line("")));
