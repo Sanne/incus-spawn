@@ -86,9 +86,9 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
 
     /**
      * Every instance's read by name, in parallel, but only as many at once as the connection cap
-     * carries (#2527, {@code IncusApi.BOUNDED_EXECS}: 50 on Linux, 8 on macOS): a rolling window, so
-     * N reads take about N/slots times one read. On macOS that is up to about 50 s for 30 instances
-     * whose reads all time out (10 s and the 3 s kill grace, four waves).
+     * carries (#2527, {@code IncusApi.BOUNDED_EXECS}: 62 on Linux, 10 on macOS): a rolling window, so
+     * N reads take about N/slots times one read. On macOS that is up to about 40 s for 30 instances
+     * whose reads all time out (10 s and the 3 s kill grace, three waves).
      */
     public static Map<String, GuestRead> readAll(IncusClient incus, List<InstanceInfo> instances) {
         var done = new java.util.concurrent.ConcurrentHashMap<String, GuestRead>();
@@ -106,7 +106,11 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
      */
     public static void readEach(IncusClient incus, List<InstanceInfo> instances,
                                 java.util.function.BiConsumer<String, GuestRead> read) {
-        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+        // One operation subscription tells every read when its command ended (#2626); none is
+        // opened when no instance runs, since then no read execs anything
+        boolean anyRunning = instances.stream().anyMatch(i -> "running".equalsIgnoreCase(i.status()));
+        try (var batch = anyRunning ? incus.probeBatch() : null;
+             var pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (var instance : instances) {
                 pool.submit(() -> {
                     GuestRead guest;

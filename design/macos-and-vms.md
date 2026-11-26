@@ -502,14 +502,31 @@ The cap predates the launcher: it kept one process from piling streams onto vfki
 It was set well above one operation's need, which stopped being true once the overview ran an exec in every running instance (#2527).
 Each exec holds five connections, so with 30 instances running the execs took every permit, and a finished command's `/wait` waited past the 5 s Incus keeps a finished operation.
 So a bounded exec is now admitted before it is posted, and only as many run at once as fit in the cap with all five connections each (`IncusApi.BOUNDED_EXECS`).
-What this gives up: the reads run in a rolling window of eight on macOS, so N reads take about N/8 times one read, not the time of the slowest one.
-For 30 instances whose reads all time out, that is four waves of 13 s (the 10 s limit and the 3 s kill grace), about 50 s.
+What this gives up: the reads run in a rolling window of ten on macOS (eight before #2626), so N reads take about N/10 times one read, not the time of the slowest one.
+For 30 instances whose reads all time out, that is three waves of 13 s (the 10 s limit and the 3 s kill grace), about 40 s.
 Only probes wait in the window: the overview's reads, and `isx mcp`'s probes of instances other sessions hold (`probeElsewhere`) and of the task a person joins (`TaskJoin`).
-So with more instances to ask than there are slots (eight on macOS, 50 on Linux), a task start waits for the waves before its own.
+So with more instances to ask than there are slots (ten on macOS, 62 on Linux), a task start waits for the waves before its own.
 `isx mcp`'s task status poll runs an unbounded exec, which is not admitted and does not wait.
 On Linux there is no forwarder for the cap to protect: the socket is incusd's own, so its cap is 256, a brake on a runaway that leaves most of the 1024 descriptors a process's soft limit commonly allows.
-That is 50 execs at once, so the overview reads 50 instances in one wave: with 40 instances whose reads took 1.5 s each, 2.5 s instead of 8.7 s (docs/dev/PERFORMANCE-NOTES.md "The overview's reads against the connection cap, on Linux").
+That was 50 execs at once, so the overview read 50 instances in one wave: with 40 instances whose reads took 1.5 s each, 2.5 s instead of 8.7 s (docs/dev/PERFORMANCE-NOTES.md "The overview's reads against the connection cap, on Linux").
 On a Mac the launcher's 192 is the real limit, so the cap's own value there is still to be derived from the launcher's room and measured on a Mac.
+
+**A batch of probes shares one operation subscription, and an exec opens its sockets at once** (#2626).
+An exec in a probe batch (`IncusClient.probeBatch`, opened by the overview's `GuestRead.readEach`) learns when its command ended from one `/1.0/events?type=operation` subscription the batch holds (`OperationWatcher`), not from a `/wait` of its own.
+It registers its operation's id right after the post, before its sockets open, and Incus starts the command only once they are connected, so the end cannot come before the registration.
+An operation that ends before anyone registered it is kept among the last 256 ends.
+The exec then opens control, stdout and stderr at once, and connects and closes stdin beside them (`IncusApi.openExecSockets`), so over the tunnel the four vsock connects overlap instead of following one another.
+If one handshake fails, the others are closed once theirs end, so no connection outlives the failure.
+An exec therefore holds at most four connections: control, stdout, stderr, and either stdin's handshake or a `/wait`.
+So `CONCURRENT_EXECS` is the cap less the pool's idle connections and the batch's subscription, divided by four: 10 on macOS and 62 on Linux, three waves instead of four for 30 instances on a Mac.
+A probe discards its stderr, so its drain waits for stdout alone and closes stderr once stdout is done, rather than waiting up to `OutputDrain.IDLE_MS` for a close frame that never comes.
+
+What the subscription gives up: when it ends while execs wait, each of them asks `/wait` from then on, and one whose command ended more than 5 s earlier gets a 404 and no exit code.
+A subscription that goes silent without ending is not noticed before the probe's limit: the probe is then killed, and its end asked of `/wait`, so a command that did end in the last 5 s is still reported, as killed.
+The batch is short, one read of the overview, and its subscription is pinged like the TUI's, so both are rare.
+A `/wait` for each exec was the alternative, and costs one connection and one request per exec, as well as the 404 when a finished command's `/wait` waits for a connection.
+Unbatched execs, the task status poll and builds, keep their `/wait`.
+On Linux the batch measured no faster, since incusd's own socket makes a handshake cheap and 30 probes fit in one wave (docs/dev/PERFORMANCE-NOTES.md "Probe batches on one operation subscription, on Linux"); the gain is the Mac's, still to be measured there.
 
 The framework's objects are used on the main queue alone, the queue the machine is made on.
 A relay's thread reaches the guest through `dial`, which asks the main queue and waits for it; nothing on the main queue waits for a relay.

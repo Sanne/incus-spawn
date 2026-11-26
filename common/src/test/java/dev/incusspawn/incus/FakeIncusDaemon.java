@@ -448,6 +448,102 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    // --- operation events (#2626) ---
+    /** Whether {@code /1.0/events?type=operation} is served while execs are. */
+    private boolean servesOperationEvents = true;
+    private final List<EventSocket> operationListeners = new ArrayList<>();
+    /** The fds of each served exec connected so far, by its operation id. */
+    private final Map<String, java.util.Set<String>> execConnected = new LinkedHashMap<>();
+    /** How long a served exec's command runs once every fd is connected, before its end event. */
+    private long execRunMillis;
+
+    /** Refuse {@code /1.0/events?type=operation}, as a daemon whose event endpoint cannot be reached. */
+    public synchronized FakeIncusDaemon refusesOperationEvents() {
+        servesOperationEvents = false;
+        return this;
+    }
+
+    /** A served exec's command runs this long once its fds are connected, before its end is announced. */
+    public synchronized FakeIncusDaemon execRunsFor(java.time.Duration run) {
+        execRunMillis = run.toMillis();
+        return this;
+    }
+
+    /** End every operation-event subscription now, as a daemon restarting or a link dropping. */
+    public synchronized void dropOperationEvents() {
+        operationListeners.forEach(EventSocket::close);
+        operationListeners.clear();
+    }
+
+    /** How many operation-event subscriptions are open. */
+    public synchronized int operationListeners() {
+        operationListeners.removeIf(EventSocket::closed);
+        return operationListeners.size();
+    }
+
+    private void fdConnected(String secret) {
+        int dash = secret.lastIndexOf('-');
+        if (dash < 0) return;
+        var id = secret.substring(0, dash);
+        var connected = execConnected.get(id);
+        if (connected == null || !connected.add(secret.substring(dash + 1)) || connected.size() < 4) return;
+        // wait-for-websocket: the command runs once every fd is connected, then its operation ends
+        var exit = execReturns.getOrDefault(id, 0);
+        long run = execRunMillis;
+        Thread.ofVirtual().start(() -> {
+            try {
+                if (run > 0) Thread.sleep(run);
+            } catch (InterruptedException e) {
+                return;
+            }
+            announceEnd(id, exit);
+        });
+    }
+
+    private synchronized void announceEnd(String id, int exit) {
+        var event = JqObject.ofEntries("type", "operation", "metadata", JqObject.ofEntries(
+                "id", id, "class", "websocket", "status", "Success", "status_code", 200,
+                "metadata", JqObject.of("return", exit)));
+        var bytes = JqValues.serializeToBytes(event);
+        operationListeners.removeIf(EventSocket::closed);
+        for (var listener : operationListeners) listener.push(bytes);
+    }
+
+    /** An event subscription: each pushed message, until closed. */
+    private static final class EventSocket implements WsConnection {
+        private static final byte[] CLOSED = new byte[0];
+        private final java.util.concurrent.LinkedBlockingQueue<byte[]> messages = new java.util.concurrent.LinkedBlockingQueue<>();
+        private volatile boolean closed;
+
+        void push(byte[] message) { messages.add(message); }
+        boolean closed() { return closed; }
+
+        @Override
+        public byte[] readMessage() throws IOException {
+            if (closed) return null;
+            try {
+                var message = messages.take();
+                return message == CLOSED ? null : message;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted");
+            }
+        }
+
+        @Override public byte[] readPayload() throws IOException { return readMessage(); }
+        @Override public long millisSinceLastReceived() { return 0; }
+        @Override public boolean hasUnread() { return !messages.isEmpty(); }
+        @Override public void sendData(byte[] data, int offset, int length) {}
+        @Override public void sendPing() {}
+        @Override public void sendClose() {}
+
+        @Override
+        public void close() {
+            closed = true;
+            messages.add(CLOSED);
+        }
+    }
+
     /** A served exec whose command line contains {@code needle} prints {@code stdout}. */
     public synchronized FakeIncusDaemon execOutput(String needle, String stdout) {
         servesExecs = true;
@@ -606,9 +702,15 @@ public final class FakeIncusDaemon implements IncusTransport {
     @Override
     public synchronized WsConnection openWebSocket(String wsPath) throws IOException {
         requests.add("WS " + wsPath);
+        if (wsPath.equals("/1.0/events?type=operation") && servesExecs && servesOperationEvents) {
+            var listener = new EventSocket();
+            operationListeners.add(listener);
+            return listener;
+        }
         var marker = "/websocket?secret=";
         var secret = wsPath.contains(marker) ? wsPath.substring(wsPath.indexOf(marker) + marker.length()) : null;
         if (!servesExecs || secret == null) throw new IOException("FakeIncusDaemon does not serve WebSockets");
+        fdConnected(secret);
         return new ExecSocket(execStdout.getOrDefault(secret, new byte[0]), execStdinSecrets.contains(secret));
     }
 
@@ -631,6 +733,7 @@ public final class FakeIncusDaemon implements IncusTransport {
         execStderrs.entrySet().stream().filter(e -> commandLine.contains(e.getKey())).findFirst()
                 .ifPresent(e -> execStdout.put(id + "-2", e.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         execStdinSecrets.add(id + "-0");
+        execConnected.put(id, new java.util.HashSet<>());
         execExits.entrySet().stream().filter(e -> commandLine.contains(e.getKey())).findFirst()
                 .ifPresent(e -> execReturns.put(id, e.getValue()));
         return async(id, JqObject.ofEntries("id", id, "metadata", JqObject.of("fds", fds)));

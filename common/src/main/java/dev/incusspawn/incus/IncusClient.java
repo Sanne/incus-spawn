@@ -348,6 +348,35 @@ public class IncusClient {
                 uid, uid, home, Map.of("HOME", home), stdout, null, limit);
     }
 
+    /** A scope in which {@link #execProbe}s learn their ends together; closing it never throws. */
+    public interface ProbeBatch extends AutoCloseable {
+        @Override
+        void close();
+    }
+
+    /**
+     * Open a probe batch for a fan-out of {@link #execProbe}s (#2626): until it is closed, every
+     * probe learns when its command ended from one operation-event subscription, so it holds no
+     * {@code /wait} of its own. Without the subscription, or once it is lost, each probe waits on
+     * {@code /wait} as before.
+     */
+    public ProbeBatch probeBatch() {
+        AutoCloseable batch;
+        try {
+            batch = http().openProbeBatch();
+        } catch (RuntimeException unreachable) {
+            // No batch: each probe meets the failure itself, and reports it as its own answer
+            return () -> { };
+        }
+        return () -> {
+            try {
+                batch.close();
+            } catch (Exception e) {
+                // releasing a batch only decrements a count and closes a socket
+            }
+        };
+    }
+
     /**
      * Execute a bidirectional command inside a container, forwarding stdin from the host.
      * Used for binary protocols like the git pack protocol.

@@ -133,6 +133,15 @@ final class LossyIncusServer implements AutoCloseable {
      * command. That fd's client frames (and PINGs) go unread while it blocks.
      */
     volatile Runnable afterFdRegistered = () -> { };
+    /** Runs on an exec fd's server thread before its upgrade is answered: the client's handshake waits. */
+    volatile Runnable beforeUpgrade = () -> { };
+    /** false: the stderr fd gets no close frame and stays open, while stdout and control close. */
+    volatile boolean closesStderr = true;
+    /** The exec fd ("0", "1", "2" or "control") whose upgrade is refused with 403, or null. */
+    volatile String rejectsFd = null;
+    /** Operation-event subscriptions ({@code /1.0/events?type=operation}) opened, in all. */
+    final AtomicInteger eventSubscriptions = new AtomicInteger();
+    private final List<WsPeer> eventPeers = new CopyOnWriteArrayList<>();
 
     final AtomicInteger connectionsAccepted = new AtomicInteger();
     /** "METHOD path" of every plain request that reached the server, in arrival order. */
@@ -395,9 +404,14 @@ final class LossyIncusServer implements AutoCloseable {
             conn.close();
             return;
         }
-        out.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
-                + "Connection: Upgrade\r\nSec-WebSocket-Accept: fake\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
-        out.flush();
+        if (req.path().startsWith("/1.0/events?type=operation")) {
+            upgraded(out);
+            var peer = new WsPeer(conn, out);
+            eventPeers.add(peer);
+            eventSubscriptions.incrementAndGet();
+            readClientFrames(in, "events", peer);
+            return;
+        }
         var secret = req.path().substring(req.path().indexOf("secret=") + 7);
         var fd = switch (secret) {
             case FD_STDIN -> "0";
@@ -406,6 +420,14 @@ final class LossyIncusServer implements AutoCloseable {
             case FD_CONTROL -> "control";
             default -> "unknown";
         };
+        beforeUpgrade.run();
+        if (fd.equals(rejectsFd)) {
+            out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            conn.close();
+            return;
+        }
+        upgraded(out);
         var peer = new WsPeer(conn, out);
         execFds.put(fd, peer);
         afterFdRegistered.run();
@@ -416,6 +438,32 @@ final class LossyIncusServer implements AutoCloseable {
             Thread.ofVirtual().start(this::runCommand);
         }
         readClientFrames(in, fd, peer);
+    }
+
+    private static void upgraded(OutputStream out) throws IOException {
+        out.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                + "Connection: Upgrade\r\nSec-WebSocket-Accept: fake\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+        out.flush();
+    }
+
+    /** End every operation-event subscription, without a close frame: a link that dropped. */
+    void dropEvents() {
+        for (var peer : eventPeers) peer.drop();
+        eventPeers.clear();
+    }
+
+    /** Tell every operation-event subscription that op1 ended, as Incus does. */
+    private void announceEnd() {
+        var event = finalStatus.equals("Success")
+                ? "{\"type\":\"operation\",\"metadata\":{\"id\":\"op1\",\"status\":\"Success\",\"metadata\":{\"return\":" + exitCode + "}}}"
+                : "{\"type\":\"operation\",\"metadata\":{\"id\":\"op1\",\"status\":\"" + finalStatus + "\",\"metadata\":{}}}";
+        for (var peer : eventPeers) {
+            try {
+                peer.send(0x1, event.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException ignored) {
+                // a subscription the client closed
+            }
+        }
     }
 
     private void runCommand() {
@@ -434,9 +482,13 @@ final class LossyIncusServer implements AutoCloseable {
             execFds.get("1").send(0x2, stdout.getBytes(StandardCharsets.UTF_8));
             execFds.get("2").send(0x2, stderr.getBytes(StandardCharsets.UTF_8));
             if (sendCloseFrames) {
-                for (var fd : List.of("1", "2", "control")) execFds.get(fd).closeWithFrame();
+                for (var fd : List.of("1", "2", "control")) {
+                    if (fd.equals("2") && !closesStderr) continue;
+                    execFds.get(fd).closeWithFrame();
+                }
             }
             operationDone.countDown();
+            announceEnd();
             if (trailingInOneWrite) {
                 execFds.get("1").sendAll(trailingStdout);
                 return;
@@ -554,6 +606,10 @@ final class LossyIncusServer implements AutoCloseable {
             }
             frame.writeBytes(payload);
             return frame.toByteArray();
+        }
+
+        void drop() {
+            try { conn.close(); } catch (IOException ignored) {}
         }
 
         synchronized void closeWithFrame() throws IOException {

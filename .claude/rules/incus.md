@@ -72,8 +72,8 @@ Every response is read through `UnixSocketTransport.socketInput` (#1650): `HttpR
 A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past one response belong to the next.
 
 **macOS vsock robustness**: the vsock tunnel as vfkit ran it did not reliably propagate connection close/EOF, which drove several design choices (see design/macos-and-vms.md "macOS vsock robustness" and appliance/DESIGN.md):
-- **Exec completion via `/wait`, not close frames.**
-  `IncusApi.execWebSocket` unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint (daemon operation state over HTTP) as the authoritative completion + exit-code signal, then drains and force-closes the data sockets -- so a lost close frame can't hang exec.
+- **Exec completion via `/wait` or an operation event, not close frames.**
+  `IncusApi.execWebSocket` unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint (daemon operation state over HTTP), or in a probe batch the operation's event, as the authoritative completion + exit-code signal, then drains and force-closes the data sockets -- so a lost close frame can't hang exec.
   Every exec fd is keepalive-pinged, stdin included (#1647).
   `IncusApi.Keepalive` stops on a flag, never an interrupt or a wait for the ping in flight; a socket sends no ping after its close frame.
   The drain is adaptive (`OutputDrain`), and counts idle only while it was watching: a gap between polls counts for at most half the idle window, and a late poll ends the drain only after an idle poll before it, since a pause of the host process is no sign the output stopped (#1062, #1084) -- but polls late again and again must not hold it to its ceiling (#1122).
@@ -84,7 +84,10 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
   Any other exit before the command finished (a `/wait` overrunning its slack, a lost op, an interrupt) sends the kill too, from `waitForExecOp`'s `finally`.
   `IncusApiLossyTunnelTest` pins all three.
   A bounded exec (`execStreamWithin`) waits for a slot in `IncusApi.BOUNDED_EXECS` before it is posted (#2527, `ExecAdmissionTest`).
-  `UnixSocketTransport.CONCURRENT_EXECS` slots exist: the cap less the pool's idle connections, divided by the five connections one exec holds, which is 50 on Linux and 8 on macOS.
+  `UnixSocketTransport.CONCURRENT_EXECS` slots exist: the cap less the pool's idle connections and a probe batch's subscription, divided by the four connections one exec holds, which is 62 on Linux and 10 on macOS.
+  An exec opens control, stdout and stderr at once and connects and closes stdin beside them (`IncusApi.openExecSockets`, #2626); a failed handshake closes the others, and its `/wait` comes only after, so it holds at most four.
+  Inside an `IncusClient.probeBatch()` (the overview's `GuestRead.readEach`) a bounded exec takes its end from the batch's one `/1.0/events?type=operation` subscription (`OperationWatcher`), registered right after its post, and asks `/wait` only once the subscription is lost or the command was killed.
+  A probe's discarded stderr is not drained: it is closed once stdout is done (`drainThenClose`).
   An exec's limit starts once it has its slot.
   Unadmitted, the overview's read of every running instance took every connection permit with its sockets, and a finished command's `/wait` waited for one past the 5 s Incus keeps a finished operation: a 404, `unknown` work state.
   So a lost operation's warning names the instance, the time since the post and the time spent waiting for a connection.
@@ -266,6 +269,7 @@ See design/storage.md "Orphaned subvolumes and dangling records".
 `InstanceLifecycleRequestBudgetTest` (and `ActionResolverRequestBudgetTest` for action contexts) pins exact request counts using `FakeIncusDaemon` (test scope, an in-memory `IncusTransport`, reachable from `cli` tests through common's test-jar).
 A change that adds requests to a covered flow fails it, and one that removes requests must lower the budget.
 `FakeIncusDaemon` serves no exec unless asked: `servesExecs()` and `execOutput(needle, stdout)` make each exec exit 0, recording its POST, a `WS` per fd and its wait, so a flow that runs commands in the guest can be counted too.
+While it serves execs it also serves `/1.0/events?type=operation`, announcing each exec's end once its four fds are connected (`execRunsFor`, `refusesOperationEvents`, `dropOperationEvents`), so a probe batch records one `WS /1.0/events?type=operation` and no wait.
 Give a new user-facing flow in `common` a budget, and prefer one `instanceMetadata`/`configByPrefix` read over several `configGet` calls.
 See design/testing.md "Request budgets".
 
