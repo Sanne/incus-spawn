@@ -3,6 +3,22 @@
 Answers to the questions that come up once an agent is working in an instance.
 Each answer says what to do first, then why.
 
+### How do I use my ChatGPT subscription for Codex without paying API charges?
+
+On the host, run `isx account add openai` and choose **ChatGPT**.
+During first-time setup, choose Codex in `isx init` to get the same sign-in options.
+Open the sign-in link in a browser on the host, or choose the device-code option if your browser is on another computer.
+
+Sign in with the account that holds your subscription so Codex uses the plan's included allowance.
+This includes ChatGPT Pro through [Codex for Open Source](https://developers.openai.com/community/codex-for-oss).
+Choosing an OpenAI API key sends usage to that key's API billing account.
+
+If your instance already uses an API key, add the ChatGPT account under a separate name, such as `oss-pro`.
+For an instance named `dev`, run `isx account set dev openai=oss-pro` on the host, then stop and start the instance.
+
+Open a fresh shell in the instance, start `codex`, and enter `/status` to check the account before sending a prompt.
+isx keeps the ChatGPT session on the host and treats this sign-in as experimental.
+
 ### Why does clicking a URL in Codex fail with "No valid browsers detected"?
 
 Use Ctrl+Shift-click to open the URL in your host browser.
