@@ -488,8 +488,19 @@ public class Tui {
     private final java.util.Map<String, PendingMerge> pendingMerges = new java.util.concurrent.ConcurrentHashMap<>();
     /** The instance whose merge is being made: at most one at a time, so moving the cursor never piles up model calls. */
     private final java.util.concurrent.atomic.AtomicReference<String> mergingNow = new java.util.concurrent.atomic.AtomicReference<>();
-    /** The instance the preview shows, when it shows one: the only one a merge is asked for. */
+    /** The instance whose merged summary is on screen: the preview's, or the open F3 details'. The only one a merge is asked for. */
     private volatile String previewed;
+    /**
+     * Whether the last frame had room for the Work tab's preview (beside the table, or at least
+     * eight rows under it). With {@link #previewShown} it is the one predicate of whether the
+     * preview is drawn, which the merge and the context line's hint follow.
+     */
+    volatile boolean previewFits = true;
+
+    /** Whether the Work tab draws the preview: the person's choice, and room for it. */
+    boolean previewDrawn() {
+        return view == View.WORK && previewFits && previewShown(lastWidth);
+    }
 
     /** How many sessions the preview says are being merged for {@code name}: waiting for its turn or asked; 0 for none. */
     int mergingSessions(String name) {
@@ -500,10 +511,14 @@ public class Tui {
     }
     private volatile int mergingCount;
 
-    /** Notes which instance the preview shows, on the UI thread, and asks for its merge. */
+    /**
+     * Notes, on the UI thread, which instance shows its merged summary: the one whose F3 details
+     * are open, else the one the Work tab's preview shows. Then asks for its merge.
+     */
     private void notePreviewed() {
         var selected = instanceTableState == null || entries == null ? null : selectedEntry(instanceTableState);
-        previewed = view == View.WORK && previewShown(lastWidth) && selected != null ? selected.name() : null;
+        if (mode == Mode.INSTANCE_DETAIL && detailInstanceName != null) previewed = detailInstanceName;
+        else previewed = previewDrawn() && selected != null ? selected.name() : null;
         mergePreviewed();
     }
 
@@ -1246,6 +1261,12 @@ public class Tui {
             if (overview) readOverview();
             return true;
         }
+        // p: on the Work tab, the preview of the selected instance, shown or hidden, whatever the
+        // instance is doing; F6 edits the purpose there
+        if (key.isChar('p') && !key.hasCtrl() && view == View.WORK) {
+            previewChoice = !previewShown(lastWidth);
+            return true;
+        }
         // With marks, F8, F7 and Shift+F7 act on the marked instances and leave the cursor row alone
         if (!markedInstances.isEmpty() && ((isDestroyKey(key) && !key.hasShift()) || key.isKey(KeyCode.F7))) {
             actOnMarkedInstances(key);
@@ -1313,11 +1334,6 @@ public class Tui {
         if (key.isKey(KeyCode.F7) && isRunning(selected)) {
             if (key.hasShift()) restartInBackground(selected);
             else stopInBackground(selected);
-            return true;
-        }
-        // p: on the Work tab, the preview of the selected instance, shown or hidden; F6 edits the purpose there
-        if (key.isChar('p') && !key.hasCtrl() && view == View.WORK) {
-            previewChoice = !previewShown(lastWidth);
             return true;
         }
         if (key.isChar('p') && !key.hasCtrl()) {
@@ -2235,6 +2251,7 @@ public class Tui {
                     var effort = log == null ? null : dev.incusspawn.command.OverviewCommand.effortOf(log, selected);
                     var github = InstanceDetailView.githubRows(effort, effort == null || reading == null ? List.of()
                             : dev.incusspawn.command.OverviewCommand.statesOf(reading, selected, effort));
+                    instanceDetail.merging = mergingSessions(selected.name());
                     instanceDetail.render(frame, screen, selected, detailAccountUses,
                             detailRegisteredWith, BaseImageAge.assess(selected.metadata(), imageDefs), detailMcpScope,
                             github, reading == null ? null : reading.summaryOf(selected));
@@ -3190,10 +3207,11 @@ public class Tui {
         }
         // Only the latest read is kept: an earlier one that ends later would show older values
         long read;
-        // A merge waiting from an earlier read is asked again by this one, if it is still needed
-        pendingMerges.clear();
         synchronized (overviewLock) {
             read = overviewReads.incrementAndGet();
+            // A merge waiting from an earlier read is asked again by this one, if it is still needed
+            long current = read;
+            pendingMerges.values().removeIf(waiting -> waiting.read() < current);
             var pending = java.util.concurrent.ConcurrentHashMap.<String>newKeySet();
             running.forEach(i -> pending.add(i.name()));
             overviewPending = pending;
@@ -3268,9 +3286,18 @@ public class Tui {
                         try {
                             var step = merger.step(byName.get(name), guest);
                             if (step.call() == null) {
+                                // A cache hit: nothing waits for a call any more
+                                synchronized (overviewLock) {
+                                    var waiting = pendingMerges.get(name);
+                                    if (waiting != null && waiting.read() <= read) pendingMerges.remove(name, waiting);
+                                }
                                 publishOverview(read, r -> r.withMerge(name, step.known()));
                             } else {
-                                pendingMerges.put(name, new PendingMerge(read, merger, byName.get(name), guest, step));
+                                // Only the latest read queues: an older one's entry would outlive the refresh
+                                synchronized (overviewLock) {
+                                    if (overviewReads.get() != read) return;
+                                    pendingMerges.put(name, new PendingMerge(read, merger, byName.get(name), guest, step));
+                                }
                                 needsRepaint.set(true);
                                 mergePreviewed();
                             }
@@ -3668,11 +3695,14 @@ public class Tui {
         for (var entry : allEntries != null ? allEntries : entries) rows.put(entry, instanceRow(entry));
         for (var entry : entries) rows.computeIfAbsent(entry, this::instanceRow);
         var natural = new int[INSTANCE_COLUMNS];
+        int widest = 0;
         for (var measured : rows.entrySet()) {
             var row = measured.getValue();
             for (int c = 1; c < natural.length; c++) natural[c] = Math.max(natural[c], row.cells().get(c).width());
-            natural[0] = Math.max(natural[0], nameWidth(measured.getKey()));
+            natural[0] = Math.max(natural[0], nameCellWidth(measured.getKey()));
+            widest = Math.max(widest, nameWidth(measured.getKey()));
         }
+        widestName = widest;
         instanceNatural = natural;
         measuredRows = rows;
 
@@ -3756,6 +3786,25 @@ public class Tui {
     static int nameWidth(InstanceInfo entry) {
         return 2 + dev.tamboui.text.CharWidth.of(entry.name());
     }
+
+    /**
+     * The cells the Instances table's NAME needs for this instance: its name and glyph, and the
+     * word of a lasting state ({@code error}, {@code frozen}), which stays until someone acts. The
+     * word of an operation under way is left out, so a stop moves no column; NAME reserves
+     * room for the longest of those ({@link #OPERATION_WORD}) instead.
+     */
+    static int nameCellWidth(InstanceInfo entry) {
+        var word = unusualState(entry);
+        boolean lasting = word != null && entry.pendingOp().isEmpty();
+        return nameWidth(entry) + (lasting ? 1 + dev.tamboui.text.CharWidth.of(word) : 0);
+    }
+
+    /** The cells of the longest operation word after a name, with the space before it. */
+    static final int OPERATION_WORD = 1 + java.util.stream.Stream.of(Metadata.OP_STARTING, Metadata.OP_STOPPING,
+            Metadata.OP_RESTARTING, Metadata.OP_DELETING).mapToInt(String::length).max().orElse(0);
+
+    /** The widest name of the instances, glyph included, words left out: what NAME reserves an operation word beside. */
+    volatile int widestName;
 
     /** Each instance's status and operation as the rows last showed them: a change flashes its row. */
     private final Map<String, String> statusSeen = new java.util.HashMap<>();

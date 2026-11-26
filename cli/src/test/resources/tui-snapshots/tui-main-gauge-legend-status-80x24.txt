@@ -10,9 +10,9 @@
 
                                       ! outdated   △ changed   ↑ parent rebuilt
  Instances ─────────────────────────────────────────────────────────────────────
-     NAME     IP              PARENT        RUNTIME           AGE          DISK
-   ● work-1                   tpl-minimal   container         3h ago       -
-   ○ vm-1                     tpl-minimal   virtual-machine   2 days ago   -
+     NAME               IP       PARENT       RUNTIME          AGE         DISK
+   ● work-1                      tpl-minimal  container        3h ago      -
+   ○ vm-1                        tpl-minimal  virtual-machine  2 days ago  -
 
 
 

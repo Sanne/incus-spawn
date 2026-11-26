@@ -10,10 +10,10 @@
 
                                       ! outdated   △ changed   ↑ parent rebuilt
  Instances ─────────────────────────────────────────────────────────────────────
-     NAME     IP               PARENT         RUNTIME      AGE    DISK
-  ◆● alpha                     tpl-minimal    container    -      -
- ▸ ● beta                      tpl-minimal    container    -      -
-  ◆○ gamma                     tpl-minimal    container    -      -
+     NAME               IP              PARENT        RUNTIME     AGE   DISK
+  ◆● alpha                              tpl-minimal   container   -     -
+ ▸ ● beta                               tpl-minimal   container   -     -
+  ◆○ gamma                              tpl-minimal   container   -     -
 
 
 

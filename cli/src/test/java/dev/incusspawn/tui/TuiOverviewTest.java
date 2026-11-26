@@ -435,6 +435,98 @@ class TuiOverviewTest {
         assertTrue(screen(tui).contains("Ported and tested the parser"), screen(tui));
     }
 
+    private static final String TWO_SESSIONS = guest("total 2\n" + claudeSession(1762164000, "Ported the parser")
+            + claudeSession(1762160000, "Wrote the tests"));
+
+    @Test
+    void f3AsksForTheMergeOfAnInstanceThePreviewDoesNotShow() throws Exception {
+        var tui = tui(80, daemon -> daemon.execOutput(dev.incusspawn.command.WorkState.HEADER, TWO_SESSIONS));
+        workTab(tui);
+        readsFinish();
+        assertFalse(screen(tui).contains("─ mine ─"), "no preview at 80 columns");
+        assertTrue(merges.isEmpty(), "nothing shows the merged summary, so nothing is merged");
+
+        press(tui, KeyEvent.ofKey(KeyCode.F3));
+        assertEquals(1, merges.size(), "F3 shows it, so F3 asks for it");
+        assertTrue(screen(tui).contains("merging 2 sessions"), screen(tui));
+        merges.removeFirst().run();
+        var merged = screen(tui);
+        assertTrue(merged.contains("a model's merge") && merged.contains("The parser is ported."), merged);
+        assertEquals(1, modelCalls.get());
+    }
+
+    @Test
+    void f3OnTheInstancesTabsOverviewAsksForTheMergeToo() throws Exception {
+        var tui = tui(120, daemon -> daemon.execOutput(dev.incusspawn.command.WorkState.HEADER, TWO_SESSIONS));
+        press(tui, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar('o'));
+        readsFinish();
+        assertTrue(merges.isEmpty());
+        press(tui, KeyEvent.ofKey(KeyCode.F3));
+        assertEquals(1, merges.size());
+    }
+
+    @Test
+    void pTogglesThePreviewWhileTheInstanceIsBusy() throws Exception {
+        var tui = tui(120, daemon -> daemon.instance("busy", "container", "Running", Map.of(Metadata.TYPE, "branch",
+                Metadata.PARENT, "tpl-minimal", Metadata.PROFILE, "tpl-minimal", Metadata.PENDING_OP, Metadata.OP_STOPPING)));
+        workTab(tui);
+        readsFinish();
+        press(tui, KeyEvent.ofKey(KeyCode.HOME));
+        assertEquals("busy", tui.selectedInstance().name());
+        assertTrue(screen(tui).contains("┬─ busy"));
+        press(tui, KeyEvent.ofChar('p'));
+        assertFalse(screen(tui).contains("┬"), "p is not an action on the instance: " + screen(tui));
+    }
+
+    @Test
+    void aTerminalTooShortForThePreviewOffersNoKeyForIt() throws Exception {
+        height = 12;
+        var tui = tui(80, daemon -> daemon.execOutput(dev.incusspawn.command.WorkState.HEADER, TWO_SESSIONS));
+        workTab(tui);
+        readsFinish();
+        press(tui, KeyEvent.ofChar('p'));
+        var shown = screen(tui);
+        assertFalse(shown.contains("p Preview") || shown.contains("Hide preview"), shown);
+        assertFalse(tui.previewDrawn());
+        assertTrue(merges.isEmpty(), "no merge for a preview that is not drawn");
+    }
+
+    @Test
+    void aMergeQueuedByARefreshedReadIsDropped() throws Exception {
+        var held = new java.util.concurrent.CountDownLatch(1);
+        var configs = new AtomicInteger();
+        var tui = tui(80, daemon -> daemon.execOutput(dev.incusspawn.command.WorkState.HEADER, TWO_SESSIONS));
+        // The first read's config waits, so its guest has passed the read's check and waits to merge
+        tui.overviewConfig = () -> {
+            if (configs.incrementAndGet() == 1) {
+                try {
+                    held.await();
+                } catch (InterruptedException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+            return config();
+        };
+        workTab(tui);
+        var first = new Thread(reads.removeFirst());
+        first.start();
+        for (int i = 0; i < 500 && !row(screen(tui), "mine").contains("↑2"); i++) Thread.sleep(10);
+        assertTrue(row(screen(tui), "mine").contains("↑2"), "the first read's guest answered");
+        press(tui, KeyEvent.ofChar('r'));
+        held.countDown();
+        first.join(10_000);
+        assertEquals(0, tui.mergingSessions("mine"), "the older read queued nothing after the refresh began");
+    }
+
+    @Test
+    void aRowCutByTheOffsetInAOneLineViewportIsDrawnFromTheTop() {
+        var rows = List.of(dev.tamboui.widgets.table.Row.from("a").height(2), dev.tamboui.widgets.table.Row.from("b").height(2));
+        var area = new dev.tamboui.layout.Rect(0, 0, 10, 2);
+        assertArrayEquals(new int[] {-1, 1}, MainScreen.rowTops(rows, 3, area), "as tamboui draws the second row, from the top");
+        assertArrayEquals(new int[] {1, -1}, MainScreen.rowTops(rows, 0, area));
+        assertArrayEquals(new int[] {1, -1}, MainScreen.rowTops(rows, 1, area), "the offset inside the first row still shows it");
+    }
+
     @Test
     void marksAndF8DestroyTheMarkedRowsOfTheOverview() throws Exception {
         var tui = tui(80);

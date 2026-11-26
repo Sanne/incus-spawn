@@ -392,10 +392,19 @@ final class MainScreen {
     static int[] rowTops(List<Row> rows, int offset, dev.tamboui.layout.Rect tableArea) {
         var tops = new int[rows.size()];
         int line = 0;
+        // As the table draws them: the first row the offset does not pass is drawn whole from the
+        // top, even when the offset cuts it, as tamboui's own scrolling does in a viewport
+        // shorter than a row; each next row follows it
+        int y = tableArea.top() + 1;
         for (int row = 0; row < rows.size(); row++) {
-            int y = tableArea.top() + 1 + line - offset;
-            tops[row] = line >= offset && y < tableArea.bottom() ? y : -1;
-            line += rows.get(row).height();
+            int height = rows.get(row).height();
+            if (line + height <= offset || y >= tableArea.bottom()) {
+                tops[row] = -1;
+            } else {
+                tops[row] = y;
+                y += height;
+            }
+            line += height;
         }
         return tops;
     }
@@ -551,20 +560,35 @@ final class MainScreen {
         dev.tamboui.layout.Rect previewArea = null;
         var border = Style.EMPTY.fg(tui.theme.panelBorderUnfocused());
         var buffer = frame.buffer();
-        if (tui.view == Tui.View.WORK && tui.previewShown(area.width()) && selected != null) {
-            if (area.width() >= WorkTable.SIDE_PREVIEW_MIN_WIDTH) {
+        boolean beside = area.width() >= WorkTable.SIDE_PREVIEW_MIN_WIDTH;
+        // The one test of room for the preview, which the hint and the merge follow (Tui.previewDrawn)
+        if (tui.view == Tui.View.WORK) tui.previewFits = beside || inner.height() >= PREVIEW_BELOW_LEAST_ROWS;
+        if (tui.previewDrawn() && selected != null) {
+            if (beside) {
                 int previewWidth = WorkTable.previewWidth(inner.width());
                 int tableWidth = inner.width() - previewWidth - 1;
                 tableArea = new dev.tamboui.layout.Rect(inner.left(), inner.top(), tableWidth, inner.height());
                 int x = inner.left() + tableWidth;
                 previewDividerX = x;
                 previewArea = new dev.tamboui.layout.Rect(x + 1, inner.top(), previewWidth, inner.height());
-                // The title rule meets the divider, and the instance's name stands on it
-                buffer.setString(x, area.top(), "┬─ ", border);
-                buffer.setString(x + 3, area.top(), WorkTable.middleCut(selected.name(), Math.max(1, previewWidth - 6)) + " ",
-                        Style.EMPTY.bold().fg(tui.theme.accent()));
+                // The title rule meets the divider, and the instance's name stands on it; a title
+                // longer than the table keeps all it says, the name after it
+                int titleEnd = area.left() + CharWidth.of(overviewTitle());
+                int nameAt;
+                if (titleEnd <= x) {
+                    buffer.setString(x, area.top(), "┬─ ", border);
+                    nameAt = x + 3;
+                } else {
+                    buffer.setString(titleEnd, area.top(), "─ ", border);
+                    nameAt = titleEnd + 2;
+                }
+                int nameRoom = area.right() - nameAt - 2;
+                if (nameRoom > 0) {
+                    buffer.setString(nameAt, area.top(), WorkTable.middleCut(selected.name(), Math.min(nameRoom, previewWidth - 6)) + " ",
+                            Style.EMPTY.bold().fg(tui.theme.accent()));
+                }
                 for (int y = inner.top(); y < inner.bottom(); y++) buffer.setString(x, y, "│", border);
-            } else if (inner.height() >= 8) {
+            } else {
                 int previewHeight = Math.min(WorkTable.PREVIEW_BELOW_MOST, inner.height() / 2);
                 tableArea = new dev.tamboui.layout.Rect(inner.left(), inner.top(), inner.width(), inner.height() - previewHeight);
                 int ruleY = tableArea.bottom();
@@ -578,6 +602,9 @@ final class MainScreen {
         renderRows(frame, tableArea, tableState, focused, workColumns());
         if (previewArea != null) renderPreview(frame, previewArea, selected);
     }
+
+    /** The fewest rows the panel needs for the preview under its table. */
+    static final int PREVIEW_BELOW_LEAST_ROWS = 8;
 
     /**
      * Where the Work tab's preview divider stands in this frame, for the footer rule's {@code ┴},
@@ -640,7 +667,10 @@ final class MainScreen {
                 source.add(7);
             }
             var shown = ColumnFit.kept(all, actualArea.width() - HIGHLIGHT_WIDTH);
-            var columns = shown.stream().map(all::get).toList();
+            // Spare room is kept for an operation's word after the widest name, so a stop starting
+            // neither moves the columns nor has its word cut to a stub; it never leaves a column out
+            var columns = new ArrayList<>(shown.stream().map(all::get).toList());
+            columns.set(0, columns.getFirst().reserving(tui.widestName + Tui.OPERATION_WORD));
             var cells = shown.stream().map(source::get).toList();
             var fitted = ColumnFit.widths(columns, actualArea.width() - HIGHLIGHT_WIDTH);
             widths = ColumnFit.constraints(fitted);
@@ -1057,10 +1087,10 @@ final class MainScreen {
                 spans.add(Span.styled("  ⇧F2", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(bg)));
                 spans.add(Span.styled(" Join task", Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
             }
-            if (tui.view == Tui.View.WORK) {
-                // p is the Work tab's own key for the preview, at every width
+            if (tui.view == Tui.View.WORK && tui.previewFits) {
+                // p is the Work tab's own key for the preview, wherever there is room to draw it
                 spans.add(Span.styled("  p", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(bg)));
-                spans.add(Span.styled(tui.previewShown(tui.lastWidth) ? " Hide preview" : " Preview",
+                spans.add(Span.styled(tui.previewDrawn() ? " Hide preview" : " Preview",
                         Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
             }
             addMarkHints(spans, tui.markedInstances().size(), bg);
