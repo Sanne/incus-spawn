@@ -153,15 +153,31 @@ public class OpencodeSetup implements ToolSetup {
     }
 
     /**
-     * Only Claude's typed accounts are checked here: a missing OpenAI or Gemini key is found by the
-     * check of every tool's {@code secret: true} entries, for the account the instance uses. That
-     * check accepts a keyless {@code type: chatgpt} or {@code type: google} account, which gives
-     * opencode no key, as it does for Pi; reporting that for both is #2525.
+     * A Claude account must be complete, and an {@code openai} or {@code gemini} one must hold an
+     * API key rather than a ChatGPT or Google sign-in ({@link ApiKeyAccounts}). A key missing
+     * altogether is found by the check of every tool's {@code secret: true} entries, for the
+     * account the instance uses.
      */
     @Override
     public String credentialProblem(SpawnConfig config, Map<String, String> resolvedParams,
                                     Map<String, String> selection) {
-        return credentialFor(resolvedParams) == Credential.ANTHROPIC ? ClaudeSetup.missingAccount(config, selection) : "";
+        return switch (credentialFor(resolvedParams)) {
+            case ANTHROPIC -> ClaudeSetup.missingAccount(config, selection);
+            case OPENAI -> ApiKeyAccounts.openaiKeyProblem(config, selection);
+            case GEMINI -> ApiKeyAccounts.geminiKeyProblem(config, selection);
+            case NONE -> "";
+        };
+    }
+
+    /** An {@code openai} or {@code gemini} sign-in in use is fixed by a default, not another account. */
+    @Override
+    public Remedy credentialRemedy(SpawnConfig config, Map<String, String> resolvedParams,
+                                   Map<String, String> selection) {
+        return switch (credentialFor(resolvedParams)) {
+            case OPENAI -> ApiKeyAccounts.openaiKeyRemedy(config, selection);
+            case GEMINI -> ApiKeyAccounts.geminiKeyRemedy(config, selection);
+            default -> null;
+        };
     }
 
     @Override

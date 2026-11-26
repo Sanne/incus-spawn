@@ -72,7 +72,7 @@ class CredentialCheckTest {
             """;
 
     private static final List<String> OPENAI_AGENTS = List.of(
-            template("[codex]"), piTemplate("openai"), "name: tpl-oc\ntools:\n  - opencode: {provider: openai}\n");
+            template("[codex]"), piTemplate("openai"), opencodeTemplate("openai"));
 
     @Test
     void aMissingOpenAiKeyIsReportedForEveryAgent() throws Exception {
@@ -92,6 +92,101 @@ class CredentialCheckTest {
     @Test
     void aChatGptAccountNeedsNoOpenAiKeyForCodex() throws Exception {
         assertEquals("", check(CHATGPT_ONLY, template("[codex]")));
+    }
+
+    // A ChatGPT session serves only Codex, and a Google sign-in only Antigravity CLI: Pi and
+    // opencode send an API key, which neither account gives the proxy to inject
+
+    private static final String GOOGLE_ONLY = """
+            gemini:
+              accounts:
+                g: { type: google }
+              default: g
+            """;
+
+    private static String opencodeTemplate(String provider) {
+        return "name: tpl-oc\ntools:\n  - opencode: {provider: " + provider + "}\n";
+    }
+
+    @Test
+    void aChatGptAccountIsNoOpenAiKeyForPiOrOpencode() throws Exception {
+        for (var agent : List.of(piTemplate("openai"), opencodeTemplate("openai"))) {
+            assertEquals("Missing credentials: OpenAI API key (the account in use, 'sub', is a ChatGPT sign-in, which only Codex can use)."
+                    + " Run 'isx account add openai' to configure it."
+                    + " Then pin it with 'isx branch <name> --from <template> --account openai=<account>'."
+                    + " Making it the default with 'isx account default openai=<account>' does it too,"
+                    + " but also moves every instance that follows the default, Codex's included, onto the key.", check(CHATGPT_ONLY, agent), agent);
+        }
+    }
+
+    @Test
+    void aGoogleSignInIsNoGeminiKeyForPiOrOpencode() throws Exception {
+        for (var agent : List.of(piTemplate("google"), opencodeTemplate("google"))) {
+            assertEquals("Missing credentials: Gemini API key (the account in use, 'g', is a Google sign-in, which only Antigravity CLI can use)."
+                    + " Run 'isx account add gemini' to configure it."
+                    + " Then pin it with 'isx branch <name> --from <template> --account gemini=<account>'."
+                    + " Making it the default with 'isx account default gemini=<account>' does it too,"
+                    + " but also moves every instance that follows the default, Antigravity CLI's included, onto the key.", check(GOOGLE_ONLY, agent), agent);
+        }
+    }
+
+    @Test
+    void aSignInIsReportedOnlyWhenItIsTheAccountInUse() throws Exception {
+        var both = """
+                openai:
+                  accounts:
+                    sub: { type: chatgpt }
+                    key: { apiKey: "secret-key" }
+                  default: sub
+                gemini:
+                  accounts:
+                    g: { type: google }
+                    key: { apiKey: "secret-key" }
+                  default: g
+                """;
+        for (var provider : List.of("openai", "google")) {
+            var ns = provider.equals("openai") ? "openai" : "gemini";
+            for (var agent : List.of(piTemplate(provider), opencodeTemplate(provider))) {
+                assertEquals("", check(both, agent, Map.of(ns, "key")), agent);
+                assertFalse(check(both, agent).isEmpty(), agent);
+            }
+        }
+    }
+
+    @Test
+    void aKeyAccountIsJudgedInItsOwnNamespaceWhenANameRepeats() throws Exception {
+        // 'personal' is a ChatGPT sign-in for OpenAI and a key for Gemini
+        var config = """
+                openai:
+                  accounts:
+                    personal: { type: chatgpt }
+                  default: personal
+                gemini:
+                  accounts:
+                    g: { type: google }
+                    personal: { apiKey: "secret-key" }
+                  default: g
+                """;
+        var said = check(config, piTemplate("google"));
+        assertTrue(said.contains("Run 'isx branch <name> --from <template> --account gemini=personal' to configure it."), said);
+        assertFalse(said.contains("isx account add"), said);
+    }
+
+    @Test
+    void aPinnedSignInIsFixedByAPinNotTheDefault() throws Exception {
+        var config = """
+                openai:
+                  accounts:
+                    sub: { type: chatgpt }
+                    key: { apiKey: "secret-key" }
+                  default: key
+                """;
+        for (var agent : List.of(piTemplate("openai"), opencodeTemplate("openai"))) {
+            var said = check(config, agent, Map.of("openai", "sub"));
+            assertTrue(said.contains("Run 'isx branch <name> --from <template> --account openai=key' to configure it."), said);
+            assertTrue(said.contains("The sign-in is pinned, by --account, the template's accounts: map or the instance branched from"), said);
+            assertFalse(said.contains("isx account default"), "the default is already the key: " + said);
+        }
     }
 
     // --- pi + OpenAI: the case #793 reported

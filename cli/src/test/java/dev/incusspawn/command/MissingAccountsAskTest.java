@@ -227,4 +227,60 @@ class MissingAccountsAskTest {
             }
         }
     }
+
+    // --- A sign-in in use for Pi, which spends only an API key (#2525)
+
+    private static final String CHATGPT_ONLY = """
+            openai:
+              accounts:
+                sub: { type: chatgpt }
+              default: sub
+            """;
+
+    /** What a branch of a Pi template on OpenAI finds missing, from the config on disk now. */
+    private static Map<CredentialCheck.Missing, List<String>> missingForPi() throws Exception {
+        var config = SpawnConfig.load();
+        var pi = Map.of("tpl-pi", ImageDef.parseYaml("name: tpl-pi\ntools:\n  - pi: {provider: openai}\n"));
+        return CredentialCheck.missingByCredential(config, List.of("tpl-pi"), pi,
+                new ToolDefLoader(config.getSearchPaths()));
+    }
+
+    @Test
+    void aSignInInUseIsNotAskedForSinceAnotherAccountWouldNotBeUsed() throws Exception {
+        Files.createDirectories(Environment.configDir());
+        Files.writeString(Environment.configDir().resolve("config.yaml"), CHATGPT_ONLY);
+        var gaps = missingForPi();
+        // With no API key account yet the add step is named, but not run: it would not be used
+        assertEquals(List.of("isx account add openai"),
+                gaps.keySet().stream().map(CredentialCheck.Missing::command).toList());
+
+        // Nothing is scripted: any question would fail, and no secret is typed for a branch still refused
+        var prompts = new ScriptedPrompts();
+        assertFalse(ask(prompts, gaps));
+        prompts.assertFullyConsumed();
+        assertEquals(gaps, missingForPi());
+    }
+
+    @Test
+    void aSecondAccountAddedBesideTheSignInServesPiOnlyOnceItIsTheDefault() throws Exception {
+        Files.createDirectories(Environment.configDir());
+        Files.writeString(Environment.configDir().resolve("config.yaml"), CHATGPT_ONLY);
+        // 'isx account add openai' with the one ChatGPT account: add a second, named key, an API key
+        var prompts = new ScriptedPrompts().line("a", "key", "1").secret("sk-key");
+        RecordingOutput.during(() -> new ChatGptAuthFlowTest.FakeInit().setupCodexAuth(SpawnConfig.load(), prompts));
+        prompts.assertFullyConsumed();
+        assertEquals("sk-key", saved("openai.accounts.key.apiKey"));
+        assertEquals("sub", saved("openai.default"));
+
+        // Why the branch does not ask for this step: the sign-in is still the account in use,
+        // and what is named now pins the key account for the branch, by its own name
+        assertEquals(List.of("isx branch <name> --from <template> --account openai=key"),
+                missingForPi().keySet().stream().map(CredentialCheck.Missing::command).toList());
+
+        // What the named command does ends the gap
+        var config = SpawnConfig.load();
+        dev.incusspawn.config.NamespaceAccounts.setDefault(config, "openai", "key");
+        config.save();
+        assertEquals(Map.of(), missingForPi());
+    }
 }

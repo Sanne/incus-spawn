@@ -236,6 +236,21 @@ public interface ToolSetup {
     }
 
     /**
+     * What fixes the problem {@link #credentialProblem} reports, when adding or replacing the
+     * namespace's account with {@code isx account add} would not; {@code null} for that step.
+     * A remedy is never asked for at {@code isx branch} or {@code isx build}, so a person is not
+     * asked for a secret that leaves the branch refused.
+     */
+    default Remedy credentialRemedy(dev.incusspawn.config.SpawnConfig config,
+                                    java.util.Map<String, String> resolvedParams,
+                                    java.util.Map<String, String> selection) {
+        return null;
+    }
+
+    /** The command that fixes a credential problem, and what to say beside it, one sentence each. */
+    record Remedy(String command, java.util.List<String> notes) {}
+
+    /**
      * Why this tool, for a template that sets {@code resolvedParams}, needs the credential
      * {@link #credentialProblem} names, and what would do instead; an empty list when that goes
      * without saying (a blank sentence counts as none). Pi spends Claude's account only because of its provider, so it says so and
