@@ -449,7 +449,7 @@ class InitTranscriptsTest {
                           - copilot
                         default-action: copilot
                         """); },
-                claudeHere, new ScriptedPrompts().line("", "", "2", "")));
+                claudeHere, new ScriptedPrompts().line("", "2", "")));
         b.add(new Branch("30-linux-no-sudo", "Linux with --no-sudo; no agent; GitHub None for now",
                 i -> i.noSudo = true, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.none()), "2", ""),
@@ -568,6 +568,10 @@ class InitTranscriptsTest {
         assertTrue(text.contains("Add GitHub Copilot CLI's account:"), text);
         assertFalse(text.contains("other tools need"), text);
         assertFalse(text.contains("Add a GitHub account:"), text);
+        // Its account is asked, so never said to be set up
+        assertFalse(text.contains("set up already"), text);
+        // The GitHub menu is asked once, answered "None for now"
+        assertEquals(1, text.split("Which GitHub account should GitHub Copilot CLI use\\?", -1).length - 1, text);
     }
 
     /** {@code yaml} as the person's own tpl-agent.yaml, as an earlier run writes it. */
