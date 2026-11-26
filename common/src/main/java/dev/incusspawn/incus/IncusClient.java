@@ -2480,7 +2480,9 @@ public class IncusClient {
                 "/1.0/storage-pools/" + pool + "/volumes",
                 Map.of("name", volumeName, "type", "custom"));
         if (!createResp.isSuccess()) {
-            throw new IncusException("Failed to create storage volume " + volumeName + " in pool " + pool);
+            var detail = createResp.body().path("error").asText("");
+            throw new IncusException("Failed to create storage volume " + volumeName + " in pool " + pool
+                    + (detail.isEmpty() ? "" : ": " + detail));
         }
     }
 
