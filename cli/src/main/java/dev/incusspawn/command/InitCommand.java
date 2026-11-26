@@ -1680,8 +1680,12 @@ public class InitCommand extends BaseCommand {
      * kept tpl-agent of the person's own names, which may be another (an earlier run's).
      */
     ToolSetup templateAgent() {
+        return chosenAgent == null ? null : templateAgent(trustedTemplates());
+    }
+
+    /** As {@link #templateAgent()}, from the {@code trusted} definitions the caller already loaded. */
+    private ToolSetup templateAgent(Map<String, ImageDef> trusted) {
         if (chosenAgent == null) return null;
-        var trusted = trustedTemplates();
         var own = trusted.get(ExampleTemplate.NAME);
         if (own == null) return chosenAgent;
         var chain = ImageDef.chain(own, trusted);
@@ -1702,8 +1706,12 @@ public class InitCommand extends BaseCommand {
      * kept template leaves unasked, or another agent's (#2528).
      */
     java.util.Set<String> templateAgentNamespaces(ToolSetup agent) {
+        return templateAgentNamespaces(agent, trustedTemplates());
+    }
+
+    /** As {@link #templateAgentNamespaces(ToolSetup)}, from the {@code trusted} definitions the caller already loaded. */
+    private java.util.Set<String> templateAgentNamespaces(ToolSetup agent, Map<String, ImageDef> trusted) {
         if (agent == null) return java.util.Set.of();
-        var trusted = trustedTemplates();
         var own = trusted.get(ExampleTemplate.NAME);
         if (own == null) return agent.credentialNamespaces(agentParams);
         // Leaf first, as a build resolves them: a child's params win over an ancestor's
@@ -2138,7 +2146,7 @@ public class InitCommand extends BaseCommand {
      * and the build inside init does not warn of it, so the closing box names it (#2528).
      */
     String gitHubGapCommand() {
-        if (chosenAgent == null || chosenAgent.credentialNamespaces().contains(dev.incusspawn.tool.GhSetup.NAMESPACE)) return null;
+        if (chosenAgent == null) return null;
         return templateGaps(true).keySet().stream().map(CredentialCheck.Missing::command).findFirst().orElse(null);
     }
 
@@ -2147,13 +2155,16 @@ public class InitCommand extends BaseCommand {
         try {
             var config = SpawnConfig.load();
             // Trusted only, as the first template is: a project's tpl-agent never asks for an account here
-            var defs = new LinkedHashMap<>(trustedTemplates());
+            var trusted = trustedTemplates();
+            var defs = new LinkedHashMap<>(trusted);
             defs.putIfAbsent(ExampleTemplate.NAME, firstTemplate(defs, chosenAgent, agentParams, config));
             var loader = ToolDefLoader.withoutProjectTools(config.getSearchPaths());
             var gaps = new LinkedHashMap<>(CredentialCheck.missingByCredential(config, List.of(ExampleTemplate.NAME), defs, loader));
             // GitHub's account is the GitHub step's, with a header of its own, unless it is the only
-            // account the agent spends (Copilot): a tpl-agent an earlier run wrote can list gh (#2528)
-            if (chosenAgent != null && !chosenAgent.credentialNamespaces().contains(dev.incusspawn.tool.GhSetup.NAMESPACE)) {
+            // account the agent spends (Copilot): a tpl-agent an earlier run wrote can list gh (#2528).
+            // The agent is the one the template installs, a kept Copilot when Claude was chosen, as the closing box sorts them
+            var agentNamespaces = templateAgentNamespaces(templateAgent(trusted), trusted);
+            if (chosenAgent != null && !agentNamespaces.contains(dev.incusspawn.tool.GhSetup.NAMESPACE)) {
                 var tools = loader.allToolSetups();
                 gaps.keySet().removeIf(g -> "gh".equals(CredentialCheck.stepTool(g, tools)) != gitHub);
             } else if (gitHub) {
@@ -2413,10 +2424,8 @@ public class InitCommand extends BaseCommand {
                     if (!list.contains(command)) list.add(command);
                 }
                 var gitHub = gitHubGapCommand();
-                // GitHub's is the agent's own when the template's agent spends it (a kept Copilot), whichever agent was chosen
-                var gitHubList = gitHub != null && gitHub.startsWith(ACCOUNT_ADD)
-                        && namespaces.contains(gitHub.substring(ACCOUNT_ADD.length())) ? own : other;
-                if (gitHub != null && !own.contains(gitHub) && !other.contains(gitHub)) gitHubList.add(gitHub);
+                // Only when the template's agent does not spend GitHub: a kept Copilot's is among its own gaps above
+                if (gitHub != null && !own.contains(gitHub) && !other.contains(gitHub)) other.add(gitHub);
                 agentAccountCommands = List.copyOf(own);
                 otherAccountCommands = List.copyOf(other);
             } catch (RuntimeException e) {
