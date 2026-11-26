@@ -32,6 +32,7 @@ class LinuxRunnerTest {
     private static final Path RUNNER = Path.of("../.github/linux-runner").toAbsolutePath();
     private static final Path HOOK = RUNNER.resolve("job-started.sh");
     private static final Path SUPERVISOR = RUNNER.resolve("isx-ci-runner.sh");
+    private static final Path DROP = RUNNER.resolve("drop-credentials.sh");
     private static final Path ROUTE = Path.of("../.github/scripts/runner-route.sh");
     private static final Path TRUSTED = Path.of("../.github/self-hosted/trusted-heads");
 
@@ -148,10 +149,13 @@ class LinuxRunnerTest {
         var prime = String.join("\n", repo.path("prime").asList().stream().map(p -> p.asText()).toList());
         assertTrue(prime.contains("install -D -o root -g root -m 0755 .github/linux-runner/job-started.sh /opt/isx-ci/job-started.sh"), prime);
         assertTrue(prime.contains("install -o root -g root -m 0644 .github/self-hosted/trusted-heads /opt/isx-ci/trusted-heads"), prime);
+        assertTrue(prime.contains("install -o root -g root -m 0755 .github/linux-runner/drop-credentials.sh /opt/isx-ci/drop-credentials.sh"), prime);
         var tools = template.path("tools").asList().stream().map(t -> t.asText()).toList();
         assertEquals(List.of("maven-3", "graalvm", "github-actions-runner"), tools,
                 "a tool with a credential would give CI jobs an account through the proxy");
         assertTrue(template.path("accounts").isNull(), "the template pins no account");
+        assertEquals("container", template.pathText("type", ""),
+                "isx exec gives a VM whose guest lacks its secret the proofs again, a container not");
         assertEquals("tpl-minimal", template.pathText("parent", ""),
                 "tpl-java's parent tpl-dev installs gh, which would give CI jobs the host's GitHub account");
     }
@@ -197,6 +201,71 @@ class LinuxRunnerTest {
         assertRefused(result, "which is not trusted here");
     }
 
+    // The credentials isx delivers to every instance
+
+    /** isx gives every instance a proof for each namespace the host serves: none may reach the job. */
+    @Test
+    void theProofsIsxDeliveredAreRemovedBeforeTheRunnerStarts(@TempDir Path dir) throws Exception {
+        var run = Files.createDirectories(dir.resolve("root/run/isx"));
+        for (var f : List.of("proof-tokens", "credential-secret", "instance-secret", "proof-generation")) {
+            Files.writeString(run.resolve(f), "x\n");
+        }
+        var gitconfig = Files.createDirectories(dir.resolve("root/etc")).resolve("gitconfig");
+        Files.writeString(gitconfig, "[credential \"https://github.com\"]\n\thelper = !isx_github_credential\n[core]\n\tpager = less\n");
+        var result = run(new ProcessBuilder("bash", "--norc", "--noprofile", DROP.toString(), dir.resolve("root").toString())
+                .redirectErrorStream(true));
+        assertEquals(0, result.exit(), result.output());
+        try (var left = Files.list(run)) {
+            assertEquals(List.of("proof-generation"), left.map(p -> p.getFileName().toString()).toList(),
+                    "the proofs and both secrets are gone; the public generation is no credential");
+        }
+        var config = Files.readString(gitconfig);
+        assertFalse(config.contains("helper"), config);
+        assertTrue(config.contains("pager = less"), "the rest of the system config stays");
+        assertEquals(0, run(new ProcessBuilder("bash", "--norc", "--noprofile", DROP.toString(), dir.resolve("root").toString())
+                .redirectErrorStream(true)).exit(), "nothing to remove is no failure");
+    }
+
+    @Test
+    void aProofThatCannotBeRemovedStopsTheRunner(@TempDir Path dir) throws Exception {
+        Files.createDirectories(dir.resolve("root/run/isx/proof-tokens/held"));
+        var result = run(new ProcessBuilder("bash", "--norc", "--noprofile", DROP.toString(), dir.resolve("root").toString())
+                .redirectErrorStream(true));
+        assertEquals(1, result.exit(), result.output());
+        assertTrue(result.output().contains("credentials are still in the instance"), result.output());
+    }
+
+    /** What the exec runs in the instance: the runner only after the drop, and with none of the exec's variables. */
+    @Test
+    void theRunnerStartsOnlyAfterTheDropAndInACleanEnvironment(@TempDir Path dir) throws Exception {
+        supervisor(dir, "once", "0");
+        var script = Files.readString(dir.resolve("in-instance"));
+        for (var dropWorks : List.of(true, false)) {
+            var home = Files.createDirectories(dir.resolve("home-" + dropWorks + "/actions-runner"));
+            Files.writeString(home.resolve("run.sh"), "#!/bin/bash\nprintf '%s\\n' \"$@\" > ran; env > env\n");
+            home.resolve("run.sh").toFile().setExecutable(true);
+            var bin = Files.createDirectories(dir.resolve("sudo-" + dropWorks));
+            Files.writeString(bin.resolve("sudo"), "#!/bin/bash\n[ \"$1\" = /opt/isx-ci/drop-credentials.sh ] && exit "
+                    + (dropWorks ? 0 : 1) + "\nexit 9\n");
+            bin.resolve("sudo").toFile().setExecutable(true);
+            var builder = new ProcessBuilder("bash", "--norc", "--noprofile", "-c", script).redirectErrorStream(true);
+            builder.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+            builder.environment().put("HOME", home.getParent().toString());
+            builder.environment().put("ISX_TEST_OUTER_VARIABLE", "gho_isx_from-the-exec");
+            builder.redirectInput(ProcessBuilder.Redirect.from(Files.writeString(dir.resolve("stdin-" + dropWorks), "THE-CONFIG\n").toFile()));
+            var result = run(builder);
+            if (dropWorks) {
+                assertEquals(0, result.exit(), result.output());
+                assertEquals("--jitconfig\nTHE-CONFIG\n", Files.readString(home.resolve("ran")));
+                assertFalse(Files.readString(home.resolve("env")).contains("ISX_TEST_OUTER_VARIABLE"),
+                        "the runner sees none of the exec's own variables");
+            } else {
+                assertEquals(1, result.exit(), result.output());
+                assertFalse(Files.exists(home.resolve("ran")), "no runner while a proof may be left");
+            }
+        }
+    }
+
     // The supervisor
 
     @Test
@@ -211,8 +280,7 @@ class LinuxRunnerTest {
                         + " -f labels[]=X64 -f labels[]=isx-linux --jq \"\\(.runner.id) \\(.encoded_jit_config)\"",
                 "isx branch isx-ci-linux-1 --from tpl-isx-ci-linux --cpu 8 --memory 16GiB"
                         + " --purpose CI runner 4242 for Sanne/incus-spawn, destroyed after one job --format plain",
-                "isx exec -i isx-ci-linux-1 --cwd /home/agentuser/actions-runner -- bash -c"
-                        + " IFS= read -r config && exec ./run.sh --jitconfig \"$config\"",
+                "isx exec -i isx-ci-linux-1 --cwd /home/agentuser/actions-runner -- bash -c <in-instance>",
                 "isx destroy isx-ci-linux-1 --skip-confirmation",
                 "gh api -X DELETE repos/Sanne/incus-spawn/actions/runners/4242"), calls);
         assertEquals("SECRET-JIT-CONFIG\n", Files.readString(dir.resolve("exec-stdin")),
@@ -337,11 +405,16 @@ class LinuxRunnerTest {
         Files.deleteIfExists(calls);
         Files.writeString(bin.resolve("isx"), """
                 #!/bin/bash
-                echo "isx $*" >> '%s'
+                if [ "$1" = exec ]; then
+                  printf '%%s' "${@: -1}" > '%s'
+                  echo "isx ${*:1:$#-1} <in-instance>" >> '%s'
+                else
+                  echo "isx $*" >> '%s'
+                fi
                 %s
                 if [ "$1" = exec ]; then cat > '%s'; exit %s; fi
                 exit 0
-                """.formatted(calls, isxHook, dir.resolve("exec-stdin"), runnerExit));
+                """.formatted(dir.resolve("in-instance"), calls, calls, isxHook, dir.resolve("exec-stdin"), runnerExit));
         Files.writeString(bin.resolve("gh"), """
                 #!/bin/bash
                 echo "gh $*" | sed -E 's/name=isx-ci-linux-1-[0-9]+/name=isx-ci-linux-1-<time>/' >> '%s'

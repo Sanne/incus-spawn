@@ -89,7 +89,8 @@ The setup is [docs/dev/MAC-CI-SETUP.md](docs/dev/MAC-CI-SETUP.md); the rationale
 **The project's Linux server runs `unit-tests` of trusted code, one fresh isx instance per job** (#2519).
 `linux-route` (`runner-route.sh linux`, the same trusted heads as the Mini) sends it there while `linux-heartbeat.yml` shows the runner up and free, and to `ubuntu-26.04` otherwise.
 The host's loop (`.github/linux-runner/isx-ci-runner.sh`) registers a just-in-time runner, branches `tpl-isx-ci-linux` for it, and destroys both after the job; the instance's root-owned job-started hook refuses untrusted code.
-The template has no tool with a credential (its parent is `tpl-minimal`), so CI jobs get no account through the proxy.
+Every isx start gives an instance a proof for each namespace the host's proxy serves, whatever its tools, so the tool list does not keep accounts out.
+Before the runner starts, the exec runs the template's root-owned `drop-credentials.sh`, which removes `/run/isx`'s proofs and secrets and the GitHub Git helper, and starts the runner only when none is left, in a clean login environment; a job's requests then carry no proof, and the proxy adds no credential to them.
 The setup is [docs/dev/LINUX-CI-SETUP.md](docs/dev/LINUX-CI-SETUP.md); the rationale is design/testing.md "A fresh isx instance runs unit-tests for trusted code".
 
 **Latency on the branch/start/shell path is never noise.**

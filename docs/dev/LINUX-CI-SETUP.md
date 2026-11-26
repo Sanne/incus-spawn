@@ -43,7 +43,8 @@ The token never enters an instance: each job gets a just-in-time runner configur
    ```
 
    It downloads GraalVM and the Actions runner once into isx's download cache, clones the repository and primes `~/.m2` with a build.
-   `isx templates validate tpl-isx-ci-linux` must say nothing about a credential: the template installs no tool with one, so the proxy gives its jobs no account.
+   isx gives every instance a proof for each of the server's accounts, whatever its tools.
+   Before the runner starts, the template's `drop-credentials.sh` removes them, and the runner does not start while one is left.
 3. Rebuild it now and then, weekly or after a dependency bump, so each job's checkout and Maven have little to fetch.
    Rebuild it after the runner's pin moves (`tools/github-actions-runner.yaml`), or each job downloads the new runner first.
 
@@ -69,6 +70,13 @@ systemctl --user enable --now isx-ci-runner@1
 It registers a runner, branches `isx-ci-linux-1` and waits for a job.
 Under Settings, Actions, Runners, the runner shows as idle.
 `isx-ci-runner once` does the same for one job in the foreground, with the service stopped, to try the setup by hand.
+
+Check once that the job will hold no proof.
+While the runner waits for a job, this must list no `proof-tokens`, `credential-secret` or `instance-secret`, and print no credential helper:
+
+```shell
+isx exec isx-ci-linux-1 -- sh -c 'ls /run/isx; git config --system --get-regexp "^credential\." ; echo end'
+```
 
 ## 4. Turn the heartbeat on
 

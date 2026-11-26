@@ -16,7 +16,8 @@
 # A just-in-time runner takes exactly one job and is then removed by GitHub, so no job sees what
 # another left: its instance is destroyed with it, and the next one is a fresh copy of the template.
 # Its configuration is a credential for that one job; it reaches the instance on the exec's stdin,
-# never on the host's command line.
+# never on the host's command line. The proofs isx gives every instance are removed before the
+# runner starts (IN_INSTANCE below).
 #
 # Settings, from the environment (the unit sets them):
 #   ISX_CI_SLOT        the slot's number, in the instance's name isx-ci-linux-<slot>   (default 1)
@@ -44,6 +45,18 @@ ISX=${ISX_CI_ISX:-isx}      # the tests point these at stand-ins
 GH=${ISX_CI_GH:-gh}
 IDLE_POLL=${ISX_CI_IDLE_POLL:-15}
 BACKOFF_MAX=${ISX_CI_BACKOFF_MAX:-600}
+
+# What the exec runs in the instance. It reads the runner's configuration from stdin, then as root
+# removes every credential proof isx delivered (drop-credentials.sh, installed by the template), and
+# only when that succeeded starts the runner in a clean login environment, with no variable of the
+# exec's own. So the job holds no proof, and the proxy gives it none of the server's accounts.
+IN_INSTANCE=$(cat <<'EOS'
+IFS= read -r config || exit 1
+sudo /opt/isx-ci/drop-credentials.sh || exit 1
+exec env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" PATH=/usr/local/bin:/usr/bin:/bin \
+    bash -lc 'cd ~/actions-runner && exec ./run.sh --jitconfig "$1"' runner "$config"
+EOS
+)
 
 log() { echo "isx-ci-runner[$SLOT]: $*" >&2; }
 
@@ -101,7 +114,7 @@ one_job() {
     fi
     log "runner $id waits for a job in $NAME"
     printf '%s\n' "$config" | "$ISX" exec -i "$NAME" --cwd /home/agentuser/actions-runner -- \
-        bash -c 'IFS= read -r config && exec ./run.sh --jitconfig "$config"'
+        bash -c "$IN_INSTANCE"
     rc=$?
     log "runner $id ended ($rc)"
     destroy
