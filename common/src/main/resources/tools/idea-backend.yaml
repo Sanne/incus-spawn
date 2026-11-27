@@ -39,8 +39,8 @@ downloads:
 
   # The IDE Index MCP Server plugin, installed by run_as_user below when index-mcp is true. It is
   # fetched on every build, and the upstream watch moves its pin (item idea-index-plugin).
-  - url: https://github.com/hechtcarmel/jetbrains-index-mcp-plugin/releases/download/5.20.8/jetbrains-index-mcp-plugin-5.20.8-signed.zip
-    sha256: e38c54e1331d3ca40158ec472beedbbc53ff35fcaaedca021d89d83ab1f50bfd
+  - url: https://github.com/hechtcarmel/jetbrains-index-mcp-plugin/releases/download/5.20.9/jetbrains-index-mcp-plugin-5.20.9-signed.zip
+    sha256: ea3e87ffdae327f607aa93bccc295ac9fe6f8b6085ff6e520927e60c26eea37d
     destination_file: /opt/index-mcp-plugin.zip
 
 run:
