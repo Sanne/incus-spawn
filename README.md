@@ -398,7 +398,7 @@ A source build (`./install.sh` in a checkout) does not change a Homebrew install
 
 To uninstall, run `uninstall.sh`:
 
-- It keeps your configuration in `~/.config/incus-spawn/` and the caches in `~/.cache/incus-spawn/` unless you pass `--purge`.
+- It keeps your configuration in `~/.config/incus-spawn/` and the caches in `~/.cache/incus-spawn/` unless you pass `--purge`, which still keeps a Git checkout in the configuration directory.
 - On macOS it keeps the VM's data disk, with every instance and template, unless you pass `--delete-instances`.
 - `--binaries-only` removes only the binaries, to switch install channel, for example from a source build to Homebrew.
 

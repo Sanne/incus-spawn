@@ -108,6 +108,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The first run's words (#2528)
   - The continuation under `sg` asks nothing
   - Nothing is taken from experienced users
+  - A reset keeps what a person wrote (#2666)
 - [Templates, tools and builds](design/templates.md)
   - Template Image Hierarchy
   - A schema for editors

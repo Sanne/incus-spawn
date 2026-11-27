@@ -20,7 +20,7 @@ import java.util.function.BooleanSupplier;
 
 @CommandDefinition(
         name = "reset",
-        description = "Return to a freshly-installed state: destroys all containers, templates, VM, proxy, routing rules, and cached data",
+        description = "Return to a freshly-installed state: destroys all containers, templates, VM, proxy, routing rules, cached data and configuration; keeps Git checkouts and search paths",
         generateHelp = true
 )
 public class ResetCommand extends BaseCommand {
@@ -28,6 +28,10 @@ public class ResetCommand extends BaseCommand {
     @Option(name = "skip-confirmation", hasValue = false,
             description = "Skip the confirmation prompt")
     boolean skipConfirmation;
+
+    @Option(name = "no-backup", hasValue = false,
+            description = "Do not write a backup of the deleted configuration to the current directory")
+    boolean noBackup;
 
     @Override
     protected CommandResult doExecute() throws Exception {
@@ -65,7 +69,12 @@ public class ResetCommand extends BaseCommand {
                 Environment.vmStateDir(),
                 Environment.dataDir(),
                 Environment.configDir());
-        var hostDirInfos = CleanCommand.collectInfo(hostDirs);
+        // What a person wrote in them stays, and the rest of the config directory is archived first (#2666)
+        var kept = KeptPaths.in(hostDirs);
+        var keep = KeptPaths.paths(kept);
+        var hostDirInfos = CleanCommand.collectInfo(hostDirs, keep);
+        // Planned before the plan is shown, so a directory that cannot take it stops the reset unasked
+        var archive = noBackup || hostDirInfos.isEmpty() ? null : ConfigBackup.plan(hostDirs, keep);
 
         boolean hasAnything = !incusReachable || !clones.isEmpty() || !builtTemplates.isEmpty()
                 || hasPoolArtifacts || proxyInstalled || vmRunning || vmDisksExist
@@ -92,7 +101,7 @@ public class ResetCommand extends BaseCommand {
         }
 
         groupOfSteps("Destroy " + clones.size() + " instance(s)", clones);
-        groupOfSteps("Destroy " + builtTemplates.size() + " template(s)", builtTemplates);
+        groupOfSteps("Destroy " + builtTemplates.size() + " built template(s)", builtTemplates);
 
         if (hasPoolArtifacts) {
             BuildOutput.step("Clean storage pool artifacts (failed builds, unused and cached base images, DNF cache)");
@@ -122,15 +131,20 @@ public class ResetCommand extends BaseCommand {
         groupOfSteps("Remove host data", hostDirInfos.stream()
                 .map(info -> String.format("%-50s %s", info.path(), CleanCommand.formatSize(info.size())))
                 .toList());
+        CleanCommand.sayKept(kept);
+        if (archive != null) archive.announce();
 
         BuildOutput.section("This returns incus-spawn to a freshly-installed state. Run 'isx init' afterwards to set up again.");
 
-        if (!confirmDestructive("This will destroy all containers, templates, and VM disk images listed above. Proceed?",
+        if (!confirmDestructive("This will destroy all containers, built templates, VM disk images and configuration listed above. Proceed?",
                 skipConfirmation, "--skip-confirmation")) {
             return CommandResult.SUCCESS;
         }
 
         // --- Execute ---
+
+        // Before anything is destroyed: a backup that could not be written whole stops the reset here
+        if (archive != null) archive.write();
 
         boolean failed = false;
 
@@ -217,7 +231,7 @@ public class ResetCommand extends BaseCommand {
                 }
                 BuildOutput.stepStart("Deleting " + info.path());
                 try {
-                    FileTrees.delete(info.path());
+                    FileTrees.delete(info.path(), keep);
                     BuildOutput.stepDone();
                 } catch (Exception e) {
                     BuildOutput.stepFail(e.getMessage());

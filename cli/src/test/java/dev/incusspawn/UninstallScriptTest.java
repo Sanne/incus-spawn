@@ -257,6 +257,38 @@ class UninstallScriptTest {
     }
 
     @Test
+    void purgeKeepsAGitCheckoutInTheConfigDirectory() throws Exception {
+        // isx init offers the config directory for the templates checkout (#2666)
+        var config = home.resolve(".config/incus-spawn");
+        var checkout = Files.createDirectories(config.resolve("incus-spawn-templates"));
+        Files.createDirectories(checkout.resolve(".git"));
+        Files.writeString(checkout.resolve("mine.yaml"), "name: mine\n");
+        Files.createDirectories(config.resolve("certs"));
+        Files.writeString(config.resolve("certs/leaf.crt"), "leaf");
+        Files.writeString(config.resolve("config.yaml"), "x: 1\n");
+
+        var result = run("--yes", "--purge");
+
+        assertEquals(0, result.exit(), result.output());
+        assertTrue(Files.exists(checkout.resolve("mine.yaml")), result.output());
+        assertTrue(Files.exists(checkout.resolve(".git")), result.output());
+        assertFalse(Files.exists(config.resolve("config.yaml")), result.output());
+        assertFalse(Files.exists(config.resolve("certs")), result.output());
+        assertTrue(result.output().contains("Kept " + checkout + ": a Git checkout."), result.output());
+    }
+
+    @Test
+    void purgeRemovesAConfigDirectoryWithNoCheckoutWhole() throws Exception {
+        var config = home.resolve(".config/incus-spawn");
+        Files.writeString(config.resolve("config.yaml"), "x: 1\n");
+
+        var result = run("--yes", "--purge");
+
+        assertEquals(0, result.exit(), result.output());
+        assertFalse(Files.exists(config), result.output());
+    }
+
+    @Test
     void binariesOnlyKeepsEverythingElse() throws Exception {
         var result = run("--yes", "--binaries-only");
 

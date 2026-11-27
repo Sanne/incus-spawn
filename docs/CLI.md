@@ -973,6 +973,16 @@ All subcommands accept these options:
 | `--dry-run` | Show what would be deleted without deleting |
 | `--skip-confirmation` | Skip the confirmation prompt |
 
+`isx clean config` and `isx clean all` also accept `--no-backup`.
+
+Neither deletes a Git checkout in `~/.config/incus-spawn/`, such as the templates repository `isx init` clones there.
+They also keep a directory that `searchPaths` in `config.yaml` names.
+
+Before they delete anything, they write what they will delete from `~/.config/incus-spawn/` to `isx-config-backup-<date>-<time>.tar.gz` in the current directory.
+That file holds your credentials, your SSH keys and the CA key, so delete it when you no longer need it.
+Pass `--no-backup` to write no backup.
+`--skip-confirmation` only answers the question, so the backup is still written.
+
 On macOS, `isx clean state` keeps the VM's data disk, with every instance, template and image, unless you pass `--delete-instances`.
 It refuses to run while the VM runs: stop the VM first with `isx vm stop`.
 Run `isx init` afterwards: the VM needs the appliance again before it boots on the kept disk.
@@ -985,9 +995,13 @@ Like `isx clean state`, it refuses to run while the VM runs.
 ## `isx reset`
 
 Return isx to a freshly installed state.
-It removes all instances and templates, cached images and downloads, the proxy service, the VM on macOS, and all configuration, including SSH keys and the CA certificate.
+It removes all instances and built templates, cached images and downloads, the proxy service, the VM on macOS, and all configuration, including SSH keys and the CA certificate.
 It shows what it will remove and asks first.
 Run `isx init` afterwards to set up again.
+
+It keeps what you wrote, and backs up the configuration it deletes, as `isx clean config` does.
+A Git checkout in `~/.config/incus-spawn/` and a directory that `searchPaths` names both stay.
+The backup is written to the current directory before anything is destroyed, and a reset that cannot write it removes nothing.
 
 ```shell
 isx reset
@@ -996,6 +1010,7 @@ isx reset
 | Option | What it does |
 |--------|--------------|
 | `--skip-confirmation` | Skip the confirmation prompt |
+| `--no-backup` | Do not write the backup of the deleted configuration |
 
 ## `isx vm`
 
