@@ -679,28 +679,45 @@ class IncusApiLossyTunnelTest {
         // The connections the others opened are closed: stop() checks the count is back to its baseline.
     }
 
+    // #2698: stdout's close frame can still be on its way to its reader when the operation's end
+    // reaches the drain, so a poll while stdout's reader runs is the drain doing its job. Only a
+    // poll after a pause that found the reader ended waits for stderr, and none may.
     @Test
     @Timeout(10)
     void aDiscardedStderrIsNotWaitedForOnceStdoutIsDone() {
         server.closesStderr = false; // its close frame never comes, as over a lossy tunnel
         server.stdout = "out";
-        var clock = new CountingClock();
-        var out = new ByteArrayOutputStream();
-        assertEquals(0, probe(api(clock), out));
-        assertEquals("out", out.toString(StandardCharsets.UTF_8));
-        assertEquals(0, clock.sleeps, "the drain must not poll for a stderr nobody reads");
+        var clock = new StdoutDoneClock();
+        assertEquals(0, probe(api(clock), clock.stdout));
+        assertEquals("out", clock.stdout.toString(StandardCharsets.UTF_8));
+        assertEquals(0, clock.pollsAfterStdoutEnded, "the drain must not poll for a stderr nobody reads");
     }
 
-    /** The system clock, counting the drain's polls. */
-    private static final class CountingClock implements IncusApi.DrainClock {
-        volatile int sleeps;
+    /**
+     * The system clock, counting the drain's polls made after its previous pause ended with
+     * stdout's reader gone: the drain sees that reader ended before it could poll again.
+     */
+    private static final class StdoutDoneClock implements IncusApi.DrainClock {
+        volatile int pollsAfterStdoutEnded;
+        private volatile Thread stdoutReader;
+        private boolean readerEndedBeforeThisPoll;
+        /** Stdout's sink, which learns the thread reading stdout from its writes. */
+        final ByteArrayOutputStream stdout = new ByteArrayOutputStream() {
+            @Override
+            public synchronized void write(byte[] b, int off, int len) {
+                stdoutReader = Thread.currentThread();
+                super.write(b, off, len);
+            }
+        };
 
         @Override public long nanoTime() { return System.nanoTime(); }
 
         @Override
         public void sleep(long millis) throws InterruptedException {
-            sleeps++;
+            if (readerEndedBeforeThisPoll) pollsAfterStdoutEnded++;
             Thread.sleep(millis);
+            var reader = stdoutReader;
+            readerEndedBeforeThisPoll = reader != null && !reader.isAlive();
         }
     }
 
