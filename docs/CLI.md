@@ -20,7 +20,7 @@ A script reads `--format=plain` or `--format=json`, whose fields are in [Scripti
 
 ## `isx init`
 
-Set up the host for isx, or check its setup and repair it.
+Set up isx on the host, or check and repair the setup.
 It installs Incus, its network and firewall rules, the proxy, and your credentials and their [accounts](CONFIGURATION.md#credential-accounts).
 Running it again is safe: it checks each step and repairs what is missing.
 
