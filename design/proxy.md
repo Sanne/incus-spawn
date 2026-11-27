@@ -344,7 +344,7 @@ It was not taken because init's other steps are host setup, and `isx account` al
 `CredentialCheck` answers for the accounts the branch will *actually* be stamped with -- the template chain's `accounts:`, the source instance's own pins and any `--account` or TUI account row, merged exactly as `BranchFlow` stamps them -- and against the leaf template recorded on the source.
 So a branch of a branch is checked too (#793).
 What a tool needs is declared, not listed.
-Every tool the template chain names, plus everything they `requires:`, spends its credential namespaces (`ToolSetup.credentialNamespaces(params)`, with params resolved as the build resolves them, so pi names only the one its `provider` uses).
+Every tool the template chain names, plus everything they `requires:`, spends its credential namespaces (`ToolSetup.credentialNamespaces(params)`, with params resolved as the build resolves them, so pi names only those its `provider` and `providers` use).
 The tools serving those namespaces, and the tool itself (Copilot's borrowed `github.token`), are then judged as the proxy judges them, by `ToolProxyResolver.missingSecrets()`.
 An auth entry is served once every key it references resolves against that selection.
 A tool is refused only when none of its entries would be, naming the keys they reference.
@@ -356,6 +356,9 @@ Tools the proxy does not serve (feature-gated off, or project-local) are not che
 Readiness that is more than a key being set is the tool's to state, through `ToolSetup.credentialProblem()`.
 So `CredentialCheck` names no tool: `ClaudeSetup` requires the resolved Claude account to be *complete* (a pre-accounts `useVertex: true` with no region still presents as an account, and fails every request).
 `PiSetup` applies the same rule for its Anthropic provider and requires a Vertex account for `vertex`/`google-vertex`; its `google` provider is judged through the `gemini` namespace like Gemini CLI.
+A provider in Pi's or opencode's `providers` is judged as the default one is, so the branch is refused while any listed provider's account is missing (#2674).
+The check books a tool's own problem to its first namespace, so both name Claude's first, the only one they judge themselves.
+It skips a tool all of whose accounts are inherited, so each also leaves an inherited Claude account unjudged when another of its accounts is not.
 A template listing only pi would not otherwise say why it needs a Claude account, so pi adds a note through `ToolSetup.credentialNote()` (#1750).
 The note names pi and its provider, and offers another provider; it follows the command that configures the account.
 `CredentialCheck` leaves the note out when a tool without one needs the same namespace, as Claude Code beside pi does.

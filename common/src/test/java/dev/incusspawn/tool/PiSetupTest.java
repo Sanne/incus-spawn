@@ -437,4 +437,76 @@ class PiSetupTest {
         assertNotNull(params.get("provider").getPattern(), "provider should have pattern validation");
         assertNotNull(params.get("model").getPattern(), "model should have pattern validation");
     }
+
+    private static java.util.List<String> envNames(Map<String, String> given) {
+        var params = ParameterResolver.resolve(new PiSetup().parameters(), given).resolvedValues();
+        return new PiSetup().envEntries(params).stream().map(e -> e.getName()).toList();
+    }
+
+    /** Pi offers the models of every provider whose key it finds, so each one gets its placeholder (#2674). */
+    @Test
+    void everyProviderOfTheTemplateGetsItsPlaceholder() {
+        var names = envNames(Map.of("providers", "openai google"));
+        assertTrue(names.containsAll(java.util.List.of("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY")), names.toString());
+        assertFalse(names.contains("GOOGLE_CLOUD_API_KEY"), names.toString());
+
+        var vertex = envNames(Map.of("provider", "openai", "providers", "vertex"));
+        assertTrue(vertex.containsAll(java.util.List.of("OPENAI_API_KEY", "GOOGLE_CLOUD_API_KEY")), vertex.toString());
+        assertFalse(vertex.contains("ANTHROPIC_API_KEY"), "no provider of this template is anthropic: " + vertex);
+    }
+
+    @Test
+    void everyProviderOfTheTemplateSpendsItsNamespace() {
+        var params = ParameterResolver.resolve(new PiSetup().parameters(),
+                Map.of("provider", "openai", "providers", "google,anthropic")).resolvedValues();
+        // Claude's first: the credential check books Pi's own problem to the first one
+        assertEquals(java.util.List.of("claude", "openai", "gemini"),
+                java.util.List.copyOf(new PiSetup().credentialNamespaces(params)));
+        // The default provider named again adds nothing
+        assertEquals(java.util.Set.of("openai"), new PiSetup().credentialNamespaces(
+                Map.of("provider", "openai", "providers", "openai")));
+    }
+
+    /** The default provider alone decides Pi's settings: providers only adds what a session can change to. */
+    @Test
+    void providersLeavesTheDefaultProviderAndModelAlone() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        new PiSetup().install(new Container(incus, CONTAINER), Map.of("providers", "openai"));
+        verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
+                arg.contains("\"defaultProvider\": \"anthropic\"") && !arg.contains("openai")));
+    }
+
+    /** A provider isx holds no credential for gains nothing from being listed, so the build refuses it. */
+    @Test
+    void providersTakesOnlyTheProvidersIsxManages() {
+        for (var bad : java.util.List.of("ollama", "openai,", "openai ollama", "")) {
+            assertFalse(ParameterResolver.resolve(new PiSetup().parameters(), Map.of("providers", bad)).errors().isEmpty(), bad);
+        }
+        assertTrue(ParameterResolver.resolve(new PiSetup().parameters(),
+                Map.of("providers", "openai,google,google-vertex,vertex,anthropic")).errors().isEmpty());
+        for (var good : java.util.List.of("openai google", "openai, google", " openai  google ")) {
+            assertTrue(ParameterResolver.resolve(new PiSetup().parameters(), Map.of("providers", good)).errors().isEmpty(), good);
+            assertEquals(java.util.List.of("anthropic", "openai", "google"), PiSetup.allProviders("anthropic", good), good);
+        }
+        assertTrue(new PiSetup().parameters().get("providers").isReconfigurable());
+    }
+
+    /** A Vertex provider among them asks for a Vertex AI account, and the note names that provider. */
+    @Test
+    void theNoteNamesTheProviderThatNeedsTheClaudeAccount() {
+        var note = new PiSetup().credentialNote(Map.of("provider", "openai", "providers", "anthropic"));
+        assertTrue(note.getFirst().contains("a Claude account for 'anthropic', which the template's providers lists"), note.toString());
+        var vertex = new PiSetup().credentialNote(Map.of("providers", "google-vertex"));
+        assertTrue(vertex.getFirst().contains("a Vertex AI Claude account for 'google-vertex'"), vertex.toString());
+        // Removing it would not be enough: the default provider spends Claude's account too
+        assertTrue(vertex.getLast().contains("'anthropic' still needs a Claude account"), vertex.toString());
+        assertEquals(2, note.size(), "the default provider here is OpenAI's: " + note);
+        // A listed provider spending Claude's account is named too, not only the default one
+        var listed = new PiSetup().credentialNote(Map.of("provider", "openai", "providers", "anthropic vertex"));
+        assertTrue(listed.getFirst().contains("for 'vertex'"), listed.toString());
+        assertTrue(listed.getLast().contains("listed provider 'anthropic' still needs a Claude account"), listed.toString());
+        assertTrue(new PiSetup().credentialNote(Map.of()).getFirst().contains("for its provider 'anthropic'"));
+        assertEquals(java.util.List.of(), new PiSetup().credentialNote(Map.of("provider", "openai", "providers", "google")));
+    }
 }

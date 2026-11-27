@@ -147,6 +147,33 @@ class OpencodeSetupTest {
         }
     }
 
+    /** Each provider of the template gets its placeholder, and its settings entry when opencode needs one (#2674). */
+    @Test
+    void everyProviderOfTheTemplateGetsItsKey() {
+        var given = Map.of("provider", "openai", "providers", "google,anthropic");
+        assertEquals(List.of("OPENAI_API_KEY=sk-placeholder", "GEMINI_API_KEY=" + GeminiSetup.PLACEHOLDER_API_KEY,
+                "OPENCODE_ANTHROPIC_API_KEY=sk-ant-placeholder"), env(given));
+        assertEquals(List.of("claude", "openai", "gemini"), List.copyOf(new OpencodeSetup().credentialNamespaces(resolved(given))));
+
+        var providers = (JqObject) config(given).getField("provider");
+        assertEquals(Set.of("google", "anthropic"), Set.copyOf(providers.keys()), "openai's key opencode reads itself");
+        assertEquals("\"{env:GEMINI_API_KEY}\"",
+                ((JqObject) ((JqObject) providers.getField("google")).getField("options")).getField("apiKey").toJsonString());
+        assertEquals("\"{env:OPENCODE_ANTHROPIC_API_KEY}\"",
+                ((JqObject) ((JqObject) providers.getField("anthropic")).getField("options")).getField("apiKey").toJsonString());
+        // The default provider alone decides the model
+        assertFalse(config(given).keys().contains("model"));
+        assertEquals("\"anthropic/claude-sonnet-5-5\"", config(Map.of("providers", "openai")).getField("model").toJsonString());
+    }
+
+    @Test
+    void providersTakesOnlyTheProvidersIsxManages() {
+        for (var bad : List.of("ollama", "vertex", "openai,", "")) {
+            assertFalse(ParameterResolver.resolve(new OpencodeSetup().parameters(), Map.of("providers", bad)).errors().isEmpty(), bad);
+        }
+        assertTrue(ParameterResolver.resolve(new OpencodeSetup().parameters(), Map.of("providers", "openai,google")).errors().isEmpty());
+    }
+
     @Test
     void aProviderIsxDoesNotManageGetsNoCredential() {
         var params = resolved(Map.of("provider", "openrouter", "model", "some-model"));

@@ -2285,12 +2285,14 @@ public class InitCommand extends BaseCommand {
     private void setUpAgentCredential(ToolSetup agent, Map<String, ToolSetup> tools) throws Exception {
         var ran = new java.util.HashSet<String>();
         accountNamespaces.clear();
+        // A kept template that names providers itself asked for its accounts: they are no default (#2674)
+        var templateChose = !templateAgentNamespaces(agent).equals(agent.credentialNamespaces(Map.of()));
         for (var gap : agentGaps().keySet()) {
             var step = CredentialCheck.stepTool(gap, tools);
             if (step != null && !ran.add(step)) continue;
             if (step != null) accountNamespaces.add(namespaceOf(tools.get(step), step));
             if (step != null && !step.equals(agent.name()) && !"antigravity".equals(agent.name())) {
-                sayWhoseAccount(agent, tools.get(step), step, agentQuestionAsked);
+                sayWhoseAccount(agent, tools.get(step), step, agentQuestionAsked || templateChose);
             }
             if (step == null) {
                 BuildOutput.note(OutputFormat.oneLine(gap.credential()) + ": " + CredentialCheck.remedy(List.of(gap)));

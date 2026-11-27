@@ -163,6 +163,7 @@ With a free-tier Gemini key, the default model of Antigravity CLI fails every ta
 
 Codex uses the template's `openai` credential account.
 Pi and opencode use the account of their template's `provider`: the Claude account, the `openai` one or the `gemini` one.
+A model of a provider in their template's `providers` uses that provider's account.
 Antigravity CLI uses the `gemini` account, as Gemini CLI does.
 
 ### Asking a question instead of reading the output

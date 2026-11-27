@@ -49,6 +49,9 @@ Like Pi it has a `provider` parameter (`anthropic`, `openai`, `google`, or one i
 For `anthropic` it reads its own placeholder, `OPENCODE_ANTHROPIC_API_KEY` (claude namespace), through `provider.anthropic.options.apiKey: "{env:...}"`, never `ANTHROPIC_API_KEY`, which would change Claude Code's auth.
 `openai` and `google` reuse Codex's `OPENAI_API_KEY` and Gemini's `GEMINI_API_KEY` placeholders.
 Its action resumes the latest top-level session in its directory, read from `~/.local/share/opencode/opencode.db` with `sqlite3`, as Bob's does.
+Pi and opencode also take `providers` (#2674), a space separated list of providers isx manages (a comma is taken too, but YAML splits at one inside `{...}`), whose models a session can change to.
+Each listed provider gets its placeholder and spends its namespace exactly as `provider` does, so a missing account refuses the branch; `provider` alone decides the default provider, model and effort.
+A provider isx does not manage is refused there by the parameter's pattern, since isx would add nothing for it.
 
 `GeminiSetup` (`gemini-cli`) installs `@google/gemini-cli` and writes `~/.gemini/settings.json` with optional `model.name`.
 Its `effort` parameter is written as a `modelConfigs.customOverrides` entry matched on that model, setting `thinkingConfig.thinkingLevel` in upper case, so Gemini CLI's helper requests on other models keep their thinking budget; it needs `model` (#2530).

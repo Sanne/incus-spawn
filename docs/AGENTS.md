@@ -176,7 +176,8 @@ Your own extensions in `~/.pi/agent/extensions/` load as usual.
 
 | Parameter | Default | What it does |
 | --- | --- | --- |
-| `provider` | `anthropic` | The API Pi talks to; also accepts `openai`, `google`, `google-vertex` or `vertex` |
+| `provider` | `anthropic` | The API Pi talks to by default; also accepts `openai`, `google`, `google-vertex` or `vertex` |
+| `providers` | none | More providers whose models Pi can change to, separated by spaces; see [Several providers](#several-providers) |
 | `model` | `claude-sonnet-5-5` for `anthropic`, otherwise Pi's own | The model Pi uses |
 | `effort` | Pi's own default | Thinking level: `off`, `minimal`, `low`, `medium`, `high` or `xhigh` |
 
@@ -205,6 +206,30 @@ tools:
       provider: openai
       model: gpt-6-luna
 ```
+
+### Several providers
+
+Pi can change model in a session, with `/model`, among the providers it holds a key for.
+By default the instance holds one, the key of `provider`.
+The `providers` parameter lists more, so one session can use models of several providers, such as one model to write and another to review.
+
+```yaml
+tools:
+  - pi:
+      provider: anthropic
+      providers: openai google
+```
+
+This instance starts Pi on Claude, and Pi also offers the OpenAI and Gemini models.
+`providers` takes `anthropic`, `openai`, `google`, `google-vertex` and `vertex`.
+On one line the same reads `- pi: {provider: anthropic, providers: openai google}`.
+
+Each listed provider needs its account, as `provider` does, and isx refuses to branch while one is missing.
+An agent in the instance can then spend each of those accounts, so list only the providers you use.
+`anthropic`, `google-vertex` and `vertex` share the Claude account, so with a Vertex provider among them that account must be a Vertex AI one.
+
+The model and effort parameters apply to `provider` alone.
+A provider isx holds no account for, such as a local model, needs no entry here: it works as before.
 
 ## opencode
 
@@ -243,7 +268,8 @@ opencode shows no isx footer: it has no place for one.
 
 | Parameter | Default | What it does |
 | --- | --- | --- |
-| `provider` | `anthropic` | The API opencode talks to; also accepts `openai` and `google` |
+| `provider` | `anthropic` | The API opencode talks to by default; also accepts `openai` and `google` |
+| `providers` | none | More providers whose models opencode can change to, separated by spaces: `anthropic`, `openai`, `google` |
 | `model` | `claude-sonnet-5-5` for `anthropic`, otherwise opencode's own | The model opencode uses |
 | `small-model` | opencode's own | The model for small tasks such as session titles; setting `model` does not change it |
 | `effort` | The model's own default | Reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; needs `model`, except with `anthropic` |
@@ -262,6 +288,16 @@ tools:
   - opencode:
       provider: openai
       model: gpt-6-luna
+```
+
+With `providers`, opencode offers the models of several providers in one session, as [Pi does](#several-providers).
+Each listed provider needs its account, and the model parameters still apply to `provider` alone.
+
+```yaml
+tools:
+  - opencode:
+      provider: anthropic
+      providers: openai google
 ```
 
 ## Gemini CLI
