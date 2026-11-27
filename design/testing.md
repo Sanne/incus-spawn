@@ -231,6 +231,33 @@ The Arch leg found at once that isx init needed `which`, which Arch's base syste
 **Integration tests** (`mvn verify -DskipITs=false`, requires Incus):
 - `TemplateBuildIT` — builds actual images, verifies metadata, agentuser, and that the generated agent context file lands without touching the user-layer CLAUDE.md
 
+## What earns a test
+
+Tests cost on every later change: an agent reads them, runs them and repairs them.
+So a test is added for what it protects, not because a change was made.
+
+A test holds behaviour that a user, a script or a security boundary depends on: an output contract, a refusal, a credential that must not leave the host, a request budget.
+It is written against a public seam, such as a command against `FakeIncusDaemon` or a proxy route against a request, so a refactor that keeps the behaviour keeps the test green.
+It does not hold how the code is arranged today: a private method, the order of calls, a step's label, an error's wording, a string in a workflow or a script.
+Extend an existing test before adding a class.
+A change with no behaviour of its own, such as a pin, a rename, a move or docs, owes no new test, and its PR says "no behaviour change".
+
+A test that reads the repository's own files (workflows, scripts, docs) is added only in two cases.
+Either the rule it holds was already broken on `main` once, or a breach would be silent and would touch security or a release.
+Its javadoc names which.
+A breach that already fails a CI job with a message naming the cause needs no test.
+
+When a refactor that changed no behaviour fails a test, loosen or delete the test in that change.
+Never edit its expected strings to match: that keeps the cost and shows the test held the arrangement.
+
+**A value written in several places is a defect to remove, not to guard.**
+Give it one definition that the rest read: a workflow `env`, a composite action, a Maven property.
+A test that holds copies equal is the last resort, for a copy nothing can derive.
+A change that meets one more unguarded copy removes copies or opens an issue for it, and does not add a test for that copy.
+
+This gives up catching a missed copy or a reworded message in `mvn test`: CI or review catches it later.
+The gates that exist pass this bar and stay: request budgets, output contracts, `RawOutputGateTest`, the checksum and platform-role checks.
+
 ## Waiting for another thread or process
 
 A test that waits for something asynchronous uses `Eventually` (`common` test-jar, `dev.incusspawn.util`), never its own `Thread.sleep` loop (#2504).

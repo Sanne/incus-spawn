@@ -26,7 +26,9 @@ Modules: `common` (shared code), `cli` (the `isx` binary), `proxy` (the `isx-pro
 
 ## Rules that apply to every change
 
-- Docs go in the same change as the code: `CLAUDE.md`, the `.claude/rules/` file and the `design/` page of the area.
+- Rationale goes in the area's `design/` page in the same change as the code.
+  A `.claude/rules/` file changes only when a rule does, and no fact is stated in two files.
+- A test is owed for behaviour, not for how the code is arranged today (design/testing.md "What earns a test").
 - Markdown is one sentence per line, with short sentences (`DocsOneSentencePerLineTest`).
   `README.md` and `docs/*.md` also keep to the budgets in `.claude/rules/writing.md`.
 - Every text a person reads follows `.claude/rules/writing.md`, and the text isx prints (prompts, output, warnings, errors, the TUI) also follows `.claude/rules/interface-text.md`.

@@ -102,11 +102,18 @@ A read costs well under a millisecond, on Linux and over the macOS vsock tunnel 
 When a flow repeats a read, fix it rather than weighing whether it is worth it.
 Pin the result in a request-budget test (such as `InstanceLifecycleRequestBudgetTest`), and trace it against a real Incus with `bench/trace-branch.sh`, since `FakeIncusDaemon` does not see what the proxy health check and refresh ask for.
 
-**Keep docs in sync**: When making architectural changes (new proxy capabilities, new tool types, new init steps, module structure changes, CI job changes, new intercepted domains, etc.), update both this file (and its `.claude/rules/` topic files) and the area's page under `design/` in the same PR.
-CLAUDE.md is the quick-reference for contributors; DESIGN.md indexes the full rationale, one `design/<area>.md` page per area, and lists each page's sections.
-A new page or a new top-level section is added to that index in the same change.
+**Each fact has one home, and a change edits that home alone.**
+The code holds what isx does.
+A `design/` page holds why, and what the decision gives up; DESIGN.md indexes those pages and lists each page's sections.
+A `.claude/rules/` file holds what a contributor to that area must do or must never do.
+This file holds only what binds every change, and points at the rest.
+A new mechanism writes its rationale in the area's `design/` page in the same PR, and adds a rule only when a contributor could break something by not knowing it.
+A new page or a new top-level section is added to DESIGN.md's index in the same change.
 Measurements go to `docs/dev/PERFORMANCE-NOTES.md`, and a design page cites them.
-Both must stay current.
+Never restate in a second file what one already says: link to its section.
+When a change would edit the same fact in two prose files, it deletes one of them in that change.
+Prose names where a version, a default or a count is set, never its value (`.claude/rules/writing.md` "Accuracy").
+A test is owed for behaviour, not for how the code is arranged today, and a value written in several places is given one definition before a test guards its copies (design/testing.md "What earns a test").
 
 **Markdown source: one sentence per line, and short sentences** (#1243).
 This applies to README.md, `docs/*.md`, DESIGN.md, `design/*.md`, this file and `.claude/rules/`, so that a diff shows exactly which sentence changed.
