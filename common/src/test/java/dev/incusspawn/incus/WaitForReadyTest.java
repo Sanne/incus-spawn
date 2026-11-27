@@ -105,6 +105,70 @@ class WaitForReadyTest {
         assertTrue(msg.contains(FAILED), msg);
     }
 
+    @Test
+    void vmIncusToldQemuToQuitIsAHostSideStartFailure() {
+        // Incus killed a healthy VM at its start (#2675): the one death its starter may retry
+        daemon.instance("vm1", "virtual-machine", "Stopped", Map.of()).qmpLog("vm1", FakeIncusDaemon.HOST_QUIT_QMP_LOG);
+        var e = assertThrows(HostSideStartFailure.class,
+                () -> client(5_000, 5_000, 1_000).waitForReady("vm1", MachineType.VM));
+
+        assertEquals("VM vm1 died during startup (status: Stopped): Incus told QEMU to quit.", e.getMessage());
+    }
+
+    /** What QEMU's monitor logs for a guest that panicked, after which Incus tells it to quit too. */
+    private static final String GUEST_PANIC_QMP_LOG = """
+            [2026-11-25T20:39:38Z] Event: {"event": "SHUTDOWN", "data": {"guest": true, "reason": "guest-panic"}}
+            [2026-11-25T20:39:38Z] QUERY: {"execute":"quit","id":31}
+            [2026-11-25T20:39:38Z] Event: {"event": "SHUTDOWN", "data": {"guest": false, "reason": "host-qmp-quit"}}
+            """;
+
+    @Test
+    void vmWhoseGuestShutItselfDownIsNoHostSideStartFailureThoughItsConsoleReadsEmpty() {
+        // Incus writes the console only when it is read while the VM runs: empty proves nothing
+        daemon.instance("vm1", "virtual-machine", "Stopped", Map.of()).qmpLog("vm1", GUEST_PANIC_QMP_LOG);
+        var e = assertThrows(IncusException.class,
+                () -> client(5_000, 5_000, 1_000).waitForReady("vm1", MachineType.VM));
+
+        assertFalse(e instanceof HostSideStartFailure, e.getMessage());
+    }
+
+    @Test
+    void vmWithNoMonitorLogIsNoHostSideStartFailure() {
+        daemon.instance("vm1", "virtual-machine", "Stopped", Map.of());
+        var e = assertThrows(IncusException.class,
+                () -> client(5_000, 5_000, 1_000).waitForReady("vm1", MachineType.VM));
+
+        assertFalse(e instanceof HostSideStartFailure, e.getMessage());
+    }
+
+    @Test
+    void vmInErrorIsNoHostSideStartFailure() {
+        // Its QEMU may still run, so a plain start could not follow
+        daemon.instance("vm1", "virtual-machine", "Error", Map.of()).qmpLog("vm1", FakeIncusDaemon.HOST_QUIT_QMP_LOG);
+        var e = assertThrows(IncusException.class,
+                () -> client(5_000, 5_000, 1_000).waitForReady("vm1", MachineType.VM));
+
+        assertFalse(e instanceof HostSideStartFailure, e.getMessage());
+        assertTrue(e.getMessage().startsWith("VM vm1 died during startup (status: Error)"), e.getMessage());
+    }
+
+    @Test
+    void vmIncusStoppedAfterItsGuestPrintedIsAHostSideStartFailureToo() {
+        // A console read while it ran holds what the guest printed: Incus stopped it all the same
+        daemon.instance("vm1", "virtual-machine", "Stopped", Map.of()).qmpLog("vm1", FakeIncusDaemon.HOST_QUIT_QMP_LOG)
+                .consoleLog("vm1", "Booting the kernel\n");
+        assertThrows(HostSideStartFailure.class,
+                () -> client(5_000, 5_000, 1_000).waitForReady("vm1", MachineType.VM));
+    }
+
+    @Test
+    void firstShutdownDecides() {
+        assertTrue(HostSideStartFailure.hostQuitFirst(FakeIncusDaemon.HOST_QUIT_QMP_LOG));
+        assertFalse(HostSideStartFailure.hostQuitFirst(GUEST_PANIC_QMP_LOG));
+        assertFalse(HostSideStartFailure.hostQuitFirst(""));
+        assertFalse(HostSideStartFailure.hostQuitFirst(null));
+    }
+
     private List<String> requestsEndingWith(String suffix) {
         return daemon.requests().stream().filter(r -> r.endsWith(suffix)).toList();
     }

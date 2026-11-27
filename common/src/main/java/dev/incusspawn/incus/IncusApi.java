@@ -1710,12 +1710,18 @@ class IncusApi {
      * Returns empty string on any failure.
      */
     String getText(String path) {
+        var text = getTextOrNull(path);
+        return text == null ? "" : text;
+    }
+
+    /** {@link #getText}, but null when the endpoint could not be read, so an empty body is told apart. */
+    String getTextOrNull(String path) {
         try {
             var raw = transport.request("GET", path, null, Map.of(), new byte[0]);
-            if (!raw.isSuccess()) return "";
+            if (!raw.isSuccess()) return null;
             return new String(raw.body(), StandardCharsets.UTF_8);
         } catch (IOException e) {
-            return "";
+            return null;
         }
     }
 

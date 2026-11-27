@@ -679,6 +679,22 @@ Additional differences:
   A wrong -1 then costs at most that much, rather than a healthy VM timing out, and a boot still makes a handful of probes instead of one per poll.
   Containers are never gated: their first probe usually answers, and a state read would be a round trip added to the branch path.
   The budget, the console fail-fast and the messages are the same either way; the gate changes only what is polled inside them.
+- **A VM Incus stopped while it started is started once more** (#2675): Incus 6.23 has been seen to kill a healthy VM milliseconds into its start, about once in 150 VM starts.
+  It loses its QEMU monitor's event stream, takes that for the VM dying and sends QEMU `quit` (`reason=disconnect` in the incusd journal).
+  What tells this apart from a guest that died is the VM's QEMU monitor log, `qemu.qmp.log`, which Incus rotates at every start: its first `SHUTDOWN` event has the reason `host-qmp-quit`.
+  A guest that panicked or powered off shuts down first with `guest-panic` or `guest-shutdown`, and only then is QEMU told to quit.
+  The console log cannot tell them apart.
+  Incus 6.23 appends to `console.log` only when someone reads the console while the VM runs, and `onStop` does not drain it, so a guest that printed in the 2 s since isx last read it reads as silent.
+  So `waitForReady` throws `HostSideStartFailure` only for a VM that reads `Stopped` and whose monitor log's first shutdown is `host-qmp-quit`, whatever its console shows.
+  An `Error` VM is never retried: Incus reports it when the QEMU process is alive but does not answer, so a plain start cannot follow.
+  The monitor log is read only after a death, so a start that succeeds costs no request for it.
+  The wait does not own the start, so it decides no policy.
+  `HostSideStart.retryOnce` wraps the wait in each path that owns a start, and is given that path's own start to run again: a build's (`BuildCommand.awaitBuildReady`), `isx project` and `isx update-all`'s, a branch's, and `InstanceLifecycle.startForUse` and `restartForUse`.
+  The last two start it again as `startForUse` does, inside `ProxyOnlyAcl.explaining` and taking a start whose answer was lost for what it did (`runsAnyway`).
+  It warns that Incus stopped the VM while it was starting, starts it again and waits once more, and a second such stop is reported as before.
+  The retry is safe: the VM is stopped with its devices still attached, and the failed start already consumed `volatile.apply_template`.
+  What it gives up: a person's `incus stop --force` in the first seconds of a start writes the same reason, so isx starts that VM again, and says so.
+  `VmAgentRecovery`'s restart is not wrapped: it is already a recovery, limited to one per boot by the boot it stamps, which a retry would replace.
 - **Recovering an unresponsive agent** (#843): when `isx shell`, `isx run` or the TUI find a running VM whose agent does not answer, `VmAgentRecovery.restartForAgent` decides whether to restart it.
   A restart recovers an agent that merely wedged.
   But it is a cold boot that kills the guest's work, and it cannot help an agent that fails to start on this image.

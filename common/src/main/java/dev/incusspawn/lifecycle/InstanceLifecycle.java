@@ -673,7 +673,9 @@ public final class InstanceLifecycle {
      * other, with the boot stamped as holding it. Taken around a whole start, which the waiter
      * may have to sit out, so its bound is the instance's ready timeout, what Incus is given to
      * stop or restart it and then start it ({@link #STATE_CHANGES}), the usual stuck-holder
-     * margin, and for a VM the graceful stop {@link VmAgentRecovery} tries before forcing one. Not reentrant: code under it calls the
+     * margin, and for a VM the graceful stop {@link VmAgentRecovery} tries before forcing one and
+     * the one more start and wait {@link HostSideStart} gives a VM Incus stopped as it started
+     * (#2675). Not reentrant: code under it calls the
      * {@code *Held} variants.
      *
      * <p>A lock file per instance name, never deleted, under its own directory, so it can never be
@@ -682,6 +684,8 @@ public final class InstanceLifecycle {
     static HostLock secretLock(IncusClient incus, String name, MachineType machineType, String activity, Output out) {
         return HostLock.acquire(Environment.lockDir().resolve("instance-secret").resolve(name + ".lock"),
                 activity, out::step, incus.readyTimeout(machineType).plus(HostLock.TIMEOUT).plus(STATE_CHANGES)
+                        .plus(machineType == MachineType.VM ? incus.readyTimeout(machineType).plus(START_AGAIN)
+                                : java.time.Duration.ZERO)
                         .plusSeconds(machineType == MachineType.VM ? VmAgentRecovery.GRACEFUL_STOP_SECONDS : 0));
     }
 
@@ -691,6 +695,9 @@ public final class InstanceLifecycle {
      * 30 s to start ({@link IncusClient#start}).
      */
     private static final java.time.Duration STATE_CHANGES = java.time.Duration.ofSeconds(60);
+
+    /** What {@link HostSideStart} gives Incus for the one more start of a VM it stopped as it started. */
+    private static final java.time.Duration START_AGAIN = java.time.Duration.ofSeconds(30);
 
     /** {@link #startForUse}, with its {@link #secretLock} held. */
     private static JqValue startHeld(IncusClient incus, String name, JqValue instance, MachineType machineType,
@@ -712,7 +719,22 @@ public final class InstanceLifecycle {
         });
         // A --no-start branch is first started here, with neither its SSH keys nor its Host entry (#1640)
         return awaitReady(incus, name, machineType, instance, secret, Metadata.isMcpCaller(instance),
-                declared, out);
+                declared, () -> startExplained(incus, name, instance, out), out);
+    }
+
+    /**
+     * Start {@code name} as {@link #startHeld} does once its secret is given: a refused
+     * proxy-only ACL explained, and a start whose answer was lost taken for what it did.
+     */
+    private static void startExplained(IncusClient incus, String name, JqValue instance, Output out) {
+        ProxyOnlyAcl.explaining(incus, name, instance, () -> {
+            try {
+                startInstance(incus, name, out);
+            } catch (RuntimeException e) {
+                if (!runsAnyway(incus, name, e)) throw e;
+            }
+            return null;
+        });
     }
 
     /**
@@ -721,12 +743,13 @@ public final class InstanceLifecycle {
      * the Host entry and the host keys its answer reported (#1640, #1863), which are local files.
      *
      * @param instance the instance as read before the start, for its SSH capability and address
+     * @param startAgain how to start it again when Incus stopped it while it started (#2675)
      * @return {@link #recordSecretBoot}'s read of the booted instance, or null for a VM
      */
     private static JqValue awaitReady(IncusClient incus, String name, MachineType machineType, JqValue instance,
                                       InstanceSecret.Delivery secret, boolean mcpCaller,
                                       CompletableFuture<ProofToken.Declared> declared,
-                                      Output out) {
+                                      Runnable startAgain, Output out) {
         var ssh = RuntimeSetup.hasSshCapability(instance);
         // A container's address before the shell, as a branch has it (#801): exec answers before
         // networkd is up. First, so a slow secret delivery or MCP registration does not delay it
@@ -736,8 +759,8 @@ public final class InstanceLifecycle {
                 + (ssh ? RuntimeSetup.sshStartScript() : "");
         var answer = new String[1];
         var booted = withCurrentProofs(incus, name, secret, current -> {
-            answer[0] = incus.waitForReady(name, machineType, guestScript,
-                    InstanceSecret.guestEnv(current, mcpCaller, declared.join().placeholders()));
+            answer[0] = HostSideStart.retryOnce(name, out, startAgain, () -> incus.waitForReady(name, machineType,
+                    guestScript, InstanceSecret.guestEnv(current, mcpCaller, declared.join().placeholders())));
             return recordSecretBoot(incus, name, machineType, current.proofGeneration());
         });
         if (ssh) {
@@ -853,7 +876,8 @@ public final class InstanceLifecycle {
             return delivery;
         });
         // As on a start, from the listing: no request of its own, and the pin stays current (#1640, #1863)
-        awaitReady(incus, name, machineType, instance, secret, mcpCaller, declared, out);
+        awaitReady(incus, name, machineType, instance, secret, mcpCaller, declared,
+                () -> startExplained(incus, name, instance, out), out);
     }
 
     /**

@@ -9,6 +9,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BuildAccounts;
+import dev.incusspawn.lifecycle.HostSideStart;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProxyService;
@@ -169,7 +170,8 @@ public class UpdateAllCommand extends BaseCommand {
         try {
             // Pinned, filtered and granted its accounts as a build is, since it runs the same prime commands (#1743)
             var started = InstanceLifecycle.startTemplate(incus, copy, read, BuildOutput.bound());
-            incus.waitForReady(copy, machineType, InstanceSecret.GUEST_SCRIPT, started.guestEnv());
+            HostSideStart.retryOnce(incus, copy, BuildOutput.bound(), () -> incus.waitForReady(copy, machineType,
+                    InstanceSecret.GUEST_SCRIPT, started.guestEnv()));
             answered = true;
 
             // Every step below needs the network: without one, each would only fail the same way

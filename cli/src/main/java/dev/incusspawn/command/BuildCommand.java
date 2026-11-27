@@ -25,6 +25,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.AgentGitIdentity;
 import dev.incusspawn.lifecycle.BuildAccounts;
+import dev.incusspawn.lifecycle.HostSideStart;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.lifecycle.InstanceNetwork;
@@ -1599,7 +1600,7 @@ public class BuildCommand extends BaseCommand {
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         var dnfCacheWarning = attachBootDevices(buildName, hostResources, machineType);
         var started = startBuild(buildName, imageDef, defs);
-        incus.waitForReady(buildName, machineType, dev.incusspawn.proxy.InstanceSecret.GUEST_SCRIPT, started.guestEnv());
+        awaitBuildReady(buildName, machineType, started);
 
         var container = new Container(incus, buildName, BuildOutput.bound(), commandLog());
         if (machineType == MachineType.CONTAINER) {
@@ -1782,7 +1783,7 @@ public class BuildCommand extends BaseCommand {
         });
         var started = launched.started();
         var dnfCacheWarning = launched.dnfCacheWarning();
-        incus.waitForReady(buildName, machineType, dev.incusspawn.proxy.InstanceSecret.GUEST_SCRIPT, started.guestEnv());
+        awaitBuildReady(buildName, machineType, started);
         BuildOutput.stepDone();
         announceBuildAccounts(imageDef, defs);
         warnDnfCacheUnavailable(dnfCacheWarning);
@@ -2804,6 +2805,12 @@ public class BuildCommand extends BaseCommand {
     BuildAccounts.Started startBuild(String buildName, ImageDef imageDef, Map<String, ImageDef> defs) {
         return BuildAccounts.start(incus, buildName, ImageDef.resolveAccounts(imageDef, defs),
                 imageDef.getName(), ProxyService::signalAccountRefresh);
+    }
+
+    /** Wait for the build {@link #startBuild} started, starting a VM Incus stopped on the host once more (#2675). */
+    private void awaitBuildReady(String buildName, MachineType machineType, BuildAccounts.Started started) {
+        HostSideStart.retryOnce(incus, buildName, BuildOutput.bound(), () -> incus.waitForReady(buildName,
+                machineType, dev.incusspawn.proxy.InstanceSecret.GUEST_SCRIPT, started.guestEnv()));
     }
 
     /** Fail the build if its guest did not take the address {@link #startBuild} gave it. */
