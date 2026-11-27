@@ -24,11 +24,11 @@ import java.util.concurrent.TimeoutException;
  */
 final class OperationWatcher implements AutoCloseable {
 
-    /** How an operation ended: its status and its own metadata (an exec's {@code return}). */
-    record End(String status, JqValue metadata) {}
+    /** How an operation ended: its status, its own metadata (an exec's {@code return}) and Incus's reason when it failed. */
+    record End(String status, JqValue metadata, String err) {}
 
     /** What {@link Waiter#await} answers once the subscription is gone: ask {@code /wait} instead. */
-    static final End LOST = new End("", null);
+    static final End LOST = new End("", null, "");
 
     // Ends no waiter was registered for yet: bounded, since every client's operations are seen
     private static final int KEPT_ENDS = 256;
@@ -105,7 +105,7 @@ final class OperationWatcher implements AutoCloseable {
                     id = op.pathText("id", "");
                     var status = op.pathText("status", "");
                     if (id.isEmpty() || IncusApi.isUnfinished(status) || "Cancelling".equals(status)) continue;
-                    end = new End(status, op.getField("metadata"));
+                    end = new End(status, op.getField("metadata"), op.pathText("err", ""));
                 } catch (RuntimeException unreadable) {
                     continue; // an event we cannot read ends nothing; its exec's limit still holds
                 }
