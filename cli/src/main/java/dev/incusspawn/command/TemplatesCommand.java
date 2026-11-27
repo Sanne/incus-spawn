@@ -1020,6 +1020,9 @@ public class TemplatesCommand extends BaseCommand {
             #     branch: main                         # branch or tag to check out; defaults to the repo's default
             #     depth: 1                             # keep only this many commits, on this branch only; omit for all
             #     prime: mvn -B install -DskipTests    # command, or a list of them, run in the clone once cloned
+            #     remote: upstream                     # the clone's own remote's name; defaults to origin
+            #     remotes:                             # other remotes, never fetched by isx
+            #       origin: https://github.com/{github.login}/repo   # the instance's GitHub login
             #   - host-source: ~/work/private-repo      # instead of url; local branches/tags, including unpushed work
             #     path: ~/private-repo                  # trusted templates only; no depth or upstream access
 

@@ -19,6 +19,8 @@ It never copies the source object store wholesale, fetches its remote, mounts it
 Only a leased independent prepared repository enters the guest; checksum verification and detachment precede prime.
 Host sources require full history and trusted templates; project-local definitions remain unable to prepare host repositories.
 Resolved source associations are stamped at build for automatic remotes, with host-owned cleanup records that survive instance or template deletion.
+A `repos:` entry's `remote:` renames the clone's `origin` and `remotes:` adds others, never fetched and skipped by `git fetch --all` (#343).
+A remote URL's one placeholder, `{github.login}`, is filled from the instance's GitHub account at build and on every move to an account with a token, and left holding the placeholder without one (`RepoRemotes`, design/templates.md "A repo's remotes"); isx creates no forks.
 
 
 ## Project Overview

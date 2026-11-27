@@ -117,6 +117,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - YAML tools vs a full plugin system (Packer, Ansible, etc.)
   - Hardcoded built-in tool list vs classpath scanning
   - Host Repo Refresh
+  - A repo's remotes
   - Build Flow
   - A template with no definition here is never rebuilt
   - Agent Context File

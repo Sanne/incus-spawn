@@ -222,6 +222,8 @@ A repo with a `depth` never takes the local fast path (it ignores `--depth`): it
 From the network it is `--single-branch --depth`, and its refspec stays narrow (#1344).
 Full preparation refuses shallow references and uses a standalone snapshot or the remote.
 The shallow fixup then drops the host checkout's own branch and origin/HEAD, leaving a network clone's refs.
+A repo's `remote:` renames the clone's `origin` and `remotes:` adds others, in the clone's exec before its prime, never fetched and marked `skipFetchAll` (`RepoRemotes`, #343).
+A remote naming `{github.login}` is recorded in `/etc/isx/repo-remotes` and filled after every layer's clones from the build's GitHub account (`GuestProvisioning.setLoginRemotes`), and again by `GhSetup.rebakeForAccount`; without a login its URL keeps the placeholder, never another account's fork (design/templates.md "A repo's remotes").
 Clones and `prime` commands use captured (non-streamed) exec so parallel output doesn't garble; progress renders via `util/TerminalProgress.java`, the shared animated braille-spinner display also used by `HostRepoRefresh`'s parallel fetch and by `BuildCommand`'s dnf operations.
 Each repo's `prime` commands (one, or a list run in turn that stops at the first failure) run in the same worker once that repo's clone finishes **and every raw shallow host reference is detached** (Cloning -> Waiting to prime -> Priming within one progress line).
 The shallow path still mounts the host checkout's working tree, so no prime may run next to any raw shallow reference (#765).

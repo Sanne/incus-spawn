@@ -875,6 +875,16 @@ class RepoCloner {
                 }
             }
 
+            // Before the prime, which may use them; never fetched, so a missing fork fails nothing (#343).
+            // A remote naming {github.login} is not among them: GuestProvisioning.setLoginRemotes adds it after every prime.
+            var remotes = dev.incusspawn.git.RepoRemotes.cloneScript(repo, expandHome(repo.getPath()));
+            if (remotes != null) {
+                var set = container.shAsUser("agentuser", remotes);
+                if (!set.success()) {
+                    states.set(idx, StepProgress.failed("could not set up the remotes: " + gitError(set), combinedOutput(set)));
+                    return CloneResult.FAILED;
+                }
+            }
             return new CloneResult(true, usedReference, fallbackReason);
         } catch (Exception e) {
             states.set(idx, StepProgress.failed(e.getMessage(), null));

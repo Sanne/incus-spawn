@@ -160,11 +160,59 @@ public class GhSetup implements ToolSetup {
         // token, gh missing -- would leave the instance with no author at all, which is worse
         // than the stale one it had: every commit made before the next successful attempt would
         // be unattributed rather than merely attributed to the previous account.
-        var identity = resolveIdentity(container, config, accountName, true);
+        GitIdentity identity;
+        try {
+            identity = resolveIdentity(container, config, accountName, true);
+        } catch (RuntimeException e) {
+            removeLoginRemotes(container, e);
+            throw e;
+        }
+        // Written before the login lookup: an identity config.yaml fixes needs no GitHub answer (#2396)
         gitConfig(container, "user.name", identity.name());
         gitConfig(container, "user.email", identity.email());
+        // A remote naming {github.login} follows the account, so it never names another's fork (#343).
+        // The identity's lookup already asked GitHub for the login, so the fill alone reads the record.
+        if (identity.login() != null) {
+            fillLoginRemotes(container, identity.login());
+        } else if (dev.incusspawn.git.RepoRemotes.hasRecord(container)) {
+            // config.yaml fixes both name and email, so GitHub is asked for the login alone. The
+            // identity needs no answer (#2396), so a lookup that fails leaves the placeholder and warns.
+            String login = null;
+            try {
+                login = githubLogin(container, config, accountName);
+            } catch (IncusException e) {
+                dev.incusspawn.Warnings.warn("Could not read the GitHub account's login, so the remotes whose URL names it"
+                        + " keep " + dev.incusspawn.git.RepoRemotes.LOGIN + ": "
+                        + dev.incusspawn.util.OutputFormat.oneLine(e.getMessage()));
+            }
+            fillLoginRemotes(container, login);
+        }
         // Git reads its config for every commit, so nothing running needs restarting
         return null;
+    }
+
+    /**
+     * Fill the remotes from {@code login}. A remote that cannot be set (a recorded clone that is no
+     * longer a Git work tree, say) warns, as the build does, rather than failing the re-point: the
+     * identity is already written, and a failure would leave the stamp stale, so every later start
+     * would re-derive and fail again.
+     */
+    private static void fillLoginRemotes(Container container, String login) {
+        try {
+            dev.incusspawn.git.RepoRemotes.fill(container, login);
+        } catch (IncusException e) {
+            dev.incusspawn.Warnings.warn("Could not set the remotes whose URL names the GitHub account's login: "
+                    + dev.incusspawn.util.OutputFormat.oneLine(e.getMessage()));
+        }
+    }
+
+    /** No login for the new account, so no remote may go on naming the previous one's fork (#343). */
+    private static void removeLoginRemotes(Container container, RuntimeException cause) {
+        try {
+            if (dev.incusspawn.git.RepoRemotes.hasRecord(container)) dev.incusspawn.git.RepoRemotes.fill(container, null);
+        } catch (RuntimeException removal) {
+            cause.addSuppressed(removal);
+        }
     }
 
     @Override
@@ -279,8 +327,11 @@ public class GhSetup implements ToolSetup {
                 + " printf %s \"$GH_TOKEN\"); printf %s \"${t:-" + PLACEHOLDER_TOKEN + "}\")\"";
     }
 
-    /** The git identity behind a GitHub account, as the API reports it. */
-    record GitIdentity(String name, String email) {}
+    /**
+     * The git identity behind a GitHub account, as the API reports it. {@code login} is what GitHub
+     * reported, or null when config.yaml fixed both name and email and GitHub was not asked.
+     */
+    record GitIdentity(String name, String email, String login) {}
 
     /**
      * Ask the API who this account's token belongs to.
@@ -300,7 +351,7 @@ public class GhSetup implements ToolSetup {
         var fixedName = AccountResolver.value(config, NAMESPACE, accountName, "name");
         var fixedEmail = AccountResolver.value(config, NAMESPACE, accountName, "email");
         if (!fixedName.isBlank() && !fixedEmail.isBlank()) {
-            return new GitIdentity(fixedName, fixedEmail);
+            return new GitIdentity(fixedName, fixedEmail, null);
         }
         var command = LOGIN_TOKEN + " gh api user --jq '[.login, .name, .email] | @tsv'";
         var tokenConfigured = !AccountResolver.value(config, NAMESPACE, accountName, "token").isBlank();
@@ -350,7 +401,38 @@ public class GhSetup implements ToolSetup {
         if (email == null) {
             email = login + "@users.noreply.github.com";
         }
-        return new GitIdentity(name, email);
+        return new GitIdentity(name, email, dev.incusspawn.git.RepoRemotes.validLogin(login) ? login : null);
+    }
+
+    /**
+     * The login of the instance's GitHub account, as the API reports it through the proxy, for the
+     * remotes that name {@code {github.login}} (#343). Null when there is none to ask about: an
+     * account with no token, unless it is {@code inherit}, whose parent may hold one. A lookup
+     * that fails for an account with a token throws, as {@link #resolveIdentity} does.
+     */
+    public String githubLogin(Container c, SpawnConfig config, String accountName) {
+        var account = AccountResolver.effectiveAccount(config, NAMESPACE, accountName);
+        var inherit = AccountResolver.INHERIT.equals(account);
+        var tokenConfigured = !account.isEmpty() && !inherit
+                && !AccountResolver.value(config, NAMESPACE, account, "token").isBlank();
+        if (!tokenConfigured && !inherit) return null;
+        var command = LOGIN_TOKEN + " gh api user --jq .login";
+        var result = c.sh(command);
+        for (int attempt = 0; tokenConfigured && attempt < retryDelaysMs.length
+                && (!result.success() || result.stdout().isBlank()); attempt++) {
+            try {
+                Thread.sleep(retryDelaysMs[attempt]);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IncusException("Interrupted while asking GitHub for the account's login", e);
+            }
+            result = c.sh(command);
+        }
+        var login = result.success() ? result.stdout().strip() : "";
+        if (dev.incusspawn.git.RepoRemotes.validLogin(login)) return login;
+        if (!tokenConfigured) return null;
+        var detail = result.stderr().isBlank() ? "" : " (" + result.stderr().strip() + ")";
+        throw new IncusException("Could not ask GitHub for the account's login" + detail);
     }
 
     private static final String JQ_NOREPLY = "([.[] | select(.verified and (.email | endswith(\"@users.noreply.github.com\"))) | .email] | first)";

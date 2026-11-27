@@ -144,6 +144,16 @@
               {"type": ["array", "null"], "items": {"type": "string"}}
             ],
             "description": "Command, or a list of them, run in the clone once cloned. Each stops the rest when it fails."
+          },
+          "remote": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Name of the clone's own remote. Defaults to origin."
+          },
+          "remotes": {
+            "type": ["object", "null"],
+            "additionalProperties": {"type": "string"},
+            "description": "Other remotes by name, never fetched by isx. A URL may hold {github.login}, the login of the instance's GitHub account."
           }
         }
       }

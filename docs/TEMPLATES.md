@@ -298,6 +298,8 @@ repos:
 | `branch` | Branch or tag to check out | the repo's default branch |
 | `depth` | A positive number of commits to keep: the clone is shallow and follows only its branch | full history |
 | `prime` | Shell command, or a list of them, to run inside the repo directory after cloning, typically to pre-fetch dependencies, such as `mvn dependency:go-offline` or `gradle dependencies` | |
+| `remote` | Name of the clone's own remote (see [Remotes](#remotes)) | `origin` |
+| `remotes` | Other remotes, by name, added beside the clone's own and never fetched by isx | |
 
 A list runs its commands in turn, and the first that fails stops the rest and fails the build.
 Each command runs in its own shell, so a variable that one command exports is not set in the next command.
@@ -310,6 +312,35 @@ Omit it for development repositories, which get the full history.
 In the instance, `git fetch --unshallow && git remote set-branches origin '*' && git fetch` fetches the full history.
 
 isx pre-trusts declared repos in `.claude.json`, so Claude Code does not prompt for trust on first use.
+
+### Remotes
+
+A shared template can clone the upstream project and still give each person a remote for their own fork:
+
+```yaml
+repos:
+  - url: https://git.example.com/example-org/example-repo.git
+    remote: upstream
+    remotes:
+      origin: https://git.example.com/{github.login}/example-repo.git
+      colleague: https://git.example.org/example-user/example-repo.git
+```
+
+`remote` renames the clone's own remote, here to `upstream`.
+Each entry of `remotes` is added beside it before the prime runs.
+A remote that names `{github.login}` is the exception: it is added once every repo is cloned and primed, so a prime cannot use it.
+
+isx never fetches these remotes, so a fork that does not exist yet does not fail the build.
+`git fetch --all` skips them too, so `isx update-all` does not fail on them; fetch one by name, as in `git fetch origin`.
+
+`{github.login}` is the only placeholder a URL may hold.
+It is the login of the instance's GitHub account, filled in at build time and whenever that account changes.
+So it belongs in a GitHub URL, which the example's host stands for.
+Without a GitHub account, the remote's URL keeps `{github.login}`, which names no repository, until an account is set.
+
+isx does not create forks on GitHub.
+The agent instructions tell the agent to check that the fork exists before pushing there, and to run `gh repo fork` when it does not.
+If you push by hand, run `gh repo fork` once.
 
 ### Runtimes a prime downloads
 

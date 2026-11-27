@@ -335,6 +335,10 @@ public class ImageDef extends DefinitionOrigin {
         private Integer depth;
         @JqConverter(CommandListConverter.class)
         private List<String> prime = List.of();
+        /** The name of the clone's own remote, or null for {@code origin} (#343). */
+        private String remote;
+        /** Other remotes, by name, added beside the clone's and never fetched by isx (#343). */
+        private Map<String, String> remotes = Map.of();
 
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
@@ -380,6 +384,24 @@ public class ImageDef extends DefinitionOrigin {
         public List<String> getPrime() { return prime; }
         public void setPrime(List<String> prime) { this.prime = items(prime).stream().filter(c -> !c.isBlank()).toList(); }
         public boolean hasPrime() { return !prime.isEmpty(); }
+        public String getRemote() { return remote; }
+        public void setRemote(String remote) { this.remote = remote; }
+        /** The clone's own remote's name: {@code remote:}, else {@code origin}. */
+        public String remoteName() {
+            return remote == null ? dev.incusspawn.git.RepoRemotes.DEFAULT_REMOTE : remote;
+        }
+        public Map<String, String> getRemotes() { return remotes; }
+        public void setRemotes(Map<String, String> remotes) {
+            this.remotes = remotes == null ? Map.of() : Collections.unmodifiableMap(new java.util.TreeMap<>(remotes));
+        }
+        /** The remote keys for a fingerprint, only when set, so an entry without them keeps its fingerprint. */
+        String remotesFingerprint() {
+            var sb = new StringBuilder();
+            // remote: origin is the clone's remote as no entry names it, so it keeps the fingerprint too
+            if (!remoteName().equals(dev.incusspawn.git.RepoRemotes.DEFAULT_REMOTE)) sb.append(",remote=").append(remote);
+            remotes.forEach((name, url) -> sb.append(",remotes.").append(name).append('=').append(url));
+            return sb.toString();
+        }
         /** The commands as one line for people, joined as {@code &&} would run them, or null for none. */
         public String primeText() { return hasPrime() ? String.join(" && ", prime) : null; }
         /**
@@ -587,7 +609,8 @@ public class ImageDef extends DefinitionOrigin {
                         .append(',').append(r.getBranch()).append(',').append(r.primeFingerprint())
                         // Only when set, so a template without one keeps the fingerprint it was built with.
                         .append(r.getDepth() != null ? ",depth=" + r.getDepth() : "")
-                        .append(r.isHostSource() ? ",host-source=" + r.getHostSource() : "").append('\n'));
+                        .append(r.isHostSource() ? ",host-source=" + r.getHostSource() : "")
+                        .append(r.remotesFingerprint()).append('\n'));
         if (skills.getRepo() != null) sb.append("skills-repo=").append(skills.getRepo()).append('\n');
         skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
         skills.appendPin(sb);
@@ -789,6 +812,12 @@ public class ImageDef extends DefinitionOrigin {
         }
         if (!java.util.Objects.equals(a.getDepth(), b.getDepth())) {
             differences.add("depth (" + shown(a.getDepth()) + " vs " + shown(b.getDepth()) + ")");
+        }
+        if (!a.remoteName().equals(b.remoteName())) {
+            differences.add("remote (" + shown(a.remoteName()) + " vs " + shown(b.remoteName()) + ")");
+        }
+        if (!a.getRemotes().equals(b.getRemotes())) {
+            differences.add("remotes (" + shown(a.getRemotes()) + " vs " + shown(b.getRemotes()) + ")");
         }
         if (!stripped(a.getPrime()).equals(stripped(b.getPrime()))) {
             differences.add("prime (" + shown(a.primeText()) + " vs " + shown(b.primeText()) + ")");
@@ -1285,6 +1314,8 @@ public class ImageDef extends DefinitionOrigin {
             return "repo " + OutputFormat.oneLine(String.valueOf(repo.getUrl()))
                     + ": 'depth' " + repo.getDepth() + " is not a positive number of commits";
         }
+        var remotes = dev.incusspawn.git.RepoRemotes.problem(repo);
+        if (remotes != null) return "repo " + OutputFormat.oneLine(String.valueOf(repo.sourceDescription())) + ": " + remotes;
         return null;
     }
 

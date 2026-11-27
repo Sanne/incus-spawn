@@ -17,6 +17,8 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.AntigravitySetup;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
+import dev.incusspawn.tool.GhSetup;
+import dev.incusspawn.git.RepoRemotes;
 import dev.incusspawn.tool.ToolVerifier;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
@@ -363,7 +365,10 @@ public class GuestProvisioning {
         // per-layer in the chain loop, buildFromParent inherits them with the copy.
         var repos = new ArrayList<AgentContextGenerator.Repo>();
         for (var repo : chainRepos(imageDef, defs)) {
-            repos.add(new AgentContextGenerator.Repo(repo.getPath(), repo.getUrl()));
+            var forks = RepoRemotes.loginRemotes(List.of(repo), path -> path).stream()
+                    .map(RepoRemotes.LoginRemote::name).toList();
+            var remote = repo.remoteName().equals(RepoRemotes.DEFAULT_REMOTE) ? null : repo.remoteName();
+            repos.add(new AgentContextGenerator.Repo(repo.getPath(), repo.getUrl(), remote, forks));
         }
 
         var toolNames = new ArrayList<String>(allTools.size());
@@ -374,6 +379,52 @@ public class GuestProvisioning {
 
         var content = AgentContextGenerator.generate(canonicalName, toolNames, repos, notes);
         AgentInstructions.install(container, content, AgentInstructions.locations(allTools, content));
+    }
+
+    /**
+     * Record the chain's remotes that name {@code {github.login}} in the guest and fill them in
+     * from the build's GitHub account (#343), after every layer's clones. Each build writes the
+     * whole chain's record, so it holds only what the definitions declare. Without the gh tool or
+     * a GitHub account there is no login, and the remote's URL keeps the placeholder until one is set.
+     */
+    static void setLoginRemotes(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
+                                List<ResolvedTool> allTools) {
+        var remotes = RepoRemotes.loginRemotes(chainRepos(imageDef, defs), GuestProvisioning::expandHome);
+        container.sh(RepoRemotes.recordScript("", remotes)).assertSuccess("Failed to record the repos' remotes");
+        if (remotes.isEmpty()) return;
+        String login = null;
+        var gh = allTools.stream().map(ResolvedTool::setup).filter(GhSetup.class::isInstance)
+                .map(GhSetup.class::cast).findFirst().orElse(null);
+        String lookupFailure = null;
+        if (gh != null) {
+            var config = dev.incusspawn.config.SpawnConfig.load();
+            try {
+                login = gh.githubLogin(container, config,
+                        ImageDef.resolveAccounts(imageDef, defs).get(GhSetup.NAMESPACE));
+            } catch (IncusException e) {
+                // The remote is optional and the build is not: a lookup that fails never fails it (#2396)
+                lookupFailure = OutputFormat.oneLine(e.getMessage());
+            }
+        }
+        try {
+            RepoRemotes.fill(container, login);
+        } catch (IncusException e) {
+            // A recorded clone that is no longer a Git work tree, say: the remote is optional, so is this
+            BuildOutput.warn("Could not set the remotes whose URL names the GitHub account's login",
+                    OutputFormat.oneLine(e.getMessage()));
+            return;
+        }
+        if (login != null) return;
+        var names = remotes.stream().map(r -> "'" + r.name() + "' in " + r.path()).distinct().toList();
+        String[] advice;
+        if (gh == null) advice = new String[] {"The gh tool gives a template a GitHub account: add it to the template."};
+        else if (lookupFailure != null) advice = new String[] {lookupFailure + ".", "Rebuilding the template fills it in once GitHub answers."};
+        else advice = new String[] {"A GitHub account with a token gives the login: 'isx account add github' sets one up.",
+                "Each branch then gets the login the next time isx branches it, opens a shell in it or runs a command in it."};
+        var why = gh == null ? "This template has no gh tool to read a GitHub login with"
+                : "This build could not read the GitHub account's login";
+        BuildOutput.warn(why + ", so the URL still holds " + RepoRemotes.LOGIN
+                + " and names no repository: remote " + String.join(", ", names), advice);
     }
 
     static final String AGENTUSER_HOME = "/home/agentuser";
