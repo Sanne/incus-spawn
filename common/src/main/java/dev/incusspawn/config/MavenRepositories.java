@@ -171,7 +171,7 @@ public final class MavenRepositories {
     private static Entry entry(Object item, Set<String> taken) throws Refused {
         if (!(item instanceof Map<?, ?> map)) throw new Refused("expected a mapping with url:, access:, confirm: and replaces-releases:");
         for (var key : map.keySet()) {
-            if (!KEYS.contains(String.valueOf(key))) throw new Refused("unknown key '" + key + "'");
+            if (!KEYS.contains(String.valueOf(key))) throw new Refused(MappedDefinition.unknownKey(key, KEYS, ""));
         }
         var url = repositoryUrl(required(map, "url"), "url");
         var host = url.host();

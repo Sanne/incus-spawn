@@ -128,7 +128,7 @@ public final class HostRoutes {
         }
         for (var field : fields.keySet()) {
             if (!KEYS.contains(String.valueOf(field))) {
-                warn.accept(ignoring(key) + ": unknown key '" + field + "' (expected target: and templates:)");
+                warn.accept(ignoring(key) + ": " + MappedDefinition.unknownKey(field, KEYS, " (expected target: and templates:)"));
                 return null;
             }
         }

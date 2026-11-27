@@ -113,7 +113,7 @@ class MavenRepositoriesTest {
         assertEquals(List.of("jitpack.io"), kept.stream().map(MavenRepositories.Entry::domain).toList());
         assertEquals(4, warnings.size(), warnings.toString());
         assertTrue(warnings.get(0).contains("not a duration"));
-        assertTrue(warnings.get(1).contains("unknown key 'confim'"));
+        assertTrue(warnings.get(1).endsWith("unknown key 'confim'; did you mean 'confirm'?"), warnings.get(1));
         assertTrue(warnings.get(3).contains("more than once"));
     }
 

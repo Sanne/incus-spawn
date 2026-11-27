@@ -104,6 +104,16 @@ class McpConfigTest {
         assertTrue(invalid("codex:\n  sandbox-mod: read-only\n").contains("unknown key codex.sandbox-mod"));
     }
 
+    /** A refused key names the setting it most likely meant, never a retired one (#2463). */
+    @Test
+    void anUnknownKeyNamesTheSettingItProbablyMeant() {
+        assertTrue(invalid("templates: [t]\nmax-instance: 2\n")
+                .contains("unknown key max-instance (did you mean 'max-instances'?)"), invalid("templates: [t]\nmax-instance: 2\n"));
+        assertTrue(invalid("templats: [t]\nbogus: 1\n")
+                .contains("unknown key templats (did you mean 'templates'?), bogus"), invalid("templats: [t]\nbogus: 1\n"));
+        assertFalse(invalid("codex:\n  sandbox-mod: read-only\n").contains("did you mean"));
+    }
+
     /** The fields that collect unknown and retired keys are no settings, so their names are unknown keys too (#1889). */
     @Test
     void aKeyNamedAfterAnInternalFieldIsRefused() {
@@ -326,6 +336,18 @@ class McpConfigTest {
                 """);
         assertEquals(1, warnings.size());
         assertTrue(warnings.get(0).contains("unknown key 'runs-as'"), warnings.get(0));
+    }
+
+    @Test
+    void hostToolUnknownKeyNamesTheKeyItProbablyMeant() {
+        var warnings = hostToolWarnings("""
+                host-tools:
+                  broken:
+                    comand: echo ok
+                    description: A tool
+                """);
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).endsWith("unknown key 'comand'; did you mean 'command'?"), warnings.get(0));
     }
 
     @Test

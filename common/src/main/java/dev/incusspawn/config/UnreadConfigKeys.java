@@ -1,6 +1,7 @@
 package dev.incusspawn.config;
 
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.util.OutputFormat;
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
@@ -57,6 +58,39 @@ public final class UnreadConfigKeys {
             if (!unread.isEmpty()) result.put(namespace, unread);
         }
         return result;
+    }
+
+    /**
+     * One note per top-level key that neither isx nor a tool reads and that is close to one that is
+     * read, saying which (#2463): {@code maven-repositorie:} for {@code maven-repositories:}. A key
+     * close to none is left alone, since it may belong to a tool isx does not have; so is one that
+     * only adds a word to a read key ({@code github-enterprise:}) or is shorter than five letters.
+     */
+    public static List<String> misspelt(JqValue tree, Map<String, ToolSetup> tools) {
+        if (!(tree instanceof JqObject root)) return List.of();
+        var known = new LinkedHashSet<>(SpawnConfig.KEYS);
+        for (var tool : tools.values()) {
+            var proxy = tool.proxy();
+            if (proxy == null) continue;
+            if (!proxy.getConfigNamespace().isBlank()) known.add(proxy.getConfigNamespace());
+            for (var entry : proxy.getConfiguration().values()) {
+                // Its namespace, or the top-level key a path with none names
+                var path = proxy.fullConfigPath(entry);
+                var dot = path.indexOf('.');
+                if (!path.isBlank()) known.add(dot < 0 ? path : path.substring(0, dot));
+            }
+        }
+        var notes = new ArrayList<String>();
+        for (var key : root.keys()) {
+            // The section mcp.yaml replaced has a notice of its own (McpConfig.legacySectionNotice)
+            if (known.contains(key) || key.equals("mcp")) continue;
+            var meant = MappedDefinition.closest(key, known, false);
+            if (meant != null) {
+                notes.add("config.yaml has '" + OutputFormat.oneLine(key) + "', which isx does not read"
+                        + MappedDefinition.didYouMean(meant));
+            }
+        }
+        return notes;
     }
 
     /** {@code namespace}'s unread keys, as full dotted paths ({@code openai.token}), in file order. */

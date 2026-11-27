@@ -78,7 +78,7 @@ public final class MavenMirrors {
     private static Entry entry(Object item) throws MavenRepositories.Refused {
         if (!(item instanceof Map<?, ?> map)) throw new MavenRepositories.Refused("expected a mapping with repository: and mirror:");
         for (var key : map.keySet()) {
-            if (!KEYS.contains(String.valueOf(key))) throw new MavenRepositories.Refused("unknown key '" + key + "'");
+            if (!KEYS.contains(String.valueOf(key))) throw new MavenRepositories.Refused(MappedDefinition.unknownKey(key, KEYS, ""));
         }
         var repository = MavenRepositories.repositoryUrl(MavenRepositories.required(map, "repository"), "repository");
         var mirror = MavenRepositories.repositoryUrl(MavenRepositories.required(map, "mirror"), "mirror");

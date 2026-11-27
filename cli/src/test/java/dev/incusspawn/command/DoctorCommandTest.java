@@ -594,6 +594,20 @@ class DoctorCommandTest {
         assertEquals("Rename or remove them in config.yaml", findings.getFirst().remediation().description());
     }
 
+    /** A top-level key close to one isx reads names the key it probably meant (#2463). */
+    @Test
+    void aMistypedTopLevelKeyIsAWarning() throws Exception {
+        var tree = dev.incusspawn.config.Jjq.spawnConfig("maven-repositorie: []\n").tree();
+
+        var findings = DoctorCommand.unreadKeyFindings(tree, builtInTools());
+
+        assertEquals(1, findings.size(), findings.toString());
+        assertEquals(DoctorCommand.Status.WARN, findings.getFirst().status());
+        assertEquals("(config.yaml has 'maven-repositorie', which isx does not read; did you mean 'maven-repositories'?)",
+                findings.getFirst().detail());
+        assertEquals("Rename or remove it in config.yaml", findings.getFirst().remediation().description());
+    }
+
     @Test
     void credentialsOkWhenNothingIsMissing() {
         var findings = credentialFindings(true, List.of(), name -> true);

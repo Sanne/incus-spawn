@@ -72,7 +72,7 @@ public abstract class MappedDefinition {
                 if (hint != null) {
                     warning += "; " + hint;
                 } else if (meant != null) {
-                    warning += "; did you mean '" + meant + "'?";
+                    warning += didYouMean(meant);
                 } else if (!where.isEmpty()) {
                     warning += " (" + OutputFormat.oneLine(where) + " takes " + OutputFormat.andList(List.copyOf(known)) + ")";
                 }
@@ -106,11 +106,38 @@ public abstract class MappedDefinition {
     }
 
     /**
+     * {@code unknown key 'key'} for a section read by hand, whose message names the place before
+     * it: with the known key it most likely meant ({@code ; did you mean 'x'?}) when there is one,
+     * else followed by {@code otherwise} (#2463).
+     */
+    static String unknownKey(Object key, Collection<String> known, String otherwise) {
+        var typed = String.valueOf(key);
+        // Sorted, so a tie between two keys of a Set.of names the same one on every run
+        var meant = closest(typed, known.stream().sorted().toList());
+        return "unknown key '" + OutputFormat.oneLine(typed) + "'"
+                + (meant != null ? didYouMean(meant) : otherwise);
+    }
+
+    /** {@code ; did you mean 'meant'?}, as every unknown-key message words it. */
+    static String didYouMean(String meant) {
+        return "; did you mean '" + meant + "'?";
+    }
+
+    /**
      * The known key {@code key} most likely meant, or null: the same key in another case or with
      * {@code _} for {@code -} (both are in use), one or two typed letters off, or a word of it
      * ({@code repo} for {@code repos}, {@code branch-name} for {@code branch}).
      */
     static String closest(String key, Collection<String> known) {
+        return closest(key, known, true);
+    }
+
+    /**
+     * As {@link #closest(String, Collection)}, with {@code words} false for an open level, where a
+     * key that is a known one plus a word ({@code github-enterprise}) or a short key is as likely
+     * another tool's own: only a key of five letters or more, one or two letters off, is matched.
+     */
+    static String closest(String key, Collection<String> known, boolean words) {
         var typed = normalized(key);
         String best = null;
         int bestScore = Integer.MAX_VALUE;
@@ -118,8 +145,8 @@ public abstract class MappedDefinition {
             var name = normalized(candidate);
             int score = distance(typed, name);
             int shorter = Math.min(typed.length(), name.length());
-            if (score > (shorter >= 5 ? 2 : shorter >= 3 ? 1 : 0)) {
-                score = shorter >= 3 && (aWordOf(typed, name) || aWordOf(name, typed)) ? 3 : Integer.MAX_VALUE;
+            if (score > (shorter >= 5 ? 2 : shorter >= 3 && words ? 1 : 0)) {
+                score = words && shorter >= 3 && (aWordOf(typed, name) || aWordOf(name, typed)) ? 3 : Integer.MAX_VALUE;
             }
             if (score < bestScore) {
                 best = candidate;

@@ -103,6 +103,27 @@ class ValidateCommandTest {
         assertTrue(run.findings().getFirst().contains("chatgpt.com"), run.findings().toString());
     }
 
+    /** A top-level key a letter or two off one isx or a tool reads names it; any other may be a tool isx does not have (#2463). */
+    @Test
+    void aMistypedTopLevelKeyNamesTheKeyItProbablyMeant() throws Exception {
+        var run = run(file("config.yaml", """
+                maven-repositorie: []
+                atlasian:
+                  token: x
+                acme:
+                  token: y
+                github-enterprise:
+                  token: z
+                maven: {}
+                box: {}
+                """).toString(), null, null);
+        assertEquals(0, run.exit());
+        assertEquals(List.of(
+                "warning config.yaml has 'maven-repositorie', which isx does not read; did you mean 'maven-repositories'?",
+                "warning config.yaml has 'atlasian', which isx does not read; did you mean 'atlassian'?"),
+                run.findings());
+    }
+
     @Test
     void aMissingFileIsAnError() throws Exception {
         var cmd = new ValidateCommand();

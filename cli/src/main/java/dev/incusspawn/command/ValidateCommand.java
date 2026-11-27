@@ -180,7 +180,9 @@ public class ValidateCommand extends BaseCommand {
         config.confirmedCache().maxSize(problems::add);
         ToolProxyResolver.servedConfirmedCacheDomains(config, acrossAccounts, problems::add);
         problems.forEach(p -> findings.add(warning(p)));
-        UnreadConfigKeys.all(config.tree(), tools).forEach((namespace, unread) ->
+        var tree = config.tree();
+        UnreadConfigKeys.misspelt(tree, tools).forEach(note -> findings.add(warning(note)));
+        UnreadConfigKeys.all(tree, tools).forEach((namespace, unread) ->
                 findings.add(warning(UnreadConfigKeys.note(namespace, unread, tools))));
         var legacy = McpConfig.legacySectionNotice(config);
         if (legacy != null) findings.add(warning(legacy));

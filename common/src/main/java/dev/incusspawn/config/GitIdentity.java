@@ -1,6 +1,7 @@
 package dev.incusspawn.config;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -40,7 +41,8 @@ public record GitIdentity(String name, String email) {
         }
         for (var key : map.keySet()) {
             if (!"name".equals(key) && !"email".equals(key)) {
-                warn.accept("Ignoring " + KEY + ": in config.yaml: unknown key '" + key + "' (expected name: and email:)");
+                warn.accept("Ignoring " + KEY + ": in config.yaml: "
+                        + MappedDefinition.unknownKey(key, List.of("name", "email"), " (expected name: and email:)"));
                 return null;
             }
         }

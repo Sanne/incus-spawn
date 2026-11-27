@@ -763,6 +763,9 @@ public class DoctorCommand extends BaseCommand {
      */
     static List<Finding> unreadKeyFindings(JqValue tree, Map<String, ToolSetup> tools) {
         var findings = new ArrayList<Finding>();
+        // A top-level key close to one isx or a tool reads (#2463)
+        UnreadConfigKeys.misspelt(tree, tools).forEach(note -> findings.add(Finding.warn("Unread keys in config.yaml",
+                "(" + note + ")", new Remediation("Rename or remove it in config.yaml", false, null))));
         UnreadConfigKeys.all(tree, tools).forEach((namespace, unread) ->
                 findings.add(Finding.warn("Unread keys in config.yaml",
                         // In parentheses like every detail, without the sentence's own full stop
