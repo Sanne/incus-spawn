@@ -1198,6 +1198,44 @@ A quota refusal on a real key, such as an instance pinned to the wrong key accou
 `AntigravityAccountModeTest` goes through the lookups a build, a branch and `isx account set` use, and `CredentialProofProxyTest` holds the refusal of a key request on a Google account.
 Nothing here was tried against Google or a real Antigravity plan, and the integration is experimental until it is.
 
+### The Antigravity app over SSH puts its Google sign-in in the instance (#2401)
+
+The Antigravity desktop app can attach to a remote Linux machine over SSH (app v2.33.0 and later), and isx writes a Host entry for every instance, so the app can attach to one.
+As shipped, that puts the user's Google sign-in inside the instance, so isx does not support it.
+This was read from the app's own code, app v2.35.2 for Linux x64, not tried against a Google account: the app's `dist/remote/` sources, readable JavaScript in its `app.asar`, and the strings of the server it installs.
+
+**The server in the instance runs the agents and signs in itself.**
+The app installs Antigravity's language server in the remote home, the same binary the app runs locally (`language_server`, from `antigravity-public/antigravity-hub/<version>-<execution id>/unsigned/language_server-linux-<arch>`).
+It runs there with `--persistent_mode`, so it "and its agents" outlive the connection (`remoteLsArgs.js`), and the window loads its UI from that server.
+That server holds Google's Code Assist client (`cloudcode-pa.googleapis.com` and its daily and sandbox variants), so the model calls leave from the instance, not from the app.
+It signs in with its own OAuth client: Antigravity CLI's personal client id, which `GoogleAuthRoute` already knows, or a business or Workforce Identity Federation client, each with PKCE and a loopback redirect, `http://localhost:<port>/auth/callback`.
+The app opens the sign-in in the host's browser, takes the one callback on the host's loopback, and relays only its path and query to the server over the SSH connection (`signInCallback.js`).
+So the server receives the authorization code and exchanges it itself (`authclient.exchangeAuthCode`) at `oauth2.googleapis.com`, or for a Workforce client at the `sts.googleapis.com/v1/oauthtoken` its strings also hold.
+It keeps the tokens in the OS keyring, or in a file when keyring writes are off (`KeyringTokenStorage`, `NewFileTokenStorage`).
+The app does not hand its own sign-in to the server in v2.35.2.
+It already reads a `credentialImportToken` that a server may announce (`bootstrapProtocol.js`) and sets `ANTIGRAVITY_ENABLE_CREDENTIAL_IMPORT=1` for it, but the shipped server contains neither name.
+A later server that accepts an import would take the host's sign-in straight over the SSH connection, which the proxy never sees.
+
+**What isx does with it today.**
+The server's exchange goes through the proxy like any of the instance's HTTPS.
+On an instance whose `gemini` account is `type: google`, a personal sign-in carries agy's client id with a redirect isx does not recognise, so `GoogleAuthRoute` refuses it.
+On Linux the refusal is a 400 at the redirect check, or a 403 while the proxy has not yet listed the instances.
+On macOS it is a 403 when no instance or several asked to sign in moments before, since the proxy cannot tell which instance sent it.
+When exactly one other instance is in its sign-in window, the exchange is held to that one and refused with the 400 at the redirect check.
+The app's window on that instance then stays signed out after a personal sign-in, and no Google token reaches the guest from it.
+A business or Workforce sign-in on that instance is a known gap, tracked in #2715: `GoogleAuthRoute` relays an exchange with another client id untouched, and `sts.googleapis.com` is not one of its hosts.
+Until #2715 is fixed, Google's real tokens from such a sign-in land in the guest even on a Google account.
+On an instance whose `gemini` account is an API key, every sign-in is relayed untouched, as agy's own is, so Google's real tokens land in the instance's keyring or files, by the user's own choice in that box.
+
+**What supporting it would take.**
+`GoogleAuthRoute` could keep the loopback exchange of the personal client as it keeps agy's pasted one, and answer with look-alikes that the server stores itself.
+The server's backend calls would then need the same host boundary as agy's, which is untested for this server.
+Its token store would need a login script like `/etc/profile.d/isx-zz-antigravity.sh`, and its file location is not documented.
+Business and Workforce sign-ins would stay unsupported, as they are for agy, and would have to be refused on a Google account rather than relayed.
+A server with credential import would bypass all of this, so supporting the app would also mean refusing or disabling that import, for which no setting is known.
+**Decision:** not built: as shipped, the app's server holds the sign-in in the instance, and a credential import would bypass the proxy entirely.
+The user pages keep saying the desktop app is not supported.
+
 ## Credential Isolation
 
 Real API keys and tokens never enter containers, regardless of network mode.
