@@ -1518,6 +1518,11 @@ public class InitCommand extends BaseCommand {
         return firstRun ? "isx machines" : "instances";
     }
 
+    /** One of {@link #machines()}, with its article: "an isx machine", else "an instance". */
+    String machine() {
+        return firstRun ? "an isx machine" : "an instance";
+    }
+
     /**
      * What a first run shows before its first question (#2528): the logo beside a welcome that
      * says what the person came for and how long it takes at most, then the run as three numbered stages, each a
@@ -2737,23 +2742,30 @@ public class InitCommand extends BaseCommand {
 
     /** Credential Setup itself: the choice of credentials, whose steps follow it. */
     InitStep credentialSetup() {
-        return new InitStep("credentials", "Credential Setup", Lines.wrap("Choose the credentials your instances may use."
-                + " Each stays on " + Platform.thisComputer() + ": isx adds it to requests as they leave an instance,"
-                + " and never puts it inside one.").toArray(String[]::new),
+        return new InitStep("credentials", "Credential Setup", Lines.wrap(credentialSetupHint(machines(), machine()))
+                .toArray(String[]::new),
                 () -> {
                     var tools = new ToolDefLoader().allToolSetups();
                     chosenCredentials = selectCredentialSteps(tools);
                 },
-                this::planCredentials);
+                // Its --plan purpose is a contract, so it keeps the words of a run that is not the first
+                this::planCredentials, credentialSetupHint("instances", "an instance"));
+    }
+
+    /** Credential Setup's hint, naming what the agent runs in as {@code machines}, and one as {@code machine}. */
+    private static String credentialSetupHint(String machines, String machine) {
+        return "Choose the credentials your " + machines + " may use."
+                + " Each stays on " + Platform.thisComputer() + ": isx adds it to requests as they leave " + machine + ","
+                + " and never puts it inside one.";
     }
 
     /**
      * A credential step's hint: {@code point}, what the person sets up, then where the credential
-     * stays, wrapped to the hint bar's width (.claude/rules/interface-text.md "A line fits its frame").
+     * stays, as they leave {@code machine}, wrapped to the hint bar's width (.claude/rules/interface-text.md "A line fits its frame").
      */
-    static String[] credentialHint(String point) {
+    static String[] credentialHint(String point, String machine) {
         return Lines.wrap(point + " It stays on " + Platform.thisComputer() + ": isx adds it to requests"
-                + " as they leave an instance, and never puts it inside one.").toArray(String[]::new);
+                + " as they leave " + machine + ", and never puts it inside one.").toArray(String[]::new);
     }
 
     /**
@@ -2765,18 +2777,18 @@ public class InitCommand extends BaseCommand {
         var title = credentialTitle(toolName, tool);
         return switch (toolName) {
             case "claude" -> new InitStep(toolName, title, credentialHint(
-                    "The Claude account your instances use: an API key, a subscription (Pro, Max or Team)"
-                            + " or Google Cloud Vertex AI."), this::setupClaudeAuth, null);
+                    "The Claude account your " + machines() + " use: an API key, a subscription (Pro, Max or Team)"
+                            + " or Google Cloud Vertex AI.", machine()), this::setupClaudeAuth, null);
             case "gh" -> new InitStep(toolName, title, credentialHint(
-                    "The GitHub account Git and gh use in your instances."
-                            + " Everything they do on GitHub is published under that account's name."), this::setupGitHubAuth, null);
+                    "The GitHub account Git and gh use in your " + machines() + "."
+                            + " Everything they do on GitHub is published under that account's name.", machine()), this::setupGitHubAuth, null);
             case "codex" -> new InitStep(toolName, title, credentialHint(
-                    "The OpenAI account Codex uses in your instances: a ChatGPT plan, signed in"
-                            + " through your browser, or an OpenAI API key."), this::setupCodexAuth, null);
+                    "The OpenAI account Codex uses in your " + machines() + ": a ChatGPT plan, signed in"
+                            + " through your browser, or an OpenAI API key.", machine()), this::setupCodexAuth, null);
             default -> {
                 var spending = spending(toolName, tool, tools, config);
                 yield new InitStep(toolName, title, credentialHint("The credential " + OutputFormat.andList(spending)
-                                + (spending.size() == 1 ? " uses" : " use") + " in your instances."),
+                                + (spending.size() == 1 ? " uses" : " use") + " in your " + machines() + ".", machine()),
                         () -> setupGenericToolCredentials(toolName, tool), null);
             }
         };
@@ -2992,8 +3004,8 @@ public class InitCommand extends BaseCommand {
 
     InitStep codeDirectoriesStep() {
         return new InitStep("code-directories", "Code Directories", hint("Directories that hold your Git repositories,"
-                + " such as ~/code. A repository from one is cloned into an instance in seconds, and gets a remote"
-                + " named after the instance, so you push and pull between the two without going through GitHub."),
+                + " such as ~/code. A repository from one is cloned into " + machine() + " in seconds, and gets a remote"
+                + " named after " + (firstRun ? "the isx machine" : "the instance") + ", so you push and pull between the two without going through GitHub."),
                 this::setupHostPaths, this::planHostPaths, PURPOSES.get("code-directories"));
     }
 
