@@ -638,6 +638,10 @@ It checks a mirrored artifact against the mirror's checksum, and confirms it wit
 A copy the repository disagrees with is dropped, and the repository's own is fetched.
 The proxy log names each artifact fetched from a mirror.
 
+Builds do not show a mirror that fails, since the proxy then asks the repository.
+`isx doctor` asks each mirror for one artifact, as the proxy would, and names what failed.
+It cannot check a mirror of a repository you declared, because isx does not know an artifact there.
+
 Naming a mirror means trusting its operator for the build that first fetches an artifact.
 Until the repository confirms that copy, you get the bytes the mirror serves, not the repository's.
 A release the repository withdrew comes back from a mirror that still holds it, until the next use evicts it again.

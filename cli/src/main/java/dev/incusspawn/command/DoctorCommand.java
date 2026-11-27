@@ -396,6 +396,8 @@ public class DoctorCommand extends BaseCommand {
             // An unreadable config.yaml reads as empty: checkConfigFile already says it is invalid
         }
         findings.addAll(hostAgentFindings(HostAgentProbe.probe()));
+        // Needs neither Incus nor the proxy, so a broken mirror shows while they are down too
+        findings.addAll(checkMavenMirrors());
         return findings;
     }
 
@@ -1664,6 +1666,70 @@ public class DoctorCommand extends BaseCommand {
         if (exposed != null) findings.add(exposed);
         var confirmed = confirmedCacheFinding(SpawnConfig.load());
         if (confirmed != null) findings.add(confirmed);
+        return findings;
+    }
+
+    /**
+     * Whether each {@code maven-mirrors:} entry the proxy uses serves an artifact (#2681), asked as
+     * the proxy asks it ({@link MavenMirrorProbe}); nothing while config.yaml names none. Every
+     * mirror failure falls back to the repository, so without this a mirror that serves nothing
+     * is invisible. The mirrors are asked at once, so several that hang cost one time limit.
+     */
+    private List<Finding> checkMavenMirrors() {
+        var mirrors = usedMavenMirrors(SpawnConfig.load());
+        if (mirrors.isEmpty()) return List.of();
+        var results = new ArrayList<MavenMirrorProbe.Result>();
+        try (var client = MavenMirrorProbe.networkClient();
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var probe = MavenMirrorProbe.overNetwork(client);
+            var asked = mirrors.stream().map(m -> executor.submit(() -> probe.probe(m))).toList();
+            for (int i = 0; i < asked.size(); i++) {
+                try {
+                    results.add(asked.get(i).get());
+                } catch (java.util.concurrent.ExecutionException e) {
+                    // One mirror's unexpected failure is that mirror's finding, never the end of doctor's run
+                    var cause = e.getCause();
+                    results.add(new MavenMirrorProbe.Result(mirrors.get(i),
+                            MavenMirrorProbe.KNOWN_ARTIFACTS.get(mirrors.get(i).repository().toString()),
+                            "the check failed (" + (cause.getMessage() == null ? cause.getClass().getSimpleName()
+                                    : dev.incusspawn.util.OutputFormat.oneLine(cause.getMessage())) + ")"));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return mavenMirrorFindings(results);
+                }
+            }
+        }
+        return mavenMirrorFindings(results);
+    }
+
+    /** The {@code maven-mirrors:} entries the proxy attaches, as {@code isx validate} works them out. */
+    static List<dev.incusspawn.config.MavenMirrors.Entry> usedMavenMirrors(SpawnConfig config) {
+        var mirrors = config.mavenMirrors().entries(ignored -> {});
+        if (mirrors.isEmpty()) return List.of();
+        var acrossAccounts = ToolProxyResolver.resolveAcrossAccounts(config, ToolProxyResolver.proxyToolSetups(config));
+        var repositories = config.mavenRepositories().entries(
+                ToolProxyResolver.repositoryDomainsTaken(ToolProxyResolver.handlerDomains(config.tree())), ignored -> {});
+        return dev.incusspawn.proxy.CachedRepositoryRules.usedMirrors(repositories, mirrors, acrossAccounts, ignored -> {});
+    }
+
+    static List<Finding> mavenMirrorFindings(List<MavenMirrorProbe.Result> results) {
+        var findings = new ArrayList<Finding>();
+        for (var result : results) {
+            var mirror = result.entry().mirror();
+            var repository = result.entry().repository();
+            if (result.untested()) {
+                findings.add(Finding.note("Maven mirror " + mirror + " not checked",
+                        "(isx does not know an artifact of " + repository + " to ask the mirror for)"));
+            } else if (result.problem() == null) {
+                findings.add(Finding.ok("Maven mirror " + mirror, "(serves " + result.artifact() + " for " + repository + ")"));
+            } else {
+                findings.add(Finding.warn("Maven mirror " + mirror + " does not work",
+                        "(asked for " + result.artifact() + ": " + result.problem()
+                                + ". Builds still pass, since the proxy asks " + repository + " instead)",
+                        new Remediation("Check that the mirror runs and serves " + repository
+                                + ", or remove it from maven-mirrors: in config.yaml", false, null)));
+            }
+        }
         return findings;
     }
 

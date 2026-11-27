@@ -1,7 +1,6 @@
 package dev.incusspawn.proxy;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -9,7 +8,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
@@ -24,7 +22,6 @@ enum Sidecar {
     ASC(".asc", null, 0);
 
     private static final int BUFFER_SIZE = 64 * 1024;
-    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     /** Every type, without {@code values()} copying the array per call. */
     static final List<Sidecar> ALL = List.of(values());
 
@@ -60,21 +57,9 @@ enum Sidecar {
         return artifact.resolveSibling(artifact.getFileName() + extension);
     }
 
-    /**
-     * The checksum a sidecar body states, as lowercase hex, or null if no
-     * well-formed checksum of this algorithm is found. Repositories publish the bare
-     * hex, the {@code sha1sum} form {@code "<hex>  <filename>"} (hex first) and the
-     * BSD/OpenSSL forms {@code "SHA1(<filename>)= <hex>"} and
-     * {@code "MD5 (<filename>) = <hex>"} (hex last), all of which Maven accepts.
-     */
+    /** The checksum a sidecar body states, as lowercase hex, or null: {@link dev.incusspawn.util.ChecksumText#hex}. */
     String hex(byte[] body) {
-        if (!isChecksum() || body == null) return null;
-        var tokens = WHITESPACE.split(new String(body, StandardCharsets.US_ASCII).trim());
-        for (var token : new String[] {tokens[0], tokens[tokens.length - 1]}) {
-            var hex = token.toLowerCase(Locale.ROOT);
-            if (hexPattern.matcher(hex).matches()) return hex;
-        }
-        return null;
+        return isChecksum() ? dev.incusspawn.util.ChecksumText.hex(body, hexPattern) : null;
     }
 
     /**
