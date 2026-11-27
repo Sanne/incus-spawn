@@ -629,6 +629,10 @@ Central's two names are separate repositories, so a mirror for both needs two en
 Only `config.yaml` can name a mirror, never a template.
 A private repository, or one that replaces releases, cannot take a mirror.
 
+`mirror` must be an `https` URL, but it may name any port and a host name of one label, such as `https://nas:8080/central/`.
+So a repository manager on a machine of your own network works on whatever port it serves https on.
+An IP address is refused, and so is the repository's own host on another port.
+
 The proxy does not send the mirror your build's headers, so your credentials do not reach it.
 It checks a mirrored artifact against the mirror's checksum, and confirms it with the repository at its next use.
 A copy the repository disagrees with is dropped, and the repository's own is fetched.

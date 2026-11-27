@@ -231,6 +231,14 @@ class Upstream {
     }
 
     /**
+     * The name a request is booked under in {@link #throttles}: its host, with the port when it is
+     * not 443, so two servers on one host, such as two mirrors, are tallied apart (#2681).
+     */
+    static String tallied(io.vertx.core.net.HostAndPort asked) {
+        return asked.port() == 443 || asked.port() < 0 ? asked.host() : asked.host() + ":" + asked.port();
+    }
+
+    /**
      * Sends a request made on {@link #probeClient} and hands its response to {@code exchange}, which
      * calls the {@code Runnable} it is given on every read of the response's body.
      * <p>
@@ -247,7 +255,7 @@ class Upstream {
         // Over when the response has ended, not when the exchange has: it may go on to follow a redirect
         var over = Promise.<Void>promise();
         var result = req.send().compose(resp -> {
-            throttles.answered(req.authority().host(), status(resp));
+            throttles.answered(tallied(req.authority()), status(resp));
             read.run();
             resp.end().onComplete(r -> over.tryComplete());
             return exchange.apply(resp, read);

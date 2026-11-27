@@ -372,7 +372,7 @@ class MavenMirrorProxyTest {
         assertEquals(List.of(), warnings);
         var repo1 = all.stream().filter(r -> r.domain().equals("repo1.maven.org")).findFirst().orElseThrow();
         assertEquals(new MavenRepositories.Url(MIRROR, "/m/"), repo1.mirror());
-        assertEquals(new CachedRepository.MirrorSource(MIRROR, "/m/org/a/1/a-1.jar"), repo1.mirrorOf("/maven2/org/a/1/a-1.jar"));
+        assertEquals(new CachedRepository.MirrorSource(MIRROR, 443, "/m/org/a/1/a-1.jar"), repo1.mirrorOf("/maven2/org/a/1/a-1.jar"));
         assertNull(all.stream().filter(r -> r.domain().equals(CENTRAL)).findFirst().orElseThrow().mirror(),
                 "each name of Central is a repository of its own");
     }

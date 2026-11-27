@@ -52,11 +52,16 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
      */
     MirrorSource mirrorOf(String path) {
         return mirror == null || !holds(path) ? null
-                : new MirrorSource(mirror.host(), mirror.pathPrefix() + path.substring(pathPrefix.length()));
+                : new MirrorSource(mirror.host(), mirror.port(), mirror.pathPrefix() + path.substring(pathPrefix.length()));
     }
 
-    /** One artifact's place on a mirror. */
-    record MirrorSource(String host, String path) {}
+    /** One artifact's place on a mirror, which may listen on any port (#2681). */
+    record MirrorSource(String host, int port, String path) {
+        /** The host, with the port when it is not 443: what {@code Host} says, and the mirror's name in a backoff, a tally or a log line. */
+        String authority() {
+            return port == 443 ? host : host + ":" + port;
+        }
+    }
 
     /** Whether {@code path} lies under this repository's prefix. */
     boolean holds(String path) {

@@ -169,7 +169,7 @@
         "required": ["repository", "mirror"],
         "properties": {
           "repository": {"type": "string", "description": "A repository the proxy caches: one of Maven Central's two names, the Gradle plugin portal, or a public one declared above."},
-          "mirror": {"type": "string", "description": "The mirror to ask first."}
+          "mirror": {"type": "string", "description": "The mirror to ask first: an https URL, on any port and under a host name of one label or more, never an IP address."}
         }
       }
     },

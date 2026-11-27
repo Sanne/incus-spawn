@@ -59,11 +59,38 @@ class MavenMirrorsTest {
         assertRefused(List.of(entry("mirror", null)), "mirror: is required");
         assertRefused(List.of(entry("mirror", "http://mirror.example.com/")), "mirror must be https://");
         assertRefused(List.of(entry("mirror", "https://user:pw@mirror.example.com/")), "must not hold a user");
-        assertRefused(List.of(entry("mirror", "https://127.0.0.1/")), "by its domain name");
-        assertRefused(List.of(entry("mirror", "https://mirror.example.com:8443/")), "port 443");
+        assertRefused(List.of(entry("mirror", "https://127.0.0.1/")), "by its name, not an address");
+        assertRefused(List.of(entry("mirror", "https://127.0.0.1:8080/")), "by its name, not an address");
+        assertRefused(List.of(entry("mirror", "https://[::1]:8443/")), "by its name, not an address");
+        assertRefused(List.of(entry("mirror", "https://3232235777/")), "by its name, not an address");
+        assertRefused(List.of(entry("mirror", "https://nas:0/")), "a port from 1 to 65535");
+        assertRefused(List.of(entry("mirror", "https://nas.internal:8080/")), ".internal");
+        assertRefused(List.of(entry("mirror", "https://nas:8080/?x=1")), "query or a fragment");
         assertRefused(List.of(entry("mirror", "https://mcp.isx.internal/")), ".internal");
         assertRefused(List.of(entry("mirror", "https://mirror.example.com/a/../b/")), "'.' or '..'");
         assertRefused(List.of(entry("mirror", "https://repo.maven.apache.org/other/")), "another host");
+        // Another port of the repository's host is still that host
+        assertRefused(List.of(entry("mirror", "https://repo.maven.apache.org:8443/other/")), "another host");
+    }
+
+    @Test
+    void aMirrorMayUseAnyPortAndAHostNameOfOneLabel() {
+        // A stock Reposilite listens on 8080, often on a host known by one label (#2681)
+        var kept = entries(List.of(entry("mirror", "https://NAS:8080/releases"),
+                entry("repository", "https://repo1.maven.org/maven2/", "mirror", "https://nas.example.net:8443/central/")));
+        assertEquals(List.of(), warnings);
+        assertEquals(new MavenRepositories.Url("nas", 8080, "/releases/"), kept.get(0).mirror());
+        assertEquals("nas:8080", kept.get(0).mirror().authority());
+        assertEquals("https://nas.example.net:8443/central/", kept.get(1).mirror().toString());
+        // Port 443 written out is the same mirror as one without a port
+        assertEquals(new MavenRepositories.Url("nas", "/"),
+                entries(List.of(entry("mirror", "https://nas:443/"))).getFirst().mirror());
+    }
+
+    @Test
+    void aRepositoryKeepsPort443AndADomainName() {
+        assertRefused(List.of(entry("repository", "https://repo.maven.apache.org:8443/maven2/")), "port 443");
+        assertRefused(List.of(entry("repository", "https://nas/maven2/")), "by its domain name");
     }
 
     @Test
