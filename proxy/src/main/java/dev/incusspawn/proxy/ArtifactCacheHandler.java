@@ -779,7 +779,7 @@ class ArtifactCacheHandler {
             redReq.send().onSuccess(redResp -> {
                 var statusCode = Upstream.status(redResp);
                 // The target's own limit, under its own name, not the domain that redirected there
-                upstream.throttles.answered(redirectHost, statusCode);
+                upstream.throttles.answered(redirectPort == 443 ? redirectHost : redirectHost + ":" + redirectPort, statusCode);
                 if (statusCode == 200) {
                     new CachingDownload(clientReq, domain, started, redResp, cacheFile, ref, verification).start();
                 } else if (statusCode >= 300 && statusCode < 400) {
@@ -1149,9 +1149,10 @@ class ArtifactCacheHandler {
                 resp.request().reset();
                 return;
             }
-            // Under the host the resume asked, a redirect's target included, not the domain the client named
+            // Under the host the resume asked, a redirect's target included, not the domain the client named,
+            // with its port when not 443, as a mirror's is tallied (#2681)
             var status = Upstream.status(resp);
-            upstream.throttles.answered(resp.request().authority().host(), status);
+            upstream.throttles.answered(Upstream.tallied(resp.request().authority()), status);
             if (status == 206 && resumesAt(resp, resumeAt)) {
                 attach(resp);
                 resumeWhenWritable();
@@ -2375,7 +2376,7 @@ class ArtifactCacheHandler {
     private void downloadMissing(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                                  ArtifactTarget target, String ref) {
         var mirror = target.mirror();
-        if (mirror == null || mirrorResting(mirror.host())) {
+        if (mirror == null || mirrorResting(mirror.authority())) {
             download(clientReq, started, domain, revalidation, target, ref);
             return;
         }
@@ -2384,18 +2385,18 @@ class ArtifactCacheHandler {
         var settled = new java.util.concurrent.atomic.AtomicBoolean();
         var timer = vertx.setTimer(mirrorWaitMillis(started), t -> {
             if (!settled.compareAndSet(false, true)) return;
-            restMirror(mirror.host());
-            ProxyLog.trace("Mirror " + mirror.host() + " did not answer for " + ref + " in time, asking " + domain);
+            restMirror(mirror.authority());
+            ProxyLog.trace("Mirror " + mirror.authority() + " did not answer for " + ref + " in time, asking " + domain);
             if (!clientReq.response().closed()) download(clientReq, started, domain, revalidation, target, ref);
         });
-        fetchSidecar(mirror.host(), mirror.path() + checksum.extension).onSuccess(answer -> {
+        fetchSidecar(mirror.host(), mirror.port(), mirror.path() + checksum.extension).onSuccess(answer -> {
             if (!settled.compareAndSet(false, true)) return;
             vertx.cancelTimer(timer);
             if (clientReq.response().closed()) return;
             var hex = answer.status() == 200 ? checksum.hex(answer.body()) : null;
             if (hex == null) {
-                if (answer.unreachable()) restMirror(mirror.host());
-                ProxyLog.trace("Mirror " + mirror.host() + " has no usable " + checksum.extension + " for " + ref
+                if (answer.unreachable()) restMirror(mirror.authority());
+                ProxyLog.trace("Mirror " + mirror.authority() + " has no usable " + checksum.extension + " for " + ref
                         + " (" + (answer == SidecarAnswer.UNREACHABLE ? "unreachable" : "HTTP " + answer.status())
                         + "), asking " + domain);
                 download(clientReq, started, domain, revalidation, target, ref);
@@ -2417,24 +2418,24 @@ class ArtifactCacheHandler {
         var options = new RequestOptions()
                 .setMethod(HttpMethod.GET)
                 .setHost(mirror.host())
-                .setPort(443)
+                .setPort(mirror.port())
                 .setURI(mirror.path())
                 .setConnectTimeout(Math.min(Upstream.UPSTREAM_CONNECT_TIMEOUT_MILLIS, wait));
         upstream.requestWithAsyncDns(options).onSuccess(req -> {
             req.idleTimeout(wait);
-            req.putHeader("Host", mirror.host());
+            req.putHeader("Host", mirror.authority());
             req.send().onSuccess(resp -> {
                 var status = Upstream.status(resp);
-                // Under the mirror's own name: its limit is not the repository's
-                upstream.throttles.answered(mirror.host(), status);
+                // Under the mirror's own name and port: its limit is not the repository's
+                upstream.throttles.answered(mirror.authority(), status);
                 if (status == 200) {
-                    ProxyLog.info("Fetching " + ref + " from its mirror " + mirror.host()
+                    ProxyLog.info("Fetching " + ref + " from its mirror " + mirror.authority()
                             + "; " + domain + " confirms the copy at its next use");
                     new CachingDownload(clientReq, domain, started, resp, target.artifact(), ref,
                             mirroredArtifact(revalidation, target.checksum(), hex)).start();
                 } else {
-                    if (status == 429 || status >= 500) restMirror(mirror.host());
-                    ProxyLog.trace("Mirror " + mirror.host() + " answered " + resp.statusCode()
+                    if (status == 429 || status >= 500) restMirror(mirror.authority());
+                    ProxyLog.trace("Mirror " + mirror.authority() + " answered " + resp.statusCode()
                             + (status != resp.statusCode() ? " with Retry-After, read as " + status : "") + " for " + ref
                             + ", asking " + domain);
                     // Over h2 the reset reaches this response as an error; it is the one we asked for
@@ -2443,14 +2444,14 @@ class ArtifactCacheHandler {
                     fromUpstream.run();
                 }
             }).onFailure(err -> {
-                restMirror(mirror.host());
-                ProxyLog.trace("Mirror " + mirror.host() + " failed for " + ref + " (" + err.getMessage()
+                restMirror(mirror.authority());
+                ProxyLog.trace("Mirror " + mirror.authority() + " failed for " + ref + " (" + err.getMessage()
                         + "), asking " + domain);
                 fromUpstream.run();
             });
         }).onFailure(err -> {
-            restMirror(mirror.host());
-            ProxyLog.trace("Mirror " + mirror.host() + " unreachable for " + ref + " (" + err.getMessage()
+            restMirror(mirror.authority());
+            ProxyLog.trace("Mirror " + mirror.authority() + " unreachable for " + ref + " (" + err.getMessage()
                     + "), asking " + domain);
             fromUpstream.run();
         });
@@ -2466,22 +2467,23 @@ class ArtifactCacheHandler {
         return Math.max(1, Math.min(upstream.timeoutLeftMillis(started), readLeft) / 2);
     }
 
-    // Mirrors that failed, hung or throttled, by host, and the System.nanoTime until which they are not asked
+    // Mirrors that failed, hung or throttled, by host and port (two on one host are apart), and the
+    // System.nanoTime until which they are not asked
     final Map<String, Long> mirrorBackoffs = new ConcurrentHashMap<>();
 
     // Downloads whose client has been answered while the copy is still being committed (#2491)
     private final Map<Path, Promise<Void>> committing = new ConcurrentHashMap<>();
 
-    private boolean mirrorResting(String host) {
-        var until = mirrorBackoffs.get(host);
+    private boolean mirrorResting(String authority) {
+        var until = mirrorBackoffs.get(authority);
         if (until == null) return false;
         if (until - System.nanoTime() > 0) return true;
-        mirrorBackoffs.remove(host, until);
+        mirrorBackoffs.remove(authority, until);
         return false;
     }
 
-    private void restMirror(String host) {
-        mirrorBackoffs.put(host, System.nanoTime() + TimeUnit.SECONDS.toNanos(Upstream.UNREACHABLE_BACKOFF_SECONDS));
+    private void restMirror(String authority) {
+        mirrorBackoffs.put(authority, System.nanoTime() + TimeUnit.SECONDS.toNanos(Upstream.UNREACHABLE_BACKOFF_SECONDS));
     }
 
     /**
@@ -2736,7 +2738,16 @@ class ArtifactCacheHandler {
 
     /** {@link #fetchSidecar} for any small document, of at most {@code maxBytes}. */
     Future<SidecarAnswer> fetchSmallBody(String domain, String path, int maxBytes) {
-        return retryOnceAfterConnect(() -> fetchSmallBody(domain, 443, path, 0, maxBytes))
+        return fetchSmallBody(domain, 443, path, maxBytes);
+    }
+
+    /** {@link #fetchSidecar} from a host on {@code port}: a mirror's, which may be any (#2681). */
+    private Future<SidecarAnswer> fetchSidecar(String host, int port, String path) {
+        return fetchSmallBody(host, port, path, MAX_SIDECAR_BYTES);
+    }
+
+    private Future<SidecarAnswer> fetchSmallBody(String host, int port, String path, int maxBytes) {
+        return retryOnceAfterConnect(() -> fetchSmallBody(host, port, path, 0, maxBytes))
                 .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE));
     }
 

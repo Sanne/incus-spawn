@@ -102,6 +102,8 @@ public final class MavenRepositories {
             "replaces-releases", "fresh", "max-stale");
     // A host name: labels of letters, digits and hyphens, at least two of them
     private static final Pattern HOST = Pattern.compile("(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]");
+    // A mirror's host may also be one label (nas): the last label starts with a letter, so no address passes
+    private static final Pattern MIRROR_HOST = Pattern.compile("(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?");
     // A path of plain segments, so the prefix means one thing to the proxy and to the repository
     private static final Pattern PREFIX = Pattern.compile("/(?:[A-Za-z0-9._~-]+/)*");
     private static final Pattern NAMESPACE = Pattern.compile("[a-z][a-z0-9_-]*");
@@ -215,33 +217,67 @@ public final class MavenRepositories {
         return new Entry(host, prefix, confirm, replacesReleases, fresh, maxStale, credentials);
     }
 
-    /** A repository's URL, cut into the host, lower case, and the path prefix, starting and ending with {@code /}. */
-    public record Url(String host, String pathPrefix) {
+    /**
+     * A repository's URL, cut into the host, lower case, the port, and the path prefix, starting and
+     * ending with {@code /}. Only a mirror's port may be other than 443.
+     */
+    public record Url(String host, int port, String pathPrefix) {
+        public Url(String host, String pathPrefix) {
+            this(host, 443, pathPrefix);
+        }
+
+        /** The host, with the port when it is not 443: what {@code Host} says, and how a mirror is told apart. */
+        public String authority() {
+            return port == 443 ? host : host + ":" + port;
+        }
+
         @Override
         public String toString() {
-            return "https://" + host + pathPrefix;
+            return "https://" + authority() + pathPrefix;
         }
     }
 
     /**
-     * {@code url}, written under {@code key}, checked as a repository URL the proxy can reach and
-     * hold one meaning for: https on port 443, a domain name outside {@code .internal}, and a path
-     * of plain segments, so the prefix means one thing to the proxy and to the repository.
+     * {@code url}, written under {@code key}, checked as a repository URL the proxy can intercept
+     * and hold one meaning for: https on port 443, a domain name outside {@code .internal}, and a
+     * path of plain segments, so the prefix means one thing to the proxy and to the repository.
      */
     static Url repositoryUrl(String url, String key) throws Refused {
+        return url(url, key, false);
+    }
+
+    /**
+     * {@code url}, written under {@code key}, checked as a mirror's (#2681): as a repository's, but on
+     * any port and under a host name of one label too, since the proxy never intercepts a mirror's
+     * host, it only asks it. Still https, so the bytes a first miss runs come over an authenticated
+     * transport, and still a name, never an address.
+     */
+    static Url mirrorUrl(String url, String key) throws Refused {
+        return url(url, key, true);
+    }
+
+    private static Url url(String url, String key, boolean mirror) throws Refused {
         URI uri;
         try {
             uri = new URI(url);
         } catch (URISyntaxException e) {
             throw new Refused(key + " is not a URL");
         }
-        if (!"https".equals(uri.getScheme())) throw new Refused(key + " must be https://, the only scheme the proxy intercepts");
+        if (!"https".equals(uri.getScheme())) {
+            throw new Refused(key + (mirror ? " must be https://, so the mirror's bytes come over an authenticated connection"
+                    : " must be https://, the only scheme the proxy intercepts"));
+        }
         if (uri.getRawUserInfo() != null) throw new Refused(key + " must not hold a user or password"
                 + (key.equals("url") ? ": name a credentials: namespace instead" : ""));
-        if (uri.getPort() != -1 && uri.getPort() != 443) throw new Refused(key + " must use port 443, the only one the proxy intercepts");
+        var port = uri.getPort() == -1 ? 443 : uri.getPort();
+        if (mirror ? port < 1 || port > 65535 : port != 443) {
+            throw new Refused(mirror ? key + " must use a port from 1 to 65535" : key + " must use port 443, the only one the proxy intercepts");
+        }
         if (uri.getRawQuery() != null || uri.getRawFragment() != null) throw new Refused(key + " must not have a query or a fragment");
         var host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
-        if (!HOST.matcher(host).matches()) throw new Refused(key + " must name a host by its domain name, not an address");
+        if (!(mirror ? MIRROR_HOST : HOST).matcher(host).matches()) {
+            throw new Refused(key + " must name a host by its " + (mirror ? "name" : "domain name") + ", not an address");
+        }
         if (host.equals("internal") || host.endsWith(".internal")) throw new Refused("names under .internal are isx's own");
         var prefix = uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
         if (!prefix.endsWith("/")) prefix += "/";
@@ -249,7 +285,7 @@ public final class MavenRepositories {
         for (var segment : prefix.split("/")) {
             if (segment.equals(".") || segment.equals("..")) throw new Refused("the " + key + "'s path must not hold '.' or '..'");
         }
-        return new Url(host, prefix);
+        return new Url(host, port, prefix);
     }
 
     static String required(Map<?, ?> map, String key) throws Refused {

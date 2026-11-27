@@ -81,7 +81,8 @@ public final class MavenMirrors {
             if (!KEYS.contains(String.valueOf(key))) throw new MavenRepositories.Refused(MappedDefinition.unknownKey(key, KEYS, ""));
         }
         var repository = MavenRepositories.repositoryUrl(MavenRepositories.required(map, "repository"), "repository");
-        var mirror = MavenRepositories.repositoryUrl(MavenRepositories.required(map, "mirror"), "mirror");
+        var mirror = MavenRepositories.mirrorUrl(MavenRepositories.required(map, "mirror"), "mirror");
+        // Another port of the repository's host is still the repository's host
         if (mirror.host().equals(repository.host())) {
             throw new MavenRepositories.Refused("the mirror must be on another host than its repository");
         }

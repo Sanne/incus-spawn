@@ -885,6 +885,12 @@ That is the trust the user chose by naming the mirror.
 A private repository cannot take a mirror, since its credential never goes to another host and its copies are confirmed before every serve; nor does one that replaces releases, for the same second reason; nor the Gradle distributions, which are not laid out as Maven coordinates.
 An entry naming no cached repository, or one of these, is dropped with a warning naming why (`CachedRepositoryRules.mirrorRefusal`, which `isx validate` runs too, so it warns about the same entry).
 The mirror's host is not intercepted: only the proxy talks to it.
+**So a mirror may use any port and a host name of one label** (#2681), which a repository's URL may not (`MavenRepositories.mirrorUrl`).
+A repository's two rules exist because the proxy intercepts its host: port 443, and a dotted name the bridge DNS can claim.
+Neither applies to a host the proxy only asks, and a repository manager on a home server often serves https on a port of its own, under a name like `nas`.
+Still refused: plain `http`, since the build that misses runs the mirror's bytes before the repository confirms them, so the transport must be authenticated; an IP address; a name under `.internal`; and the repository's own host on another port, which is still that host.
+The proxy connects to the mirror's port and sends it in `Host` when it is not 443 (`CachedRepository.MirrorSource.authority`).
+Two mirrors on one host and different ports rest apart in `mirrorBackoffs` and are booked apart in `Upstream.throttles`, both keyed by that authority, since each is its own server.
 Uncached paths (`maven-metadata.xml`, SNAPSHOTs, a sidecar with no stored copy) still go to the repository alone, which leaves a build that resolves a version range or a plugin prefix exposed to its limit.
 **A request right after a download waits for its commit** (#2491).
 The client is answered when the last byte arrives, and the copy is committed after that.
