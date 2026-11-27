@@ -588,6 +588,10 @@ class InitTranscriptsTest {
                         default-action: copilot
                         """); },
                 claudeHere, new ScriptedPrompts().line("", "2", "")));
+        // Seen on a Mac (#2542): --all asks the steps a first run leaves for later, in the first run's words
+        b.add(new Branch("41-all-steps", "isx init --all; Claude Code; everything given; every later step skipped",
+                i -> { i.found = sub; i.all = true; }, claudeHere,
+                new ScriptedPrompts().line("", "").secret(OAUTH_TOKEN).line("1").secret(GITHUB_TOKEN).line("", "", "", "", "", "", "", "", "")));
         b.add(new Branch("30-linux-no-sudo", "Linux with --no-sudo; no agent; GitHub None for now",
                 i -> i.noSudo = true, h -> { },
                 new ScriptedPrompts().line(String.valueOf(probe.none()), "2", ""),
