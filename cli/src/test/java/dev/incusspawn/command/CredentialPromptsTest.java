@@ -576,11 +576,48 @@ class CredentialPromptsTest {
     void clonePathDefaultsOnEnterOrYes() {
         assertEquals("/default", clonePath(""));
         assertEquals("/default", clonePath("Y"));
+        // The prompt reads "Y = yes, n = no", so the words are answers, never directories (#2673 review)
+        assertEquals("/default", clonePath("yes"));
+        assertEquals("/default", clonePath("YES"));
+    }
+
+    /**
+     * The clone's directory is said on a line of its own, so a long home does not push the
+     * question past the frame: "Clone to <path>? (Y/path/n)" was 80 columns on a Mac (#2542).
+     */
+    @Test
+    void theCloneQuestionFitsTheFrameWhateverTheDirectory() {
+        var prompts = ScriptedPrompts.lines("");
+        var path = System.getProperty("user.home") + "/" + "a-long-directory-name/".repeat(4) + "incus-spawn-templates";
+        assertEquals(path, InitCommand.askClonePath(prompts, path));
+        var conversation = prompts.conversation();
+        assertTrue(conversation.contains("  ~/" + "a-long-directory-name/".repeat(4) + "incus-spawn-templates"), conversation.toString());
+        // The step's indent is 4 columns of the frame's 62
+        conversation.stream().filter(l -> !l.startsWith("  ~/")).map(l -> l.startsWith("? ") ? l.substring(2) : l)
+                .forEach(l -> assertTrue(l.length() <= InitCommand.BOX_WIDTH - 4, l));
+    }
+
+    /**
+     * The confirmation after a typed directory names it on a line of its own too: "Will clone to
+     * <absolute path>. Proceed?" ran past the frame as the first question did (#2673 review).
+     */
+    @Test
+    void theCloneConfirmationFitsTheFrameWhateverTheDirectory() {
+        var long_ = "a-long-directory-name/".repeat(4) + "incus-spawn-templates";
+        var prompts = ScriptedPrompts.lines("");
+        assertTrue(InitCommand.confirmCloneTarget(prompts, java.nio.file.Path.of(System.getProperty("user.home"), long_)));
+        var conversation = prompts.conversation();
+        assertTrue(conversation.contains("  ~/" + long_), conversation.toString());
+        conversation.stream().filter(l -> !l.startsWith("  ~/")).map(l -> l.startsWith("? ") ? l.substring(2) : l)
+                .forEach(l -> assertTrue(l.length() <= InitCommand.BOX_WIDTH - 4, l));
+        assertFalse(InitCommand.confirmCloneTarget(ScriptedPrompts.lines("n"), java.nio.file.Path.of("/srv/templates")));
     }
 
     @Test
     void clonePathNoDeclines() {
         assertNull(clonePath("n"));
+        assertNull(clonePath("no"));
+        assertNull(clonePath("No"));
     }
 
     @Test
@@ -588,8 +625,8 @@ class CredentialPromptsTest {
         var home = System.getProperty("user.home");
         assertEquals("/srv/templates", clonePath("/srv/templates"));
         assertEquals(home + "/templates", clonePath("~/templates"));
-        assertEquals(home + "/templates", clonePath("path", "~/templates"));
-        assertEquals("/default", clonePath("path", ""));
+        // "path" is no longer a keyword the prompt names: it is a directory like any other
+        assertEquals("path", clonePath("path"));
     }
 
     private static dev.incusspawn.tool.ToolSetup servers() throws Exception {
