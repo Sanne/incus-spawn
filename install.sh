@@ -166,10 +166,10 @@ if $NATIVE; then
             exit 1
         fi
         # The same Oracle GraalVM line as the Linux graalvm-version in .github/workflows/:
-        # 25i5 is Oracle's floating tag of GraalVM 25.5 (Innovation 5), as version: '25.5' is in
-        # setup-graalvm, so it follows each 25.5 patch. Not :latest, which is the 25.0 LTS line.
+        # 25i6 is Oracle's floating tag of GraalVM 25.6 (Innovation 6), as version: '25.6' is in
+        # setup-graalvm, so it follows each 25.6 patch. Not :latest, which is the 25.0 LTS line.
         # -ol10 (Oracle Linux 10, what :latest was) is multi-arch and pins the OS.
-        GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:25i5-ol10"
+        GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:25i6-ol10"
         # A local cache of the base with WORKDIR /project (Quarkus mounts the project there),
         # named after the base tag and labelled with the base it was built from: rebuilt
         # whenever a pull brings a newer base, used as is when the registry is unreachable.
@@ -217,7 +217,7 @@ if $NATIVE; then
         # The same Oracle GraalVM line as the graalvm-version in .github/workflows/release.yml.
         # Another line fails at "[1/8] Initializing..." with a NoSuchMethodError from Quarkus's
         # generated Feature, and Homebrew's graalvm-jdk@25 is the 25.0 LTS line, so look for it.
-        GRAALVM_LINE="25.5"
+        GRAALVM_LINE="25.6"
         graalvm_version() { [ -f "$1/release" ] || return 0; sed -n 's/^GRAALVM_VERSION="\(.*\)"$/\1/p' "$1/release"; }
         on_line() { case "$(graalvm_version "$1")" in "$GRAALVM_LINE"|"$GRAALVM_LINE".*) return 0 ;; esac; return 1; }
         GRAALVM_HINT="  Install it with SDKMAN (sdk install java $GRAALVM_LINE.<patch>-graal, as sdk list java names it), or download Oracle GraalVM $GRAALVM_LINE

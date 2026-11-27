@@ -274,7 +274,7 @@ A profile kept in the repository or a release asset would go stale with every co
 `proxy.native.gc` in `proxy/pom.xml` is `serial`, and the `linux-g1` profile sets `G1`.
 
 **Alternative:** G1 on macOS aarch64 too.
-Native Image has supported it there since Oracle GraalVM 25.1, and the Apple Silicon release job builds with Oracle GraalVM 25.5, so nothing prevents it.
+Native Image has supported it there since Oracle GraalVM 25.1, and the Apple Silicon release job builds with Oracle GraalVM 25.6, so nothing prevents it.
 
 **Why not:** it was measured on Apple Silicon (#1140) and gives no gain.
 Three interleaved rounds of `bench/run.sh`, same commit, Oracle GraalVM 25.4.4.1.1: 118 req/s for both collectors on `--load=maven`, and 53,900 (serial) against 53,700 (G1) on `--load=saturate`, a difference inside the noise.
@@ -341,13 +341,15 @@ What an Intel Mac user meets instead of a broken download:
 
 ## One GraalVM line
 
-Every build runs on one Oracle GraalVM innovation line: the `graalvm-version` of `release.yml`, set up by every workflow, and its floating builder image (`25i5-ol10` for 25.5) in `install.sh` and both modules' `quarkus.native.builder-image`.
+Every build runs on one Oracle GraalVM innovation line: the `graalvm-version` of `release.yml`, set up by every workflow, and its floating builder image (`25i6-ol10` for 25.6) in `install.sh` and both modules' `quarkus.native.builder-image`.
 On macOS `install.sh` builds with the host's GraalVM, so it looks for that line (`GRAALVM_LINE`) by the `GRAALVM_VERSION` of each home's `release` file and refuses any other.
 A `GRAALVM_HOME` you set is the only home checked, and the script refuses it when it is another line or has no `native-image`.
 Without one it looks in `JAVA_HOME`, then in what `java_home -V` lists, then in SDKMAN's JDKs, which `java_home` does not list.
 Another line fails late and obscurely: GraalVM 25.0.4 stops at "[1/8] Initializing..." with a `NoSuchMethodError` from Quarkus's generated `Feature`, and Homebrew's `graalvm-jdk@25`, which the script used to suggest, is the 25.0 line.
 `InstallScriptGraalVmTest` keeps the copies equal.
 The native proxy is a TLS MITM built from the JDK's `javax.net.ssl`, `java.net` and `java.security`, so a JDK advisory against them is a reason to move the line, as the advisory of 2026-10-20 moved it from 25.4 to 25.5 (#2105).
+The move to 25.6 had no advisory behind it.
+Oracle stops updating an innovation release once the next one ships, so 25.5 gets no further patches, and the next advisory would find the builds on a line with no fix.
 A version change is verified with a `workflow_dispatch` run of `release.yml` before merging ("Profile-guided optimization").
 
 ## The install script verifies its downloads
