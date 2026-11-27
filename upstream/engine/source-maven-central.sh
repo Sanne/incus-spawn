@@ -316,8 +316,9 @@ src_describe() {
             rows+="| \`$a\` | $v | $(_dir "$a")/$v/ |"$'\n'
         done
     done <<<"$parsed"
+    local cooling; cooling="$(item "$ITEM" cooling)"
     cat <<MD
-Bumps \`$ITEM\` to $1: each member's newest release on Maven Central within its major, past the item's $(item "$ITEM" cooling) cooling.
+Bumps \`$ITEM\` to $1: each member's newest release on Maven Central within its major$([[ "$cooling" == 0 ]] || echo ", past the item's $cooling cooling").
 
 | Artifact | Version | On Central |
 |---|---|---|

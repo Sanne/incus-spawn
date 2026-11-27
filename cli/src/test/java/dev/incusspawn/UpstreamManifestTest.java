@@ -25,9 +25,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * regenerates it; a {@code review} item (#2210) gets the same proven PR, which only Sanne merges.
  * So the manifest is a policy file, and these tests hold its shape statically: an item the engine
  * bumps is fully specified, its verification keys name committed files and the pinned
- * fingerprint, a third-party source cools for a day, and no key anywhere switches a check off.
+ * fingerprint, no item waits on a cooling period, and no key anywhere switches a check off.
  * {@code upstream.sh validate} holds the same rules at run time, with the source types loaded, and
- * the last test runs it so the two cannot drift apart unnoticed.
+ * the last test runs it so the two cannot drift apart unnoticed. The one exception is the cooling:
+ * {@code validate} accepts any duration, so only {@link #noItemWaitsOnACoolingPeriod} holds it at 0.
  */
 class UpstreamManifestTest {
 
@@ -47,12 +48,6 @@ class UpstreamManifestTest {
     private static final Pattern FINGERPRINT_PIN = Pattern.compile("(?m)^AUTOSIGNER_FPR=\"([0-9A-F]{40})\"$");
     /** A key that would read as "do not check this", whatever its value. */
     private static final Pattern PROTECTION_SWITCH = Pattern.compile("(?i)skip|disable|auto-?merge");
-    /**
-     * The one source type whose publisher may be first party, so the one a cooling under the 24h floor
-     * may go with (see {@link #coolingUnderADayIsOnlyForAFirstPartySource}).
-     */
-    private static final String FIRST_PARTY_SOURCE_TYPE = "github-release";
-
     private static JqValue manifest;
 
     @BeforeAll
@@ -149,21 +144,18 @@ class UpstreamManifestTest {
     }
 
     /**
-     * Cooling is the time between a publisher's release and the watch proposing it, so a release the
-     * publisher pulls within a day (a bad tarball, a compromised account) never reaches a PR. That
-     * floor is waived for a first-party source only, since there is no one else to wait for. The
-     * engine decides first party at run time, from the release's owner against the manifest's own
-     * ({@code src_first_party} in {@code source-github-release.sh}); the only source type with such a
-     * check is {@code github-release}, so statically that is the only type a cooling under 24h may go
-     * with. A kernel.org or JetBrains item at {@code 0} fails here before the engine ever runs.
+     * Sanne scrapped every wait ("scrap all wait times"): a bump is proposed as soon as the watch sees
+     * the release, and testing is the gate, {@code upstream-verify} proving the pin and CI and the
+     * item's gates testing the bump. An item given a cooling again would make its PRs wait, which
+     * this decision forbids, so the manifest holds every item at {@code 0}.
      */
     @Test
-    void coolingUnderADayIsOnlyForAFirstPartySource() {
-        proposedItems().forEach((name, item) -> {
+    void noItemWaitsOnACoolingPeriod() {
+        items().forEach((name, item) -> {
             var cooling = text(item, "cooling");
-            if (seconds(cooling) >= 86400) return;
-            assertEquals(FIRST_PARTY_SOURCE_TYPE, item.path("source").pathText("type", ""),
-                    name + ": cooling " + cooling + " is under the 24h floor, which only a first-party source may be");
+            if (cooling.isEmpty()) return; // a findings source has nothing to cool
+            assertTrue(DURATION.matcher(cooling).matches(), name + ": cooling is not a duration: '" + cooling + "'");
+            assertEquals(0, seconds(cooling), name + ": cooling " + cooling + " makes its bumps wait; every item's is 0");
         });
     }
 

@@ -2,12 +2,13 @@
 # The antigravity source type (#2366) on a fixture repository with Google faked: curl serves the two
 # stable Linux manifests, each build's manifest.json, the bucket's object records and the tarballs by
 # URL. Checks that validate reads the pin from the Java file; that check passes a pin the stable
-# manifests no longer name, from its build's own manifest.json; that plan waits while the stable
-# release cools and then proposes it, with the sha256 of tarballs that matched Google's sha512; that
-# check and plan report a stable release rolled back below the pin as a pin mismatch, and a manifest
-# that cannot be read as a failed read; that plan fails closed on a tarball the sha512 does not match,
-# a build manifest whose sha512 differs from the stable one and a URL off the bucket, and proposes
-# nothing while the Linux manifests name two builds; that verify-trees passes exactly the engine's
+# manifests no longer name, from its build's own manifest.json; that plan proposes the stable
+# release at once, or waits while it cools where the item sets a cooling and then proposes it, with
+# the sha256 of tarballs that matched Google's sha512; that check and plan report a stable release
+# rolled back below the pin as a pin mismatch, and a manifest that cannot be read as a failed read;
+# that plan fails closed on a tarball the sha512 does not match, a build manifest whose sha512
+# differs from the stable one and a URL off the bucket, and proposes nothing while the Linux
+# manifests name two builds; that verify-trees passes exactly the engine's
 # regeneration and a person's correct bump, and fails a tampered sum, an app PR for a version the
 # stable manifests no longer name and one made during a split; and that a Java file whose pin lines
 # changed shape has no fields.
@@ -97,7 +98,6 @@ bad_manifest() {
     return 0
 }
 bad_manifest '.items.antigravity.fields = ["version"]' "fields that drift from the source"
-bad_manifest '.items.antigravity.cooling = "1h"' "cooling under the floor"
 bad_manifest '.items.antigravity.verify.type = "asset-digest"' "a verify.type the source does not provide"
 cp "$REPO/$J" "$WORK/java.bak"
 sed -i 's|antigravity-public/antigravity-cli/" + BUILD|evil/" + BUILD|' "$REPO/$J"
@@ -125,12 +125,18 @@ echo "check: ok"
 # ---- plan --------------------------------------------------------------------------------------------
 plan() { local out="$WORK/plan-$1"; rm -rf "$out"; "$E" plan "$out" > "$out.log" 2>&1 || { cat "$out.log" >&2; fail "plan $1 failed"; }; echo "$out"; }
 row() { awk -F'\t' '$1 == "antigravity" { print $2 " " $3 }' "$1/plan.tsv"; }
+# The manifest's cooling is 0: a tarball uploaded an hour ago is proposed at once.
+P="$(plan fresh)"
+[ "$(row "$P")" = "pr 1.5.13" ] || fail "expected a PR for a fresh 1.5.13 with no cooling: $(cat "$P/plan.tsv")"
+# An item that sets a cooling waits for it, counted from the tarballs' upload.
+yq -i '.items.antigravity.cooling = "24h"' "$REPO/upstream/manifest.yaml"
 P="$(plan cooling)"
 [ "$(row "$P")" = "wait 1.5.13" ] || fail "expected to wait for 1.5.13: $(cat "$P/plan.tsv")"
 for a in x86_64 aarch64; do jq -n --arg t "$(ts $((2 * 86400)))" '{timeCreated: $t}' > "$WORK/art/1.5.13-$a.obj"
     serve "$OBJ"'1.5.13-333%2F'"${DIR[$a]}%2F${FILE[$a]}" "$WORK/art/1.5.13-$a.obj"; done
 P="$(plan cooled)"
 [ "$(row "$P")" = "pr 1.5.13" ] || fail "expected a PR for 1.5.13 once cooled: $(cat "$P/plan.tsv")"
+git -C "$REPO" checkout -q -- upstream/manifest.yaml
 C="$(jq -r .commit "$P/antigravity.json")"
 [ "$(git -C "$REPO" diff --name-only "$BASE" "$C")" = "$J" ] || fail "the bump touches more than the Java file"
 git -C "$REPO" show "$C:$J" > "$WORK/new.java"

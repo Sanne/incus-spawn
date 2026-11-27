@@ -99,7 +99,7 @@ _releases() {
 # variable first, so a failed GitHub read fails the run rather than reading as no release.
 _cooled() {
     local secs rel
-    secs="$(duration_seconds "$(item "$ITEM" cooling 72h)")"
+    secs="$(duration_seconds "$(item "$ITEM" cooling 0)")"
     rel="$(_releases "$1")"
     awk -F'\t' -v lim="$(( $(date -u +%s) - secs ))" '$2 <= lim { print $1 }' <<<"$rel"
 }
@@ -119,7 +119,7 @@ src_validate() {
         [[ "$repo" =~ $GA_REPO_RE ]] || die "manifest: item $ITEM: member $key is not owner/repo: '$repo'"
     done < <(_members)
     [[ "$(_members | cut -f2 | sort | uniq -d)" == "" ]] || die "manifest: item $ITEM: a repository is a member twice"
-    duration_seconds "$(item "$ITEM" cooling 72h)" > /dev/null
+    duration_seconds "$(item "$ITEM" cooling 0)" > /dev/null
     src_current > /dev/null
 }
 
@@ -234,8 +234,9 @@ src_describe() {
         within+="${within:+_}$key.$pick"
         [[ "$want" == "$tag" ]] || rows+="| \`$repo\` | $tag | $want$([[ "$(_major "$want")" == "$(_major "$tag")" ]] || echo ' (new major)') | https://github.com/$repo/releases/tag/$want |"$'\n'
     done < <(_parse "$cur")
+    local cooling; cooling="$(item "$ITEM" cooling 0)"
     cat <<MD
-These GitHub Actions have a newer release, each published at least $(item "$ITEM" cooling 72h) ago:
+These GitHub Actions have a newer release$([[ "$cooling" == 0 ]] || echo ", each published at least $cooling ago"):
 
 | Action | Pinned | Newest | Release notes |
 |---|---|---|---|

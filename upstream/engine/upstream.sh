@@ -31,7 +31,7 @@ usage() { sed -n '2,20p' "$0" >&2; exit 2; }
 # ---- validate -------------------------------------------------------------------------------------
 
 validate() {
-    local repo login i class within cooling secs type verify fingerprint files f gates judgement keys k sf
+    local repo login i class within cooling type verify fingerprint files f gates judgement keys k sf
     repo="$(manifest_repo)"
     [[ "$repo" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die "manifest: repo is not owner/name: '$repo'"
     login="$(app_login)"
@@ -89,12 +89,10 @@ validate() {
                 grep -qxF -- "$k" <<<"$have_fprs" || die "manifest: item $i: fingerprint $k is not the primary key of any key in $(item "$i" verify.key)"
             done
         fi
+        # No floor: testing is the gate, not a wait, so every item may be proposed at once (cooling: 0).
         cooling="$(item "$i" cooling)"
         [[ -n "$cooling" ]] || die "manifest: $class item $i has no cooling"
-        secs="$(duration_seconds "$cooling")"
-        if (( secs < 86400 )) && ! src_first_party; then
-            die "manifest: item $i: cooling $cooling is under the 24h floor for a third-party source"
-        fi
+        duration_seconds "$cooling" > /dev/null
         # The fields the item declares are the ones its source rewrites: a drift fails here.
         # Read first: an unreadable pin must fail validate, and a die inside a comparison's $(...) would not.
         sf="$(src_fields)"
