@@ -3,27 +3,25 @@ package dev.incusspawn.command;
 import java.util.List;
 
 /**
- * The sessions of a coding agent that the overview does not read, only finds (#2290): Gemini CLI,
- * GitHub Copilot CLI and Bob, and Antigravity CLI's conversations that have no transcript. When
- * an agent's session files are there, it is named among {@link AgentSessions#otherAgents} as not
- * read, so an instance it worked in never reads as {@code untouched}. Its closing messages are not
- * shown: a reader is written from session files the agent itself wrote, as the others were, and
- * none were at hand for Gemini CLI, Copilot and Bob.
+ * The sessions of a coding agent that the overview finds but does not read (#2290): Gemini CLI's
+ * chats from before JSON Lines, files directly in Copilot's {@code session-state}, and Antigravity
+ * CLI's conversations that have no transcript. Their readers ({@link GeminiSessions},
+ * {@link CopilotSessions}, {@link AntigravitySessions}) do not know them, so when they are there
+ * the agent is named among {@link AgentSessions#otherAgents} as not read, and an instance it worked
+ * in never reads as {@code untouched}.
  *
  * <p>Each check looks for session files alone, never for the agent's directory, which isx fills at
- * build time with settings, extensions and policies. Where each agent keeps them was read from the
- * code it ships: {@code @google/gemini-cli-core} 0.68.0, {@code @github/copilot} 1.0.114 and
- * {@code @ibm/bob} 2.1.0.
+ * build time with settings, extensions and policies.
  */
 public final class UnreadSessions implements AgentSessions.GuestReader {
 
     /**
-     * Gemini CLI's chats, {@code ~/.gemini/tmp/<project>/chats/session-*.jsonl} ({@code .json} before),
-     * a subagent's one directory deeper.
+     * Gemini CLI's chats saved whole, {@code ~/.gemini/tmp/<project>/chats/session-*.json}, as it
+     * kept them before {@code .jsonl} ({@code @google/gemini-cli-core} 0.68.0 still lists both).
      */
     static final UnreadSessions GEMINI = new UnreadSessions("gemini-cli", """
             g=${GEMINI_CLI_HOME:-$HOME}/.gemini/tmp
-            [ -n "$(find "$g"/*/chats -mindepth 1 -maxdepth 2 -name 'session-*.json*' -type f -print -quit 2>/dev/null)" ] && echo unread
+            [ -n "$(find "$g"/*/chats -mindepth 1 -maxdepth 1 -name 'session-*.json' -type f -print -quit 2>/dev/null)" ] && echo unread
             """);
 
     /**
@@ -42,24 +40,16 @@ public final class UnreadSessions implements AgentSessions.GuestReader {
             done
             """);
 
-    /** Copilot's {@code ~/.copilot/session-state}, one entry per session; an XDG location is migrated back there. */
-    static final UnreadSessions COPILOT = new UnreadSessions("copilot", """
-            [ -n "$(ls -A "${COPILOT_HOME:-$HOME/.copilot}/session-state" 2>/dev/null)" ] && echo unread
-            """);
-
     /**
-     * Bob's tasks, rows of {@code tasks} in {@code ~/.bob/db/bob.db}. A database {@code sqlite3}
-     * cannot count, or none installed, names Bob as not read too.
+     * A file directly in Copilot's {@code ~/.copilot/session-state}, where {@code @github/copilot}
+     * 1.0.114 keeps a directory per session and nothing else: a layout {@link CopilotSessions}
+     * does not know.
      */
-    static final UnreadSessions BOB = new UnreadSessions("bob", """
-            b=$HOME/.bob/db/bob.db
-            if [ -f "$b" ]; then
-              n=$(sqlite3 -readonly -batch -noheader -cmd '.timeout 2000' "$b" 'SELECT count(*) FROM tasks' 2>/dev/null) || n=x
-              [ "$n" = 0 ] || echo unread
-            fi
+    static final UnreadSessions COPILOT = new UnreadSessions("copilot", """
+            [ -n "$(find "${COPILOT_HOME:-$HOME/.copilot}/session-state" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null)" ] && echo unread
             """);
 
-    static final List<UnreadSessions> ALL = List.of(GEMINI, ANTIGRAVITY, COPILOT, BOB);
+    static final List<UnreadSessions> ALL = List.of(GEMINI, ANTIGRAVITY, COPILOT);
 
     private final String agent;
     private final String header;

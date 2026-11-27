@@ -16,8 +16,9 @@ import java.util.regex.Pattern;
  *
  * <p>A {@link GuestReader} reads one agent's sessions in the guest, as a section of the overview's
  * one script ({@link GuestRead}): {@link ClaudeSessions}, {@link CodexSessions}, {@link PiSessions},
- * {@link AntigravitySessions} and {@link OpencodeSessions}; {@link UnreadSessions} only finds
- * those of the agents no reader reads, and names them as not read. What the summary is made
+ * {@link AntigravitySessions}, {@link GeminiSessions}, {@link CopilotSessions},
+ * {@link OpencodeSessions} and {@link BobSessions}; {@link UnreadSessions} only finds sessions kept
+ * in a layout no reader reads, and names their agents as not read. What the summary is made
  * of is this record, whatever read it, so a later reader (a content log in the proxy) feeds the
  * same {@link Summary}.
  *

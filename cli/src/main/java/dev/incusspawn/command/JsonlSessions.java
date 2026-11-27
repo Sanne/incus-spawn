@@ -13,8 +13,9 @@ import java.util.regex.Pattern;
 
 /**
  * An agent that keeps each session as a JSON Lines transcript (#2241): Claude Code
- * ({@link ClaudeSessions}), Codex ({@link CodexSessions}), Pi ({@link PiSessions}) and Antigravity CLI
- * ({@link AntigravitySessions}). The script
+ * ({@link ClaudeSessions}), Codex ({@link CodexSessions}), Pi ({@link PiSessions}), Antigravity CLI
+ * ({@link AntigravitySessions}), Gemini CLI ({@link GeminiSessions}) and Copilot
+ * ({@link CopilotSessions}). The script
  * reads only the newest {@link #MAX_SESSIONS}, and from each only a few lines: the first lines of
  * the person's among its first {@link #HEAD_LINES}, and the last lines of the agent's that hold
  * text among its last {@link #TAIL_LINES}, read from the end with {@code tac}, so a long
@@ -48,7 +49,8 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
      * Where one agent keeps its transcripts and which lines may be what: {@code root} is a shell
      * expression for the directory, searched exactly {@code depth} levels down for {@code name}
      * and not {@code notName} (null for none). A candidate ask holds every {@code askHas} and no
-     * {@code askLacks}; a closing candidate holds every {@code closeHas}. With {@code meta}, the
+     * {@code askLacks}; a closing candidate holds every {@code closeHas} and no {@code closeLacks}.
+     * With {@code meta}, the
      * first line is sent too, for where the session ran ({@link #cwd}). With {@code strangeIsUnread},
      * a directory that holds files but no session this layout knows answers {@code unread}: the
      * agent may keep its sessions another way, so they are named as not read, never as none.
@@ -56,11 +58,11 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
      * files it matches are looked at, not every directory {@code depth} levels down (#2627).
      */
     record Layout(String agent, String header, String root, int depth, String name, String notName,
-                  List<String> askHas, List<String> askLacks, List<String> closeHas, boolean meta,
-                  boolean strangeIsUnread, String glob) {
+                  List<String> askHas, List<String> askLacks, List<String> closeHas, List<String> closeLacks,
+                  boolean meta, boolean strangeIsUnread, String glob) {
         Layout {
             for (var s : concat(List.of(root, name), notName == null ? List.of() : List.of(notName),
-                    glob == null ? List.of() : List.of(glob), askHas, askLacks, closeHas)) {
+                    glob == null ? List.of() : List.of(glob), askHas, askLacks, closeHas, closeLacks)) {
                 if (s.indexOf('\'') >= 0 || s.indexOf('\n') >= 0) throw new IllegalArgumentException("not quotable: " + s);
             }
             if (glob != null && !glob.endsWith("/" + name)) throw new IllegalArgumentException("a glob ends in its name: " + glob);
@@ -69,7 +71,7 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
         Layout(String agent, String header, String root, int depth, String name, String notName,
                List<String> askHas, List<String> askLacks, List<String> closeHas, boolean meta,
                boolean strangeIsUnread) {
-            this(agent, header, root, depth, name, notName, askHas, askLacks, closeHas, meta, strangeIsUnread, null);
+            this(agent, header, root, depth, name, notName, askHas, askLacks, closeHas, List.of(), meta, strangeIsUnread, null);
         }
 
         @SafeVarargs
@@ -84,8 +86,31 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
     private final String script;
 
     JsonlSessions(Layout layout) {
+        this(layout, null, null);
+    }
+
+    /**
+     * With {@code askSed} and {@code closeSed}, {@code sed -E} programs (null for none) that trim a
+     * candidate line to the fields its reader needs before the line is cut to its bound, so a line
+     * that holds the agent's reasoning or a file's text beside the message still parses. A line
+     * longer than {@link #TRIM_BYTES}, or one a program does not match, is cut as it is.
+     */
+    JsonlSessions(Layout layout, String askSed, String closeSed) {
+        for (var sed : new String[] {askSed, closeSed}) {
+            if (sed != null && (sed.indexOf('\'') >= 0 || sed.indexOf('\n') >= 0)) throw new IllegalArgumentException("not quotable: " + sed);
+        }
         this.layout = layout;
-        this.script = script(layout);
+        this.script = script(layout, trim(askSed), trim(closeSed));
+    }
+
+    /** A JSON string, escapes included, in a {@code sed -E} program. */
+    static final String SED_STRING = "\"(\\\\.|[^\"\\\\])*\"";
+
+    /** The bytes of a candidate line a trim reads, which bounds what it costs. */
+    static final int TRIM_BYTES = 1024 * 1024;
+
+    private static String trim(String sed) {
+        return sed == null ? "" : " | cut -b1-" + TRIM_BYTES + " | sed -E '" + sed + "'";
     }
 
     /**
@@ -93,12 +118,13 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
      * with its {@code meta}, {@code ask} and {@code close} candidates, each {@code <base64 line>},
      * then {@code end}.
      */
-    private static String script(Layout l) {
+    private static String script(Layout l, String askTrim, String closeTrim) {
         var asks = new StringBuilder();
         for (var has : l.askHas()) asks.append(" | grep -F '").append(has).append('\'');
         for (var lacks : l.askLacks()) asks.append(" | grep -v -F '").append(lacks).append('\'');
         var closes = new StringBuilder();
         for (var has : l.closeHas()) closes.append(" | grep -F '").append(has).append('\'');
+        for (var lacks : l.closeLacks()) closes.append(" | grep -v -F '").append(lacks).append('\'');
         var notName = l.notName() == null ? "" : " ! -name '" + l.notName() + "'";
         // A glob's paths start with ./, so find never takes one for an option; the name drops it
         var list = l.glob() == null
@@ -123,9 +149,9 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
                       [ -n "$e" ] || continue
                       n=${e#* }; n=${n#./}; f=$d/$n
                       echo "session ${e%%%% *} $(printf '%%s' "$n" | base64 -w0)"
-                %s      head -n %d "$f" 2>/dev/null%s | head -n %d | cut -b1-%d \\
+                %s      head -n %d "$f" 2>/dev/null%s | head -n %d%s | cut -b1-%d \\
                         | while IFS= read -r x; do echo "ask $(printf '%%s' "$x" | base64 -w0)"; done
-                      tac "$f" 2>/dev/null | head -n %d%s | head -n %d | cut -b1-%d \\
+                      tac "$f" 2>/dev/null | head -n %d%s | head -n %d%s | cut -b1-%d \\
                         | while IFS= read -r x; do echo "close $(printf '%%s' "$x" | base64 -w0)"; done
                     done
                   else
@@ -136,7 +162,7 @@ abstract class JsonlSessions implements AgentSessions.GuestReader {
                 fi
                 echo end
                 """.formatted(l.header(), l.root(), list, unread, MAX_SESSIONS,
-                meta, HEAD_LINES, asks, ASKS, ASK_BYTES, TAIL_LINES, closes, CLOSES, CLOSE_BYTES);
+                meta, HEAD_LINES, asks, ASKS, askTrim, ASK_BYTES, TAIL_LINES, closes, CLOSES, closeTrim, CLOSE_BYTES);
     }
 
     @Override

@@ -68,11 +68,14 @@ class TuiOverviewTest {
     /** What a guest's read prints: one clone with two commits not pushed, and Claude Code's sessions. */
     private static String guest(String claude) {
         return dev.incusspawn.command.WorkState.HEADER + "\nrepo 0 2 0 app\nend\n"
-                + "isx-sessions gemini-cli 1\nend\nisx-sessions antigravity 1\nend\nisx-sessions copilot 1\nend\nisx-sessions bob 1\nend\n"
+                + "isx-sessions gemini-cli 1\nend\nisx-sessions antigravity 1\nend\nisx-sessions copilot 1\nend\n"
                 + dev.incusspawn.command.ClaudeSessions.HEADER + "\n" + claude + "end\n"
                 + dev.incusspawn.command.CodexSessions.HEADER + "\ntotal 0\nend\n"
                 + dev.incusspawn.command.PiSessions.HEADER + "\ntotal 0\nend\n"
                 + dev.incusspawn.command.AntigravitySessions.HEADER + "\ntotal 0\nend\n"
+                + dev.incusspawn.command.GeminiSessions.HEADER + "\ntotal 0\nend\n"
+                + dev.incusspawn.command.CopilotSessions.HEADER + "\ntotal 0\nend\n"
+                + dev.incusspawn.command.BobSessions.HEADER + "\ntotal 0\nend\n"
                 + dev.incusspawn.command.OpencodeSessions.HEADER + "\ntotal 0\nend\n";
     }
 

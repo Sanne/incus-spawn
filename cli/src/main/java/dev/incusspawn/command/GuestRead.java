@@ -23,7 +23,8 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
      * lines, so the output bound never cuts them.
      */
     static final List<AgentSessions.GuestReader> READERS = java.util.stream.Stream.concat(UnreadSessions.ALL.stream(),
-            java.util.stream.Stream.of(new ClaudeSessions(), new CodexSessions(), new PiSessions(), new AntigravitySessions(), new OpencodeSessions())).toList();
+            java.util.stream.Stream.of(new ClaudeSessions(), new CodexSessions(), new PiSessions(), new AntigravitySessions(),
+                    new GeminiSessions(), new CopilotSessions(), new OpencodeSessions(), new BobSessions())).toList();
 
     /** The whole output kept: the work state's own bound, then each reader's ({@link AgentSessions.GuestReader#maxOutput}). */
     static final int MAX_OUTPUT = WorkState.MAX_OUTPUT + READERS.stream().mapToInt(AgentSessions.GuestReader::maxOutput).sum();

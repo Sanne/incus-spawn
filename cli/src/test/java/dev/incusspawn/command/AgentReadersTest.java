@@ -22,13 +22,14 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Codex's, Pi's and opencode's sessions read as the overview reads Claude Code's (#2241). The
- * fixtures are what the agents themselves wrote, Codex 0.169.0, Pi 1.5.2 and opencode 1.19.5,
- * each run against a stand-in model that answered "## Done\nFixed the flaky test; PR #12 is
- * open."; only Codex's 21 KB base instructions are cut from its first line.
+ * The other agents' sessions read as the overview reads Claude Code's (#2241, #2363). The
+ * fixtures are what the agents themselves wrote, Codex 0.169.0, Pi 1.5.2, opencode 1.19.5, Gemini
+ * CLI 0.68.0, Copilot CLI 1.0.114 and Bob 2.1.0, each run against a stand-in model that answered
+ * "## Done\nFixed the flaky test; PR #12 is open."; only Codex's 21 KB base instructions and
+ * Copilot's and Bob's system prompts are cut.
  *
  * <p>The scripts run here as the guest runs them, so the tests are Linux-only, as
- * {@link AgentSessionsTest}'s are; opencode's also needs {@code sqlite3}, which CI installs.
+ * {@link AgentSessionsTest}'s are; opencode's and Bob's also need {@code sqlite3}, which CI installs.
  */
 @EnabledOnOs(value = OS.LINUX, disabledReason = "the script is a Linux guest's, with GNU find, tac and base64")
 class AgentReadersTest {
@@ -157,12 +158,13 @@ class AgentReadersTest {
     }
 
     /**
-     * Gemini CLI, Copilot and Bob are coding agents no reader reads (#2290): their session files
-     * name them as not read, so an instance only they worked in is never {@code untouched}. What
-     * isx itself writes into their directories at build time says nothing.
+     * Gemini CLI's, Copilot's and Bob's sessions where their readers do not know them (#2290,
+     * #2363): Gemini CLI's chats saved whole and a file directly in Copilot's
+     * {@code session-state} name the agent as not read, so an instance only it worked in is never
+     * {@code untouched}. What isx itself writes into their directories at build time says nothing.
      */
     @Test
-    void agentsNoReaderReadsAreNamedWhenTheirSessionsAreThere(@TempDir Path home) throws Exception {
+    void sessionsKeptAnotherWayAreNamedAsNotRead(@TempDir Path home) throws Exception {
         // What a build writes: settings, an extension, a policy, an MCP configuration
         Files.writeString(Files.createDirectories(home.resolve(".gemini/extensions/isx")).resolve("GEMINI.md"), "notes");
         Files.writeString(Files.createDirectories(home.resolve(".gemini/policies")).resolve("isx-auto-approve.toml"), "");
@@ -170,9 +172,14 @@ class AgentReadersTest {
         Files.writeString(Files.createDirectories(home.resolve(".copilot")).resolve("mcp-config.json"), "{}");
         Files.createDirectories(home.resolve(".copilot/session-state"));
         Files.writeString(Files.createDirectories(home.resolve(".bob/settings")).resolve("settings.json"), "{}");
+        // A Copilot session that ended before its first message: a directory with no events
+        Files.writeString(Files.createDirectories(home.resolve(".copilot/session-state/ed470818-b305-4cd6-8802-9608ae744654"))
+                .resolve("workspace.yaml"), "id: ed470818-b305-4cd6-8802-9608ae744654\n");
+        Files.writeString(Files.createDirectories(home.resolve(".copilot/session-state/.session-operation-locks"))
+                .resolve("ed470818-b305-4cd6-8802-9608ae744654.lock"), "");
         assertEquals("untouched", AgentSessionsTest.run(home).summary(false).from(), "what isx wrote at build is no session");
 
-        Files.writeString(Files.createDirectories(home.resolve(".gemini/tmp/app/chats")).resolve("session-2026-11-18T10-00-1a2b3c4d.jsonl"), "{}\n");
+        Files.writeString(Files.createDirectories(home.resolve(".gemini/tmp/app/chats")).resolve("session-2026-11-18T10-00-1a2b3c4d.json"), "{}\n");
         Files.writeString(home.resolve(".copilot/session-state/0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0.jsonl"), "{}\n");
         Files.writeString(Files.createDirectories(home.resolve(".bob/db")).resolve("bob.db"), "not a database");
 
@@ -183,6 +190,134 @@ class AgentReadersTest {
         var summary = Summary.of(read.sessions(), read.work(), false);
         assertNull(summary.from(), "never untouched");
         assertEquals("sessions of gemini-cli, copilot, bob not read", summary.cell());
+    }
+
+    /**
+     * Gemini CLI's chat gives its ask and closing message (#2363). The fixture is what Gemini CLI
+     * 0.68.0 wrote against a stand-in model that called one tool and then answered; its first
+     * message is the context it sends itself, and the reply that called the tool is written twice.
+     */
+    @Test
+    void geminiClisChatGivesItsAskAndClosing(@TempDir Path home) throws Exception {
+        var chats = Files.createDirectories(home.resolve(".gemini/tmp/app/chats"));
+        Files.writeString(chats.resolve("session-2026-11-27T10-50-8a51b46a.jsonl"), fixture("gemini-session.jsonl")
+                // A reply that only called a tool after the report is not the closing message
+                + "{\"id\":\"z\",\"timestamp\":\"2026-11-27T10:51:00.000Z\",\"type\":\"gemini\",\"content\":\"\",\"toolCalls\":[{\"name\":\"glob\"}]}\n");
+        // A subagent's chat, one directory deeper, and a project's logs: no session of the person's
+        Files.writeString(Files.createDirectories(chats.resolve("8a51b46a-0000")).resolve("session-2026-11-27T10-51-0000.jsonl"),
+                fixture("gemini-session.jsonl"));
+        Files.writeString(Files.createDirectories(home.resolve(".gemini/tmp/app/logs")).resolve("session-x.jsonl"), "{}\n");
+        // An older chat whose ask named a file, whose text comes before the words, and whose reply's thoughts are long
+        var big = "x".repeat(JsonlSessions.CLOSE_BYTES);
+        var older = chats.resolve("session-2026-11-27T09-00-1e428999.jsonl");
+        Files.writeString(older, fixture("gemini-session.jsonl")
+                .replace("\"content\":[{\"text\":\"Fix the flaky test\"}]}", "\"content\":[{\"text\":\"@big.txt Fix it\"},"
+                        + "{\"text\":\"\\n--- Content from referenced files ---\"},{\"text\":\"" + big + "\"}],\"displayContent\":[{\"text\":\"@big.txt Fix it\"}]}")
+                + "{\"id\":\"y\",\"timestamp\":\"2026-11-27T09:01:00.000Z\",\"type\":\"gemini\",\"content\":\"Fixed it.\","
+                + "\"thoughts\":[{\"subject\":\"Plan\",\"description\":\"" + big + "\"}],\"model\":\"gemini-2.5-flash\"}\n");
+        Files.setLastModifiedTime(older, FileTime.from(Instant.parse("2026-11-27T09:01:00Z")));
+
+        var sessions = AgentSessionsTest.run(home).sessions();
+
+        assertEquals(AgentSessions.State.READ, sessions.state(), sessions.why());
+        assertEquals(2, sessions.total(), "a subagent's chat is not counted");
+        var named = sessions.sessions().get(1);
+        assertEquals("@big.txt Fix it", named.ask(), "what the person typed, not the file's text, which is longer than the bound");
+        assertEquals("Fixed it.", named.closing(), "thoughts longer than the bound do not hide the reply");
+        var session = sessions.sessions().getFirst();
+        assertEquals("gemini-cli", session.agent());
+        assertEquals("Fix the flaky test", session.ask(), "not the context Gemini CLI sends as the user");
+        assertEquals(DONE, session.closing());
+        assertNull(session.cwd(), "a chat names no directory");
+        assertTrue(sessions.otherAgents().isEmpty());
+    }
+
+    /**
+     * Copilot's event log gives its ask, closing message and directory (#2363). The fixture is what
+     * Copilot CLI 1.0.114 wrote against a stand-in model that called one tool and then answered;
+     * only its system prompt is cut.
+     */
+    @Test
+    void copilotsEventsGiveItsAskClosingAndDirectory(@TempDir Path home) throws Exception {
+        var state = Files.createDirectories(home.resolve(".copilot/session-state"));
+        Files.writeString(Files.createDirectories(state.resolve("64a9023d-3ab8-4b50-94d0-4516ab6e8d75")).resolve("events.jsonl"),
+                fixture("copilot-events.jsonl")
+                        // A subagent's report after the main agent's is not the closing message
+                        + "{\"type\":\"assistant.message\",\"data\":{\"messageId\":\"m\",\"content\":\"a subagent's report\",\"toolRequests\":[]},"
+                        + "\"id\":\"e\",\"timestamp\":\"2026-11-27T10:51:00.000Z\",\"parentId\":null,\"agentId\":\"sub-1\"}\n");
+        Files.writeString(Files.createDirectories(state.resolve("ed470818-b305-4cd6-8802-9608ae744654")).resolve("workspace.yaml"), "id: x\n");
+        // An older session whose ask attached a file and whose report carries the model's reasoning, both longer than the bound
+        var big = "x".repeat(JsonlSessions.CLOSE_BYTES);
+        var older = Files.createDirectories(state.resolve("1188332d-0092-4624-a9ed-bf19cc42e05d")).resolve("events.jsonl");
+        Files.writeString(older, fixture("copilot-events.jsonl")
+                .replaceFirst("\"transformedContent\":\"[^\"]*\"", "\"transformedContent\":\"" + big + "\"")
+                + "{\"type\":\"assistant.message\",\"data\":{\"messageId\":\"r\",\"model\":\"gpt-5\",\"content\":\"Reasoned it through.\","
+                + "\"toolRequests\":[{\"name\":\"create\",\"arguments\":{\"path\":\"x\",\"content\":\"\"}}],\"reasoningOpaque\":\"" + big + "\"},"
+                + "\"id\":\"f\",\"timestamp\":\"2026-11-27T09:01:00.000Z\",\"parentId\":null}\n");
+        Files.setLastModifiedTime(older, FileTime.from(Instant.parse("2026-11-27T09:01:00Z")));
+
+        var sessions = AgentSessionsTest.run(home).sessions();
+
+        assertEquals(AgentSessions.State.READ, sessions.state(), sessions.why());
+        assertEquals(2, sessions.total(), "a session with no events is none");
+        var reasoned = sessions.sessions().get(1);
+        assertEquals("Fix the flaky test", reasoned.ask(), "the text sent to the model, with its attachments, does not hide the person's");
+        assertEquals("Reasoned it through.", reasoned.closing(), "reasoning longer than the bound, and a tool's empty argument, do not hide the report");
+        var session = sessions.sessions().getFirst();
+        assertEquals("copilot", session.agent());
+        assertEquals("Fix the flaky test", session.ask(), "as shown, not as sent to the model");
+        assertEquals(DONE, session.closing());
+        assertEquals("/tmp/h-cop/app", session.cwd(), "from the session's start");
+        assertTrue(sessions.otherAgents().isEmpty());
+    }
+
+    /**
+     * Bob's database gives its top-level tasks (#2363). The fixture is the database Bob 2.1.0 wrote
+     * against a stand-in model that called one tool and then answered; only its system prompt is
+     * cut.
+     */
+    @Test
+    void bobsDatabaseGivesItsTopLevelTasks(@TempDir Path home) throws Exception {
+        var db = Files.createDirectories(home.resolve(".bob/db")).resolve("bob.db");
+        sqlite(db, fixture("bob.sql") + """
+                -- A subtask, newer than its parent: not a session of the person's
+                INSERT INTO tasks (id, project_id, parent_id, first_message, directory, created_at, updated_at, task_type)
+                  VALUES ('child', 'file:/tmp/h-bob/app', '%1$s', 'a subtask', '', 1795776700000, 1795776700000, 'subtask');
+                INSERT INTO messages VALUES ('cm', 'child', 'assistant', '{"role":"assistant","content":"a subtask''s report"}', 1795776700000);
+                -- A message that is not JSON, and one that only called a tool, written after the report
+                INSERT INTO messages VALUES ('zz1', '%1$s', 'assistant', 'not json', 1795776636261);
+                INSERT INTO messages VALUES ('zz2', '%1$s', 'assistant', '{"role":"assistant","content":"","toolCalls":[{"name":"glob"}]}', 1795776636261);
+                """.formatted(bobTask()));
+
+        var sessions = AgentSessionsTest.run(home).sessions();
+
+        assertEquals(AgentSessions.State.READ, sessions.state(), sessions.why());
+        assertEquals(1, sessions.total(), "a subtask is not counted");
+        var session = sessions.sessions().getFirst();
+        assertEquals("bob", session.agent());
+        assertEquals("Fix the flaky test", session.ask());
+        assertEquals(DONE, session.closing(), "the last report, in the order Bob wrote its rows");
+        assertEquals("/tmp/h-bob/app", session.cwd(), "from its environment, as its directory is empty");
+        assertEquals(Instant.ofEpochSecond(1795776636), session.modified());
+        assertTrue(sessions.otherAgents().isEmpty());
+    }
+
+    /** Bob's database read by its own tasks: none is no session, and only then. */
+    @Test
+    void bobsDatabaseWithoutTasksIsNoSession(@TempDir Path home) throws Exception {
+        var db = Files.createDirectories(home.resolve(".bob/db")).resolve("bob.db");
+        sqlite(db, fixture("bob.sql") + "DELETE FROM messages; DELETE FROM tasks;");
+        assertEquals("untouched", AgentSessionsTest.run(home).summary(false).from());
+
+        sqlite(db, "ALTER TABLE tasks RENAME TO old_tasks;");
+        assertEquals(List.of("bob"), AgentSessionsTest.run(home).sessions().otherAgents(), "a schema the read does not know");
+    }
+
+    /** The id of the one task in {@code bob.sql}. */
+    private static String bobTask() {
+        var sql = fixture("bob.sql");
+        int at = sql.indexOf("INSERT INTO tasks VALUES('") + "INSERT INTO tasks VALUES('".length();
+        return sql.substring(at, sql.indexOf('\'', at));
     }
 
     /**
@@ -203,9 +338,12 @@ class AgentReadersTest {
         Files.writeString(home.resolve(".gemini/antigravity-cli/conversations/94739f6c-d0df-4ecd-9113-4ec4a007e331.db"), "not a database");
         assertEquals(List.of("antigravity"), AgentSessionsTest.run(home).sessions().otherAgents());
 
-        Files.writeString(Files.createDirectories(home.resolve(".gemini/tmp/app/chats")).resolve("session-2026-11-18T10-00-1a2b3c4d.jsonl"), "{}\n");
+        Files.writeString(Files.createDirectories(home.resolve(".gemini/tmp/app/chats")).resolve("session-2026-11-18T10-00-1a2b3c4d.jsonl"),
+                fixture("gemini-session.jsonl"));
         Files.delete(home.resolve(".gemini/antigravity-cli/conversations/94739f6c-d0df-4ecd-9113-4ec4a007e331.db"));
-        assertEquals(List.of("gemini-cli"), AgentSessionsTest.run(home).sessions().otherAgents());
+        var gemini = AgentSessionsTest.run(home).sessions();
+        assertTrue(gemini.otherAgents().isEmpty(), "Gemini CLI's chat is not Antigravity CLI's");
+        assertEquals(List.of("gemini-cli"), gemini.sessions().stream().map(Session::agent).toList());
     }
 
     /**
@@ -254,17 +392,6 @@ class AgentReadersTest {
         assertEquals(List.of("antigravity"), some.otherAgents(), "a conversation with no transcript is not read");
     }
 
-    /** Bob's database read by its own tasks: none is no session, and only then. */
-    @Test
-    void bobsDatabaseWithoutTasksIsNoSession(@TempDir Path home) throws Exception {
-        var db = Files.createDirectories(home.resolve(".bob/db")).resolve("bob.db");
-        sqlite(db, "CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, parent_id TEXT REFERENCES tasks(id));");
-        assertEquals("untouched", AgentSessionsTest.run(home).summary(false).from());
-
-        sqlite(db, "INSERT INTO tasks VALUES ('t1', 'file:/app', NULL);");
-        assertEquals(List.of("bob"), AgentSessionsTest.run(home).sessions().otherAgents());
-    }
-
     @Test
     void aReaderThatFailedIsNamedAndNeverBlanksTheOthers() {
         var work = WorkState.HEADER + "\nend\n";
@@ -274,20 +401,21 @@ class AgentReadersTest {
         var codex = CodexSessions.HEADER + "\ntotal x\nend\n";
         var pi = PiSessions.HEADER + "\ntotal 0\nend\n";
         var agy = AntigravitySessions.HEADER + "\ntotal 0\nend\n";
+        var more = GeminiSessions.HEADER + "\ntotal 0\nend\n" + CopilotSessions.HEADER + "\ntotal 0\nend\n" + BobSessions.HEADER + "\ntotal 0\nend\n";
         var opencode = OpencodeSessions.HEADER + "\ntotal 0\nend\n";
 
-        var oneFailed = GuestRead.parse(0, work + unread + claude + codex + pi + agy + opencode, false).sessions();
+        var oneFailed = GuestRead.parse(0, work + unread + claude + codex + pi + agy + more + opencode, false).sessions();
         assertEquals(AgentSessions.State.READ, oneFailed.state());
         assertEquals(List.of("codex"), oneFailed.otherAgents());
         assertNull(Summary.of(oneFailed, WorkState.parse(0, work, false), false).from(), "never untouched");
 
-        var cut = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + agy + OpencodeSessions.HEADER + "\ntotal 1\n", true);
+        var cut = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + agy + more + OpencodeSessions.HEADER + "\ntotal 1\n", true);
         assertEquals(List.of("opencode"), cut.sessions().otherAgents(), "the bound cut opencode's section alone");
 
         var all = GuestRead.parse(0, work + unread + claude.replace("total 0", "total x"), false).sessions();
         assertEquals(AgentSessions.State.UNKNOWN, all.state(), "no reader answered: the agents found but not read are no reader");
 
-        var untouched = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + agy + opencode, false);
+        var untouched = GuestRead.parse(0, work + unread + claude + codex.replace("total x", "total 0") + pi + agy + more + opencode, false);
         assertEquals("untouched", Summary.of(untouched.sessions(), untouched.work(), false).from());
     }
 
