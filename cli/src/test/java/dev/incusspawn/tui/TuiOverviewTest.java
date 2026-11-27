@@ -625,8 +625,9 @@ class TuiOverviewTest {
         var reading = new Thread(reads.removeFirst());
         reading.start();
         try {
+            // The title is drawn before the rows, so a frame drawn while the guest's answer lands shows one without the other (#2669)
             String shown = screen(tui);
-            for (int i = 0; i < 500 && !row(shown, "mine").contains("↑2"); i++) {
+            for (int i = 0; i < 500 && !(row(shown, "mine").contains("↑2") && !shown.contains("0/1 instance")); i++) {
                 Thread.sleep(10);
                 shown = screen(tui);
             }
