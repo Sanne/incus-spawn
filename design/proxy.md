@@ -891,6 +891,8 @@ Neither applies to a host the proxy only asks, and a repository manager on a hom
 Still refused: plain `http`, since the build that misses runs the mirror's bytes before the repository confirms them, so the transport must be authenticated; an IP address; a name under `.internal`; and the repository's own host on another port, which is still that host.
 The proxy connects to the mirror's port and sends it in `Host` when it is not 443 (`CachedRepository.MirrorSource.authority`).
 Two mirrors on one host and different ports rest apart in `mirrorBackoffs` and are booked apart in `Upstream.throttles`, both keyed by that authority, since each is its own server.
+A cached repository's own backoff (`Upstream.backoffDomains`) is kept only for requests on 443, so a mirror refused on another port of a declared repository's host does not make the proxy serve that repository's copies unconfirmed.
+The upstream clients send SNI for every name (`setForceSni`), since JSSE leaves it out for a name of one label, and a frontend that routes by SNI would then not find a mirror such as `https://nas:8443/`.
 **`isx doctor` shows a mirror that does not work** (#2681).
 Every mirror failure falls back to the repository, so the builds pass and a mirror that serves nothing is otherwise visible only in the proxy's trace log.
 For each entry the proxy attaches (`CachedRepositoryRules.usedMirrors`, the same pass `isx validate` runs), doctor asks the mirror for one small, fixed artifact as the proxy would: its `.sha1`, redirects followed over https, then the artifact, unredirected, checked against it (`MavenMirrorProbe`).

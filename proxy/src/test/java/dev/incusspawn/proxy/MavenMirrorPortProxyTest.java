@@ -37,6 +37,8 @@ class MavenMirrorPortProxyTest {
 
     private static final String CENTRAL = "repo.maven.apache.org";
     private static final String REPO1 = "repo1.maven.org";
+    private static final String PORTAL = "plugins.gradle.org";
+    private static final String PORTAL_JAR = "/m2/" + "org/example/lib/1.0/lib-1.0.jar";
     private static final String MIRROR = "localhost";
     private static final String COORDINATES = "org/example/lib/1.0/lib-1.0.jar";
     private static final String JAR = "/maven2/" + COORDINATES;
@@ -51,12 +53,16 @@ class MavenMirrorPortProxyTest {
     /** One mirror for each of Central's two names, on one host and two ports. */
     static int firstPort;
     static int secondPort;
+    /** A port nothing listens on: the Plugin Portal's mirror, which refuses every connection. */
+    static int refusedPort;
     static HttpClient client;
     static MitmProxy proxy;
     /** "Host METHOD path" of every request each mirror received. */
     static final List<String> atFirst = new CopyOnWriteArrayList<>();
     static final List<String> atSecond = new CopyOnWriteArrayList<>();
     static final List<String> atCentral = new CopyOnWriteArrayList<>();
+    /** The SNI name each request to the first mirror came with. */
+    static final List<String> firstSni = new CopyOnWriteArrayList<>();
     static volatile boolean firstFails;
 
     @BeforeAll
@@ -80,6 +86,9 @@ class MavenMirrorPortProxyTest {
         centralPort = NpmCacheProxyTest.listen(central);
         firstPort = NpmCacheProxyTest.listen(mirror(ca, atFirst, true));
         secondPort = NpmCacheProxyTest.listen(mirror(ca, atSecond, false));
+        try (var free = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+            refusedPort = free.getLocalPort();
+        }
 
         Files.createDirectories(tempHome.resolve(".config/incus-spawn"));
         Files.writeString(tempHome.resolve(".config/incus-spawn/config.yaml"), """
@@ -88,7 +97,9 @@ class MavenMirrorPortProxyTest {
                     mirror: https://%s:%d/central/
                   - repository: https://%s/maven2/
                     mirror: https://%s:%d/repo1/
-                """.formatted(CENTRAL, MIRROR, firstPort, REPO1, MIRROR, secondPort));
+                  - repository: https://%s/m2/
+                    mirror: https://%s:%d/portal/
+                """.formatted(CENTRAL, MIRROR, firstPort, REPO1, MIRROR, secondPort, PORTAL, MIRROR, refusedPort));
 
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1", ConfigFingerprint.load());
         proxy.upstream.upstreamTrustAll = true;
@@ -98,10 +109,12 @@ class MavenMirrorPortProxyTest {
     }
 
     private static HttpServer mirror(CertificateAuthority ca, List<String> seen, boolean first) throws Exception {
-        return vertx.createHttpServer(new HttpServerOptions().setSsl(true)
+        // SNI on, so the server reads the name the client indicated
+        return vertx.createHttpServer(new HttpServerOptions().setSsl(true).setSni(true)
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(ca, MIRROR)))
                 .requestHandler(req -> {
                     seen.add(req.getHeader("Host") + " " + req.method() + " " + req.path());
+                    if (first) firstSni.add(String.valueOf(req.connection().indicatedServerName()));
                     if (first && firstFails) {
                         req.response().setStatusCode(503).end();
                     } else {
@@ -144,11 +157,13 @@ class MavenMirrorPortProxyTest {
         atFirst.clear();
         atSecond.clear();
         atCentral.clear();
+        firstSni.clear();
         firstFails = false;
         proxy.upstream.clearBackoffs();
         proxy.artifactCache.mirrorBackoffs.clear();
         proxy.overrideUpstream(CENTRAL, "127.0.0.1", centralPort);
         proxy.overrideUpstream(REPO1, "127.0.0.1", centralPort);
+        proxy.overrideUpstream(PORTAL, "127.0.0.1", centralPort);
         var dir = Environment.mavenCacheDir();
         if (Files.isDirectory(dir)) {
             try (var files = Files.walk(dir)) {
@@ -202,6 +217,8 @@ class MavenMirrorPortProxyTest {
         var host = MIRROR + ":" + firstPort;
         assertEquals(List.of(host + " GET /central/" + COORDINATES + ".sha1", host + " GET /central/" + COORDINATES), atFirst);
         assertEquals(List.of(), atCentral, "the mirror served the miss");
+        // JSSE sends no SNI for a name of one label unless told to, and a frontend that routes by it would not find the mirror
+        assertEquals(List.of(MIRROR, MIRROR), firstSni, "a host name of one label is sent as SNI");
     }
 
     @Test
@@ -217,5 +234,24 @@ class MavenMirrorPortProxyTest {
         assertEquals(200, get(REPO1));
         assertEquals(2, atSecond.size(), atSecond.toString());
         assertEquals(List.of(), atCentral);
+    }
+
+    @Test
+    void aRefusedMirrorOnAnotherPortLeavesItsHostsRepositoryOutOfTheBackoff() throws Exception {
+        // As when maven-repositories: declares https://nas/maven/ and a mirror is at https://nas:8443/:
+        // the host is one whose 443 the proxy caches and keeps a backoff for
+        var backoffDomains = proxy.upstream.backoffDomains;
+        var withMirrorsHost = new java.util.HashSet<>(backoffDomains);
+        withMirrorsHost.add(MIRROR);
+        proxy.upstream.backoffDomains = java.util.Set.copyOf(withMirrorsHost);
+        try {
+            get(PORTAL, PORTAL_JAR);
+            assertTrue(proxy.artifactCache.mirrorBackoffs.containsKey(MIRROR + ":" + refusedPort),
+                    "the refused mirror rests: " + proxy.artifactCache.mirrorBackoffs);
+            assertFalse(proxy.artifactCache.inBackoff(MIRROR),
+                    "a refused connection to another port says nothing about the repository on 443");
+        } finally {
+            proxy.upstream.backoffDomains = backoffDomains;
+        }
     }
 }
