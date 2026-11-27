@@ -811,7 +811,9 @@ public final class BranchFlow {
         var template = definitions.get(inherited.template());
         if (template == null) return false;
         var missing = CredentialCheck.missing(config, template, definitions, accounts.accounts(), allTools, served);
-        return !missing.isEmpty() && missingAccounts.ask(inherited.template(), missing);
+        // A gap no step fixes refuses the branch whatever else is set up, so nothing is asked (#2525)
+        if (missing.isEmpty() || missing.stream().anyMatch(m -> CredentialCheck.stepTool(m, allTools) == null)) return false;
+        return missingAccounts.ask(inherited.template(), missing);
     }
 
     /**

@@ -181,6 +181,27 @@ class BranchFlowCredentialsTest {
         assertTrue(e.getMessage().contains("OpenAI API key"), e.getMessage());
     }
 
+    /**
+     * A sign-in in use for Pi is refused whatever else is set up (#2525), so the branch asks for
+     * nothing, not even Claude's missing key beside it: a secret typed there would not let it go ahead.
+     */
+    @Test
+    void aGapNoStepFixesIsRefusedWithoutAskingForAnything() throws Exception {
+        Files.writeString(SpawnConfig.configDir().resolve("config.yaml"), """
+                openai:
+                  accounts:
+                    sub: { type: chatgpt }
+                  default: sub
+                """);
+        var defs = defs("name: tpl-dev\ntools:\n  - claude\n  - pi: {provider: openai}\n");
+        var e = assertThrows(BranchFlow.BranchException.class, () -> preflight(template(), defs, List.of(),
+                (template, missing) -> {
+                    throw new AssertionError("asked for " + missing);
+                }));
+        assertTrue(e.getMessage().contains("ChatGPT sign-in"), e.getMessage());
+        assertTrue(e.getMessage().contains("Anthropic API key"), e.getMessage());
+    }
+
     /** Nothing missing, nothing asked. */
     @Test
     void aBranchWithEveryAccountIsNotAsked() throws Exception {

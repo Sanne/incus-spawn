@@ -362,8 +362,9 @@ The note names pi and its provider, and offers another provider; it follows the 
 The credential itself is still reported, so pi's stricter Vertex need is not hidden behind Claude Code's.
 A tool whose problem another account would not fix names its own remedy through `ToolSetup.credentialRemedy()`: a command and a note.
 Pi and opencode on a ChatGPT or Google sign-in name `isx branch --account` with the namespace's own API key account, or `isx account add` when there is none (#2525).
-Their note names the template's `accounts:` map when the sign-in is pinned, and otherwise the default, which also moves Codex or Antigravity CLI off the sign-in and onto the metered key.
+Their note says that `--account` outranks a pin of the sign-in, from the template's `accounts:` map, the source or the command line, and otherwise names the default, which also moves Codex or Antigravity CLI off the sign-in and onto the metered key.
 A remedy is never asked for at a branch or a build (`CredentialCheck.Missing.asked`), since an account added beside the sign-in is not used while the sign-in stays the default, and nobody should type a secret for a branch that is then refused.
+For the same reason a branch with any gap no step fixes, such a remedy or an `isx init` one, asks for none of its other gaps either, and is refused straight away.
 A missing credential is one entry, identified by the credential and its command; the notes of the tools and templates that need it are collected on it, so a note never splits one credential into two lines.
 
 **Auth error reporting**: When credential injection fails the proxy records an `authError` and surfaces it on `/health`, which `isx proxy status`, `isx doctor` and the TUI banner all render.
