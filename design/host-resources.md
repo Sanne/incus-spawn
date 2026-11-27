@@ -168,6 +168,19 @@ The rules:
 File-level host resources (individual files rather than directories) automatically fall back to `copy` mode on VMs, since Incus disk devices only support directory mounts for virtual machines.
 The fallback is logged: "VM: falling back to copy mode for file ...".
 
+### A source on overlayfs is mounted unshifted
+
+A container's `readonly` and `overlay` devices are added with `shift=true`, so the source's files keep their owners inside.
+A kernel that cannot make an idmapped mount of overlayfs makes Incus refuse such a device with "Required idmapping abilities not available" (#595).
+That is what happened when a template with an overlay `~/.m2/repository` was built inside an isx instance (`tpl-incus-spawn`): there the source is the outer instance's overlay mount.
+So `HostResourceSetup.addShiftIfSupported` leaves `shift=true` off for a source on `overlay` that uid 1000 owns.
+Unshifted, the build's `raw.idmap` (`both 1000 1000`) shows uid 1000's files as `agentuser`'s, as the shift would.
+What this gives up: a file inside owned by another uid shows as `nobody`, and in `overlay` mode it cannot be copied up, so writing it fails.
+It gives that up on every kernel, since isx cannot ask the kernel without making the mount.
+Kernel 7.3.5 with Incus 6.23 shifts an overlay source, over an ext4 or a virtiofs lower layer, so the refusal belongs to the kernel of the report and others like it.
+A source owned by another uid keeps its shift: on a kernel that shifts it, the shift is what makes it readable, and on one that refuses it nothing worked before either.
+The type and owner are a mount-table read and a `stat` on the host, about 35 µs per device on build and branch, and none for a VM or on macOS, which never shift (docs/dev/PERFORMANCE-NOTES.md "A host resource's filesystem type and owner, on Linux").
+
 ### Missing sources
 
 If a host path doesn't exist at build or branch time, the entry is skipped with a warning.
