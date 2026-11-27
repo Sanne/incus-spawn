@@ -71,13 +71,70 @@ class VmStopTest {
             Files.copy(Path.of("/bin/sh").toRealPath(), qemu);
             qemu.toFile().setExecutable(true);
         }
-        vm = (OS.MAC.isCurrentOs()
+        vm = startCopy(OS.MAC.isCurrentOs()
                 ? new ProcessBuilder(qemu.toString(), "60")
                 : new ProcessBuilder(java.util.stream.Stream.concat(
-                        java.util.stream.Stream.of(qemu.toString(), "-c", "read x", program), extraArgs.stream()).toList())).start();
+                        java.util.stream.Stream.of(qemu.toString(), "-c", "read x", program), extraArgs.stream()).toList()));
         Files.createDirectories(Environment.vmStateDir());
         Files.writeString(Environment.vmPidFile(), Long.toString(vm.pid()));
         assertTrue(VmManager.isRunning(), "the stand-in must pass for a VM");
+    }
+
+    /**
+     * Starts a stand-in just copied into place, again while its exec fails with ETXTBSY. A process
+     * another test thread forks while the copy is still open for writing holds that descriptor
+     * until its own exec, so the stand-in's exec can fail for that short while (#2684).
+     */
+    static Process startCopy(ProcessBuilder builder) throws IOException {
+        var deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (true) {
+            try {
+                return builder.start();
+            } catch (IOException e) {
+                if (!textFileBusy(e) || System.nanoTime() - deadline > 0) throw e;
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+    }
+
+    private static boolean textFileBusy(IOException e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            var message = t.getMessage();
+            if (message != null && (message.contains("error: 26") || message.contains("error=26"))) return true;
+        }
+        return false;
+    }
+
+    /** The race of #2684, made certain: the copy is open for writing when its start is first tried. */
+    @Test
+    @org.junit.jupiter.api.condition.DisabledOnOs(OS.MAC)
+    void aCopyStillOpenForWritingStartsOnceItIsClosed() throws Exception {
+        var copy = tempHome.resolve("busy-sh");
+        Files.copy(Path.of("/bin/sh").toRealPath(), copy);
+        copy.toFile().setExecutable(true);
+        var writer = java.nio.channels.FileChannel.open(copy, java.nio.file.StandardOpenOption.WRITE);
+        var began = System.nanoTime();
+        var closer = Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(200);
+                writer.close();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
+        try {
+            var process = startCopy(new ProcessBuilder(copy.toString(), "-c", "exit 0"));
+            assertEquals(0, process.waitFor());
+            assertTrue(Duration.ofNanos(System.nanoTime() - began).toMillis() >= 200,
+                    "the copy must have been busy when its start was first tried");
+        } finally {
+            closer.join();
+        }
     }
 
     @AfterEach
@@ -336,11 +393,11 @@ class VmStopTest {
         var vfkit = home.resolve("vfkit");
         Files.copy(Path.of("/bin/sh").toRealPath(), vfkit);
         vfkit.toFile().setExecutable(true);
-        vm = new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
-                "--device", "virtio-blk,path=" + Environment.vmDiskImage()).start();
+        vm = startCopy(new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
+                "--device", "virtio-blk,path=" + Environment.vmDiskImage()));
         // An unrelated vfkit, another user's or another state directory's, is not the VM.
-        var other = new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
-                "--device", "virtio-blk,path=/elsewhere/disk.img").start();
+        var other = startCopy(new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
+                "--device", "virtio-blk,path=/elsewhere/disk.img"));
         try {
             assertFalse(VmManager.isRunning(), "no pid file: isRunning() alone cannot see it");
 
@@ -370,8 +427,8 @@ class VmStopTest {
         var vfkit = home.resolve("vfkit");
         Files.copy(Path.of("/bin/sh").toRealPath(), vfkit);
         vfkit.toFile().setExecutable(true);
-        vm = new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
-                "--device", "virtio-blk,path=" + Environment.vmDiskImage()).start();
+        vm = startCopy(new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
+                "--device", "virtio-blk,path=" + Environment.vmDiskImage()));
         Files.writeString(Environment.vmPidFile(), Long.toString(ProcessHandle.current().pid()));
         Files.writeString(Environment.vmAgentSocket(), "");
 
@@ -393,8 +450,8 @@ class VmStopTest {
         var vfkit = home.resolve("vfkit");
         Files.copy(Path.of("/bin/sh").toRealPath(), vfkit);
         vfkit.toFile().setExecutable(true);
-        vm = new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
-                "--device", "virtio-blk,path=" + Environment.vmDiskImage()).start();
+        vm = startCopy(new ProcessBuilder(vfkit.toString(), "-c", "read x", "vfkit",
+                "--device", "virtio-blk,path=" + Environment.vmDiskImage()));
 
         assertEquals(VmManager.StopResult.SIGNALLED, VmManager.stopToDelete());
         assertFalse(vm.isAlive());
@@ -416,7 +473,7 @@ class VmStopTest {
         var launcher = home.resolve("isx-vm");
         Files.copy(Path.of("/bin/sh").toRealPath(), launcher);
         launcher.toFile().setExecutable(true);
-        vm = new ProcessBuilder(launcher.toString(), "-c", "read x", "isx-vm", "--control", control.toString()).start();
+        vm = startCopy(new ProcessBuilder(launcher.toString(), "-c", "read x", "isx-vm", "--control", control.toString()));
         Files.createDirectories(Environment.vmStateDir());
         Files.writeString(Environment.vmPidFile(), Long.toString(vm.pid()));
     }
