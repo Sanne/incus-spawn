@@ -221,6 +221,9 @@ The probe's guest script runs as root with no time limit of its own, so whatever
 A branch's setup script writes the keys as agentuser too (`RuntimeSetup.WRITE_KEYS`, #1698): root never touches `~/.ssh`, which a branch of an instance copies from its source.
 A state without `processes` falls back to plain probing, and containers never read `/state`.
 Timings are a `ReadyTimeouts` record that `WaitForReadyTest` shortens through the package-private setter.
+A VM that reads `Stopped`, and whose QEMU monitor log's first `SHUTDOWN` is `host-qmp-quit` (`HostSideStartFailure.hostQuitFirst`, `IncusClient.qmpLogOrNull`), throws `HostSideStartFailure` (#2675): Incus told a healthy QEMU to quit, which Incus 6.23 does about once in 150 starts.
+An empty console alone proves nothing, since Incus writes `console.log` only when it is read while the VM runs, and an `Error` VM is never retried.
+Code that owns a start wraps its wait in `lifecycle/HostSideStart.retryOnce` with its own start, which says so, starts the VM once more and waits again; `waitForReady` itself never retries, and neither does `VmAgentRecovery`'s once-per-boot restart.
 A running VM whose agent does not answer on `isx shell`/`isx run`/the TUI goes through `InstanceLifecycle.ensureReady` -> `lifecycle/VmAgentRecovery.restartForAgent` -- never a bare `forceStop` + start.
 It refuses when the console log shows a `VmAgentFailure` the agent has not since recovered from (`unrecoveredLines`, after `waitForReady`'s grace), restarts at most once per boot (the restarted boot's `IncusClient.pid` is stamped as `Metadata.AGENT_RESTART_BOOT`), and stops gracefully before forcing (#843).
 

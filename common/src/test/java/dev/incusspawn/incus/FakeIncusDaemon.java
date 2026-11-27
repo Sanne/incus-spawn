@@ -96,7 +96,13 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, JqValue> operationResults = new LinkedHashMap<>();
     /** Images whose /sbin/init cannot run: an instance created from one fails to start. */
     private final java.util.Set<String> brokenInit = new java.util.LinkedHashSet<>();
+    /** How many more starts of each instance Incus answers as done and leaves stopped (#2675). */
+    private final Map<String, Integer> killedOnStart = new LinkedHashMap<>();
+    /** The monitor log each of those starts leaves, by instance. */
+    private final Map<String, String> killedOnStartLog = new LinkedHashMap<>();
     private final Map<String, String> lxcLogs = new LinkedHashMap<>();
+    /** Each VM's QEMU monitor log of its current or last boot, as Incus serves {@code qemu.qmp.log}. */
+    private final Map<String, String> qmpLogs = new LinkedHashMap<>();
     private final List<String> brokenFetches = new ArrayList<>();
     private int nextFetch = 1;
     private boolean refuseNextWrite;
@@ -408,6 +414,37 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** Answer every instance GET with this error status (0: answer normally), as a failing daemon would. */
     public synchronized FakeIncusDaemon failInstanceReads(int status) {
         failReadsWith = status;
+        return this;
+    }
+
+    /** {@code qemu.qmp.log} of a boot Incus ended by telling QEMU to quit, as Incus 6.23 logs it (#2675). */
+    public static final String HOST_QUIT_QMP_LOG = """
+            [2026-11-25T20:39:37Z] QUERY: {"execute":"system_reset","id":29}
+            [2026-11-25T20:39:37Z] QUERY: {"execute":"cont","id":30}
+            [2026-11-25T20:39:37Z] QUERY: {"execute":"quit","id":31}
+            [2026-11-25T20:39:37Z] Event: {"timestamp": {"seconds": 1795725577, "microseconds": 179731},             "event": "SHUTDOWN", "data": {"guest": false, "reason": "host-qmp-quit"}}
+            [2026-11-25T20:39:37Z] REPLY: {"return": {}, "id": 31}
+            """;
+
+    /** What VM {@code instanceName}'s {@code qemu.qmp.log} holds, its current or last boot's. */
+    public synchronized FakeIncusDaemon qmpLog(String instanceName, String log) {
+        qmpLogs.put(instanceName, log);
+        return this;
+    }
+
+    /**
+     * The next {@code starts} starts of {@code instanceName} succeed and leave it stopped, its
+     * console empty and its monitor log ending in {@link #HOST_QUIT_QMP_LOG}: as Incus 6.23 kills a
+     * healthy VM milliseconds into its start, once it loses its QEMU monitor's event stream (#2675).
+     */
+    public synchronized FakeIncusDaemon killedOnStart(String instanceName, int starts) {
+        return stoppedOnStart(instanceName, starts, HOST_QUIT_QMP_LOG);
+    }
+
+    /** As {@link #killedOnStart}, each such start leaving {@code qmpLog} as its monitor log. */
+    public synchronized FakeIncusDaemon stoppedOnStart(String instanceName, int starts, String qmpLog) {
+        killedOnStart.put(instanceName, starts);
+        killedOnStartLog.put(instanceName, qmpLog);
         return this;
     }
 
@@ -1116,6 +1153,10 @@ public final class FakeIncusDaemon implements IncusTransport {
             return sync(lxcLogs.containsKey(name)
                     ? JqArray.of(JqString.of("/1.0/instances/" + name + "/logs/lxc.log")) : JqArray.EMPTY);
         }
+        if (rest.equals("/logs/qemu.qmp.log") && method.equals("GET")) {
+            var log = qmpLogs.get(name);
+            return log == null ? notFound() : new RawResponse(200, log.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
         if (rest.equals("/logs/lxc.log") && method.equals("GET")) {
             var log = lxcLogs.get(name);
             return log == null ? notFound() : new RawResponse(200, log.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -1161,8 +1202,16 @@ public final class FakeIncusDaemon implements IncusTransport {
                         + " - Exec format error - Failed to exec \"/sbin/init\"\n");
                 return badRequest();
             }
+            if (action.equals("start") && killedOnStart.getOrDefault(name, 0) > 0) {
+                killedOnStart.merge(name, -1, Integer::sum);
+                set(name, "status", "Stopped");
+                qmpLogs.put(name, killedOnStartLog.getOrDefault(name, HOST_QUIT_QMP_LOG));
+                return async();
+            }
             hotplugged.remove(name);
             if (action.equals("start") || action.equals("restart")) {
+                // Incus rotates the monitor log at every start
+                if (qmpLogs.containsKey(name)) qmpLogs.put(name, "");
                 set(name, "status", "Running");
                 pids.put(name, nextPid++);
                 // What Incus sets on every start, a reboot included

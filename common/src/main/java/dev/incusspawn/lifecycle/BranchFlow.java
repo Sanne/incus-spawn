@@ -714,7 +714,10 @@ public final class BranchFlow {
         JqValue started = null;
         if (machineType == MachineType.VM) {
             BuildOutput.stepStart("Waiting for VM agent");
-            incus.waitForReady(name, MachineType.VM);
+            HostSideStart.retryOnce(incus, name, BuildOutput.bound(), () -> {
+                incus.waitForReady(name, MachineType.VM);
+                return null;
+            });
             BuildOutput.stepDone();
             started = InstanceNetwork.pushDeferredVmFiles(incus, name, networkMode);
         }

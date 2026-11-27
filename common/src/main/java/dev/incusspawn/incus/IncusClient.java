@@ -577,7 +577,11 @@ public class IncusClient {
         return stdout.substring(0, stdout.length() - "ready".length()).strip();
     }
 
-    /** Throw if {@code instance} has stopped or errored: waiting any longer cannot help. */
+    /**
+     * Throw if {@code instance} has stopped or errored: waiting any longer cannot help. A VM that
+     * Incus stopped by telling QEMU to quit throws {@link HostSideStartFailure}, which its starter
+     * may retry.
+     */
     private void failIfDied(String name, JqValue instance) {
         if (instance == null) return;
         failIfDied(name, instance.pathText("status", ""), machineType(instance));
@@ -589,6 +593,12 @@ public class IncusClient {
             throw new IncusException("Container " + name + " died during startup (status: " + status + ")");
         }
         var msg = "VM " + name + " died during startup (status: " + status + ")";
+        // Incus told a healthy QEMU to quit (#2675): only a stopped VM, so no QEMU is left to
+        // refuse a start, and only when this boot's monitor log says the host stopped it before
+        // its guest did. The console cannot say: Incus writes it only when it is read
+        if ("Stopped".equals(status) && HostSideStartFailure.hostQuitFirst(qmpLogOrNull(name))) {
+            throw new HostSideStartFailure(msg + ": Incus told QEMU to quit.");
+        }
         var log = consoleLog(name);
         var lines = VmAgentFailure.unrecoveredLines(log);
         var saved = VmAgentFailure.save(name, log);
@@ -644,10 +654,28 @@ public class IncusClient {
      * reports units that failed to start. Empty if it cannot be read.
      */
     public String consoleLog(String name) {
+        var log = consoleLogOrNull(name);
+        return log == null ? "" : log;
+    }
+
+    /**
+     * The QEMU monitor log of VM {@code name}'s current or last boot ({@code qemu.qmp.log}, which
+     * Incus rotates at every start), or null when it cannot be read.
+     */
+    public String qmpLogOrNull(String name) {
         try {
-            return http().getText("/1.0/instances/" + name + "/console");
+            return http().getTextOrNull("/1.0/instances/" + name + "/logs/qemu.qmp.log");
         } catch (Exception e) {
-            return "";
+            return null;
+        }
+    }
+
+    /** {@link #consoleLog}, but null when it could not be read rather than "". */
+    public String consoleLogOrNull(String name) {
+        try {
+            return http().getTextOrNull("/1.0/instances/" + name + "/console");
+        } catch (Exception e) {
+            return null;
         }
     }
 

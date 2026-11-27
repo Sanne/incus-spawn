@@ -12,6 +12,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.util.BuildOutput;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -171,8 +172,9 @@ public final class BuildAccounts {
             ProxyService.signalAccountRefresh();
             startAttempted = true;
             InstanceLifecycle.startInstance(incus, name);
-            incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
-                    InstanceSecret.guestEnv(secret, false, placeholders));
+            HostSideStart.retryOnce(incus, name, BuildOutput.bound(),
+                    () -> incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
+                            InstanceSecret.guestEnv(secret, false, placeholders)));
             InstanceNetwork.requireBuildAddress(incus, name, address);
         }
 
