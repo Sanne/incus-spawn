@@ -452,6 +452,23 @@ class GoogleAuthRouteTest {
         assertTrue(proxy.googleAuth.mintedDigests().isEmpty());
     }
 
+    /**
+     * The Antigravity app's server in an instance signs in with agy's client id and a loopback
+     * redirect (design/proxy.md "The Antigravity app over SSH puts its Google sign-in in the
+     * instance"): on a Google account that exchange is refused, so its real tokens stay out of the guest.
+     */
+    @Test
+    void anAgyExchangeWithALoopbackRedirectFromAGoogleAccountInstanceIsRefusedNotRelayed() throws Exception {
+        var form = exchangeForm("4/0Aloopback");
+        form.put("redirect_uri", "http://localhost:43117/auth/callback");
+        var reply = token(form(form));
+
+        assertEquals(400, reply.status(), reply.body());
+        assertEquals(0, tokenRequests.get(), "never relayed");
+        assertNull(store.read(ACCOUNT));
+        assertTrue(proxy.googleAuth.mintedDigests().isEmpty());
+    }
+
     @Test
     void anExchangeThatIsNotAgysIsRelayedUntouched() throws Exception {
         var form = exchangeForm("4/0Aother");
