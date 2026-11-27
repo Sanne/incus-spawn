@@ -98,6 +98,16 @@ public class ChatGptSignIn {
         }
     }
 
+    /** The browser sign-in found no sign-in before its time ran out; {@code minutes} is that time. */
+    public static final class TimedOut extends IOException {
+        public final long minutes;
+
+        public TimedOut(long minutes) {
+            super("timed out after " + minutes + " minutes");
+            this.minutes = minutes;
+        }
+    }
+
     /** A one-time code the person enters at {@link DeviceCode#verificationUrl()}. */
     public record DeviceCode(String deviceAuthId, String userCode, long intervalSeconds,
                              String verificationUrl) {}
@@ -320,7 +330,7 @@ public class ChatGptSignIn {
                 return code;
             }
         }
-        throw new IOException("isx did not receive a sign-in within " + wait.toMinutes() + " minutes");
+        throw new TimedOut(wait.toMinutes());
     }
 
     /** The most of a request that is read, its line first: a browser's callback line is a fraction of it. */

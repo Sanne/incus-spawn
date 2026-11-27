@@ -675,37 +675,41 @@ public final class ProxyHealthCheck {
      * whether the proxy runs as the service, which isx restarts itself once {@code initComplete}.
      */
     static DriftWarning driftWarning(ProxyInfo info, DriftReport report, boolean serviceActive, boolean initComplete) {
+        return driftWarning(info, report, serviceActive, initComplete, BuildInfo.instance());
+    }
+
+    static DriftWarning driftWarning(ProxyInfo info, DriftReport report, boolean serviceActive, boolean initComplete,
+                                     BuildInfo cliInfo) {
         var lines = new ArrayList<String>();
-        // The drifts are also a value of 'isx proxy status --format', so only their words of a build are reused
-        var settings = checkToolProxyDrift(info);
-        var builds = report.drifts().stream().filter(d -> !d.equals(settings)).toList();
         // As the report reads it: a proxy from before versioning reports no change of settings
-        var settingsChanged = !settings.isEmpty();
+        var settingsChanged = !checkToolProxyDrift(info).isEmpty();
+        var otherBuild = !checkVersionDrift(info, cliInfo).isEmpty();
         String title;
-        if (builds.isEmpty()) {
-            title = "isx's settings changed after the isx proxy started";
+        if (!otherBuild) {
+            title = "The proxy is running with old settings";
         } else {
-            title = "The isx proxy is a different build from isx";
-            lines.addAll(builds);
-            if (settingsChanged) lines.add("isx's settings also changed after it started.");
+            title = "The isx proxy is from another isx version";
+            // Worded here: the drift strings are a value of 'isx proxy status --format', which stays as it is
+            lines.add(info.isLegacy() ? "It is from before isx recorded its versions."
+                    : "Proxy is " + info.displayVersion() + " (" + shortSha(info.gitSha()) + "), isx is "
+                            + cliInfo.displayVersion() + " (" + shortSha(cliInfo.gitSha()) + ").");
+            if (settingsChanged) lines.add("Its settings are also out of date.");
         }
         var reinstalls = serviceActive && report.futileReason() == null;
-        var change = !builds.isEmpty() && settingsChanged ? "changes" : "change";
         if (serviceActive && report.futileReason() != null) {
             lines.add(report.futileReason());
         } else if (reinstalls) {
             // Before init completes, isx restarts nothing here: on Linux init restarts a running
             // service once it has, and on a Mac the next command's drift check does
-            lines.add(initComplete ? "Restarting the proxy service so it picks up the " + change + "."
-                    : "isx restarts the proxy service once 'isx init' completes.");
+            lines.add(!initComplete ? "isx restarts the proxy service once 'isx init' completes."
+                    : otherBuild ? "Restarting the proxy." : "Restarting it to load the new ones.");
         } else {
-            lines.add("Restart the proxy to pick up the " + change + ":");
+            lines.add(otherBuild ? "Restart the proxy:" : "Restart it to load the new ones:");
             lines.add(RESTART);
             if (!info.configDrifted()) {
                 // A foreground proxy leaves no record of what it runs, so this cannot tell
                 // whether a restart would help; say what to do if it does not.
-                // Two lines, so each fits init's frame as the lines above do
-                lines.add("If it is still a different build afterwards,");
+                lines.add("If it is still from another version afterwards,");
                 lines.add("install isx and isx-proxy from the same build.");
             }
         }

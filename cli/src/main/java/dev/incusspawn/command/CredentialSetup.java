@@ -494,6 +494,8 @@ class CredentialSetup {
             } catch (Exception e) {
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();
                 Lines.warnWrapped(Thread.currentThread().isInterrupted() ? "The ChatGPT sign-in was interrupted."
+                        : e instanceof dev.incusspawn.proxy.ChatGptSignIn.TimedOut t
+                        ? "The ChatGPT sign-in timed out after " + t.minutes + " minutes."
                         : "The ChatGPT sign-in did not finish: " + reason(e));
             }
             if (tokens != null) {
@@ -2937,13 +2939,13 @@ class CredentialSetup {
         if (noreply == null || real == null) {
             // No question to ask: what the commits carry is said once
             if (noreply != null) {
-                Lines.step((noAgent ? "Commits in isx machines carry" : "The agent's commits carry")
+                Lines.step((noAgent ? "Commits in instances carry" : "The agent's commits carry")
                         + " GitHub's private address for " + OutputFormat.oneLine(user.login()) + ".");
             }
             return noreply != null ? noreply : user.email();
         }
         BuildOutput.gap();
-        prompts.say(noAgent ? "Which email should commits in isx machines carry?" : "Which email should the agent's commits carry?");
+        prompts.say(noAgent ? "Which email should commits in instances carry?" : "Which email should the agent's commits carry?");
         prompts.say("");
         prompts.say("  1. " + OutputFormat.oneLine(noreply));
         prompts.say("     GitHub's private address. Keeps the real one out of");
