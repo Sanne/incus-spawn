@@ -224,4 +224,75 @@ class CleanKeepsWhatAPersonWroteTest {
 
         assertTrue(out.contains("Do not commit isx-config-backup-"), out);
     }
+
+    @Test
+    void aSearchPathSpelledThroughASymlinkIsKept() throws Exception {
+        // /home for /var/home on Fedora Atomic: the same directory under another spelling
+        var templates = config().resolve("my-templates");
+        Files.createDirectories(templates);
+        Files.writeString(templates.resolve("mine.yaml"), "name: mine\n");
+        var alias = Files.createSymbolicLink(ConfigBackup.directory.resolve("home-alias"),
+                Path.of(System.getProperty("user.home")));
+        IsolatedHome.seed("searchPaths:\n  - " + alias + "/.config/incus-spawn/my-templates\n");
+
+        var out = cleanConfig(true, false);
+
+        assertTrue(Files.exists(templates.resolve("mine.yaml")), out);
+        assertTrue(out.contains("Kept " + templates + ": a search path of config.yaml."), out);
+    }
+
+    @Test
+    void aConfigThatCannotBeReadSaysTheSearchPathsAreNotKnown() throws Exception {
+        var checkout = seedWithCheckout();
+        Files.writeString(config().resolve("config.yaml"), "searchPaths: [unclosed\n");
+
+        var out = cleanConfig(false, true);
+
+        assertTrue(out.contains("its search paths are not known"), out);
+        assertTrue(out.contains("Kept " + checkout), out);
+    }
+
+    @Test
+    void theBackupMayGoIntoTheKeptCheckout() throws Exception {
+        // Where a person working on their templates stands
+        var checkout = seedWithCheckout();
+        var previous = ConfigBackup.directory;
+        ConfigBackup.directory = checkout;
+        try {
+            var out = cleanConfig(false, false);
+
+            try (var files = Files.list(checkout)) {
+                assertTrue(files.anyMatch(f -> f.getFileName().toString().startsWith("isx-config-backup-")), out);
+            }
+            assertFalse(Files.exists(config().resolve("config.yaml")), out);
+        } finally {
+            ConfigBackup.directory = previous;
+        }
+    }
+
+    @Test
+    void emptyDirectoriesBesideTheCheckoutAreStillRemoved() throws Exception {
+        var checkout = config().resolve("incus-spawn-templates");
+        Files.createDirectories(checkout.resolve(".git"));
+        Files.createDirectories(config().resolve("certs"));
+
+        var out = cleanConfig(false, false);
+
+        assertFalse(out.contains("Nothing to clean"), out);
+        assertFalse(Files.exists(config().resolve("certs")), out);
+        assertTrue(Files.exists(checkout.resolve(".git")), out);
+    }
+
+    @Test
+    void cleanAllDoesNotWarnAboutAConfigurationThatHoldsOnlyTheCheckout() throws Exception {
+        Files.createDirectories(config().resolve("incus-spawn-templates/.git"));
+        Files.createDirectories(Environment.cacheDir());
+        Files.writeString(Environment.cacheDir().resolve("x"), "x");
+
+        var out = String.join("\n", RecordingOutput.during(() ->
+                CleanCommand.All.clean(null, false, false, question -> true, true)).lines());
+
+        assertFalse(out.contains("SSH keys"), out);
+        assertFalse(Files.exists(Environment.cacheDir()), out);
+    }
 }

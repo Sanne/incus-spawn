@@ -132,6 +132,7 @@ public class ResetCommand extends BaseCommand {
                 .map(info -> String.format("%-50s %s", info.path(), CleanCommand.formatSize(info.size())))
                 .toList());
         CleanCommand.sayKept(kept);
+        KeptPaths.warnIfSearchPathsUnknown(hostDirs);
         if (archive != null) archive.announce();
 
         BuildOutput.section("This returns incus-spawn to a freshly-installed state. Run 'isx init' afterwards to set up again.");

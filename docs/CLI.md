@@ -980,7 +980,7 @@ They also keep a directory that `searchPaths` in `config.yaml` names.
 
 Before they delete anything, they write what they will delete from `~/.config/incus-spawn/` to `isx-config-backup-<date>-<time>.tar.gz` in the current directory.
 That file holds your credentials, your SSH keys and the CA key, so delete it when you no longer need it.
-Pass `--no-backup` to write no backup.
+Pass `--no-backup` to skip the backup.
 `--skip-confirmation` only answers the question, so the backup is still written.
 
 On macOS, `isx clean state` keeps the VM's data disk, with every instance, template and image, unless you pass `--delete-instances`.

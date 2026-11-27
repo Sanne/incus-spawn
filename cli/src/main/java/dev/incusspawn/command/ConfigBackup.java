@@ -58,8 +58,11 @@ final class ConfigBackup {
 
         var into = directory != null ? directory : Path.of("").toAbsolutePath();
         var real = into.toRealPath();
+        // Inside what is kept the archive is safe: the templates checkout is where a person often stands
+        var inKept = false;
+        for (var each : kept) inKept |= Files.exists(each) && real.startsWith(each.toRealPath());
         for (var dir : removed) {
-            if (Files.exists(dir) && real.startsWith(dir.toRealPath())) {
+            if (!inKept && Files.exists(dir) && real.startsWith(dir.toRealPath())) {
                 throw new IOException("the backup of " + config + " would go to " + into
                         + ", which this command deletes. Run it from another directory, or pass --no-backup.");
             }
@@ -83,7 +86,7 @@ final class ConfigBackup {
     /** The plan's lines: where the archive goes and what it holds. */
     void announce() {
         BuildOutput.step("Will first write " + file + ", a backup of what is deleted from " + configDir + ".");
-        BuildOutput.stepNote("It holds your credentials, and it is yours to delete. Pass --no-backup to write none.");
+        BuildOutput.stepNote("It holds your credentials, and it is yours to delete. Pass --no-backup to skip the backup.");
         var checkout = gitCheckoutHolding(file);
         if (checkout != null) {
             BuildOutput.warn("The backup goes into the Git checkout " + checkout + ", and it holds your credentials.",
@@ -98,30 +101,42 @@ final class ConfigBackup {
      */
     void write() throws IOException {
         BuildOutput.stepStart("Writing the backup " + file);
-        Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-        var list = Files.createTempFile("isx-backup-members", ".list");
+        Path list = null;
+        var created = false;
         try {
+            Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+            created = true;
+            list = Files.createTempFile("isx-backup-members", ".list");
             var parent = configDir.getParent();
             var names = new StringBuilder();
             for (var member : members) names.append(parent.relativize(member)).append('\0');
             Files.writeString(list, names, StandardCharsets.UTF_8);
             // To stdout, so the file created above for its owner alone is the one written
             run(new ProcessBuilder("tar", "-czf", "-", "-C", parent.toString(), "--null", "-T", list.toString())
-                    .redirectOutput(file.toFile()));
-            run(new ProcessBuilder("tar", "-tzf", file.toString()).redirectOutput(ProcessBuilder.Redirect.DISCARD));
+                    .redirectOutput(file.toFile()), true);
+            run(new ProcessBuilder("tar", "-tzf", file.toString()).redirectOutput(ProcessBuilder.Redirect.DISCARD), false);
             if (Files.size(file) == 0) throw new IOException("tar wrote an empty archive");
         } catch (IOException e) {
-            Files.deleteIfExists(file);
+            // Only the file this call created: one that was already there is not ours to remove
+            if (created) Files.deleteIfExists(file);
             BuildOutput.stepBreak();
             throw new IOException("the backup " + file + " could not be written (" + e.getMessage()
                     + "), so nothing was deleted. Pass --no-backup to go on without one.", e);
         } finally {
-            Files.deleteIfExists(list);
+            if (list != null) Files.deleteIfExists(list);
         }
         BuildOutput.stepDone();
     }
 
-    private static void run(ProcessBuilder command) throws IOException {
+    /** GNU tar's report of a file written while it was read, such as a certificate the proxy added. */
+    private static final String CHANGED = "file changed as we read it";
+
+    /**
+     * Runs {@code command}; any exit but 0 throws. With {@code changesAllowed}, GNU tar's exit 1
+     * passes when every line it printed is {@link #CHANGED}: the archive is whole, and the read
+     * back that follows proves it.
+     */
+    private static void run(ProcessBuilder command, boolean changesAllowed) throws IOException {
         var process = command.redirectInput(ProcessBuilder.Redirect.from(Path.of("/dev/null").toFile())).start();
         var errors = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).strip();
         int exit;
@@ -132,7 +147,10 @@ final class ConfigBackup {
             Thread.currentThread().interrupt();
             throw new IOException("interrupted", e);
         }
-        if (exit != 0) throw new IOException(errors.isEmpty() ? "tar exited with " + exit : errors);
+        if (exit == 0) return;
+        var onlyChanges = exit == 1 && !errors.isEmpty() && errors.lines().allMatch(line -> line.contains(CHANGED));
+        if (changesAllowed && onlyChanges) return;
+        throw new IOException(errors.isEmpty() ? "tar exited with " + exit : errors);
     }
 
     /**

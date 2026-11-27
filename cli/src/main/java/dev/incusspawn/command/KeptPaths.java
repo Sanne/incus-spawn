@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -39,11 +40,10 @@ final class KeptPaths {
     /** What stays when {@code dirs} are removed, outermost paths only, in the order found. */
     static List<Kept> in(Collection<Path> dirs) {
         var found = new ArrayList<Kept>();
-        for (var searchPath : SpawnConfig.load().getSearchPaths()) {
+        for (var searchPath : searchPaths()) {
             var path = Path.of(HostResourceSetup.expandHostTilde(searchPath)).toAbsolutePath().normalize();
-            if (Files.exists(path, LinkOption.NOFOLLOW_LINKS) && liesIn(path, dirs)) {
-                found.add(new Kept(path, SEARCH_PATH));
-            }
+            var inside = spelledIn(path, dirs);
+            if (inside != null) found.add(new Kept(inside, SEARCH_PATH));
         }
         var config = Environment.configDir();
         if (dirs.contains(config) && Files.isDirectory(config, LinkOption.NOFOLLOW_LINKS)) {
@@ -56,9 +56,52 @@ final class KeptPaths {
         return kept.stream().map(Kept::path).toList();
     }
 
-    /** Strictly inside one of {@code dirs}: a search path that is such a directory does not keep it. */
-    private static boolean liesIn(Path path, Collection<Path> dirs) {
-        return dirs.stream().anyMatch(dir -> path.startsWith(dir) && !path.equals(dir));
+    /**
+     * Whether config.yaml could be read for its search paths; when not, only the Git rule holds,
+     * which the caller says before it asks.
+     */
+    static boolean searchPathsKnown() {
+        try {
+            SpawnConfig.loadStrict();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** The warning for a plan that removes the config directory with its search paths not known. */
+    static void warnIfSearchPathsUnknown(Collection<Path> dirs) {
+        if (!dirs.contains(Environment.configDir()) || searchPathsKnown()) return;
+        BuildOutput.warn("config.yaml could not be read, so its search paths are not known.",
+                "Only Git checkouts are kept; a search path that is not one is deleted.");
+    }
+
+    private static List<String> searchPaths() {
+        try {
+            return SpawnConfig.loadStrict().getSearchPaths();
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * {@code path} as it is spelled under the one of {@code dirs} it lies strictly inside, or null.
+     * Real paths are compared, so a search path written through a symlink (/home for /var/home)
+     * is still found, and the answer is spelled the way the delete walks the directory. A search
+     * path that is such a directory does not keep it.
+     */
+    private static Path spelledIn(Path path, Collection<Path> dirs) {
+        try {
+            var real = path.toRealPath();
+            for (var dir : dirs) {
+                if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) continue;
+                var realDir = dir.toRealPath();
+                if (real.startsWith(realDir) && !real.equals(realDir)) return dir.resolve(realDir.relativize(real));
+            }
+        } catch (IOException e) {
+            // A search path that is not there, or cannot be resolved, is not kept
+        }
+        return null;
     }
 
     /** The directories under {@code root} that hold a {@code .git}, a worktree's file included. */
