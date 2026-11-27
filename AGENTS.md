@@ -34,6 +34,7 @@ Modules: `common` (shared code), `cli` (the `isx` binary), `proxy` (the `isx-pro
 - A divergence from stock Fedora is listed in `docs/FEDORA.md` in the same change.
 - Never print to stdout or stderr directly; all output goes through `BuildOutput` (`RawOutputGateTest`).
 - A regular expression is a `static final Pattern` (`PatternConstantGateTest`).
+- A test waits through `Eventually`, never a loop of its own that sleeps (`PollingLoopGateTest`).
 - Never write a model ID in source; it is declared in `common/src/main/resources/models.yaml`.
 - Base-image and tool checksums are taken from the publisher, never from a build log or another PR.
 - Latency on the branch, start and shell path is never noise.

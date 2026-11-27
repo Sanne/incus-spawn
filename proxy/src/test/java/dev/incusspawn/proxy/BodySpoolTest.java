@@ -601,7 +601,7 @@ class BodySpoolTest {
             start.countDown();
             for (var thread : threads) thread.join();
             on(() -> null);
-            Thread.sleep(5);
+            Thread.sleep(5); // pause is the test: time for a second give-back, which must not happen
             on(() -> null);
             assertEquals(0, budget.held(), "round " + round);
         }

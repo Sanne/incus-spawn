@@ -238,6 +238,9 @@ It samples after 1 ms, doubling up to 10 ms, so a wait lasts barely longer than 
 A long timeout therefore costs nothing when the condition is met, and only a hung test pays it.
 `Eventually.await(what, timeout, condition)` fails naming what was awaited, `poll` returns the first non-null value, and `holdsWithin` answers a boolean for a test that asserts afterwards.
 A fixed `Thread.sleep` stays only where the test asserts that something does not happen within a period.
+In a loop, a pause stays only where the pause is the test: it paces a producer, spaces the retries of an action run again, or leaves time for something that must not happen.
+Such a pause says so on its line with a `// pause is the test:` comment.
+`PollingLoopGateTest` fails any other sleep, park or spin inside a loop in the test sources of every module, since loops written after #2504 went in unnoticed (#2686).
 
 ## Site previews: built without secrets, deployed without PR code
 

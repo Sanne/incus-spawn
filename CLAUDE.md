@@ -478,6 +478,10 @@ Both native builds pass `-H:AbortOnMethodReachable=java.io.ObjectInputStream.rea
 `Pattern.compile`, and with it every `String.matches`, `replaceAll`, `replaceFirst` and regex `split`, costs a compile per call; a constant compiles once, at build time in the native image.
 `PatternConstantGateTest` enforces it; a pattern only known at run time says why with a `// regex at run time:` comment (design/native-image.md "Regular expressions are compiled once").
 
+**A test waits through `Eventually`, never a loop of its own that sleeps** (#2686).
+A loop whose pause is the test says so with a `// pause is the test:` comment on the pause's line.
+`PollingLoopGateTest` enforces it in the test sources of every module (design/testing.md "Waiting for another thread or process").
+
 **Virtual threads are woken by platform pollers** (#2129).
 `IncusSpawn.run` and `ProxyMain.run` first call `VirtualThreadPollers.usePlatformThreads()`, which sets `jdk.pollerMode=1` before any virtual thread waits on a socket.
 The JDK's Linux default delivers a socket's readiness through virtual sub-pollers, and in a native image one can lose its wakeup for good while `sun.nio.ch.Poller` is still being initialized.
