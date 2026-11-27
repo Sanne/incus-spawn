@@ -108,6 +108,21 @@ class ProxyServiceInitGateTest {
         assertEquals("stale", Files.readString(unit));
     }
 
+    /**
+     * The drift warning has already said that isx init restarts the service, so its reinstall
+     * refuses without "Run 'isx init' first", which would contradict it (#2673 review).
+     */
+    @Test
+    void reinstallAfterTheDriftWarningRefusesWithoutAnError() throws Exception {
+        markerFromAnOlderInit();
+        var unit = staleUnitFile();
+
+        var output = RecordingOutput.during(() -> assertFalse(ProxyService.reinstallIfChanged(null, null, true)));
+        assertEquals(List.of(), output.events(), "nothing printed");
+        assertEquals(List.of(), commands, "no systemctl call");
+        assertEquals("stale", Files.readString(unit));
+    }
+
     @Test
     void upgradeIfNeededLeavesTheServiceAndItsFilesAlone() throws Exception {
         markerFromAnOlderInit();

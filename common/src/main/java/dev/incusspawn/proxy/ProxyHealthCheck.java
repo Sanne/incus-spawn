@@ -652,25 +652,64 @@ public final class ProxyHealthCheck {
             var info = fetchProxyInfo(address);
             var report = assessDrift(info);
             if (report.isEmpty()) return;
-            var lines = new ArrayList<String>();
-            var active = ProxyService.isActive();
-            if (active) {
-                lines.add(report.futileReason() != null ? report.futileReason()
-                        : "Restarting the proxy service, if a restart can pick up the changes.");
-            } else {
-                lines.add("Restart the proxy to pick up changes:");
-                lines.add(RESTART);
-                if (!info.configDrifted()) {
-                    // A foreground proxy leaves no record of what it runs, so this cannot tell
-                    // whether a restart would help; say what to do if it does not.
-                    lines.add("If the drift remains afterwards, install isx and isx-proxy from the same build.");
-                }
-            }
-            BuildOutput.warnBanner("Proxy drift detected: " + String.join(" ", report.drifts()), lines.toArray(String[]::new));
+            // Asked silently: ProxyService.initComplete() reports an error, and the warning says what init does instead
+            var initialized = Environment.hasBeenInitialized();
+            var warning = driftWarning(info, report, ProxyService.isActive(), initialized);
+            BuildOutput.warnBanner(warning.title(), warning.lines().toArray(String[]::new));
             // Not a bare restart: the service files may still exec a binary from a previous
-            // installation, and restarting that would leave the drift in place.
-            if (active && report.futileReason() == null) ProxyService.reinstallIfChanged(incus, info);
+            // installation, and restarting that would leave the drift in place. Before init it
+            // still runs, for the macOS halt of a plist whose binary is gone, and says nothing more.
+            if (warning.reinstalls()) ProxyService.reinstallIfChanged(incus, info, !initialized);
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * What a drifted proxy is warned with, and whether the service is then brought into line with
+     * the installed binary, which restarts it once init has completed.
+     */
+    record DriftWarning(String title, List<String> lines, boolean reinstalls) {}
+
+    /**
+     * The warning for {@code report}'s drift, in a person's words (#2542): the title says what
+     * differs, and the lines what isx does about it or what to run. {@code serviceActive} is
+     * whether the proxy runs as the service, which isx restarts itself once {@code initComplete}.
+     */
+    static DriftWarning driftWarning(ProxyInfo info, DriftReport report, boolean serviceActive, boolean initComplete) {
+        var lines = new ArrayList<String>();
+        // The drifts are also a value of 'isx proxy status --format', so only their words of a build are reused
+        var settings = checkToolProxyDrift(info);
+        var builds = report.drifts().stream().filter(d -> !d.equals(settings)).toList();
+        // As the report reads it: a proxy from before versioning reports no change of settings
+        var settingsChanged = !settings.isEmpty();
+        String title;
+        if (builds.isEmpty()) {
+            title = "isx's settings changed after the isx proxy started";
+        } else {
+            title = "The isx proxy is a different build from isx";
+            lines.addAll(builds);
+            if (settingsChanged) lines.add("isx's settings also changed after it started.");
+        }
+        var reinstalls = serviceActive && report.futileReason() == null;
+        var change = !builds.isEmpty() && settingsChanged ? "changes" : "change";
+        if (serviceActive && report.futileReason() != null) {
+            lines.add(report.futileReason());
+        } else if (reinstalls) {
+            // Before init completes, isx restarts nothing here: on Linux init restarts a running
+            // service once it has, and on a Mac the next command's drift check does
+            lines.add(initComplete ? "Restarting the proxy service so it picks up the " + change + "."
+                    : "isx restarts the proxy service once 'isx init' completes.");
+        } else {
+            lines.add("Restart the proxy to pick up the " + change + ":");
+            lines.add(RESTART);
+            if (!info.configDrifted()) {
+                // A foreground proxy leaves no record of what it runs, so this cannot tell
+                // whether a restart would help; say what to do if it does not.
+                // Two lines, so each fits init's frame as the lines above do
+                lines.add("If it is still a different build afterwards,");
+                lines.add("install isx and isx-proxy from the same build.");
+            }
+        }
+        return new DriftWarning(title, lines, reinstalls);
     }
 
     private static String textOrEmpty(JqValue node, String field) {

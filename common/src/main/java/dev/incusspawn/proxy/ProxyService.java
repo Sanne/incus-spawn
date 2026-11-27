@@ -694,6 +694,16 @@ public final class ProxyService {
      * caller that had already announced drift would then do nothing. Null means "unknown".
      */
     public static boolean reinstallIfChanged(IncusClient incus, ProxyHealthCheck.ProxyInfo info) {
+        return reinstallIfChanged(incus, info, false);
+    }
+
+    /**
+     * {@link #reinstallIfChanged(IncusClient, ProxyHealthCheck.ProxyInfo)}, refusing before init
+     * completes without a word when {@code refusalSaid}: the caller has already told the person
+     * that init restarts the service, which "Run 'isx init' first" would contradict, even during
+     * isx init itself (#2673 review).
+     */
+    public static boolean reinstallIfChanged(IncusClient incus, ProxyHealthCheck.ProxyInfo info, boolean refusalSaid) {
         try (var ignored = acquireProxyLock()) {
             var proxyBin = resolveProxyBinaryPath();
             // A plist whose binary has gone cannot be brought into line, and restarting it
@@ -703,7 +713,7 @@ public final class ProxyService {
             }
             // Before the service files too: rewritten now and not restarted onto, they would
             // compare equal on the run of `isx init` that could restart onto them.
-            if (!initComplete()) return false;
+            if (refusalSaid ? !Environment.hasBeenInitialized() : !initComplete()) return false;
             var needsReinstall = Platform.isMacOS() ? needsMacOsPlistUpdate() : regenerateServiceFiles(proxyBin);
 
             // Assessed again under the lock: another isx process may have made this very restart
