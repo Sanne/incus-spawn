@@ -73,11 +73,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Oracle GraalVM 25.5
+      - name: Install Oracle GraalVM 25.6
         if: runner.environment == 'github-hosted'
         uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
         with:
-          version: '25.5'
+          version: '25.6'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -87,8 +87,8 @@ jobs:
         run: |
           echo "The project's Linux runner, in an isx instance of $(uname -n)"
           case "${GRAALVM_HOME:-}" in
-            */graalvm-25.5.*) ;;
-            *) echo "::error::The runner's template has no GraalVM 25.5 (GRAALVM_HOME=${GRAALVM_HOME:-unset}): rebuild it (docs/dev/LINUX-CI-SETUP.md)"; exit 1 ;;
+            */graalvm-25.6.*) ;;
+            *) echo "::error::The runner's template has no GraalVM 25.6 (GRAALVM_HOME=${GRAALVM_HOME:-unset}): rebuild it (docs/dev/LINUX-CI-SETUP.md)"; exit 1 ;;
           esac
           echo "JAVA_HOME=$GRAALVM_HOME" >> "$GITHUB_ENV"
           echo "$GRAALVM_HOME/bin" >> "$GITHUB_PATH"
@@ -190,11 +190,11 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Oracle GraalVM 25.5
+      - name: Install Oracle GraalVM 25.6
         if: steps.gate.outputs.run == 'true'
         uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
         with:
-          version: '25.5'
+          version: '25.6'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -272,11 +272,11 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Oracle GraalVM 25.5
+      - name: Install Oracle GraalVM 25.6
         if: steps.gate.outputs.run == 'true'
         uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
         with:
-          version: '25.5'
+          version: '25.6'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -356,10 +356,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Oracle GraalVM 25.5
+      - name: Install Oracle GraalVM 25.6
         uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
         with:
-          version: '25.5'
+          version: '25.6'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -433,10 +433,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Oracle GraalVM 25.5
+      - name: Install Oracle GraalVM 25.6
         uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
         with:
-          version: '25.5'
+          version: '25.6'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -465,10 +465,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Oracle GraalVM 25.5
+      - name: Install Oracle GraalVM 25.6
         uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
         with:
-          version: '25.5'
+          version: '25.6'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -971,10 +971,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Oracle GraalVM 25.5
+      - name: Install Oracle GraalVM 25.6
         uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1.6.10
         with:
-          version: '25.5'
+          version: '25.6'
           java-version: '25'
           distribution: 'graalvm'
 

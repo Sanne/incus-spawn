@@ -33,7 +33,7 @@ Key jobs:
 
 - **`unit-tests`**: `mvn package` (no Incus required), with zsh and sqlite3 installed so `ZshCompletionTest` and `AgentReadersTest`'s opencode read run rather than skip.
   It runs on the project's Linux server, in a fresh isx instance made for the job and destroyed after it, or on `ubuntu-26.04`, as `linux-route` picks (#2519, design/testing.md "A fresh isx instance runs unit-tests for trusted code").
-  There it skips `setup-graalvm`, the apt installs and the Maven cache (`runner.environment == 'github-hosted'`), since `tpl-isx-ci-linux` bakes them in, and its Maven goes through the proxy's cache; it fails at once when the template's GraalVM is not the 25.5 line
+  There it skips `setup-graalvm`, the apt installs and the Maven cache (`runner.environment == 'github-hosted'`), since `tpl-isx-ci-linux` bakes them in, and its Maven goes through the proxy's cache; it fails at once when the template's GraalVM is not the 25.6 line.
 - **`linux-route`**: picks where `unit-tests` runs, with `.github/scripts/runner-route.sh linux`: the same trusted code as `mac-route`, while `linux-heartbeat.yml` shows the runner up and no job of another run is on the `isx-linux` label (`LINUX_WORKFLOWS`).
   It is `continue-on-error`, and `unit-tests` runs on `!cancelled()` and falls back to `ubuntu-26.04` without its output, so a failed route neither holds unit-tests up nor makes `cancel-on-unit-failure` cancel the run.
   The instance's own job-started hook (`.github/linux-runner/job-started.sh`, installed root-owned by the template's prime from its clone of `main`) refuses untrusted code; `.github/linux-runner/isx-ci-runner.sh` is the host's loop, one just-in-time runner and one instance per job (docs/dev/LINUX-CI-SETUP.md).
