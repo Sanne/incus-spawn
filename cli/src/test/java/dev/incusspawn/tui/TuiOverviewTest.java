@@ -7,6 +7,7 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.EventLogReader;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.util.Eventually;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
@@ -23,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -512,8 +514,7 @@ class TuiOverviewTest {
         workTab(tui);
         var first = new Thread(reads.removeFirst());
         first.start();
-        for (int i = 0; i < 500 && !row(screen(tui), "mine").contains("↑2"); i++) Thread.sleep(10);
-        assertTrue(row(screen(tui), "mine").contains("↑2"), "the first read's guest answered");
+        Eventually.await("the first read's guest answered", () -> row(screen(tui), "mine").contains("↑2"));
         press(tui, KeyEvent.ofChar('r'));
         held.countDown();
         first.join(10_000);
@@ -626,11 +627,12 @@ class TuiOverviewTest {
         reading.start();
         try {
             // The title is drawn before the rows, so a frame drawn while the guest's answer lands shows one without the other (#2669)
-            String shown = screen(tui);
-            for (int i = 0; i < 500 && !(row(shown, "mine").contains("↑2") && !shown.contains("0/1 instance")); i++) {
-                Thread.sleep(10);
-                shown = screen(tui);
-            }
+            var drawn = new AtomicReference<String>();
+            Eventually.holdsWithin(Eventually.DEFAULT_TIMEOUT, () -> {
+                drawn.set(screen(tui));
+                return row(drawn.get(), "mine").contains("↑2") && !drawn.get().contains("0/1 instance");
+            });
+            var shown = drawn.get();
             assertTrue(row(shown, "mine").contains("↑2"), "the guest's row does not wait for the log: " + shown);
             assertTrue(shown.contains("reading the proxy's event log"), shown);
             assertFalse(shown.contains("0/1 instance"), "the title counts the guest read: " + shown);
