@@ -8,7 +8,8 @@
 #   proven PR, which the bot never merges).
 # - verify.type must be what the source type provides, and signed-sums, signed-file or
 #   publisher-sums for a mechanical item.
-# - cooling is 24h or more unless the source is first party.
+# - cooling is 0 on every item: a bump is proposed as soon as the watch sees the release, and
+#   testing is the gate (upstream-verify proves the pin, CI and the item's gates test the bump).
 # - A github-action item (the workflows' Actions, tag-commit) is class judgement: the app has no
 #   workflows permission, so it could never push the bump.
 # - A maven-central item (central-exists) is never mechanical: Central's record of a release is not a
@@ -28,7 +29,7 @@ items:
     class: mechanical
     # 7.3.x only: a new series needs its fragments checked by a person, so it opens an issue.
     within: series
-    cooling: 24h
+    cooling: 0
     judgement: design
     source:
       type: kernel-org
@@ -45,7 +46,6 @@ items:
     class: mechanical
     # The same Fedora line only: a new Fedora rebuilds every template, and opens an issue.
     within: series
-    # First party (Sanne/incus-spawn-images), so no cooling.
     cooling: 0
     judgement: build
     source:
@@ -58,7 +58,7 @@ items:
   idea-backend:
     class: mechanical
     within: any
-    cooling: 48h
+    cooling: 0
     judgement: build
     source:
       type: jetbrains
@@ -74,7 +74,7 @@ items:
     class: mechanical
     # The major version: starship 2.0 would open an issue.
     within: series
-    cooling: 48h
+    cooling: 0
     judgement: build
     source:
       type: github-asset
@@ -95,7 +95,7 @@ items:
     # check here proves, and its release ships no sums (GitHub's digest is all there is).
     class: review
     within: series
-    cooling: 48h
+    cooling: 0
     judgement: build
     source:
       type: github-asset
@@ -116,7 +116,7 @@ items:
     # JASOLO_GIT_ROOTS the tool sets or change what it needs to start, which no CI job runs.
     class: review
     within: series
-    cooling: 48h
+    cooling: 0
     judgement: build
     source:
       type: github-asset
@@ -135,7 +135,7 @@ items:
     class: mechanical
     # 3.10.x only: a later 3.x series or a new major would open an issue (Maven 4 is not in this listing).
     within: series
-    cooling: 24h
+    cooling: 0
     judgement: build
     source:
       type: signed-file
@@ -188,7 +188,7 @@ items:
     class: mechanical
     # 1.x only: a 2.0 would open an issue.
     within: series
-    cooling: 24h
+    cooling: 0
     judgement: build
     source:
       type: signed-file
@@ -236,7 +236,7 @@ items:
     # The 7.0 LTS line only: the regex lists LTS releases (X.0.Y), so a new LTS opens an issue and a
     # feature release (7.6) is never a candidate. A new Incus changes the appliance, so a Mac boot too.
     within: series
-    cooling: 24h
+    cooling: 0
     judgement: design
     source:
       type: signed-file
@@ -268,7 +268,7 @@ items:
     class: mechanical
     # 3.24.x only: the successors feed lists the latest stable release, so Alpine 3.25 opens an issue.
     within: series
-    cooling: 24h
+    cooling: 0
     judgement: design
     source:
       type: signed-file
@@ -307,7 +307,7 @@ items:
     # Arch rolls: the newest dated image is the one wanted, so no series. Mirrors delete old images,
     # which is why the pin moves at all.
     within: any
-    cooling: 24h
+    cooling: 0
     judgement: build
     source:
       type: signed-file
@@ -340,7 +340,7 @@ items:
     class: mechanical
     # The noble release directory is dated and replaced by the next one, so no series.
     within: any
-    cooling: 24h
+    cooling: 0
     judgement: build
     source:
       type: signed-file
@@ -394,8 +394,7 @@ items:
     # a box writes it with `upstream.sh apply github-actions <version>` and Sanne merges it.
     class: judgement
     judgement: build
-    # A bad Action release is usually pulled within days.
-    cooling: 72h
+    cooling: 0
     source:
       type: github-action
       members:
@@ -432,8 +431,7 @@ items:
     class: review
     # Within each member's major: a new major opens an issue, and the other members still move.
     within: series
-    # A bad release on Central is usually followed by a fixed one within days.
-    cooling: 72h
+    cooling: 0
     judgement: build
     source:
       type: maven-central
@@ -494,7 +492,7 @@ items:
     # A person merges it: aesh parses every isx command line and ships in the binary.
     class: review
     within: series
-    cooling: 72h
+    cooling: 0
     judgement: build
     source:
       type: maven-central
@@ -515,7 +513,7 @@ items:
     # minor may change its mappings, so the series is the major and a person reads each bump.
     class: review
     within: series
-    cooling: 72h
+    cooling: 0
     judgement: build
     source:
       type: maven-central
@@ -535,7 +533,7 @@ items:
     # A test library, which the plan on #2210 puts in review: its version decides what the schema tests accept.
     class: review
     within: series
-    cooling: 72h
+    cooling: 0
     judgement: build
     source:
       type: maven-central
@@ -554,11 +552,10 @@ items:
     fields: [json-schema-validator.version]
   antigravity:
     # A person merges it: Google signs nothing, and isx's delegation parses what agy prints and the
-    # conversations it writes, which no CI job runs against a model. Google releases about daily, and
-    # the 24h floor counts from the tarballs' upload, not from when the manifests made the build stable.
+    # conversations it writes, which no CI job runs against a model.
     class: review
     within: series
-    cooling: 24h
+    cooling: 0
     judgement: build
     source:
       type: antigravity
@@ -569,12 +566,11 @@ items:
     fields: [version, build, sha256.x86_64, sha256.aarch64]
   rex:
     # A person merges it: Rex is a preview, and isx reads what its CLI prints (rex ls --json) and
-    # registers each instance with the host's Rex, which no CI job runs. Superlogical publishes a
-    # preview every day or two; the 24h floor counts from the latest build time of the two rpms.
+    # registers each instance with the host's Rex, which no CI job runs.
     # Any series: a 0.2 preview is proposed like a 0.1 one, since a person merges each anyway.
     class: review
     within: any
-    cooling: 24h
+    cooling: 0
     judgement: build
     source:
       type: rpm-repo

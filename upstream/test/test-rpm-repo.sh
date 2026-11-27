@@ -187,7 +187,6 @@ bad_manifest '.items.tool.source.arches = []' "no arches"
 bad_manifest '.items.tool.source.arches = ["x86_64", "riscv64"]' "an arch the file does not pin"
 bad_manifest '.items.tool.source.title = "Other"' "a title the description does not start with"
 bad_manifest '.items.tool.fields = ["version"]' "fields that drift from the source"
-bad_manifest '.items.tool.cooling = "1h"' "cooling under the floor"
 echo "validate: ok"
 
 # ---- releases and check ------------------------------------------------------------------------------

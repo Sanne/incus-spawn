@@ -4,8 +4,9 @@
 # JetBrains feed, .sha256 files and small tarballs), gh answers release, pull-request and issue
 # queries from fixtures and records what it is asked to change. Checks that validate holds each
 # manifest rule; that check passes a pin the publisher confirms and fails one it does not; that plan
-# prepares a bump commit as the app for a newer release of the pinned series, waits out cooling,
-# opens an issue for another series, a judgement item or a pin the publisher no longer confirms,
+# prepares a bump commit as the app for a newer release of the pinned series at once, waits out a
+# cooling only where an item sets one, opens an issue for another series, a judgement item or a pin
+# the publisher no longer confirms,
 # proposes nothing for an older release, and fails closed on a bad signature, a sum the publisher
 # does not confirm or a link off the allowlist; that verify-trees passes exactly the engine's
 # regeneration of an app PR and fails one with anything else in it, a tampered sum, a downgrade,
@@ -203,7 +204,10 @@ bad_manifest() { # <yq edit> <what it must fail for>
 }
 bad_manifest '.items.kernel.skip-verify = true' "an unknown key"
 bad_manifest 'del(.items.kernel.verify)' "a mechanical item without verify"
-bad_manifest '.items.kernel.cooling = "1h"' "cooling under the 24h floor on a third-party source"
+bad_manifest '.items.kernel.cooling = "soon"' "a cooling that is not a duration"
+# No cooling floor: testing is the gate, so a third-party item is proposed as soon as it is seen.
+yq '.items.kernel.cooling = "1h"' "$REPO/upstream/manifest.yaml" > "$WORK/nocool.yaml"
+MANIFEST="$WORK/nocool.yaml" "$E" validate > /dev/null || fail "validate refuses a cooling under a day on a third-party item"
 bad_manifest '.items.kernel.verify.fingerprint = "0000000000000000000000000000000000000000"' "a fingerprint that is not the pinned one"
 bad_manifest '.items.kernel.class = "automatic"' "an unknown class"
 bad_manifest '.items.kernel.verify.type = "publisher-sums"' "a verify.type the source does not provide"
@@ -220,7 +224,6 @@ yq '.items.idea-backend.class = "review"' "$REPO/upstream/manifest.yaml" > "$WOR
 MANIFEST="$WORK/review.yaml" "$E" validate > /dev/null || fail "validate refuses a review item"
 bad_manifest '.items.idea-backend.class = "review" | del(.items.idea-backend.verify)' "a review item without verify"
 bad_manifest '.items.idea-backend.class = "review" | del(.items.idea-backend.within)' "a review item without within"
-bad_manifest '.items.idea-backend.class = "review" | .items.idea-backend.cooling = "1h"' "a review item's cooling under the 24h floor"
 echo "validate: ok"
 
 # ---- check -------------------------------------------------------------------------------------------
@@ -269,16 +272,21 @@ mv "$FIX/http/$(http https://download.jetbrains.com/idea/idea-2026.3.tar.gz)" "$
 P="$(plan carried)"
 [ "$(action "$P" idea-backend)" = pr ] || fail "a carried version was not prepared without the tarball: $(cat "$P/plan.tsv")"
 mv "$WORK/hidden.tgz" "$FIX/http/$(http https://download.jetbrains.com/idea/idea-2026.3.tar.gz)"; rm -f "$FIX/prs.json"
-# Cooling: a release younger than its item's cooling waits.
+# No cooling: the manifest's items are proposed as soon as the release is seen, dated or not.
 releases_json "$((NOW - 3600))" "$((NOW - 86400))" > "$WORK/releases.json"; serve https://www.kernel.org/releases.json "$WORK/releases.json"
-P="$(plan cooling)"
-[ "$(action "$P" kernel)" = wait ] || fail "a one-hour-old kernel release did not wait: $(cat "$P/plan.tsv")"
-[ ! -f "$P/kernel.json" ] || fail "a waiting item prepared a commit"
-releases_json "$((NOW - 3 * 86400))" "$((NOW - 86400))" > "$WORK/releases.json"; serve https://www.kernel.org/releases.json "$WORK/releases.json"
-# A release without a date waits too.
+P="$(plan fresh)"
+[ "$(action "$P" kernel)" = pr ] || fail "a one-hour-old kernel release waited: $(cat "$P/plan.tsv")"
 jq '{releases: [.releases[] | select(.version != "7.2.10")]}' "$WORK/releases.json" > "$WORK/nodate.json"; serve https://www.kernel.org/releases.json "$WORK/nodate.json"
-P="$(plan nodate)"; [ "$(action "$P" kernel)" = wait ] || fail "an undated release did not wait"
+P="$(plan nodate)"; [ "$(action "$P" kernel)" = pr ] || fail "an undated release waited: $(cat "$P/plan.tsv")"
+# An item that sets a cooling still waits for it, and for a date.
+yq -i '.items.kernel.cooling = "24h"' "$REPO/upstream/manifest.yaml"
+P="$(plan nodate-cooling)"; [ "$(action "$P" kernel)" = wait ] || fail "an undated release did not wait out a cooling"
 serve https://www.kernel.org/releases.json "$WORK/releases.json"
+P="$(plan cooling)"
+[ "$(action "$P" kernel)" = wait ] || fail "a one-hour-old kernel release did not wait out a cooling: $(cat "$P/plan.tsv")"
+[ ! -f "$P/kernel.json" ] || fail "a waiting item prepared a commit"
+git -C "$REPO" checkout -q -- upstream/manifest.yaml
+releases_json "$((NOW - 3 * 86400))" "$((NOW - 86400))" > "$WORK/releases.json"; serve https://www.kernel.org/releases.json "$WORK/releases.json"
 echo "plan cooling: ok"
 
 # Release tags in their line's order (#1994): sort -V ranked fedora-45-v1 above fedora-45-20261111,
@@ -385,13 +393,16 @@ verify "$poc" "$APP_LOGIN" yes && fail "an app PR with an empty sum passed while
 grep -q 'hashes to' "$WORK/verify.log" || fail "the failed re-hash was not what failed: $(cat "$WORK/verify.log")"
 verify "$I3" "someone" yes && fail "a person's bump passed while the publisher's tarball does not match its .sha256"
 serve_text https://download.jetbrains.com/idea/idea-2026.3.tar.gz.sha256 "$S3X *idea-2026.3.tar.gz"
-# What plan would not propose, verify does not pass: a version inside its cooling period or without
-# a date, and one Sanne declined.
+# What plan would not propose, verify does not pass: a version inside a cooling the item sets or
+# without a date then, and one Sanne declined. With no cooling, a release of today passes.
 jq '.IIU[0].date = (now | strftime("%Y-%m-%d"))' "$WORK/jb.json" > "$WORK/jb-fresh.json"; serve "$JB_URL" "$WORK/jb-fresh.json"
+verify "$I3" "$APP_LOGIN" yes || fail "an app PR for a release of today failed with no cooling: $(cat "$WORK/verify.log")"
+yq -i '.items.idea-backend.cooling = "48h"' "$REPO/upstream/manifest.yaml"
 verify "$I3" "$APP_LOGIN" yes && fail "an app PR for a release inside its cooling period passed"
 grep -q 'cooling' "$WORK/verify.log" || fail "cooling was not what failed: $(cat "$WORK/verify.log")"
 jq 'del(.IIU[0].date)' "$WORK/jb.json" > "$WORK/jb-undated.json"; serve "$JB_URL" "$WORK/jb-undated.json"
 verify "$I3" "$APP_LOGIN" yes && fail "an app PR for an undated release passed"
+git -C "$REPO" checkout -q -- upstream/manifest.yaml
 serve "$JB_URL" "$WORK/jb.json"
 jq -n '[{body: "x\n\n<!-- upstream-watch: kernel 7.2.10 -->", mergedAt: null, headRepositoryOwner: {login: "Sanne"}, isCrossRepository: false}]' > "$FIX/prs-closed.json"
 verify "$K" "$APP_LOGIN" yes && fail "an app PR for a declined version passed"

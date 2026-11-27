@@ -9,7 +9,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
 
@@ -102,6 +101,5 @@ class WorkflowActionsPinnedTest {
         var item = item();
         assertEquals("judgement", item.pathText("class", ""));
         assertEquals("github-action", item.path("source").pathText("type", ""));
-        assertTrue(Set.of("72h", "3d").contains(item.pathText("cooling", "")), "Actions cool for 72h (#2210)");
     }
 }

@@ -211,7 +211,6 @@ bad_manifest '.items.starship.source.assets.x86_64 = "starship-{arch}.tar.gz"' "
 bad_manifest 'del(.items.starship.source.assets)' "no assets"
 bad_manifest '.items.starship.source.assets.riscv = "starship-riscv.tar.gz"' "an asset the YAML has no download for"
 bad_manifest '.items.starship.fields = ["url.x86_64"]' "fields that drift from the source"
-bad_manifest '.items.starship.cooling = "1h"' "cooling under the floor"
 echo "validate: ok"
 
 # ---- check -------------------------------------------------------------------------------------------

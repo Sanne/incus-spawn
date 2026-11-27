@@ -236,7 +236,6 @@ bad_manifest '.items.pkg.source.files.any.url = "http://dl.example/pkg-{version}
 bad_manifest '.items.pkg.source.files.any.url = "https://dl.example/{arch}/pkg-{version}.tar.xz"' "an unknown placeholder"
 bad_manifest 'del(.items.pkg.source.index.regex)' "an index with no regex"
 bad_manifest '.items.pkg.fields = ["version"]' "fields that drift from the source"
-bad_manifest '.items.pkg.cooling = "1h"' "cooling under the floor"
 echo "validate: ok"
 
 # ---- check -------------------------------------------------------------------------------------------

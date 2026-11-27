@@ -50,7 +50,16 @@ The kernel's sums files and its next-major probe go through `update-kernel-pin.s
 A bump's downloads are re-hashed once per version: when this repository's open PR already carries it, `plan` takes the sums from the publisher without the tarballs, since `publish` will not push anything and `upstream-verify` re-hashed that PR.
 
 **The PR mechanics** (`pr.sh`) are `update-kernel.yml`'s, ported for every item (#1355): one PR per item on `upstream/<item>`, this repository's branch only and never a fork's of the same name; a refresh marks the PR pending before the push and names the version only after it, so a failure between the two leaves a PR that claims nothing its branch lacks; a version whose PR was closed unmerged is recognised by the marker in its body and not proposed again; a non-merge commit on the branch the app did not make stops any push or close; a PR `main` has caught up with is closed and its branch deleted, unless the branch carries a commit the app did not make, which stops the close as it stops a push (the run fails so a person sees it).
-A newer release replaces the PR's commit rather than opening a second PR, and a `cooling` period that has not elapsed, or a release the publisher does not date yet, makes the item wait.
+A newer release replaces the PR's commit rather than opening a second PR.
+A release is proposed as soon as the watch sees it, since every item's `cooling` is 0.
+An item given a cooling would wait until that period had passed since the publisher dated the release, and would wait for a release the publisher does not date yet.
+
+**No cooling: testing is the gate.**
+Sanne scrapped every wait: a bump PR waited up to three days after a release for an upstream yank, while the bump is tested anyway.
+`upstream-verify` proves each pin against the publisher, CI and the item's `gates` test the bump, and a person merges every `review` item.
+A hand bump by a box never waited on cooling, and still does not.
+**Alternatives:** keep the 24-hour floor for third-party sources; keep a wait only on unsigned feeds.
+**What this gives up:** a release the publisher pulls within hours can reach a PR, and for a `mechanical` item the bot's merge, when its tests pass; the PR is a public record a revert undoes.
 
 **The check** (`.github/workflows/upstream-verify.yml`, `upstream-verify`) runs on every PR under `pull_request_target`, checks out the default branch, holds no secret and `contents: read` and `pull-requests: read` only, and reads the PR's trees as data through git and the API.
 It passes at once when no item's files changed, so it can be a required check.
@@ -75,26 +84,26 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 
 | Item | File | Source | Verifier | Class | `within` | `cooling` | Judgement issue |
 |---|---|---|---|---|---|---|---|
-| `kernel` | `appliance/kernel/build-kernel.sh` (`KERNEL_VERSION`, `KERNEL_SHA256`) | kernel.org's signed `sha256sums.asc`, through `update-kernel-pin.sh` | `signed-sums`, the committed autosigner key and pinned fingerprint | mechanical | `series` | 24h | a new series, the series' EOL (`go:design`); gate `kernel-mac-verified` |
-| `base-image` | `common/src/main/resources/images/minimal.yaml` (tag, both URLs, four sums) | `Sanne/incus-spawn-images` releases, `SHA256SUMS` and `SHA256SUMS.v2` | `publisher-sums` | mechanical | `series` (one Fedora line) | 0 (first party) | a new Fedora line (`go:build`) |
-| `idea-backend` | `common/src/main/resources/tools/idea-backend.yaml` (`description`, both URLs and sums) | JetBrains products API, `.sha256` beside each tarball, URLs under `https://download.jetbrains.com/idea/` only | `publisher-sums` | mechanical | `any` | 48h | none; the tool installs whatever `idea-IU-*` unpacks to |
-| `starship` | `common/src/main/resources/tools/starship.yaml` (`description`, both URLs and sums) | `starship/starship` releases, the `.sha256` asset beside each tarball | `publisher-sums` | mechanical | `series` (the major) | 48h | a new major (`go:build`) |
-| `idea-index-plugin` | `common/src/main/resources/tools/idea-backend.yaml` (the plugin's `downloads:` entry) | `hechtcarmel/jetbrains-index-mcp-plugin` releases, GitHub's digest of the signed zip | `asset-digest` | review | `series` (the major) | 48h | a new major (`go:build`) |
-| `jasolo` | `common/src/main/resources/tools/jasolo.yaml` (`description`, the jar's URL and sum) | `mkouba/jasolo` releases, GitHub's digest of the runner jar | `asset-digest` | review | `series` (the major) | 48h | a new major (`go:build`) |
-| `antigravity` | `common/src/main/java/dev/incusspawn/tool/AntigravitySetup.java` (`VERSION`, `BUILD`, both sha256) | Google's stable Linux manifests (the installer's), and the `manifest.json` beside each build in the bucket, a sha512 per tarball | `publisher-sums` | review | `series` (the major) | 24h | a new major (`go:build`) |
-| `maven-3` | `common/src/main/resources/tools/maven-3.yaml` (description, URL, sum, link, `MAVEN_HOME`) and `.mvn/wrapper/maven-wrapper.properties` (the zip's URL and `distributionSha256Sum`) | Apache's `maven-3/` listing, the `.asc` of each file, signed by the release manager | `signed-file`, `upstream/keys/apache-maven.asc` | mechanical | `series` (3.9) | 24h | a new series (`go:build`) |
-| `mvnd` | `common/src/main/resources/tools/mvnd.yaml` (both URLs, sums and links) | Apache's `mvnd/` listing, the `.asc` of each zip | `signed-file`, `upstream/keys/apache-mvnd.asc` | mechanical | `series` (1.x) | 24h | a new major (`go:build`) |
-| `incus` | `appliance/build.sh` (`INCUS_VERSION`, `INCUS_SHA512`) | linuxcontainers.org's `downloads/incus/` listing of LTS releases (`X.0.Y`), the `.asc` of the tarball | `signed-file`, `upstream/keys/incus-stgraber.asc` | mechanical | `series` (7.0) | 24h | a new LTS (`go:design`); gate `kernel-mac-verified` |
-| `alpine-minirootfs` | `appliance/build.sh` (`ALPINE_VERSION`, both `ALPINE_SHA256`) | Alpine's `v3.24/releases/<arch>/` listing, the `.asc` of each tarball | `signed-file`, `upstream/keys/alpine-ncopa.asc` | mechanical | `series` (3.24) | 24h | a new minor, seen in the latest-stable feed (`go:design`); gate `kernel-mac-verified` |
-| `arch-cloud-image` | `scripts/distro-images.env` (`ARCH_IMAGE_URL`, `ARCH_IMAGE_SHA256`) | the Arch mirror's `images/` listing, the signed `.SHA256` of the image | `signed-file`, `upstream/keys/arch-linux.asc` | mechanical | `any` | 24h | none |
-| `ubuntu-cloud-image` | `scripts/distro-images.env` (`UBUNTU_IMAGE_URL`, `UBUNTU_IMAGE_SHA256`) | Canonical's `releases/noble/` listing, the `SHA256SUMS` signed by `SHA256SUMS.gpg` | `signed-file`, `upstream/keys/ubuntu-cloud-images.asc` | mechanical | `any` | 24h | none |
-| `rex` | `common/src/main/resources/tools/rex.yaml` (`description`, both rpm URLs and sums) | Superlogical's `rex/rpm/preview/<arch>/` repository: the signed `repomd.xml`, then the primary metadata it hashes | `signed-file`, `upstream/keys/superlogical-rex.asc` | review | `any` | 24h | none |
+| `kernel` | `appliance/kernel/build-kernel.sh` (`KERNEL_VERSION`, `KERNEL_SHA256`) | kernel.org's signed `sha256sums.asc`, through `update-kernel-pin.sh` | `signed-sums`, the committed autosigner key and pinned fingerprint | mechanical | `series` | 0 | a new series, the series' EOL (`go:design`); gate `kernel-mac-verified` |
+| `base-image` | `common/src/main/resources/images/minimal.yaml` (tag, both URLs, four sums) | `Sanne/incus-spawn-images` releases, `SHA256SUMS` and `SHA256SUMS.v2` | `publisher-sums` | mechanical | `series` (one Fedora line) | 0 | a new Fedora line (`go:build`) |
+| `idea-backend` | `common/src/main/resources/tools/idea-backend.yaml` (`description`, both URLs and sums) | JetBrains products API, `.sha256` beside each tarball, URLs under `https://download.jetbrains.com/idea/` only | `publisher-sums` | mechanical | `any` | 0 | none; the tool installs whatever `idea-IU-*` unpacks to |
+| `starship` | `common/src/main/resources/tools/starship.yaml` (`description`, both URLs and sums) | `starship/starship` releases, the `.sha256` asset beside each tarball | `publisher-sums` | mechanical | `series` (the major) | 0 | a new major (`go:build`) |
+| `idea-index-plugin` | `common/src/main/resources/tools/idea-backend.yaml` (the plugin's `downloads:` entry) | `hechtcarmel/jetbrains-index-mcp-plugin` releases, GitHub's digest of the signed zip | `asset-digest` | review | `series` (the major) | 0 | a new major (`go:build`) |
+| `jasolo` | `common/src/main/resources/tools/jasolo.yaml` (`description`, the jar's URL and sum) | `mkouba/jasolo` releases, GitHub's digest of the runner jar | `asset-digest` | review | `series` (the major) | 0 | a new major (`go:build`) |
+| `antigravity` | `common/src/main/java/dev/incusspawn/tool/AntigravitySetup.java` (`VERSION`, `BUILD`, both sha256) | Google's stable Linux manifests (the installer's), and the `manifest.json` beside each build in the bucket, a sha512 per tarball | `publisher-sums` | review | `series` (the major) | 0 | a new major (`go:build`) |
+| `maven-3` | `common/src/main/resources/tools/maven-3.yaml` (description, URL, sum, link, `MAVEN_HOME`) and `.mvn/wrapper/maven-wrapper.properties` (the zip's URL and `distributionSha256Sum`) | Apache's `maven-3/` listing, the `.asc` of each file, signed by the release manager | `signed-file`, `upstream/keys/apache-maven.asc` | mechanical | `series` (3.9) | 0 | a new series (`go:build`) |
+| `mvnd` | `common/src/main/resources/tools/mvnd.yaml` (both URLs, sums and links) | Apache's `mvnd/` listing, the `.asc` of each zip | `signed-file`, `upstream/keys/apache-mvnd.asc` | mechanical | `series` (1.x) | 0 | a new major (`go:build`) |
+| `incus` | `appliance/build.sh` (`INCUS_VERSION`, `INCUS_SHA512`) | linuxcontainers.org's `downloads/incus/` listing of LTS releases (`X.0.Y`), the `.asc` of the tarball | `signed-file`, `upstream/keys/incus-stgraber.asc` | mechanical | `series` (7.0) | 0 | a new LTS (`go:design`); gate `kernel-mac-verified` |
+| `alpine-minirootfs` | `appliance/build.sh` (`ALPINE_VERSION`, both `ALPINE_SHA256`) | Alpine's `v3.24/releases/<arch>/` listing, the `.asc` of each tarball | `signed-file`, `upstream/keys/alpine-ncopa.asc` | mechanical | `series` (3.24) | 0 | a new minor, seen in the latest-stable feed (`go:design`); gate `kernel-mac-verified` |
+| `arch-cloud-image` | `scripts/distro-images.env` (`ARCH_IMAGE_URL`, `ARCH_IMAGE_SHA256`) | the Arch mirror's `images/` listing, the signed `.SHA256` of the image | `signed-file`, `upstream/keys/arch-linux.asc` | mechanical | `any` | 0 | none |
+| `ubuntu-cloud-image` | `scripts/distro-images.env` (`UBUNTU_IMAGE_URL`, `UBUNTU_IMAGE_SHA256`) | Canonical's `releases/noble/` listing, the `SHA256SUMS` signed by `SHA256SUMS.gpg` | `signed-file`, `upstream/keys/ubuntu-cloud-images.asc` | mechanical | `any` | 0 | none |
+| `rex` | `common/src/main/resources/tools/rex.yaml` (`description`, both rpm URLs and sums) | Superlogical's `rex/rpm/preview/<arch>/` repository: the signed `repomd.xml`, then the primary metadata it hashes | `signed-file`, `upstream/keys/superlogical-rex.asc` | review | `any` | 0 | none |
 | `models` | `common/src/main/resources/models.yaml` (every model ID isx ships) | each vendor's keyless markdown deprecations page (Anthropic, OpenAI, Google) | none: a findings source pins nothing | judgement | none | none | a deprecated or retired ID, or a successor (`go:build`) |
-| `maven-plugins` | the four poms (`compiler-plugin.version`, `surefire-plugin.version`, which failsafe shares, and the exec, jandex and assertj versions) | Maven Central's listing of each artifact | `central-exists` | review | `series` (each member's major) | 72h | a member's new major (`go:build`) |
-| `aesh` | `pom.xml` (`aesh.version`, for aesh and its processor) | Maven Central's listings | `central-exists` | review | `series` (the major) | 72h | a new major (`go:build`) |
-| `jjq` | `pom.xml` (`jjq.version`, for jjq-yaml, jjq-mapper and its processor) | Maven Central's listings | `central-exists` | review | `series` (the major) | 72h | a new major (`go:build`) |
-| `json-schema-validator` | `cli/pom.xml` (the test dependency's version) | Maven Central's listing | `central-exists` | review | `series` (the major) | 72h | a new major (`go:build`) |
-| `github-actions` | every file under `.github/` with a `uses:` of a repository's action (each `owner/repo@<sha> # <tag>`) | each member's GitHub releases and tag refs, an annotated tag followed to its commit | `tag-commit` | judgement | none (a new major is listed apart) | 72h | every member with a newer cooled release, in one issue (`go:build`) |
+| `maven-plugins` | the four poms (`compiler-plugin.version`, `surefire-plugin.version`, which failsafe shares, and the exec, jandex and assertj versions) | Maven Central's listing of each artifact | `central-exists` | review | `series` (each member's major) | 0 | a member's new major (`go:build`) |
+| `aesh` | `pom.xml` (`aesh.version`, for aesh and its processor) | Maven Central's listings | `central-exists` | review | `series` (the major) | 0 | a new major (`go:build`) |
+| `jjq` | `pom.xml` (`jjq.version`, for jjq-yaml, jjq-mapper and its processor) | Maven Central's listings | `central-exists` | review | `series` (the major) | 0 | a new major (`go:build`) |
+| `json-schema-validator` | `cli/pom.xml` (the test dependency's version) | Maven Central's listing | `central-exists` | review | `series` (the major) | 0 | a new major (`go:build`) |
+| `github-actions` | every file under `.github/` with a `uses:` of a repository's action (each `owner/repo@<sha> # <tag>`) | each member's GitHub releases and tag refs, an annotated tag followed to its commit | `tag-commit` | judgement | none (a new major is listed apart) | 0 | every member with a newer release, in one issue (`go:build`) |
 
 The `base-image` item takes over what `update-base-image.yml` did (#1678, #1862): every checksum comes from the release's own sums files for the asset each URL downloads, a release of another Fedora line is an issue rather than a PR, and `vm_image_url` moves to `-vm-direct` in the first release that has it for both arches and never back to the stock image (design/templates.md "Which base image an instance runs").
 Its series is a tag's whole line, its channel included (`src_series`, #1994), and it lists the stable channel's releases alone, so a channel is never proposed and never opens an issue.
@@ -155,9 +164,8 @@ Pinning the sha512 beside the sha256 would let the check skip the download, but 
 The sum comes from Google over HTTPS, as JetBrains' does, so it proves consistency and transfer, not provenance.
 The item is `class: review` anyway: isx's delegation parses what `agy` prints and the conversations it writes (`antigravity-runner.cjs`, `AgentSessions`), and no CI job runs `agy` against a model.
 
-What this gives up: Google releases about once a day, and the 24h floor counts from the tarball's upload, not from the moment the manifests named it stable.
-A build uploaded a day or more before Google made it stable is proposed at once, with no time left for a yank.
-One made stable at its upload is proposed only once it has stood a day, which about half of November 2026's releases did.
+What this gives up: Google releases about once a day, and with no cooling each build is proposed as soon as the manifests name it stable, with no time left for a yank.
+A cooling set on the item would count from the tarballs' upload, not from the moment the manifests named the build stable.
 An app PR passes `upstream-verify` only while its version is still the stable one; when Google moves on, the next run proposes the new version.
 Every new sum costs a download of both tarballs, about 200 MB.
 With `UPSTREAM_REHASH=0`, as in `plan`'s check of the pin, the pin keeps its own sum and nothing is downloaded.
@@ -168,7 +176,7 @@ That spares the pin alone: while the item's PR is open, each six-hourly run prep
 A download whose publisher signs it with OpenPGP is pinned by a `signed-file` item (#2210): Maven and mvnd (Apache), Incus (linuxcontainers.org), Alpine's minirootfs, and the Arch and Ubuntu cloud images the distro tests boot.
 The proof is a signature, so the verifier is `signed-file`, which `validate` accepts on a mechanical item beside `signed-sums` and `publisher-sums`.
 The manifest says where the versions are listed (`source.index`: a page and a regex with one capture group, matched against each link or line), which files the item pins (`source.files`, one label each), and where each pin sits in the tree (`source.pins`).
-The date on a version's line in the listing is its release date, so `cooling` counts from it.
+The date on a version's line in the listing is its release date, which a `cooling` would count from.
 `series-parts` says how many dotted parts of a version name its series (default 2), and `successors` is a second page whose versions only show that another series exists: Alpine's latest-stable feed, so 3.25 opens an issue although the pinned listing is `v3.24/`.
 Incus lists LTS releases only (`X.0.Y`), so a feature release is never a candidate and a new LTS is the issue.
 
@@ -224,7 +232,7 @@ The primary metadata must hash to what the signed file gives, and its location m
 A version is a candidate only when every arch lists it, and each arch pins the highest release it lists for that version.
 Each rpm's URL is built from the manifest, the version and that release, and a package whose location is not that name fails the run.
 The version is written `0.1.0-preview.25`, rpm's `~` turned into `-`, the form the description shows and a branch or commit title can hold; `src_order` puts a release after its previews, as rpm does and `sort -V` would not.
-The release date is the latest build time of the two rpms, so the 24h floor counts from the later one.
+The release date is the latest build time of the two rpms, so a cooling would count from the later one.
 A pinned version the repository no longer lists is a pin-mismatch issue (`src_confirms`), not a run that fails, so a pruned preview stops only this item.
 
 **Alternatives:** a `signed-file` item, which needs a signature of each file or a signed sums file, and the repository has neither beside the rpms.
@@ -236,7 +244,7 @@ It is `within: any`, since a person merges every bump anyway, so a 0.2 preview i
 
 What this gives up: only the preview channel is watched; moving the tool to the stable channel, once it has packages, is a person's change.
 A new release of the version already pinned (`-2` after `-1`) is not proposed: the check reads it as a pin the repository no longer confirms and opens a pin-mismatch issue.
-Superlogical publishes a preview every day or two, and the candidate is always the newest, so a run of releases each less than a day apart proposes nothing until one stands a day.
+Superlogical publishes a preview every day or two, and the candidate is always the newest, so each run proposes the newest preview at once.
 
 ## The github-action source type
 
@@ -255,7 +263,7 @@ Since `src_fields` reads the same lines, a PR that adds any of those fails `upst
 The verifier is `tag-commit`: each commit must be the one its tag points at on GitHub when it is read, an annotated tag followed to its commit.
 It proves where the tag pointed, not what the action's code does.
 A tag the publisher moved fails `check`, so `plan` opens the pin-mismatch issue rather than following it.
-A release counts once 72 hours have passed since GitHub published it, and a draft, a prerelease and a tag that is not `v<numbers>` never count.
+A release counts as soon as GitHub publishes it, and a draft, a prerelease and a tag that is not `v<numbers>` never count.
 The proposed version is each member's newest such release, never older than its pin.
 
 The family is `class: judgement`, and `validate` refuses any other class for this source type.
@@ -290,7 +298,7 @@ Only a dotted number is a release, so `3.6.0-M1`, `4.0.0-beta-5` and `4.0.0.CR1`
 Central's listing of an artifact dates each version by its directory, and a member's version is dated by the latest of its artifacts.
 A version that one of a member's artifacts lacks is no release of it: failsafe without the surefire of its number holds the member back.
 
-A family proposes each member's newest release past cooling within its major, never older than its pin.
+A family proposes each member's newest release within its major, never older than its pin.
 A member's new major opens the item's new-series issue beside that PR, so it never holds the other members back.
 `src_releases` gives two versions for that: every member in its major, and every member at its newest.
 A bump never moves a member back, whatever version it is given.
@@ -350,7 +358,7 @@ The design made these items auto for that reason (rows 45 and 48 of #2210): what
 A pin on a branch never merged is a pin-mismatch issue, and a person's PR pinning one fails `upstream-verify`.
 `check` asks the type's `src_confirms` for that before it regenerates anything, so the pin reads as a mismatch.
 A clone of `main` that fails is a failed read instead: `check` returns 2, and `plan` prints why and fails the run (#2261).
-Cooling is 0, as for every first-party source, and counts from the committer date.
+Cooling is 0, as for every item; a cooling would count from the committer date.
 
 ## Sibling repositories
 
@@ -415,7 +423,7 @@ The regeneration check still earns its place there: it proves the diff is that o
 What this gives up: a review PR waits for a person, so such a pin can lag as long as nobody merges it.
 
 The class is held in three places.
-`item_proposed` (`lib.sh`) is the one test for "the engine writes this item's PR", used by `validate`, `plan` and the check, so a review item needs everything a mechanical one does: `within`, a verifier its source provides, and a `cooling` at or above the floor.
+`item_proposed` (`lib.sh`) is the one test for "the engine writes this item's PR", used by `validate`, `plan` and the check, so a review item needs everything a mechanical one does: `within`, a verifier its source provides, and a `cooling`.
 `upstream-verify` passes the app's PR for a review item only as the regeneration, like a mechanical one's.
 The merge script requires `class: mechanical` by name, so it refuses a review item without knowing the class exists; a class added later is refused the same way.
 
@@ -423,7 +431,7 @@ The merge script requires `class: mechanical` by name, so it refuses a review it
 
 | Threat | How it is closed |
 |---|---|
-| Compromised upstream or release feed | Where the publisher signs (kernel.org, Apache, Incus, Alpine, Arch, Ubuntu), the signature against a committed key is required and the feed only tells the engine *which* version to verify. Where it does not (JetBrains, Google's agy manifests, the images releases), the URL allowlist and `within` bound what a feed can point at, `cooling` leaves time for an upstream yank, and the pin remains a public PR and a reviewed record. A publisher whose own signing key is compromised is beyond any watcher. |
+| Compromised upstream or release feed | Where the publisher signs (kernel.org, Apache, Incus, Alpine, Arch, Ubuntu), the signature against a committed key is required and the feed only tells the engine *which* version to verify. Where it does not (JetBrains, Google's agy manifests, the images releases), the URL allowlist and `within` bound what a feed can point at, the PR's tests run on what it names, and the pin remains a public PR and a reviewed record. No cooling waits for an upstream yank ("No cooling: testing is the gate"). A publisher whose own signing key is compromised is beyond any watcher. |
 | Poisoned checksum source | Signed sums, or a signature of the file itself: closed by the signature, from a key whose primary fingerprint the manifest pins. Same-origin sums: `upstream-verify` re-downloads artifact and sums from the publisher, never from the PR, so a sum not derived from the publisher fails; and a pinned version whose values the publisher no longer confirms becomes an issue, not a re-pin. |
 | Credential exfiltration | The app key is an environment secret only `main`'s `upstream-watch.yml` can reference; it is read in one step of a job that does not download anything, on another runner than the one that fetched publisher data, and the minted token is per run, per repository, one hour. The app has no ruleset bypass, so the worst a thief can do is open branches and PRs, and the bot merges only a PR that byte-matches the engine's regeneration. Sanne's own account's token (`BOT_TOKEN`) leaves Actions. |
 | A malicious PR or issue reaching the job | The watch has no PR, issue or comment trigger, reads no PR, issue or comment, and takes input only from the manifest on `main` and the publisher endpoints it names; `workflow_dispatch` input is checked against the manifest's keys; no `${{ }}` reaches a `run:` line. `upstream-verify` runs `main`'s engine, has no secret and never executes PR content. |
@@ -473,6 +481,6 @@ The same central watch mints a one-hour token per target repository, so no sibli
 No manifest key skips a check: an unknown key fails `validate`, and there is no field that disables a verifier, the regeneration or a gate.
 `class` defaults to `judgement`, so an item that forgets to say what it is gets an issue, not a PR.
 The bot never approves or merges a `review` item's PR.
-`cooling` has a floor of 24 hours for a third-party source and no off switch; only a first-party source (`Sanne/*`) may set 0.
+No item waits on a `cooling` period, and a hand bump never did: a release is proposed as soon as it is seen, and testing is the gate.
 The watch never moves a `within: series` item to another series, never re-pins a version the publisher stopped confirming, and never proposes a version whose PR was closed unmerged.
 Nothing else becomes auto-mergeable: not a bot PR, not a lead's, not an upstream PR anyone else pushed to.
