@@ -165,6 +165,9 @@ class Upstream {
                 .setSsl(true)
                 .setVerifyHost(!upstreamTrustAll)
                 .setTrustAll(upstreamTrustAll)
+                // JSSE leaves SNI out for a name of one label, such as a mirror at https://nas:8443/
+                // (#2681); a frontend that routes by it would not find the mirror
+                .setForceSni(true)
                 .setKeepAliveTimeout(30)
                 .setConnectTimeout(UPSTREAM_CONNECT_TIMEOUT_MILLIS)
                 // Outlasts the MITM server's idle timeout: a stalled relay or wait for the cache is
@@ -185,6 +188,7 @@ class Upstream {
                 .setSsl(true)
                 .setVerifyHost(!upstreamTrustAll)
                 .setTrustAll(upstreamTrustAll)
+                .setForceSni(true)
                 .setProtocolVersion(HttpVersion.HTTP_2)
                 .setUseAlpn(true)
                 .setHttp2KeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
@@ -297,7 +301,9 @@ class Upstream {
                 });
             });
         }
-        if (!backoffDomains.contains(host)) return connected;
+        // A backoff is a cached repository's, on 443: another port of its host is another server,
+        // such as a mirror, whose refusals say nothing about it (#2681)
+        if (options.getPort() != 443 || !backoffDomains.contains(host)) return connected;
         var sent = System.nanoTime();
         // Every request to a caching domain that keeps one, whatever its purpose, keeps its backoff current: a
         // failed connect or a 429 starts it, and only another answer or its end ends it, since a request on a
