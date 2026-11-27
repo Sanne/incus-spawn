@@ -42,6 +42,11 @@ class InstallScriptGraalVmTest {
             Pattern.compile("^\\s*GRAALVM_BASE=\"([^\"]+)\"", Pattern.MULTILINE);
     private static final Pattern GRAALVM_LINE =
             Pattern.compile("^\\s*GRAALVM_LINE=\"([^\"]+)\"", Pattern.MULTILINE);
+    /** The case arm of the step that takes the Linux runner's GraalVM: <code>*&#47;graalvm-X.Y.*)</code>. */
+    private static final Pattern RUNNER_HOME_GLOB = Pattern.compile("\\*/graalvm-([0-9.]+)\\.\\*\\)");
+    /** Its error names the line it wanted: {@code has no GraalVM X.Y}. */
+    private static final Pattern RUNNER_HOME_ERROR = Pattern.compile("has no GraalVM ([0-9.]+) ");
+    private static final String RUNNER_GRAALVM_STEP = "Use the instance's GraalVM";
 
     @Test
     void builderImagesFollowTheReleasedLinuxGraalVm() throws IOException {
@@ -113,6 +118,41 @@ class InstallScriptGraalVmTest {
             assertTrue(checked.stream().anyMatch(c -> c.startsWith(workflow)),
                     "no setup-graalvm step checked in " + workflow + ": " + checked);
         }
+    }
+
+    /**
+     * The project's Linux runner skips setup-graalvm and takes the GraalVM its template baked in, so
+     * the step that checks {@code GRAALVM_HOME} names the line in a shell glob. A bump that misses it
+     * fails only on that runner, and only after the template is rebuilt.
+     */
+    @Test
+    void theLinuxRunnersGraalVmCheckWantsTheReleasedLine() throws IOException {
+        var linux = linuxReleaseGraalVmVersion();
+        var checked = new HashSet<String>();
+        try (var files = Files.list(WORKFLOWS)) {
+            for (var file : files.filter(f -> f.toString().endsWith(".yml")).sorted().toList()) {
+                var jobs = JqYaml.parse(Files.readString(file)).path("jobs").asMap();
+                for (var job : jobs.entrySet()) {
+                    var where = file.getFileName() + " job " + job.getKey();
+                    for (var step : job.getValue().path("steps").asList()) {
+                        if (!RUNNER_GRAALVM_STEP.equals(step.pathText("name", ""))) {
+                            continue;
+                        }
+                        var run = step.pathText("run", "");
+                        var glob = RUNNER_HOME_GLOB.matcher(run);
+                        assertTrue(glob.find(), where + ": the step must match GRAALVM_HOME against */graalvm-X.Y.*");
+                        assertEquals(linux, glob.group(1), where
+                                + ": the runner's GRAALVM_HOME must be the Linux graalvm-version of release.yml");
+                        var error = RUNNER_HOME_ERROR.matcher(run);
+                        assertTrue(error.find(), where + ": the step's error must name the line it wants");
+                        assertEquals(linux, error.group(1), where + ": the step's error must name the released line");
+                        checked.add(where);
+                    }
+                }
+            }
+        }
+        assertTrue(checked.stream().anyMatch(c -> c.startsWith("test-integration.yml job ")),
+                "no \"" + RUNNER_GRAALVM_STEP + "\" step found in test-integration.yml: " + checked);
     }
 
     @Test
