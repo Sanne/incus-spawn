@@ -642,6 +642,49 @@ class BuildCommandBatchTest {
         assertEquals(2, warnings.stream().filter(w -> w.contains("'isx branch' cannot copy")).count(), warnings::toString);
     }
 
+    /**
+     * isx init's own build, whose closing box lists what is missing, warns of no missing account:
+     * a Mac's run printed the warning just before a build that then succeeded, as if it would fail (#2542).
+     */
+    @Test
+    void initsBuildDoesNotWarnOfAMissingAccount() throws Exception {
+        atATerminal(new ScriptedPrompts());
+        var asks = onLoader;
+        onLoader = c -> {
+            asks.accept(c);
+            c.askForAccounts = false;
+            c.warnMissingAccounts = false;
+        };
+
+        assertEquals(0, build("tpl-dev"));
+
+        assertEquals(0, asked);
+        assertEquals(0, warnings.stream().filter(w -> w.contains("'isx branch' cannot copy")).count(), warnings::toString);
+    }
+
+    /** The build isx init runs is the one {@link #initsBuildDoesNotWarnOfAMissingAccount} sets up. */
+    @Test
+    void initsBuildIsSetUpNotToAskOrWarn() throws Exception {
+        var ran = new java.util.ArrayList<BuildCommand>();
+        var init = new InitCommand() {
+            @Override BuildCommand newBuild() {
+                return new BuildCommand() {
+                    @Override protected org.aesh.command.CommandResult doExecute() {
+                        ran.add(this);
+                        return org.aesh.command.CommandResult.SUCCESS;
+                    }
+                };
+            }
+        };
+
+        assertEquals(0, init.buildTemplate("tpl-agent"));
+
+        assertEquals(1, ran.size());
+        assertEquals(List.of("tpl-agent"), ran.getFirst().names);
+        assertFalse(ran.getFirst().askForAccounts);
+        assertFalse(ran.getFirst().warnMissingAccounts);
+    }
+
     /** {@code --yes} is a build nobody watches: nothing is asked. */
     @Test
     void withYesNothingIsAsked() throws Exception {
