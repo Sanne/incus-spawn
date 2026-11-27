@@ -195,6 +195,8 @@ class ArtifactCacheProxyTest {
      * by then. Opened by {@link #openGates} before every drain, so none outlives its test.
      */
     static final Map<String, CompletableFuture<Void>> gates = new ConcurrentHashMap<>();
+    /** As {@link #gates}, but answered as their route was when they arrived. */
+    static final Map<String, CompletableFuture<Void>> arrivalGates = new ConcurrentHashMap<>();
 
     @BeforeAll
     static void start() throws Exception {
@@ -245,6 +247,13 @@ class ArtifactCacheProxyTest {
         var key = host + " " + req.path();
         hits.computeIfAbsent(req.method() + " " + key, k -> new AtomicInteger()).incrementAndGet();
         if (req.method() == HttpMethod.GET) getConnections.add(req.path() + " " + req.getHeader("Connection"));
+        var arrivalGate = arrivalGates.get(req.method() + " " + key);
+        if (arrivalGate != null && !arrivalGate.isDone()) {
+            var context = vertx.getOrCreateContext();
+            var held = routes.get(key);
+            arrivalGate.thenRun(() -> context.runOnContext(v -> reply(req, key, held)));
+            return;
+        }
         var gate = gates.get(req.method() + " " + key);
         if (gate != null && !gate.isDone()) {
             var context = vertx.getOrCreateContext();
@@ -490,6 +499,8 @@ class ArtifactCacheProxyTest {
     static void openGates() {
         gates.values().forEach(gate -> gate.complete(null));
         gates.clear();
+        arrivalGates.values().forEach(gate -> gate.complete(null));
+        arrivalGates.clear();
     }
 
     /** No request is left to hold: what {@link #hold} counts down. */
@@ -2166,13 +2177,16 @@ class ArtifactCacheProxyTest {
         VerifiedArtifactStore.expireConfirmation(artifact, Sidecar.SHA1);
         hits.clear();
 
+        // Held by a gate opened after the commit, never a timer, so load cannot reorder them (#2695).
         // Held past the class's 1 s probe timeout, the probe would be retried and miss the race
-        proxy.upstream.probeReadIdleSeconds = 5;
-        nextGetDelayMs = 2_000;
+        proxy.upstream.probeReadIdleSeconds = 15;
+        var held = new CompletableFuture<Void>();
+        arrivalGates.put("GET " + CENTRAL + " " + JAR + sidecar, held);
         var response = getAsync(CENTRAL, JAR + sidecar);
         await("the sidecar fetch", () -> hitsOn(CENTRAL, JAR + sidecar) == 1);
         whileHeld.run();
         commitV2(artifact, Instant.now());
+        held.complete(null);
         return response;
     }
 
