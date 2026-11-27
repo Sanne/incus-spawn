@@ -75,6 +75,8 @@ It was checked on Oracle GraalVM 25.0.5.0.3, x86_64, against CR1 at 8b5d05c7:
 The figures are in `PERFORMANCE-NOTES.md`, "Quarkus 4.0.0 against CR1".
 Throughput was not measured for 4.0.0, since no library it depends on changed from CR1.
 
+Quarkus 4.0.1 manages the same Vert.x, Netty, Jackson, SmallRye Config and GraalVM SDK versions as 4.0.0, and fixes no open Q-* item, so the move to it is a version bump too (#2678).
+
 CR1 keeps Beta3's Vert.x 5.2.3 and Netty 4.2.20, so the move from Beta3 is a version bump with no code change.
 It was checked on Oracle GraalVM 25.0.4.1.1, x86_64, against Beta3 at 8b8fd9b4 (#2169):
 
