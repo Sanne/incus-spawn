@@ -105,11 +105,14 @@ public final class TuiDemo {
         var none = "\ntotal 0\nend\n";
         daemon.execOutputIn(name, dev.incusspawn.command.WorkState.HEADER, dev.incusspawn.command.WorkState.HEADER + "\n"
                 + repos + "\nend\n"
-                + "isx-sessions gemini-cli 1\nend\nisx-sessions antigravity 1\nend\nisx-sessions copilot 1\nend\nisx-sessions bob 1\nend\n"
+                + "isx-sessions gemini-cli 1\nend\nisx-sessions antigravity 1\nend\nisx-sessions copilot 1\nend\n"
                 + dev.incusspawn.command.ClaudeSessions.HEADER + "\n" + sessions + "end\n"
                 + dev.incusspawn.command.CodexSessions.HEADER + none
                 + dev.incusspawn.command.PiSessions.HEADER + none
                 + dev.incusspawn.command.AntigravitySessions.HEADER + none
+                + dev.incusspawn.command.GeminiSessions.HEADER + none
+                + dev.incusspawn.command.CopilotSessions.HEADER + none
+                + dev.incusspawn.command.BobSessions.HEADER + none
                 + dev.incusspawn.command.OpencodeSessions.HEADER + none);
     }
 

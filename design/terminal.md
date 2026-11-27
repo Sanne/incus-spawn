@@ -813,14 +813,26 @@ A database is read by its fields, so the query selects: sessions with no `parent
 Neither is a compaction's summary, nor a part opencode made up (`synthetic`) or set aside (`ignored`).
 Each value is cut in the query to one code point past what is kept and sent in hex.
 A database `sqlite3` cannot read (none installed, a schema the query does not know, a damaged file), or the JSON `storage` of an opencode from before its database, makes opencode not read.
-Gemini CLI, GitHub Copilot CLI and Bob have no reader yet, since a reader is written from session files the agent itself wrote, and none were at hand (#2290).
-Their sessions are only found (`UnreadSessions`), and an agent whose sessions are there is named as not read, so an instance only it worked in is never `untouched`.
+Gemini CLI's reader (`GeminiSessions`, verified with Gemini CLI 0.68.0, #2363) lists `~/.gemini/tmp/<project>/chats/session-*.jsonl`, and not a subagent's chats one directory deeper.
+Its first `user` message is the context Gemini CLI sends itself (`<session_context>`), often longer than the bound, so the script leaves it out.
+Its ask is the first `user` message with text that is neither that context nor a command, the lines Gemini CLI's own session list skips; its closing message is the last `gemini` message with text.
+A chat names no directory, so a Gemini CLI session shows none.
+A file named with `@` puts its text in the message before what the person typed (`displayContent`), and a reply's thoughts follow its text, so the script trims such a line to the fields read before the bound cuts it (`JsonlSessions` `sed` trims, over at most 1 MiB of a line).
+A rewind (`$rewindTo`) is not followed, so a reply the person rewound away may still show; what this gives up is exactness after a rewind, for a read with no state.
+Copilot's reader (`CopilotSessions`, verified with Copilot CLI 1.0.114) lists `~/.copilot/session-state/<id>/events.jsonl`, and sends its first line, `session.start`, which names where the session ran.
+Its ask is the first `user.message` the person sent, as shown rather than as sent to the model; its closing message is the last `assistant.message` with text; an event with an `agentId` is a subagent's and is neither.
+A session that ended before its first message has no `events.jsonl` and is no session.
+Its ask line drops `transformedContent`, the text sent to the model with the files attached, and its closing line keeps a message only through its text, since the model's reasoning follows it on the same line.
+Bob's reader (`BobSessions`, verified with Bob 2.1.0) asks `sqlite3 -readonly`, which `BobSetup` installs, for the tasks of `~/.bob/db/bob.db` with no `parent_id`.
+Its ask is a task's `first_message`, and its closing message the last `assistant` row of `messages` whose content is text, in the order of `rowid`, since Bob writes a task's rows at once with one `created_at`.
+Bob 2.1.0 leaves a task's `directory` empty, so where it ran is the `workspace` of its `env`.
+A database `sqlite3` cannot read makes Bob not read, as it does opencode.
+The three readers were written from files each agent wrote against a local stand-in model that called a tool and then answered, since no account was at hand.
+Sessions in a layout no reader knows are only found (`UnreadSessions`), and their agent is named as not read, so an instance only it worked in is never `untouched`.
 Each check looks for session files alone, never the agent's directory, which a build fills with settings, extensions and policies.
-Gemini CLI's are `~/.gemini/tmp/<project>/chats/session-*.jsonl` (`.json` in older versions), a subagent's one directory deeper, read from `@google/gemini-cli-core` 0.68.0.
-Antigravity CLI's conversations are `~/.gemini/antigravity-cli/conversations/<id>.db`, one each, beside their transcripts in `brain/<id>`; Gemini CLI's check never counts them, nor theirs Gemini CLI's (#2366).
+Gemini CLI's chats saved whole as `session-*.json`, before JSON Lines, are found this way, and so is a file directly in Copilot's `session-state`, where Copilot keeps a directory per session.
+Antigravity CLI's conversations are `~/.gemini/antigravity-cli/conversations/<id>.db`, one each, beside their transcripts in `brain/<id>`; Gemini CLI's reader never counts them, nor theirs Gemini CLI's (#2366).
 Only a conversation with no transcript is found this way, and names Antigravity CLI as not read (#2478).
-Copilot's are the entries of `~/.copilot/session-state`, read from Copilot CLI 1.0.114, which moves an XDG state directory's back there.
-Bob's are the rows of `tasks` in `~/.bob/db/bob.db`, counted with `sqlite3 -readonly` (read from Bob 2.1.0); a database it cannot count names Bob as not read too.
 Their sections come before the readers', each a few lines with a 256-byte share of the bound, so the bound never cuts them.
 A check that answered is not a reader that answered, so when every reader failed the sessions are still `unknown` (`GuestReader.readsSessions`).
 When the newest candidate does not parse, cut at the bound or not JSON, the closing message is unreadable, and an older message is never shown in its place.

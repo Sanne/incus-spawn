@@ -1,14 +1,5 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.command.AgentSessions.Session;
-
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.regex.Pattern;
-
 /**
  * opencode's sessions in a guest (#2241): the rows of {@code ~/.local/share/opencode/opencode.db},
  * read with {@code sqlite3 -readonly}, which {@code OpencodeSetup} installs (verified with opencode
@@ -19,15 +10,12 @@ import java.util.regex.Pattern;
  * <p>Unlike a transcript, the database is read by fields, so the query itself selects: the first
  * ask is the text of the first {@code user} message with any, the closing message that of the
  * last {@code assistant} message with any that is not a compaction's summary, and a part opencode
- * made up ({@code synthetic}) or set aside ({@code ignored}) is neither. Each value is cut in the
- * query to one code point beyond what the overview keeps and sent in hex, so no text can frame
- * the output.
+ * made up ({@code synthetic}) or set aside ({@code ignored}) is neither.
  *
- * <p>When the database is there but cannot be read (no {@code sqlite3}, a schema this query does
- * not know, a damaged file), or only the JSON {@code storage} of opencode before its database is,
- * the answer is {@code unread}: there are sessions, and they are named as not read.
+ * <p>When only the JSON {@code storage} of opencode before its database is there, the answer is
+ * {@code unread}, as for a database that cannot be read ({@link SqliteSessions}).
  */
-public final class OpencodeSessions implements AgentSessions.GuestReader {
+public final class OpencodeSessions extends SqliteSessions {
 
     static final String AGENT = "opencode";
     public static final String HEADER = "isx-sessions opencode 1";
@@ -58,86 +46,10 @@ public final class OpencodeSessions implements AgentSessions.GuestReader {
             + message("assistant", "DESC", " AND IFNULL(json_extract(m.data, '$.summary'), 0) != 1", AgentSessions.MAX_CLOSING + 1)
             + " FROM s) ORDER BY t DESC, i DESC, k; COMMIT;";
 
-    static final String SCRIPT = """
-            echo '%s'
-            o=${XDG_DATA_HOME:-$HOME/.local/share}/opencode
-            if [ -f "$o/opencode.db" ]; then
-              if command -v sqlite3 >/dev/null 2>&1 && r=$(sqlite3 -readonly -batch -noheader -list -cmd '.timeout 2000' "$o/opencode.db" 2>/dev/null <<'ISX_SQL'
-            %s
-            ISX_SQL
-              ); then
-                printf '%%s\\n' "$r"
-              else
+    OpencodeSessions() {
+        super(AGENT, HEADER, "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db", QUERY, """
                 echo 'total 0'
-                echo unread
-              fi
-            elif [ -n "$(ls -A "$o/storage" 2>/dev/null)" ]; then
-              echo 'total 0'
-              echo unread
-            else
-              echo 'total 0'
-            fi
-            echo end
-            """.formatted(HEADER, QUERY);
-
-    @Override
-    public String agent() {
-        return AGENT;
-    }
-
-    @Override
-    public String header() {
-        return HEADER;
-    }
-
-    @Override
-    public String script() {
-        return SCRIPT;
-    }
-
-    private static final Pattern SESSION = Pattern.compile("session (\\d{1,12}) ([0-9A-F]{2,1600}) ([0-9A-F]{0,8000})");
-    private static final Pattern LINE = Pattern.compile("(ask|close) ([0-9A-F]{0,200000})");
-
-    @Override
-    public AgentSessions parse(List<String> section) {
-        if (section.size() < 3 || !section.getFirst().equals(HEADER) || !section.getLast().equals("end")) {
-            return AgentSessions.unknown("its answer was cut short");
-        }
-        var total = JsonlSessions.TOTAL.matcher(section.get(1));
-        if (!total.matches()) return AgentSessions.unknown("its answer was not the script's");
-        var body = section.subList(2, section.size() - 1);
-        if (body.equals(List.of("unread"))) {
-            return new AgentSessions(AgentSessions.State.READ, 0, List.of(), List.of(AGENT), null);
-        }
-        var sessions = new ArrayList<Session>();
-        // Each session is exactly three lines: the session, its ask, its closing message
-        if (body.size() % 3 != 0) return AgentSessions.unknown("its answer was not the script's");
-        for (int i = 0; i < body.size(); i += 3) {
-            var s = SESSION.matcher(body.get(i));
-            var ask = LINE.matcher(body.get(i + 1));
-            var close = LINE.matcher(body.get(i + 2));
-            if (!s.matches() || !ask.matches() || !ask.group(1).equals("ask") || !close.matches() || !close.group(1).equals("close")
-                    || odd(s.group(2), s.group(3), ask.group(2), close.group(2))) {
-                return AgentSessions.unknown("its answer was not the script's");
-            }
-            var closing = AgentSessions.text(decode(close.group(2)), AgentSessions.MAX_CLOSING);
-            sessions.add(new Session(AGENT, decode(s.group(2)), Instant.ofEpochSecond(Long.parseLong(s.group(1))),
-                    JsonlSessions.bounded(decode(s.group(3))), AgentSessions.text(decode(ask.group(2)), AgentSessions.MAX_ASK),
-                    closing, true));
-        }
-        int count = Integer.parseInt(total.group(1));
-        if (sessions.size() > Math.min(count, JsonlSessions.MAX_SESSIONS)) return AgentSessions.unknown("its answer was not the script's");
-        return new AgentSessions(AgentSessions.State.READ, count, List.copyOf(sessions), List.of(), null);
-    }
-
-    /** Hex that is not whole bytes is not what the query writes. */
-    private static boolean odd(String... hex) {
-        for (var h : hex) if (h.length() % 2 != 0) return true;
-        return false;
-    }
-
-    private static String decode(String hex) {
-        if (hex.isEmpty()) return null;
-        return new String(HexFormat.of().parseHex(hex), StandardCharsets.UTF_8);
+                [ -z "$(ls -A "${db%/*}/storage" 2>/dev/null)" ] || echo unread
+                """);
     }
 }

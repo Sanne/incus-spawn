@@ -33,7 +33,7 @@ public final class AntigravitySessions extends JsonlSessions {
 
     AntigravitySessions() {
         super(new Layout(AGENT, HEADER, "$HOME/.gemini/antigravity-cli/brain", 4, "transcript.jsonl", null,
-                List.of("\"type\":\"USER_INPUT\""), List.of(), List.of("\"type\":\"PLANNER_RESPONSE\"", "\"content\":\""), false,
+                List.of("\"type\":\"USER_INPUT\""), List.of(), List.of("\"type\":\"PLANNER_RESPONSE\"", "\"content\":\""), List.of(), false,
                 // brain/ also holds a conversation's artifacts and swarm files: they are no session
                 false,
                 // Its steps/ directories hold a file per step: only the transcript's own path is looked at

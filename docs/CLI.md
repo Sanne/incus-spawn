@@ -503,7 +503,7 @@ A clone isx copied from a checkout on the host has no remote, and the commits it
 Only commits made in the guest since then count as unpushed.
 
 The DONE column says what the coding agent reported it did, in its own closing message.
-The same script reads the newest sessions of Claude Code, Codex, Pi and opencode in each running instance.
+The same script reads the newest sessions of every coding agent isx installs in each running instance.
 
 With several sessions, one model call merges their closing messages into one line.
 DONE shows that line with how many sessions it read and how old it is.
@@ -518,10 +518,8 @@ DONE then shows the newest message, marked as `newest of` the count.
 DONE shows `untouched` only when nothing says the instance was used.
 That means no agent session, no work in any clone, and no activity in the event log.
 When one agent's sessions cannot be read, DONE names that agent as not read, and the instance is never `untouched`.
-opencode's sessions are read with `sqlite3`, which its tool installs.
 
-DONE does not show the closing messages of Gemini CLI, GitHub Copilot CLI or Bob yet.
-When their sessions are in an instance, DONE names those agents as not read, and the instance is never `untouched`.
+The sessions of opencode and Bob are read with `sqlite3`, which their tools install.
 
 The session text is scrubbed of anything shaped like a credential and cut to a bound.
 
