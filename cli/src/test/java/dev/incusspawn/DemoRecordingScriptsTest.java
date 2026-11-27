@@ -278,7 +278,7 @@ class DemoRecordingScriptsTest {
         var isx = run.log().stream().filter(l -> l.startsWith("isx build") || l.startsWith("isx destroy")).toList();
         assertEquals(List.of("isx build tpl-demo-recorder --yes", "isx destroy demo-recorder --skip-confirmation"), isx);
         assertTrue(run.log().contains("incus pull"), "what a failed run did record is still brought back");
-        assertTrue(run.log().stream().anyMatch(l -> l.contains("ISX_RECORD_VERSION=0.5.0")), "0.5.0 by default");
+        assertTrue(run.log().stream().anyMatch(l -> l.contains("ISX_RECORD_VERSION=0.6.0")), "0.6.0 by default");
     }
 
     @Test

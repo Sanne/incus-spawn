@@ -16,7 +16,7 @@
 #   cast    hero, branching, realmachine, creds or tui, as for record-all.sh; all five when none
 #   --keep  leave the VM running afterwards, to look inside (isx destroy it when done)
 # Environment:
-#   ISX_RECORD_VERSION  the isx release to record with (default 0.5.0)
+#   ISX_RECORD_VERSION  the isx release to record with (default 0.6.0)
 #   ISX_RECORD_BINARIES  a directory holding an isx and an isx-proxy to record with instead of a
 #                        release, such as a native build of this checkout (SCRIPT.md)
 #   ISX_RECORDER        the VM's name (default demo-recorder)
@@ -27,7 +27,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-VERSION=${ISX_RECORD_VERSION:-0.5.0}
+VERSION=${ISX_RECORD_VERSION:-0.6.0}
 BINARIES=${ISX_RECORD_BINARIES:-}
 VM=${ISX_RECORDER:-demo-recorder}
 CASTS="hero branching realmachine creds tui"

@@ -123,7 +123,7 @@ site/demo/record-in-vm.sh                  # all five
 site/demo/record-in-vm.sh --keep tui       # just this one, and keep the VM to look inside
 ```
 
-It builds `tpl-demo-recorder` (`.incus-spawn/images/demo-recorder.yaml`, a Fedora VM with Incus, python3 and git) when it is missing or stale, and branches a VM from it. It copies this directory, `scripts/local-incus.sh` and `common/src/main/resources/git-remote-isx` into the VM. There, it installs the isx release `ISX_RECORD_VERSION` names (default 0.5.0) from COPR and writes a fresh `config.yaml` whose `claude` and `github` accounts are `inherit`, with `host-paths: [~/sources]` and `features: [shell-status-bar]`. It then brings Incus up with `scripts/local-incus.sh`, starts the proxy, builds `tpl-demo` from `tpl-demo.yaml`, seeds `workbench` (appendix C), clones isx-demo into `~/sources` and runs `record-all.sh`. The casts it recorded come back into this directory, and the VM is destroyed, whether or not every take worked.
+It builds `tpl-demo-recorder` (`.incus-spawn/images/demo-recorder.yaml`, a Fedora VM with Incus, python3 and git) when it is missing or stale, and branches a VM from it. It copies this directory, `scripts/local-incus.sh` and `common/src/main/resources/git-remote-isx` into the VM. There, it installs the isx release `ISX_RECORD_VERSION` names (default 0.6.0) from COPR and writes a fresh `config.yaml` whose `claude` and `github` accounts are `inherit`, with `host-paths: [~/sources]` and `features: [shell-status-bar]`. It then brings Incus up with `scripts/local-incus.sh`, starts the proxy, builds `tpl-demo` from `tpl-demo.yaml`, seeds `workbench` (appendix C), clones isx-demo into `~/sources` and runs `record-all.sh`. The casts it recorded come back into this directory, and the VM is destroyed, whether or not every take worked.
 
 To record the isx a checkout builds rather than a release, which is what a refresh after the interface changed wants, build it native and name a directory holding its two binaries:
 
@@ -136,9 +136,9 @@ ISX_RECORD_BINARIES=/tmp/isx-bin site/demo/record-in-vm.sh
 ```
 
 The VM installs them in `/usr/local/bin` instead of the COPR release, with the checkout's `git-remote-isx` beside them, as the release has.
-An agent already working in a disposable isx VM can skip the nested VM: as a fresh user whose home holds no isx configuration, with passwordless sudo and read access to `/run/isx` (its group), it copies those three into `~/incus-spawn`, keeping their paths, and runs `ISX_RECORD_BINARIES=<dir> ~/incus-spawn/site/demo/record-in-vm.sh --inside`.
+An agent already working in a disposable isx VM can skip the nested VM: as a fresh user whose home holds no isx configuration, with passwordless sudo and read access to `/run/isx` (its group), it copies those three into `~/incus-spawn`, keeping their paths, and runs `~/incus-spawn/site/demo/record-in-vm.sh --inside`, with `ISX_RECORD_BINARIES=<dir>` for a build rather than the release.
 The casts then name that user's home in the git remote lines.
-The 2026-11-26 refresh was recorded this way, as a user `dev`.
+The 2026-11-27 refresh was recorded this way, as a user `dev`, with the 0.6.0 release.
 
 No credential enters the VM: its instances borrow the VM's own grants through your proxy, so your `claude` and `github` accounts must work on the host. Under `inherit`, Claude's banner reads "API Usage Billing" whatever your own account is. A full run takes 15 to 25 minutes, most of it building tpl-demo, and needs a real Claude for the hero cast.
 
