@@ -1,6 +1,7 @@
 package dev.incusspawn.vm;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.util.Eventually;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -86,20 +87,30 @@ class VmStopTest {
      * until its own exec, so the stand-in's exec can fail for that short while (#2684).
      */
     static Process startCopy(ProcessBuilder builder) throws IOException {
-        var deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
-        while (true) {
-            try {
-                return builder.start();
-            } catch (IOException e) {
-                if (!textFileBusy(e) || System.nanoTime() - deadline > 0) throw e;
+        var started = new AtomicReference<Process>();
+        var busy = new AtomicReference<IOException>();
+        boolean held;
+        try {
+            held = Eventually.holdsWithin(Duration.ofSeconds(5), () -> {
                 try {
-                    Thread.sleep(10);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw e;
+                    started.set(builder.start());
+                    return true;
+                } catch (IOException e) {
+                    if (!textFileBusy(e)) throw e;
+                    busy.set(e);
+                    return false;
                 }
-            }
+            });
+        } catch (IOException | RuntimeException e) {
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while the copy was text file busy", busy.get());
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
         }
+        if (!held) throw busy.get();
+        return started.get();
     }
 
     private static boolean textFileBusy(IOException e) {
