@@ -91,16 +91,28 @@ public final class CachedRepositoryRules {
     /** Every warning the proxy's second pass gives for {@code repositories} and {@code mirrors}: the repositories', then the mirrors'. */
     public static void check(List<MavenRepositories.Entry> repositories, List<MavenMirrors.Entry> mirrors,
                              Collection<ResolvedToolProxy> toolProxies, Consumer<String> warn) {
+        usedMirrors(repositories, mirrors, toolProxies, warn);
+    }
+
+    /**
+     * The {@code mirrors} the proxy attaches, in order, each one it ignores named through {@code warn}
+     * as {@link #check} does: what {@code isx doctor} asks (#2681).
+     */
+    public static List<MavenMirrors.Entry> usedMirrors(List<MavenRepositories.Entry> repositories, List<MavenMirrors.Entry> mirrors,
+                                                       Collection<ResolvedToolProxy> toolProxies, Consumer<String> warn) {
         var cached = new ArrayList<>(BUILT_IN);
         for (var entry : repositories) {
             var refusal = repositoryRefusal(entry, toolProxies);
             if (refusal != null) warn.accept(refusal);
             else cached.add(cached(entry));
         }
+        var used = new ArrayList<MavenMirrors.Entry>();
         for (var mirror : mirrors) {
             var refusal = mirrorRefusal(mirror, cached);
             if (refusal != null) warn.accept(refusal);
+            else used.add(mirror);
         }
+        return List.copyOf(used);
     }
 
     /** Whether a tool proxy entry for {@code entryDomain} (exact, or {@code *.suffix}) covers {@code domain}. */

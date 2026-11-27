@@ -891,6 +891,18 @@ Neither applies to a host the proxy only asks, and a repository manager on a hom
 Still refused: plain `http`, since the build that misses runs the mirror's bytes before the repository confirms them, so the transport must be authenticated; an IP address; a name under `.internal`; and the repository's own host on another port, which is still that host.
 The proxy connects to the mirror's port and sends it in `Host` when it is not 443 (`CachedRepository.MirrorSource.authority`).
 Two mirrors on one host and different ports rest apart in `mirrorBackoffs` and are booked apart in `Upstream.throttles`, both keyed by that authority, since each is its own server.
+**`isx doctor` shows a mirror that does not work** (#2681).
+Every mirror failure falls back to the repository, so the builds pass and a mirror that serves nothing is otherwise visible only in the proxy's trace log.
+For each entry the proxy attaches (`CachedRepositoryRules.usedMirrors`, the same pass `isx validate` runs), doctor asks the mirror for one small, fixed artifact as the proxy would: its `.sha1`, redirects followed over https, then the artifact, unredirected, checked against it (`MavenMirrorProbe`).
+It warns with what failed: the name, the connection, TLS with its reason, a status, no usable `.sha1`, or bytes that do not match it.
+Doctor runs the check itself, not the proxy: both trust the host's store through `SystemTrust` and resolve through the system resolver, so the answer is the proxy's, and it comes while the proxy is down.
+What that gives up: the proxy's DNS cache and connection pool are not the ones asked, and a test's upstream override does not apply.
+The whole check of one mirror, every redirect and both bodies included, has one 5 s deadline, below the proxy's own share for a mirror, and the mirrors are asked at once, so mirrors that hang cost doctor one wait.
+`HttpRequest.timeout` stops at the headers, so a mirror that sent them and then stalled would hold a blocking body read for good: the exchange is asynchronous, its body gathered up to a size limit and the exchange cancelled at the deadline.
+It runs before the Incus gate, since it needs neither Incus nor the proxy.
+A redirect it does not follow is reported with why, and every URL the mirror chose is shown on one line.
+Central's two names share `junit-4.13.2.pom` and the Plugin Portal has one of its own; isx cannot know an artifact of a repository `maven-repositories:` declares, so its mirror gets a note that it was not checked.
+`isx validate` keeps to what it can tell without the network.
 Uncached paths (`maven-metadata.xml`, SNAPSHOTs, a sidecar with no stored copy) still go to the repository alone, which leaves a build that resolves a version range or a plugin prefix exposed to its limit.
 **A request right after a download waits for its commit** (#2491).
 The client is answered when the last byte arrives, and the copy is committed after that.
