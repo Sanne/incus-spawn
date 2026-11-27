@@ -278,6 +278,45 @@ class UninstallScriptTest {
     }
 
     @Test
+    void purgeNamesEachKeptCheckoutBeforeItAsks() throws Exception {
+        // The plan must say which checkouts stay before the question, not only after the purge (#2685)
+        var config = home.resolve(".config/incus-spawn");
+        var templates = Files.createDirectories(config.resolve("incus-spawn-templates"));
+        Files.createDirectories(templates.resolve(".git"));
+        var nested = Files.createDirectories(config.resolve("mine/tools"));
+        Files.writeString(nested.resolve(".git"), "gitdir: /elsewhere\n");
+        Files.writeString(config.resolve("config.yaml"), "x: 1\n");
+
+        var result = run("--purge");
+
+        assertNotEquals(0, result.exit(), "no answer must not proceed:\n" + result.output());
+        assertTrue(Files.exists(config.resolve("config.yaml")), result.output());
+        assertTrue(result.output().contains("Kept:                  " + templates + "\n"), result.output());
+        assertTrue(result.output().contains("Kept:                  " + nested + "\n"), result.output());
+        assertFalse(result.output().contains("Kept:                  " + config + "\n"), result.output());
+    }
+
+    @Test
+    void purgeDoesNotPromiseACheckoutInTheVmClientConfig() throws Exception {
+        // On macOS the VM client config goes whole, before the purge keeps any checkout
+        var inVm = Files.createDirectories(home.resolve(".config/incus-spawn/vm/notes"));
+        Files.createDirectories(inVm.resolve(".git"));
+
+        var result = run("--purge");
+
+        assertFalse(result.output().contains("Kept:                  " + inVm), result.output());
+    }
+
+    @Test
+    void purgeWithNoCheckoutNamesNoneKept() throws Exception {
+        Files.writeString(home.resolve(".config/incus-spawn/config.yaml"), "x: 1\n");
+
+        var result = run("--purge");
+
+        assertFalse(result.output().contains("Git checkout"), result.output());
+    }
+
+    @Test
     void purgeRemovesAConfigDirectoryWithNoCheckoutWhole() throws Exception {
         var config = home.resolve(".config/incus-spawn");
         Files.writeString(config.resolve("config.yaml"), "x: 1\n");

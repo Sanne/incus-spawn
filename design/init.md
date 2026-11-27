@@ -294,3 +294,4 @@ Moving it would not help an install that already has the checkout there, and one
 A reset followed by `isx init` finds the kept checkout at that path and adds it to the search paths again.
 
 `uninstall.sh --purge` keeps the Git checkouts in the config directory and does not write an archive: a script cannot read the search paths, and `--purge` is asked for by name.
+Its plan names each checkout it keeps before it asks (#2685).
