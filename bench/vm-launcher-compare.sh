@@ -13,8 +13,15 @@ set -uo pipefail
 #
 #   start_ms            isx vm start until isx list answers
 #   stop_ms             isx vm stop, of the VM the round started
+#   appliance           the appliance version the VM booted (its agent's answer), and
+#   appliance_replaced  1 when this start replaced the VM's root disk with another appliance's:
+#                       the summary says so when the two builds ran different appliances, since
+#                       idle memory then compares guests as much as launchers (#2579)
 #   idle_*              after IDLE_SETTLE seconds idle, over IDLE_WINDOW seconds: the launcher's
-#                       and the framework's machine process's resident memory and CPU
+#                       and the framework's machine process's resident memory and CPU, and the
+#                       guest's own memory in use (idle_guest_mem_used_kb, Incus's resources);
+#                       the machine process's footprint and vmmap summaries go to
+#                       <out>/memory-<side>-<round>/, the breakdown of its resident memory
 #   machine_fds         descriptors the machine process has open, idle (lsof's numbered rows only)
 #   branch_prompt_ms    bench/trace-branch.sh --isx: a branch to its prompt (TRACES times)
 #   exec_ms             incus exec <instance> -- true, through the VM's socket (EXECS times)
@@ -30,6 +37,11 @@ set -uo pipefail
 #   share_busy_*        the same with an instance holding SHARE_FILES (40) files of the home open
 #                       through the share, and the room full: the machine process's descriptors
 #   relay_*_refused_*   isx-vm alone: what each relay refused, from its control socket, per phase
+#
+# Both builds boot the appliance of their own version, so a release against a build of another
+# version replaces the VM's root disk at every switch. To compare launchers on one appliance, give
+# --old and --new builds that resolve the same appliance version: two development builds (each
+# resolves the latest release), or two builds of one version.
 #
 # --sleep, once per build after the rounds: a minute of sleep with 20 connections held, then how
 # soon the API answers, what the host still holds and the guest's clock (needs sudo -n pmset).
@@ -62,7 +74,7 @@ done
 [ -n "$OLD" ] && [ -n "$NEW" ] || { echo "usage: $0 --old=<isx> --new=<isx> [--rounds=N] [--sleep] [--out=<dir>]" >&2; exit 2; }
 [[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]] || { echo "--rounds takes a number" >&2; exit 2; }
 [ "$(uname -s)" = Darwin ] || { echo "this measures the Mac's VM, so it runs on macOS" >&2; exit 2; }
-for tool in incus curl perl python3 lsof; do
+for tool in incus curl perl python3 lsof footprint vmmap; do
     command -v "$tool" > /dev/null || { echo "needs $tool" >&2; exit 2; }
 done
 
@@ -182,6 +194,12 @@ measure() {
     done
     note "$side" "$round" start_ms $(( $(now_ms) - t0 ))
     [ "$(launcher_name)" = "$want" ] || { say "FAIL: the VM runs under '$(launcher_name)', not $want"; return 1; }
+    note "$side" "$round" appliance "$(perl "$ROOT/appliance/agent-call.pl" "$STATE/vm.agent.sock" version 2 2> /dev/null | tr -d '\r\n ')"
+    if grep -q 'Replacing appliance root disk' "$OUT/start-$side-$round.log"; then
+        note "$side" "$round" appliance_replaced 1
+    else
+        note "$side" "$round" appliance_replaced 0
+    fi
 
     # Idle: memory and CPU of both processes, descriptors of the machine's.
     sleep "$IDLE_SETTLE"
@@ -195,6 +213,16 @@ measure() {
     note "$side" "$round" idle_launcher_cpu_pct "$(python3 -c "print(round(($lc1 - $lc0) / $IDLE_WINDOW, 2))")"
     note "$side" "$round" idle_machine_cpu_pct "$(python3 -c "print(round(($mc1 - $mc0) / $IDLE_WINDOW, 2))")"
     note "$side" "$round" machine_fds "$(open_descriptors "$mp")"
+    # What the machine process's resident memory is made of, read now, while it is still idle.
+    local mem="$OUT/memory-$side-$round" used
+    mkdir -p "$mem"
+    # Bounded: vmmap suspends the process while it reads it, and neither may stall the round.
+    bounded 60 footprint -p "$mp" > "$mem/footprint.txt" 2>&1
+    bounded 60 vmmap -summary "$mp" > "$mem/vmmap-summary.txt" 2>&1
+    curl -s --max-time 10 --unix-socket "$STATE/vm.incus.sock" http://localhost/1.0/resources > "$mem/guest-resources.json" 2> /dev/null
+    used="$(python3 -c 'import json, sys
+print(json.load(open(sys.argv[1]))["metadata"]["memory"]["used"] // 1024)' "$mem/guest-resources.json" 2> /dev/null)"
+    [[ "$used" =~ ^[0-9]+$ ]] && note "$side" "$round" idle_guest_mem_used_kb "$used"
 
     # Branch to the prompt.
     local line
@@ -352,14 +380,26 @@ echo "old: $("$OLD" --version 2> /dev/null | head -1), new: $("$NEW" --version 2
 python3 - "$OUT/values-old" "$OUT/values-new" <<'EOF'
 import statistics, sys
 def load(path):
-    out = {}
+    out, appliances, replaced = {}, set(), 0
     for line in open(path):
         _, _, kv = line.strip().partition(" ")
         k, _, v = kv.partition("=")
+        if k == "appliance":
+            appliances.add("unknown" if not v or v.startswith("error") else v)
+            continue
+        if k == "appliance_replaced":
+            replaced += v == "1"
+            continue
         try: out.setdefault(k, []).append(float(v))
         except ValueError: pass
-    return out
-old, new = load(sys.argv[1]), load(sys.argv[2])
+    return out, appliances, replaced
+(old, old_app, old_rep), (new, new_app, new_rep) = load(sys.argv[1]), load(sys.argv[2])
+print(f"appliance: old {', '.join(sorted(old_app)) or '-'}, new {', '.join(sorted(new_app)) or '-'}")
+print(f"starts that replaced the root disk: old {old_rep}, new {new_rep}")
+# A round whose agent did not answer says nothing about which appliance ran.
+old_known, new_known = old_app - {"unknown"}, new_app - {"unknown"}
+if old_known != new_known or len(old_known) > 1:
+    print("The two builds did not run one appliance: the idle and guest rows compare guests as much as launchers.")
 # Higher is better for these; lower for everything else.
 higher = ("_mbs", "_accepted", "_still_open")
 print("| metric | old (vfkit) median [min-max] n | new (isx-vm) median [min-max] n | new vs old | |")

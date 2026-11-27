@@ -563,6 +563,9 @@ With `--sleep` it also puts the Mac to sleep for a minute under each, which need
 It prints each metric's median, range and count, and flags the new build where its median is worse by more than a tenth.
 Every exec in its probe instance is bounded (`PROBE_TIMEOUT`, 150 s, above the download's own limit), since one stalled vfkit exec once held a side's later samples for 16 minutes; a cut exec is counted as `probe_timeouts` and leaves its sample out.
 The bound sends `SIGTERM`, then `SIGKILL`: a bare alarm does not end `incus`, whose Go runtime takes `SIGALRM`, and a stalled exec ran 1666 s under one on the Mac.
+Each build boots the appliance of its own version, so a release against a build of another version replaces the VM's root disk at every switch, and idle memory then compares guests as much as launchers (#2579).
+The script records the appliance each start booted and whether it replaced the disk, and its summary says when the two sides did not run one appliance; two development builds resolve the same one.
+At idle it also saves the machine process's `footprint` and `vmmap -summary` and the guest's own memory in use, so a difference in resident memory can be taken apart.
 The download is the first 100 MiB of a kernel tarball from kernel.org's CDN, since Cloudflare's speed test answered 403 from the VM under both launchers.
 A download that is not one (a refusal or a challenge page) counts as `net_failed` and never as 0 MB/s.
 `measure-tunnel.sh` takes no latency at a count held at the relay's room (`ROOM`, 192), where every new connection waits for a held one to end.
