@@ -58,9 +58,27 @@ class TuiCharacterisationTest {
                 .shutdownHook(false).noTick().build());
     }
 
+    /**
+     * The threads the TUI started through the executors {@link #tui} gives it: the Work tab's reads
+     * and merges and the background tasks. They write under the home IsolatedHome deletes after
+     * this class's own teardown, so {@link #close()} waits for them first (#2677).
+     */
+    private final List<Thread> started = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private java.util.concurrent.Executor threads(String name) {
+        return task -> started.add(Thread.ofVirtual().name(name).start(task));
+    }
+
     @AfterEach
-    void close() {
-        runner.close();
+    void close() throws InterruptedException {
+        try {
+            runner.close();
+        } finally {
+            // By index: a thread that ends may start another, as a merge that ends asks for the next
+            for (int i = 0; i < started.size(); i++) {
+                var thread = started.get(i);
+                assertTrue(thread.join(java.time.Duration.ofSeconds(30)), "a thread the TUI started is still running: " + thread);
+            }
+        }
     }
 
     private static final String VERSION = "1.2.3";
@@ -147,8 +165,10 @@ class TuiCharacterisationTest {
                 return VERSION;
             }
         };
+        tui.overviewExecutor = threads("isx-overview");
+        tui.overviewMergeExecutor = threads("isx-merge");
         tui.useDefinitions(defs, new ToolDefLoader(List.of()), List.of());
-        tui.startSession(daemon.client(), new BackgroundTaskManager(), new FlockInstanceLockManager(),
+        tui.startSession(daemon.client(), new BackgroundTaskManager(threads("isx-task")), new FlockInstanceLockManager(),
                 InstanceListing.collectEntries(daemon.client().listJson()));
         return tui;
     }
