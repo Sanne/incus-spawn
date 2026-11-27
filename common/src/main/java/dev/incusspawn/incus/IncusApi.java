@@ -9,6 +9,7 @@ import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalStreams;
 import dev.incusspawn.vm.VmDisk;
 import dev.incusspawn.vm.VmManager;
@@ -1238,6 +1239,8 @@ class IncusApi {
     private ExecOp postExec(String instance, List<String> command,
                             Integer uid, Integer gid, String cwd, Map<String, String> env,
                             boolean interactive, int width, int height) {
+        // A new exec: a post or socket that fails must not leave the last one's reason behind
+        LAST_EXEC_FAILURE.remove();
         long postedAt = System.nanoTime();
         long permitWaitAtPost = UnixSocketTransport.permitWaitNanos();
         var postResp = post("/1.0/instances/" + instance + "/exec",
@@ -1585,6 +1588,7 @@ class IncusApi {
         long giveUp = limit + KILL_GRACE_SECONDS * 1_000_000_000L;
         boolean killed = false;
         boolean finished = false;
+        LAST_EXEC_FAILURE.remove();
         try {
             while (System.nanoTime() < deadline) {
                 long pollSeconds = WAIT_TIMEOUT_SECONDS;
@@ -1610,7 +1614,7 @@ class IncusApi {
                         if (ended == null) continue; // the limit: killed on the next turn
                         if (ended != OperationWatcher.LOST) {
                             finished = true;
-                            return exitCode(ended.status(), ended.metadata());
+                            return exitCode(exec, ended.status(), ended.metadata(), ended.err());
                         }
                         end = null; // the subscription is gone: /wait from here on
                     }
@@ -1623,8 +1627,14 @@ class IncusApi {
                 if (!waitResp.isSuccess()) {
                     // An instance stopped or deleted under its command takes the operation with it;
                     // that is no news to the user, and there is no exit code to be had either way.
-                    if (waitResp.statusCode() == 404 && instanceStoppedOrGone(instance, limit != 0)) return -1;
-                    BuildOutput.warn(lostOperation(exec, waitResp.statusCode()));
+                    if (waitResp.statusCode() == 404 && instanceStoppedOrGone(instance, limit != 0)) {
+                        LAST_EXEC_FAILURE.set("The exit code of a command in " + instance
+                                + " is unknown: the instance stopped or went under it.");
+                        return -1;
+                    }
+                    var lost = lostOperation(exec, waitResp.statusCode());
+                    LAST_EXEC_FAILURE.set(lost);
+                    BuildOutput.warn(lost);
                     return -1;
                 }
                 var meta = waitResp.body().getField("metadata");
@@ -1634,10 +1644,12 @@ class IncusApi {
                 }
                 finished = true;
                 if (killed) throw new IncusException("exec " + opPath + " was killed: it ran past its time limit");
-                return exitCode(status, meta.getField("metadata"));
+                return exitCode(exec, status, meta.getField("metadata"), meta.pathText("err", ""));
             }
-            BuildOutput.warn("exec operation timed out after "
-                    + MAX_EXEC_WAIT_SECONDS + "s on " + opPath + " — exit code unknown");
+            var timedOut = "exec operation timed out after "
+                    + MAX_EXEC_WAIT_SECONDS + "s on " + opPath + " — exit code unknown";
+            LAST_EXEC_FAILURE.set(timedOut);
+            BuildOutput.warn(timedOut);
             return -1;
         } finally {
             // Bounded, whatever ends the wait before the command was reported finished -- a /wait
@@ -1647,11 +1659,37 @@ class IncusApi {
         }
     }
 
-    /** A finished exec's exit code from its operation's status and metadata. */
-    private static int exitCode(String status, JqValue metadata) {
-        // Failure or Cancelled: the command may never have run, so there is no exit code to report.
-        if (!"Success".equals(status)) return -1;
+    /**
+     * A finished exec's exit code from its operation's status and metadata. Failure or Cancelled:
+     * the command may never have run, so there is no exit code, and Incus's reason is kept for
+     * {@link #lastExecFailure}. It is not warned of: a binary that is not there ends the same way
+     * ({@code Command not found}), and callers that probe or poll take -1 as their answer.
+     */
+    private static int exitCode(ExecOp exec, String status, JqValue metadata, String err) {
+        if (!"Success".equals(status)) {
+            LAST_EXEC_FAILURE.set(failedOperation(exec.instance, status, err));
+            return -1;
+        }
         return metadata == null ? 0 : metadata.getField("return").asInt(0);
+    }
+
+    // Why this thread's last exec has no exit code; never printed, only read by a caller that must say why (#2711).
+    private static final ThreadLocal<String> LAST_EXEC_FAILURE = new ThreadLocal<>();
+
+    /**
+     * Why the last exec this thread waited for ended without an exit code (in Incus's words when it
+     * ended the operation itself), or null when it had one or ended by throwing: for a caller, a test
+     * among them, that has to say why it got -1.
+     */
+    static String lastExecFailure() {
+        return LAST_EXEC_FAILURE.get();
+    }
+
+    /** Why an exec that Incus ended without success has no exit code, in Incus's own words. */
+    static String failedOperation(String instance, String status, String err) {
+        var reason = err == null || err.isBlank() ? "Incus gave no reason" : "Incus said: " + OutputFormat.oneLine(err.strip());
+        return "The exit code of a command in " + instance + " is unknown: Incus ended its operation as "
+                + OutputFormat.oneLine(status) + ". " + reason + ".";
     }
 
     /**

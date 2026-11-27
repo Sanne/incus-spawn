@@ -96,7 +96,35 @@ class IncusApiLossyTunnelTest {
     void anOperationThatFailedHasNoExitCodeToReport() {
         // The command may never have run: a probe must not read that as a clean, empty answer.
         server.finalStatus = "Failure";
-        assertEquals(-1, exec(api()).exitCode());
+        var said = RecordingOutput.during(() -> assertEquals(-1, exec(api()).exitCode()));
+        assertEquals(List.of(), said.warnings(), "a probe's -1 is its answer, never news");
+        assertEquals("The exit code of a command in c1 is unknown: Incus ended its operation as Failure."
+                + " Incus said: forkexec failed.", IncusApi.lastExecFailure(),
+                "Incus's reason is kept for the caller that has to say why (#2711)");
+        assertEquals(0, server.requestCount("GET /1.0/instances/c1"), "it costs no read of the instance");
+    }
+
+    @Test
+    @Timeout(10)
+    void anExecWithAnExitCodeKeepsNoFailure() {
+        server.finalStatus = "Failure";
+        exec(api());
+        server.finalStatus = "Success";
+        assertEquals(0, exec(api()).exitCode());
+        assertNull(IncusApi.lastExecFailure(), "the reason belongs to the exec that had no exit code");
+    }
+
+    @Test
+    @Timeout(10)
+    void aBatchedExecThatFailedKeepsWhyFromItsEvent() throws Exception {
+        server.finalStatus = "Failure";
+        var api = api();
+        try (var batch = api.openProbeBatch()) {
+            assertEquals(-1, probe(api, new ByteArrayOutputStream()));
+        }
+        assertEquals(0, server.waits.get(), "the end came from the event");
+        assertNotNull(IncusApi.lastExecFailure());
+        assertTrue(IncusApi.lastExecFailure().contains("Incus said: forkexec failed"), IncusApi.lastExecFailure());
     }
 
     @Test

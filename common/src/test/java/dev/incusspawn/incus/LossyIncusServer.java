@@ -456,7 +456,7 @@ final class LossyIncusServer implements AutoCloseable {
     private void announceEnd() {
         var event = finalStatus.equals("Success")
                 ? "{\"type\":\"operation\",\"metadata\":{\"id\":\"op1\",\"status\":\"Success\",\"metadata\":{\"return\":" + exitCode + "}}}"
-                : "{\"type\":\"operation\",\"metadata\":{\"id\":\"op1\",\"status\":\"" + finalStatus + "\",\"metadata\":{}}}";
+                : "{\"type\":\"operation\",\"metadata\":{\"id\":\"op1\",\"status\":\"" + finalStatus + "\",\"err\":\"forkexec failed\",\"metadata\":{}}}";
         for (var peer : eventPeers) {
             try {
                 peer.send(0x1, event.getBytes(StandardCharsets.UTF_8));

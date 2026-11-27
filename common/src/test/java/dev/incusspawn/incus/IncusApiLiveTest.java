@@ -417,7 +417,7 @@ class IncusApiLiveTest {
                     List.of("sh", "-c", "echo hello-stdout; echo hello-stderr >&2; exit 7"),
                     0, 0, null, java.util.Map.of());
 
-            assertEquals(7, result.exitCode(), "exit code should be 7");
+            assertEquals(7, result.exitCode(), () -> "exit code should be 7: " + IncusApi.lastExecFailure());
             assertTrue(result.stdout().contains("hello-stdout"), "stdout: " + result.stdout());
             assertTrue(result.stderr().contains("hello-stderr"), "stderr: " + result.stderr());
             System.out.println("execCapture: exit=" + result.exitCode()
@@ -441,7 +441,7 @@ class IncusApiLiveTest {
 
             // Run id as root (uid=0)
             var rootResult = http.execCapture(name, List.of("id", "-u"), 0, 0, "/root", java.util.Map.of());
-            assertEquals(0, rootResult.exitCode());
+            assertEquals(0, rootResult.exitCode(), IncusApi::lastExecFailure);
             assertEquals("0", rootResult.stdout().strip());
 
             // Create a user (Alpine: adduser -D, Fedora: useradd)
@@ -449,15 +449,15 @@ class IncusApiLiveTest {
             if (addResult.exitCode() != 0) {
                 addResult = http.execCapture(name, List.of("useradd", "testuser"), 0, 0, null, java.util.Map.of());
             }
-            assertEquals(0, addResult.exitCode(), "user creation should succeed: " + addResult.stderr());
+            assertEquals(0, addResult.exitCode(), "user creation should succeed: " + addResult.stderr() + " " + IncusApi.lastExecFailure());
             var uidResult = http.execCapture(name, List.of("id", "-u", "testuser"), 0, 0, null, java.util.Map.of());
-            assertEquals(0, uidResult.exitCode(), "id -u testuser should succeed: " + uidResult.stderr());
+            assertEquals(0, uidResult.exitCode(), () -> "id -u testuser should succeed: " + uidResult.stderr() + " " + IncusApi.lastExecFailure());
             assertFalse(uidResult.stdout().strip().isEmpty(), "id -u should return a uid");
             var uid = Integer.parseInt(uidResult.stdout().strip());
 
             var userResult = http.execCapture(name, List.of("id", "-u"), uid, uid, "/home/testuser",
                     java.util.Map.of("HOME", "/home/testuser"));
-            assertEquals(0, userResult.exitCode());
+            assertEquals(0, userResult.exitCode(), IncusApi::lastExecFailure);
             assertEquals(String.valueOf(uid), userResult.stdout().strip(), "should run as testuser");
             System.out.println("execCapture as user uid=" + uid + " confirmed");
         } finally {
@@ -482,7 +482,7 @@ class IncusApiLiveTest {
                     List.of("sh", "-c", "echo streamed-out; echo streamed-err >&2"),
                     0, 0, null, java.util.Map.of(), stdoutBuf, stderrBuf);
 
-            assertEquals(0, exitCode);
+            assertEquals(0, exitCode, IncusApi::lastExecFailure);
             assertTrue(stdoutBuf.toString().contains("streamed-out"), "stdout: " + stdoutBuf);
             assertTrue(stderrBuf.toString().contains("streamed-err"), "stderr: " + stderrBuf);
             System.out.println("execStream: stdout=" + stdoutBuf.toString().strip());
