@@ -3112,7 +3112,7 @@ public class InitCommand extends BaseCommand {
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
         if (CertificateAuthority.exists()) {
-            BuildOutput.step("The isx proxy's certificate is ready.");
+            BuildOutput.ok("The isx proxy's certificate is ready");
         } else {
             CertificateAuthority.loadOrCreate();
             reportCertificateCreated();
