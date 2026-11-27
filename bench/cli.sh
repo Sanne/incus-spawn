@@ -253,7 +253,7 @@ if $COLLECTING; then
 # relays, isx list. Moderate: the TUI. Once: --help and templates list, so their code is in the
 # profile without weight. Left out: doctor, builds, init, accounts, completion (rare, and a
 # build's own work is native git, not isx). See docs/dev/PGO.md.
-import collections, glob, gzip, os, shutil, subprocess, sys
+import collections, glob, gzip, os, re, shutil, subprocess, sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ["SCRIPT_DIR"])
@@ -363,12 +363,16 @@ for i in range(GIT_ROUNDS):
 shutil.rmtree(seed)
 
 # Once the instance shows as running: Down, Down, F3 (details), Esc, Tab (the other panel), Down,
-# F3, Esc, F10 (quit). The name is cut to the column's width, so the screen is matched on its state.
+# F3, Esc, F10 (quit). The name is cut to the column's width, so the screen is matched on its state:
+# the running glyph before an instance's name, which starts with a letter. The header's "● 1
+# container running" puts a digit after it, so it does not match. BenchCliTuiReadyTest holds this
+# pattern to the TUI's own rendering of a running instance.
+TUI_READY = re.compile(rb"\xe2\x97\x8f\s*[A-Za-z]")
 TUI_KEYS = (b"\x1b[B", b"\x1b[B", b"\x1bOR", b"\x1b", b"\t", b"\x1b[B", b"\x1bOR", b"\x1b", b"\x1b[21~")
 print(f"  TUI: {TUI_RUNS} sessions")
 for _ in range(TUI_RUNS):
     on_pty("tui", isxbench.run_on_pty, [isx], 60,
-           lambda out: b"Running" in isxbench.ANSI.sub(b"", out), b"", TUI_KEYS)
+           lambda out: TUI_READY.search(isxbench.ANSI.sub(b"", out)), b"", TUI_KEYS)
 
 run("destroy", [isx, "destroy", instance, "--skip-confirmation"])
 
