@@ -237,7 +237,10 @@ A test that waits for something asynchronous uses `Eventually` (`common` test-ja
 It samples after 1 ms, doubling up to 10 ms, so a wait lasts barely longer than the condition takes.
 A long timeout therefore costs nothing when the condition is met, and only a hung test pays it.
 `Eventually.await(what, timeout, condition)` fails naming what was awaited, `poll` returns the first non-null value, and `holdsWithin` answers a boolean for a test that asserts afterwards.
-A fixed `Thread.sleep` stays only where the test asserts that something does not happen within a period.
+A fixed `Thread.sleep` stays only where the test asserts that something does not happen within a period, paces a producer, or spaces the retries of an action it runs again.
+`PollingLoopGateTest` (`cli`) fails on a sleep, park or spin inside a loop in any module's test sources, outside `Eventually` itself.
+A sleep in a loop that is not a wait says why with a `// not a wait:` comment on its line.
+It came after #2504's conversions, once loops written later (#2625's, which #2672 then edited) had gone in unnoticed.
 
 ## Site previews: built without secrets, deployed without PR code
 

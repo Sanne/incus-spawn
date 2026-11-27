@@ -422,7 +422,7 @@ class TrustBindingsTest {
         int n = 0;
         while (p.isAlive() && n < 600) { // churn: a new entry every 50 ms
             Files.createDirectories(opt.resolve("e" + n++));
-            Thread.sleep(50);
+            Thread.sleep(50); // not a wait: the churn the settle loop must outlast
         }
         assertFalse(p.isAlive(), "the settle loop must end although the directory keeps changing");
         assertEquals(0, p.waitFor());

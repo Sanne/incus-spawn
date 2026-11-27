@@ -134,7 +134,7 @@ class ProxyNetworkIT {
             answer = result.stdout().strip();
             stderr = result.stderr();
             if (gatewayIp.equals(answer)) break;
-            try { Thread.sleep(1000); } catch (InterruptedException e) {
+            try { Thread.sleep(1000); } catch (InterruptedException e) { // not a wait: spaces the retries of a lookup run again
                 Thread.currentThread().interrupt();
                 break;
             }

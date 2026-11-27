@@ -176,6 +176,8 @@ Install from the main checkout, never from a worktree you will delete; `--native
 
 To check a change against a real Incus on a disposable Linux host, `scripts/local-incus.sh` sets one up the way CI's `isx-integration-tests-native` job does, and the `validate-on-real-incus` skill (`.claude/skills/`) covers what to exercise and inspect.
 
+A test waits for another thread or process through `Eventually` (common test-jar), never its own loop around a sleep; `PollingLoopGateTest` fails one, unless its line says `// not a wait: <why>` (design/testing.md "Waiting for another thread or process").
+
 Git preparation tests require `git daemon` (`git-daemon` on Fedora) and serve disposable loopback remotes.
 Tests that run `git credential` or log in over HTTPS configure Git with `HermeticGit` (common test-jar), so no developer credential helper, such as macOS's osxkeychain, receives a test proof (#1505).
 
