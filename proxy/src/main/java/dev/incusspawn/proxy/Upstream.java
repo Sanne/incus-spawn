@@ -235,7 +235,7 @@ class Upstream {
      * not 443, so two servers on one host, such as two mirrors, are tallied apart (#2681).
      */
     static String tallied(io.vertx.core.net.HostAndPort asked) {
-        return asked.port() == 443 || asked.port() < 0 ? asked.host() : asked.host() + ":" + asked.port();
+        return dev.incusspawn.util.Authority.of(asked.host(), asked.port());
     }
 
     /**
