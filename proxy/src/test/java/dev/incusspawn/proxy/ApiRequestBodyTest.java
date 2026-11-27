@@ -967,20 +967,17 @@ class ApiRequestBodyTest {
     }
 
     static String waitForLog(Path dir, String marker) throws Exception {
-        var last = "";
-        for (int i = 0; i < 50; i++) {
-            if (Files.isDirectory(dir)) {
-                try (var files = Files.list(dir)) {
-                    var file = files.findFirst();
-                    if (file.isPresent()) {
-                        last = Files.readString(file.get());
-                        if (last.contains(marker)) return last;
-                    }
-                }
+        var last = new String[] {""};
+        Eventually.await("a debug log holding '" + marker + "' in " + dir, Eventually.DEFAULT_TIMEOUT, () -> {
+            if (!Files.isDirectory(dir)) return false;
+            try (var files = Files.list(dir)) {
+                var file = files.findFirst();
+                if (file.isEmpty()) return false;
+                last[0] = Files.readString(file.get());
             }
-            Thread.sleep(100);
-        }
-        return fail("No debug log holding '" + marker + "' was written to " + dir + "; last read: " + last);
+            return last[0].contains(marker);
+        }, () -> "last read: " + last[0]);
+        return last[0];
     }
 
     static NetSocket connect(MitmProxy p, String host) throws Exception {
