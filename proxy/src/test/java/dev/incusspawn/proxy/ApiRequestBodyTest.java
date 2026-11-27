@@ -742,7 +742,7 @@ class ApiRequestBodyTest {
             var writes = new java.util.ArrayList<io.vertx.core.Future<Void>>();
             for (int at = split; at < body.length(); at += slice) {
                 writes.add(socket.write(body.substring(at, Math.min(body.length(), at + slice))));
-                Thread.sleep(100);
+                Thread.sleep(100); // not a wait: trickles the body in slices
             }
             refusal.assertReadWhole(writes);
         }));
@@ -784,7 +784,7 @@ class ApiRequestBodyTest {
             var refusedAt = System.nanoTime();
             for (int i = 0; i < 100 && !refusal.closed().isDone(); i++) {
                 socket.write("x");
-                Thread.sleep(100);
+                Thread.sleep(100); // not a wait: trickles the body a byte at a time
             }
             assertTrue(refusal.closed().isDone(), "a body trickling in held its refused connection for 10 s");
             // Counted from after the refusal, so it may be short of the cap, but not by half
@@ -967,20 +967,17 @@ class ApiRequestBodyTest {
     }
 
     static String waitForLog(Path dir, String marker) throws Exception {
-        var last = "";
-        for (int i = 0; i < 50; i++) {
-            if (Files.isDirectory(dir)) {
-                try (var files = Files.list(dir)) {
-                    var file = files.findFirst();
-                    if (file.isPresent()) {
-                        last = Files.readString(file.get());
-                        if (last.contains(marker)) return last;
-                    }
-                }
+        var last = new String[] {""};
+        Eventually.await("a debug log holding '" + marker + "' in " + dir, Duration.ofSeconds(5), () -> {
+            if (!Files.isDirectory(dir)) return false;
+            try (var files = Files.list(dir)) {
+                var file = files.findFirst();
+                if (file.isEmpty()) return false;
+                last[0] = Files.readString(file.get());
+                return last[0].contains(marker);
             }
-            Thread.sleep(100);
-        }
-        return fail("No debug log holding '" + marker + "' was written to " + dir + "; last read: " + last);
+        }, () -> "last read: " + last[0]);
+        return last[0];
     }
 
     static NetSocket connect(MitmProxy p, String host) throws Exception {

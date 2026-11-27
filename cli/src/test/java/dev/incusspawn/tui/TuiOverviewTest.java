@@ -7,6 +7,7 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.EventLogReader;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.util.Eventually;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -512,7 +514,7 @@ class TuiOverviewTest {
         workTab(tui);
         var first = new Thread(reads.removeFirst());
         first.start();
-        for (int i = 0; i < 500 && !row(screen(tui), "mine").contains("↑2"); i++) Thread.sleep(10);
+        Eventually.holdsWithin(Duration.ofSeconds(5), () -> row(screen(tui), "mine").contains("↑2"));
         assertTrue(row(screen(tui), "mine").contains("↑2"), "the first read's guest answered");
         press(tui, KeyEvent.ofChar('r'));
         held.countDown();
@@ -626,11 +628,12 @@ class TuiOverviewTest {
         reading.start();
         try {
             // The title is drawn before the rows, so a frame drawn while the guest's answer lands shows one without the other (#2669)
-            String shown = screen(tui);
-            for (int i = 0; i < 500 && !(row(shown, "mine").contains("↑2") && !shown.contains("0/1 instance")); i++) {
-                Thread.sleep(10);
-                shown = screen(tui);
-            }
+            var frame = new String[1];
+            Eventually.holdsWithin(Duration.ofSeconds(5), () -> {
+                frame[0] = screen(tui);
+                return row(frame[0], "mine").contains("↑2") && !frame[0].contains("0/1 instance");
+            });
+            String shown = frame[0];
             assertTrue(row(shown, "mine").contains("↑2"), "the guest's row does not wait for the log: " + shown);
             assertTrue(shown.contains("reading the proxy's event log"), shown);
             assertFalse(shown.contains("0/1 instance"), "the title counts the guest read: " + shown);
