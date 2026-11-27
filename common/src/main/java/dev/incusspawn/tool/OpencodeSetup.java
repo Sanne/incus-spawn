@@ -66,6 +66,7 @@ public class OpencodeSetup implements ToolSetup {
         provider.setReconfigurable(true);
         provider.setDefault(DEFAULT_PROVIDER);
         params.put("provider", provider);
+        params.put(PiSetup.PROVIDERS, PiSetup.providersParameter("opencode", List.of("anthropic", "openai", "google")));
 
         var model = new ToolDef.ParameterDef();
         model.setType("string");
@@ -138,12 +139,13 @@ public class OpencodeSetup implements ToolSetup {
 
     @Override
     public Set<String> credentialNamespaces(Map<String, String> resolvedParams) {
-        return switch (credentialFor(resolvedParams)) {
-            case ANTHROPIC -> Set.of(SpawnConfig.ClaudeConfig.NAMESPACE);
-            case OPENAI -> Set.of("openai");
-            case GEMINI -> Set.of(PiSetup.GEMINI_NAMESPACE);
-            case NONE -> Set.of();
-        };
+        // Claude's first, as Pi's: it is the one credentialProblem judges
+        var credentials = credentials(resolvedParams);
+        var namespaces = new LinkedHashSet<String>();
+        if (credentials.contains(Credential.ANTHROPIC)) namespaces.add(SpawnConfig.ClaudeConfig.NAMESPACE);
+        if (credentials.contains(Credential.OPENAI)) namespaces.add("openai");
+        if (credentials.contains(Credential.GEMINI)) namespaces.add(PiSetup.GEMINI_NAMESPACE);
+        return namespaces;
     }
 
     /** Which provider, so the first run sets up that provider's account, or none (#2536). */
@@ -161,29 +163,54 @@ public class OpencodeSetup implements ToolSetup {
     @Override
     public String credentialProblem(SpawnConfig config, Map<String, String> resolvedParams,
                                     Map<String, String> selection) {
-        return switch (credentialFor(resolvedParams)) {
-            case ANTHROPIC -> ClaudeSetup.missingAccount(config, selection);
-            case OPENAI -> ApiKeyAccounts.openaiKeyProblem(config, selection);
-            case GEMINI -> ApiKeyAccounts.geminiKeyProblem(config, selection);
-            case NONE -> "";
-        };
+        var credentials = credentials(resolvedParams);
+        if (credentials.contains(Credential.ANTHROPIC)) {
+            var claude = claudeProblem(config, resolvedParams, selection);
+            if (!claude.isEmpty()) return claude;
+        }
+        // Each listed provider's account, not only the default's: a sign-in gives none of them a key
+        if (credentials.contains(Credential.OPENAI)) {
+            var openai = ApiKeyAccounts.openaiKeyProblem(config, selection);
+            if (!openai.isEmpty()) return openai;
+        }
+        return credentials.contains(Credential.GEMINI) ? ApiKeyAccounts.geminiKeyProblem(config, selection) : "";
     }
 
-    /** An {@code openai} or {@code gemini} sign-in in use is fixed by a default, not another account. */
+    /** A Claude account's problem, unless the parent instance answers for it. */
+    private String claudeProblem(SpawnConfig config, Map<String, String> resolvedParams, Map<String, String> selection) {
+        // An inherited Claude account is the parent instance's, whatever this config holds. The
+        // credential check skips a tool all of whose accounts are inherited, not one of several,
+        // so only a template with several is looked up here: the branch path reads the config once.
+        if (credentialNamespaces(resolvedParams).size() > 1 && dev.incusspawn.config.AccountResolver.inherits(config.tree(), SpawnConfig.ClaudeConfig.NAMESPACE,
+                selection.get(SpawnConfig.ClaudeConfig.NAMESPACE))) {
+            return "";
+        }
+        return ClaudeSetup.missingAccount(config, selection);
+    }
+
+    /**
+     * An {@code openai} or {@code gemini} sign-in in use is fixed by a default, not another account:
+     * the remedy of the problem {@link #credentialProblem} reports, so none while Claude's comes first.
+     */
     @Override
     public Remedy credentialRemedy(SpawnConfig config, Map<String, String> resolvedParams,
                                    Map<String, String> selection) {
-        return switch (credentialFor(resolvedParams)) {
-            case OPENAI -> ApiKeyAccounts.openaiKeyRemedy(config, selection);
-            case GEMINI -> ApiKeyAccounts.geminiKeyRemedy(config, selection);
-            default -> null;
-        };
+        var credentials = credentials(resolvedParams);
+        if (credentials.contains(Credential.ANTHROPIC) && !claudeProblem(config, resolvedParams, selection).isEmpty()) return null;
+        if (credentials.contains(Credential.OPENAI)) {
+            var openai = ApiKeyAccounts.openaiKeyRemedy(config, selection);
+            if (openai != null) return openai;
+        }
+        return credentials.contains(Credential.GEMINI) ? ApiKeyAccounts.geminiKeyRemedy(config, selection) : null;
     }
 
     @Override
     public List<String> credentialNote(Map<String, String> resolvedParams) {
-        if (credentialFor(resolvedParams) != Credential.ANTHROPIC) return List.of();
-        return List.of("opencode needs a Claude account for its provider '" + provider(resolvedParams) + "'.",
+        if (!credentials(resolvedParams).contains(Credential.ANTHROPIC)) return List.of();
+        if (!DEFAULT_PROVIDER.equals(provider(resolvedParams))) {
+            return PiSetup.listedProviderNote("opencode", "a Claude account", DEFAULT_PROVIDER);
+        }
+        return List.of("opencode needs a Claude account for its provider '" + DEFAULT_PROVIDER + "'.",
                 "To use another provider, set it in the template's tools, run 'isx build' on the template"
                         + " and branch from it:"
                         + " '- opencode: {provider: openai}' spends an OpenAI API key,"
@@ -193,8 +220,21 @@ public class OpencodeSetup implements ToolSetup {
     /** The isx-managed credential an opencode provider spends. */
     private enum Credential { ANTHROPIC, OPENAI, GEMINI, NONE }
 
-    private static Credential credentialFor(Map<String, String> resolvedParams) {
-        return switch (provider(resolvedParams)) {
+    /** The provider of each credential the template gives opencode, the default's first, each once. */
+    private static Map<Credential, String> providersByCredential(Map<String, String> resolvedParams) {
+        var byCredential = new LinkedHashMap<Credential, String>();
+        for (var provider : PiSetup.allProviders(provider(resolvedParams), resolvedParams.get(PiSetup.PROVIDERS))) {
+            byCredential.putIfAbsent(credentialFor(provider), provider);
+        }
+        return byCredential;
+    }
+
+    private static Set<Credential> credentials(Map<String, String> resolvedParams) {
+        return providersByCredential(resolvedParams).keySet();
+    }
+
+    private static Credential credentialFor(String provider) {
+        return switch (provider) {
             case "anthropic" -> Credential.ANTHROPIC;
             case "openai" -> Credential.OPENAI;
             case "google" -> Credential.GEMINI;
@@ -209,12 +249,17 @@ public class OpencodeSetup implements ToolSetup {
 
     @Override
     public List<EnvEntry> envEntries(Map<String, String> resolvedParams) {
-        return switch (credentialFor(resolvedParams)) {
-            case ANTHROPIC -> List.of(EnvEntry.set(ANTHROPIC_KEY.env(), ANTHROPIC_KEY.staticValuePrefix()));
-            case OPENAI -> List.of(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
-            case GEMINI -> List.of(EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY));
-            case NONE -> List.of();
-        };
+        // One placeholder per provider the template gives opencode, the default's first (#2674)
+        var entries = new java.util.ArrayList<EnvEntry>();
+        for (var credential : credentials(resolvedParams)) {
+            switch (credential) {
+                case ANTHROPIC -> entries.add(EnvEntry.set(ANTHROPIC_KEY.env(), ANTHROPIC_KEY.staticValuePrefix()));
+                case OPENAI -> entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
+                case GEMINI -> entries.add(EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY));
+                case NONE -> { }
+            }
+        }
+        return entries;
     }
 
     @Override
@@ -291,13 +336,17 @@ public class OpencodeSetup implements ToolSetup {
         // As of opencode 1.19.6 (installed unpinned), its google provider reads GOOGLE_GENERATIVE_AI_API_KEY
         // alone, never GEMINI_API_KEY, so the setting names the variable the start's proof replaces. A login-expanded
         // copy would not do: isx-env.sh runs before the proofs, so it would copy the static placeholder.
-        var keyEnv = switch (credentialFor(resolvedParams)) {
-            case ANTHROPIC -> ANTHROPIC_KEY.env();
-            case GEMINI -> "GEMINI_API_KEY";
-            case OPENAI, NONE -> "";
-        };
-        var providerLine = keyEnv.isEmpty() ? ""
-                : "  \"provider\": {\"" + provider + "\": {\"options\": {\"apiKey\": \"{env:" + keyEnv + "}\"}}},\n";
+        // One entry per provider the template gives opencode that needs its variable named; OpenAI's it reads itself.
+        var keys = new java.util.ArrayList<String>();
+        providersByCredential(resolvedParams).forEach((credential, name) -> {
+            var keyEnv = switch (credential) {
+                case ANTHROPIC -> ANTHROPIC_KEY.env();
+                case GEMINI -> "GEMINI_API_KEY";
+                case OPENAI, NONE -> "";
+            };
+            if (!keyEnv.isEmpty()) keys.add("\"" + name + "\": {\"options\": {\"apiKey\": \"{env:" + keyEnv + "}\"}}");
+        });
+        var providerLine = keys.isEmpty() ? "" : "  \"provider\": {" + String.join(", ", keys) + "},\n";
         return """
                 {
                   "$schema": "https://opencode.ai/config.json",

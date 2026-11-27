@@ -1163,6 +1163,34 @@ class InitFirstRunTest {
         assertEquals(List.of(copilot), asked);
     }
 
+    /**
+     * A kept template that lists Claude's provider itself asked for the Claude account, so the step
+     * does not call it isx's default or say to skip it for another provider (#2674).
+     */
+    @Test
+    void aKeptTemplatesListedProviderIsNotCalledTheDefault() throws Exception {
+        var said = new java.util.LinkedHashMap<String, Boolean>();
+        for (var tools : List.of("  - pi\n", "  - pi: {provider: openai, providers: anthropic}\n")) {
+            var init = new InitCommand() {
+                @Override Prompts prompts() { return ScriptedPrompts.lines(); }
+
+                @Override
+                Map<CredentialCheck.Missing, List<String>> agentGaps() {
+                    return Map.of(new CredentialCheck.Missing("Anthropic API key, OAuth token, or Vertex AI",
+                            "isx account add claude"), List.of("tpl-agent"));
+                }
+            };
+            init.chosenAgent = init.codingAgentTools().stream().filter(a -> a.name().equals("pi")).findFirst().orElseThrow();
+            Files.createDirectories(ExampleTemplate.file().getParent());
+            Files.writeString(ExampleTemplate.file(), "name: tpl-agent\nparent: tpl-minimal\ntools:\n" + tools);
+
+            var lines = RecordingOutput.during(init::setUpAgentCredential).lines();
+            said.put(tools.strip(), lines.stream().anyMatch(l -> l.contains("works with several providers")));
+            assertTrue(lines.stream().anyMatch(l -> l.contains("Claude")), String.join("\n", lines));
+        }
+        assertEquals(List.of(true, false), List.copyOf(said.values()), said.toString());
+    }
+
     /** Chooses the gh login, holding {@code token}, for Copilot CLI; the token is saved. */
     private static RecordingOutput choosingGhLoginFor(String token) throws Exception {
         var setup = new CredentialSetup() {

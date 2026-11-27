@@ -431,6 +431,18 @@ It gives up one thing: a template that pins `model` still has title calls on ope
 The `anthropic` key is read from `OPENCODE_ANTHROPIC_API_KEY` through the settings' `{env:...}` reference, a placeholder of the claude namespace: `ANTHROPIC_API_KEY` would switch Claude Code to API-key auth beside an OAuth account.
 opencode has no status line or footer a plugin can fill, so it shows no isx message.
 
+**Several providers for Pi and opencode (#2674).**
+Both agents change model in a session among the providers they hold a key for, and `provider` gave an instance one key, so that feature was lost.
+The `providers` parameter lists more providers, separated by spaces, and each gets its placeholder and spends its namespace as `provider` does.
+Nothing else is needed: Pi 1.x lists the models of every provider whose variable is set, and opencode those too, once its settings name `OPENCODE_ANTHROPIC_API_KEY` and `GEMINI_API_KEY` for `anthropic` and `google`.
+`provider` still decides the default provider, the model and the effort alone.
+It gives up the narrowest grant: an instance of such a template can spend every listed account, which is why the list is explicit and never "all the accounts the host has".
+A listed provider whose account is missing refuses the branch, as the default one does, rather than starting an agent that offers models which fail.
+A listed `openai` or `google` provider whose account is a ChatGPT or Google sign-in refuses it too, through the same `ApiKeyAccounts` check as the default one, since a sign-in gives neither agent a key.
+One problem is reported at a time, Claude's account first, since the credential check holds one per tool.
+The separator is a space because YAML ends a value at a comma inside the braces isx itself writes (`- pi: {provider: openai}`); a comma is accepted too, for a value on its own line or in quotes.
+Only providers isx manages are accepted (the parameter's pattern), since for any other isx would add nothing and the name would only look as if it had.
+
 **Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`).
 A YAML tool with the same name replaces any earlier definition.
 Two tool files declaring the same `name:` within one directory are a same-directory conflict, reported by `ToolDefLoader.conflicts()` and treated exactly like image conflicts (see the images section above).

@@ -85,6 +85,7 @@ public class PiSetup implements ToolSetup {
         provider.setReconfigurable(true);
         provider.setDefault(DEFAULT_PROVIDER);
         params.put("provider", provider);
+        params.put(PROVIDERS, providersParameter("Pi", MANAGED_PROVIDERS));
 
         var model = new ToolDef.ParameterDef();
         model.setType("string");
@@ -158,16 +159,57 @@ public class PiSetup implements ToolSetup {
                 SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX, SpawnConfig.ClaudeConfig.NAMESPACE), VERTEX_KEY);
     }
 
-    /** Only the one its {@code provider} spends, once the template has said which. */
+    /**
+     * Only those its {@code provider} and {@code providers} spend, once the template has said
+     * which. Claude's comes first: it is the one {@link #credentialProblem} judges, and the
+     * credential check books a tool's problem to its first namespace.
+     */
     @Override
     public java.util.Set<String> credentialNamespaces(java.util.Map<String, String> resolvedParams) {
-        return switch (credentialFor(resolvedParams)) {
-            case ANTHROPIC, VERTEX -> java.util.Set.of(SpawnConfig.ClaudeConfig.NAMESPACE);
-            case OPENAI -> java.util.Set.of("openai");
-            case GEMINI -> java.util.Set.of(GEMINI_NAMESPACE);
-            case NONE -> java.util.Set.of();
-        };
+        var credentials = credentials(resolvedParams);
+        var namespaces = new java.util.LinkedHashSet<String>();
+        if (credentials.contains(Credential.ANTHROPIC) || credentials.contains(Credential.VERTEX)) {
+            namespaces.add(SpawnConfig.ClaudeConfig.NAMESPACE);
+        }
+        if (credentials.contains(Credential.OPENAI)) namespaces.add("openai");
+        if (credentials.contains(Credential.GEMINI)) namespaces.add(GEMINI_NAMESPACE);
+        return namespaces;
     }
+
+    /** The parameter naming the providers a template gives beside the default one (#2674). */
+    static final String PROVIDERS = "providers";
+
+    /** The providers isx holds a credential for, which are the ones {@code providers} takes. */
+    private static final List<String> MANAGED_PROVIDERS = List.of("anthropic", "openai", "google", PiSetup.GOOGLE_VERTEX, "vertex");
+
+    /**
+     * The {@code providers} parameter of Pi and opencode: providers whose account the instance
+     * may spend beside {@code provider}'s, so a session can change to their models. Only
+     * {@code managed} ones, since isx gives a provider it does not know nothing to add.
+     */
+    static ToolDef.ParameterDef providersParameter(String title, List<String> managed) {
+        var names = String.join("|", managed);
+        var providers = new ToolDef.ParameterDef();
+        providers.setType("string");
+        providers.setDescription("More providers " + title + " can use beside provider, separated by spaces ("
+                + String.join(", ", managed) + "); each needs its account, as provider does");
+        // Spaces, since YAML ends a value at a comma inside the braces isx writes ('- pi: {provider: openai}');
+        // a comma is taken too, for a value on a line of its own or in quotes
+        providers.setPattern("^ *(" + names + ")( *[ ,] *(" + names + "))* *$");
+        providers.setOptional(true);
+        providers.setReconfigurable(true);
+        return providers;
+    }
+
+    /** The default provider, then each of {@code providers} not yet named, in the template's order. */
+    static List<String> allProviders(String provider, String providers) {
+        var all = new java.util.LinkedHashSet<String>();
+        all.add(provider);
+        if (providers != null && !providers.isBlank()) all.addAll(List.of(SEPARATOR.split(providers.strip())));
+        return List.copyOf(all);
+    }
+
+    private static final java.util.regex.Pattern SEPARATOR = java.util.regex.Pattern.compile("[ ,]+");
 
     /** Which provider, so the first run sets up that provider's account, or none (#2536). */
     @Override
@@ -188,32 +230,76 @@ public class PiSetup implements ToolSetup {
                         "Provider ID, or Enter to go back: "));
     }
 
+    /**
+     * Claude's account first, as the one its first namespace books, then each listed {@code openai}
+     * and {@code google} provider's, which must hold an API key rather than a ChatGPT or Google
+     * sign-in ({@link ApiKeyAccounts}): the first problem is the one reported.
+     */
     @Override
     public String credentialProblem(SpawnConfig config, java.util.Map<String, String> resolvedParams,
                                     java.util.Map<String, String> selection) {
-        return switch (credentialFor(resolvedParams)) {
-            case ANTHROPIC -> ClaudeSetup.missingAccount(config, selection);
-            case VERTEX -> {
-                var account = config.getClaude().accountNamed(selection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
-                yield account != null && account.isComplete()
-                        && account.effectiveType() == SpawnConfig.ClaudeAccountType.VERTEX
-                        ? "" : "Vertex AI configuration";
-            }
-            case OPENAI -> ApiKeyAccounts.openaiKeyProblem(config, selection);
-            case GEMINI -> ApiKeyAccounts.geminiKeyProblem(config, selection);
-            case NONE -> "";
-        };
+        var claude = claudeProblem(config, resolvedParams, selection);
+        if (!claude.isEmpty()) return claude;
+        var credentials = credentials(resolvedParams);
+        // Each listed provider's account, not only the default's: a sign-in gives none of them a key
+        if (credentials.contains(Credential.OPENAI)) {
+            var openai = ApiKeyAccounts.openaiKeyProblem(config, selection);
+            if (!openai.isEmpty()) return openai;
+        }
+        return credentials.contains(Credential.GEMINI) ? ApiKeyAccounts.geminiKeyProblem(config, selection) : "";
     }
 
-    /** An {@code openai} or {@code gemini} sign-in in use is fixed by a default, not another account. */
+    /** The Claude account's problem when a provider spends it, unless the parent instance answers for it. */
+    private String claudeProblem(SpawnConfig config, java.util.Map<String, String> resolvedParams,
+                                 java.util.Map<String, String> selection) {
+        var claude = claudeCredential(resolvedParams);
+        if (claude != Credential.ANTHROPIC && claude != Credential.VERTEX) return "";
+        // An inherited Claude account is the parent instance's, whatever this config holds. The
+        // credential check skips a tool all of whose accounts are inherited, not one of several,
+        // so only a template with several is looked up here: the branch path reads the config once.
+        if (credentialNamespaces(resolvedParams).size() > 1
+                && dev.incusspawn.config.AccountResolver.inherits(config.tree(), SpawnConfig.ClaudeConfig.NAMESPACE,
+                        selection.get(SpawnConfig.ClaudeConfig.NAMESPACE))) {
+            return "";
+        }
+        if (claude == Credential.ANTHROPIC) return ClaudeSetup.missingAccount(config, selection);
+        var account = config.getClaude().accountNamed(selection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
+        return account != null && account.isComplete()
+                && account.effectiveType() == SpawnConfig.ClaudeAccountType.VERTEX
+                ? "" : "Vertex AI configuration";
+    }
+
+    /**
+     * An {@code openai} or {@code gemini} sign-in in use is fixed by a default, not another account:
+     * the remedy of the problem {@link #credentialProblem} reports, so none while Claude's comes first.
+     */
     @Override
     public Remedy credentialRemedy(SpawnConfig config, java.util.Map<String, String> resolvedParams,
                                    java.util.Map<String, String> selection) {
-        return switch (credentialFor(resolvedParams)) {
-            case OPENAI -> ApiKeyAccounts.openaiKeyRemedy(config, selection);
-            case GEMINI -> ApiKeyAccounts.geminiKeyRemedy(config, selection);
-            default -> null;
-        };
+        if (!claudeProblem(config, resolvedParams, selection).isEmpty()) return null;
+        var credentials = credentials(resolvedParams);
+        if (credentials.contains(Credential.OPENAI)) {
+            var openai = ApiKeyAccounts.openaiKeyRemedy(config, selection);
+            if (openai != null) return openai;
+        }
+        return credentials.contains(Credential.GEMINI) ? ApiKeyAccounts.geminiKeyRemedy(config, selection) : null;
+    }
+
+    /**
+     * The first provider that needs a Claude account, which decides what is asked of it: Gemini
+     * on Vertex needs a Vertex AI one, where {@code anthropic} takes any. Else the default's.
+     */
+    private static Credential claudeCredential(java.util.Map<String, String> resolvedParams) {
+        var credentials = credentials(resolvedParams);
+        if (credentials.contains(Credential.VERTEX)) return Credential.VERTEX;
+        if (credentials.contains(Credential.ANTHROPIC)) return Credential.ANTHROPIC;
+        return credentials.getFirst();
+    }
+
+    /** The provider, of those the template gives Pi, that spends {@code credential}. */
+    private static String providerSpending(Credential credential, java.util.Map<String, String> resolvedParams) {
+        return allProviders(provider(resolvedParams), resolvedParams.get(PROVIDERS)).stream()
+                .filter(p -> credentialFor(p) == credential).findFirst().orElse(provider(resolvedParams));
     }
 
     /**
@@ -222,17 +308,46 @@ public class PiSetup implements ToolSetup {
      */
     @Override
     public List<String> credentialNote(java.util.Map<String, String> resolvedParams) {
-        var account = switch (credentialFor(resolvedParams)) {
+        var claude = claudeCredential(resolvedParams);
+        var account = switch (claude) {
             case ANTHROPIC -> "a Claude account";
             case VERTEX -> "a Vertex AI Claude account";
             case OPENAI, GEMINI, NONE -> "";
         };
         if (account.isEmpty()) return List.of();
-        return List.of("Pi needs " + account + " for its provider '" + provider(resolvedParams) + "'.",
-                "To use another provider, set it in the template's tools, run 'isx build' on the template"
-                        + " and branch from it:"
-                        + " '- pi: {provider: openai}' spends an OpenAI API key,"
-                        + " or add a custom tool with a proxy rule for another gateway.");
+        var spending = providerSpending(claude, resolvedParams);
+        // Changing the one named is not enough when another provider spends Claude's account too
+        var others = new ArrayList<String>();
+        for (var other : allProviders(provider(resolvedParams), resolvedParams.get(PROVIDERS))) {
+            if (other.equals(spending)) continue;
+            var otherAccount = switch (credentialFor(other)) {
+                case ANTHROPIC -> "a Claude account, of any type";
+                case VERTEX -> "a Vertex AI Claude account";
+                case OPENAI, GEMINI, NONE -> "";
+            };
+            if (otherAccount.isEmpty()) continue;
+            others.add((other.equals(provider(resolvedParams)) ? "Its provider '" : "Its listed provider '")
+                    + other + "' still needs " + otherAccount + ".");
+        }
+        var note = new ArrayList<String>();
+        if (!spending.equals(provider(resolvedParams))) {
+            note.addAll(listedProviderNote("Pi", account, spending));
+        } else {
+            note.add("Pi needs " + account + " for its provider '" + spending + "'.");
+            note.add("To use another provider, set it in the template's tools, run 'isx build' on the template"
+                    + " and branch from it:"
+                    + " '- pi: {provider: openai}' spends an OpenAI API key,"
+                    + " or add a custom tool with a proxy rule for another gateway.");
+        }
+        note.addAll(others);
+        return List.copyOf(note);
+    }
+
+    /** The note for a Claude account that one of {@code providers} needs, not the default provider. */
+    static List<String> listedProviderNote(String title, String account, String provider) {
+        return List.of(title + " needs " + account + " for '" + provider + "', which the template's providers lists.",
+                "To do without it, remove '" + provider + "' from providers in the template's tools,"
+                        + " run 'isx build' on the template and branch from it.");
     }
 
     /** The isx-managed credential a pi provider spends. */
@@ -249,9 +364,15 @@ public class PiSetup implements ToolSetup {
         NONE
     }
 
-    /** Which credential pi spends for the {@code provider} in its resolved parameters. */
-    private static Credential credentialFor(java.util.Map<String, String> resolvedParams) {
-        return switch (provider(resolvedParams)) {
+    /** The credential of each provider the template gives Pi, the default's first, each once. */
+    private static List<Credential> credentials(java.util.Map<String, String> resolvedParams) {
+        return allProviders(provider(resolvedParams), resolvedParams.get(PROVIDERS)).stream()
+                .map(PiSetup::credentialFor).distinct().toList();
+    }
+
+    /** Which credential pi spends for {@code provider}. */
+    private static Credential credentialFor(String provider) {
+        return switch (provider) {
             case "anthropic" -> Credential.ANTHROPIC;
             case "vertex", GOOGLE_VERTEX -> Credential.VERTEX;
             case "google" -> Credential.GEMINI;
@@ -288,24 +409,23 @@ public class PiSetup implements ToolSetup {
     public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams,
                                      java.util.Map<String, String> accountSelection) {
         var entries = new ArrayList<EnvEntry>();
-        var credential = credentialFor(resolvedParams);
+        var credentials = credentials(resolvedParams);
         var account = SpawnConfig.load().getClaude()
                 .accountNamed(accountSelection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
         var type = account == null ? null : account.effectiveType();
 
-        if (credential == Credential.OPENAI) {
-            // OpenAI has its own credential; the Claude account is irrelevant here.
-            entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
-        } else if (credential == Credential.VERTEX) {
-            // An API key puts Pi on Vertex's express form, which the proxy moves into the account's project
-            entries.add(EnvEntry.set(VERTEX_KEY.env(), VERTEX_KEY.staticValuePrefix()));
-        } else if (credential == Credential.GEMINI) {
-            entries.add(EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY));
-        } else if (type == SpawnConfig.ClaudeAccountType.OAUTH) {
-            // ANTHROPIC, and NONE too: a placeholder is harmless to a provider that ignores it.
-            entries.add(EnvEntry.set("ANTHROPIC_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
-        } else {
-            entries.add(EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));
+        // One placeholder per provider the template gives Pi: Pi offers the models of every
+        // provider whose key it finds, so each of these can be chosen in a session (#2674).
+        // OpenAI and Gemini have their own credentials; the Claude account is irrelevant to them.
+        if (credentials.contains(Credential.OPENAI)) entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
+        // An API key puts Pi on Vertex's express form, which the proxy moves into the account's project
+        if (credentials.contains(Credential.VERTEX)) entries.add(EnvEntry.set(VERTEX_KEY.env(), VERTEX_KEY.staticValuePrefix()));
+        if (credentials.contains(Credential.GEMINI)) entries.add(EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY));
+        // ANTHROPIC, and a lone NONE too: a placeholder is harmless to a provider that ignores it.
+        if (credentials.contains(Credential.ANTHROPIC) || entries.isEmpty()) {
+            entries.add(type == SpawnConfig.ClaudeAccountType.OAUTH
+                    ? EnvEntry.set("ANTHROPIC_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN)
+                    : EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));
         }
         entries.add(EnvEntry.set("PI_SKIP_VERSION_CHECK", "1"));
         return entries;

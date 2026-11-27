@@ -63,6 +63,67 @@ class BranchFlowCredentialsTest {
                 "the account the branch will use has no key");
     }
 
+    /** Each of {@code providers} needs its account, as the default provider does (#2674). */
+    @Test
+    void everyProviderATemplateGivesAnAgentNeedsItsAccount() throws Exception {
+        for (var agent : List.of("pi", "opencode")) {
+            var defs = defs("name: tpl-dev\ntools:\n  - " + agent + ": {provider: openai, providers: anthropic google}\n");
+            var result = problem(template(), "tpl-dev", List.of(), defs);
+            assertTrue(result.contains("Anthropic API key"), agent + ": " + result);
+            assertTrue(result.contains("Gemini"), agent + ": " + result);
+            assertFalse(result.contains("OpenAI"), agent + " has the default provider's key: " + result);
+            assertTrue(result.contains("To do without it, remove 'anthropic' from providers"), agent + ": " + result);
+
+            // A comma works where YAML leaves it alone: on a line of its own, here with a space after it
+            var commas = defs("name: tpl-dev\ntools:\n  - " + agent + ":\n      provider: openai\n      providers: anthropic, google\n");
+            assertEquals(result, problem(template(), "tpl-dev", List.of(), commas), agent);
+
+            var onlyTheOneItHas = defs("name: tpl-dev\ntools:\n  - " + agent + ": {provider: google, providers: openai}\n");
+            assertFalse(problem(template(), "tpl-dev", List.of("openai=spare"), onlyTheOneItHas).contains("Anthropic"), agent);
+            assertTrue(problem(template(), "tpl-dev", List.of("openai=spare"), onlyTheOneItHas).contains("OpenAI"), agent);
+        }
+    }
+
+    /**
+     * A listed provider's ChatGPT or Google sign-in is refused as the default provider's is (#2525):
+     * it gives the agent no key, though Claude's account for the default provider is complete.
+     */
+    @Test
+    void aListedProvidersSignInIsRefusedAsTheDefaultOnesIs() throws Exception {
+        Files.writeString(SpawnConfig.configDir().resolve("config.yaml"), """
+                claude:
+                  accounts:
+                    personal: { type: api-key, apiKey: "sk-ant-x" }
+                  default: personal
+                openai:
+                  accounts:
+                    sub: { type: chatgpt }
+                    key: { apiKey: "sk-key" }
+                  default: sub
+                gemini:
+                  accounts:
+                    g: { type: google }
+                    key: { apiKey: "gemini-key" }
+                  default: g
+                """);
+        for (var agent : List.of("pi", "opencode")) {
+            var openai = defs("name: tpl-dev\ntools:\n  - " + agent + ": {provider: anthropic, providers: openai}\n");
+            var result = problem(template(), "tpl-dev", List.of(), openai);
+            assertTrue(result.contains("ChatGPT sign-in"), agent + ": " + result);
+            assertTrue(result.contains("--account openai=key"), agent + ": " + result);
+            assertEquals("", problem(template(), "tpl-dev", List.of("openai=key"), openai), agent);
+
+            var google = defs("name: tpl-dev\ntools:\n  - " + agent + ": {provider: anthropic, providers: google}\n");
+            assertTrue(problem(template(), "tpl-dev", List.of(), google).contains("Google sign-in"), agent);
+            assertEquals("", problem(template(), "tpl-dev", List.of("gemini=key"), google), agent);
+
+            // Both listed: the first sign-in is reported, then the other once it is fixed
+            var both = defs("name: tpl-dev\ntools:\n  - " + agent + ": {provider: anthropic, providers: openai google}\n");
+            assertTrue(problem(template(), "tpl-dev", List.of(), both).contains("ChatGPT sign-in"), agent);
+            assertTrue(problem(template(), "tpl-dev", List.of("openai=key"), both).contains("Google sign-in"), agent);
+        }
+    }
+
     @Test
     void anOverrideRepairsABrokenTemplatePin() throws Exception {
         var defs = defs("name: tpl-dev\ntools: [gh]\naccounts:\n  github: deleted\n");
