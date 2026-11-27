@@ -56,6 +56,62 @@ class GuestProvisioningOutputTest {
                 new RecordingOutput.Event(RecordingOutput.Kind.STEP_DONE, null)), recorded.events());
     }
 
+    /**
+     * A login lookup that fails leaves the {github.login} remote's URL unfilled and warns: the remote is
+     * optional, and a lookup the build does not need for its identity never fails it (#343, #2396).
+     */
+    @Test
+    void aLoginLookupThatFailsWarnsAndBuildsOn() {
+        var incus = mock(IncusClient.class, call ->
+                call.getMethod().getReturnType() == IncusClient.ExecResult.class ? OK : null);
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://git.example.com/example-org/example-repo.git");
+        repo.setPath("~/quarkus");
+        repo.setRemotes(Map.of("origin", "https://git.example.com/{github.login}/example-repo.git"));
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-quarkus");
+        imageDef.setRepos(List.of(repo));
+        var gh = new dev.incusspawn.tool.GhSetup() {
+            @Override
+            public String githubLogin(Container c, dev.incusspawn.config.SpawnConfig config, String accountName) {
+                throw new dev.incusspawn.incus.IncusException("Could not ask GitHub for the account's login (HTTP 503)");
+            }
+        };
+
+        var recorded = RecordingOutput.during(() -> GuestProvisioning.setLoginRemotes(new Container(incus, "test"),
+                imageDef, Map.of(), List.of(new BuildTools.ResolvedTool("gh", gh, Map.of()))));
+
+        var warnings = recorded.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warnings.size(), recorded.events().toString());
+        assertTrue(warnings.getFirst().msg().endsWith("remote 'origin' in /home/agentuser/quarkus"), warnings.getFirst().msg());
+        assertTrue(warnings.getFirst().details().getFirst().contains("HTTP 503"), warnings.getFirst().details().toString());
+        org.mockito.Mockito.verify(incus).execInContainer(eq("test"), eq("agentuser"),
+                org.mockito.ArgumentMatchers.contains("login=''"));
+    }
+
+    /** A fill that fails, as in a recorded clone that is no longer a work tree, is a warning, not a failed build. */
+    @Test
+    void aFillThatFailsWarnsAndBuildsOn() {
+        var incus = mock(IncusClient.class, call ->
+                call.getMethod().getReturnType() == IncusClient.ExecResult.class ? OK : null);
+        when(incus.execInContainer(eq("test"), eq("agentuser"), org.mockito.ArgumentMatchers.contains("login=")))
+                .thenReturn(new IncusClient.ExecResult(1, "", "fatal: not a git repository"));
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://git.example.com/example-org/example-repo.git");
+        repo.setPath("~/quarkus");
+        repo.setRemotes(Map.of("origin", "https://git.example.com/{github.login}/example-repo.git"));
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-quarkus");
+        imageDef.setRepos(List.of(repo));
+
+        var recorded = RecordingOutput.during(() -> GuestProvisioning.setLoginRemotes(new Container(incus, "test"),
+                imageDef, Map.of(), List.of()));
+
+        var warnings = recorded.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warnings.size(), recorded.events().toString());
+        assertEquals("Could not set the remotes whose URL names the GitHub account's login", warnings.getFirst().msg());
+    }
+
     /** No DNF cache to mount is a warning naming why; none when there is no reason. */
     @Test
     void anUnmountableDnfCacheIsAWarning() {

@@ -1671,6 +1671,7 @@ public class BuildCommand extends BaseCommand {
         // After every tool's setup, which may have rewritten an agent's config, and after the
         // repos a server may name: the whole chain's servers, with every agent in the image.
         McpServerRegistration.register(container, imageDef, defs, allTools);
+        GuestProvisioning.setLoginRemotes(container, imageDef, defs, allTools);
         // After the repos it lists have actually been cloned, matching buildFromScratch.
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
         if (machineType == MachineType.VM) {
@@ -1937,6 +1938,7 @@ public class BuildCommand extends BaseCommand {
         verifyTools(container, allTools);
         // As in buildFromParent: once, over every layer's tools, after every layer's repos.
         McpServerRegistration.register(container, imageDef, defs, allTools);
+        GuestProvisioning.setLoginRemotes(container, imageDef, defs, allTools);
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
         bindTrustStores(container);
         if (machineType == MachineType.VM) {

@@ -148,11 +148,23 @@ public class TemplateValidator {
      * {@code host-source}, a {@code url} beside one, or a {@code depth} beside one or below 1.
      */
     private static String repoKeyAtFault(ImageDef.RepoEntry repo, boolean projectLocal) {
-        if (!repo.isHostSource()) return repo.getDepth() != null ? ".depth" : "";
+        if (!repo.isHostSource()) {
+            if (repo.getDepth() != null && repo.getDepth() < 1) return ".depth";
+            return remoteKeyAtFault(repo);
+        }
         if (projectLocal || repo.getHostSource().isBlank()) return ".host-source";
         if (repo.getUrl() != null) return ".url";
         if (repo.getDepth() != null) return ".depth";
+        if (repo.sourceProblem() == null) return remoteKeyAtFault(repo);
         return ".host-source";
+    }
+
+    /** {@code .remote}, {@code .remotes} or {@code .path} when {@link dev.incusspawn.git.RepoRemotes#problem} refuses one, else nothing. */
+    private static String remoteKeyAtFault(ImageDef.RepoEntry repo) {
+        var problem = dev.incusspawn.git.RepoRemotes.problem(repo);
+        if (problem == null) return "";
+        if (problem.startsWith("'remote'")) return ".remote";
+        return problem.startsWith(dev.incusspawn.git.RepoRemotes.PATH_PROBLEM) ? ".path" : ".remotes";
     }
 
     private static final Set<String> VALID_HR_MODES = Set.of("readonly", "overlay", "copy");

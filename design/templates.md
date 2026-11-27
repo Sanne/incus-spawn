@@ -548,6 +548,41 @@ Checkout discovery and instance push/pull linking still use `host-paths` and `re
 Discovery narrows same-named checkouts to those with a remote matching the URL (`GitRemoteUtils.resolveHostRepoPath`).
 A checkout only lends objects, so a lookup that fails (still ambiguous, unreadable) drops the checkout and keeps the preparation from the remote; the build warns with the repo's name why its checkout was not used (#1933).
 
+## A repo's remotes
+
+A shared template clones the upstream project, and each person wants a remote for their own fork beside it (#343).
+A `repos:` entry's `remote:` renames the clone's own remote, `origin` by default, and `remotes:` adds others, each spelled out in full.
+Both are set up in the clone's own exec, right after the clone and before its prime, so a prime can use them (`RepoRemotes.cloneScript`).
+An added remote is never fetched by isx, so a fork that does not exist yet cannot fail a build.
+It is marked `skipFetchAll`, so the `git fetch --all` that `isx update-all` runs skips it too.
+A URL must be an HTTPS, SSH or Git network URL (`GitPreparation.isRemoteUrl`), never a path or a remote helper, though isx does not fetch it either.
+`remote:` is refused on a `host-source` entry, whose clone keeps no remote, while `remotes:` adds to it.
+
+The one placeholder is `{github.login}`, the login of the instance's GitHub account.
+A remote that names it is not added at clone time, since a fork of the wrong account must never be the name a person pushes to.
+Each build writes the whole chain's such remotes to `/etc/isx/repo-remotes` (`RepoRemotes.recordScript`), then asks GitHub for the login through the proxy and fills them in (`GhSetup.githubLogin`, `RepoRemotes.fillScript`).
+`GhSetup.rebakeForAccount` fills them again whenever the instance's GitHub account changes (`isx account set`, `isx branch --account`), so they follow the account as the Git identity does.
+That costs one exec on that path, since the fill reads the record itself, and nothing on a plain start.
+The login comes from the identity's own lookup, so GitHub is asked again only when `config.yaml` fixes both the name and the email.
+Without a login (no gh tool, or an account with no token) the remotes' URLs keep the placeholder, which names no repository, so they never go on naming another account's fork, and the build warns.
+A re-point whose identity lookup fails puts the placeholder back too, before it fails, and the next re-point that succeeds fills it in again.
+A re-point whose identity `config.yaml` fixes needs only the login from GitHub, so when that lookup fails it puts the placeholder back and warns, and does not fail (#2396).
+A re-point whose fill itself fails warns and completes, as a build does, so its identity stamp is written and later starts do not re-derive again.
+The remote is kept rather than removed, since removing it drops every branch's tracking of it, which a `git push -u` to the fork set up.
+A build whose login lookup fails, or whose fill fails, adds the remotes with the placeholder URL, warns and does not fail: the remote is optional, and a template whose `config.yaml` identity needs no lookup must not fail on one (#2396).
+A move to a GitHub account with no token re-derives nothing, as it does not for the commit identity either (`AccountSelection.needsRederive` wants an identity to move to), so such a remote keeps the previous account's login until a move to an account with a token.
+No push can succeed meanwhile, since the account has no token to send.
+The fill sets every recorded remote's URL, so a URL a person changed by hand on one is replaced at the next fill.
+The record is a guest file rather than a stamp, so a copy inherits it with the clones it describes, and a clone a person deleted is skipped.
+
+isx does not create forks.
+Creating a repository on GitHub with a person's credential is an outward action no build should take on its own, and the template stays shareable without it.
+Instead, a template that declares a `{github.login}` remote names it in the agent instructions as the agent's fork, with how to check it exists (`gh repo view`) and create it (`gh repo fork`), for when the agent is asked to push.
+What this gives up: a person pushing by hand runs `gh repo fork` once.
+
+A per-user default in `config.yaml`, applying remotes to every declared repo of every template, is not in this step.
+It waits for what people need after template-level remotes, since remote names are a personal preference.
+
 ## Build Flow
 
 **`buildFromScratch` (root image, no parent):**

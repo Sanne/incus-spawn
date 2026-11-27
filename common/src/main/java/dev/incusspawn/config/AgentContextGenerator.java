@@ -81,8 +81,33 @@ public final class AgentContextGenerator {
             For reconnaissance and code review, prefer `ast-grep` for structural searches and `difft` for syntax-aware diffs.
             """;
 
-    /** A repository the build already cloned into the image. */
-    public record Repo(String path, String url) {}
+    /**
+     * A repository the build already cloned into the image: its own remote's name, when not
+     * {@code origin}, and the remotes that name the GitHub account's login, a fork that may not
+     * exist yet (#343).
+     */
+    public record Repo(String path, String url, String remote, List<String> forkRemotes) {
+        public Repo {
+            forkRemotes = forkRemotes == null ? List.of() : List.copyOf(forkRemotes);
+        }
+
+        public Repo(String path, String url) {
+            this(path, url, null, List.of());
+        }
+    }
+
+    /**
+     * Only when a template declares a remote naming the login: what to do before pushing to a
+     * fork that may not exist, since isx creates no repositories on GitHub.
+     */
+    private static final String FORK_HINT = """
+
+            A remote named as your fork points at your GitHub account's copy of the repository, which may not exist yet.
+            When you are asked to push there, check it with `gh repo view <owner>/<name>` first.
+            If it does not exist, create it with `gh repo fork <the repository's URL> --clone=false`.
+            `git fetch --all` skips such a remote: fetch it by name.
+            While its URL still holds `{github.login}`, isx could not read this instance's GitHub login, so there is nothing to push to.
+            """;
 
     private AgentContextGenerator() {}
 
@@ -112,11 +137,15 @@ public final class AgentContextGenerator {
                 // i.e. as an instruction to do the very thing this list exists to stop.
                 if (repo.url() != null && !repo.url().isBlank()) {
                     sb.append("- ").append(repo.url()).append(" is checked out at `")
-                            .append(repo.path()).append("`\n");
+                            .append(repo.path()).append('`');
                 } else {
-                    sb.append("- `").append(repo.path()).append("`\n");
+                    sb.append("- `").append(repo.path()).append('`');
                 }
+                if (repo.remote() != null) sb.append(", as remote `").append(repo.remote()).append('`');
+                for (var fork : repo.forkRemotes()) sb.append(", your fork as remote `").append(fork).append('`');
+                sb.append('\n');
             }
+            if (repos.stream().anyMatch(r -> !r.forkRemotes().isEmpty())) sb.append(FORK_HINT);
         }
 
         var cleaned = distinct(notes.stream().map(n -> n == null ? null : n.strip()).toList());

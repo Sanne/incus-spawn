@@ -412,6 +412,88 @@ class GhSetupTest {
         verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("bot@acme.example"));
     }
 
+    /** A remote naming {github.login} follows the account, so it never names the previous one's fork (#343). */
+    @Test
+    void aRepointFillsTheLoginRemotesFromTheNewAccount(@TempDir Path home) throws IOException {
+        var incus = stubIncus();
+        existingIdentity(incus);
+        ghApiUserReturns(incus, "acme-bot\tAcme Bot\t\n");
+        ghApiEmailsReturns(incus, "bot@acme.example\n");
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains(dev.incusspawn.git.RepoRemotes.RECORD + " ]")))
+                .thenReturn(new IncusClient.ExecResult(0, "isx-repo-remotes\n", ""));
+
+        withTokenConfig(home, () -> new GhSetup().rebakeForAccount(new Container(incus, CONTAINER), "default"));
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"),
+                and(contains("login='acme-bot'"), contains(dev.incusspawn.git.RepoRemotes.RECORD)));
+        // The identity's lookup already named the login: GitHub is not asked again
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq .login"));
+    }
+
+    @Test
+    void aFailedRepointRemovesTheLoginRemotesOfThePreviousAccount() {
+        var incus = stubIncus();
+        existingIdentity(incus);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq")))
+                .thenReturn(new IncusClient.ExecResult(1, "", "HTTP 401"));
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains(dev.incusspawn.git.RepoRemotes.RECORD + " ]")))
+                .thenReturn(new IncusClient.ExecResult(0, "isx-repo-remotes\n", ""));
+
+        var setup = new GhSetup();
+        setup.retryDelaysMs = new long[0];
+        assertThrows(IncusException.class, () -> setup.rebakeForAccount(new Container(incus, CONTAINER), "acme"));
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"),
+                and(contains("login=''"), contains(dev.incusspawn.git.RepoRemotes.RECORD)));
+    }
+
+    /**
+     * config.yaml fixes the identity, so only the login lookup asks GitHub. Its failure must not
+     * fail the re-point (#2396): the identity is written, the remotes keep the placeholder, and it warns.
+     */
+    @Test
+    void aRepointWhoseLoginLookupFailsKeepsThePlaceholderAndWritesTheFixedIdentity(@TempDir Path home) throws IOException {
+        var incus = stubIncus();
+        existingIdentity(incus);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains(dev.incusspawn.git.RepoRemotes.RECORD + " ]")))
+                .thenReturn(new IncusClient.ExecResult(0, "isx-repo-remotes\n", ""));
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq .login")))
+                .thenReturn(new IncusClient.ExecResult(1, "", "HTTP 503"));
+
+        var setup = new GhSetup();
+        setup.retryDelaysMs = new long[0];
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> {
+            try {
+                withGitHubConfig(home, "github:\n  token: ghp_x\n  name: CI\n  email: ci@x.example\n", () ->
+                        setup.rebakeForAccount(new Container(incus, CONTAINER), "default"));
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        });
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("ci@x.example"));
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"),
+                and(contains("login=''"), contains(dev.incusspawn.git.RepoRemotes.RECORD)));
+        // Warnings.warn reports aside, so the account change it is part of keeps its own step
+        var warnings = recorded.events(dev.incusspawn.util.RecordingOutput.Kind.WARN_ASIDE);
+        assertEquals(1, warnings.size(), recorded.events().toString());
+        assertTrue(warnings.getFirst().msg().contains("HTTP 503"), warnings.getFirst().msg());
+    }
+
+    @Test
+    void aRepointWithoutLoginRemotesAsksNothingMore() {
+        var incus = stubIncus();
+        existingIdentity(incus);
+        ghApiUserReturns(incus, "acme-bot\tAcme Bot\t\n");
+        ghApiEmailsReturns(incus, "bot@acme.example\n");
+
+        new GhSetup().rebakeForAccount(new Container(incus, CONTAINER), "acme");
+
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq .login"));
+        // The fill reads the record itself, so no exec asks first whether there is one
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains(dev.incusspawn.git.RepoRemotes.RECORD + " ]"));
+    }
+
     @Test
     void aRepointUsesConfigNameOverApiName(@TempDir Path home) throws IOException {
         var incus = stubIncus();

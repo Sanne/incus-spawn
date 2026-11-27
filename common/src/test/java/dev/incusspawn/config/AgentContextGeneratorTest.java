@@ -99,6 +99,28 @@ class AgentContextGeneratorTest {
     }
 
     @Test
+    void aRenamedRemoteAndAForkAreNamedAndTheForkMayNeedCreating() {
+        // isx creates no repository on GitHub (#343): the agent is told how, for when it is asked to push
+        var out = AgentContextGenerator.generate("tpl-quarkus", List.of(),
+                List.of(new AgentContextGenerator.Repo("~/quarkus", "https://git.example.com/example-org/example-repo.git",
+                        "upstream", List.of("origin"))),
+                List.of());
+        assertTrue(out.contains("- https://git.example.com/example-org/example-repo.git is checked out at `~/quarkus`,"
+                + " as remote `upstream`, your fork as remote `origin`\n"), out);
+        assertTrue(out.contains("`gh repo view <owner>/<name>`"), out);
+        assertTrue(out.contains("`gh repo fork <the repository's URL> --clone=false`"), out);
+    }
+
+    @Test
+    void noForkNoForkHint() {
+        var out = AgentContextGenerator.generate("tpl-quarkus", List.of(),
+                List.of(new AgentContextGenerator.Repo("~/quarkus", "https://git.example.com/example-org/example-repo.git",
+                        "upstream", List.of())),
+                List.of());
+        assertFalse(out.contains("gh repo fork"), out);
+    }
+
+    @Test
     void repoWithoutUrlRendersPathAlone() {
         var out = AgentContextGenerator.generate("tpl-x", List.of(),
                 List.of(new AgentContextGenerator.Repo("~/scratch", null)), List.of());
