@@ -459,4 +459,44 @@ class ProxyHealthCheckTest {
         assertEquals("The MITM proxy is not running.", banners.getFirst().msg());
         assertTrue(banners.getFirst().details().contains("Then re-run this command."), banners.getFirst().details()::toString);
     }
+
+    /**
+     * A proxy that started before config.yaml changed is warned of in a person's words, which
+     * fit init's frame: "Proxy drift detected: (config has changed since the proxy started)" was
+     * 66 columns, a fragment, and a word the flow never used (#2542, seen on a Mac).
+     */
+    @Test
+    void aConfigChangeIsWarnedOfInAPersonsWords() {
+        var info = new ProxyHealthCheck.ProxyInfo(BuildInfo.instance().version(), BuildInfo.instance().gitSha(),
+                "native", "", true, true, "");
+        var report = new ProxyHealthCheck.DriftReport(List.of("(config has changed since the proxy started)"), null);
+
+        var restarted = ProxyHealthCheck.driftWarning(info, report, true, true);
+        assertEquals("isx's settings changed after the isx proxy started", restarted.title());
+        assertEquals(List.of("Restarting the proxy service so it picks up the change."), restarted.lines());
+        assertTrue(restarted.reinstalls());
+        for (var line : restarted.lines()) assertTrue(line.length() <= 62 - 4, line);
+        assertTrue(restarted.title().length() <= 62 - 4, restarted.title());
+
+        // Before init completes the service is not restarted, and the warning says isx init restarts it
+        var notInitialized = ProxyHealthCheck.driftWarning(info, report, true, false);
+        assertEquals(List.of("isx restarts the proxy service once 'isx init' completes."), notInitialized.lines());
+        assertTrue(notInitialized.reinstalls());
+
+        var byHand = ProxyHealthCheck.driftWarning(info, report, false, true);
+        assertEquals(List.of("Restart the proxy to pick up the change:", "  isx proxy stop && isx proxy start"), byHand.lines());
+        assertFalse(byHand.reinstalls());
+    }
+
+    /** A different build is named as one, with both versions, and a futile restart is not promised. */
+    @Test
+    void aDifferentBuildIsNamedWithBothVersions() {
+        var info = new ProxyHealthCheck.ProxyInfo("0.9", "abcdef0123", "native", "", false, true, "");
+        var report = new ProxyHealthCheck.DriftReport(List.of("Proxy is 0.9 (abcdef0), CLI is 1.0 (1234567)."), "Restarting again cannot help.");
+
+        var warning = ProxyHealthCheck.driftWarning(info, report, true, true);
+        assertEquals("The isx proxy is a different build from isx", warning.title());
+        assertEquals(List.of("Proxy is 0.9 (abcdef0), CLI is 1.0 (1234567).", "Restarting again cannot help."), warning.lines());
+        assertFalse(warning.reinstalls());
+    }
 }
