@@ -266,6 +266,8 @@ A directory that `searchPaths` in `config.yaml` names stays, wherever it lies in
 A Git checkout in the config directory stays, whether or not a search path names it.
 The second rule is what makes a second reset safe: the first one deleted `config.yaml`, so nothing names the search paths any more, but the checkout is still found on disk.
 It stops at the config directory because isx prepares Git repositories of its own in the cache, which a clean is there to delete.
+A search path is compared by its real path, so one spelled through a symlink, such as `/home` on a host whose home is `/var/home`, is kept all the same.
+A `config.yaml` that cannot be read leaves the search paths unknown: the plan warns that only Git checkouts are kept, and the archive still holds the rest.
 The config directory itself is never kept, even when it is a checkout or a search path, since a reset has to remove the configuration.
 
 Everything else in the config directory is deleted as before, hand-written definitions under `images/` and `tools/` included.
@@ -279,12 +281,13 @@ What is kept is left out of it, so a templates checkout with its history does no
 The archive holds every credential of the config directory: the API keys, the CA key, the SSH keys and the session tokens.
 This is what the design gives up: after a reset the credentials are no longer gone from the disk, and the file lies wherever the person stood.
 So it is created for its owner alone, it never replaces a file, the plan says that it holds credentials and is the person's to delete, and a working directory inside a Git checkout gets a warning not to commit it.
-`--no-backup` writes no archive.
+With `--no-backup` the command does not write the archive.
 `--skip-confirmation` only answers the question, so a scripted reset is as safe as one a person confirms.
+`tar` reports a file that changed while it was read, such as a certificate the proxy wrote, with exit status 1; the archive is accepted then, since it still reads back whole.
 A working directory that is itself being deleted, or that cannot be written to, stops the command before it asks.
 
 Init's default clone path stays where it is.
 Moving it would not help an install that already has the checkout there, and one directory to look in is simpler for a person.
 A reset followed by `isx init` finds the kept checkout at that path and adds it to the search paths again.
 
-`uninstall.sh --purge` keeps the Git checkouts in the config directory and writes no archive: a script cannot read the search paths, and `--purge` is asked for by name.
+`uninstall.sh --purge` keeps the Git checkouts in the config directory and does not write an archive: a script cannot read the search paths, and `--purge` is asked for by name.

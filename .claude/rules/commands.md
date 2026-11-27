@@ -154,18 +154,19 @@ A new command that deletes `vmStateDir()` does the same; `isx reset` and `isx vm
 A kept disk is only as intact as the VM's stop.
 `VmManager.stop()` returns a `StopResult`, and `isx vm stop --require-clean` exits 4 when the VM was `SIGNALLED` rather than shut down (every stop of an appliance from before #881), which `uninstall.sh` turns into its warning.
 A caller about to delete the disks stops with `stopToDelete()`, which does not warn and does not ask the guest.
+`stopLocked` asks the guest first, through the agent's `shutdown` verb (`VmAgentClient.shutdown()`), and waits up to 30 s for the launcher to exit by itself: the launcher's own stop cuts the disks off, so without the verb every stop is a hard power-off that loses up to five minutes of btrfs changes (`commit=300`; appliance/DESIGN.md "Stop sequence").
+The exit status is opt-in so `isx vm stop && ...` keeps working.
 
 **Removing isx's directories never takes what a person wrote (#2666).**
 `isx init` offers `~/.config/incus-spawn/incus-spawn-templates` for the templates checkout, so deleting the config directory whole deleted uncommitted work.
 `isx reset`, `isx clean config` and `isx clean all` keep a configured search path inside any directory they remove and a Git checkout inside the config directory (`KeptPaths`), and say which.
 The Git rule stops at the config directory, since isx prepares Git repositories of its own in the cache.
 Before they delete anything they archive what they will delete from the config directory to the current directory (`ConfigBackup`), read it back, and delete nothing when that fails.
-`--no-backup` writes no archive, and `--skip-confirmation` alone still writes it.
-`uninstall.sh --purge` keeps the Git checkouts, since a script cannot read the search paths, and writes no archive.
+With `--no-backup` they do not write the archive, and `--skip-confirmation` alone still writes it.
+`uninstall.sh --purge` keeps the Git checkouts, since a script cannot read the search paths, and does not write an archive.
+A `config.yaml` that cannot be read leaves the search paths unknown, which the plan says in a warning.
 A new command that deletes `configDir()` goes through `KeptPaths`, `ConfigBackup` and `FileTrees.delete(root, keep)`.
 The rationale is design/init.md "A reset keeps what a person wrote".
-`stopLocked` asks the guest first, through the agent's `shutdown` verb (`VmAgentClient.shutdown()`), and waits up to 30 s for the launcher to exit by itself: the launcher's own stop cuts the disks off, so without the verb every stop is a hard power-off that loses up to five minutes of btrfs changes (`commit=300`; appliance/DESIGN.md "Stop sequence").
-The exit status is opt-in so `isx vm stop && ...` keeps working.
 
 **Remediations act through isx, never name an `incus` command (#986).**
 Doctor and build say what is done and do it through `IncusClient` (REST, so the same on Linux and over the macOS vsock tunnel, whose host has no `incus` CLI).

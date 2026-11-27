@@ -67,21 +67,25 @@ public class CleanCommand extends BaseCommand {
         for (var dir : dirs) {
             if (!Files.isDirectory(dir)) continue;
             var info = measure(dir, keep);
-            // Nothing but what is kept left: there is nothing here to delete
-            if (info.files == 0 && FileTrees.leadsToAny(dir, keep)) continue;
+            // Nothing but what is kept left, not even an empty directory: there is nothing here to delete
+            if (info == null) continue;
             result.add(info);
         }
         return result;
     }
 
+    /** What deleting {@code dir} frees, or null when it holds only what is kept and what leads to it. */
     private static DirInfo measure(Path dir, Collection<Path> keep) {
         long[] size = {0};
         int[] files = {0};
+        int[] removedDirs = {0};
         try {
             Files.walkFileTree(dir, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path sub, BasicFileAttributes attrs) {
-                    return keep.contains(sub) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+                    if (keep.contains(sub)) return FileVisitResult.SKIP_SUBTREE;
+                    if (!sub.equals(dir) && !FileTrees.leadsToAny(sub, keep)) removedDirs[0]++;
+                    return FileVisitResult.CONTINUE;
                 }
 
                 @Override
@@ -99,6 +103,7 @@ public class CleanCommand extends BaseCommand {
                 }
             });
         } catch (IOException ignored) {}
+        if (files[0] == 0 && removedDirs[0] == 0 && FileTrees.leadsToAny(dir, keep)) return null;
         return new DirInfo(dir, size[0], files[0]);
     }
 
@@ -195,6 +200,7 @@ public class CleanCommand extends BaseCommand {
             }
         }
         sayKept(kept);
+        KeptPaths.warnIfSearchPathsUnknown(dirs);
         // Planned before the question, so a directory that cannot take it stops the clean unasked
         var archive = backup && !infos.isEmpty() ? ConfigBackup.plan(dirs, keep) : null;
         if (archive != null) archive.announce();
@@ -478,7 +484,9 @@ public class CleanCommand extends BaseCommand {
                     Environment.configDir());
             boolean poolDeleted = deleteInstances && Files.exists(Environment.vmDataImage());
             // With only the DNF cache volume left, there is no configuration to warn about
-            boolean configGoes = Files.isDirectory(Environment.configDir());
+            // Nor when the config directory holds only what a person keeps (#2666)
+            var config = List.of(Environment.configDir());
+            boolean configGoes = !collectInfo(config, KeptPaths.paths(KeptPaths.in(config))).isEmpty();
             Runnable caveats = () -> {
                 if (configGoes) {
                     BuildOutput.warn("This includes your SSH keys, CA certificate, and configuration.",
