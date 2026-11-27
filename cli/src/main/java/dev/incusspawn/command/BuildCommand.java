@@ -18,11 +18,13 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.PoolSpace;
 import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.Platform;
+import dev.incusspawn.incus.HostSideStartFailure;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.incus.VmAgentFailure;
 import dev.incusspawn.lifecycle.AgentGitIdentity;
 import dev.incusspawn.lifecycle.BuildAccounts;
 import dev.incusspawn.lifecycle.HostSideStart;
@@ -1233,30 +1235,55 @@ public class BuildCommand extends BaseCommand {
     /** The build instance's status as {@link #printBuildDiagnostics} last read it, or "" when it did not. */
     private String diagnosedStatus = "";
 
+    /** A VM build's whole QEMU monitor log as {@link #printBuildDiagnostics} last read it, or "" (#2675). */
+    private String diagnosedVmLog = "";
+
     String printBuildDiagnostics(String buildName, boolean created) {
         diagnosedStatus = "";
+        diagnosedVmLog = "";
         var diag = new StringBuilder();
         try {
             // Without a container only the host's state is left to report: a full pool can be
             // why it was never created
             var status = "";
+            String hostSideCause = null;
             if (created) {
-                status = incus.getInstanceStatus(buildName);
-                diagnosedStatus = status == null ? "" : status;
-                appendDiag(diag, "  Container status: " + (status.isEmpty() ? "(unknown)" : status));
+                // One read for both: a VM's log is its QEMU monitor's, which says whether Incus stopped it (#2675)
+                var instance = incus.instanceMetadata(buildName);
+                boolean vm = instance != null && IncusClient.machineType(instance) == MachineType.VM;
+                var kind = vm ? "VM" : "Container";
+                var logName = vm ? "QEMU monitor log" : "LXC log";
+                status = instance == null ? "" : instance.pathText("status", "");
+                diagnosedStatus = status;
+                appendDiag(diag, "  " + kind + " status: " + (status.isEmpty() ? "(unknown)" : status));
 
-                var log = incus.getLog(buildName);
-                if (!log.isBlank()) {
+                var log = vm ? incus.qmpLogOrNull(buildName) : incus.getLog(buildName);
+                if (vm) diagnosedVmLog = log == null ? "" : log;
+                if (log != null && !log.isBlank()) {
                     var lines = log.lines()
                             .filter(l -> !l.contains("No security context received"))
                             .toList();
                     if (lines.isEmpty()) {
-                        appendDiag(diag, "  LXC log: (no actionable entries)");
+                        appendDiag(diag, "  " + logName + ": (no actionable entries)");
                     } else {
                         var tail = lines.subList(Math.max(0, lines.size() - 20), lines.size());
-                        appendDiag(diag, "  LXC log (last " + tail.size() + " lines):");
+                        appendDiag(diag, "  " + logName + " (last " + tail.size() + " lines):");
                         tail.forEach(l -> appendDiag(diag, "    " + l));
                     }
+                }
+                if (vm) {
+                    // Incus writes the console only when it is read while the VM runs, so an empty
+                    // one does not show that the guest printed nothing
+                    var console = incus.consoleLogOrNull(buildName);
+                    if (console == null) {
+                        appendDiag(diag, "  Console log: could not be read");
+                    } else if (console.isBlank()) {
+                        appendDiag(diag, "  Console log: empty");
+                    } else {
+                        var saved = VmAgentFailure.save(buildName, console);
+                        if (saved != null) appendDiag(diag, "  Console log: " + saved);
+                    }
+                    hostSideCause = diagnoseHostSideStart(status, log);
                 }
             }
 
@@ -1285,7 +1312,9 @@ public class BuildCommand extends BaseCommand {
                 appendDiag(diag, "  " + mem);
             }
 
-            if ("Error".equals(status) || "Stopped".equals(status)) {
+            if (hostSideCause != null) {
+                appendDiag(diag, "  Cause: " + hostSideCause);
+            } else if ("Error".equals(status) || "Stopped".equals(status)) {
                 var cause = diagnoseInotifyExhaustion(incus);
                 if (cause != null) {
                     appendDiag(diag, "  Cause: " + cause);
@@ -1326,6 +1355,17 @@ public class BuildCommand extends BaseCommand {
         var lines = text == null ? List.<String>of() : text.lines().map(BuildCommand::shown).toList();
         if (lines.isEmpty()) return;
         BuildOutput.error(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
+    }
+
+    /**
+     * Why a stopped VM stopped, when the first shutdown its QEMU monitor log records is Incus
+     * telling QEMU to quit (#2675): Incus 6.23 does so to a healthy VM when it loses its monitor's
+     * event stream. Null for any other failure, a guest's own shutdown or panic included.
+     */
+    static String diagnoseHostSideStart(String status, String qmpLog) {
+        if (!"Stopped".equals(status) || !HostSideStartFailure.hostQuitFirst(qmpLog)) return null;
+        return "Incus told QEMU to quit, so the VM was stopped from the host, not by its guest."
+                + " If nobody stopped it, Incus did, and running the build again should work.";
     }
 
     static String diagnoseCrashCause(String dmesg) {
@@ -1500,6 +1540,8 @@ public class BuildCommand extends BaseCommand {
         var log = buildLog;
         var logLine = log == null ? "" : log.reportLine();
         var hostReport = logLine.isEmpty() ? report : report + "\n" + logLine;
+        var qmpLog = saveQmpLog(canonicalName);
+        if (qmpLog != null) hostReport += "\nThe whole QEMU monitor log: " + qmpLog + "\n";
 
         // Update the host report with the full diagnostics. Write to a temp file and move so
         // a failure (e.g. disk full) after truncation cannot erase the initial error-only report.
@@ -1533,6 +1575,34 @@ public class BuildCommand extends BaseCommand {
                     + shown(BaseCommand.failure(e)));
         }
         return true;
+    }
+
+    /**
+     * Save the VM build's whole QEMU monitor log, which the diagnostics quote 20 lines of, beside
+     * its report, scrubbed as the report is (#2675). Incus's own copy keeps the build's temporary
+     * name, which the instance loses when it is kept as a failed build. Where it was saved, or
+     * null for a container, an empty log or a failed write; a copy an earlier failure saved is
+     * deleted first, so it never passes for this one's.
+     */
+    private Path saveQmpLog(String canonicalName) {
+        Path file;
+        try {
+            file = Environment.buildFailureQmpLogFile(canonicalName);
+        } catch (IllegalArgumentException malformed) {
+            // The report's own path was refused for the same name, and said so
+            return null;
+        }
+        try {
+            Files.deleteIfExists(file);
+            if (diagnosedVmLog.isBlank()) return null;
+            Files.createDirectories(file.getParent());
+            BuildLog.ownerOnly(file);
+            Files.writeString(file, scrubbed(diagnosedVmLog));
+            return file;
+        } catch (Exception e) {
+            BuildOutput.warn("Could not save the build's QEMU monitor log: " + shown(BaseCommand.failure(e)));
+            return null;
+        }
     }
 
     /**

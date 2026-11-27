@@ -660,6 +660,14 @@ Additional differences:
   The retry is safe: the VM is stopped with its devices still attached, and the failed start already consumed `volatile.apply_template`.
   What it gives up: a person's `incus stop --force` in the first seconds of a start writes the same reason, so isx starts that VM again, and says so.
   `VmAgentRecovery`'s restart is not wrapped: it is already a recovery, limited to one per boot by the boot it stamps, which a retry would replace.
+- **A failed VM build's report is a VM's** (#2675): the diagnostics say `VM status` and `QEMU monitor log` rather than a container's labels, and quote the monitor log, `qemu.qmp.log`.
+  Status and machine type come from one `GET /1.0/instances/<n>`.
+  They say whether the console log is empty, could not be read, or where it was saved (`VmAgentFailure.save`), and never take an empty one for a guest that printed nothing.
+  A stopped VM whose monitor log's first shutdown is `host-qmp-quit` fills the `Cause:` line: the VM was stopped from the host, not by its guest, so unless a person stopped it, running the build again should work.
+  The pool and memory lines stay notes beside it.
+  The whole monitor log is saved beside the report as `build-failures/<template>.qmp.log`, scrubbed as the report is, and the report names it.
+  A failure without one deletes the copy an earlier failure saved, so it never passes for the new report's.
+  Incus keeps its own copy under the build's temporary name, which the kept `-failed-build` instance no longer answers to.
 - **Recovering an unresponsive agent** (#843): when `isx shell`, `isx run` or the TUI find a running VM whose agent does not answer, `VmAgentRecovery.restartForAgent` decides whether to restart it.
   A restart recovers an agent that merely wedged.
   But it is a cold boot that kills the guest's work, and it cannot help an agent that fails to start on this image.

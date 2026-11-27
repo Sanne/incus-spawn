@@ -286,7 +286,7 @@ class BuildCommandTest {
             assertFalse(out.contains("Container"), out);
             assertFalse(out.contains("BUILD_FAILURE.txt"), out);
             assertFalse(out.contains("kept the failed build"), out);
-            verify(incus, never()).getInstanceStatus(anyString());
+            verify(incus, never()).instanceMetadata(anyString());
             verify(incus, never()).forceStop(anyString());
             verify(incus, never()).rename(anyString(), anyString());
             verify(incus, never()).configSetAll(anyString(), anyMap());
@@ -314,7 +314,7 @@ class BuildCommandTest {
 
             assertTrue(out[0].contains("Build interrupted for tpl-minimal"), out[0]);
             assertFalse(out[0].contains("Container"), out[0]);
-            verify(incus, never()).getInstanceStatus(anyString());
+            verify(incus, never()).instanceMetadata(anyString());
             verify(incus, never()).forceStop(anyString());
             verify(incus, never()).rename(anyString(), anyString());
             verify(incus, never()).configSetAll(anyString(), anyMap());
@@ -490,10 +490,10 @@ class BuildCommandTest {
                     .withStepOutput("─── prepare output: my-repo ───\nconnection refused\n─── end prepare output: my-repo ───\n\n");
 
             var earlyContent = new String[1];
-            when(incus.getInstanceStatus("tpl-dev-rebuilding")).thenAnswer(invocation -> {
+            when(incus.instanceMetadata("tpl-dev-rebuilding")).thenAnswer(invocation -> {
                 var log = Environment.buildFailureLogFile("tpl-dev");
                 earlyContent[0] = Files.readString(log);
-                return "Running";
+                return instance("container", Map.of());
             });
 
             cmd.reportBuildFailure("tpl-dev-rebuilding", "tpl-dev",
@@ -2013,6 +2013,112 @@ class BuildCommandTest {
 
         assertTrue(recorder.events().stream().noneMatch(e -> e.msg() != null && e.msg().startsWith("Likely cause")),
                 recorder.events()::toString);
+    }
+
+    /** The QEMU monitor log of a VM whose guest panicked: no host-side stop. */
+    private static final String GUEST_PANIC_QMP_LOG = """
+            [2026-11-25T20:39:37Z] QUERY: {"execute":"cont","id":30}
+            [2026-11-25T20:39:38Z] Event: {"event": "GUEST_PANICKED", "data": {"action": "pause"}}
+            [2026-11-25T20:39:38Z] Event: {"event": "SHUTDOWN", "data": {"guest": true, "reason": "guest-panic"}}
+            [2026-11-25T20:39:38Z] QUERY: {"execute":"quit","id":31}
+            [2026-11-25T20:39:38Z] Event: {"event": "SHUTDOWN", "data": {"guest": false, "reason": "host-qmp-quit"}}
+            """;
+
+    private static io.hyperfoil.tools.jjq.value.JqObject stoppedVm() {
+        return io.hyperfoil.tools.jjq.value.JqObject.builder(2).put("type", "virtual-machine").put("status", "Stopped").build();
+    }
+
+    private static IncusClient vmBuildThatStopped(String qmpLog, String consoleLog) {
+        var incus = mock(IncusClient.class);
+        when(incus.instanceMetadata("tpl-vm-rebuilding")).thenReturn(stoppedVm());
+        when(incus.qmpLogOrNull("tpl-vm-rebuilding")).thenReturn(qmpLog);
+        when(incus.consoleLogOrNull("tpl-vm-rebuilding")).thenReturn(consoleLog);
+        when(incus.instanceMetadataOrThrow("tpl-vm-rebuilding")).thenReturn(stoppedVm());
+        return incus;
+    }
+
+    /** A VM Incus told QEMU to quit is reported as a VM's host-side stop, not with a container's labels (#2675). */
+    @Test
+    void aVmIncusStoppedIsNamedAsAHostSideStop(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var cmd = new BuildCommand();
+            cmd.incus = vmBuildThatStopped(FakeIncusDaemon.HOST_QUIT_QMP_LOG, "");
+
+            var diagnostics = cmd.printBuildDiagnostics("tpl-vm-rebuilding", true);
+
+            assertTrue(diagnostics.contains("  VM status: Stopped\n"), diagnostics);
+            assertTrue(diagnostics.contains("  QEMU monitor log (last 5 lines):\n"), diagnostics);
+            assertTrue(diagnostics.contains("  Console log: empty\n"), diagnostics);
+            assertTrue(diagnostics.contains("  Cause: Incus told QEMU to quit, so the VM was stopped from the host, not by its guest."), diagnostics);
+            assertFalse(diagnostics.contains("Container status"), diagnostics);
+            assertFalse(diagnostics.contains("LXC log"), diagnostics);
+            verify(cmd.incus, times(1)).instanceMetadata("tpl-vm-rebuilding");
+            verify(cmd.incus, never()).getInstanceStatus(anyString());
+            verify(cmd.incus, never()).machineType(anyString());
+        });
+    }
+
+    /** A guest that panicked is not a host-side stop, though Incus then told QEMU to quit, and its console is saved and named. */
+    @Test
+    void aVmWhoseGuestPanickedIsNoHostSideStop(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var cmd = new BuildCommand();
+            cmd.incus = vmBuildThatStopped(GUEST_PANIC_QMP_LOG, "[    0.000000] Linux version 7.3.4\n");
+
+            var diagnostics = cmd.printBuildDiagnostics("tpl-vm-rebuilding", true);
+
+            assertFalse(diagnostics.contains("Incus told QEMU to quit"), diagnostics);
+            assertTrue(diagnostics.contains("  Console log: " + Environment.consoleLogFile("tpl-vm-rebuilding")), diagnostics);
+        });
+    }
+
+    /** A console that could not be read is said so, never reported as empty. */
+    @Test
+    void aVmConsoleThatCouldNotBeReadIsNotEmpty(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var cmd = new BuildCommand();
+            cmd.incus = vmBuildThatStopped(GUEST_PANIC_QMP_LOG, null);
+
+            var diagnostics = cmd.printBuildDiagnostics("tpl-vm-rebuilding", true);
+
+            assertTrue(diagnostics.contains("  Console log: could not be read\n"), diagnostics);
+            assertFalse(diagnostics.contains("Console log: empty"), diagnostics);
+        });
+    }
+
+    /** The whole QEMU monitor log is saved beside the report, since Incus's copy keeps the build's temporary name (#2675). */
+    @Test
+    void aFailedVmBuildKeepsItsWholeQmpLogBesideItsReport(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var cmd = new BuildCommand();
+            cmd.incus = vmBuildThatStopped(FakeIncusDaemon.HOST_QUIT_QMP_LOG, "");
+
+            cmd.reportBuildFailure("tpl-vm-rebuilding", "tpl-vm", "Build failed for tpl-vm: VM died");
+
+            var saved = Environment.buildFailureQmpLogFile("tpl-vm");
+            try {
+                assertEquals(FakeIncusDaemon.HOST_QUIT_QMP_LOG, Files.readString(saved));
+                assertTrue(Files.readString(Environment.buildFailureLogFile("tpl-vm")).contains("The whole QEMU monitor log: " + saved),
+                        "the report names where it is");
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+    }
+
+    /** A later failure with no monitor log deletes an earlier one's, so it never sits beside the new report. */
+    @Test
+    void aFailureWithoutAQmpLogLeavesNoEarlierOne(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var cmd = new BuildCommand();
+            cmd.incus = vmBuildThatStopped(FakeIncusDaemon.HOST_QUIT_QMP_LOG, "");
+            cmd.reportBuildFailure("tpl-vm-rebuilding", "tpl-vm", "Build failed for tpl-vm: VM died");
+
+            cmd.incus = vmBuildThatStopped(null, "");
+            cmd.reportBuildFailure("tpl-vm-rebuilding", "tpl-vm", "Build failed for tpl-vm: VM died again");
+
+            assertFalse(Files.exists(Environment.buildFailureQmpLogFile("tpl-vm")));
+        });
     }
 
     // --- diagnoseCrashCause ---
