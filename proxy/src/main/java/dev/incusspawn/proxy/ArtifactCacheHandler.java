@@ -775,12 +775,12 @@ class ArtifactCacheHandler {
         upstream.requestWithAsyncDns(redirectOptions).onSuccess(redReq -> {
             redReq.idleTimeout(upstream.timeoutLeftMillis(started));
             // With its port when not 443, as the target's own Host names it
-            redReq.putHeader("Host", redirectPort == 443 ? redirectHost : redirectHost + ":" + redirectPort);
+            redReq.putHeader("Host", dev.incusspawn.util.Authority.of(redirectHost, redirectPort));
 
             redReq.send().onSuccess(redResp -> {
                 var statusCode = Upstream.status(redResp);
                 // The target's own limit, under its own name, not the domain that redirected there
-                upstream.throttles.answered(redirectPort == 443 ? redirectHost : redirectHost + ":" + redirectPort, statusCode);
+                upstream.throttles.answered(dev.incusspawn.util.Authority.of(redirectHost, redirectPort), statusCode);
                 if (statusCode == 200) {
                     new CachingDownload(clientReq, domain, started, redResp, cacheFile, ref, verification).start();
                 } else if (statusCode >= 300 && statusCode < 400) {
@@ -2851,7 +2851,7 @@ class ArtifactCacheHandler {
         try {
             var target = URI.create(location);
             if (!target.isAbsolute()) {
-                target = URI.create("https://" + host + (port == 443 ? "" : ":" + port) + rawUri).resolve(target);
+                target = URI.create("https://" + dev.incusspawn.util.Authority.of(host, port) + rawUri).resolve(target);
             }
             var scheme = target.getScheme();
             if ("http".equalsIgnoreCase(scheme)) {

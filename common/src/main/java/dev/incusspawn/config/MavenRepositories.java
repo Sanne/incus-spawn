@@ -228,7 +228,7 @@ public final class MavenRepositories {
 
         /** The host, with the port when it is not 443: what {@code Host} says, and how a mirror is told apart. */
         public String authority() {
-            return port == 443 ? host : host + ":" + port;
+            return dev.incusspawn.util.Authority.of(host, port);
         }
 
         @Override

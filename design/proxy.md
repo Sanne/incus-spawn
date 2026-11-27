@@ -1331,6 +1331,7 @@ A 5xx does not end a refusal, since it says nothing of the limit.
 The counters are the host's, since a limit is on the host's address, and they are lost on a restart, like the other activity counters (above), with no state of the proxy's own.
 `/activity` serves them as `throttled`.
 `isx proxy activity` prints a line per domain under its table, with how long ago its last 429 came, and `upstream_refusals`, `served_unconfirmed` and `throttled_domains` on the unattributed record.
+A host asked on a port other than 443, such as a mirror or a redirect's target, is named with its port, `nas:8443`, so two servers on one host are counted apart (#2681).
 `isx doctor` warns for 30 minutes after a domain's last 429, whether or not it has answered since, since a domain nothing asked again still reads as refusing.
 Its warning names the limit as upstream's, on this host's address for a registry and possibly the account's for a model API or GitHub, and the cached artifacts as still served.
 `isx doctor --explain` reads the same finding.

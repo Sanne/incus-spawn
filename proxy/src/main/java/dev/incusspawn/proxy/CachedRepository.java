@@ -59,7 +59,7 @@ record CachedRepository(String domain, String pathPrefix, Layout layout, Revalid
     record MirrorSource(String host, int port, String path) {
         /** The host, with the port when it is not 443: what {@code Host} says, and the mirror's name in a backoff, a tally or a log line. */
         String authority() {
-            return port == 443 ? host : host + ":" + port;
+            return dev.incusspawn.util.Authority.of(host, port);
         }
     }
 
