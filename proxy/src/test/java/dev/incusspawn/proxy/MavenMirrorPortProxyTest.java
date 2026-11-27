@@ -41,6 +41,7 @@ class MavenMirrorPortProxyTest {
     private static final String COORDINATES = "org/example/lib/1.0/lib-1.0.jar";
     private static final String JAR = "/maven2/" + COORDINATES;
     private static final String CONTENT = "central bytes";
+    private static final String REDIRECTED = "/maven2/org/example/moved/1.0/moved-1.0.jar";
 
     @TempDir
     static Path tempHome;
@@ -68,7 +69,13 @@ class MavenMirrorPortProxyTest {
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(ca, CENTRAL)))
                 .requestHandler(req -> {
                     atCentral.add(req.method() + " " + req.path());
-                    serve(req, JAR);
+                    if (req.path().equals(REDIRECTED)) {
+                        // A repository that sends its downloads to a server on another port
+                        req.response().setStatusCode(302)
+                                .putHeader("Location", "https://" + MIRROR + ":" + secondPort + "/elsewhere/" + COORDINATES).end();
+                    } else {
+                        serve(req, JAR);
+                    }
                 });
         centralPort = NpmCacheProxyTest.listen(central);
         firstPort = NpmCacheProxyTest.listen(mirror(ca, atFirst, true));
@@ -150,20 +157,43 @@ class MavenMirrorPortProxyTest {
         }
     }
 
+    /**
+     * The artifact from {@code repository}, once its copy is committed: the client is answered
+     * before that, and a commit still under way when the next test's {@link #reset} clears the
+     * cache would lose its temporary file under it.
+     */
     private static int get(String repository) throws Exception {
+        var status = get(repository, JAR);
+        var copy = Environment.mavenCacheDir().resolve(repository).resolve(JAR.substring(1));
+        var checksum = copy.resolveSibling(copy.getFileName() + ".sha1");
+        dev.incusspawn.util.Eventually.await("the download to be cached", java.time.Duration.ofSeconds(5),
+                () -> Files.isRegularFile(checksum) && Files.isRegularFile(copy));
+        // The commit writes what goes beside the checksum after it, under this lock
+        synchronized (VerifiedArtifactStore.lockFor(copy)) {
+            return status;
+        }
+    }
+
+    private static int get(String repository, String path) throws Exception {
         var options = new RequestOptions()
                 .setMethod(HttpMethod.GET)
                 .setServer(SocketAddress.inetSocketAddress(proxy.mitmPort(), "127.0.0.1"))
                 .setHost(repository)
                 .setPort(443)
-                .setURI(JAR);
+                .setURI(path);
         return client.request(options)
                 .compose(req -> req.send())
                 .compose(resp -> resp.body().map(b -> {
-                    assertEquals(CONTENT, b.toString(StandardCharsets.UTF_8));
+                    if (path.equals(JAR)) assertEquals(CONTENT, b.toString(StandardCharsets.UTF_8));
                     return resp.statusCode();
                 }))
                 .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void aRedirectToAnotherPortNamesThatPortInHost() throws Exception {
+        get(CENTRAL, REDIRECTED);
+        assertTrue(atSecond.contains(MIRROR + ":" + secondPort + " GET /elsewhere/" + COORDINATES), atSecond.toString());
     }
 
     @Test

@@ -774,7 +774,8 @@ class ArtifactCacheHandler {
 
         upstream.requestWithAsyncDns(redirectOptions).onSuccess(redReq -> {
             redReq.idleTimeout(upstream.timeoutLeftMillis(started));
-            redReq.putHeader("Host", redirectHost);
+            // With its port when not 443, as the target's own Host names it
+            redReq.putHeader("Host", redirectPort == 443 ? redirectHost : redirectHost + ":" + redirectPort);
 
             redReq.send().onSuccess(redResp -> {
                 var statusCode = Upstream.status(redResp);
