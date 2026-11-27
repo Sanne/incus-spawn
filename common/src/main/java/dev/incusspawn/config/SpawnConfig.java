@@ -935,8 +935,16 @@ public class SpawnConfig extends UnreadableFile {
     }
 
     public void setConfigByPath(String dotPath, String value) {
-        var segments = dotPath.split("\\.");
+        setConfigSegments(dotPath.split("\\."), value);
+    }
+
+    /**
+     * As {@link #setConfigByPath(String, String)}, with the path already split, so a segment such
+     * as an account name may hold dots.
+     */
+    public void setConfigSegments(String[] segments, String value) {
         if (segments.length == 0) return;
+        var dotPath = String.join(".", segments);
         var tree = setLeaf(tree(), segments, 0, value);
         try {
             // Merge semantics: only the addressed keys change, everything else stays.

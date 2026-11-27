@@ -166,7 +166,7 @@ class NamespaceAccountsTest {
     /**
      * What is written for an account is what the proxy reads back for it. Writing a dotted name
      * whole while reading it split once left such an account listed and given no credential;
-     * new names now refuse '.', and the two sides must keep agreeing for whatever reaches them.
+     * new names now refuse '.', and a hand-written one is written and read whole (#2700).
      */
     @Test
     void anAccountsTokenReadsBackAsItWasWritten() throws Exception {
@@ -181,6 +181,9 @@ class NamespaceAccountsTest {
         NamespaceAccounts.put(config, "github", "my.work", "token", "ghp_mywork");
         assertEquals("ghp_client", AccountResolver.value(config.tree(), "github", "client", "token"));
         assertEquals("ghp_mywork", AccountResolver.value(config.tree(), "github", "my.work", "token"), dump(config));
+        assertEquals(List.of("work", "client", "my.work"), NamespaceAccounts.names(config, "github"), dump(config));
+        NamespaceAccounts.put(config, "github", "my.work", "token", "");
+        assertEquals(List.of("work", "client"), NamespaceAccounts.names(config, "github"), dump(config));
     }
 
     /** An emptied account would still be listed, so removal has to prune the parent. */

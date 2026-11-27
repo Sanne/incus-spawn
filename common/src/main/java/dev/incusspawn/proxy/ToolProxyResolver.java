@@ -206,17 +206,18 @@ public final class ToolProxyResolver {
         // The parent instance holds the credentials, and this host has no list of its servers
         if (AccountResolver.INHERIT.equals(accountName)) return null;
         if (!accountName.isBlank()) {
-            var node = nodeAt(configTree, proxyDef.accountConfigPath(list, accountName));
+            var node = nodeAt(configTree, proxyDef.accountConfigSegments(list, accountName));
             if (node != null) return node;
         }
-        return nodeAt(configTree, proxyDef.fullConfigPath(list));
+        var fullPath = proxyDef.fullConfigPath(list);
+        return fullPath.isBlank() ? null : nodeAt(configTree, fullPath.split("\\."));
     }
 
-    /** The object at dotted {@code path}, or null when there is none or it holds no item. */
-    private static JqValue nodeAt(JqValue tree, String path) {
-        if (path.isBlank()) return null;
+    /** The object at {@code segments}, or null when there is none or it holds no item. */
+    private static JqValue nodeAt(JqValue tree, String[] segments) {
+        if (segments.length == 0) return null;
         var node = tree;
-        for (var segment : path.split("\\.")) {
+        for (var segment : segments) {
             if (!(node instanceof io.hyperfoil.tools.jjq.value.JqObject object) || !object.keys().contains(segment)) return null;
             node = object.getField(segment);
         }
@@ -809,9 +810,9 @@ public final class ToolProxyResolver {
         // and the proxy presents its proof instead (InheritedProof)
         if (AccountResolver.INHERIT.equals(accountName)) return "";
         if (!accountName.isBlank()) {
-            var accountPath = proxyDef.accountConfigPath(configDef, accountName);
-            if (!accountPath.isBlank()) {
-                var value = navigateConfigPath(configTree, accountPath);
+            var accountPath = proxyDef.accountConfigSegments(configDef, accountName);
+            if (accountPath.length > 0) {
+                var value = AccountResolver.navigate(configTree, accountPath);
                 // An account that omits this key falls through to the flat path rather
                 // than resolving to blank: a namespace may hold some keys per account
                 // (the token) and others globally (an org-wide setting).

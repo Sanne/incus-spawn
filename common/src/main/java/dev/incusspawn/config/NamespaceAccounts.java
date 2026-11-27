@@ -59,7 +59,7 @@ public final class NamespaceAccounts {
         if (ns == null || !ns.isObject() || !shape.hasFlatCredential(ns)) return;
         var account = shape.flatAccount(ns);
         leaves("", account, (key, value) ->
-                config.setConfigByPath(accountPath(namespace, DEFAULT_ACCOUNT_NAME, key), value));
+                config.setConfigSegments(accountPath(namespace, DEFAULT_ACCOUNT_NAME, key), value));
         for (var key : shape.flatKeys()) {
             config.removeConfigPath(namespace + "." + key);
         }
@@ -74,9 +74,9 @@ public final class NamespaceAccounts {
                            String account, String key, String value) {
         materialize(config, namespace);
         if (value == null || value.isBlank()) {
-            config.removeConfigPath(accountPath(namespace, account, key));
+            config.removeConfigSegments(accountPath(namespace, account, key));
         } else {
-            config.setConfigByPath(accountPath(namespace, account, key), value);
+            config.setConfigSegments(accountPath(namespace, account, key), value);
         }
         // The first account written becomes the default. Adding one later must not re-point it --
         // including when there is no default: line and the first in file order is serving.
@@ -170,8 +170,8 @@ public final class NamespaceAccounts {
         setDefault(config, namespace, account);
     }
 
-    private static String accountPath(String namespace, String account, String key) {
-        return namespace + "." + AccountResolver.ACCOUNTS_KEY + "." + account + "." + key;
+    private static String[] accountPath(String namespace, String account, String key) {
+        return AccountResolver.accountSegments(namespace, account, key);
     }
 
     private static void leaves(String prefix, io.hyperfoil.tools.jjq.value.JqValue node,

@@ -253,7 +253,7 @@ JBang installs each alias separately, so `jbang-catalog.json` publishes `isx` **
 **Credential accounts are per config namespace, not per tool.**
 A namespace (`claude`, `github`, ... -- whatever a tool declares as `config-namespace`) holds `accounts:` and `default:`.
 Which account an instance uses is decided in three layers, lowest first: that `default`, the template's `accounts:` map (merged per key down the chain), then `isx branch --account <ns>=<account>` / `isx account set`, stamped as `user.incus-spawn.account.<ns>`.
-The generic seam is `ProxyDef.accountConfigPath()` + `ToolProxyResolver`, so adding accounts to a new credential needs **no new mechanism** -- only config and init UX.
+The generic seam is `ProxyDef.accountConfigSegments()` + `ToolProxyResolver`, so adding accounts to a new credential needs **no new mechanism** -- only config and init UX.
 Selection is always `<ns>=<account>`; never accept a bare account name, which would silently fan out across namespaces added later.
 Resolution **fails closed**: a pin to a missing account errors rather than serving the default.
 Every namespace, Claude included, follows one model (#773): a flat, pre-accounts credential *presents as the account `default`*, and writes always produce the accounts layout.

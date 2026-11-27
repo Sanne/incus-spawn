@@ -121,7 +121,8 @@ Key design:
   A proven WebSocket there gets the key header stripped and nothing injected; unproven requests relay unchanged, as everywhere.
   The host's gcloud token reaches every project its user can touch, which is why the route names the project itself and serves model calls alone.
 - **The generic seam is one method.**
-  `ProxyDef.accountConfigPath()` builds `<ns>.accounts.<account>.<config-path>` beside the existing `fullConfigPath()`.
+  `ProxyDef.accountConfigSegments()` builds `<ns>.accounts.<account>.<config-path>` beside the existing `fullConfigPath()`.
+  It returns the path as segments (`AccountResolver.accountSegments`), so a hand-written account name holding a dot stays one key (#2700).
   `ToolProxyResolver.resolveConfigValue` prefers it and falls back to the flat path when the namespace has no accounts *or the account omits that key* (a namespace may hold the token per account and other settings globally).
   That gives named accounts to every namespace at once, YAML-only tools included, with no per-tool code.
   The namespace is derived **per config entry** (`ProxyDef.namespaceOf`), not per tool: a tool may *borrow* another namespace's credential by naming it fully in `config-path` and declaring no `config-namespace` (`CopilotSetup` points at `github.token` to share the `gh` PAT).

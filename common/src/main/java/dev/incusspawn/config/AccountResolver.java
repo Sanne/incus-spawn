@@ -214,8 +214,7 @@ public final class AccountResolver {
         // Not even the flat credential: the parent instance's isx holds this one
         if (INHERIT.equals(accountName)) return "";
         if (accountName != null && !accountName.isBlank()) {
-            var fromAccount = navigate(configTree,
-                    namespace + "." + ACCOUNTS_KEY + "." + accountName + "." + key);
+            var fromAccount = navigate(configTree, accountSegments(namespace, accountName, key));
             if (!fromAccount.isBlank()) return fromAccount;
         }
         return navigate(configTree, namespace + "." + key);
@@ -262,8 +261,15 @@ public final class AccountResolver {
      * two owners now: tool-proxy credential resolution and every account lookup above.
      */
     public static String navigate(JqValue tree, String path) {
+        return navigate(tree, path.split("\\."));
+    }
+
+    /**
+     * As {@link #navigate(JqValue, String)}, with the path already split, so a segment such as an
+     * account name may hold dots.
+     */
+    public static String navigate(JqValue tree, String... segments) {
         var node = tree;
-        var segments = path.split("\\.");
         for (int i = 0; i < segments.length; i++) {
             // Jackson parity: node.get() returns null for a missing key (reads as ""),
             // while an explicit null is a NullNode (a value node reading as "null").
@@ -273,6 +279,21 @@ public final class AccountResolver {
         if (node == null) return "";
         if (node.isNull()) return "null";
         return !node.isContainer() ? node.asText() : "";
+    }
+
+    /**
+     * The path of {@code key} under one account, split into segments: the account name stays one
+     * segment whatever it holds, while {@code key} may itself be a dotted path below the account.
+     * A hand-written name may hold dots, which a dotted path would read as nesting (#2700).
+     */
+    public static String[] accountSegments(String namespace, String accountName, String key) {
+        var keySegments = key.split("\\.");
+        var segments = new String[3 + keySegments.length];
+        segments[0] = namespace;
+        segments[1] = ACCOUNTS_KEY;
+        segments[2] = accountName;
+        System.arraycopy(keySegments, 0, segments, 3, keySegments.length);
+        return segments;
     }
 
     /** The name in {@code <ns>.default}, or {@code ""}. */
