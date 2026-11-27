@@ -173,6 +173,20 @@ class CredentialCheckTest {
     }
 
     @Test
+    void aKeyAccountWhoseNameHoldsADotIsFound() throws Exception {
+        var config = """
+                openai:
+                  accounts:
+                    sub: { type: chatgpt }
+                    work.key: { apiKey: "secret-key" }
+                  default: sub
+                """;
+        var said = check(config, piTemplate("openai"));
+        assertTrue(said.contains("Run 'isx branch <name> --from <template> --account openai=work.key' to configure it."), said);
+        assertFalse(said.contains("isx account add"), said);
+    }
+
+    @Test
     void aPinnedSignInIsFixedByAPinNotTheDefault() throws Exception {
         var config = """
                 openai:
@@ -184,7 +198,7 @@ class CredentialCheckTest {
         for (var agent : List.of(piTemplate("openai"), opencodeTemplate("openai"))) {
             var said = check(config, agent, Map.of("openai", "sub"));
             assertTrue(said.contains("Run 'isx branch <name> --from <template> --account openai=key' to configure it."), said);
-            assertTrue(said.contains("The sign-in is pinned, by --account, the template's accounts: map or the instance branched from"), said);
+            assertTrue(said.contains("The sign-in is pinned, by the template's accounts: map, the instance branched from or --account, and --account outranks each of them."), said);
             assertFalse(said.contains("isx account default"), "the default is already the key: " + said);
         }
     }

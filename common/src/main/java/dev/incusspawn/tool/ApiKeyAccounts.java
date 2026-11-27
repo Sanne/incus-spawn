@@ -72,11 +72,17 @@ final class ApiKeyAccounts {
      * account it presents as, {@code default}, never for every account that lacks one.
      */
     private static boolean holdsKey(JqValue tree, String namespace, String account) {
-        var accounts = namespace + "." + AccountResolver.ACCOUNTS_KEY;
-        if (!AccountResolver.navigate(tree, accounts + "." + account + ".apiKey").isBlank()) return true;
-        return !(tree.path(namespace).path(AccountResolver.ACCOUNTS_KEY) instanceof JqObject)
+        // Segment by segment, as an account's name may hold a dot
+        var accounts = tree.path(namespace).path(AccountResolver.ACCOUNTS_KEY);
+        if (!scalar(accounts.path(account).path("apiKey")).isBlank()) return true;
+        return !(accounts instanceof JqObject)
                 && AccountResolver.FLAT_ACCOUNT_NAME.equals(account)
-                && !AccountResolver.navigate(tree, namespace + ".apiKey").isBlank();
+                && !scalar(tree.path(namespace).path("apiKey")).isBlank();
+    }
+
+    /** A scalar's text, a number's included, as {@link AccountResolver#navigate} reads it; {@code ""} for none. */
+    private static String scalar(JqValue node) {
+        return node == null || node.isNull() || node.isContainer() ? "" : node.asText();
     }
 
     /** Whether {@code account} of {@code namespace} is that namespace's own sign-in. */
@@ -89,9 +95,10 @@ final class ApiKeyAccounts {
      * An API key account is needed in use, not only configured: one added beside the sign-in is
      * not used while the sign-in stays the default or stays pinned. So the command pins the key
      * account for the branch, naming it when there is one, and is the add step only when there is
-     * none. The note says what else does it: the template's {@code accounts:} map when the sign-in
-     * is pinned there or on the source, and otherwise the default, which also moves every
-     * instance following it, {@code agent}'s included, off the sign-in and onto the key. Either
+     * none. When the sign-in is pinned, by the template's {@code accounts:} map, the source or
+     * {@code --account}, the note says that {@code --account} outranks each of them; otherwise it
+     * names the default, which also moves every instance following it, {@code agent}'s included,
+     * off the sign-in and onto the key. Either
      * way the remedy is never asked for at a branch or a build (a step that ran would leave the
      * branch refused). Worded for every place the check is shown, a build's warning and init's
      * summary included.
@@ -109,8 +116,8 @@ final class ApiKeyAccounts {
         var notes = new java.util.ArrayList<String>();
         if (keys.isEmpty()) notes.add("Then pin it with '" + pin + "'.");
         notes.add(pinned
-                ? "The sign-in is pinned, by --account, the template's accounts: map or the instance branched from,"
-                        + " and naming the key account in the map does it for every branch."
+                ? "The sign-in is pinned, by the template's accounts: map, the instance branched from or --account,"
+                        + " and --account outranks each of them."
                 : "Making it the default with 'isx account default " + namespace + "=" + (keys.isEmpty() ? "<account>" : name)
                         + "' does it too, but also moves every instance that follows the default, "
                         + agent + "'s included, onto the key.");
