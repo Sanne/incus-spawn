@@ -21,11 +21,14 @@ import java.util.List;
  * {@code isx init} offers the config directory as the place for the templates checkout, so
  * deleting that directory whole deleted work nobody had committed.
  *
- * <p>Two rules, both read from what is there now, so a second reset keeps the same as the first:
- * a configured search path anywhere in those directories, and a Git checkout in the config
- * directory. The Git rule stops at the config directory because isx makes Git repositories of its
- * own in the cache, which a clean is there to delete. The config directory itself is never kept:
- * a reset removes the configuration.
+ * <p>Two rules: a configured search path anywhere in those directories, and a Git checkout in the
+ * config directory. A checkout is found on disk, so a second reset keeps it too; a search path
+ * that is not one is named only by the config.yaml the first reset deleted, so a later reset
+ * deletes it, into its archive unless {@code --no-backup} (design/init.md).
+ *
+ * <p>The Git rule stops at the config directory because isx makes Git repositories of its own in
+ * the cache, which a clean is there to delete. The config directory itself is never kept: a reset
+ * removes the configuration.
  */
 final class KeptPaths {
 

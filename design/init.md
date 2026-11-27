@@ -261,10 +261,13 @@ A reset or a clean of the configuration never deletes a person's own files, and 
 `isx reset`, `isx clean config` and `isx clean all` deleted `~/.config/incus-spawn` whole.
 The plan showed that directory as one line, so a person who reset to repair a failed install lost templates they had not committed.
 
-Two rules decide what stays (`KeptPaths`), and both read what is there now.
+Two rules decide what stays (`KeptPaths`).
 A directory that `searchPaths` in `config.yaml` names stays, wherever it lies in the directories being removed.
 A Git checkout in the config directory stays, whether or not a search path names it.
-The second rule is what makes a second reset safe: the first one deleted `config.yaml`, so nothing names the search paths any more, but the checkout is still found on disk.
+The second rule is what makes a second reset safe for a checkout: the first one deleted `config.yaml`, so nothing names the search paths any more, but the checkout is still found on disk.
+A search path that is not a Git checkout has no such protection: once `config.yaml` is gone nothing names it, so a later reset deletes it and it is only in that reset's archive.
+With `--no-backup` on that later reset it is lost, which is accepted, since the flag is asked for by name and init's default path is a checkout.
+Writing the kept search paths to a new `config.yaml` would close this, but init would then take the host for a configured one and present itself as a repair.
 It stops at the config directory because isx prepares Git repositories of its own in the cache, which a clean is there to delete.
 A search path is compared by its real path, so one spelled through a symlink, such as `/home` on a host whose home is `/var/home`, is kept all the same.
 A `config.yaml` that cannot be read leaves the search paths unknown: the plan warns that only Git checkouts are kept, and the archive still holds the rest.
