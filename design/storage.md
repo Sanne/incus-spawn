@@ -418,6 +418,22 @@ The root fix, moving the data disk out of the state directory, needs a migration
 `isx clean state` and `isx clean all` remove the appliance (`~/.local/share/incus-spawn`) along with the rest, so the VM boots on the kept disk only after `isx init` downloads it again, after either command.
 The VM's launch agent has no `KeepAlive` (checked on a Mac in the plists 0.3.9 and this change write; 0.3.10's was not available there), so stopping the VM before booting out the agent cannot have launchd start it again.
 
+**Tidying the configuration keeps what a person wrote, and archives the rest first (#2666).**
+`isx init` offers `~/.config/incus-spawn/incus-spawn-templates` as the place to clone the templates repository, so a person's own templates, committed or not, can live in the config directory.
+`isx reset`, `isx clean config` and `isx clean all` deleted that directory whole, and their plan showed it as one line, so a person lost uncommitted templates to a confirmed prompt.
+They now keep every Git checkout in it (a directory holding a `.git` entry, a worktree's file included) and every `searchPaths` entry of `config.yaml` that lies inside it, and say which (`ConfigSweep`).
+Symlinks are not followed, so a link to a checkout elsewhere is removed as a link, and its target stays.
+When `config.yaml` does not parse, its search paths are not known, and the plan says that only checkouts are kept.
+Everything else in the directory still goes, `config.yaml` included, so the commands still return isx to a fresh state.
+What goes is written first to `isx-config-backup-<date>-<time>.tar.gz` in the directory the command runs from (`ConfigBackup`), unless `--no-backup` is given.
+`--skip-confirmation` answers the question alone, so a scripted reset still writes it.
+The archive is created only where no file has its name, readable by its owner alone, and read back before anything is deleted: every entry's name, kind, link target and SHA-256 must be the ones written, and the gzip trailer must check.
+A failure removes it and deletes nothing, and so does an archive that would land inside a directory the command deletes, refused before the question.
+It holds credentials (API keys, the CA key, SSH keys), so the plan says so, and warns when the archive would land in a Git working tree, where it could be committed.
+It is a POSIX tar with PAX records for long or non-ASCII names, written in Java rather than by `tar`, which differs between Linux and macOS and cannot be held to an exact list of entries and then checked against it.
+What this gives up: a reset leaves a directory behind when a checkout is in it, and a credential leaves the config directory in a file the person has to delete.
+The plan names both.
+
 `install.sh` never writes a Homebrew prefix (#1614).
 A prefix is machine state: `/opt/homebrew` serves every account on a Mac, and `/home/linuxbrew/.linuxbrew` every account on Linux.
 It used to relink the prefix's `isx`, `isx-proxy` and `git-remote-isx` to the installer's `$INSTALL_DIR`, so the brew isx would not shadow the new build.

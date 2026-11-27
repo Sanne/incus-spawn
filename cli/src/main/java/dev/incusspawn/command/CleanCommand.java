@@ -21,10 +21,12 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -62,30 +64,40 @@ public class CleanCommand extends BaseCommand {
     record DirInfo(Path path, long size, int files) {}
 
     static List<DirInfo> collectInfo(List<Path> dirs) {
-        return collectInfo(dirs, null);
+        return collectInfo(dirs, Set.of());
     }
 
-    /** What deleting {@code dirs} frees, leaving {@code keep} (if not null) out of the count. */
-    static List<DirInfo> collectInfo(List<Path> dirs, Path keep) {
+    /** What deleting {@code dirs} frees, leaving the paths in {@code keep}, and all under them, out of the count. */
+    static List<DirInfo> collectInfo(List<Path> dirs, Set<Path> keep) {
         var result = new ArrayList<DirInfo>();
         for (var dir : dirs) {
-            if (!Files.isDirectory(dir)) continue;
+            if (!Files.isDirectory(dir) || keep.contains(dir)) continue;
             var info = measure(dir, keep);
-            // Nothing but the kept file left: there is nothing here to delete
-            if (info.files == 0 && keep != null && dir.equals(keep.getParent())) continue;
+            // Nothing but kept paths left: there is nothing here to delete
+            if (info.files == 0 && holdsKept(dir, keep)) continue;
             result.add(info);
         }
         return result;
     }
 
-    private static DirInfo measure(Path dir, Path keep) {
+    /** Whether {@code dir} holds one of {@code keep}, so it stays. */
+    private static boolean holdsKept(Path dir, Set<Path> keep) {
+        return keep.stream().anyMatch(k -> k.startsWith(dir));
+    }
+
+    private static DirInfo measure(Path dir, Set<Path> keep) {
         long[] size = {0};
         int[] files = {0};
         try {
             Files.walkFileTree(dir, new SimpleFileVisitor<>() {
                 @Override
+                public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
+                    return keep.contains(d) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+                }
+
+                @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    if (!file.equals(keep)) {
+                    if (!keep.contains(file)) {
                         size[0] += attrs.size();
                         files[0]++;
                     }
@@ -121,19 +133,28 @@ public class CleanCommand extends BaseCommand {
         return String.format("%-50s %8s  (%d files)", what, formatSize(size), files);
     }
 
-    /** Delete {@code dir}, or everything in it but {@code keep} when that is one of its entries. */
-    private static void delete(Path dir, Path keep) throws IOException {
-        if (keep == null || !dir.equals(keep.getParent())) {
-            FileTrees.delete(dir);
+    /**
+     * Delete {@code dir}, or when it holds one of {@code keep}, everything in it but the kept paths
+     * and the directories that hold them. Symlinks are removed, never followed.
+     */
+    static void delete(Path dir, Set<Path> keep) throws IOException {
+        if (keep.contains(dir)) return;
+        if (!holdsKept(dir, keep) || !Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) FileTrees.delete(dir);
+            else Files.deleteIfExists(dir);
             return;
         }
+        IOException failure = null;
         try (var children = Files.list(dir)) {
             for (var child : children.toList()) {
-                if (child.equals(keep)) continue;
-                if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) FileTrees.delete(child);
-                else Files.deleteIfExists(child);
+                try {
+                    delete(child, keep);
+                } catch (IOException e) {
+                    if (failure == null) failure = e;
+                }
             }
         }
+        if (failure != null) throw failure;
     }
 
     static void cleanDirs(List<Path> dirs, boolean dryRun, boolean skipConfirmation,
@@ -159,7 +180,7 @@ public class CleanCommand extends BaseCommand {
                              String category, String header, Runnable caveats, String question)
             throws IOException {
         return cleanDirs(dirs, deleteInstances, dryRun, confirmation(skipConfirmation),
-                category, header, caveats, question, null);
+                category, header, caveats, question, null, null);
     }
 
     static Predicate<String> confirmation(boolean skipConfirmation) {
@@ -169,19 +190,26 @@ public class CleanCommand extends BaseCommand {
     /**
      * As above, with {@code dnfCache} (if not null) listed and confirmed with the directories and
      * deleted before them: it is never deleted on an answer that kept them (#1627).
+     *
+     * <p>When {@code dirs} holds the config directory, its Git checkouts and search paths are kept
+     * ({@link ConfigSweep}), and unless {@code backupDir} is null, what is deleted from it is first
+     * archived there; nothing is deleted when that fails (#2666).
      */
     static boolean cleanDirs(List<Path> dirs, boolean deleteInstances, boolean dryRun, Predicate<String> confirm,
                              String category, String header, Runnable caveats, String question,
-                             DnfCacheVolume dnfCache)
+                             DnfCacheVolume dnfCache, Path backupDir)
             throws IOException {
         var disk = Environment.vmDataImage();
-        // Only a directory holding the disk itself: delete() spares it there and nowhere deeper
+        // Only a directory holding the disk itself
         boolean holdsDisk = Files.exists(disk) && dirs.contains(disk.getParent());
         if (deleteInstances && !holdsDisk) {
             BuildOutput.warn("--delete-instances only deletes the macOS VM's data disk, and there is none.",
                     "To remove instances, use 'isx destroy', or 'isx reset' for everything.");
         }
-        var keep = holdsDisk && !deleteInstances ? disk : null;
+        var keep = new HashSet<Path>();
+        if (holdsDisk && !deleteInstances) keep.add(disk);
+        var sweep = ConfigSweep.forDirs(dirs);
+        if (sweep != null) keep.addAll(sweep.keep());
         var infos = collectInfo(dirs, keep);
         if (infos.isEmpty() && dnfCache == null) {
             BuildOutput.step("Nothing to clean — no " + category + " data found.");
@@ -198,10 +226,20 @@ public class CleanCommand extends BaseCommand {
                 BuildOutput.stepNote("Pass --delete-instances to delete it too.");
             }
         }
+        var configGoes = sweep != null && infos.stream().anyMatch(i -> i.path.equals(sweep.dir()));
+        var archive = configGoes && backupDir != null
+                ? ConfigSweep.archivePath(backupDir, LocalDateTime.now()) : null;
+        if (sweep != null) sweep.showKept();
+        if (configGoes) sweep.showArchive(archive, dryRun);
+        // Refused in a dry run too, so it never promises an archive the real run refuses
+        if (archive != null) ConfigSweep.requireArchiveKept(archive, dirs, keep);
         if (dryRun) return false;
         caveats.run();
 
         if (!confirm.test(question)) return false;
+
+        // Before anything is deleted: a failure deletes nothing
+        if (archive != null) sweep.archive(archive);
 
         // First: Incus may need what the directories hold, such as the config
         if (dnfCache != null) dnfCache.delete();
@@ -326,7 +364,7 @@ public class CleanCommand extends BaseCommand {
         /** {@code incus} is null when there is no Incus to ask about the DNF cache volume. */
         static void clean(IncusClient incus, boolean dryRun, Predicate<String> confirm) throws IOException {
             cleanDirs(List.of(Environment.cacheDir()), false, dryRun, confirm, "cache", "Will delete",
-                    () -> {}, "Proceed?", incus == null ? null : DnfCacheVolume.findOrWarn(incus));
+                    () -> {}, "Proceed?", incus == null ? null : DnfCacheVolume.findOrWarn(incus), null);
         }
     }
 
@@ -400,7 +438,7 @@ public class CleanCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "config",
-            description = "Remove configuration, SSH keys, and CA certificate (~/.config/incus-spawn/)",
+            description = "Remove configuration, SSH keys, and CA certificate (~/.config/incus-spawn/), archived first; keeps Git checkouts and search paths there",
             generateHelp = true
     )
     public static class Config extends BaseCommand {
@@ -411,14 +449,22 @@ public class CleanCommand extends BaseCommand {
         @Option(name = "skip-confirmation", hasValue = false, description = "Skip the confirmation prompt")
         boolean skipConfirmation;
 
+        @Option(name = "no-backup", hasValue = false, description = ConfigSweep.NO_BACKUP_HELP)
+        boolean noBackup;
+
         @Override
         protected CommandResult doExecute() throws Exception {
-            cleanDirs(List.of(Environment.configDir()), false, dryRun, skipConfirmation, "configuration",
+            clean(dryRun, confirmation(skipConfirmation), ConfigSweep.backupDir(noBackup));
+            return CommandResult.SUCCESS;
+        }
+
+        /** {@code backupDir} is where the archive goes, null for none. */
+        static void clean(boolean dryRun, Predicate<String> confirm, Path backupDir) throws IOException {
+            cleanDirs(List.of(Environment.configDir()), false, dryRun, confirm, "configuration",
                     "Will delete", () -> BuildOutput.warn(
                             "This will permanently delete your SSH keys, CA certificate, and configuration.",
                             "You will need to run 'isx init' again and rebuild all templates."),
-                    "Delete configuration?");
-            return CommandResult.SUCCESS;
+                    "Delete configuration?", null, backupDir);
         }
     }
 
@@ -439,6 +485,9 @@ public class CleanCommand extends BaseCommand {
         @Option(name = "skip-confirmation", hasValue = false, description = "Skip the confirmation prompt")
         boolean skipConfirmation;
 
+        @Option(name = "no-backup", hasValue = false, description = ConfigSweep.NO_BACKUP_HELP)
+        boolean noBackup;
+
         @Override
         protected CommandResult doExecute() throws Exception {
             if (VmManager.runningOrAdopted()) {
@@ -448,13 +497,16 @@ public class CleanCommand extends BaseCommand {
 
             // On macOS Incus runs in the VM, stopped here, so there is no Incus to ask about the DNF cache
             clean(Platform.isMacOS() ? null : RuntimeServices.incus(), deleteInstances, dryRun,
-                    confirmation(skipConfirmation));
+                    confirmation(skipConfirmation), ConfigSweep.backupDir(noBackup));
             return CommandResult.SUCCESS;
         }
 
-        /** {@code incus} is null when there is no Incus to ask about the DNF cache volume. */
-        static void clean(IncusClient incus, boolean deleteInstances, boolean dryRun, Predicate<String> confirm)
-                throws IOException {
+        /**
+         * {@code incus} is null when there is no Incus to ask about the DNF cache volume, and
+         * {@code backupDir} when no archive is written.
+         */
+        static void clean(IncusClient incus, boolean deleteInstances, boolean dryRun, Predicate<String> confirm,
+                          Path backupDir) throws IOException {
             var dirs = List.of(
                     Environment.cacheDir(),
                     Environment.vmStateDir(),
@@ -477,7 +529,7 @@ public class CleanCommand extends BaseCommand {
             var dnfCache = poolDeleted || incus == null ? null : DnfCacheVolume.findOrWarn(incus);
             cleanDirs(dirs, deleteInstances, dryRun, confirm, "incus-spawn",
                     "Will delete incus-spawn cache, state, and configuration", caveats,
-                    "Delete everything listed?", dnfCache);
+                    "Delete everything listed?", dnfCache, backupDir);
         }
     }
 

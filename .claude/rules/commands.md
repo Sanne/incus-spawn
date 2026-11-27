@@ -157,6 +157,10 @@ A caller about to delete the disks stops with `stopToDelete()`, which does not w
 `stopLocked` asks the guest first, through the agent's `shutdown` verb (`VmAgentClient.shutdown()`), and waits up to 30 s for the launcher to exit by itself: the launcher's own stop cuts the disks off, so without the verb every stop is a hard power-off that loses up to five minutes of btrfs changes (`commit=300`; appliance/DESIGN.md "Stop sequence").
 The exit status is opt-in so `isx vm stop && ...` keeps working.
 
+**Tidying the configuration keeps what a person wrote (#2666).**
+`isx reset`, `isx clean config` and `isx clean all` keep the Git checkouts and the `searchPaths` inside `Environment.configDir()` (`ConfigSweep`), and first archive what they delete from it to `isx-config-backup-<date>-<time>.tar.gz` in the working directory (`ConfigBackup`), read back whole before anything is deleted, unless `--no-backup`.
+A new command that deletes the config directory goes through `CleanCommand.cleanDirs` or the same two classes; design/storage.md "Tidying the configuration keeps what a person wrote".
+
 **Remediations act through isx, never name an `incus` command (#986).**
 Doctor and build say what is done and do it through `IncusClient` (REST, so the same on Linux and over the macOS vsock tunnel, whose host has no `incus` CLI).
 A destructive step on a trust gate still asks, at a terminal, via `Prompts`.

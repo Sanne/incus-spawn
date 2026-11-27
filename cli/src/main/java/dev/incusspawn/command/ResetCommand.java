@@ -1,6 +1,5 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.FileTrees;
 import dev.incusspawn.Platform;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.Environment;
@@ -20,7 +19,7 @@ import java.util.function.BooleanSupplier;
 
 @CommandDefinition(
         name = "reset",
-        description = "Return to a freshly-installed state: destroys all containers, templates, VM, proxy, routing rules, and cached data",
+        description = "Return to a freshly-installed state: destroys all containers, built templates, VM, proxy, routing rules, and cached data; archives the configuration first and keeps Git checkouts and search paths in it",
         generateHelp = true
 )
 public class ResetCommand extends BaseCommand {
@@ -28,6 +27,9 @@ public class ResetCommand extends BaseCommand {
     @Option(name = "skip-confirmation", hasValue = false,
             description = "Skip the confirmation prompt")
     boolean skipConfirmation;
+
+    @Option(name = "no-backup", hasValue = false, description = ConfigSweep.NO_BACKUP_HELP)
+    boolean noBackup;
 
     @Override
     protected CommandResult doExecute() throws Exception {
@@ -65,7 +67,14 @@ public class ResetCommand extends BaseCommand {
                 Environment.vmStateDir(),
                 Environment.dataDir(),
                 Environment.configDir());
-        var hostDirInfos = CleanCommand.collectInfo(hostDirs);
+        // A person's own checkouts and search paths stay (#2666)
+        var sweep = ConfigSweep.forDirs(hostDirs);
+        var keep = sweep == null ? java.util.Set.<Path>of() : sweep.keep();
+        var hostDirInfos = CleanCommand.collectInfo(hostDirs, keep);
+        var configGoes = sweep != null && hostDirInfos.stream().anyMatch(i -> i.path().equals(sweep.dir()));
+        var backupDir = ConfigSweep.backupDir(noBackup);
+        var archive = configGoes && backupDir != null
+                ? ConfigSweep.archivePath(backupDir, java.time.LocalDateTime.now()) : null;
 
         boolean hasAnything = !incusReachable || !clones.isEmpty() || !builtTemplates.isEmpty()
                 || hasPoolArtifacts || proxyInstalled || vmRunning || vmDisksExist
@@ -92,7 +101,7 @@ public class ResetCommand extends BaseCommand {
         }
 
         groupOfSteps("Destroy " + clones.size() + " instance(s)", clones);
-        groupOfSteps("Destroy " + builtTemplates.size() + " template(s)", builtTemplates);
+        groupOfSteps("Destroy " + builtTemplates.size() + " built template(s)", builtTemplates);
 
         if (hasPoolArtifacts) {
             BuildOutput.step("Clean storage pool artifacts (failed builds, unused and cached base images, DNF cache)");
@@ -122,15 +131,21 @@ public class ResetCommand extends BaseCommand {
         groupOfSteps("Remove host data", hostDirInfos.stream()
                 .map(info -> String.format("%-50s %s", info.path(), CleanCommand.formatSize(info.size())))
                 .toList());
+        if (sweep != null) sweep.showKept();
+        if (configGoes) sweep.showArchive(archive, false);
+        if (archive != null) ConfigSweep.requireArchiveKept(archive, hostDirs, keep);
 
         BuildOutput.section("This returns incus-spawn to a freshly-installed state. Run 'isx init' afterwards to set up again.");
 
-        if (!confirmDestructive("This will destroy all containers, templates, and VM disk images listed above. Proceed?",
+        if (!confirmDestructive("This will destroy all containers, built templates, and VM disk images listed above. Proceed?",
                 skipConfirmation, "--skip-confirmation")) {
             return CommandResult.SUCCESS;
         }
 
         // --- Execute ---
+
+        // Before anything is deleted: a failure deletes nothing
+        if (archive != null) sweep.archive(archive);
 
         boolean failed = false;
 
@@ -217,7 +232,7 @@ public class ResetCommand extends BaseCommand {
                 }
                 BuildOutput.stepStart("Deleting " + info.path());
                 try {
-                    FileTrees.delete(info.path());
+                    CleanCommand.delete(info.path(), keep);
                     BuildOutput.stepDone();
                 } catch (Exception e) {
                     BuildOutput.stepFail(e.getMessage());

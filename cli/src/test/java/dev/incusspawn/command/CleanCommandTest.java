@@ -165,6 +165,7 @@ class CleanCommandTest {
         seedVmState();
         var all = new CleanCommand.All();
         all.skipConfirmation = true;
+        all.noBackup = true;
 
         var out = run(all);
 
@@ -178,6 +179,7 @@ class CleanCommandTest {
         seedVmState();
         var all = new CleanCommand.All();
         all.skipConfirmation = true;
+        all.noBackup = true;
         all.deleteInstances = true;
 
         var out = run(all);
@@ -368,7 +370,7 @@ class CleanCommandTest {
         var blob = Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
         var incus = withDnfCacheVolume();
 
-        var out = capture(() -> CleanCommand.All.clean(incus, false, false, q -> false));
+        var out = capture(() -> CleanCommand.All.clean(incus, false, false, q -> false, null));
 
         assertTrue(out.contains("DNF cache volume"), out);
         verify(incus, never()).deleteStorageVolume(anyString(), anyString());
@@ -381,7 +383,7 @@ class CleanCommandTest {
         Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
         var incus = withDnfCacheVolume();
 
-        capture(() -> CleanCommand.All.clean(incus, false, false, q -> true));
+        capture(() -> CleanCommand.All.clean(incus, false, false, q -> true, null));
 
         verify(incus).deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME);
     }
@@ -392,7 +394,7 @@ class CleanCommandTest {
         seedVmState();
         var incus = mock(IncusClient.class);
 
-        capture(() -> CleanCommand.All.clean(incus, true, false, q -> true));
+        capture(() -> CleanCommand.All.clean(incus, true, false, q -> true, null));
 
         verifyNoInteractions(incus);
         assertFalse(Files.exists(Environment.vmDataImage()));
@@ -458,7 +460,7 @@ class CleanCommandTest {
     void cleanAllWithOnlyTheVolumeLeftDoesNotWarnAboutTheConfiguration() throws Exception {
         var incus = withDnfCacheVolume();
 
-        var out = capture(() -> CleanCommand.All.clean(incus, false, false, q -> true));
+        var out = capture(() -> CleanCommand.All.clean(incus, false, false, q -> true, null));
 
         assertFalse(out.contains("SSH keys"), out);
         verify(incus).deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME);
@@ -474,6 +476,7 @@ class CleanCommandTest {
         Files.writeString(Environment.configDir().resolve("config.yaml"), "x: 1\n");
         var config = new CleanCommand.Config();
         config.skipConfirmation = true;
+        config.noBackup = true;
 
         var recorded = RecordingOutput.during(config::doExecute);
 

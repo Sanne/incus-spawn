@@ -973,9 +973,14 @@ All subcommands accept these options:
 | `--dry-run` | Show what would be deleted without deleting |
 | `--skip-confirmation` | Skip the confirmation prompt |
 
+`isx clean config` and `isx clean all` also accept `--no-backup`.
+
 On macOS, `isx clean state` keeps the VM's data disk, with every instance, template and image, unless you pass `--delete-instances`.
 It refuses to run while the VM runs: stop the VM first with `isx vm stop`.
 Run `isx init` afterwards: the VM needs the appliance again before it boots on the kept disk.
+
+`isx clean config` and `isx clean all` keep every Git checkout in the configuration directory, and every search path of `config.yaml` there.
+They archive the rest before deleting it, as `isx reset` does below, unless you pass `--no-backup`.
 
 `isx clean pool --base-images` also removes the downloaded base images, which the next build downloads again.
 
@@ -996,6 +1001,20 @@ isx reset
 | Option | What it does |
 |--------|--------------|
 | `--skip-confirmation` | Skip the confirmation prompt |
+| `--no-backup` | Do not archive the configuration first |
+
+Your own templates stay.
+A Git checkout in `~/.config/incus-spawn`, such as the templates repository `isx init` clones there, is kept, and so is any search path of `config.yaml` inside it.
+The plan names each one it keeps.
+
+Before deleting anything, `isx reset` writes the rest of `~/.config/incus-spawn` to `isx-config-backup-<date>-<time>.tar.gz` in the current directory.
+Only you can read the file, and it never replaces an existing one.
+It holds your credentials: API keys, the CA key and SSH keys.
+Delete it once you no longer need it.
+
+If the archive cannot be written and read back whole, nothing is deleted.
+`--skip-confirmation` still writes it.
+To restore it, run `tar xzf <archive>` in `~/.config`; to restore one file, add `incus-spawn/<file>` after the archive.
 
 ## `isx vm`
 
