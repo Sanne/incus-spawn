@@ -338,15 +338,29 @@ class IncusApiLiveTest {
             createBody.put("config", java.util.Map.of("security.privileged", "true"));
             assertTrue(http.requestAndWait("POST", "/1.0/instances", createBody).isSuccess());
 
-            // deviceConfigSet: reads expanded_devices, merges "size", PATCHes full device config
-            var setResp = http.deviceConfigSet(name, "root", "size", "10GB");
-            assertTrue(setResp.isSuccess(), "deviceConfigSet should succeed");
+            // deviceConfigSet: reads expanded_devices, merges the key, PATCHes full device config.
+            // The device is the profile's NIC on isx's bridge, which comes from the default
+            // profile like root does, but a NIC key: root's "size" is a storage quota, which a
+            // btrfs pool without qgroups (a nested host) refuses, so it tested the host's storage
+            // rather than the merge (#2711). Device names are conventional, so it is found by
+            // type and network rather than assumed to be eth0.
+            var nicName = IncusClient.nicDeviceName(
+                    http.get("/1.0/instances/" + name).body().path("metadata"), BridgeAddress.BRIDGE);
+            if (nicName == null) {
+                System.out.println("Skipping deviceConfigSet test: the default profile has no NIC on "
+                        + BridgeAddress.BRIDGE + ".");
+                return;
+            }
+            var setResp = http.deviceConfigSet(name, nicName, "security.ipv4_filtering", "true");
+            assertTrue(setResp.isSuccess(), "deviceConfigSet should succeed: " + setResp.body());
 
             var infoResp = http.get("/1.0/instances/" + name);
-            var rootSize = infoResp.body().path("metadata").path("devices")
-                    .path("root").path("size").asText("");
-            assertEquals("10GB", rootSize, "root device size should be updated to 10GB");
-            System.out.println("deviceConfigSet succeeded: root.size = " + rootSize);
+            var nic = infoResp.body().path("metadata").path("devices").path(nicName);
+            assertEquals("true", nic.path("security.ipv4_filtering").asText(""),
+                    nicName + " should carry the key it was given");
+            assertEquals("nic", nic.path("type").asText(""),
+                    nicName + " should keep the profile's type, merged in from expanded_devices");
+            System.out.println("deviceConfigSet succeeded: " + nicName + " = " + nic);
 
         } finally {
             http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
