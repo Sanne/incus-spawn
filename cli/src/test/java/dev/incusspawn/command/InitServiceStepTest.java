@@ -130,7 +130,7 @@ class InitServiceStepTest {
         assertEquals(Set.of("proxy-service"), init.failed);
         assertEquals("the proxy service", init.failedService());
         var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
-        assertFalse(box.contains("Setup complete"), box);
+        assertFalse(box.contains("is set up for isx"), box);
         assertTrue(box.contains("Setup finished without the proxy service."), box);
     }
 
@@ -141,7 +141,7 @@ class InitServiceStepTest {
         assertEquals(Set.of("macos-services"), init.failed);
         assertEquals("the VM and proxy services", init.failedService());
         var box = BuildOutput.stripAnsi(String.join("\n", init.macOsClosingSteps(false)));
-        assertFalse(box.contains("Setup complete"), box);
+        assertFalse(box.contains("is set up for isx"), box);
         assertTrue(box.contains("Setup finished without the VM and proxy services."), box);
         assertTrue(box.contains("1. Start VM, proxy:"), box);
     }
@@ -161,7 +161,7 @@ class InitServiceStepTest {
         assertEquals(ProxyService.NOT_RESTARTED, warns.get(0).msg());
         assertEquals(List.of(ProxyService.CHECK_LOGS, ProxyService.START_AGAIN), warns.get(0).details());
         var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
-        assertFalse(box.contains("Setup complete"), box);
+        assertFalse(box.contains("is set up for isx"), box);
     }
 
     /** An upgrade whose restart left the service down is not reported as running either (#2604). */
@@ -182,7 +182,7 @@ class InitServiceStepTest {
         // The warning names where to see why and how to start it again (#2620)
         assertEquals(List.of(ProxyService.CHECK_LOGS, ProxyService.START_AGAIN), warn.details());
         var box = BuildOutput.stripAnsi(String.join("\n", init.linuxClosingSteps(false, false)));
-        assertFalse(box.contains("Setup complete"), box);
+        assertFalse(box.contains("is set up for isx"), box);
     }
 
     /**

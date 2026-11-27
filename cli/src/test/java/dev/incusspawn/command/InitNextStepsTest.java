@@ -65,7 +65,7 @@ class InitNextStepsTest {
         var lines = Arrays.stream(InitCommand.nextSteps(InitCommand.Services.START_PROXY, "the proxy service", false))
                 .map(BuildOutput::stripAnsi).toList();
         var text = String.join("\n", lines);
-        assertFalse(text.contains("Setup complete"), text);
+        assertFalse(text.contains("is set up for isx"), text);
         assertEquals("   ! Setup finished without the proxy service.", lines.getFirst());
         assertTrue(lines.contains("   1. Start the proxy:   isx proxy start"), text);
     }
@@ -83,14 +83,50 @@ class InitNextStepsTest {
         assertTrue(lines.contains("   Or launch the TUI:    isx"), text);
     }
 
+    /**
+     * A re-run that found everything set up is not told a setup just completed, and its one next
+     * step is not a numbered list of one (#2542, seen on a Mac).
+     */
+    @Test
+    void aReRunWithNothingLeftSaysHowTheComputerStands() {
+        var lines = dev.incusspawn.Platform.wordedAs(true, () -> Arrays.stream(InitCommand.nextSteps(InitCommand.Services.INSTALLED, null, true))
+                .map(BuildOutput::stripAnsi).toList());
+        assertEquals(List.of("   ✓ This Mac is set up for isx.", "", "   isx's services start on their own.", "",
+                "   Next step:",
+                "   Branch a template: isx branch <name> --from <template>",
+                "   Or launch the TUI: isx"), lines);
+    }
+
+    /** A service step still left is not called a set-up computer: the header says a step is left (#2673 review). */
+    @Test
+    void aServiceStepLeftIsNotCalledSetUp() {
+        for (var services : InitCommand.Services.values()) {
+            if (services == InitCommand.Services.INSTALLED) continue;
+            var lines = dev.incusspawn.Platform.wordedAs(false, () -> Arrays.stream(InitCommand.nextSteps(services, null, true))
+                    .map(BuildOutput::stripAnsi).toList());
+            assertEquals("   ! This computer still needs isx's services running.", lines.getFirst(), services.name());
+        }
+    }
+
+    /** Services the person declined are said plainly, never as a warning against their answer (#2673 review). */
+    @Test
+    void declinedServicesAreNotAWarning() {
+        var lines = dev.incusspawn.Platform.wordedAs(true, () -> Arrays.stream(InitCommand.nextSteps(InitCommand.Services.START_VM_AND_PROXY, null, true, true))
+                .map(BuildOutput::stripAnsi).toList());
+        assertEquals("   This Mac is set up for isx, without its services.", lines.getFirst());
+        assertTrue(lines.contains("   1. Start VM, proxy:   isx vm start && isx proxy start"), lines.toString());
+    }
+
     @Test
     void everyLineFitsTheBox() {
         for (var services : InitCommand.Services.values()) {
             for (var failed : Arrays.asList(null, "the proxy service", "the VM and proxy services")) {
                 for (var built : List.of(false, true)) {
-                    for (var line : InitCommand.nextSteps(services, failed, built)) {
-                        line = BuildOutput.stripAnsi(line);
-                        assertTrue(line.length() <= InitCommand.BOX_WIDTH, line);
+                    for (var declined : List.of(false, true)) {
+                        for (var line : InitCommand.nextSteps(services, failed, built, declined)) {
+                            line = BuildOutput.stripAnsi(line);
+                            assertTrue(line.length() <= InitCommand.BOX_WIDTH, line);
+                        }
                     }
                 }
             }
