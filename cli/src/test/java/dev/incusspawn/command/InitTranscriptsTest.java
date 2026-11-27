@@ -54,9 +54,9 @@ class InitTranscriptsTest {
     private static final Pattern OSC = Pattern.compile("\u001B\\]8;;[^\u001B\u0007]*(?:\u001B\\\\|\u0007)");
     /**
      * The first run's "Never" words (.claude/rules/interface-text.md "One word for one thing"):
-     * "machine" alone, not after "isx", and the words isx uses elsewhere.
+     * "instance" is the one word for what an agent runs in, so "machine", "container" and "box" are not.
      */
-    private static final Pattern NEVER = Pattern.compile("(?i)\\b(instances?|containers?|host|hosts|box)\\b|(?<!isx )\\bmachines?\\b");
+    private static final Pattern NEVER = Pattern.compile("(?i)\\b(machines?|containers?|host|hosts|box)\\b");
     private static final Pattern CSI = Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
 
     static final HostAgentProbe.HostAgent CLAUDE_SUBSCRIPTION = new HostAgentProbe.HostAgent("claude", true,
@@ -611,7 +611,7 @@ class InitTranscriptsTest {
             var text = transcript(branch);
             Files.writeString(OUT.resolve(branch.name() + ".txt"), text);
             // The closing message's bridging line is the one place "instance" is said
-            faults.addAll(TranscriptGate.faults(branch.name(), text, NEVER, "isx commands and docs call"));
+            faults.addAll(TranscriptGate.faults(branch.name(), text, NEVER, null));
             // Worded for the branch's platform, not the one running the test (#2588); the header line is the test's
             var other = branch.macOs() ? "this computer" : "this Mac";
             if (text.substring(text.indexOf('\n') + 1).contains(other)) faults.add(branch.name() + ": says \"" + other + "\"");
@@ -635,7 +635,7 @@ class InitTranscriptsTest {
     void aWholeRunShowsTheSetupItRan() throws Exception {
         var mac = transcriptOf("34c-whole-run-mac");
         for (var line : List.of("⟪the Incus VM starts here: a first run downloads its appliance, then boots it⟫",
-                "▸ Installing what isx needs on this Mac", "This Mac's own traffic", "✓ SSH access to isx machines ready",
+                "▸ Installing what isx needs on this Mac", "This Mac's own traffic", "✓ SSH access to instances ready",
                 "⟪launchd installs and starts the VM and proxy services here⟫")) {
             assertTrue(mac.contains(line), line + "\n" + mac);
         }
@@ -645,8 +645,8 @@ class InitTranscriptsTest {
         var linux = transcriptOf("34b-whole-run-linux-clean");
         assertFalse(linux.contains("⟪the host's setup runs here⟫"), linux);
         for (var line : List.of("▸ Installing what isx needs on this computer", "✓ Installing Incus",
-                "✓ Adding you to the incus-admin group", "✓ Letting isx machines through the firewall",
-                "✓ Creating the isx proxy's certificate", "✓ SSH access to isx machines ready",
+                "✓ Adding you to the incus-admin group", "✓ Letting instances through the firewall",
+                "✓ Creating the isx proxy's certificate", "✓ SSH access to instances ready",
                 "⟪sudo asks for the password here⟫", "⟪systemd installs and starts the proxy service here⟫")) {
             assertTrue(linux.contains(line), line + "\n" + linux);
         }
@@ -684,7 +684,7 @@ class InitTranscriptsTest {
         assertTrue(text.contains("⚠ Could not mount the DNF cache, so builds are slower."), text);
         assertTrue(text.contains("✓ tpl-agent built"), text);
         assertTrue(text.contains("Setup complete"), text);
-        assertEquals(List.of(), TranscriptGate.faults("34d", text, NEVER, "isx commands and docs call"));
+        assertEquals(List.of(), TranscriptGate.faults("34d", text, NEVER, null));
     }
 
     @Test

@@ -739,4 +739,15 @@ class InitPlanTest {
         assertEquals(59, lines.get(1).length(), String.join("\n", lines));
         assertTrue(lines.get(2).startsWith("      a"), String.join("\n", lines));
     }
+
+    /** The --no-sudo script is read by a person, so its comments word a step as its hint does today, not as --plan's purpose (#2542). */
+    @Test
+    void theRootScriptSaysWhatTheHintSays() {
+        var change = InitPlan.Change.run("Install Incus", InitPlan.Who.SUDO, "dnf install -y incus");
+        var entry = new InitPlan.Entry("incus", "Incus Installation", HostSetup.INCUS_FIRST_RUN_PURPOSE,
+                String.join(" ", HostSetup.INCUS_FIRST_RUN), InitPlan.Assessment.of(List.of(change)));
+        var script = InitPlan.script(List.of(new InitPlan.Privileged(entry, change)), "isx init --no-sudo");
+        assertTrue(script.contains("# Incus Installation: " + String.join(" ", HostSetup.INCUS_FIRST_RUN)), script);
+        assertFalse(script.contains("isx machine"), script);
+    }
 }

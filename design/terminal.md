@@ -886,7 +886,9 @@ It is a file of its own rather than a wider `writing.md`, because an agent editi
 It cites `writing.md` for the principles both share, and holds only what a prompt or a status line needs beyond them: what each answer does, one outcome on one line, a line that fits its frame.
 What this gives up: a principle changed in `writing.md` reaches interface text only through that citation, so the two files are read together when one changes.
 
-The first run has a vocabulary of its own, "isx machine" and "this Mac", set in #2528 for a person who has met no isx term yet; every other text keeps the docs' "instance" and "host".
+Every text uses one vocabulary, the first run included: "instance" for what an agent runs in, which the first run's intro explains (#2673).
+The first run also calls the computer "this Mac" or "this computer", never "host", for a person who has met no isx term yet (#2528).
+Only the walk through a first setup is the first run; `isx init --help`, its `--plan` and errors from shared code say "host", as every other text does (#2673).
 
 A gate is worth having, since the rules alone did not hold for the docs either.
 It reads generated transcripts of the main flows rather than string literals, because a message is assembled from several of them.

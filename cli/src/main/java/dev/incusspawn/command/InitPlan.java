@@ -172,8 +172,16 @@ final class InitPlan {
         }
     }
 
-    /** One step of the plan. */
-    record Entry(String step, String title, String purpose, Assessment assessment) {}
+    /**
+     * One step of the plan. {@code purpose} is the formats' value, a contract; {@code says} is
+     * what the {@code --no-sudo} script's comment tells the person who reads it, worded as the
+     * step's hint is today (#2542).
+     */
+    record Entry(String step, String title, String purpose, String says, Assessment assessment) {
+        Entry(String step, String title, String purpose, Assessment assessment) {
+            this(step, title, purpose, purpose, assessment);
+        }
+    }
 
     /**
      * Combines the standings of a step's parts: pending when any part certainly changes something,
@@ -410,7 +418,7 @@ final class InitPlan {
                     // With nothing it could not check left, the step is no longer unknown: what is left only offers
                     : new Assessment(a.state() == State.UNKNOWN && left.stream().allMatch(Change::checked)
                             ? State.OPTIONAL : a.state(), a.asks(), left, a.note(), a.checks());
-            out.add(new Entry(entry.step(), entry.title(), entry.purpose(), assessment));
+            out.add(new Entry(entry.step(), entry.title(), entry.purpose(), entry.says(), assessment));
         }
         return out;
     }
@@ -446,7 +454,7 @@ final class InitPlan {
             if (p.entry() != step) {
                 step = p.entry();
                 out.append("\n# ").append(OutputFormat.oneLine(step.title())).append(": ")
-                        .append(OutputFormat.oneLine(step.purpose())).append("\n");
+                        .append(OutputFormat.oneLine(step.says())).append("\n");
             }
             out.append("# - ").append(OutputFormat.oneLine(p.change().what())).append("\n");
             for (var line : p.change().script()) out.append(line).append("\n");

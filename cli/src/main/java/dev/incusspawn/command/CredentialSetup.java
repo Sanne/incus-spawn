@@ -122,7 +122,7 @@ class CredentialSetup {
     /** The tool name of the agent the first run set up, or null: an account kind only another agent can use is not offered (#2528). */
     String agent;
 
-    /** Whether the first run chose no agent: what acts on GitHub is then isx machines, never "the agent" (#2528). */
+    /** Whether the first run chose no agent: what acts on GitHub is then instances, never "the agent" (#2528). */
     boolean noAgent;
 
     /** Whether the GitHub account is for GitHub Copilot CLI, which needs more of the token than isx does (#2537). */
@@ -132,11 +132,11 @@ class CredentialSetup {
     boolean copilotSignedInHere;
 
     /**
-     * What the agent runs in, as this step names it: "isx machines" in the first run, which
-     * introduces that word, and "instances", as the rest of isx says, everywhere else (#2528).
+     * What the agent runs in, as every flow names it: "instances", which the first run's intro
+     * explains (#2542).
      */
     String machines() {
-        return firstRun ? "isx machines" : "instances";
+        return "instances";
     }
 
     boolean hostHasCommand(String command) {
@@ -1243,7 +1243,7 @@ class CredentialSetup {
     /**
      * A check's answer: whether the credential verified, why not, and whether the check reached
      * the service at all. Only a check that could not run may be saved unverified (#2528):
-     * a credential the service rejected would fail the same way in every isx machine.
+     * a credential the service rejected would fail the same way in every instance.
      */
     record AuthResult(boolean verified, String message, boolean reached) {
         AuthResult(boolean verified, String message) {
@@ -1855,7 +1855,7 @@ class CredentialSetup {
         savedChecked(GhSetup.NAMESPACE, verified);
         BuildOutput.ok(verified ? "Token verified and saved on " + here : "Token saved on " + here + ", unverified");
         if (result != null && result.login() != null) {
-            BuildOutput.stepNote((noAgent ? "isx machines act" : "The agent acts") + " on GitHub as " + OutputFormat.oneLine(result.login()) + ".");
+            BuildOutput.stepNote((noAgent ? "Instances act" : "The agent acts") + " on GitHub as " + OutputFormat.oneLine(result.login()) + ".");
         }
         if (!verified) BuildOutput.stepNote("If it fails, 'isx account add github' replaces it.");
     }
@@ -2615,7 +2615,7 @@ class CredentialSetup {
                 prompts.say("     GitHub Copilot CLI cannot start until you add one");
                 prompts.say("     with 'isx account add github'.");
             } else {
-                prompts.say(noAgent ? "     isx machines cannot push, comment or open anything on"
+                prompts.say(noAgent ? "     Instances cannot push, comment or open anything on"
                         : "     The agent cannot push, comment or open anything on");
                 prompts.say("     GitHub. Add an account later with");
                 prompts.say("     'isx account add github'.");
@@ -2688,13 +2688,13 @@ class CredentialSetup {
             "     or those of an organization it belongs to.",
             "     Needs a second GitHub account and a token for it.");
 
-    /** {@link #SEPARATE_ACCOUNT_FOR_AGENT} when the first run chose no agent: what acts is isx machines. */
+    /** {@link #SEPARATE_ACCOUNT_FOR_AGENT} when the first run chose no agent: what acts is instances. */
     private static final List<String> SEPARATE_ACCOUNT_FOR_MACHINES = List.of(
-            "As which GitHub account should isx machines act?",
+            "As which GitHub account should instances act?",
             "",
             "  1. A separate account",
             "     Its permissions are independent of yours.",
-            "     isx machines can work only on the repositories this",
+            "     Instances can work only on the repositories this",
             "     account owns, or those of an organization it belongs",
             "     to. Needs a second GitHub account and a token for it.");
 
@@ -2806,7 +2806,7 @@ class CredentialSetup {
     private boolean confirmOwnAccount(Prompts prompts, String login) {
         BuildOutput.gap();
         prompts.say("This token belongs to " + OutputFormat.oneLine(login) + ", your own account.");
-        prompts.say(noAgent ? "isx machines would act on GitHub as you." : "The agent would act on GitHub as you.");
+        prompts.say(noAgent ? "Instances would act on GitHub as you." : "The agent would act on GitHub as you.");
         return askYesNo(prompts, "Use it anyway?", false);
     }
 
@@ -2929,7 +2929,7 @@ class CredentialSetup {
         return chooseCommitEmail(user, prompts, false);
     }
 
-    /** {@link #chooseCommitEmail}, naming isx machines rather than the agent when {@code noAgent}. */
+    /** {@link #chooseCommitEmail}, naming instances rather than the agent when {@code noAgent}. */
     static String chooseCommitEmail(GitHubUser user, Prompts prompts, boolean noAgent) {
         var noreply = user.id() > 0 && user.login() != null
                 ? user.id() + "+" + user.login() + "@users.noreply.github.com" : null;

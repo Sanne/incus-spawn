@@ -14,7 +14,7 @@ A run without a terminal, or in a machine format, keeps the walk it always had: 
 
 `runFirstRun` takes these steps, in order:
 
-1. It prints a welcome in its banner (`printFirstRunIntro`): the logo, with "Welcome to isx." and two short lines beside it saying what the person came for and that it takes no more than 5 minutes, then the run as three numbered stages (the questions, isx installing what it needs and then building an example template, and the agent ready to open in an isx machine).
+1. It prints a welcome in its banner (`printFirstRunIntro`): the logo, with "Welcome to isx." and two short lines beside it saying what the person came for and that it takes no more than 5 minutes, then the run as three numbered stages (the questions, isx installing what it needs and then building an example template, and the agent ready to open in an instance, which the third stage explains).
    The stages are sentences with isx as the actor: an earlier form labelled its rows "You answer", "isx then" and "You get", which read as orders.
    The logo is the TUI's, three rows beside the welcome's three lines (design/visual-language.md), and is drawn nowhere else in the run: once it is a signature, and the closing box is kept short.
    It is kept to eight lines of text, so it leaves out what isx installs (the Linux VM, Incus, the proxy) and what a template is for, which the setup block and the closing box say where they happen; on Linux it keeps the sudo password, which the person must be ready for.
@@ -87,14 +87,14 @@ A first run whose proxy is not a running service builds nothing either, since a 
 The completion message then names the build command.
 
 **The completion message is what the person does next, in order** (#2528).
-The box holds the result and the next command: the template, built or not, which is where "template" is explained in every variant of the box, and the command that opens the agent in a new isx machine (`InitCommand.firstRunNextSteps`).
+The box holds the result and the next command: the template, built or not, which is where "template" is explained in every variant of the box, and the command that opens the agent in a new instance (`InitCommand.firstRunNextSteps`).
 When more is left, it lists it as numbered steps, one command to a line, in the order that works: start the services, build the template, add the agent's account, open the agent.
 Its title reads "Setup complete" only when opening the agent is all that is left, and otherwise counts the steps left; a build that failed is named.
 When a service install failed, a later run's box names the service it finished without in its header, and starting it stays the first step (#2597).
-Otherwise it ticks its header only when no service step is left: "This Mac is set up for isx", or on Linux "This computer is set up for isx".
-With a service step left, it says the computer still needs isx's services running, and that step comes first.
-When the person declined the services, it says the computer is set up without them, with no warning's mark, since a warning must not contradict their answer.
-It says how the computer stands rather than "Setup complete!", since a later run may have skipped every step (#2542).
+Otherwise its header is "Setup complete" when no service step is left, and "One step left: start isx's services" when one is, that step first; "install" takes the place of "start" when the step installs them.
+When the person declined the services, the header has no warning's mark, since a warning must not contradict their answer: `isx is ready. Start its services when you need them:`.
+The service step follows that colon alone, and the template's steps come after it under their own label, since building a template is not a way to start the services.
+A later run's header never says that a setup just completed when there is something left, since that run may have skipped every step (#2542).
 A single next step is not numbered.
 A running service that the run restarted counts only once the proxy answers, within the proxy's start wait (`ready-timeouts.proxy`), as `isx proxy install` waits: the unit reads `active` before a new proxy that exits at once has exited (#2619).
 An answer from another proxy on the service's ports does not count, and a unit the upgrade left down fails without the wait.
@@ -102,8 +102,7 @@ A unit that reads `activating`, systemd waiting out `RestartSec` to start a prox
 `ProxyService.restart` counts it as restarted the same way, so `isx proxy restart` and doctor's restart remedies fail when the proxy does not answer within that wait.
 A proxy that systemd stopped for a configuration error (exit 78) is named as that, in each of them and in `isx proxy start` (`ProxyService.notAnsweringAfterRestart`).
 An agent that needs something of the person at its first start says so under its step (`ToolSetup.firstStartNote`): Antigravity CLI on a Google account signs in from the instance.
-Under the box come the commands for later: return to the machine, list the machines, edit the template, the templates guide and `isx init`.
-Its last line says that isx's commands and docs call an isx machine an "instance".
+Under the box come the commands for later: return to the instance, see your instances, edit the template, the templates guide and `isx init`.
 No line is wider than the box, which `InitFirstRunTest#everyLineOfTheClosingBoxEndsAtItsBorderAsTheTerminalDrawsIt` holds with escapes on: a link is an OSC 8 string, whose URL the terminal does not draw, and padding counted it until #2528.
 
 **A run that stops half way says how to go on.**
@@ -122,7 +121,7 @@ The first `isx branch` at a terminal asks for it (#2405).
 
 A Claude Code subscription found on the host answers which kind of account to set up (`CredentialSetup.setupClaudeSubscription`): it is re-issued with `claude setup-token`, never copied, since the proxy and the host's Claude Code would otherwise share one refresh token.
 Other local sign-ins answer it too: a local Claude API key, Codex CLI's ChatGPT sign-in or API key and Antigravity CLI's Google account (`InitCommand.localAgentSignIn`).
-Each of those steps names the sign-in it found and says that isx keeps a separate credential for isx machines.
+Each of those steps names the sign-in it found and says that isx keeps a separate credential for instances.
 Enter sets up that kind, `o` offers the other kinds and `s` skips; Enter at a pasted key's prompt goes back to that choice.
 GitHub Copilot CLI's sign-in is only named above the GitHub question, which then asks as it always does.
 The subscription's step says what will happen before it asks: the command runs and opens the browser, the person approves, then isx reads the token, or the person pastes it when isx cannot.
@@ -177,8 +176,9 @@ A namespace that already holds accounts, usable or not, gets the full step, whic
 ## The first run's words (#2528)
 
 Sanne reviewed the first run screen by screen on a Mac, and the text it prints follows nine rules agreed then (#2528, #2542).
-What an agent runs in is an "isx machine", the computer is "this Mac" or "this computer" (`Platform.thisComputer`), and the closing message bridges to "instance" once.
-That word is the first run's alone: a credential step shared with `isx account add` says "instance" outside it (`CredentialSetup.machines`), and nothing else in isx was renamed.
+What an agent runs in is an "instance", the noun every isx command names, and the computer is "this Mac" or "this computer" (`Platform.thisComputer`).
+The intro's third stage explains the word before any other text uses it.
+The first run once said "isx machine", with a closing line bridging to "instance"; Sanne moved it to "instance" on #2673, so a person learns the one word they read in every command afterwards.
 What is asked comes before why, a step that starts something says what will happen first, and each answer says what it does.
 A step header shows its number once, as `[2/3]`.
 Each header after the first also recaps the answers so far, above its title (`InitCommand.Answered`, `recapLine`): "Coding agent", "Its account" and "GitHub", each with a tick and what was chosen, or a hyphen and "left for later" or "none for now".
@@ -199,7 +199,7 @@ Starting each question on a cleared screen under that recap is an experiment lef
 The count is the run's own: before the agent is chosen it counts the questions for the agent offered first, and with none to offer it shows the most a run asks: the agent, its account and GitHub (`InitCommand.questionsFor`).
 So the total can drop at the next header and never reads `+`; it grows only when the person turns down the agent offered for one with an account to set up.
 After the choice it counts again, so a Copilot run, whose account step is the GitHub question, reads `[2/2]`, and the intro's first stage lists the same questions.
-With no agent chosen, the GitHub step and the Git identity question speak of isx machines, never of "the agent" (`CredentialSetup.noAgent`).
+With no agent chosen, the GitHub step and the Git identity question speak of instances, never of "the agent" (`CredentialSetup.noAgent`).
 A check that fails is answered with one letter per meaning across the step: `Y` tries again and `s` skips, as in the step's own menu.
 Every key the first run accepts is checked before it is saved, or its definition says why it cannot be (#2566).
 OpenAI's key is checked with `GET /v1/models`, and a tool's secret with the `check.url` its configuration entry declares (`SecretCheck`), sent with the header its own auth entry for that host injects.
@@ -214,10 +214,10 @@ Every pasted secret gets a receipt first, `Received N characters`, with its mask
 A secret is not echoed, so the receipt is the only sign that the paste arrived, and it comes before a check that can take a while and before the GitHub step's email question, which is asked ahead of the outcome line.
 It carries no tick, which is kept for a credential that was checked, and it costs a second line beside the outcome line.
 A ChatGPT sign-in, in the browser or by one-time code, says isx waits while the person signs in, and one that did not finish offers the same `Y` and `s` (`CredentialSetup.signInChatGptInBrowser`, `signInChatGptWithDeviceCode`).
-Saving unverified (`u`) is offered only when the check could not run or reach the service (`CredentialSetup.AuthResult.reached`), since a credential the service rejected fails the same way in every isx machine.
+Saving unverified (`u`) is offered only when the check could not run or reach the service (`CredentialSetup.AuthResult.reached`), since a credential the service rejected fails the same way in every instance.
 A namespace with a hosted sign-in (Gemini's Google account) offers its kinds as the Claude step does, each with a line under it and "None for now", and offers the hosted kind only to the agents that can use it (`ToolSetup.HostedSignIn.tools`): a first run for Gemini CLI never offers Antigravity CLI's Google sign-in.
 No line under a step header, its indent included, is wider than 62 columns (.claude/rules/interface-text.md "A line fits its frame"): text built from names breaks through `Lines.wrap`.
-`InitTranscriptsTest` renders every branch of the first run through the terminal's own output, escapes on, and reduces it to what a terminal draws; it writes one transcript per branch to `cli/target/init-transcripts/` and fails a line wider than the frame, or a word of the rule file's "Never" column before the closing message's line.
+`InitTranscriptsTest` renders every branch of the first run through the terminal's own output, escapes on, and reduces it to what a terminal draws; it writes one transcript per branch to `cli/target/init-transcripts/` and fails a line wider than the frame, or a word of the rule file's "Never" column anywhere in the flow.
 The transcripts are how a branch nobody walks at a terminal is read and reviewed.
 A branch on a Mac says "this Mac" on any OS that writes it: the test runs it under `Platform.wordedAs`, which changes `Platform.thisComputer` for that run alone and never the platform role (#2588, #1800).
 It fails a branch that says the other platform's words, so text that writes "this computer" itself is caught.

@@ -774,7 +774,7 @@ public class InitCommand extends BaseCommand {
     boolean sudoFirst() {
         if (firstRun) {
             Lines.step("isx asks for your sudo password now. It installs packages,"
-                    + " and configures the firewall and the user IDs of isx machines.");
+                    + " and configures the firewall and the user IDs of instances.");
         } else {
             BuildOutput.step("Some steps run with sudo, which may ask for your password:");
             BuildOutput.step("packages, the firewall and the user IDs of instances.");
@@ -927,21 +927,16 @@ public class InitCommand extends BaseCommand {
         var first = firstRun;
         return List.of(
                 new InitStep("incus", first ? "Incus" : "Incus Installation", first ? HostSetup.INCUS_FIRST_RUN : HostSetup.INCUS_HINT,
-                        this::installIncus, host::planIncusInstallation, purpose(first, HostSetup.INCUS_FIRST_RUN, HostSetup.INCUS_PURPOSE)),
+                        this::installIncus, host::planIncusInstallation, first ? HostSetup.INCUS_FIRST_RUN_PURPOSE : HostSetup.INCUS_PURPOSE),
                 new InitStep("subids", first ? "User Mappings" : "User Namespace Mappings", first ? HostSetup.SUBID_FIRST_RUN : HostSetup.SUBID_HINT,
-                        host::configureSubuidSubgid, host::planSubids, purpose(first, HostSetup.SUBID_FIRST_RUN, HostSetup.SUBID_PURPOSE)),
+                        host::configureSubuidSubgid, host::planSubids, first ? HostSetup.SUBID_FIRST_RUN_PURPOSE : HostSetup.SUBID_PURPOSE),
                 new InitStep("storage-network", "Storage & Network", first ? HostSetup.STORAGE_FIRST_RUN : HostSetup.STORAGE_HINT,
-                        host::initializeIncus, host::planStorageAndNetwork, purpose(first, HostSetup.STORAGE_FIRST_RUN, HostSetup.STORAGE_PURPOSE)),
+                        host::initializeIncus, host::planStorageAndNetwork, first ? HostSetup.STORAGE_FIRST_RUN_PURPOSE : HostSetup.STORAGE_PURPOSE),
                 new InitStep("firewall", first ? "Firewall" : "Firewall Configuration", first ? HostSetup.FIREWALL_FIRST_RUN : HostSetup.FIREWALL_HINT,
-                        host::configureFirewall, host::planFirewall, purpose(first, HostSetup.FIREWALL_FIRST_RUN, HostSetup.FIREWALL_PURPOSE)),
+                        host::configureFirewall, host::planFirewall, first ? HostSetup.FIREWALL_FIRST_RUN_PURPOSE : HostSetup.FIREWALL_PURPOSE),
                 new InitStep("mitm-proxy", first ? "The isx Proxy" : "MITM Authentication Proxy", first ? HostSetup.MITM_FIRST_RUN : HostSetup.MITM_HINT,
-                        host::configureMitmProxy, host::planMitmProxy, purpose(first, HostSetup.MITM_FIRST_RUN, HostSetup.MITM_PURPOSE)),
+                        host::configureMitmProxy, host::planMitmProxy, first ? HostSetup.MITM_FIRST_RUN_PURPOSE : HostSetup.MITM_PURPOSE),
                 sshKeyPair());
-    }
-
-    /** {@code --plan}'s purpose of a Linux step: the first run's hint, joined, or the one it has always had. */
-    private static String purpose(boolean first, String[] firstRun, String purpose) {
-        return first ? String.join(" ", firstRun) : purpose;
     }
 
     /** What Linux init installs before its numbered steps, with no header of its own. */
@@ -1098,6 +1093,11 @@ public class InitCommand extends BaseCommand {
             this.step = label == null ? null : String.format("%-19s%s", label + ":", command);
         }
 
+        /** Whether the step installs the services rather than starting them. */
+        boolean installs() {
+            return this == INSTALL_PROXY || this == INSTALL_PROXY_NO_SUDO || this == INSTALL_VM_AND_PROXY;
+        }
+
         /** Whether the command keeps its terminal until it is stopped, so the next step needs another. */
         boolean holdsTerminal() {
             return this == START_PROXY || this == START_VM_AND_PROXY;
@@ -1131,18 +1131,25 @@ public class InitCommand extends BaseCommand {
     static String[] nextSteps(Services services, String failedService, boolean templateBuilt, boolean declined) {
         // A re-run may have changed nothing, so the header says how the computer stands, never that
         // a setup just completed; it is set up only once no service step is left
-        var computer = capitalized(Platform.thisComputer());
         var header = failedService != null
                 ? "   " + styled(BOLD + YELLOW, "!") + styled(BOLD, " Setup finished without " + failedService + ".")
                 : services.step != null && declined
-                ? "   " + styled(BOLD, computer + " is set up for isx, without its services.")
+                ? "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " isx is ready. Start its services when you need them:")
                 : services.step != null
-                ? "   " + styled(BOLD + YELLOW, "!") + styled(BOLD, " " + computer + " still needs isx's services running.")
-                : "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " " + computer + " is set up for isx.");
+                ? "   " + styled(BOLD + YELLOW, "!") + styled(BOLD, " One step left: " + (services.installs() ? "install" : "start") + " isx's services")
+                : "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete");
         var lines = new ArrayList<String>(List.of(header, ""));
         if (services.step == null) lines.addAll(List.of("   isx's services start on their own.", ""));
         var steps = new ArrayList<String>();
-        if (services.step != null) steps.add(services.step);
+        if (services.step != null) {
+            if (declined && failedService == null) {
+                // The header's colon leads into the service step alone: the template's steps are
+                // not ways to start the services, so they follow under a label of their own
+                lines.addAll(List.of("   " + services.step, ""));
+            } else {
+                steps.add(services.step);
+            }
+        }
         if (templateBuilt) {
             steps.add("Branch a template: isx branch <name> --from <template>");
         } else {
@@ -1375,7 +1382,7 @@ public class InitCommand extends BaseCommand {
             return;
         }
         AgentGitIdentityStep.offer(config, prompts(), gitIdentityFromHost, this::hostGitIdentity,
-                firstRun ? "isx machines" : "instances", !firstRun || chosenAgent != null);
+                "instances", !firstRun || chosenAgent != null);
     }
 
     /** This host's Git identity, or null; tests answer it instead. */
@@ -1541,14 +1548,9 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    /** What the agent runs in: "isx machines" in the first run, which introduces the word, else "instances" (#2528). */
+    /** What the agent runs in, as every flow names it: "instances", which the first run's intro explains (#2542). */
     String machines() {
-        return firstRun ? "isx machines" : "instances";
-    }
-
-    /** One of {@link #machines()}, with its article: "an isx machine", else "an instance". */
-    String machine() {
-        return firstRun ? "an isx machine" : "an instance";
+        return "instances";
     }
 
     /**
@@ -1583,7 +1585,7 @@ public class InitCommand extends BaseCommand {
         }
         out.add(boxLine(""));
         var stages = List.of(introQuestions(questions), introSetup(macOs, noSudo),
-                "Your agent is ready to open in an isx machine, its own isolated Linux system.");
+                "Your agent is ready to open in an instance: its own isolated Linux system.");
         for (int n = 0; n < stages.size(); n++) {
             var lines = Lines.wrap(stages.get(n), BOX_WIDTH - 2 * INTRO_INDENT.length() - INTRO_INDENT.length());
             for (int l = 0; l < lines.size(); l++) {
@@ -2039,7 +2041,7 @@ public class InitCommand extends BaseCommand {
         chosenAgent = suggested == null ? chooseAgent(prompts, agents) : confirmAgent(prompts, agents, suggested, found);
         if (chosenAgent == null) {
             BuildOutput.step("Skipped the agent for now.");
-            BuildOutput.step("Your first isx machine is a plain Linux system.");
+            BuildOutput.step("Your first instance is a plain Linux system.");
             return;
         }
         var config = firstRunConfig();
@@ -2174,7 +2176,7 @@ public class InitCommand extends BaseCommand {
             options.add(ExampleTemplate.title(agent)
                     + (found.contains(agent.name()) ? " (found on " + dev.incusspawn.Platform.thisComputer() + ")" : ""));
         }
-        options.add("None for now\nA plain isx machine, without an agent or an account.");
+        options.add("None for now\nA plain instance, without an agent or an account.");
         var answer = prompts.choose("isx can set up these agents:", options, null, null);
         while (true) {
             if (answer == null) return null;
@@ -2255,8 +2257,8 @@ public class InitCommand extends BaseCommand {
     /** The agent account step's hint: whose account it is, and where its credential stays (#2528). */
     static String[] accountHint(String title) {
         var stays = "Its credential stays on " + dev.incusspawn.Platform.thisComputer() + ".";
-        var never = "isx machines never get it.";
-        var first = "The account " + title + " uses inside isx machines.";
+        var never = "Instances never get it.";
+        var first = "The account " + title + " uses inside instances.";
         // One line when it fits the frame under the hint's bar: on neither platform with today's words
         return (stays + " " + never).length() <= BOX_WIDTH - 4 ? new String[]{first, stays + " " + never}
                 : new String[]{first, stays, never};
@@ -2440,7 +2442,7 @@ public class InitCommand extends BaseCommand {
      */
     InitStep gitHubStep(AtomicBoolean saved) {
         return new InitStep("github", "GitHub Account", Lines.wrap(chosenAgent == null
-                ? "Everything done on GitHub from an isx machine is published under one account's name: commits,"
+                ? "Everything done on GitHub from an instance is published under one account's name: commits,"
                         + " pull requests, issues, comments. With a separate account, other people can tell that work from yours."
                 : "Everything the agent does on GitHub is published under one account's name: commits, pull requests,"
                         + " issues, comments. With a separate account for the agent, other people can tell what the agent"
@@ -2709,7 +2711,7 @@ public class InitCommand extends BaseCommand {
             add.addAll(c.otherCommands());
             steps.add(add);
         }
-        var open = new ArrayList<>(List.of(plain ? "Open a new isx machine:" : "Open " + c.agent() + " in a new isx machine:",
+        var open = new ArrayList<>(List.of(plain ? "Open a new instance:" : "Open " + c.agent() + " in a new instance:",
                 "isx branch " + c.instance() + " --from " + c.template()));
         open.addAll(c.firstStart());
         steps.add(open);
@@ -2719,14 +2721,13 @@ public class InitCommand extends BaseCommand {
         if (!c.built()) {
             // Where "template" is explained, built or not (#2528)
             var what = c.template() + (c.buildFailed() ? " did not build. It is" : " is") + " a template that makes "
-                    + (plain ? "plain isx\u00a0machines." : "isx\u00a0machines with " + c.agent() + ".");
-            // "isx machine" is never broken across two lines: the vocabulary's one name
-            for (var line : Lines.wrap(what, BOX_WIDTH - 6)) box.add("   " + line.replace('\u00a0', ' '));
+                    + (plain ? "plain instances." : "instances with " + c.agent() + ".");
+            for (var line : Lines.wrap(what, BOX_WIDTH - 6)) box.add("   " + line);
         } else {
             // Where "template" is explained (#2528)
             box.add("   " + c.template() + " is built: a template that makes "
-                    + (plain ? "plain" : "isx machines"));
-            box.add("   " + (plain ? "isx machines." : "with " + c.agent() + "."));
+                    + (plain ? "plain" : "instances"));
+            box.add("   " + (plain ? "instances." : "with " + c.agent() + "."));
         }
         // The title counts what is left; the steps follow it
         for (int i = 0; i < steps.size(); i++) {
@@ -2739,7 +2740,7 @@ public class InitCommand extends BaseCommand {
         }
         if (c.noIdentity()) {
             box.add("");
-            box.add("   Git in isx machines refuses to commit until it has a");
+            box.add("   Git in instances refuses to commit until it has a");
             // A step above already gives the command
             box.add(c.otherCommands().contains(ACCOUNT_ADD + "github") || c.accountCommands().contains(ACCOUNT_ADD + "github") ? "   name: a GitHub account gives it one."
                     : "   name: 'isx account add github' gives it one.");
@@ -2748,12 +2749,11 @@ public class InitCommand extends BaseCommand {
         var later = new ArrayList<String>();
         later.add("Later:");
         later.add(String.format("  %-26s%s", "Return to it", "isx shell " + c.instance()));
-        later.add(String.format("  %-26s%s", "See your isx machines", "isx"));
+        later.add(String.format("  %-26s%s", "See your instances", "isx"));
         if (!plain) later.add(String.format("  %-26s%s", "Change " + c.template(), "isx templates edit " + c.template()));
         later.add(String.format("  %-26s%s", "Add your own templates",
                 TerminalLink.link("https://isx.run/docs/templates")));
         if (c.listLater()) later.add(String.format("  %-26s%s", "Set up more", "isx init"));
-        later.add("isx commands and docs call an isx machine an \"instance\".");
         // Titled by what is left, never "set up" above a list of what is not (#2528)
         var title = ready ? "Setup complete" : steps.size() + " steps left";
         return new ClosingMessage(title, box, later);
@@ -2770,30 +2770,25 @@ public class InitCommand extends BaseCommand {
 
     /** Credential Setup itself: the choice of credentials, whose steps follow it. */
     InitStep credentialSetup() {
-        return new InitStep("credentials", "Credential Setup", Lines.wrap(credentialSetupHint(machines(), machine()))
-                .toArray(String[]::new),
+        return new InitStep("credentials", "Credential Setup", Lines.wrap("Choose the accounts your isx instances can use."
+                + " They stay on " + Platform.thisComputer() + ": isx adds them to requests on the way out.").toArray(String[]::new),
                 () -> {
                     var tools = new ToolDefLoader().allToolSetups();
                     chosenCredentials = selectCredentialSteps(tools);
                 },
-                // Its --plan purpose is a contract, so it keeps the words of a run that is not the first
-                this::planCredentials, credentialSetupHint("instances", "an instance"));
-    }
-
-    /** Credential Setup's hint, naming what the agent runs in as {@code machines}, and one as {@code machine}. */
-    private static String credentialSetupHint(String machines, String machine) {
-        return "Choose the credentials your " + machines + " may use."
-                + " Each stays on " + Platform.thisComputer() + ": isx adds it to requests as they leave " + machine + ","
-                + " and never puts it inside one.";
+                // Its --plan purpose is a contract, so it keeps the words the hint had
+                this::planCredentials, "Choose the credentials your instances may use. Each stays on " + Platform.thisComputer()
+                        + ": isx adds it to requests as they leave an instance, and never puts it inside one.");
     }
 
     /**
      * A credential step's hint: {@code point}, what the person sets up, then where the credential
-     * stays, as they leave {@code machine}, wrapped to the hint bar's width (.claude/rules/interface-text.md "A line fits its frame").
+     * stays, worded as Credential Setup's hint, wrapped to the hint bar's width (.claude/rules/interface-text.md
+     * "A line fits its frame").
      */
-    static String[] credentialHint(String point, String machine) {
-        return Lines.wrap(point + " It stays on " + Platform.thisComputer() + ": isx adds it to requests"
-                + " as they leave " + machine + ", and never puts it inside one.").toArray(String[]::new);
+    static String[] credentialHint(String point) {
+        return Lines.wrap(point + " It stays on " + Platform.thisComputer() + ": isx adds it to requests on the way out.")
+                .toArray(String[]::new);
     }
 
     /**
@@ -2806,17 +2801,17 @@ public class InitCommand extends BaseCommand {
         return switch (toolName) {
             case "claude" -> new InitStep(toolName, title, credentialHint(
                     "The Claude account your " + machines() + " use: an API key, a subscription (Pro, Max or Team)"
-                            + " or Google Cloud Vertex AI.", machine()), this::setupClaudeAuth, null);
+                            + " or Google Cloud Vertex AI."), this::setupClaudeAuth, null);
             case "gh" -> new InitStep(toolName, title, credentialHint(
                     "The GitHub account Git and gh use in your " + machines() + "."
-                            + " Everything they do on GitHub is published under that account's name.", machine()), this::setupGitHubAuth, null);
+                            + " Everything they do on GitHub is published under that account's name."), this::setupGitHubAuth, null);
             case "codex" -> new InitStep(toolName, title, credentialHint(
                     "The OpenAI account Codex uses in your " + machines() + ": a ChatGPT plan, signed in"
-                            + " through your browser, or an OpenAI API key.", machine()), this::setupCodexAuth, null);
+                            + " through your browser, or an OpenAI API key."), this::setupCodexAuth, null);
             default -> {
                 var spending = spending(toolName, tool, tools, config);
                 yield new InitStep(toolName, title, credentialHint("The credential " + OutputFormat.andList(spending)
-                                + (spending.size() == 1 ? " uses" : " use") + " in your " + machines() + ".", machine()),
+                                + (spending.size() == 1 ? " uses" : " use") + " in your " + machines() + "."),
                         () -> setupGenericToolCredentials(toolName, tool), null);
             }
         };
@@ -3032,8 +3027,8 @@ public class InitCommand extends BaseCommand {
 
     InitStep codeDirectoriesStep() {
         return new InitStep("code-directories", "Code Directories", hint("Directories that hold your Git repositories,"
-                + " such as ~/code. A repository from one is cloned into " + machine() + " in seconds, and gets a remote"
-                + " named after " + (firstRun ? "the isx machine" : "the instance") + ", so you push and pull between the two without going through GitHub."),
+                + " such as ~/code. Repositories from them clone into an instance in seconds, and you can push and pull"
+                + " between your checkout and the instance without GitHub."),
                 this::setupHostPaths, this::planHostPaths, PURPOSES.get("code-directories"));
     }
 
@@ -3140,7 +3135,7 @@ public class InitCommand extends BaseCommand {
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
         if (CertificateAuthority.exists()) {
-            BuildOutput.ok("The isx proxy's certificate is ready");
+            BuildOutput.ok("Proxy certificate ready");
         } else {
             CertificateAuthority.loadOrCreate();
             reportCertificateCreated();
@@ -3916,11 +3911,9 @@ public class InitCommand extends BaseCommand {
     }
 
     static String askClonePath(Prompts prompts, String defaultPath) {
-        // The directory on a line of its own, so a long home does not push the question past the frame
-        prompts.say("isx would clone your copy to this directory:");
-        prompts.say("  " + homeAbbreviated(defaultPath));
-        var answer = readInput(prompts.ask("Clone it there? (Y = yes, n = no, or another directory): "));
-        // The prompt spells the answers out, so the words are answers too, never directory names
+        sayCloneTarget(prompts, defaultPath);
+        var answer = readInput(prompts.ask("(Y/n, or type another directory): "));
+        // A person may type the word for Y or n, which is never taken as a directory name
         if (answer.equalsIgnoreCase("n") || answer.equalsIgnoreCase("no")) return null;
         if (answer.isEmpty() || answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes")) return defaultPath;
         return HostResourceSetup.expandHostTilde(answer);
@@ -3933,13 +3926,23 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * Whether the person confirms cloning into {@code target}, a directory they typed or one isx
-     * adjusted: named on a line of its own, as {@link #askClonePath} names it, so the question fits the frame.
+     * "Clone your templates to {@code path}?", the home as ~: on one line when it fits the frame, and
+     * otherwise with the directory on a line of its own (.claude/rules/interface-text.md "A line fits its frame").
      */
+    static void sayCloneTarget(Prompts prompts, String path) {
+        var question = "Clone your templates to " + homeAbbreviated(path) + "?";
+        if (question.length() <= BOX_WIDTH - 4) {
+            prompts.say(question);
+        } else {
+            prompts.say("Clone your templates to");
+            prompts.say("  " + homeAbbreviated(path) + "?");
+        }
+    }
+
+    /** Whether the person confirms cloning into {@code target}, a directory they typed or one isx adjusted. */
     static boolean confirmCloneTarget(Prompts prompts, Path target) {
-        prompts.say("isx will clone it to this directory:");
-        prompts.say("  " + homeAbbreviated(target.toString()));
-        return askYesNo(prompts, "Clone it there?", true);
+        sayCloneTarget(prompts, target.toString());
+        return askYesNo(prompts, "Clone them there?", true);
     }
 
     private void cloneAndAddSearchPath(Prompts prompts, String nwo, String targetPath, boolean alreadyConfirmed) {
@@ -4280,7 +4283,7 @@ public class InitCommand extends BaseCommand {
             } catch (Exception e) {
                 assessment = InitPlan.Assessment.unknown(PLAN_FAILED + failure(e));
             }
-            return new InitPlan.Entry(step.id(), step.title(), step.purpose(), assessment);
+            return new InitPlan.Entry(step.id(), step.title(), step.purpose(), String.join(" ", step.hint()), assessment);
         }).toList();
     }
 

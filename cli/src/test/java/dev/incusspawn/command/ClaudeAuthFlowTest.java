@@ -338,7 +338,7 @@ class ClaudeAuthFlowTest {
         assertFalse(prompts.conversation().stream().anyMatch(l -> l.contains("did not verify")), prompts.conversation()::toString);
     }
 
-    /** A key Anthropic rejected is never offered for saving: it would fail in every isx machine (#2528). */
+    /** A key Anthropic rejected is never offered for saving: it would fail in every instance (#2528). */
     @Test
     void aRejectedKeyCannotBeSavedUnverified() {
         var prompts = new ScriptedPrompts().line("1").secret("sk-ant-bad").line("u", "s");
