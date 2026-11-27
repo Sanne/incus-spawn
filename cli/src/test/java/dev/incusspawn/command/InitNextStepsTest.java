@@ -65,7 +65,7 @@ class InitNextStepsTest {
         var lines = Arrays.stream(InitCommand.nextSteps(InitCommand.Services.START_PROXY, "the proxy service", false))
                 .map(BuildOutput::stripAnsi).toList();
         var text = String.join("\n", lines);
-        assertFalse(text.contains("is set up for isx"), text);
+        assertFalse(text.contains("Setup complete"), text);
         assertEquals("   ! Setup finished without the proxy service.", lines.getFirst());
         assertTrue(lines.contains("   1. Start the proxy:   isx proxy start"), text);
     }
@@ -91,7 +91,7 @@ class InitNextStepsTest {
     void aReRunWithNothingLeftSaysHowTheComputerStands() {
         var lines = dev.incusspawn.Platform.wordedAs(true, () -> Arrays.stream(InitCommand.nextSteps(InitCommand.Services.INSTALLED, null, true))
                 .map(BuildOutput::stripAnsi).toList());
-        assertEquals(List.of("   ✓ This Mac is set up for isx.", "", "   isx's services start on their own.", "",
+        assertEquals(List.of("   ✓ Setup complete", "", "   isx's services start on their own.", "",
                 "   Next step:",
                 "   Branch a template: isx branch <name> --from <template>",
                 "   Or launch the TUI: isx"), lines);
@@ -104,7 +104,8 @@ class InitNextStepsTest {
             if (services == InitCommand.Services.INSTALLED) continue;
             var lines = dev.incusspawn.Platform.wordedAs(false, () -> Arrays.stream(InitCommand.nextSteps(services, null, true))
                     .map(BuildOutput::stripAnsi).toList());
-            assertEquals("   ! This computer still needs isx's services running.", lines.getFirst(), services.name());
+            assertEquals("   ! One step left: " + (services.installs() ? "install" : "start") + " isx's services",
+                    lines.getFirst(), services.name());
         }
     }
 
@@ -113,8 +114,30 @@ class InitNextStepsTest {
     void declinedServicesAreNotAWarning() {
         var lines = dev.incusspawn.Platform.wordedAs(true, () -> Arrays.stream(InitCommand.nextSteps(InitCommand.Services.START_VM_AND_PROXY, null, true, true))
                 .map(BuildOutput::stripAnsi).toList());
-        assertEquals("   This Mac is set up for isx, without its services.", lines.getFirst());
-        assertTrue(lines.contains("   1. Start VM, proxy:   isx vm start && isx proxy start"), lines.toString());
+        assertEquals(List.of(
+                "   ✓ isx is ready. Start its services when you need them:",
+                "",
+                "   Start VM, proxy:   isx vm start && isx proxy start",
+                "",
+                "   " + "Next step:",
+                "   Branch a template: isx branch <name> --from <template>",
+                "   Or launch the TUI: isx"), lines.subList(0, 7));
+    }
+
+    @Test
+    void declinedServicesKeepTheTemplateStepsApart() {
+        var lines = Arrays.stream(InitCommand.nextSteps(InitCommand.Services.START_PROXY, null, false, true))
+                .map(BuildOutput::stripAnsi).toList();
+        // Building a template is not a way to start the services, so it does not follow their colon
+        assertEquals("   Start the proxy:   isx proxy start", lines.get(2));
+        assertEquals("   Next steps, to a first agent:", lines.get(4));
+        assertEquals("   1. Define tpl-agent:  https://isx.run/docs#quick-start", lines.get(5));
+    }
+
+    @Test
+    void aServiceInstallLeftSaysInstall() {
+        var header = BuildOutput.stripAnsi(InitCommand.nextSteps(InitCommand.Services.INSTALL_PROXY, null, true, false)[0]);
+        assertEquals("   ! One step left: install isx's services", header);
     }
 
     @Test

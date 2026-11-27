@@ -184,7 +184,7 @@ public class PiSetup implements ToolSetup {
                 new Choice("Claude\nYour Claude account, set up next.", null),
                 new Choice("OpenAI\nYour OpenAI API key, set up next.", "openai"),
                 new Choice("Gemini\nYour Gemini API key, set up next.", "google")),
-                new Choice("A local provider, or another gateway\nSuch as ollama, or a gateway whose key a custom\nisx tool adds from " + dev.incusspawn.Platform.thisComputer() + ".\nNever put an API key inside an isx machine.",
+                new Choice("A local provider, or another gateway\nSuch as ollama, or a gateway whose key a custom\nisx tool adds from " + dev.incusspawn.Platform.thisComputer() + ".\nNever put an API key inside an instance.",
                         "Provider ID, or Enter to go back: "));
     }
 

@@ -38,7 +38,7 @@ final class AgentGitIdentityStep {
         return offer(config, prompts, fromHost, host, "instances", true);
     }
 
-    /** {@link #offer}, naming what the agent runs in as {@code machines}: "isx machines" in the first run (#2528). */
+    /** {@link #offer}, naming what the agent runs in as {@code machines}: "instances", the word every flow uses (#2542). */
     static boolean offer(SpawnConfig config, Prompts prompts, boolean fromHost, Supplier<GitIdentity> host, String machines,
                          boolean agent) {
         if (!AccountResolver.usableAccountNames(config, dev.incusspawn.tool.GhSetup.NAMESPACE).isEmpty()) {

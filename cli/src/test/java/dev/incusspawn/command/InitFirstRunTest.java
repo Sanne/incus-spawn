@@ -308,7 +308,7 @@ class InitFirstRunTest {
         assertFalse(box.contains("Setup complete"), box);
         assertTrue(box.contains("2 steps left"), box);
         assertTrue(box.indexOf("1. Add Claude Code's account:") < box.indexOf("isx account add claude"), box);
-        assertTrue(box.indexOf("isx account add claude") < box.indexOf("2. Open Claude Code in a new isx machine:"), box);
+        assertTrue(box.indexOf("isx account add claude") < box.indexOf("2. Open Claude Code in a new instance:"), box);
         assertTrue(Files.readString(ExampleTemplate.file()).contains("  - claude"));
     }
 
@@ -387,14 +387,12 @@ class InitFirstRunTest {
         var later = String.join("\n", plain(message.later()));
 
         assertEquals("Setup complete", message.title());
-        assertTrue(box.contains("tpl-agent is built: a template that makes isx machines\n   with Claude Code."), box);
-        assertTrue(box.contains("   Open Claude Code in a new isx machine:\n     isx branch my-first-12 --from tpl-agent"), box);
+        assertTrue(box.contains("tpl-agent is built: a template that makes instances\n   with Claude Code."), box);
+        assertTrue(box.contains("   Open Claude Code in a new instance:\n     isx branch my-first-12 --from tpl-agent"), box);
         assertTrue(later.lines().anyMatch(l -> l.strip().startsWith("Return to it ") && l.endsWith(" isx shell my-first-12")), later);
         assertTrue(later.lines().anyMatch(l -> l.strip().startsWith("Change tpl-agent ") && l.endsWith(" isx templates edit tpl-agent")), later);
         assertTrue(later.contains("https://isx.run/docs/templates"), later);
         assertTrue(later.lines().anyMatch(l -> l.strip().startsWith("Set up more ") && l.endsWith(" isx init")), later);
-        // The one line that bridges the first run's word to the rest of isx's
-        assertTrue(later.endsWith("isx commands and docs call an isx machine an \"instance\"."), later);
     }
 
     /** Everything left at once: numbered in the order that works, and never called complete. */
@@ -410,7 +408,7 @@ class InitFirstRunTest {
         var order = List.of("1. Start the proxy:", "isx proxy start", "the proxy keeps this terminal",
                 "2. Fix the error above, then build tpl-agent:", "isx build tpl-agent",
                 "3. Add Antigravity CLI's account:", "isx account add gemini",
-                "4. Open Antigravity CLI in a new isx machine:", "isx branch my-first-12 --from tpl-agent",
+                "4. Open Antigravity CLI in a new instance:", "isx branch my-first-12 --from tpl-agent",
                 "agy then prints a sign-in link.");
         var at = -1;
         for (var part : order) {
@@ -431,7 +429,7 @@ class InitFirstRunTest {
         var box = String.join("\n", plain(message.box()));
 
         assertTrue(box.contains("1. Add Pi's accounts:\n        isx account add gemini\n        isx account add github\n"), box);
-        assertTrue(box.contains("2. Open Pi in a new isx machine:"), box);
+        assertTrue(box.contains("2. Open Pi in a new instance:"), box);
     }
 
     /** A key only in the environment is not taken for Codex's own sign-in, which its step would claim (#2528). */

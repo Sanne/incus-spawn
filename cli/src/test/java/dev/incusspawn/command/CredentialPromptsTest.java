@@ -591,7 +591,7 @@ class CredentialPromptsTest {
         var path = System.getProperty("user.home") + "/" + "a-long-directory-name/".repeat(4) + "incus-spawn-templates";
         assertEquals(path, InitCommand.askClonePath(prompts, path));
         var conversation = prompts.conversation();
-        assertTrue(conversation.contains("  ~/" + "a-long-directory-name/".repeat(4) + "incus-spawn-templates"), conversation.toString());
+        assertTrue(conversation.contains("  ~/" + "a-long-directory-name/".repeat(4) + "incus-spawn-templates?"), conversation.toString());
         // The step's indent is 4 columns of the frame's 62
         conversation.stream().filter(l -> !l.startsWith("  ~/")).map(l -> l.startsWith("? ") ? l.substring(2) : l)
                 .forEach(l -> assertTrue(l.length() <= InitCommand.BOX_WIDTH - 4, l));
@@ -607,10 +607,18 @@ class CredentialPromptsTest {
         var prompts = ScriptedPrompts.lines("");
         assertTrue(InitCommand.confirmCloneTarget(prompts, java.nio.file.Path.of(System.getProperty("user.home"), long_)));
         var conversation = prompts.conversation();
-        assertTrue(conversation.contains("  ~/" + long_), conversation.toString());
+        assertTrue(conversation.contains("  ~/" + long_ + "?"), conversation.toString());
         conversation.stream().filter(l -> !l.startsWith("  ~/")).map(l -> l.startsWith("? ") ? l.substring(2) : l)
                 .forEach(l -> assertTrue(l.length() <= InitCommand.BOX_WIDTH - 4, l));
         assertFalse(InitCommand.confirmCloneTarget(ScriptedPrompts.lines("n"), java.nio.file.Path.of("/srv/templates")));
+    }
+
+    /** A directory that fits is asked about on one line (#2673, the wording Sanne chose). */
+    @Test
+    void aShortCloneDirectoryIsAskedAboutOnOneLine() {
+        var prompts = ScriptedPrompts.lines("");
+        assertEquals("/srv/templates", InitCommand.askClonePath(prompts, "/srv/templates"));
+        assertEquals(List.of("Clone your templates to /srv/templates?", "? (Y/n, or type another directory): "), prompts.conversation());
     }
 
     @Test

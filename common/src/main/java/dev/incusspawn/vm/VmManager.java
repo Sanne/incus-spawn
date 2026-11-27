@@ -607,9 +607,9 @@ public final class VmManager {
             BuildOutput.note("macOS may ask to allow access to your home folder and the");
             BuildOutput.note("local network. Both are safe to approve.");
             BuildOutput.note("The VM mounts your home folder read-only to share folders");
-            BuildOutput.note("you choose later. isx machines see only those folders,");
+            BuildOutput.note("you choose later. Instances see only those folders,");
             BuildOutput.note("never your whole home folder.");
-            BuildOutput.note("Local network access connects isx machines to the network.");
+            BuildOutput.note("Local network access connects instances to the network.");
         }
 
         // Every start, the automatic one included: an older isx's proxy still running would take

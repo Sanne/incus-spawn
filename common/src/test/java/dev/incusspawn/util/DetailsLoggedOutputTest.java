@@ -48,7 +48,7 @@ class DetailsLoggedOutputTest {
     @Test
     void anOutcomeForgetsTheDetailsBeforeIt() {
         out.step("Incus is installed.");
-        out.ok("SSH access to isx machines ready");
+        out.ok("SSH access to instances ready");
         out.warn("Proxy service did not start");
 
         assertEquals(List.of(OK, WARN), shown().stream().map(RecordingOutput.Event::kind).toList());

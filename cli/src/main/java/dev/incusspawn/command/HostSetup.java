@@ -218,25 +218,35 @@ class HostSetup {
 
     /** The first run's hints, shown only when a step asks (#2528): its words, at the frame's width. */
     static final String[] INCUS_FIRST_RUN = {
-            "Incus runs isx machines: full Linux systems, each one",
+            "Incus runs instances: full Linux systems, each one",
             "isolated from this computer. This step installs Incus,",
             "starts its service and adds you to the incus-admin group."};
     static final String[] SUBID_FIRST_RUN = {
-            "The users inside isx machines map to users that have no",
+            "The users inside instances map to users that have no",
             "rights on this computer. This step writes those mappings",
             "to /etc/subuid and /etc/subgid."};
     static final String[] STORAGE_FIRST_RUN = {
-            "isx machines need a network and a place on disk. With a",
-            "btrfs pool, each new isx machine is a copy made instantly",
+            "Instances need a network and a place on disk. With a",
+            "btrfs pool, each new instance is a copy made instantly",
             "that shares the files it has not changed."};
     static final String[] FIREWALL_FIRST_RUN = {
-            "isx machines reach the internet through this computer.",
+            "Instances reach the internet through this computer.",
             "This step lets the firewall pass their traffic and DNS."};
     static final String[] MITM_FIRST_RUN = {
             "The isx proxy adds your credentials to the HTTPS requests",
-            "of isx machines, so isx machines never hold them. This",
+            "of instances, so instances never hold them. This",
             "step sends that traffic to the proxy and makes its",
             "certificate."};
+
+    /**
+     * {@code --plan}'s purposes for a first run's steps, as their hints read when the first run
+     * said "isx machine": a contract, so they stay as they were (#2542).
+     */
+    static final String INCUS_FIRST_RUN_PURPOSE = "Incus runs isx machines: full Linux systems, each one isolated from this computer. This step installs Incus, starts its service and adds you to the incus-admin group.";
+    static final String SUBID_FIRST_RUN_PURPOSE = "The users inside isx machines map to users that have no rights on this computer. This step writes those mappings to /etc/subuid and /etc/subgid.";
+    static final String STORAGE_FIRST_RUN_PURPOSE = "isx machines need a network and a place on disk. With a btrfs pool, each new isx machine is a copy made instantly that shares the files it has not changed.";
+    static final String FIREWALL_FIRST_RUN_PURPOSE = "isx machines reach the internet through this computer. This step lets the firewall pass their traffic and DNS.";
+    static final String MITM_FIRST_RUN_PURPOSE = "The isx proxy adds your credentials to the HTTPS requests of isx machines, so isx machines never hold them. This step sends that traffic to the proxy and makes its certificate.";
 
     static final String[] INCUS_HINT = {
             "Incus runs instances: full Linux systems, each isolated",
@@ -1071,7 +1081,7 @@ class HostSetup {
 
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {
-            BuildOutput.ok("The isx proxy's certificate is ready");
+            BuildOutput.ok("Proxy certificate ready");
         } else {
             CertificateAuthority.loadOrCreate();
             init.reportCertificateCreated();
