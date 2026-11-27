@@ -234,6 +234,14 @@ public final class Environment {
     }
 
     /**
+     * The whole QEMU monitor log of a template's failed VM build, beside its report (#2675): Incus
+     * keeps its own copy under the build's temporary name, which the kept instance no longer has.
+     */
+    public static Path buildFailureQmpLogFile(String template) {
+        return stateLogFile("build-failures", "Template", template + ".qmp");
+    }
+
+    /**
      * Every command a template's last build ran from its definitions, with what each printed
      * (#1742): beside the failure reports, and written on success too.
      */
