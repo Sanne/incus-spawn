@@ -1120,12 +1120,27 @@ public class InitCommand extends BaseCommand {
      * to branch, so the box lists only what is left on it, never the Quick Start again (#2598).
      */
     static String[] nextSteps(Services services, String failedService, boolean templateBuilt) {
-        var header = failedService == null
-                ? "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!")
-                : "   " + styled(BOLD + YELLOW, "!") + styled(BOLD, " Setup finished without " + failedService + ".");
+        return nextSteps(services, failedService, templateBuilt, false);
+    }
+
+    /**
+     * As {@link #nextSteps(Services, String, boolean)}, where {@code declined} says the person
+     * answered no to the services: the header then states it without a warning's mark, since a
+     * warning must not contradict the person's last answer (.claude/rules/interface-text.md).
+     */
+    static String[] nextSteps(Services services, String failedService, boolean templateBuilt, boolean declined) {
+        // A re-run may have changed nothing, so the header says how the computer stands, never that
+        // a setup just completed; it is set up only once no service step is left
+        var computer = capitalized(Platform.thisComputer());
+        var header = failedService != null
+                ? "   " + styled(BOLD + YELLOW, "!") + styled(BOLD, " Setup finished without " + failedService + ".")
+                : services.step != null && declined
+                ? "   " + styled(BOLD, computer + " is set up for isx, without its services.")
+                : services.step != null
+                ? "   " + styled(BOLD + YELLOW, "!") + styled(BOLD, " " + computer + " still needs isx's services running.")
+                : "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " " + computer + " is set up for isx.");
         var lines = new ArrayList<String>(List.of(header, ""));
         if (services.step == null) lines.addAll(List.of("   isx's services start on their own.", ""));
-        lines.add("   " + styled(BOLD, templateBuilt ? "Next steps:" : "Next steps, to a first agent:"));
         var steps = new ArrayList<String>();
         if (services.step != null) steps.add(services.step);
         if (templateBuilt) {
@@ -1135,9 +1150,22 @@ public class InitCommand extends BaseCommand {
             steps.add("Build it:          isx build tpl-agent");
             steps.add("Branch it:         isx branch my-first --from tpl-agent");
         }
-        for (int i = 0; i < steps.size(); i++) lines.add("   " + (i + 1) + ". " + steps.get(i));
-        lines.add("   Or launch the TUI:    isx");
+        if (steps.size() == 1) {
+            // A list of one is not numbered: its label lines up with the TUI's below
+            lines.add("   " + styled(BOLD, "Next step:"));
+            lines.add("   " + steps.getFirst());
+            lines.add("   Or launch the TUI: isx");
+        } else {
+            lines.add("   " + styled(BOLD, templateBuilt ? "Next steps:" : "Next steps, to a first agent:"));
+            for (int i = 0; i < steps.size(); i++) lines.add("   " + (i + 1) + ". " + steps.get(i));
+            lines.add("   Or launch the TUI:    isx");
+        }
         return lines.toArray(String[]::new);
+    }
+
+    /** {@code text} with its first letter a capital, to start a sentence. */
+    static String capitalized(String text) {
+        return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
     /** The work of one step of init. */
@@ -3128,7 +3156,7 @@ public class InitCommand extends BaseCommand {
         var computer = dev.incusspawn.Platform.thisComputer();
         for (var line : Lines.wrap("The proxy uses it to open the HTTPS requests that " + machines()
                 + " send to your accounts' services, and adds your credentials. "
-                + Character.toUpperCase(computer.charAt(0)) + computer.substring(1)
+                + capitalized(computer)
                 + "'s own traffic does not go through the proxy.", Lines.WIDTH - 4)) {
             BuildOutput.stepNote(line);
         }
@@ -4087,7 +4115,8 @@ public class InitCommand extends BaseCommand {
 
     /** Linux's closing box after a re-run: the next steps, naming a service whose install failed (#2597). */
     String[] linuxClosingSteps(boolean serviceInstalled, boolean continued) {
-        var next = new ArrayList<>(List.of(nextSteps(linuxServices(serviceInstalled), failedService(), anyTemplateBuilt())));
+        var next = new ArrayList<>(List.of(nextSteps(linuxServices(serviceInstalled), failedService(), anyTemplateBuilt(),
+                declined.contains("proxy-service"))));
         if (continued) next.addAll(GROUP_PENDING);
         return next.toArray(String[]::new);
     }
@@ -4096,7 +4125,7 @@ public class InitCommand extends BaseCommand {
     String[] macOsClosingSteps(boolean servicesInstalled) {
         return nextSteps(servicesInstalled ? Services.INSTALLED
                 : skipped.contains("macos-services") ? Services.INSTALL_VM_AND_PROXY : Services.START_VM_AND_PROXY,
-                failedService(), anyTemplateBuilt());
+                failedService(), anyTemplateBuilt(), declined.contains("macos-services"));
     }
 
     /** What the closing box names as not set up, when this run's service install failed; else null. */

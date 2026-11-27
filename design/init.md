@@ -90,7 +90,12 @@ The completion message then names the build command.
 The box holds the result and the next command: the template, built or not, which is where "template" is explained in every variant of the box, and the command that opens the agent in a new isx machine (`InitCommand.firstRunNextSteps`).
 When more is left, it lists it as numbered steps, one command to a line, in the order that works: start the services, build the template, add the agent's account, open the agent.
 Its title reads "Setup complete" only when opening the agent is all that is left, and otherwise counts the steps left; a build that failed is named.
-A later run's box ticks "Setup complete!" only when no service install failed; otherwise its header names the service it finished without, and starting it stays the first step (#2597).
+When a service install failed, a later run's box names the service it finished without in its header, and starting it stays the first step (#2597).
+Otherwise it ticks its header only when no service step is left: "This Mac is set up for isx", or on Linux "This computer is set up for isx".
+With a service step left, it says the computer still needs isx's services running, and that step comes first.
+When the person declined the services, it says the computer is set up without them, with no warning's mark, since a warning must not contradict their answer.
+It says how the computer stands rather than "Setup complete!", since a later run may have skipped every step (#2542).
+A single next step is not numbered.
 A running service that the run restarted counts only once the proxy answers, within the proxy's start wait (`ready-timeouts.proxy`), as `isx proxy install` waits: the unit reads `active` before a new proxy that exits at once has exited (#2619).
 An answer from another proxy on the service's ports does not count, and a unit the upgrade left down fails without the wait.
 A unit that reads `activating`, systemd waiting out `RestartSec` to start a proxy that exited, is not down: init waits for it too (`ProxyService.isActiveOrStarting`).
