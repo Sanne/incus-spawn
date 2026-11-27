@@ -103,6 +103,16 @@ class EditorSchemasTest {
         assertEquals(List.of(), problems);
     }
 
+    /** The lists an unknown key is matched against for what it meant (#2463) are the keys the loaders bind. */
+    @Test
+    void theKeysASuggestionIsTakenFromAreTheSchemasKeys() throws IOException {
+        var config = JqYaml.parse(Files.readString(SCHEMAS.resolve("config.json"))).path("properties");
+        assertEquals(config.asMap().keySet(), privateSet(SpawnConfig.class, "KEYS"));
+        var mcp = new LinkedHashSet<>(JqYaml.parse(Files.readString(SCHEMAS.resolve("mcp.json"))).path("properties").asMap().keySet());
+        mcp.removeAll(privateSet(McpConfig.class, "RETIRED"));
+        assertEquals(mcp, privateSet(McpConfig.class, "KEYS"));
+    }
+
     @Test
     void theClosedSectionsOfConfigAndMcpNameTheKeysTheirLoadersAccept() throws IOException {
         var config = JqYaml.parse(Files.readString(SCHEMAS.resolve("config.json"))).path("properties");
@@ -197,7 +207,7 @@ class EditorSchemasTest {
         try {
             var field = Class.forName(owner, true, loader).getDeclaredField(name);
             field.setAccessible(true);
-            return (Set<String>) field.get(null);
+            return new LinkedHashSet<>((java.util.Collection<String>) field.get(null));
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }

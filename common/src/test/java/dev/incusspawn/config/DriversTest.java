@@ -51,7 +51,7 @@ class DriversTest {
         assertNull(find("drivers:\n  mcp:\n    destroy: true\n", "mcp"));
         assertNull(find("drivers: [orca]\n", "orca"));
         assertEquals(List.of(
-                "Ignoring drivers: orca in config.yaml: unknown key 'destory' (expected destroy:)",
+                "Ignoring drivers: orca in config.yaml: unknown key 'destory'; did you mean 'destroy'?",
                 "Ignoring drivers: orca in config.yaml: destroy: is true or false",
                 "Ignoring drivers: orca in config.yaml: expected destroy: under it",
                 "Ignoring drivers: mcp in config.yaml: the owner name mcp is reserved for instances isx mcp makes",

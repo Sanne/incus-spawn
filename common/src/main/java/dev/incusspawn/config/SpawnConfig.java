@@ -40,6 +40,16 @@ public class SpawnConfig extends UnreadableFile {
         return Jjq.mapper().toJqValue(this);
     }
 
+    /**
+     * The top-level keys this class binds, which a key no tool declares is matched against for what
+     * it meant (#2463); {@code EditorSchemasTest} holds it to the schema's keys.
+     */
+    static final java.util.List<String> KEYS = java.util.List.of("claude", "github", "openai", "bob", "features", "searchPaths",
+            "host-path", "host-paths", "repo-paths", "incus-bridge-gateway", "preferred-agent",
+            "tui-live-refresh", "disk-hint", "artifact-cache", "git-cache", "git-transfer", "ready-timeouts",
+            "host-routes", "exposed-host-ports", "maven-repositories", "confirmed-cache", "maven-mirrors",
+            "drivers", "git-identity", "host-ca");
+
     private ClaudeConfig claude = new ClaudeConfig();
     private GitHubConfig github = new GitHubConfig();
     private BobConfig bob = new BobConfig();

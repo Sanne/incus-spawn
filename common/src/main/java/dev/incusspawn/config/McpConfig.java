@@ -83,6 +83,9 @@ public class McpConfig extends McpUndeclaredKeys {
      */
     static final Set<String> RETIRED = Set.of(
             "delegate-max-turns", "delegate-permission-mode", "delegate-permission-modes", "codex");
+    /** The settings mcp.yaml takes, which an unknown key is matched against for what it meant (#2463). */
+    static final List<String> KEYS = List.of("templates", "max-instances", "max-concurrent-tasks",
+            "orphan-grace-hours", "dormant-after-hours", "dormant-grace-hours", "summary-model", "host-tools");
     private static final Set<String> RETIRED_CODEX = Set.of("sandbox-mode", "sandbox-modes");
     public static final int DEFAULT_ORPHAN_GRACE_HOURS = 24;
     public static final int DEFAULT_DORMANT_AFTER_HOURS = 24;
@@ -204,7 +207,7 @@ public class McpConfig extends McpUndeclaredKeys {
         }
         for (var field : fields.keySet()) {
             if (!HOST_TOOL_KEYS.contains(String.valueOf(field))) {
-                warn.accept(ignoringHostTool(key) + ": unknown key '" + field + "'");
+                warn.accept(ignoringHostTool(key) + ": " + MappedDefinition.unknownKey(field, HOST_TOOL_KEYS, ""));
                 return null;
             }
         }
@@ -334,9 +337,16 @@ public class McpConfig extends McpUndeclaredKeys {
         if (!unknown.isEmpty()) {
             throw new IllegalArgumentException(unknown.contains("mcp")
                     ? "the settings go at the top level of mcp.yaml, without an enclosing mcp: key"
-                    : "unknown key " + String.join(", ", unknown));
+                    : "unknown key " + String.join(", ", unknown.stream().map(McpConfig::withMeant).toList()));
         }
         summaryModel();
+    }
+
+    /** {@code key}, followed by the setting it most likely meant when there is one; never a retired one. */
+    private static String withMeant(String key) {
+        var meant = key.contains(".") ? null : MappedDefinition.closest(key, KEYS);
+        var shown = dev.incusspawn.util.OutputFormat.oneLine(key);
+        return meant == null ? shown : shown + " (did you mean '" + meant + "'?)";
     }
 
     /**

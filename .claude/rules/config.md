@@ -96,6 +96,8 @@ The skeleton's examples, uncommented, must stay a valid template.
 **Unknown keys warn, wherever they are** (#1546): every class a template or tool definition maps to, entries included, extends `MappedDefinition`, so a key isx does not read is collected and `ImageDef.unknownKeyWarnings()` / `ToolDef.unknownKeyWarnings()` name it with its place (`repos[0].branch-name`) and the key it probably meant.
 A new mapped class in a definition extends it, and a new list, map or nested entry gets a line in that walk; a converter that reads the tree itself hands its unknown keys to the entry it builds (`EnvEntryListConverter`, `SkillsDefConverter`).
 They are warnings, never refusals, reported at load (`ImageDef.validate`, `ToolDefLoader`) and by `TemplateValidator`.
+`config.yaml`'s closed sections and `mcp.yaml` word an unknown key with `MappedDefinition.unknownKey`, which adds the key it probably meant (#2463).
+A top-level `config.yaml` key one or two letters off one `SpawnConfig.KEYS` or a trusted tool's namespace names is reported by `UnreadConfigKeys.misspelt` (`isx validate`, `isx doctor`); `EditorSchemasTest` holds `SpawnConfig.KEYS` and `McpConfig.KEYS` to the schemas.
 In `config.yaml`, a key in a tool's credential namespace that no tool reads (`openai.token`) is named by `UnreadConfigKeys` (#1733).
 What a namespace reads is declared: its tools' `proxy.configuration` paths and `AccountShape` keys (`accountKeys()` for what an account holds), plus `accounts:` and `default:`.
 The credential steps of `isx init` and `isx account add` warn before asking, `CredentialCheck` adds it to a missing credential's notes, and `isx doctor` reports it; isx never moves the key to where it reads one.

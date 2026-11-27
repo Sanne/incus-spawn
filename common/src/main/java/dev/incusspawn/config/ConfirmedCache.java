@@ -109,7 +109,7 @@ public final class ConfirmedCache {
         }
         for (var key : map.keySet()) {
             if (!KEYS.contains(String.valueOf(key))) {
-                warn.accept("Ignoring confirmed-cache: in config.yaml: unknown key '" + key + "'");
+                warn.accept("Ignoring confirmed-cache: in config.yaml: " + MappedDefinition.unknownKey(key, KEYS, ""));
                 return null;
             }
         }

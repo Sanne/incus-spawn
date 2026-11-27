@@ -68,7 +68,7 @@ public final class Drivers {
         }
         for (var field : fields.keySet()) {
             if (!KEYS.contains(String.valueOf(field))) {
-                warn.accept(ignoring(name) + ": unknown key '" + field + "' (expected destroy:)");
+                warn.accept(ignoring(name) + ": " + MappedDefinition.unknownKey(field, KEYS, " (expected destroy:)"));
                 return null;
             }
         }

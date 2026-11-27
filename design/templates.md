@@ -109,6 +109,13 @@ Every mapped class, entries included, extends `MappedDefinition`, whose `@JqAnyS
 A misspelled key changes the build as surely as a wrong value, since the build goes ahead without what it asked for, so it is not dropped without a word.
 It is a warning and not a refusal, so every definition that loaded before still loads; whether some keys (a misspelled top-level section) should refuse is a separate decision.
 The keys are never written back, so a stored definition holds only what isx read.
+`config.yaml` and `mcp.yaml` take the same suggestion from `MappedDefinition.unknownKey` (#2463).
+`mcp.yaml` still refuses the file on an unknown key, and names the setting it probably meant, never a retired one.
+Each closed section of `config.yaml` (`drivers`, `host-routes`, `git-identity`, `confirmed-cache`, `maven-repositories`, `maven-mirrors`) still drops its entry, and its warning names the key too.
+Its top level is open, since a tool declares its own namespace there, so `UnreadConfigKeys.misspelt` names a top-level key only when it is one or two letters off a key `SpawnConfig` binds or a trusted tool reads.
+A key that adds a word to one (`github-enterprise`), is shorter than five letters or is close to none may belong to a tool isx does not have, and stays silent.
+`isx validate` and `isx doctor` report it.
+An editor underlines an unknown key through the schema, but the language server's message cannot carry a suggestion.
 
 A credential in `config.yaml` written under a key isx does not read (`openai.token` for `openai.apiKey`) is kept and never used, so the only symptom used to be the credential reported missing (#1733).
 `UnreadConfigKeys` names such keys in every namespace a tool declares, from the same declarations the proxy and the account resolver use: the tools' `proxy.configuration` paths and `AccountShape` keys, plus `accounts:` and `default:`.

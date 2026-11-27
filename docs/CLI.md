@@ -749,7 +749,9 @@ A template or a tool is checked as `isx templates validate` and `isx tools valid
 
 A `config.yaml` or `mcp.yaml` that does not parse, or that `isx mcp` refuses, is an error, and the command exits 1.
 Warnings name a git identity, host route, exposed port, repository or mirror isx ignores, a credential key no tool reads, and a dead setting.
-A misspelled top-level section is not checked: it may belong to a tool you lack.
+
+A misspelled key names the key it probably meant, in `mcp.yaml` and in each section of `config.yaml`.
+A top-level key of `config.yaml` that isx does not read is named only when it is a letter or two off one that isx or a tool reads, since it may belong to a tool you lack.
 
 ```shell
 isx validate <file>
