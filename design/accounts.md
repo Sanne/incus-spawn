@@ -27,7 +27,8 @@ A bare account name is deliberately not accepted even though it would read bette
 It would have to fan out over whichever namespaces happened to hold an account of that name, so adding a credential namespace later would silently widen the meaning of a command someone had already written down.
 
 **Accounts are generic, not Claude-specific.**
-`ToolDef.ProxyDef.fullConfigPath()` already built `<config-namespace>.<config-path>` (`github.token`); `accountConfigPath()` builds `<ns>.accounts.<account>.<path>` beside it, and `ToolProxyResolver` prefers it, falling back to the flat path when the account omits that key.
+`ToolDef.ProxyDef.fullConfigPath()` already built `<config-namespace>.<config-path>` (`github.token`); `accountConfigSegments()` builds `<ns>.accounts.<account>.<path>` beside it, and `ToolProxyResolver` prefers it, falling back to the flat path when the account omits that key.
+That path is read and written as segments, never split at its dots, so a hand-written account name holding a dot is still one account (#2700).
 That one preference is the whole mechanism: every namespace gains named accounts at once, including a tool defined purely in YAML that isx has never heard of, with no per-tool code and no per-tool flag.
 `AccountResolver` does the namespace-agnostic resolution off the serialized config tree.
 

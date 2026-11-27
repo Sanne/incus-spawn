@@ -68,6 +68,29 @@ class ToolProxyResolverTest {
         assertEquals("OpenAI API key", pinnedAway.getFirst().description());
     }
 
+    /**
+     * A hand-written account name may hold a dot (#2700). Its key is read with the name as one
+     * segment, so the branch check finds it and the proxy serves it, never splitting the name.
+     */
+    @Test
+    void anAccountWhoseNameHoldsADotHasItsKeyRead() throws Exception {
+        var tree = Jjq.spawnConfig("""
+                openai:
+                  accounts:
+                    work.key: { apiKey: "sk-dotted" }
+                    work: { key: { apiKey: "sk-nested" } }
+                  default: work.key
+                """).tree();
+        var tools = Map.<String, dev.incusspawn.tool.ToolSetup>of("codex", new dev.incusspawn.tool.CodexSetup());
+        assertEquals("sk-dotted", dev.incusspawn.config.AccountResolver.value(tree, "openai", "work.key", "apiKey"));
+        assertTrue(ToolProxyResolver.missingSecrets(tree, tools, java.util.List.of("codex"),
+                Map.of("openai", "work.key")).isEmpty(), "the pinned account holds its key");
+        var served = ToolProxyResolver.resolve(tree, tools, Map.of("openai", "work.key")).stream()
+                .flatMap(r -> r.configValues().values().stream()).toList();
+        assertTrue(served.contains("sk-dotted"), served.toString());
+        assertFalse(served.contains("sk-nested"), served.toString());
+    }
+
     @Test
     @ExtendWith(TempHome.class)
     void proxyToolSetupsReadTheSearchPathsOfTheConfigTheyAreGiven() throws Exception {

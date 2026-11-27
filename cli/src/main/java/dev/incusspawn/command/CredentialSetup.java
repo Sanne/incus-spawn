@@ -3082,8 +3082,8 @@ class CredentialSetup {
         var here = Platform.thisComputer();
         var accountValues = new LinkedHashMap<String, String>();
         var sharedValues = new LinkedHashMap<String, String>();
-        // Lists entered anew, by full path: their old items go once the new ones are saved
-        var replacedLists = new ArrayList<String>();
+        // Lists entered anew, by full path in segments: their old items go once the new ones are saved
+        var replacedLists = new ArrayList<String[]>();
         var secretSkipped = false;
         // A secret left blank with none kept: the consents after it are not asked
         var freshSecretSkipped = false;
@@ -3131,8 +3131,8 @@ class CredentialSetup {
                         if (targetExists) {
                             for (var configDef : proxyDef.getConfiguration().values()) {
                                 var path = configDef.isSecret() || configDef.hasSecretField()
-                                        ? proxyDef.accountConfigPath(configDef, target.name()) : "";
-                                if (!path.isBlank()) config.removeConfigPath(path);
+                                        ? proxyDef.accountConfigSegments(configDef, target.name()) : new String[0];
+                                if (path.length > 0) config.removeConfigSegments(path);
                             }
                         }
                         config.save();
@@ -3168,8 +3168,8 @@ class CredentialSetup {
                     // A list is a question of its own: the intro below is for a first question that is a key
                     first = false;
                     var listPath = perAccount
-                            ? namespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY + "." + target.name() + "." + key
-                            : fullPath;
+                            ? dev.incusspawn.config.AccountResolver.accountSegments(namespace, target.name(), key)
+                            : fullPath.split("\\.");
                     var current = targetExists || !perAccount ? itemsAt(configTree, listPath) : Map.<String, String>of();
                     var labels = current.keySet().stream().map(k -> k.substring(0, k.indexOf('.'))).distinct().toList();
                     if (!labels.isEmpty()) {
@@ -3305,16 +3305,16 @@ class CredentialSetup {
 
         boolean savedAny = false;
         // Only a list entered anew is cleared, and only an account's own when it is the one written
-        for (var listPath : replacedLists) config.removeConfigPath(listPath);
+        for (var listPath : replacedLists) config.removeConfigSegments(listPath);
         if (target != null && !accountValues.isEmpty()) {
             savedAny = saveAccount(config, namespace, shape, target, accountValues);
             // Nothing saved is said once, by the report below (#2528)
             // A hosted account given a credential is one no longer: its type would make the
             // credential unread (a 'type: google' account spends no key, #2443)
-            var typePath = namespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY + "." + target.name() + ".type";
+            var typePath = dev.incusspawn.config.AccountResolver.accountSegments(namespace, target.name(), "type");
             if (savedAny && hosted != null && targetExists
-                    && hosted.type().equals(ToolProxyResolver.navigateConfigPath(config.tree(), typePath))) {
-                config.removeConfigPath(typePath);
+                    && hosted.type().equals(dev.incusspawn.config.AccountResolver.navigate(config.tree(), typePath))) {
+                config.removeConfigSegments(typePath);
             }
         }
         for (var shared : sharedValues.entrySet()) {
@@ -3453,10 +3453,10 @@ class CredentialSetup {
         return values;
     }
 
-    /** A list's items at dotted {@code path}, as {@code <label>.<field>} to value; empty when it holds none. */
-    private static Map<String, String> itemsAt(io.hyperfoil.tools.jjq.value.JqValue tree, String path) {
+    /** A list's items at {@code path}, given as segments, as {@code <label>.<field>} to value; empty when it holds none. */
+    private static Map<String, String> itemsAt(io.hyperfoil.tools.jjq.value.JqValue tree, String[] path) {
         var node = tree;
-        for (var segment : path.split("\\.")) {
+        for (var segment : path) {
             if (!(node instanceof io.hyperfoil.tools.jjq.value.JqObject object) || !object.keys().contains(segment)) return Map.of();
             node = object.getField(segment);
         }

@@ -425,18 +425,19 @@ public class ToolDef extends FingerprintCache {
          *
          * <p>This is the whole of what makes named accounts generic: a tool declares
          * {@code config-namespace} and gets per-account credentials without any code,
-         * including a tool defined purely in YAML. Blank when the tool has no namespace
+         * including a tool defined purely in YAML. Empty when the tool has no namespace
          * or no account was selected, in which case callers fall back to
          * {@link #fullConfigPath(ConfigEntry)} -- the flat, pre-accounts layout.
+         *
+         * <p>Split into segments, so an account name holding a dot stays one key (#2700).
          */
-        public String accountConfigPath(ConfigEntry entry, String accountName) {
-            if (accountName == null || accountName.isBlank()) return "";
+        public String[] accountConfigSegments(ConfigEntry entry, String accountName) {
+            if (accountName == null || accountName.isBlank()) return new String[0];
             var namespace = namespaceOf(entry);
-            if (namespace.isBlank()) return "";
+            if (namespace.isBlank()) return new String[0];
             var path = fullConfigPath(entry);
             var leaf = path.substring(namespace.length() + 1);
-            return namespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY
-                    + "." + accountName + "." + leaf;
+            return dev.incusspawn.config.AccountResolver.accountSegments(namespace, accountName, leaf);
         }
 
         /**
