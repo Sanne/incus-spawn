@@ -405,7 +405,7 @@ class ChatGptSignInTest {
                         if (!trickling.get()) break;
                         out.write(b);
                         out.flush();
-                        Thread.sleep(100);
+                        Thread.sleep(100); // pause is the test: a trickle the whole-request timeout has to cut
                     }
                 } catch (Exception ignored) {
                     // the listener dropping it is the point

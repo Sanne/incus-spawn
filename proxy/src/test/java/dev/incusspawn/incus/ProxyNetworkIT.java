@@ -134,7 +134,7 @@ class ProxyNetworkIT {
             answer = result.stdout().strip();
             stderr = result.stderr();
             if (gatewayIp.equals(answer)) break;
-            try { Thread.sleep(1000); } catch (InterruptedException e) {
+            try { Thread.sleep(1000); } catch (InterruptedException e) { // pause is the test: spaces the DNS retries
                 Thread.currentThread().interrupt();
                 break;
             }

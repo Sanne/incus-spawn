@@ -742,7 +742,7 @@ class ApiRequestBodyTest {
             var writes = new java.util.ArrayList<io.vertx.core.Future<Void>>();
             for (int at = split; at < body.length(); at += slice) {
                 writes.add(socket.write(body.substring(at, Math.min(body.length(), at + slice))));
-                Thread.sleep(100);
+                Thread.sleep(100); // pause is the test: paces the rest of the body
             }
             refusal.assertReadWhole(writes);
         }));
@@ -784,7 +784,7 @@ class ApiRequestBodyTest {
             var refusedAt = System.nanoTime();
             for (int i = 0; i < 100 && !refusal.closed().isDone(); i++) {
                 socket.write("x");
-                Thread.sleep(100);
+                Thread.sleep(100); // pause is the test: a trickle the cap has to cut
             }
             assertTrue(refusal.closed().isDone(), "a body trickling in held its refused connection for 10 s");
             // Counted from after the refusal, so it may be short of the cap, but not by half

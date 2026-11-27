@@ -371,7 +371,7 @@ class PrivateMavenRepositoryProxyTest {
             assertEquals(200, answer.status(), "served as relayed: " + sent);
             assertEquals(CONTENT, answer.body());
             assertNull(answer.etag(), "never an ETag the proxy made up: " + sent);
-            Thread.sleep(50);
+            Thread.sleep(50); // pause is the test: time for a cache write, which must not happen
             assertEquals(List.of(), cachedCopies(HOSTED), "never cached on ETag " + sent);
         }
     }

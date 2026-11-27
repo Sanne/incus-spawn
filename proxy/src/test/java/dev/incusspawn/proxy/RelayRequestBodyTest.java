@@ -391,7 +391,7 @@ class RelayRequestBodyTest {
                 var writes = new java.util.ArrayList<io.vertx.core.Future<Void>>();
                 for (int at = split; at < body.length(); at += slice) {
                     writes.add(socket.write(body.substring(at, Math.min(body.length(), at + slice))));
-                    Thread.sleep(100);
+                    Thread.sleep(100); // pause is the test: paces the rest of the upload
                 }
                 closed.get(10, TimeUnit.SECONDS);
                 for (var write : writes) {
@@ -429,7 +429,7 @@ class RelayRequestBodyTest {
             socket.resume();
             // Twice the budget, a byte at a time
             for (var b : "bcdefghi".toCharArray()) {
-                Thread.sleep(500);
+                Thread.sleep(500); // pause is the test: a byte every 500 ms outlasts the budget
                 socket.write(String.valueOf(b));
             }
             var reply = answer.get(10, TimeUnit.SECONDS);
