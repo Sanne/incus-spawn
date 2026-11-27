@@ -320,7 +320,7 @@ public class ChatGptSignIn {
                 return code;
             }
         }
-        throw new IOException("the sign-in did not finish in " + wait.toMinutes() + " minutes");
+        throw new IOException("isx did not receive a sign-in within " + wait.toMinutes() + " minutes");
     }
 
     /** The most of a request that is read, its line first: a browser's callback line is a fraction of it. */
