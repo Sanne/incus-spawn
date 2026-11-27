@@ -69,7 +69,7 @@ import static dev.incusspawn.command.CredentialSetup.readInput;
 
 @CommandDefinition(
         name = "init",
-        description = "Set up the host for isx, or check its setup and repair it",
+        description = "Set up isx on the host, or check and repair the setup",
         generateHelp = true
 )
 public class InitCommand extends BaseCommand {
