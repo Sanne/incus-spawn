@@ -3888,16 +3888,30 @@ public class InitCommand extends BaseCommand {
     }
 
     static String askClonePath(Prompts prompts, String defaultPath) {
-        var answer = readInput(prompts.ask("Clone to " + defaultPath + "? (Y/path/n): "));
-        if (answer.equalsIgnoreCase("n")) return null;
-        if (answer.isEmpty() || answer.equalsIgnoreCase("y")) return defaultPath;
-
-        if (answer.equalsIgnoreCase("path")) {
-            var path = readInput(prompts.ask("Clone path: "));
-            if (path.isEmpty()) return defaultPath;
-            return HostResourceSetup.expandHostTilde(path);
-        }
+        // The directory on a line of its own, so a long home does not push the question past the frame
+        prompts.say("isx would clone your copy to this directory:");
+        prompts.say("  " + homeAbbreviated(defaultPath));
+        var answer = readInput(prompts.ask("Clone it there? (Y = yes, n = no, or another directory): "));
+        // The prompt spells the answers out, so the words are answers too, never directory names
+        if (answer.equalsIgnoreCase("n") || answer.equalsIgnoreCase("no")) return null;
+        if (answer.isEmpty() || answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes")) return defaultPath;
         return HostResourceSetup.expandHostTilde(answer);
+    }
+
+    /** {@code path} with the home directory written as {@code ~}, to keep a line short. */
+    static String homeAbbreviated(String path) {
+        var home = Environment.home().toString();
+        return path.startsWith(home + "/") ? "~" + path.substring(home.length()) : path;
+    }
+
+    /**
+     * Whether the person confirms cloning into {@code target}, a directory they typed or one isx
+     * adjusted: named on a line of its own, as {@link #askClonePath} names it, so the question fits the frame.
+     */
+    static boolean confirmCloneTarget(Prompts prompts, Path target) {
+        prompts.say("isx will clone it to this directory:");
+        prompts.say("  " + homeAbbreviated(target.toString()));
+        return askYesNo(prompts, "Clone it there?", true);
     }
 
     private void cloneAndAddSearchPath(Prompts prompts, String nwo, String targetPath, boolean alreadyConfirmed) {
@@ -3913,11 +3927,9 @@ public class InitCommand extends BaseCommand {
             return;
         }
 
-        if (!alreadyConfirmed || adjusted) {
-            if (!askYesNo(prompts, "Will clone to " + target + ". Proceed?", true)) {
-                BuildOutput.step("Skipped cloning. You can add the path manually below.");
-                return;
-            }
+        if ((!alreadyConfirmed || adjusted) && !confirmCloneTarget(prompts, target)) {
+            BuildOutput.step("Skipped cloning. You can add the path manually below.");
+            return;
         }
 
         BuildOutput.stepStart("Cloning " + nwo);
