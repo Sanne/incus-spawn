@@ -412,7 +412,9 @@ While a Google account is configured, an instance on a Gemini API key cannot sig
 Gemini CLI, Pi and opencode use API keys only, so an instance on a Google account gives them no Gemini credential.
 For all three, `isx branch` reports that before it creates the instance.
 It refuses the branch even when the template also installs `agy`, until the instance uses an API key account.
+
 The Antigravity desktop app and IDE are not supported.
+Attached to an instance over SSH, the app installs a server in the instance that would sign in to Google and keep your tokens there.
 
 ### A free-tier key has no Pro quota
 
