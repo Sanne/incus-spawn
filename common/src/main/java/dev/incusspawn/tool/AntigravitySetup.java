@@ -48,13 +48,13 @@ import java.util.Set;
  */
 public class AntigravitySetup implements ToolSetup {
 
-    static final String VERSION = "1.5.14";
-    private static final String BUILD = "1.5.14-5302690847260672";
+    static final String VERSION = "1.5.18";
+    private static final String BUILD = "1.5.18-6386224290725888";
     private static final String DOWNLOAD_BASE = "https://storage.googleapis.com/antigravity-public/antigravity-cli/" + BUILD;
     static final Download X86_64 = new Download(DOWNLOAD_BASE + "/linux-x64/cli_linux_x64.tar.gz",
-            "d58386322d2073e96b33f7cc32b4e9ae2db6228f58440369725967b2de48c7b5");
+            "a4960723ed9cf5b5ac72ed541db8df4d62741795261eb93a4681006ccb23d5ad");
     static final Download AARCH64 = new Download(DOWNLOAD_BASE + "/linux-arm/cli_linux_arm64.tar.gz",
-            "e5f69a3123fac66974b303d9a201f381a0fb32b3ef869d9139da85d5caf67a2a");
+            "97799abac91ba0b29b77598b62f903b866461da17680263a182fef2cb796ab0d");
 
     /** One architecture's tarball, which holds the single binary {@code antigravity}. */
     record Download(String url, String sha256) {}
