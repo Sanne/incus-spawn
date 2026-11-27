@@ -2330,17 +2330,24 @@ class ArtifactCacheProxyTest {
         if (ascAnswer == null) routes.remove(asc); else routes.put(asc, ascAnswer);
         hits.clear();
 
+        // Each step is held by a gate the test opens, never a timer, so load cannot reorder them (#2695).
         // Held past the class's 1 s probe timeout, the HEAD would be retried and miss the race
-        proxy.upstream.probeReadIdleSeconds = 5;
-        nextGetDelayMs = 500;
-        headDelayMs = 2_000;
+        proxy.upstream.probeReadIdleSeconds = 15;
+        var sidecarHeld = new CompletableFuture<Void>();
+        var headHeld = new CompletableFuture<Void>();
+        gates.put("GET " + asc, sidecarHeld);
+        gates.put("HEAD " + CENTRAL + " " + JAR, headHeld);
         var response = getAsync(CENTRAL, JAR + ".asc");
         await("the sidecar fetch", () -> hitsOn(CENTRAL, JAR + ".asc") == 1);
+        // Before the sidecar's answer, so before the header's lookup, which follows that answer
         var committedLookup = Instant.now();
+        sidecarHeld.complete(null);
         await("the header's HEAD", () -> headsOn(CENTRAL, JAR) == 1);
         publishJar(CENTRAL, JAR, "v2");
         commitV2(artifact, committedLookup);
         Files.writeString(storedAsc, "sig-2");
+        // Answered as the routes are now: the header describes "v2"
+        headHeld.complete(null);
 
         var answer = response.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
         assertEquals(1, headsOn(CENTRAL, JAR), "settled by the header");
