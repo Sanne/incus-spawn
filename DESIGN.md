@@ -211,6 +211,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - A VM's hostname is set at each start (#2334)
   - Considered and deferred
 - [Testing](design/testing.md)
+  - What earns a test
   - Waiting for another thread or process
   - Site previews: built without secrets, deployed without PR code
   - The Mac Mini runs the trusted macOS jobs

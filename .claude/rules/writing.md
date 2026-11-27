@@ -1,6 +1,9 @@
 ---
 paths:
   - "README.md"
+  - "CLAUDE.md"
+  - "AGENTS.md"
+  - ".claude/rules/**"
   - "DESIGN.md"
   - "design/**"
   - "docs/**"
@@ -216,6 +219,16 @@ Concreteness is much of what makes a sentence feel clear.
 **A general statement that is true beats a list of cases.**
 "Whatever the agent does afterwards" covers what "adds or rewrites commits" tries to list, and a list invites the reader to wonder about a missing case.
 
+**Prose never repeats a value the code or config holds.**
+For a version, a default, a count or a size, name where it is set (`graalvm-version` in `release.yml`), never what it is.
+A bump then edits the value and no page.
+A measurement is the exception: it goes in `docs/dev/PERFORMANCE-NOTES.md` with its date.
+Name a class in prose as the place to start reading, never the chain of calls behind it, which a refactor changes.
+
+**A design page says what holds now and why.**
+What changed, when, and which PR moved it belongs to the commit message.
+Keep an incident only when it is the reason for a rule, in one sentence.
+
 ## A clear sentence
 
 No test checks these rules either.
@@ -396,6 +409,21 @@ A release note ("after upgrading, restart", "before downgrading") is never a use
 
 **`docs/dev/`** is maintainer notes and is not published.
 DESIGN.md and its `design/` pages are the record of why, and the one place for issue numbers and internals.
+
+**A `.claude/rules/` file** is read whole by an agent before every edit in its area, so each sentence is paid for on every such change.
+It holds imperatives with a one-clause reason: what to do, what never to do, which seam to use.
+How the mechanism works, what was measured and the incident behind it stay in the `design/` page the rule links.
+`CLAUDE.md` is read in every session, so it holds only what binds every change.
+
+**Each fact has one home.**
+A page links to the section that states a fact and does not state it again.
+When an edit finds the same fact in two files, it deletes one of them.
+
+**A PR description is scaled to its change.**
+It always says what changed, in the reader's terms, and what it was verified on.
+Any other section is written only when it has content, never to say "none" or "nothing".
+A review finding is reported only when the reviewer must decide on it.
+A mechanical change, such as a pin, a rename or a doc fix, is described in at most five lines.
 
 ## Splitting a sentence
 
