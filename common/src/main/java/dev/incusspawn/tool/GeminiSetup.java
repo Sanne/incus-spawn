@@ -118,6 +118,25 @@ public class GeminiSetup implements ToolSetup {
     @Override
     public boolean codingAgent() { return true; }
 
+    /**
+     * The {@code gemini} account in use must hold an API key: a Google sign-in serves Antigravity
+     * CLI alone, so Gemini CLI on one would fail at its first model call ({@link ApiKeyAccounts},
+     * #2671). A key missing altogether is found by the check of every tool's {@code secret: true}
+     * entries.
+     */
+    @Override
+    public String credentialProblem(SpawnConfig config, Map<String, String> resolvedParams,
+                                    Map<String, String> selection) {
+        return ApiKeyAccounts.geminiKeyProblem(config, selection);
+    }
+
+    /** A Google sign-in in use is fixed by a pin or a default, not another account. */
+    @Override
+    public Remedy credentialRemedy(SpawnConfig config, Map<String, String> resolvedParams,
+                                   Map<String, String> selection) {
+        return ApiKeyAccounts.geminiKeyRemedy(config, selection);
+    }
+
     @Override
     public String name() { return "gemini-cli"; }
 

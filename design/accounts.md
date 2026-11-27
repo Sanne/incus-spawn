@@ -74,7 +74,7 @@ Namespaces with no Java class at all were already safe: they land in `SpawnConfi
 A `gemini` account of `type: google` holds no key: its credential is the Google sign-in Antigravity CLI makes through the proxy, kept in `~/.config/incus-spawn/gemini/<account>/session.json` (`GoogleSessionStore`), as a ChatGPT session is for `openai`.
 `GeminiSetup.ACCOUNT_SHAPE` judges such an account usable with no key and answers `credentialOutsideConfig` for it, which is the one hook `ToolProxyResolver.missingSecrets` and `findUnresolved` need: neither a branch check nor the proxy's startup report calls it incomplete for lacking `apiKey`.
 That counts it as configured for every agent, but only agy can use it, as only Codex can use a ChatGPT session.
-So Pi and opencode, which send an API key, report either sign-in as a missing key when it is the account the instance uses (`ApiKeyAccounts`, #2525).
+So Pi and opencode, which send an API key, report either sign-in as a missing key when it is the account the instance uses (`ApiKeyAccounts`, #2525), and Gemini CLI reports a Google one (#2671).
 The fix they name is never asked for at a branch, since a key added there would leave the sign-in the default: a per-branch pin of the key account, or `isx account add` when there is none (design/proxy.md).
 The branch is then refused, even in a template that also installs Codex or agy, as Pi's Vertex provider is beside an OAuth Claude account.
 `isx init` offers it beside the key through `ToolSetup.hostedSignIn`, a declaration, so no step branches on the namespace; `describeAccount` names the signed-in email, never a token.

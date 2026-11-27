@@ -10,6 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -120,8 +121,8 @@ class CredentialCheckTest {
     }
 
     @Test
-    void aGoogleSignInIsNoGeminiKeyForPiOrOpencode() throws Exception {
-        for (var agent : List.of(piTemplate("google"), opencodeTemplate("google"))) {
+    void aGoogleSignInIsNoGeminiKeyForPiOpencodeOrGeminiCli() throws Exception {
+        for (var agent : List.of(piTemplate("google"), opencodeTemplate("google"), template("[gemini-cli]"))) {
             assertEquals("Missing credentials: Gemini API key (the account in use, 'g', is a Google sign-in, which only Antigravity CLI can use)."
                     + " Run 'isx account add gemini' to configure it."
                     + " Then pin it with 'isx branch <name> --from <template> --account gemini=<account>'."
@@ -146,11 +147,22 @@ class CredentialCheckTest {
                 """;
         for (var provider : List.of("openai", "google")) {
             var ns = provider.equals("openai") ? "openai" : "gemini";
-            for (var agent : List.of(piTemplate(provider), opencodeTemplate(provider))) {
+            var agents = new ArrayList<>(List.of(piTemplate(provider), opencodeTemplate(provider)));
+            if (ns.equals("gemini")) agents.add(template("[gemini-cli]"));
+            for (var agent : agents) {
                 assertEquals("", check(both, agent, Map.of(ns, "key")), agent);
                 assertFalse(check(both, agent).isEmpty(), agent);
             }
         }
+    }
+
+    @Test
+    void aGoogleSignInServesAntigravityCliAlone() throws Exception {
+        assertEquals("", check(GOOGLE_ONLY, template("[antigravity]")));
+        // Gemini CLI beside it is refused, as Pi beside Codex is on a ChatGPT session
+        var refused = check(GOOGLE_ONLY, template("[gemini-cli]"));
+        assertFalse(refused.isEmpty());
+        assertEquals(refused, check(GOOGLE_ONLY, template("[antigravity, gemini-cli]")));
     }
 
     @Test

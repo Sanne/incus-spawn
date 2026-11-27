@@ -410,7 +410,8 @@ After `/logout` in `agy`, open a new login shell before you sign in again.
 While a Google account is configured, an instance on a Gemini API key cannot sign `agy` in to Google on macOS.
 
 Gemini CLI, Pi and opencode use API keys only, so an instance on a Google account gives them no Gemini credential.
-For Pi and opencode, `isx branch` reports that before it creates the instance.
+For all three, `isx branch` reports that before it creates the instance.
+It refuses the branch even when the template also installs `agy`, until the instance uses an API key account.
 The Antigravity desktop app and IDE are not supported.
 
 ### A free-tier key has no Pro quota

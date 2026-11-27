@@ -13,8 +13,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Whether the {@code openai} or {@code gemini} account an instance uses holds an API key, for Pi
- * and opencode, which spend nothing else. A {@code type: chatgpt} account is a session that
+ * Whether the {@code openai} or {@code gemini} account an instance uses holds an API key, for Pi,
+ * opencode and Gemini CLI, which spend nothing else. A {@code type: chatgpt} account is a session that
  * {@code ChatGptRoute} serves for Codex's operations alone, and a {@code type: google} one a sign-in
  * that {@code GoogleAuthRoute} serves for Antigravity CLI alone. The check of every tool's
  * {@code secret: true} entries counts either as configured, so without this an instance would be
