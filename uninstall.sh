@@ -136,6 +136,25 @@ describe_data_disk() {
     echo "$instances instance(s) and $templates built template(s)"
 }
 
+# A Git checkout in the config directory is the person's own work, such as the templates
+# 'isx init' offers to clone there, so --purge keeps it with the directories that lead to it
+# (#2666), and the plan names each one before it asks (#2685).
+# 'isx reset' and 'isx clean' keep configured search paths too, which a script cannot read.
+is_git_checkout='test -e "$1/.git"'
+
+# Each Git checkout below the config directory, one per line; none inside another is listed.
+# On macOS the VM client config is removed whole, so a checkout in it is not kept.
+config_checkouts() {
+    [ -d "$CONFIG_DIR" ] || return 0
+    find "$CONFIG_DIR" -mindepth 1 -type d -exec sh -c "$is_git_checkout" _ {} \; -prune -print 2>/dev/null | sort \
+        | while IFS= read -r checkout; do
+            if $IS_MACOS; then
+                case "$checkout" in "$CONFIG_DIR/vm"|"$CONFIG_DIR/vm/"*) continue ;; esac
+            fi
+            echo "$checkout"
+        done
+}
+
 echo "incus-spawn uninstaller"
 echo "======================="
 echo ""
@@ -182,7 +201,14 @@ else
     fi
     if $PURGE; then
         echo "  - Cache:             $CACHE_DIR/  (--purge)"
-        echo "  - Config:            $CONFIG_DIR/  (--purge; a Git checkout in it is kept)"
+        echo "  - Config:            $CONFIG_DIR/  (--purge)"
+        KEPT_CHECKOUTS="$(config_checkouts)"
+        if [ -n "$KEPT_CHECKOUTS" ]; then
+            echo ""
+            while IFS= read -r checkout; do echo "Kept:                  $checkout"; done <<< "$KEPT_CHECKOUTS"
+            echo "  your Git checkouts in the configuration directory, uncommitted changes included;"
+            echo "  delete them yourself if you no longer want them"
+        fi
     else
         echo ""
         echo "Preserved:             $CONFIG_DIR/"
@@ -465,11 +491,6 @@ if [ -d "$APPLIANCE_DIR" ]; then
 fi
 
 # ── Remove cache and config (only with --purge) ──────────────────────────
-
-# A Git checkout in the config directory is the person's own work, such as the templates
-# 'isx init' offers to clone there, so it stays with the directories that lead to it (#2666).
-# 'isx reset' and 'isx clean' keep configured search paths too, which a script cannot read.
-is_git_checkout='test -e "$1/.git"'
 
 purge_config() {
     if [ -z "$(find "$CONFIG_DIR" -mindepth 2 -name .git -print -quit 2>/dev/null)" ]; then

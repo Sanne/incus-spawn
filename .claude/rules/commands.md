@@ -164,6 +164,7 @@ The Git rule stops at the config directory, since isx prepares Git repositories 
 Before they delete anything they archive what they will delete from the config directory to the current directory (`ConfigBackup`), read it back, and delete nothing when that fails.
 With `--no-backup` they do not write the archive, and `--skip-confirmation` alone still writes it.
 `uninstall.sh --purge` keeps the Git checkouts, since a script cannot read the search paths, and does not write an archive.
+Its plan names each checkout it keeps before it asks (#2685).
 A `config.yaml` that cannot be read leaves the search paths unknown, which the plan says in a warning.
 A new command that deletes `configDir()` goes through `KeptPaths`, `ConfigBackup` and `FileTrees.delete(root, keep)`.
 The rationale is design/init.md "A reset keeps what a person wrote".
