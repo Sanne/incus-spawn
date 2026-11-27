@@ -78,4 +78,35 @@ class FileTreesTest {
         assertFalse(Files.exists(link, java.nio.file.LinkOption.NOFOLLOW_LINKS));
         assertTrue(Files.exists(outside.resolve("keep.txt")));
     }
+
+    @Test
+    void whatIsKeptStaysWithTheDirectoriesThatLeadToIt() throws Exception {
+        var root = dir.resolve("root");
+        var kept = root.resolve("a/checkout");
+        Files.createDirectories(kept.resolve("sub"));
+        Files.writeString(kept.resolve("sub/work.txt"), "mine");
+        Files.writeString(root.resolve("a/sibling.txt"), "x");
+        Files.createDirectories(root.resolve("b/c"));
+        Files.writeString(root.resolve("b/c/gone.txt"), "x");
+        var keptFile = root.resolve("disk.img");
+        Files.writeString(keptFile, "disk");
+
+        FileTrees.delete(root, java.util.List.of(kept, keptFile));
+
+        assertTrue(Files.exists(kept.resolve("sub/work.txt")));
+        assertTrue(Files.exists(keptFile));
+        assertFalse(Files.exists(root.resolve("a/sibling.txt")));
+        assertFalse(Files.exists(root.resolve("b")));
+    }
+
+    @Test
+    void aKeptRootIsLeftWhole() throws Exception {
+        var root = dir.resolve("root");
+        Files.createDirectories(root);
+        Files.writeString(root.resolve("f"), "x");
+
+        FileTrees.delete(root, java.util.List.of(root));
+
+        assertTrue(Files.exists(root.resolve("f")));
+    }
 }

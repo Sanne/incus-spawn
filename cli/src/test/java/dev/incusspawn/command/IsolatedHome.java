@@ -26,6 +26,8 @@ import dev.incusspawn.proxy.ProxyService;
  * whatever isx proxy runs on the developer's machine; {@link #proxySignals()} counts the calls.
  * And it gives {@link CredentialSetup} an Incus of its own, empty until a test adds to it through
  * {@link #incus()}, so no flow reads the instances of an Incus the developer runs (#1965).
+ * A clean's backup of the config directory goes to a directory of the test's, {@link #backups()},
+ * never to the one the tests run in (#2666).
  */
 public final class IsolatedHome implements BeforeEachCallback, AfterEachCallback {
 
@@ -67,6 +69,13 @@ public final class IsolatedHome implements BeforeEachCallback, AfterEachCallback
         return PROXY_SIGNALS.get();
     }
 
+    /** The archives a clean or a reset wrote in this test, oldest first. */
+    static java.util.List<Path> backups() throws IOException {
+        try (var files = Files.list(ConfigBackup.directory)) {
+            return files.sorted().toList();
+        }
+    }
+
     private static volatile FakeIncusDaemon incus;
 
     /** The Incus the code under test asks, which has no instances until the test adds some. */
@@ -82,6 +91,9 @@ public final class IsolatedHome implements BeforeEachCallback, AfterEachCallback
         store.put("home", home);
         System.setProperty("user.home", home.toString());
         PROXY_SIGNALS.set(0);
+        var backups = Files.createTempDirectory("isx-backups");
+        store.put("backups", backups);
+        ConfigBackup.directory = backups;
         store.put("signal", ProxyService.replaceAccountRefreshSignal(PROXY_SIGNALS::incrementAndGet));
         var daemon = new FakeIncusDaemon();
         incus = daemon;
@@ -103,9 +115,12 @@ public final class IsolatedHome implements BeforeEachCallback, AfterEachCallback
         } else {
             System.setProperty("user.home", original);
         }
-        try (var walk = Files.walk(store.get("home", Path.class))) {
-            for (var path : walk.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(path);
+        ConfigBackup.directory = null;
+        for (var key : new String[] {"home", "backups"}) {
+            try (var walk = Files.walk(store.get(key, Path.class))) {
+                for (var path : walk.sorted(Comparator.reverseOrder()).toList()) {
+                    Files.deleteIfExists(path);
+                }
             }
         }
     }

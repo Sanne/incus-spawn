@@ -182,7 +182,7 @@ else
     fi
     if $PURGE; then
         echo "  - Cache:             $CACHE_DIR/  (--purge)"
-        echo "  - Config:            $CONFIG_DIR/  (--purge)"
+        echo "  - Config:            $CONFIG_DIR/  (--purge; a Git checkout in it is kept)"
     else
         echo ""
         echo "Preserved:             $CONFIG_DIR/"
@@ -466,13 +466,33 @@ fi
 
 # ── Remove cache and config (only with --purge) ──────────────────────────
 
+# A Git checkout in the config directory is the person's own work, such as the templates
+# 'isx init' offers to clone there, so it stays with the directories that lead to it (#2666).
+# 'isx reset' and 'isx clean' keep configured search paths too, which a script cannot read.
+is_git_checkout='test -e "$1/.git"'
+
+purge_config() {
+    if [ -z "$(find "$CONFIG_DIR" -mindepth 2 -name .git -print -quit 2>/dev/null)" ]; then
+        rm -rf "$CONFIG_DIR"
+        return
+    fi
+    find "$CONFIG_DIR" -mindepth 1 \
+        \( -type d -exec sh -c "$is_git_checkout" _ {} \; -prune -exec echo "Kept {}: a Git checkout." \; \) \
+        -o \( ! -type d -exec rm -f {} + \)
+    # Deepest first, and rmdir leaves a directory that still leads to a checkout
+    find "$CONFIG_DIR" -mindepth 1 \( -type d -exec sh -c "$is_git_checkout" _ {} \; -prune \) -o \( -type d -print \) \
+        | sort -r | while IFS= read -r dir; do rmdir "$dir" 2>/dev/null || true; done
+}
+
 if $PURGE; then
-    for dir in "$CACHE_DIR" "$CONFIG_DIR"; do
-        if [ -d "$dir" ]; then
-            echo "Removing $dir/..."
-            rm -rf "$dir"
-        fi
-    done
+    if [ -d "$CACHE_DIR" ]; then
+        echo "Removing $CACHE_DIR/..."
+        rm -rf "$CACHE_DIR"
+    fi
+    if [ -d "$CONFIG_DIR" ]; then
+        echo "Removing $CONFIG_DIR/..."
+        purge_config
+    fi
 fi
 
 echo ""

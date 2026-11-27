@@ -253,3 +253,38 @@ The first run gets shorter, and isx does not get smaller.
   When one is, it lists only what is left on the host: the services to start, the credential gaps, a branch and the TUI.
   The way to a first agent comes back only when no template is built, or when the listing cannot be read.
 - `InitFirstRunTest#everyStepIsInTheFirstRunOrInTheMenu` holds that every step `isx init --plan` lists, on Linux and on macOS, is in the first run or in the menu, so a step cannot be dropped from both.
+
+## A reset keeps what a person wrote (#2666)
+
+A reset or a clean of the configuration never deletes a person's own files, and what it does delete can be recovered.
+`isx init` offers `~/.config/incus-spawn/incus-spawn-templates` as the place for the templates checkout, and `--fork-templates` takes it without asking.
+`isx reset`, `isx clean config` and `isx clean all` deleted `~/.config/incus-spawn` whole.
+The plan showed that directory as one line, so a person who reset to repair a failed install lost templates they had not committed.
+
+Two rules decide what stays (`KeptPaths`), and both read what is there now.
+A directory that `searchPaths` in `config.yaml` names stays, wherever it lies in the directories being removed.
+A Git checkout in the config directory stays, whether or not a search path names it.
+The second rule is what makes a second reset safe: the first one deleted `config.yaml`, so nothing names the search paths any more, but the checkout is still found on disk.
+It stops at the config directory because isx prepares Git repositories of its own in the cache, which a clean is there to delete.
+The config directory itself is never kept, even when it is a checkout or a search path, since a reset has to remove the configuration.
+
+Everything else in the config directory is deleted as before, hand-written definitions under `images/` and `tools/` included.
+So before anything is deleted, what will be deleted from the config directory is archived (`ConfigBackup`).
+The archive goes to the directory the command runs in, as `isx-config-backup-<date>-<time>.tar.gz`.
+It is written and then read back before the first delete, and a failure of either stops the command with nothing removed: a full disk passes a check that the directory is writeable.
+In a reset this happens before the first instance is destroyed.
+What is kept is left out of it, so a templates checkout with its history does not go into every archive.
+`tar` writes it, since the JDK's zip keeps neither the mode of a key nor a symlink.
+
+The archive holds every credential of the config directory: the API keys, the CA key, the SSH keys and the session tokens.
+This is what the design gives up: after a reset the credentials are no longer gone from the disk, and the file lies wherever the person stood.
+So it is created for its owner alone, it never replaces a file, the plan says that it holds credentials and is the person's to delete, and a working directory inside a Git checkout gets a warning not to commit it.
+`--no-backup` writes no archive.
+`--skip-confirmation` only answers the question, so a scripted reset is as safe as one a person confirms.
+A working directory that is itself being deleted, or that cannot be written to, stops the command before it asks.
+
+Init's default clone path stays where it is.
+Moving it would not help an install that already has the checkout there, and one directory to look in is simpler for a person.
+A reset followed by `isx init` finds the kept checkout at that path and adds it to the search paths again.
+
+`uninstall.sh --purge` keeps the Git checkouts in the config directory and writes no archive: a script cannot read the search paths, and `--purge` is asked for by name.
