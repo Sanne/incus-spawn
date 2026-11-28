@@ -7,7 +7,9 @@
 # for a new major, skips a draft, a prerelease, a release missing an asset and one still cooling, and
 # fails closed on a sum the asset does not have; and that verify-trees passes exactly the engine's
 # regeneration of an app PR for each of two items sharing one file, and fails a tampered sum, a
-# change to both items at once and a link off the release. Needs bash, git, jq, yq, curl faked, perl.
+# change to both items at once and a link off the release. A GraalVM-shaped item checks that an asset
+# name built from the version's parts ({version.N}, {version.N+}) under a dashed tag prefix is found and
+# moved (#2719). Needs bash, git, jq, yq, curl faked, perl.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="$(mktemp -d)"
@@ -57,6 +59,18 @@ plug() { release "$1" "$2" false false "$(mk_asset hechtcarmel/jetbrains-index-m
 { plug 5.20.3 $((30 * 86400)); plug 5.20.4 $((20 * 86400)); plug 5.20.5 $((10 * 86400)); } | jq -s . > "$FIX/rel-hechtcarmel_jetbrains-index-mcp-plugin.json"
 oth() { release "v$1" "$2" false false "$(mk_asset example/other "v$1" "other-$1.zip" file)"; }
 { oth 1.0.0 $((30 * 86400)); oth 1.1.0 $((10 * 86400)); } | jq -s . > "$FIX/rel-example_other.json"
+# GraalVM's assets spell the version apart: graal-25.2.4 ships graalvm-community-jdk-25i2-25.0.4_...
+GX() { printf 'graalvm-community-jdk-%s_linux-x64_bin.tar.gz' "$1"; }
+graal() { # <version> <asset version> <age>
+    release "graal-$1" "$3" false false "$(mk_asset graalvm/graalvm-ce-builds "graal-$1" "$(GX "$2")" file)"
+}
+{
+    graal 25.1.3 25i1-25.0.3 $((30 * 86400)); graal 25.2.4 25i2-25.0.4 $((10 * 86400)); graal 26.1.0 26i1-26.0.0 $((9 * 86400))
+    # 25.3.1 names its asset another way, so it is not a release of this item
+    graal 25.3.1 25.3.1 $((9 * 86400))
+    # a tag of another line of the same repository never counts
+    release jdk-25.0.9 $((9 * 86400)) false false "$(mk_asset graalvm/graalvm-ce-builds jdk-25.0.9 "$(GX 25.0.9)" file)"
+} | jq -s . > "$FIX/rel-graalvm_graalvm-ce-builds.json"
 
 # ---- fakes -------------------------------------------------------------------------------------------
 cat > "$WORK/bin/curl" <<'FAKE'
@@ -115,6 +129,15 @@ downloads:
     sha256: $(sum_of_asset v1.26.0 starship-aarch64-unknown-linux-musl.tar.gz)
     extract: /tmp/starship
     arch: aarch64
+Y
+cat > "$REPO/$T/graalvm.yaml" <<Y
+name: graalvm
+description: GraalVM Community Edition 25.1.3 for JDK 25
+downloads:
+  - url: https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.1.3/$(GX 25i1-25.0.3)
+    sha256: $(sum_of_asset graal-25.1.3 "$(GX 25i1-25.0.3)")
+    extract: /opt
+    arch: x86_64
 Y
 PNAME="jetbrains-index-mcp-plugin"
 cat > "$REPO/$T/idea-backend.yaml" <<Y
@@ -182,6 +205,23 @@ items:
       type: publisher-sums
     files: [$T/idea-backend.yaml]
     fields: [url.any, sha256.any]
+  graalvm:
+    class: mechanical
+    within: series
+    cooling: 48h
+    judgement: build
+    source:
+      type: github-asset
+      repo: graalvm/graalvm-ce-builds
+      tag-prefix: graal-
+      sums: sha256-asset
+      versioned-description: true
+      assets:
+        x86_64: graalvm-community-jdk-{version.1}i{version.2}-{version.1}.0.{version.3+}_linux-x64_bin.tar.gz
+    verify:
+      type: publisher-sums
+    files: [$T/graalvm.yaml]
+    fields: [description, url.x86_64, sha256.x86_64]
 Y
 cd "$REPO" && git init -q -b main && git add -A && git -c user.name=t -c user.email=t@t commit -qm fixture
 git init -q --bare "$WORK/remote.git" && git remote add origin "$WORK/remote.git" && git push -q origin main
@@ -208,13 +248,16 @@ bad_manifest '.items.starship.source.sums = "trust-me"' "an unknown sums kind"
 bad_manifest '.items.starship.source.repo = "evil"' "a repo that is not owner/name"
 bad_manifest '.items.starship.source.assets.x86_64 = "../starship.tar.gz"' "an asset that is not a file name"
 bad_manifest '.items.starship.source.assets.x86_64 = "starship-{arch}.tar.gz"' "an unknown placeholder"
+bad_manifest '.items.graalvm.source.assets.x86_64 = "graalvm-{version.0}.tar.gz"' "a version part numbered from zero"
+bad_manifest '.items.graalvm.source.assets.x86_64 = "graalvm-{version.x}.tar.gz"' "a version part that is not a number"
+bad_manifest '.items.graalvm.source.tag-prefix = "graal-/"' "a tag prefix that is not letters and a dash"
 bad_manifest 'del(.items.starship.source.assets)' "no assets"
 bad_manifest '.items.starship.source.assets.riscv = "starship-riscv.tar.gz"' "an asset the YAML has no download for"
 bad_manifest '.items.starship.fields = ["url.x86_64"]' "fields that drift from the source"
 echo "validate: ok"
 
 # ---- check -------------------------------------------------------------------------------------------
-for i in starship idea-index-plugin other; do "$E" check "$i" > /dev/null || fail "check $i fails on a pin the release confirms"; done
+for i in starship idea-index-plugin other graalvm; do "$E" check "$i" > /dev/null || fail "check $i fails on a pin the release confirms"; done
 echo "check: ok"
 
 # ---- plan --------------------------------------------------------------------------------------------
@@ -233,7 +276,15 @@ P="$(plan cooled)"
 [ "$(action "$P" starship)" = pr ] && [ "$(version "$P" starship)" = 1.28.0 ] || fail "starship: expected a PR for 1.28.0 once cooled: $(cat "$P/plan.tsv")"
 [ "$(action "$P" idea-index-plugin)" = pr ] && [ "$(version "$P" idea-index-plugin)" = 5.20.5 ] || fail "plugin: expected a PR for 5.20.5: $(cat "$P/plan.tsv")"
 [ "$(action "$P" other)" = pr ] && [ "$(version "$P" other)" = 1.1.0 ] || fail "other: expected a PR for 1.1.0: $(cat "$P/plan.tsv")"
-for i in starship idea-index-plugin other; do
+# 25.3.1 names its asset another way and jdk-25.0.9 is another line, so 25.2.4 is the newest of 25
+[ "$(action "$P" graalvm)" = pr ] && [ "$(version "$P" graalvm)" = 25.2.4 ] || fail "graalvm: expected a PR for 25.2.4: $(cat "$P/plan.tsv")"
+ls "$P/issues/" | grep -q '^graalvm-26.json$' || fail "no issue for graalvm's new major: $(ls "$P/issues")"
+gc="$(jq -r .commit "$P/graalvm.json")"
+git -C "$REPO" show "$gc:$T/graalvm.yaml" > "$WORK/graal-new.yaml"
+grep -q "releases/download/graal-25.2.4/$(GX 25i2-25.0.4)\$" "$WORK/graal-new.yaml" || fail "the GraalVM URL does not spell 25.2.4 as its asset does: $(cat "$WORK/graal-new.yaml")"
+grep -q "$(sum_of_asset graal-25.2.4 "$(GX 25i2-25.0.4)")" "$WORK/graal-new.yaml" || fail "the GraalVM sum is not the release's"
+grep -q '^description: GraalVM Community Edition 25.2.4 for JDK 25$' "$WORK/graal-new.yaml" || fail "the GraalVM description kept the old version"
+for i in starship idea-index-plugin other graalvm; do
     c="$(jq -r .commit "$P/$i.json")"
     [ "$(git -C "$REPO" log -1 --format=%ae "$c")" = "$APP_EMAIL" ] || fail "$i: the bump is not committed as the app"
     [ "$(git -C "$REPO" diff --name-only "$BASE" "$c")" = "$(yq -r ".items[\"$i\"].files[0]" "$REPO/upstream/manifest.yaml")" ] || fail "$i: the bump touches more than the item's file"
@@ -270,7 +321,7 @@ echo "plan fail-closed: ok"
 # ---- verify-trees ------------------------------------------------------------------------------------
 verify() { "$E" verify-trees "$BASE" "$1" "$2" "$3" > "$WORK/verify.log" 2>&1; }
 P="$(plan verify)"
-for i in starship idea-index-plugin other; do
+for i in starship idea-index-plugin other graalvm; do
     verify "$(jq -r .commit "$P/$i.json")" "$APP_LOGIN" yes || { cat "$WORK/verify.log" >&2; fail "the engine's own $i bump failed verification"; }
 done
 PC="$(jq -r .commit "$P/idea-index-plugin.json")"
