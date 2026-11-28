@@ -65,7 +65,7 @@ public class ExecCommand extends BaseCommand {
     List<String> env;
 
     @Option(shortName = 'i', name = "stdin", hasValue = false,
-            description = "Pass isx's standard input to the command (otherwise it reads none)")
+            description = "Pass standard input on to the command, so it reads what you pipe into isx exec; without -i it does not read any input")
     boolean stdin;
 
     @Override

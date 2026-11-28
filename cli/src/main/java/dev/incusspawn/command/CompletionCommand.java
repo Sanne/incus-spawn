@@ -16,14 +16,14 @@ import org.aesh.command.option.Option;
  */
 @CommandDefinition(
         name = "completion",
-        description = "Print shell completion script",
+        description = "Print the shell completion script",
         generateHelp = true
 )
 public class CompletionCommand extends BaseCommand {
 
     enum Shell { bash, zsh, fish, pwsh }
 
-    @Argument(description = "Shell type: bash, zsh, fish, pwsh", required = false, defaultValue = {"bash"},
+    @Argument(description = "The shell: bash, zsh, fish or pwsh", required = false, defaultValue = {"bash"},
             completer = Completers.Shell.class)
     Shell shell;
 

@@ -83,7 +83,7 @@ public final class ProxyLog {
         stdout("  " + String.format("%-14s", label + ":") + " " + value);
     }
 
-    /** An option of the help on {@link #stdout}: {@code "  --port <port>         MITM listen port"}. */
+    /** An option of the help on {@link #stdout}: {@code "  --port <port>         Port the proxy serves instances on"}. */
     public static void option(String flag, String description) {
         stdout("  " + String.format("%-21s", flag) + " " + description);
     }

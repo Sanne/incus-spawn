@@ -29,7 +29,7 @@ public class GitRemoteHelperCommand extends BaseCommand {
     @Argument(index = "1", description = "Git service (git-upload-pack or git-receive-pack)", required = true)
     String service;
 
-    @Argument(index = "2", description = "Repository path inside the container", required = true)
+    @Argument(index = "2", description = "Repository path inside the instance", required = true)
     String path;
 
 

@@ -21,23 +21,23 @@ import java.util.concurrent.TimeUnit;
 
 @CommandDefinition(
         name = "start",
-        description = "Start the MITM authentication proxy (required for non-airgapped containers)",
+        description = "Start the proxy: as its service when one is installed, otherwise in this terminal",
         generateHelp = true
 )
 public class ProxyStartCommand extends BaseCommand {
 
-    @Option(name = "port", description = "MITM TLS proxy port (default: 18443)",
+    @Option(name = "port", description = "Port the proxy serves instances on (default: 18443)",
             defaultValue = {"" + ProxyConfig.DEFAULT_MITM_PORT})
     int port;
 
-    @Option(name = "health-port", description = "Health check HTTP port (default: 18080)",
+    @Option(name = "health-port", description = "Port of the proxy's health check (default: 18080)",
             defaultValue = {"" + ProxyConfig.DEFAULT_HEALTH_PORT})
     int healthPort;
 
-    @Option(name = "gateway-ip", description = "Incus bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)")
+    @Option(name = "gateway-ip", description = "The bridge address, where instances reach the proxy, for when Incus cannot report it (on macOS, the VM's bridge)")
     String gatewayIpOption;
 
-    @Option(name = "debug", description = "Log full API request/response details for traffic inspection",
+    @Option(name = "debug", description = "Log every API request and response in full, to inspect the traffic",
             hasValue = false)
     boolean debug;
 

@@ -27,9 +27,8 @@ import java.util.Set;
 
 @CommandDefinition(
         name = "update-all",
-        description = "Update system packages, npm globals, and git-fetch repos in all templates."
-                + " Does not re-clone repos, reinstall tools, or re-run prime commands (use --prime for that)."
-                + " For a full rebuild from the template definition, use 'isx build'.",
+        description = "Update every template's system packages, npm globals and repositories, without rebuilding it;"
+                + " 'isx build' rebuilds a template from its definition",
         generateHelp = true
 )
 public class UpdateAllCommand extends BaseCommand {
@@ -37,7 +36,7 @@ public class UpdateAllCommand extends BaseCommand {
     /** What a template that did not take its pinned address names, and how to retry it. */
     static final InstanceNetwork.AddressUse UPDATE_ADDRESS = new InstanceNetwork.AddressUse("Template", "'isx update-all'");
 
-    @Option(name = "prime", hasValue = false, description = "Re-run prime commands (e.g. 'mvn install -DskipTests') for repositories that define one")
+    @Option(name = "prime", hasValue = false, description = "Also re-run each repository's prime command, such as 'mvn install -DskipTests'")
     boolean prime;
 
     @Override

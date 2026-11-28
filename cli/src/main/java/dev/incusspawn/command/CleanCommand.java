@@ -436,7 +436,7 @@ public class CleanCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "all",
-            description = "Remove cache, state, and configuration, and on Linux the DNF cache volume builds share (does not touch Incus templates or instances unless --delete-instances)",
+            description = "Remove cache, state and configuration, and on Linux the DNF cache volume builds share; instances and templates stay, unless --delete-instances deletes the macOS VM's data disk",
             generateHelp = true
     )
     public static class All extends BaseCommand {

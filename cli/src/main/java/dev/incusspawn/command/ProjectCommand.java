@@ -56,7 +56,7 @@ public class ProjectCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "create",
-            description = "Create a project template from a parent base image",
+            description = "Create a project template from incus-spawn.yaml, the file in a project's directory that names its parent template, its repositories and its pre-build command",
             generateHelp = true
     )
     public static class Create extends BaseCommand {
@@ -64,7 +64,7 @@ public class ProjectCommand extends BaseCommand {
         @Argument(required = true, description = "Name of the project template")
         String name;
 
-        @Option(name = "config", completer = Completers.HostPath.class, description = "Path to incus-spawn.yaml (default: auto-detect from cwd)")
+        @Option(name = "config", completer = Completers.HostPath.class, description = "Path to incus-spawn.yaml (default: found from the current directory)")
         Path configPath;
 
         @Override
@@ -214,7 +214,7 @@ public class ProjectCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "update",
-            description = "Update a project template (system packages, git repos, dependencies)",
+            description = "Update a project template's system packages, repositories and dependencies",
             generateHelp = true
     )
     public static class Update extends BaseCommand {
@@ -222,7 +222,7 @@ public class ProjectCommand extends BaseCommand {
         @Argument(required = true, completer = Completers.Project.class, description = "Name of the project template to update")
         String name;
 
-        @Option(name = "config", completer = Completers.HostPath.class, description = "Path to incus-spawn.yaml")
+        @Option(name = "config", completer = Completers.HostPath.class, description = "Path to incus-spawn.yaml (default: found from the current directory, and it must name this template)")
         Path configPath;
 
         @Override

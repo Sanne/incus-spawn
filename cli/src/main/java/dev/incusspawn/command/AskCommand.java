@@ -17,7 +17,7 @@ import java.util.function.Consumer;
 
 @CommandDefinition(
         name = "ask",
-        description = "AI-powered help — ask any question about isx (uses AI tokens)",
+        description = "Ask an AI model any question about isx (uses AI tokens from your account)",
         generateHelp = true
 )
 public class AskCommand extends BaseCommand {
@@ -27,7 +27,7 @@ public class AskCommand extends BaseCommand {
     List<String> questionWords;
 
     @Option(name = "with-templates", hasValue = false,
-            description = "Include template and tool definitions in the AI context")
+            description = "Include your template and tool definitions in what the AI model reads")
     boolean withTemplates;
 
     @Option(name = "account", completer = Completers.AiHelpAccount.class,
@@ -262,7 +262,7 @@ public class AskCommand extends BaseCommand {
 
     private void printUsage() {
         BuildOutput.results().print("""
-                AI-powered help for incus-spawn. Tokens will be consumed.
+                Ask an AI model any question about isx. It uses AI tokens from your account.
 
                 Usage: isx ask <question>
                        isx ask --with-templates <question>
@@ -274,7 +274,7 @@ public class AskCommand extends BaseCommand {
                   isx ask --with-templates why is my maven tool broken?
 
                 Options:
-                  --with-templates  Include tool and image definitions in the AI context
+                  --with-templates  Include your template and tool definitions in what the AI model reads
                   --account         The account that answers, such as claude=work
 
                 Accounts: an Anthropic API key, Claude on Vertex AI, an OpenAI API key or a

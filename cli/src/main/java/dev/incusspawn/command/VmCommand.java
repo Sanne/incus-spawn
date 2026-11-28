@@ -50,7 +50,7 @@ public class VmCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "start",
-            description = "Start the VM (creates disk image on first run)",
+            description = "Start the VM, creating its disk image on the first run",
             generateHelp = true
     )
     public static class Start extends BaseCommand {
@@ -63,7 +63,7 @@ public class VmCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "stop",
-            description = "Stop the VM (graceful shutdown)",
+            description = "Stop the VM, shutting its guest down cleanly",
             generateHelp = true
     )
     public static class Stop extends BaseCommand {
@@ -89,7 +89,7 @@ public class VmCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "restart",
-            description = "Stop and restart the VM, or start it if it is not running (keeps instances, stops running containers, applies pending appliance updates)",
+            description = "Stop and restart the VM, or start it if it is not running: running instances stop, every instance is kept, and a pending appliance update is applied",
             generateHelp = true
     )
     public static class Restart extends BaseCommand {
@@ -201,7 +201,7 @@ public class VmCommand extends BaseCommand {
     )
     public static class Resize extends BaseCommand {
 
-        @Argument(description = "New size, e.g. 100G (must be larger than current; grow-only)",
+        @Argument(description = "The new size, such as 100G, larger than the current one",
                 required = true)
         String size;
 

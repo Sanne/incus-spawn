@@ -19,7 +19,7 @@ class IncusSpawnHelpQuestionTest {
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
                 "--help takes no question.",
                 "Did you mean: isx ask how do I branch",
-                "Use 'isx ask <question>' for AI-powered help (uses AI tokens).",
+                "Use 'isx ask <question>' to ask an AI model (uses AI tokens from your account).",
                 "Use 'isx --help' for command usage.")), recorded.events(RecordingOutput.Kind.ERROR));
     }
 }

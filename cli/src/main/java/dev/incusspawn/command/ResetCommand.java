@@ -20,7 +20,7 @@ import java.util.function.BooleanSupplier;
 
 @CommandDefinition(
         name = "reset",
-        description = "Return to a freshly-installed state: destroys all containers, templates, VM, proxy, routing rules, cached data and configuration; keeps Git checkouts and search paths",
+        description = "Remove what isx set up: every instance and template, the VM on macOS, the proxy service and its routing rules, caches and configuration; Git checkouts and search paths stay",
         generateHelp = true
 )
 public class ResetCommand extends BaseCommand {

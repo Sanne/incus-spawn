@@ -97,15 +97,15 @@ public class InitCommand extends BaseCommand {
     boolean noService;
 
     @Option(name = AgentGitIdentityStep.FLAG, hasValue = false,
-            description = "Let agents that lack a GitHub account commit under the Git name and email of this computer, without asking")
+            description = "Let agents that lack a GitHub account commit under the host's Git name and email, without asking")
     boolean gitIdentityFromHost;
 
     @Option(name = "no-sudo", hasValue = false,
-            description = "Run nothing as root: write the steps that need root as a script, for you to run before you run init again")
+            description = "Do not run anything as root: write the steps that need root as a script, for you to run before you run init again")
     boolean noSudo;
 
     @Option(name = "plan", hasValue = false,
-            description = "Say what init would change on this computer and who must do each step, changing nothing")
+            description = "Say what init would change on the host and who must do each step, without changing anything")
     boolean plan;
 
     @Argument(description = "Run one step alone: credentials, search-paths, code-directories or mcp")
