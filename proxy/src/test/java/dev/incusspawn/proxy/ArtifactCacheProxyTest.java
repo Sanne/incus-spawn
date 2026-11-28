@@ -672,12 +672,19 @@ class ArtifactCacheProxyTest {
 
     /** As {@link #await}, a timeout also reporting {@code state}, read when it happens. */
     static void awaitOr(String what, Condition condition, Supplier<String> state) throws Exception {
-        Eventually.await(what, Duration.ofSeconds(5), condition::holds, state);
+        Eventually.await(what, AWAIT, condition::holds, state);
     }
+
+    static final Duration AWAIT = Duration.ofSeconds(5);
 
     /** Commits happen after the response ends, on a worker thread. */
     static void awaitFile(Path file, String content) throws Exception {
-        await(file + " to hold " + content,
+        awaitFile(file, content, AWAIT);
+    }
+
+    /** As {@link #awaitFile(Path, String)}, for a download whose own delays take part of the wait. */
+    static void awaitFile(Path file, String content, Duration within) throws Exception {
+        Eventually.await(file + " to hold " + content, within,
                 () -> Files.isRegularFile(file) && Files.readString(file).equals(content));
     }
 
@@ -1926,7 +1933,8 @@ class ArtifactCacheProxyTest {
         var content = publishCutJar(false);
         cutBeforeBody = true;
         // The head gets 1.5s of slack; after it, less of the budget is left than a resume needs
-        nextGetDelayMs = 2_500;
+        var headDelay = Duration.ofMillis(2_500);
+        nextGetDelayMs = headDelay.toMillis();
         proxy.upstream.clientSilenceBudgetSeconds = 4;
 
         requestAsync(CENTRAL, JAR, req -> {
@@ -1935,7 +1943,9 @@ class ArtifactCacheProxyTest {
             return Future.succeededFuture();
         });
 
-        awaitFile(cached(CENTRAL, JAR), content);
+        // The head's delay and a stall check come before the resume, by design: the wait is on top of them
+        var stallCheck = Duration.ofSeconds(proxy.artifactCache.downloadIdleSeconds);
+        awaitFile(cached(CENTRAL, JAR), content, AWAIT.plus(headDelay).plus(stallCheck));
     }
 
     @Test
