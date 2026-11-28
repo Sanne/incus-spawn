@@ -21,7 +21,7 @@ import java.util.List;
 /**
  * The last reading of each instance's guest ({@link GuestRead}), kept on the host so a stopped
  * instance shows what it held without being started (#2752). Every read of a running guest the
- * overview makes is kept, and so is one made just before each stop isx makes ({@link #beforeStop}),
+ * overview makes that ends well is kept, and so is one made just before each stop isx makes ({@link #beforeStop}),
  * since a stopped instance's clones and sessions cannot change until it starts again.
  *
  * <p>One file per instance incarnation, so a new instance of the same name never shows an older
@@ -37,6 +37,9 @@ public record KeptReads(Path dir) {
      * usually takes well under a second (docs/dev/PERFORMANCE-NOTES.md "The overview's guest read, on Linux").
      */
     static final Duration STOP_LIMIT = Duration.ofSeconds(2);
+
+    /** A temporary file older than this is a write that never finished. */
+    private static final Duration STALE_TEMP = Duration.ofHours(1);
 
     /** Names the script a kept answer came from, so a changed script never parses an older one's answer. */
     static final String SCRIPT_SHA = ToolDef.sha256hex(GuestRead.SCRIPT);
@@ -77,9 +80,13 @@ public record KeptReads(Path dir) {
         }
     }
 
-    /** Keeps {@code answer} as the instance's last reading; one that cannot be written is only not kept. */
+    /**
+     * Keeps {@code answer} as the instance's last reading, only when the script ended well (exit 0):
+     * a read killed at its limit, cut short by a stop or failed would replace a good earlier
+     * reading with unknown. One that cannot be written is only not kept.
+     */
     void put(String name, String incarnation, GuestRead.Answer answer) {
-        if (incarnation.isEmpty()) return;
+        if (incarnation.isEmpty() || answer.exit() != 0) return;
         var json = JqObject.builder(7)
                 .put("name", name)
                 .put("incarnation", incarnation)
@@ -113,9 +120,7 @@ public record KeptReads(Path dir) {
     public void beforeStop(IncusClient incus, String name, String incarnation) {
         if (incarnation == null || incarnation.isBlank()) return;
         try {
-            var answer = GuestRead.ask(incus, name, STOP_LIMIT);
-            // A read killed at the limit, or that failed, would replace a good earlier reading with unknown
-            if (answer.exit() == 0) put(name, incarnation.strip(), answer);
+            put(name, incarnation.strip(), GuestRead.ask(incus, name, STOP_LIMIT));
         } catch (RuntimeException e) {
             // Not kept: the stop is what was asked for
         }
@@ -145,9 +150,22 @@ public record KeptReads(Path dir) {
             for (var file : files.toList()) {
                 var fileName = file.getFileName().toString();
                 if (fileName.endsWith(".json") && !keep.contains(fileName)) Files.deleteIfExists(file);
+                // A write a crash interrupted left the guest's answer behind; one under way is younger
+                else if (fileName.startsWith(".read") && fileName.endsWith(".tmp") && staleTemp(file)) {
+                    Files.deleteIfExists(file);
+                }
             }
         } catch (IOException | RuntimeException e) {
             // A reading left behind is shown for no instance: only its file stays
+        }
+    }
+
+    /** Whether the temporary file is older than {@link #STALE_TEMP}; one a write just moved away is not. */
+    private static boolean staleTemp(Path file) {
+        try {
+            return Files.getLastModifiedTime(file).toInstant().isBefore(Instant.now().minus(STALE_TEMP));
+        } catch (IOException e) {
+            return false;
         }
     }
 

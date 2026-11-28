@@ -789,12 +789,14 @@ Those stops are `isx stop`, the TUI's stop and its stop before a rename, and `is
 A rename moves the reading to the new name.
 The read before a stop is the overview's own script with a shorter limit (`KeptReads.STOP_LIMIT`), since a person waits for the stop.
 A guest that does not answer is stopped all the same, and its earlier reading stays.
+Only an answer whose script ended well (exit 0) is kept, on either occasion, so a read killed at its limit or cut short by a stop never replaces a good reading with `unknown`.
 A restart, and the stops a build, a network repair or `isx update-all` makes, read nothing, since the instance runs again or is not a person's.
 A stopped instance shows the kept reading with its age: the preview says `read 4 days ago, before it stopped`, the overview's WORK cell `clean, read 4 days ago`, and its formats `read_at`.
-When the instance started after the reading, the preview says `before its last start, so it may have changed`, the cell `before its last start`, and the formats `read_before_last_start`.
+When the instance started after the reading, the preview says `before its last start, so it may have changed`, the Work tab's WORK cell ends in a warning `?`, the overview's cell says `before its last start`, and the formats `read_before_last_start`.
 That happens when a stop isx did not make came after a start: a host reboot, a shutdown in the guest or a plain `incus stop`, after a start nobody looked at.
 What is kept is the guest's answer as the exec gave it, already bounded, and it is parsed again when shown, so it stays the guest's untrusted text; an answer to another version of the script is not read back.
-An overview of every instance removes the files of instances no longer listed.
+An overview of every instance removes the files of instances no longer listed, and the temporary files of a write a crash interrupted.
+The TUI keeps a stopped row's shown reading until the kept one is read only when it was made after the instance was created, since the readings it shows are by name.
 Reading a stopped instance's disk from the host was refused: `git status` on a clone whose `.git/config` the guest wrote runs that config's commands, such as `core.fsmonitor`, as the host user, and a VM's disk, or any disk on a Mac, is not readable from the host.
 What this gives up: each stop isx makes waits for one read of the guest, which took 0.2 to 0.8 s in the measurement of "The overview's guest read, on Linux" in docs/dev/PERFORMANCE-NOTES.md, and at most `KeptReads.STOP_LIMIT` plus the exec's kill.
 

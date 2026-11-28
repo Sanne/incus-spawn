@@ -384,6 +384,32 @@ class TuiOverviewTest {
     }
 
     @Test
+    void aKeptReadingFromBeforeTheLastStartIsMarkedInTheTable() throws Exception {
+        // ws last started on Nov 3 at 12:00, after this reading
+        dev.incusspawn.command.KeptReadsAccess.put(new dev.incusspawn.command.KeptReads(dir.resolve("reads")), "ws", WS,
+                guest("total 0\n"), Instant.parse("2026-11-02T13:00:00Z"));
+        var tui = tui(120);
+        workTab(tui);
+        readsFinish();
+        press(tui, KeyEvent.ofKey(KeyCode.DOWN));
+        var ws = screen(tui);
+        assertTrue(row(ws, "ws").contains(Glyphs.UNPUSHED + "2?"), "it may miss what its last run did: " + ws);
+        assertTrue(ws.contains("read 5 days ago, before its last start, so"), ws);
+    }
+
+    @Test
+    void aShownReadingOfADestroyedInstanceIsNotCarriedToANewOneOfTheSameName() {
+        var daemon = new FakeIncusDaemon().instance("ws", "container", "Stopped", Map.of(Metadata.TYPE, "branch"))
+                .createdAt("ws", "2026-11-05T00:00:00Z");
+        var row = dev.incusspawn.command.InstanceListing.collectEntries(daemon.client().listJsonConfig()).getFirst();
+        var older = dev.incusspawn.command.KeptReadsAccess.parsed(guest("total 0\n"), Instant.parse("2026-11-04T00:00:00Z"));
+        var newer = dev.incusspawn.command.KeptReadsAccess.parsed(guest("total 0\n"), Instant.parse("2026-11-06T00:00:00Z"));
+
+        assertFalse(Tui.sameIncarnation(older, row), "read before this instance was made");
+        assertTrue(Tui.sameIncarnation(newer, row));
+    }
+
+    @Test
     void aMarkOnATwoLineRowIsOnItsFirstLineAndMovesNothing() throws Exception {
         var tui = tui(120);
         workTab(tui);

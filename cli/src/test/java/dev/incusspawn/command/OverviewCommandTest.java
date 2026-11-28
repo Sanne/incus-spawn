@@ -149,6 +149,21 @@ class OverviewCommandTest {
     }
 
     @Test
+    void aReadThatFailsKeepsTheEarlierReading() throws Exception {
+        var reads = new KeptReads(dir.resolve("reads"));
+        var before = java.time.Instant.parse("2026-11-03T13:00:00Z");
+        reads.put("dev-1", DEV1, new GuestRead.Answer(0, WorkState.HEADER + "\nrepo 0 0 0 app\nend\n", false, before));
+        daemon.execExit(WorkState.HEADER, 137);
+
+        var plain = overview("plain").lines().toList();
+
+        assertTrue(plain.get(0).contains("\tunknown\t"), "the failed read is shown as it is: " + plain.get(0));
+        var kept = reads.get("dev-1", DEV1);
+        assertEquals(WorkState.State.CLEAN, kept.work().state(), "a read killed at its limit never replaces a good one");
+        assertEquals(before, kept.at());
+    }
+
+    @Test
     void jsonSaysWhatEachGuestHoldsAndWhatBecameOfItsPullRequests() throws Exception {
         var json = overview("json");
         assertTrue(json.contains("\"pull_request_states\" : [ \"merged\" ]"), json);

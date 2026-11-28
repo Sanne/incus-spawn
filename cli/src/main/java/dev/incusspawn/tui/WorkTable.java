@@ -176,9 +176,23 @@ final class WorkTable {
     /**
      * The WORK cell: {@code ✓} clean, {@code ±3} changes not committed, {@code ↑1} commits not
      * pushed, both as {@code ±3↑1}, {@code ≡2} stashes alone, a trailing {@code ?} where a clone
-     * could not be read, {@code ?} unknown, {@code –} not read (stopped), {@code …} while its
+     * could not be read or, on a stopped instance's kept reading, where it ran again after the
+     * reading, {@code ?} unknown, {@code –} not read (stopped, nothing kept), {@code …} while its
      * guest is read. An instance with no clone shows a dim {@code ✓}: there is nothing to lose.
      */
+    static Work work(OverviewCommand.Reading reading, InstanceInfo instance, boolean awaits) {
+        if (awaits) return work(null, true);
+        var cell = work(reading.workOf(instance), false);
+        var guest = reading.guestOf(instance);
+        // A stopped instance's kept reading from before its last start may miss what that run did (#2752)
+        if (!"running".equalsIgnoreCase(instance.status())
+                && dev.incusspawn.command.KeptReads.beforeLastStart(guest, instance) && !cell.text().endsWith("?")) {
+            return new Work(cell.text() + "?", Tone.WARN);
+        }
+        return cell;
+    }
+
+    /** {@link #work(OverviewCommand.Reading, InstanceInfo, boolean)} of a work state alone. */
     static Work work(WorkState state, boolean awaits) {
         if (awaits) return new Work(ColumnFit.ELLIPSIS, Tone.DIM);
         return switch (state.state()) {

@@ -133,6 +133,7 @@ public record GuestRead(WorkState work, AgentSessions sessions, java.time.Instan
         }
         try {
             var answer = ask(incus, instance.name(), WorkState.LIMIT);
+            // Kept only when it ended well, so a read killed at its limit keeps the earlier one
             kept.put(instance.name(), incarnation, answer);
             return answer.parsed();
         } catch (RuntimeException e) {

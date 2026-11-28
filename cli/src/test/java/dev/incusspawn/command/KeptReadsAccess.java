@@ -9,4 +9,9 @@ public final class KeptReadsAccess {
     public static void put(KeptReads kept, String name, String incarnation, String output, Instant at) {
         kept.put(name, incarnation, new GuestRead.Answer(0, output, false, at));
     }
+
+    /** A reading of {@code output}, made at {@code at}. */
+    public static GuestRead parsed(String output, Instant at) {
+        return new GuestRead.Answer(0, output, false, at).parsed();
+    }
 }

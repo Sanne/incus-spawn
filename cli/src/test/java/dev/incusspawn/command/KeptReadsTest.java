@@ -73,6 +73,28 @@ class KeptReadsTest {
     }
 
     @Test
+    void aStaleTemporaryFileIsPrunedAndOneBeingWrittenIsNot() throws Exception {
+        var reads = dir.resolve("reads");
+        Files.createDirectories(reads);
+        var stale = Files.writeString(reads.resolve(".read123.tmp"), "guest text");
+        Files.setLastModifiedTime(stale, java.nio.file.attribute.FileTime.from(Instant.now().minus(java.time.Duration.ofDays(1))));
+        var fresh = Files.writeString(reads.resolve(".read456.tmp"), "guest text");
+
+        kept().prune(java.util.List.of());
+
+        assertFalse(Files.exists(stale), "a write a crash interrupted");
+        assertTrue(Files.exists(fresh), "a write under way");
+    }
+
+    @Test
+    void aFailedAnswerIsNotKept() {
+        kept().put("dev", "c", new GuestRead.Answer(0, WORK, false, AT));
+        kept().put("dev", "c", new GuestRead.Answer(137, WorkState.HEADER + "\n", false, AT.plusSeconds(60)));
+
+        assertEquals(AT, kept().get("dev", "c").at(), "the earlier reading stays");
+    }
+
+    @Test
     void aCutAnswerStaysUnknown() {
         kept().put("dev", "c", new GuestRead.Answer(0, WorkState.HEADER + "\nrepo 0 0 0 app\n", true, AT));
 

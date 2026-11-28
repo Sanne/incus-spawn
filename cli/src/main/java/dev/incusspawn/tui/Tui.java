@@ -2125,6 +2125,16 @@ public class Tui {
         return true;
     }
 
+    /** Whether {@code read}, shown for an instance of {@code row}'s name, was made of this instance: after it was created. */
+    static boolean sameIncarnation(dev.incusspawn.command.GuestRead read, InstanceInfo row) {
+        if (read.at() == null) return false;
+        try {
+            return !read.at().isBefore(java.time.Instant.parse(dev.incusspawn.command.OverviewCommand.incarnation(row)));
+        } catch (java.time.format.DateTimeParseException e) {
+            return false;
+        }
+    }
+
     /** The {@code created_at} of the listed instance {@code name}, which names its kept reading; blank when it is not listed. */
     private String listedIncarnation(String name) {
         var listed = searchActive && allEntries != null ? allEntries : entries;
@@ -3376,9 +3386,11 @@ public class Tui {
         var shown = overviewReading;
         for (var row : rows) {
             if ("running".equalsIgnoreCase(row.status())) continue;
-            // What was shown stays until the kept reading is read, which is that one or newer
+            // What was shown stays until the kept reading is read, which is that one or newer, but
+            // only when it was read of this incarnation: the readings are by name, and a reading
+            // older than the instance is of one destroyed before it was made
             var before = shown == null ? null : shown.guests().get(row.name());
-            stopped.put(row.name(), before != null ? before : dev.incusspawn.command.GuestRead.NOT_READ);
+            stopped.put(row.name(), before != null && sameIncarnation(before, row) ? before : dev.incusspawn.command.GuestRead.NOT_READ);
         }
         // Only the latest read is kept: an earlier one that ends later would show older values
         long read;

@@ -559,6 +559,9 @@ After them come `merged_done`, `merged_state`, `merged_pending`, `merged_session
 
 Then come `read_at` and `read_before_last_start`, which are `null` unless a stopped instance shows a kept reading.
 
+For a stopped instance with a kept reading, the work and session fields are that reading's, so `work_state` can be `clean` for an instance that is not running.
+When `read_before_last_start` is `true`, the instance ran again after the reading, so a script must not take those fields as its current state.
+
 `tokens` is the sum of the four token counts.
 `pushed_branches` lists `<owner>/<repo>:<branch>` for each branch the instance pushed and kept.
 `pull_requests` lists `<owner>/<repo>#<number>`.
