@@ -131,6 +131,7 @@ class TuiOverviewTest {
             return answer;
         };
         tui.overviewCache = () -> new dev.incusspawn.command.SessionMerge.Cache(dir.resolve("summaries"));
+        tui.overviewKept = () -> new dev.incusspawn.command.KeptReads(dir.resolve("reads"));
         tui.overviewZone = java.time.ZoneOffset.UTC;
         tui.overviewClock = () -> NOW;
         tui.useDefinitions(new LinkedHashMap<>(), new ToolDefLoader(List.of()), List.of());
@@ -360,6 +361,26 @@ class TuiOverviewTest {
                 KeyEvent.ofKey(KeyCode.F8));
         var confirm = screen(tui);
         assertTrue(confirm.contains("mine") && confirm.contains("ws") && confirm.contains("Destroy"), confirm);
+    }
+
+    @Test
+    void aStoppedInstanceShowsTheReadingKeptBeforeItStopped() throws Exception {
+        dev.incusspawn.command.KeptReadsAccess.put(new dev.incusspawn.command.KeptReads(dir.resolve("reads")), "ws", WS,
+                guest("total 1\n" + claudeSession(1762164000, "Wrote the grammar")), Instant.parse("2026-11-03T13:00:00Z"));
+        var daemons = new java.util.ArrayList<FakeIncusDaemon>();
+        var tui = tui(120, daemons::add);
+        var daemon = daemons.getFirst();
+        workTab(tui);
+        readsFinish();
+        press(tui, KeyEvent.ofKey(KeyCode.DOWN));
+        var ws = screen(tui);
+        assertTrue(row(ws, "ws").contains(Glyphs.UNPUSHED + "2"), "its WORK cell is the kept reading's: " + ws);
+        assertTrue(ws.contains("│ Work     2 unpushed"), ws);
+        assertTrue(ws.contains("│          read 4 days ago, before it stopped"), ws);
+        assertTrue(ws.contains("│   Wrote the grammar"), "its closing message is the kept one: " + ws);
+        assertEquals(1, daemon.execs().size(), "only the running instance is read: " + daemon.execs());
+        assertNotNull(new dev.incusspawn.command.KeptReads(dir.resolve("reads")).get("mine", "2026-11-02T08:00:00Z"),
+                "the running instance's read is kept for when it stops");
     }
 
     @Test

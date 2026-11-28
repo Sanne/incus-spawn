@@ -94,12 +94,17 @@ class StartStopCommandTest {
                 "said once, however long it waits");
     }
 
+    @org.junit.jupiter.api.io.TempDir
+    java.nio.file.Path dir;
+
     @Test
     void stopStopsARunningInstanceUnderItsMarkAndClearsTheMark() {
-        var daemon = new FakeIncusDaemon().instance("dev", "container", "Running", Map.of());
+        var daemon = new FakeIncusDaemon().instance("dev", "container", "Running", Map.of())
+                .createdAt("dev", "2026-11-01T00:00:00Z").servesExecs();
         var locks = new Locks();
         var command = new StopCommand();
         command.name = "dev";
+        command.kept = () -> new KeptReads(dir);
 
         RecordingOutput.during(() -> assertEquals(0, assertDoesNotThrow(() -> command.stop(daemon.client(), locks)).getResultValue()));
 
@@ -108,8 +113,27 @@ class StartStopCommandTest {
         assertFalse(daemon.instance("dev").path("config").has(Metadata.PENDING_OP), "the mark is cleared");
         // Marked, read back, stopped, unmarked: the mark is on while the stop runs.
         var requests = daemon.requests().stream().filter(r -> !r.startsWith("GET /1.0/operations")).toList();
+        // The guest is read just before it stops (#2752), with no request of its own besides the exec
+        var asked = requests.stream().filter(r -> !r.startsWith("GET /1.0/instances/dev/logs") && !r.contains("/websocket")).toList();
         assertEquals(List.of("GET /1.0/instances/dev", "PATCH /1.0/instances/dev", "GET /1.0/instances/dev",
-                "PUT /1.0/instances/dev/state", "PATCH /1.0/instances/dev"), requests);
+                "POST /1.0/instances/dev/exec", "PUT /1.0/instances/dev/state", "PATCH /1.0/instances/dev"), asked);
+    }
+
+    @Test
+    void aStopKeepsTheGuestsLastReadingForTheOverview() {
+        var daemon = new FakeIncusDaemon().instance("dev", "container", "Running", Map.of())
+                .createdAt("dev", "2026-11-01T00:00:00Z")
+                .execOutput(WorkState.HEADER, WorkState.HEADER + "\nrepo 4 0 0 app\nend\n");
+        var command = new StopCommand();
+        command.name = "dev";
+        command.kept = () -> new KeptReads(dir);
+
+        RecordingOutput.during(() -> assertEquals(0, assertDoesNotThrow(() -> command.stop(daemon.client(), new Locks())).getResultValue()));
+
+        assertEquals("Stopped", daemon.instance("dev").path("status").asText());
+        var kept = new KeptReads(dir).get("dev", "2026-11-01T00:00:00Z");
+        assertNotNull(kept, "read before the stop");
+        assertEquals(4, kept.work().uncommitted());
     }
 
     @Test

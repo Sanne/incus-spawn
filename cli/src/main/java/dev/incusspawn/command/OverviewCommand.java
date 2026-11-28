@@ -75,6 +75,9 @@ public class OverviewCommand extends BaseCommand {
     /** Where merged summaries are kept on the host. */
     Supplier<SessionMerge.Cache> cache = SessionMerge.Cache::host;
 
+    /** Where the last reading of each guest is kept on the host, for when it is stopped. */
+    Supplier<KeptReads> kept = KeptReads::host;
+
     /**
      * Everything the overview shows beside the listing: the event log, each instance's work state
      * read in its guest, and what became of its pull requests.
@@ -142,7 +145,8 @@ public class OverviewCommand extends BaseCommand {
             return merge == null ? summary : summary.withMerged(merge, LocalDateTime.now(), sessions.otherAgents());
         }
 
-        private GuestRead guestOf(InstanceInfo instance) {
+        /** Its guest's reading: made now when it runs, the kept one when it is stopped. */
+        public GuestRead guestOf(InstanceInfo instance) {
             var read = guests.get(instance.name());
             if (read != null) return read;
             return "running".equalsIgnoreCase(instance.status())
@@ -160,11 +164,11 @@ public class OverviewCommand extends BaseCommand {
      * GitHub's answer at once. {@code failed} hears what could not be read, as a warning.
      */
     public static Reading read(IncusClient incus, List<InstanceInfo> instances, EventLogReader.Log log,
-                               SpawnConfig config, PullRequestStates.GitHub github,
+                               SpawnConfig config, PullRequestStates.GitHub github, KeptReads kept,
                                java.util.function.Consumer<String> failed) {
         try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var pulls = pool.submit(() -> PullRequestStates.read(instances, log, config, github, failed));
-            var work = GuestRead.readAll(incus, instances);
+            var work = GuestRead.readAll(incus, instances, kept);
             try {
                 return new Reading(log, work, pulls.get());
             } catch (InterruptedException e) {
@@ -200,10 +204,14 @@ public class OverviewCommand extends BaseCommand {
                 .toList();
         var host = config.get();
         var summaries = cache.get();
-        var reading = read(incus, instances, eventLog.get(), host, github, BuildOutput::warn);
+        var readings = kept.get();
+        var reading = read(incus, instances, eventLog.get(), host, github, readings, BuildOutput::warn);
         reading = reading.withMerged(SessionMerge.mergeAll(instances, reading.guests(), host, model, summaries, BuildOutput::warn));
         // Only a listing of every instance says which were destroyed
-        if (wanted == null) summaries.prune(instances);
+        if (wanted == null) {
+            summaries.prune(instances);
+            readings.prune(instances);
+        }
         switch (outputFormat) {
             case PLAIN, JSON -> {
                 outputFormat.print(out, records(instances, reading, zone));
@@ -220,7 +228,7 @@ public class OverviewCommand extends BaseCommand {
     }
 
     /** The listing's {@code created_at}, which names the instance in the event log (#1063). */
-    static String incarnation(InstanceInfo instance) {
+    public static String incarnation(InstanceInfo instance) {
         return instance.metadata() == null ? "" : instance.metadata().pathText("created_at", "").strip();
     }
 
@@ -276,6 +284,10 @@ public class OverviewCommand extends BaseCommand {
             record.put("merged_pending", merge == null ? null : merge.pending());
             record.put("merged_sessions", merge == null ? null : merge.sessions());
             record.put("merged_at", merge == null ? null : iso(merge.made(), zone));
+            // A stopped instance's kept reading: when it was made, and whether the instance ran again after it
+            var kept = "running".equalsIgnoreCase(i.status()) ? null : reading.guestOf(i).at();
+            record.put("read_at", iso(kept, zone));
+            record.put("read_before_last_start", kept == null ? null : KeptReads.beforeLastStart(reading.guestOf(i), i));
             records.add(record);
         }
         return records;
@@ -304,13 +316,26 @@ public class OverviewCommand extends BaseCommand {
         for (var i : instances) {
             var effort = effortOf(log, i);
             table.row(i.name(), ListCommand.statusCell(i.status()), lastUsedCell(i), tokensCell(effort),
-                    activeCell(effort, zone), reading.workOf(i).cell(), githubCell(effort, statesOf(reading, i, effort), 40),
+                    activeCell(effort, zone), workCell(reading, i), githubCell(effort, statesOf(reading, i, effort), 40),
                     ListCommand.purposeCell(i), doneCell(reading.summaryOf(i), 80));
         }
         table.print(out);
         out.println();
         var note = coverage(log, zone);
         if (note != null) out.println(note);
+    }
+
+    /**
+     * The WORK cell; a stopped instance's kept reading says how old it is, and that it may be out
+     * of date when the instance ran again after it ({@code clean, read 2 days ago}).
+     */
+    static String workCell(Reading reading, InstanceInfo instance) {
+        var guest = reading.guestOf(instance);
+        var cell = guest.work().cell();
+        if (guest.at() == null || "running".equalsIgnoreCase(instance.status())) return cell;
+        return cell + ", read " + Metadata.ageDescription(LocalDateTime.ofInstant(guest.at(), ZoneId.systemDefault())
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                + (KeptReads.beforeLastStart(guest, instance) ? " before its last start" : "");
     }
 
     /** {@link Metadata#ageDescription} of the last start, or {@code never}: elapsed time, against this host's clock and zone. */

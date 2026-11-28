@@ -230,7 +230,7 @@ class TaskChangedNotificationTest {
     void anInstanceThatCannotBeAskedWaitsForTheNextSlowRound() throws Exception {
         initialize(true);
         var task = delegate();
-        backend.stop(task.instance()); // stopped behind the session's back: its exec fails
+        backend.stop(task.instance(), ""); // stopped behind the session's back: its exec fails
         rounds(false, 1);
         var reads = backend.metadataReads.get();
         rounds(false, 3);

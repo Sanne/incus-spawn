@@ -439,6 +439,8 @@ public class Tui {
     dev.incusspawn.command.SessionMerge.Model overviewModel = dev.incusspawn.command.SessionMerge.api();
     /** Where merged summaries are kept on the host. */
     java.util.function.Supplier<dev.incusspawn.command.SessionMerge.Cache> overviewCache = dev.incusspawn.command.SessionMerge.Cache::host;
+    /** Where the last reading of each guest is kept, shown while it is stopped and written before each stop (#2752). */
+    java.util.function.Supplier<dev.incusspawn.command.KeptReads> overviewKept = dev.incusspawn.command.KeptReads::host;
 
     /** Whether the instance table shows the overview's columns: on {@code o}, or in the Work tab. */
     boolean overviewShown() {
@@ -1570,7 +1572,11 @@ public class Tui {
                 instance.name(),
                 "Stopped " + instance.name(),
                 Metadata.OP_STOPPING,
-                () -> HostIntegration.stopAll(incus, instance.name(), drawing, () -> incus.stop(instance.name())));
+                () -> HostIntegration.stopAll(incus, instance.name(), drawing, () -> {
+                    overviewKept.get().beforeStop(incus, instance.name(),
+                            dev.incusspawn.command.OverviewCommand.incarnation(instance));
+                    incus.stop(instance.name());
+                }));
     }
 
     private void restartInBackground(InstanceInfo instance) {
@@ -1876,6 +1882,8 @@ public class Tui {
     private boolean rename(String newName) {
         try {
             var instance = incus.rename(renameSourceName, newName);
+            // Its kept reading follows it, or it would show none until it runs again (#2752)
+            overviewKept.get().renamed(renameSourceName, newName, instance.pathText("created_at", "").strip());
             try {
                 InstanceLifecycle.removeHostIntegration(renameSourceName, drawing);
                 var config = instance.path("config");
@@ -2117,6 +2125,14 @@ public class Tui {
         return true;
     }
 
+    /** The {@code created_at} of the listed instance {@code name}, which names its kept reading; blank when it is not listed. */
+    private String listedIncarnation(String name) {
+        var listed = searchActive && allEntries != null ? allEntries : entries;
+        if (listed == null) return "";
+        return listed.stream().filter(i -> i.name().equals(name)).findFirst()
+                .map(dev.incusspawn.command.OverviewCommand::incarnation).orElse("");
+    }
+
     private boolean handleConfirmStopForRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (key.isChar('y') || key.isChar('Y')) {
             if (vanished(renameSourceName)) return true;
@@ -2126,7 +2142,11 @@ public class Tui {
             try {
                 // As any stop isx makes: an open herdr must not start it again before the rename (#2041)
                 var source = renameSourceName;
-                HostIntegration.stopAll(incus, source, drawing, () -> incus.stop(source));
+                var incarnation = listedIncarnation(source);
+                HostIntegration.stopAll(incus, source, drawing, () -> {
+                    overviewKept.get().beforeStop(incus, source, incarnation);
+                    incus.stop(source);
+                });
                 progressMessage = null;
                 applyEdit(tableState);
             } catch (Exception e) {
@@ -3351,9 +3371,14 @@ public class Tui {
         var listed = searchActive && allEntries != null ? allEntries : entries;
         var rows = listed == null ? List.<InstanceInfo>of() : List.copyOf(listed);
         var running = viewportFirst(rows.stream().filter(i -> "running".equalsIgnoreCase(i.status())).toList());
+        var kept = overviewKept;
         var stopped = new java.util.HashMap<String, dev.incusspawn.command.GuestRead>();
+        var shown = overviewReading;
         for (var row : rows) {
-            if (!"running".equalsIgnoreCase(row.status())) stopped.put(row.name(), dev.incusspawn.command.GuestRead.NOT_READ);
+            if ("running".equalsIgnoreCase(row.status())) continue;
+            // What was shown stays until the kept reading is read, which is that one or newer
+            var before = shown == null ? null : shown.guests().get(row.name());
+            stopped.put(row.name(), before != null ? before : dev.incusspawn.command.GuestRead.NOT_READ);
         }
         // Only the latest read is kept: an earlier one that ends later would show older values
         long read;
@@ -3423,7 +3448,7 @@ public class Tui {
                 pool.submit(() -> {
                     var byName = new java.util.HashMap<String, InstanceInfo>();
                     running.forEach(i -> byName.put(i.name(), i));
-                    dev.incusspawn.command.GuestRead.readEach(client, running, (name, guest) -> {
+                    dev.incusspawn.command.GuestRead.readEach(client, running, kept.get(), (name, guest) -> {
                         synchronized (overviewLock) {
                             if (overviewReads.get() != read) return;
                             overviewPending.remove(name);
@@ -3456,13 +3481,21 @@ public class Tui {
                         }
                     });
                 });
-                // A stopped instance's last merged summary is on disk: shown without waiting for any guest
+                // A stopped instance's last reading and merged summary are on disk: shown without waiting for any guest
                 pool.submit(() -> {
+                    var readings = new java.util.HashMap<String, dev.incusspawn.command.GuestRead>();
+                    var store = kept.get();
+                    for (var row : rows) {
+                        if (!stopped.containsKey(row.name())) continue;
+                        var last = store.get(row.name(), dev.incusspawn.command.OverviewCommand.incarnation(row));
+                        readings.put(row.name(), last == null ? dev.incusspawn.command.GuestRead.NOT_READ : last);
+                    }
+                    if (!readings.isEmpty()) publishOverview(read, r -> r.withGuests(readings));
                     var merger = setup.join().merger();
                     if (merger == null) return;
                     for (var row : rows) {
-                        if (!stopped.containsKey(row.name())) continue;
-                        var known = merger.step(row, dev.incusspawn.command.GuestRead.NOT_READ).known();
+                        if (!readings.containsKey(row.name())) continue;
+                        var known = merger.step(row, readings.get(row.name())).known();
                         publishOverview(read, r -> r.withMerge(row.name(), known));
                     }
                 });

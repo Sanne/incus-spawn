@@ -105,8 +105,8 @@ final class WorkPreview {
                     + (effort.modelCalls() == 1 ? " model call" : " model calls"), Style.EMPTY, width, theme);
         }
         from = block(blocks, "Tokens", out, from);
-        work(out, s, width, theme);
-        from = block(blocks, "Work", out, from);
+        var readAge = work(out, s, width, theme);
+        from = block(blocks, "Work", out, from, readAge);
 
         if (effort != null) {
             var pulls = effort.pullRequests();
@@ -182,12 +182,13 @@ final class WorkPreview {
         return since + " since its last start";
     }
 
-    private static void work(List<Line> out, Subject s, int width, TuiTheme theme) {
+    /** The WORK part; returns the text in it that the clock alone changes, or null. */
+    private static String work(List<Line> out, Subject s, int width, TuiTheme theme) {
         var warn = Style.EMPTY.fg(theme.statusWarning());
         var faint = Style.EMPTY.fg(theme.textFaint());
         if (s.reading() == null || s.awaits()) {
             row(out, "Work", "reading the clones" + ColumnFit.ELLIPSIS, faint, width, theme);
-            return;
+            return null;
         }
         var work = s.reading().workOf(s.instance());
         switch (work.state()) {
@@ -204,6 +205,21 @@ final class WorkPreview {
                 }
             }
         }
+        return readAge(out, s, width, theme);
+    }
+
+    /**
+     * A stopped instance's kept reading says how old it is (#2752), and that it may be out of date
+     * when the instance started again after it; returns the age, which the clock changes.
+     */
+    private static String readAge(List<Line> out, Subject s, int width, TuiTheme theme) {
+        var guest = s.reading().guestOf(s.instance());
+        if (guest.at() == null || "running".equalsIgnoreCase(s.instance().status())) return null;
+        var age = WorkTable.idleWords(Duration.between(guest.at(), s.now()));
+        var stale = dev.incusspawn.command.KeptReads.beforeLastStart(guest, s.instance());
+        row(out, "", "read " + age + " ago, " + (stale ? "before its last start, so it may have changed" : "before it stopped"),
+                Style.EMPTY.fg(stale ? theme.statusWarning() : theme.textFaint()), width, theme);
+        return age;
     }
 
     private static String counts(WorkState.Repo repo) {

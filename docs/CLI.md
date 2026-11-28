@@ -346,6 +346,9 @@ Stopping an instance that is already stopped succeeds, so a script can repeat it
 A frozen instance cannot shut down, so `isx stop` refuses it with an error.
 If another isx process is starting or stopping it, `isx stop` waits for that first, for up to two minutes.
 
+Just before the stop, isx reads the instance's work for `isx overview` and the TUI's Work tab, which show it while the instance is stopped.
+That read is short, and an instance that does not answer is stopped all the same.
+
 ## `isx exec`
 
 Run a command in a running instance and wait for it to finish.
@@ -481,7 +484,14 @@ That is the tokens its model calls spent, the days it was active, the branches i
 The WORK column says what destroying the instance would lose.
 It counts the uncommitted changes, unpushed commits and stashes of each Git clone in the home directory or one level below.
 A short script reads them in each running instance and changes nothing.
-A stopped instance shows `not read`, since nothing starts it, and a failed read shows `unknown`.
+A failed read shows `unknown`.
+
+isx never starts a stopped instance to read it.
+It shows the last reading kept on the host instead, with its age, such as `clean, read 4 days ago`.
+That reading is taken every time the overview reads the running instance, and again just before `isx stop`, the TUI or an agent stops it.
+
+When the instance ran again after that reading, the cell adds `before its last start`, since its work may have changed.
+An instance with no kept reading shows `not read`.
 
 A pull request shows whether it is still open, merged or closed.
 isx asks GitHub from the host, with the instance's own GitHub account, in one request per account.
@@ -546,6 +556,8 @@ F3 also lists each pull request by its full address, as a link, and the branches
 
 In `plain` and `json` it prints these fields, in this order: `name`, `status`, `purpose`, `last_used`, `model_calls`, `tokens`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `first_active`, `last_active`, `pushed_branches`, `pull_requests`, `pull_request_states`, `work_state`, `uncommitted_changes`, `unpushed_commits`, `stashes`, `repos`, `unsaved_repos`, `agent_sessions`, `headline`, `headline_from`, `last_session`, `first_ask` and `closing_message`.
 After them come `merged_done`, `merged_state`, `merged_pending`, `merged_sessions` and `merged_at`.
+
+Then come `read_at` and `read_before_last_start`, which are `null` unless a stopped instance shows a kept reading.
 
 `tokens` is the sum of the four token counts.
 `pushed_branches` lists `<owner>/<repo>:<branch>` for each branch the instance pushed and kept.

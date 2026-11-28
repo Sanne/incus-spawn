@@ -291,8 +291,10 @@ public final class SessionMerge {
         public Step step(InstanceInfo instance, GuestRead guest) {
             var incarnation = OverviewCommand.incarnation(instance);
             if (incarnation.isEmpty()) return Step.NONE;
-            if (guest == null || guest.sessions().state() == AgentSessions.State.NOT_READ) {
-                if ("running".equalsIgnoreCase(instance.status())) return Step.NONE;
+            boolean running = "running".equalsIgnoreCase(instance.status());
+            // A stopped instance, its reading kept or not, makes no model call: its last summary is shown
+            if (!running || guest == null || guest.sessions().state() == AgentSessions.State.NOT_READ) {
+                if (running) return Step.NONE;
                 var last = cache.get(instance.name(), incarnation);
                 return last == null ? Step.NONE : new Step(last.merged(), null);
             }

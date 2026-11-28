@@ -1619,7 +1619,7 @@ final class McpTools {
         // Cancelled first, so none is left recorded as running in an instance nobody can ask.
         tasks.cancel(name, busy);
         ctx.progress("Stopping " + name);
-        backend.stop(name);
+        backend.stop(name, metadata.getOrDefault(InstanceBackend.CREATED_AT, ""));
         notDormant(name, metadata);
         McpAuditLog.record(session.id, "stop_instance", name, null, millisSince(start),
                 busy.isEmpty() ? "stopped" : "stopped, cancelled " + busy.size() + " task(s)");

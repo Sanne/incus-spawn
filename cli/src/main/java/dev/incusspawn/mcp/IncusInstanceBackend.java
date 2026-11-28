@@ -52,6 +52,9 @@ final class IncusInstanceBackend implements InstanceBackend {
     private final IncusClient incus;
     private final InstanceLockManager locks;
 
+    /** Where the guest's last reading is kept before a stop, for the overview to show while it is stopped (#2752). */
+    java.util.function.Supplier<dev.incusspawn.command.KeptReads> kept = dev.incusspawn.command.KeptReads::host;
+
     IncusInstanceBackend(IncusClient incus, InstanceLockManager locks) {
         this.incus = incus;
         this.locks = locks;
@@ -260,13 +263,18 @@ final class IncusInstanceBackend implements InstanceBackend {
         if (lock.isEmpty()) throw inUse(name);
         try (var held = lock.get()) {
             // Under the mark, so an adoption stamping meanwhile is seen here or sees the mark.
+            var incarnation = new java.util.concurrent.atomic.AtomicReference<String>("");
             return InstanceDestroyer.stopMarkedIf(incus, name,
-                    instance -> session.equals(instance.path("config").path(Metadata.MCP_SESSION).asText(null))
-                            && "Running".equals(instance.path("status").asText()),
+                    instance -> {
+                        incarnation.set(instance.path("created_at").asText(""));
+                        return session.equals(instance.path("config").path(Metadata.MCP_SESSION).asText(null))
+                                && "Running".equals(instance.path("status").asText());
+                    },
                     // Stamped first: stopped without it, the next sweep would destroy it as any stopped orphan.
                     () -> {
                         incus.configUpdate(name, new java.util.HashMap<String, Object>(stamps));
                         HostIntegration.stoppingAll(name, BuildOutput.bound());
+                        kept.get().beforeStop(incus, name, incarnation.get());
                     },
                     () -> {
                         HostIntegration.stopFailedAll(incus, name, BuildOutput.bound());
@@ -301,13 +309,16 @@ final class IncusInstanceBackend implements InstanceBackend {
     }
 
     @Override
-    public void stop(String name) {
+    public void stop(String name, String incarnation) {
         var lock = locks.tryAcquire(name, Metadata.OP_STOPPING);
         if (lock.isEmpty()) throw inUse(name);
         try (var held = lock.get()) {
             incus.setPendingOperation(name, Metadata.OP_STOPPING);
             try {
-                HostIntegration.stopAll(incus, name, BuildOutput.bound(), () -> incus.stop(name));
+                HostIntegration.stopAll(incus, name, BuildOutput.bound(), () -> {
+                    kept.get().beforeStop(incus, name, incarnation);
+                    incus.stop(name);
+                });
             } finally {
                 incus.clearPendingOperation(name);
             }
