@@ -39,7 +39,14 @@ Ollama's API has no authentication, so read [What exposing a port gives away](..
 ## Tell Pi where Ollama is
 
 Pi learns about a model server from its `models.json` file, and a small tool of your own writes it into the template.
-Save this as `~/.config/incus-spawn/tools/ollama-models.yaml`:
+Create the tool:
+
+```shell
+isx tools new ollama-models
+```
+
+Your editor opens a short file.
+Replace it with this:
 
 ```yaml
 # yaml-language-server: $schema=https://isx.run/schema/tool.json
@@ -62,6 +69,8 @@ Put each model you pulled in `models`, by the name `ollama list` shows.
 Its `contextWindow` is the context you gave Ollama, so Pi compacts a long conversation before Ollama would cut it.
 Ollama ignores the `apiKey`, but Pi offers no model without one.
 [File entry fields](../TOOLS.md#file-entry-fields) says what `merge: json` keeps of the file, and Pi's [models documentation](https://docs.pi.dev/latest/models) lists the other fields.
+
+When you close the editor, isx checks the tool and names any field it cannot use.
 
 ## Make the template
 
