@@ -444,7 +444,7 @@ Scripts read `--format=plain` or `--format=json`, which stay stable: see [Script
 ## Further reading
 
 - [FAQ](docs/FAQ.md): URL clicks in Codex, the clipboard, and why there is no read-write project mount.
-- [Compared with other sandboxes](docs/SANDBOXES.md): why an isx instance is a whole machine, and how nono, Claude Code's sandbox runtime, NVIDIA OpenShell, dev containers, Docker Sandboxes and a VM you manage compare with it.
+- [isx compared to other sandboxes](docs/SANDBOXES.md): why an isx instance is a whole machine, and how nono, Claude Code's sandbox runtime, NVIDIA OpenShell, dev containers, Docker Sandboxes and a VM you manage compare with it.
 - [What differs from a stock Fedora install](docs/FEDORA.md): the few deliberate deviations, mostly so that every runtime trusts the proxy's CA.
 - [Vision](docs/VISION.md): where isx is going, from a container manager to mission control for parallel coding agents.
 - [DESIGN.md](DESIGN.md): the architecture and why each choice was made.

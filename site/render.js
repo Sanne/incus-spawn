@@ -154,8 +154,10 @@ const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g,
 for (const page of all) {
   page.md ??= fs.readFileSync(path.join(root, page.src), 'utf8');
   page.title = (page.md.match(/^# (.*)$/m) || [, page.src])[1].replace(/[`*]/g, '');
-  // The title a search result shows: the brand goes last, so a heading's leading "isx: " is dropped
-  page.headTitle = (page.searchTitle ?? page.title).replace(/^isx: /, '') + TITLE_SUFFIX;
+  // The title a search result shows: the brand goes last, so a heading's leading "isx: " or "isx "
+  // is dropped ("isx compared to other sandboxes" is "Compared to other sandboxes — isx")
+  const head = (page.searchTitle ?? page.title).replace(/^isx:? /, '');
+  page.headTitle = head.charAt(0).toUpperCase() + head.slice(1) + TITLE_SUFFIX;
 }
 
 // The page's introduction, its first paragraph before any section, cut at a word to the length
