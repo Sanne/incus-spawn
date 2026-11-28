@@ -897,7 +897,10 @@ The instance details show the other three lines, pending labelled as inferred.
 Its fingerprint is a hash of the model, the prompt and the whole question, so the cache holds exactly when the model would be shown the same thing.
 That covers what the issue named: a new session or closing message changes it, and so do the clones' counts of uncommitted changes, unpushed commits and stashes.
 A commit that leaves the counts as they were, such as one pushed at once, does not; the closing messages describe it, which is what is merged.
-A stopped instance shows its last cached summary with its age, and is never merged anew, even from its kept reading: nothing starts it, and it makes no model call.
+A stopped instance is never merged anew, even from its kept reading: nothing starts it, and it makes no model call.
+With no kept reading it shows its last cached summary with its age.
+With one, it shows the cached summary only when that summary was made of the reading's sessions and clones, whatever model or account merged them, and otherwise the newest session's own message, so a merge of earlier sessions never stands for later work.
+The cache keeps a hash of the question beside the fingerprint for that match.
 An overview of every instance removes the files of instances no longer listed; one filtered by `--status` removes none.
 Files are written whole through a rename and readable by the host user alone.
 At most four calls run at once in `isx overview`, which merges every instance that needs it before it prints.
@@ -908,7 +911,7 @@ A summary the cache holds is shown at once for every instance, as before.
 The cost and the wait of the lazy merge were not measured against a real Incus or a real account.
 What this gives up: the first overview after an instance's work changed waits for its call, up to the transport's two minutes; a model's summary can be wrong, and the exact columns beside it are the check.
 `untouched` is shown only when no session was found, every clone was read and holds nothing, the event log saw no activity, and every agent's sessions were read.
-So a read that failed, a stopped instance with no kept reading, or an opencode database that could not be read never reads as untouched.
+So a read that failed, a stopped instance with no kept reading or with one from before its last start, or an opencode database that could not be read never reads as untouched.
 Beside the newest message, DONE and the preview name such an agent as not read, since it may have worked since.
 What this gives up: a closing message can overstate what the agent finished, and WORK beside it is the check; a person's work outside an agent is not described.
 

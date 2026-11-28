@@ -138,6 +138,22 @@ class OverviewCommandTest {
     }
 
     @Test
+    void aKeptReadingFromBeforeTheLastStartIsNeverUntouched() throws Exception {
+        var clean = WORK.replace("repo 3 1 0 app\nrepo 0 0 0 lib\n", "repo 0 0 0 app\n")
+                .replaceAll("(?s)" + java.util.regex.Pattern.quote(ClaudeSessions.HEADER) + "\ntotal 1\n.*?\nend\n",
+                        java.util.regex.Matcher.quoteReplacement(ClaudeSessions.HEADER + "\ntotal 0\nend\n"));
+        var reads = new KeptReads(dir.resolve("reads"));
+        reads.put("dev-2", "2026-11-02T08:00:00Z", new GuestRead.Answer(0, clean, false, java.time.Instant.parse("2026-11-02T10:00:00Z")));
+        assertTrue(overview("plain").lines().toList().get(1).contains("\tclean\t0\t0\t0\tapp\t-\t0\tuntouched\t"),
+                "read after its last start, nothing says it was used");
+
+        daemon.lastUsedAt("dev-2", "2026-11-03T08:00:00Z");
+        var stale = overview("plain").lines().toList().get(1);
+        assertTrue(stale.contains("\tclean\t") && !stale.contains("untouched"),
+                "its last run may have done work the reading never saw: " + stale);
+    }
+
+    @Test
     void aRunningInstancesReadIsKeptAndADestroyedOnesIsDropped() throws Exception {
         var reads = new KeptReads(dir.resolve("reads"));
         reads.put("gone", "2026-10-01T00:00:00Z", new GuestRead.Answer(0, WORK, false, java.time.Instant.parse("2026-10-02T00:00:00Z")));

@@ -140,7 +140,10 @@ public class OverviewCommand extends BaseCommand {
          */
         public AgentSessions.Summary summaryOf(InstanceInfo instance) {
             var sessions = sessionsOf(instance);
-            var summary = AgentSessions.Summary.of(sessions, workOf(instance), effortOf(log, instance).any());
+            // A kept reading from before the last start may miss that run's work: never untouched
+            var guest = guestOf(instance);
+            boolean stale = !"running".equalsIgnoreCase(instance.status()) && KeptReads.beforeLastStart(guest, instance);
+            var summary = AgentSessions.Summary.of(sessions, workOf(instance), effortOf(log, instance).any() || stale);
             var merge = merged.get(instance.name());
             return merge == null ? summary : summary.withMerged(merge, LocalDateTime.now(), sessions.otherAgents());
         }

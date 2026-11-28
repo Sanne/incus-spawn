@@ -189,6 +189,11 @@ public final class SessionMerge {
         return ToolDef.sha256hex(model + "\n" + SYSTEM + "\n" + question);
     }
 
+    /** What a stopped instance's kept reading is matched on: the sessions and clones alone, whatever model merged them. */
+    static String questionHash(String question) {
+        return ToolDef.sha256hex(question);
+    }
+
     private static final Pattern LABEL = Pattern.compile("^\\**(Headline|Done|State|Pending)\\**:\\**\\s*(.*)$");
 
     /**
@@ -213,8 +218,8 @@ public final class SessionMerge {
 
     /**
      * The merged summary of each instance that has one, by name: a cached one when its sessions
-     * and clones are unchanged, or a stopped instance's last; otherwise one call per instance, on
-     * its own account. {@code failed} hears a call that failed or answered out of shape.
+     * and clones are unchanged, or a stopped instance's last when nothing of it was kept; otherwise
+     * one call per running instance, on its own account. {@code failed} hears a call that failed or answered out of shape.
      */
     public static Map<String, Merged> mergeAll(List<InstanceInfo> instances, Map<String, GuestRead> guests,
                                                SpawnConfig config, Model model, Cache cache, Consumer<String> failed) {
@@ -292,8 +297,8 @@ public final class SessionMerge {
             var incarnation = OverviewCommand.incarnation(instance);
             if (incarnation.isEmpty()) return Step.NONE;
             boolean running = "running".equalsIgnoreCase(instance.status());
-            // A stopped instance, its reading kept or not, makes no model call: its last summary is shown
-            if (!running || guest == null || guest.sessions().state() == AgentSessions.State.NOT_READ) {
+            if (guest == null || guest.sessions().state() == AgentSessions.State.NOT_READ) {
+                // Not read: a stopped instance shows its last summary, with its age
                 if (running) return Step.NONE;
                 var last = cache.get(instance.name(), incarnation);
                 return last == null ? Step.NONE : new Step(last.merged(), null);
@@ -305,6 +310,13 @@ public final class SessionMerge {
             var fingerprint = fingerprint(target == null ? "" : target.model(), question);
             var cached = cache.get(instance.name(), incarnation);
             if (cached != null && cached.fingerprint().equals(fingerprint)) return new Step(cached.merged(), null);
+            // A stopped instance's kept reading makes no model call (#2752), and a merge of other
+            // sessions than it holds is not shown: its newest session speaks for it. It is matched
+            // on the question alone, so a new model or account does not hide a merge of the same sessions
+            if (!running) {
+                return cached != null && questionHash(question).equals(cached.question())
+                        ? new Step(cached.merged(), null) : Step.NONE;
+            }
             if (target == null) return Step.NONE;
             return new Step(null, () -> {
                 try {
@@ -320,7 +332,7 @@ public final class SessionMerge {
                         failed.accept("The model's summary of " + instance.name() + "'s sessions was not in the shape asked for, so the newest session is shown.");
                         return null;
                     }
-                    cache.put(instance.name(), incarnation, fingerprint, made, failed);
+                    cache.put(instance.name(), incarnation, fingerprint, questionHash(question), made, failed);
                     return made;
                 } catch (IOException | RuntimeException e) {
                     // The message is the client's or the provider's, which never holds the key sent
@@ -344,8 +356,11 @@ public final class SessionMerge {
             return new Cache(Environment.cacheDir().resolve("overview-summaries"));
         }
 
-        /** A cached summary and the fingerprint it was made for. */
-        public record Entry(String fingerprint, Merged merged) {}
+        /**
+         * A cached summary, the fingerprint it was made for, and the {@link #questionHash} of its
+         * question (null in a summary an older isx kept).
+         */
+        public record Entry(String fingerprint, String question, Merged merged) {}
 
         static String key(String name, String incarnation) {
             return ToolDef.sha256hex(name + "\n" + incarnation);
@@ -365,7 +380,7 @@ public final class SessionMerge {
                 var fingerprint = json.pathText("fingerprint", null);
                 if (fingerprint == null || merged.headline() == null || merged.done() == null
                         || merged.current() == null || merged.pending() == null) return null;
-                return new Entry(fingerprint, merged);
+                return new Entry(fingerprint, json.pathText("question", null), merged);
             } catch (IOException | RuntimeException e) {
                 return null;
             }
@@ -373,10 +388,17 @@ public final class SessionMerge {
 
         /** Keeps {@code merged} for the instance; {@code failed} hears why it could not be written. */
         void put(String name, String incarnation, String fingerprint, Merged merged, Consumer<String> failed) {
-            var json = JqObject.builder(12)
+            put(name, incarnation, fingerprint, null, merged, failed);
+        }
+
+        /** As {@link #put(String, String, String, Merged, Consumer)}, with the {@link #questionHash} of what was merged. */
+        void put(String name, String incarnation, String fingerprint, String question, Merged merged, Consumer<String> failed) {
+            var builder = JqObject.builder(13)
                     .put("name", name)
                     .put("incarnation", incarnation)
-                    .put("fingerprint", fingerprint)
+                    .put("fingerprint", fingerprint);
+            if (question != null) builder.put("question", question);
+            var json = builder
                     .put("made", merged.made().toString())
                     .put("sessions", (long) merged.sessions())
                     .put("total", (long) merged.total())
