@@ -4,7 +4,8 @@
 // there are SECTION_FROM of them; each states its own title and description in front matter, since
 // those lines are what a search result shows.
 // Every page's title ends with TITLE_SUFFIX, the brand last, except the home page's, which starts
-// with it (SiteTitlesTest); the build fails on a title that does not, or is longer than TITLE_MAX.
+// with "isx: "; the build fails on a title that does not, or is longer than TITLE_MAX, and
+// SiteTitlesTest holds what it does not check: no guide's title: names isx itself.
 // Links between the Markdown files become links between the pages; any other relative link goes to
 // the file on GitHub.
 //
@@ -293,8 +294,8 @@ for (const f of fs.readdirSync(out, { recursive: true }).filter(f => f.endsWith(
   for (const raw of titles) {
     const title = raw === undefined ? undefined : decode(raw.replace(/&mdash;/g, '—'));
     if (title === undefined) titleProblems.push(f + ' has no <title>');
-    else if (f === 'index.html' ? !title.startsWith('isx') : !title.endsWith(TITLE_SUFFIX)) {
-      titleProblems.push(f + "'s title \"" + title + '" does not ' + (f === 'index.html' ? 'start with isx' : 'end with "' + TITLE_SUFFIX + '"'));
+    else if (f === 'index.html' ? !title.startsWith('isx: ') : !title.endsWith(TITLE_SUFFIX)) {
+      titleProblems.push(f + "'s title \"" + title + '" does not ' + (f === 'index.html' ? 'start with "isx: "' : 'end with "' + TITLE_SUFFIX + '"'));
     } else if (title.length > TITLE_MAX) titleProblems.push(f + "'s title \"" + title + '" is longer than ' + TITLE_MAX + ' characters');
   }
 }

@@ -65,7 +65,7 @@ class SiteTitlesTest {
     @Test
     void theHomePageStartsWithTheBrand() throws IOException {
         for (var title : headTitles("index.html")) {
-            assertTrue(title.startsWith("isx"), "site/index.html's title \"" + title + "\" starts with isx");
+            assertTrue(title.startsWith("isx: "), "site/index.html's title \"" + title + "\" starts with \"isx: \"");
             assertTrue(title.length() <= titleMax(), "site/index.html's title \"" + title + "\" is longer than " + titleMax());
         }
     }

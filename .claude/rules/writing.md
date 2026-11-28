@@ -395,7 +395,7 @@ It says what isx is worth, not how it works.
 
 **A page title names the page first and the brand last**: `<what the page is> — isx`, so a search result leads with the words a person searched for.
 Only the home page's title starts with `isx`.
-`site/render.js` adds the suffix to every docs and guide page and fails the build on a title that lacks it or is longer than its `TITLE_MAX`, and `SiteTitlesTest` holds the hand-written heads.
+`site/render.js` adds the suffix to every docs and guide page and fails the build on a title that lacks it or is longer than its `TITLE_MAX`; `SiteTitlesTest` holds the hand-written heads and keeps isx out of a guide's `title:`.
 The `og:title` and `twitter:title` of a page are its title.
 
 **The README** is the newcomer's path, and nothing else.
