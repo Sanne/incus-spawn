@@ -1351,6 +1351,47 @@ The new side was PR #2316 at `567336d9` built native (`0.5.3-dev.1+24`) with its
 vfkit's tunnel had wedged earlier in the same round, and a vfkit VM outside a bench round set the clock within a second on #2282, so its -61 s is not a measure of `--timesync` alone.
 One sample a side.
 
+## The machine's idle memory under vfkit and under `isx-vm`, on one appliance, on a Mac (issue #2579)
+
+Measured by the Mac runner on 2026-11-28 with `bench/vm-launcher-compare.sh --rounds=5`, twice, on an otherwise idle Mac on mains power (Mac18,5, 16 GiB, macOS 27.2.1).
+Both sides were native development builds, so both booted the latest release's appliance, 0.6.0, and no start replaced the root disk.
+The old side was `b0a562ab8`, the last commit before the launcher that builds, under vfkit 0.6.4; `1f41c9dcc` between it and `a41b5e10d` does not compile on its own.
+The new side was PR #2721 at `711929319` under `isx-vm`.
+The VM had 2 CPUs and 6.4 GB, and one instance of the Mac's own ran in it throughout.
+
+**On one appliance, the machine process's idle memory is the same under both launchers, and `isx-vm`'s own process is 15 MB smaller.**
+
+| Idle, five rounds a side, the second run | vfkit | `isx-vm` |
+|---|---|---|
+| The machine process's resident memory, median | 1156 MiB | 1168 MiB (+1%) |
+| its range | 1134 to 1202 MiB | 1131 to 1239 MiB |
+| The guest's memory in use (Incus's resources), median | 375 MiB | 370 MiB (−1%) |
+| The launcher's own resident memory, median | 38 MiB | 23 MiB |
+| The two processes together | 1194 MiB | 1191 MiB |
+
+`footprint` charges the machine process about 810 MB, and guest RAM ("App-Specific Tag 1", 52 regions) is 97% of that on both sides.
+Everything else it charges, malloc, page tables, stacks and the framework's own data, comes to about 23 MB, and agrees between the two sides to within a few hundred kB.
+The resident figure above is about 330 MB more than the footprint, the same on both sides: `vmmap -summary` puts it in clean pages of shared code and data (`__TEXT` alone is 185 MB), which `ps` counts and `footprint` does not.
+`vmmap` otherwise agrees: the same regions and the same sizes but for guest RAM.
+So any difference is in which guest pages are resident on the host, not in what the launcher configures beside them.
+
+Neither launcher gives the guest a memory balloon: vfkit adds one only for `--device virtio-balloon`, which isx never passed, and `isx-vm` has none.
+Both attach the disks with the host's cache in front of them (`cachingMode: .cached`), and that cache is the host kernel's, not the machine process's, so it is not in these figures.
+With no gap to explain, no launcher setting was changed.
+
+**The first run's gap came from the bench, not the launchers.**
+Its medians were 1180 MiB against 1322 MiB (+12%), with idle memory growing from 1.04 to 1.46 GiB across the run on both sides.
+Three of vfkit's five rounds wedged its tunnel under the bursts, and those rounds could not destroy their probe instance.
+Each probe left running started with the VM in every later round, three by the end, and the readings fit about 128 MB a probe, with `isx-vm` at +11 ± 15 MB once that is accounted for.
+The second run, the one in the table, destroyed such a probe before the idle reading (`leftover_probes`) and recorded how many instances ran at it (`idle_instances`).
+
+Memory a guest has touched stays resident on the host under both launchers until the VM stops.
+The two `isx-vm` rounds of the second run that destroyed vfkit's leftover probe just before their reading are its two highest, 1229 and 1239 MiB against 1131 to 1168 MiB for the other three.
+A balloon, or the guest's free-page reporting, is what would hand such memory back; it was not tried.
+So the bench now also starts the VM again after it destroys a leftover probe, before the reading; that was not part of either run.
+
+The second run's `stop_ms` read 4964 ms for `isx-vm` against 4407 ms for vfkit, flagged as a regression, while the first run read 4978 against 4986 ms; it was not looked into.
+
 ## The vsock tunnel's relay under load, on Linux (issue #2031)
 
 Measured on 2026-11-13 in a quiet window, in an isx VM under nested KVM (x86_64, 8 vCPUs, 16 GiB, QEMU 11.1.3), with the scripts as #2197 first proposed them.
