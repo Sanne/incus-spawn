@@ -346,6 +346,8 @@ The proxy listens on that port at the bridge address, the host address where ins
 It passes each connection unchanged to the same port on `127.0.0.1`, or on `[::1]` when nothing answers on `127.0.0.1`.
 Nothing is installed in the instance, and the service keeps listening on loopback alone.
 
+[Use a local model with Ollama in an isx sandbox](guides/ollama.md) walks through this for Ollama, with Pi as the agent.
+
 | What | How it behaves |
 |---|---|
 | Who can connect | Every instance with network, including one built from a cloned repository's own template |
