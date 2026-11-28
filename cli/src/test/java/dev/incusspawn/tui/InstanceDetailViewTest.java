@@ -52,6 +52,19 @@ class InstanceDetailViewTest {
                 TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses, List.of(), null, null, List.of(), null)));
     }
 
+    /**
+     * A line wrapped to the widest the dialog gets keeps its last cell when the dialog scrolls:
+     * the scrollbar's column is added to the dialog, never taken from the text.
+     */
+    @Test
+    void aWrappedLineIsNotCutByTheScrollbar() {
+        var view = view();
+        var uses = List.of(new AccountUsage.Use("github", "work", null, "", "", "", ""));
+        var text = TuiSnapshot.toText(TuiSnapshot.render(80, 24,
+                f -> view.render(f, f.area(), instance(), uses, List.of(), null, null, List.of(), null)));
+        assertTrue(text.contains("(github.default in"), text);
+    }
+
     @Test
     void rendersAVmWithoutTheKvmRowAndWithItsAge() {
         // Created three hours before the pinned clock, so the age reads "3h ago" on any day.
