@@ -121,6 +121,10 @@ class MacRunnerWorkflowTest {
             assertTrue(twin.contains("    if: ${{ !cancelled() && needs." + name + ".outputs.fell-back == 'true' }}"),
                     name + "-fallback runs exactly when the Mac runner gave the job up");
             assertEquals(steps(job), steps(twin), name + "-fallback must run " + name + "'s steps word for word");
+            var limit = parsed.path(name).path("timeout-minutes").asText();
+            assertFalse(limit.isEmpty(), name + " has a time limit");
+            assertEquals(limit, parsed.path(name + "-fallback").path("timeout-minutes").asText(),
+                    name + "-fallback runs on GitHub's runner, so it needs " + name + "'s time limit (#1839)");
 
             var steps = parsed.path(name).path("steps").asList();
             assertEquals("gate", steps.get(0).pathText("id", ""), name + ": the gate is the first step");

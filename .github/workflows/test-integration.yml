@@ -157,11 +157,12 @@ jobs:
   # standard label, free on a public repository; -xlarge is billed and would only buy speed. Not in
   # cancel-on-unit-failure's needs: a Mac-only failure leaves the Linux jobs worth finishing, and it
   # starts alongside unit-tests rather than after it, so a Linux failure still cancels it early.
+  # 30 minutes: green runs on macos-15 took 16 to 19 minutes, and 20 cancelled passing runs (#1839).
   unit-tests-macos:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     needs: [mac-route]
     runs-on: ${{ fromJSON(needs.mac-route.outputs.runner) }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     outputs:
       fell-back: ${{ steps.gate.outputs.fell-back }}
     steps:
@@ -245,7 +246,7 @@ jobs:
     needs: [unit-tests-macos]
     if: ${{ !cancelled() && needs.unit-tests-macos.outputs.fell-back == 'true' }}
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       # The project's Mac runner takes a job only while the agent runner does not hold the Mac
       # (#2298). Its job-started hook records which for this job; one it gave up runs again on
