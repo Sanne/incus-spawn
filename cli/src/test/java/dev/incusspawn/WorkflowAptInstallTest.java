@@ -49,9 +49,9 @@ class WorkflowAptInstallTest {
                 for (var job : jobs.asMap().entrySet()) {
                     boolean checkedOut = false;
                     for (var step : job.getValue().path("steps").asList()) {
-                        // release.yml checks out with a `git clone` step of its own
+                        // release.yml checks out the run's commit with a `git` step of its own
                         checkedOut |= step.pathText("uses", "").startsWith("actions/checkout@")
-                                || step.pathText("name", "").equals("Checkout") && step.pathText("run", "").startsWith("git clone");
+                                || step.pathText("name", "").equals("Checkout") && step.pathText("run", "").contains("git checkout");
                         var run = step.pathText("run", "");
                         var where = file.getFileName() + " " + job.getKey() + ": " + step.pathText("name", "");
                         if (RAW_APT.matcher(run).find()) offenders.add(where + " runs apt directly");

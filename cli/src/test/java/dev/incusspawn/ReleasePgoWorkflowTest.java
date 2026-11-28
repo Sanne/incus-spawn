@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ReleasePgoWorkflowTest {
 
     private static final Path RELEASE = Path.of("../.github/workflows/release.yml");
+    private static final Pattern CLONE_OF_REF = Pattern.compile("git (clone|fetch)[^\n]*GITHUB_REF_NAME");
 
     private static JqValue jobs() throws IOException {
         return JqYaml.parse(Files.readString(RELEASE)).path("jobs");
@@ -73,7 +75,7 @@ class ReleasePgoWorkflowTest {
         var jobs = jobs();
         var names = new ArrayList<String>();
         names.addAll(jobs.asMap().keySet());
-        assertTrue(names.containsAll(List.of("profiles", "build", "release")), "jobs: " + names);
+        assertTrue(names.containsAll(List.of("profiles", "build", "checksums", "release")), "jobs: " + names);
         for (var name : names) {
             var job = jobs.path(name);
             if (name.equals("profiles") || name.equals("build")) {
@@ -96,5 +98,39 @@ class ReleasePgoWorkflowTest {
         var release = jobs.path("release").pathText("if", "");
         assertTrue(release.contains("startsWith(github.ref, 'refs/tags/v')"),
                 "the release job publishes: it must run for a pushed v* tag only. Found: " + release);
+    }
+
+    @Test
+    void everyJobChecksOutTheRunsCommitNotTheRefsTip() throws IOException {
+        var jobs = jobs();
+        var checkedOut = new ArrayList<String>();
+        for (var entry : jobs.asMap().entrySet()) {
+            for (var step : entry.getValue().path("steps").asList()) {
+                var run = step.pathText("run", "");
+                assertFalse(CLONE_OF_REF.matcher(run).find(),
+                        entry.getKey() + ": " + step.pathText("name", "") + " clones or fetches the ref's tip");
+                if (!step.pathText("name", "").equals("Checkout")) continue;
+                // A clone of $GITHUB_REF_NAME is the ref's tip when the job starts, so two jobs could
+                // build different commits and the profiles not be the build's (#2750)
+                assertTrue(run.contains("\"$GITHUB_SHA\"") && run.contains("git checkout -q --detach FETCH_HEAD"),
+                        entry.getKey() + " must check out the run's commit, $GITHUB_SHA");
+                assertFalse(run.contains("GITHUB_REF_NAME"), entry.getKey() + " checks out the ref's tip");
+                checkedOut.add(entry.getKey());
+            }
+        }
+        assertTrue(checkedOut.containsAll(List.of("profiles", "build", "checksums", "release")), "checked out: " + checkedOut);
+    }
+
+    @Test
+    void theReleaseIsPublishedOnlyWhileTheTagNamesTheRunsCommit() throws IOException {
+        var create = jobs().path("release").path("steps").asList().stream()
+                .filter(step -> step.pathText("name", "").equals("Create GitHub Release"))
+                .findFirst().orElseThrow().pathText("run", "");
+        // Every job built $GITHUB_SHA, so a tag moved since the push must stop the release, and a
+        // deleted one must not be created again at the default branch (#2750)
+        var check = create.indexOf("[ \"$TAGGED\" = \"$GITHUB_SHA\" ]");
+        assertTrue(check >= 0, "the tag must still name the run's commit");
+        assertTrue(check < create.indexOf("gh release create"), "check the tag before publishing");
+        assertTrue(create.contains("--verify-tag"), "gh release create must not create a missing tag");
     }
 }
