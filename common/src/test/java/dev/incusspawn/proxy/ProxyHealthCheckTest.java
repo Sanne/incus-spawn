@@ -199,7 +199,7 @@ class ProxyHealthCheckTest {
 
         var staleDns = refusal(ProxyHealthCheck.ProxyStatus.STALE_DNS);
         assertTrue(staleDns.contains("isx proxy"));
-        assertTrue(staleDns.contains("DNS overrides"));
+        assertTrue(staleDns.contains("cannot reach the sites it serves"));
 
         var staleGateway = refusal(ProxyHealthCheck.ProxyStatus.STALE_GATEWAY);
         assertTrue(staleGateway.contains("isx proxy stop && isx proxy start"));
@@ -213,6 +213,19 @@ class ProxyHealthCheckTest {
             var text = refusal(status);
             assertEquals(BuildOutput.stripAnsi(text), text, status.name());
             assertTrue(text.chars().noneMatch(c -> c == 0x1b), status.name());
+        }
+    }
+
+    /**
+     * A banner prints its lines as they are, under a 60-column rule, and the TUI's error dialog
+     * wraps them to its width, so every line fits the rule (#2542).
+     */
+    @Test
+    void anExplanationFitsTheBanner() {
+        for (var status : ProxyHealthCheck.ProxyStatus.values()) {
+            for (var line : ProxyHealthCheck.explanation(status)) {
+                assertTrue(line.length() <= 60, status + ": " + line);
+            }
         }
     }
 
@@ -456,7 +469,7 @@ class ProxyHealthCheckTest {
 
         var banners = out.events(RecordingOutput.Kind.WARN_BANNER);
         assertEquals(1, banners.size(), out.events()::toString);
-        assertEquals("The MITM proxy is not running.", banners.getFirst().msg());
+        assertEquals("The isx proxy is not running.", banners.getFirst().msg());
         assertTrue(banners.getFirst().details().contains("Then re-run this command."), banners.getFirst().details()::toString);
     }
 

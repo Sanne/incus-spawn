@@ -273,13 +273,13 @@ That's the only path that overwrites an existing stamp, and it also fires at mos
 A status that can't be read (old agent answering `error: unknown verb`, pre-6.1 kernel without the sysfs attributes, quota off) is `available=false`, never "trusted": the display simply behaves as it did before the check.
 `BuildCommand.probeReferencedSize()` runs the same detect-and-repair before stamping and never waits for it: an inconsistent pool leaves the template unstamped, silently, for the backfill (a rescan walks the whole pool, and every rebuild's swap can flag it again).
 `isx doctor` reports the state and offers the rescan as a remediation for when the automatic one couldn't run (e.g. a Linux sudoers rule from before `INIT_VERSION` 6 added `btrfs quota rescan`).
-The `C` key reclaims space via a two-phase flow: `CleanCommand.scanPool(incus)` discovers reclaimable items (with a "Scanning pool..." progress overlay), then a `CLEAN_CONFIRM` modal always opens showing all four categories (failed builds, unused images, cached base images, DNF build cache).
+The `C` key reclaims space via a two-phase flow: `CleanCommand.scanPool(incus)` discovers reclaimable items (with a "Scanning the storage pool" progress overlay), then a `CLEAN_CONFIRM` modal always opens showing all four categories (failed builds, unused images, cached base images, DNF build cache).
 Actionable categories are checkboxes with counts/sizes (failed builds and unused images pre-checked; cached base images and DNF cache unchecked, since removing them only costs the next build a re-download).
 `CleanCommand.classifyImages` decides the split.
 An image behind a template's `image_url`/`vm_image_url` alias (`BuildCommand.vmImageAlias` for the latter) is a cached base image, never "unused".
 Empty categories are shown as disabled dim lines with a short reason (e.g. "none", "all match a template", "no cache volume").
 Focus navigation skips disabled categories.
-When nothing is reclaimable, the modal shows "Pool is clean." with only an Esc/Close hint.
+When nothing is reclaimable, the modal shows "Nothing to clean." with only an Esc/Close hint.
 On macOS, a dim `isx vm resize` tip appears when the pool is low (`PoolUsage.isLow()`).
 Space toggles, Enter executes the selected categories via `CleanCommand.cleanPool(incus, builds, images, baseImages, dnf)`, and the `CLEAN_RESULT` modal shows what was freed.
 Both modals are `CleanModal` (`CleanModalTest`): it owns the checkboxes, their keys and the rendering, and hands Enter back, so `Tui` scans the pool to open it and runs the clean with its progress overlay.

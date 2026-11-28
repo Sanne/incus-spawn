@@ -430,7 +430,7 @@ final class ListingLoader {
         try {
             var skew = VmManager.applianceSkew();
             tui.applianceSkewMessage = skew == null ? null
-                    : "Appliance " + skew.running() + " — restart VM for " + skew.installed();
+                    : "Appliance " + skew.running() + ": restart VM for " + skew.installed();
         } catch (Exception e) {
             tui.applianceSkewMessage = null;
         }

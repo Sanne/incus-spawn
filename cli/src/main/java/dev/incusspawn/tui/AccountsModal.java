@@ -74,7 +74,7 @@ final class AccountsModal {
             if (!row.pinned().isEmpty() && !accounts.contains(row.pinned())) accounts.add(row.pinned());
             options.add(accounts);
             var labels = new ArrayList<String>();
-            labels.add(row.defaultName().isEmpty() ? "global default (none configured)"
+            labels.add(row.defaultName().isEmpty() ? "global default (not set)"
                     : "global default (" + row.defaultName() + ")");
             for (var account : accounts) {
                 labels.add(row.accounts().contains(account) ? account : account + " (not configured)");
@@ -187,8 +187,8 @@ final class AccountsModal {
         var dim = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
         int cell = 0;
         frame.renderWidget(Paragraph.from(Line.styled(rows.isEmpty()
-                ? "No credential accounts are configured. Run 'isx account add' to add one."
-                : "Takes effect on the next request; isx names anything to restart.", dim)), cells.get(cell++));
+                ? "There are no credential accounts yet. Run 'isx account add' to add one."
+                : "Takes effect on the next request; a warning names what to restart.", dim)), cells.get(cell++));
         cell++;
 
         int labelWidth = rows.stream().mapToInt(r -> r.namespace().length()).max().orElse(0);
@@ -233,7 +233,7 @@ final class AccountsModal {
         var row = rows.get(i);
         var account = selectedAccount(i);
         if (account.isEmpty()) {
-            return row.defaultName().isEmpty() ? "no account is configured"
+            return row.defaultName().isEmpty() ? "has no account yet: 'isx account add' adds one"
                     : "not pinned: changes if the global default is changed";
         }
         if (!row.accounts().contains(account)) return "not configured: requests fail until it is";

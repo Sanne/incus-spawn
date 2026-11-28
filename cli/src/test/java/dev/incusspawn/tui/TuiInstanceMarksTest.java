@@ -336,7 +336,7 @@ class TuiInstanceMarksTest {
         var tui = tui();
         press(tui, TAB, DOWN, DOWN, SPACE);
         press(tui, KeyEvent.ofKey(KeyCode.F7));
-        assertEquals("No marked instance is running", tui.statusMessage);
+        assertEquals("The marked instance is not running", tui.statusMessage);
         assertTrue(queued.isEmpty());
         assertEquals(List.of("gamma"), List.copyOf(tui.markedInstances()));
     }

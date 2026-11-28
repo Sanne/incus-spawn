@@ -26,7 +26,7 @@
 │                                                                                                                    █ │
 │ Repos:                                                                                                             █ │
 │   https://github.com/acme/app.git → ~/app                                                                          █ │
-│     No matching host checkout found                                                                                █ │
+│     Not linked: the host has no checkout of it                                                                     █ │
 │                                                                                                                    █ │
 │ Host Resources: (none)                                                                                             █ │
 │                                                                                                                    █ │

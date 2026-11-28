@@ -19,7 +19,7 @@
 │     Tools: claude  (+node)                                                                                           │
 │     Skills: review                                                                                                   │
 │     Repo: https://github.com/acme/app.git → ~/app                                                                    │
-│       No matching host checkout found                                                                                │
+│       Not linked: the host has no checkout of it                                                                     │
 │     Accounts: claude=work                                                                                            │
 │     Env: MAVEN_OPTS=-Xmx2g                                                                                           │
 │     Env: API_TOKEN=••••••                                                                                            │

@@ -457,49 +457,54 @@ public final class ProxyHealthCheck {
      * does not. Plain text: the banner styles its title, and the TUI's log keeps the lines as they are.
      */
     static List<String> refusal(ProxyStatus status) {
+        var lines = explanation(status);
+        if (lines.isEmpty() || status == ProxyStatus.WAITING_FOR_DNS) return lines;
+        var withRerun = new ArrayList<>(lines);
+        withRerun.add("");
+        withRerun.add(RERUN);
+        return List.copyOf(withRerun);
+    }
+
+    /**
+     * What {@code status} means for a person and what to do, its title first; empty while the proxy
+     * runs. Each line is at most 60 columns, so a banner prints the lines as
+     * they are and the TUI's error dialog can wrap them to its width (#2542).
+     */
+    public static List<String> explanation(ProxyStatus status) {
         return switch (status) {
             case STALE_DNS -> List.of(
-                    "The MITM proxy is not running, but DNS overrides are still active from a previous session.",
+                    "The isx proxy is not running.",
                     "",
-                    "Intercepted domains (Maven repos, GitHub, Docker registries)",
-                    "are resolving to the gateway where nothing is listening.",
+                    "Until it runs, instances cannot reach the sites it serves:",
+                    "  GitHub, Maven repositories and container registries.",
                     "",
-                    "Start the proxy to restore connectivity:",
-                    "  isx proxy start",
-                    "",
-                    RERUN);
+                    "Start it:",
+                    "  isx proxy start");
             case STALE_GATEWAY -> List.of(
-                    "The MITM proxy is running, but on an old address of the Incus bridge.",
+                    "The isx proxy is running on an old address of the bridge.",
                     "",
-                    "The address of incusbr0 changed after the proxy started, so",
-                    "intercepted domains resolve to an address nothing answers on.",
+                    "Instances cannot reach it there, or the sites it serves.",
                     "",
-                    "Restart the proxy so it binds the bridge's current address:",
-                    RESTART,
-                    "",
-                    RERUN);
+                    "Restart it to move it to the bridge's current address:",
+                    RESTART);
             case NOT_RUNNING -> List.of(
-                    "The MITM proxy is not running.",
+                    "The isx proxy is not running.",
                     "",
-                    "The proxy provides authentication for Claude, GitHub,",
-                    "and caches Maven/Docker artifacts during builds.",
+                    "Instances and builds use your accounts through it.",
                     "",
                     "Start it in a separate terminal:",
                     "  isx proxy start",
                     "",
-                    "Or install it as a service (auto-starts on boot):",
-                    "  isx init",
-                    "",
-                    RERUN);
+                    "Or install it as a service that starts at boot:",
+                    "  isx init --service");
             case WAITING_FOR_DNS -> List.of(
-                    "The MITM proxy is running but DNS overrides are not yet configured.",
+                    "The isx proxy is running, but it cannot serve instances yet.",
                     "",
-                    "The proxy is waiting for the VM to become reachable so it",
-                    "can configure bridge DNS. Containers cannot reach intercepted",
-                    "domains until this completes.",
+                    "It waits for the VM to answer before it sets up DNS.",
+                    "Until then, instances cannot reach the sites it serves.",
                     "",
-                    "Check VM status:  isx vm status",
-                    "Proxy status:     isx proxy status");
+                    "VM status:     isx vm status",
+                    "Proxy status:  isx proxy status");
             case RUNNING -> List.of();
         };
     }

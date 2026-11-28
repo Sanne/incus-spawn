@@ -485,6 +485,7 @@ The sites on the branch path that printed one (GUI and KVM passthrough's explana
 GUI and KVM passthrough return why they could not, the cause and then what to do about it, and the branch makes it one warning with what it does instead (`Unavailable.warn`), since the log used to keep only "Continuing without GUI passthrough." with no cause.
 The pre-upgrade CA note is a warning rather than a note, so the TUI's copying binding keeps it.
 `common/vm` and `common/proxy` report through `BuildOutput` too: the VM's start before the TUI opens is the same header, start and wait as `isx vm start`, and a proxy refusal is one banner the TUI's log keeps (`ProxyHealthCheck.refusal`).
+The TUI's error dialog for a proxy that cannot serve instances shows the same words, from `ProxyHealthCheck.explanation`, so the two never drift apart (#2542).
 `ProxyService` reports its install, stop and restart the same way: what was done as steps, why it failed as an error with the journal's lines or launchd's last run under it.
 A command's answer has a kind of its own, `Output.results()`: a stream rather than a method per line, since the printers (`OutputFormat`, the tables) already take a `PrintStream`.
 A terminal's is its stdout, as it is at that moment, so a result written during a live step freezes the step's line first; an output that is not a terminal has none, so a result is never drawn over the TUI.
@@ -566,7 +567,7 @@ Bare `isx` gets ready first -- on macOS it starts the VM, which also checks the 
 Fixing each message would leave the next one to be found the same way, so `IncusSpawn.launchTui()` opens a window (`PreTuiOutput`) that the TUI closes before its first reload (so time spent at the pause leaves no stale listing).
 Inside it, `Warnings` go to a held list that is handed to the TUI's `warningChannel` (so it does not announce the same one again) and from there to the `WarningLog`, which announces them as it does any other warning.
 The stale-appliance notice reaches it this way (`VmManager.warnOfSkew`), at no cost to the user.
-The header's "Appliance X — restart VM for Y" stays where the skew remains visible, and keeps skipping the first load so opening the TUI asks the VM nothing extra.
+The header's "Appliance X: restart VM for Y" stays where the skew remains visible, and keeps skipping the first load so opening the TUI asks the VM nothing extra.
 Everything else still reaches the terminal when it is written (a VM start or init that hangs must show its progress).
 But `System.out`/`System.err` are wrapped to note that something was printed, and if anything was, isx asks for Enter before opening the TUI.
 The wrapping is `StreamWatch`, a gate class of `RawOutputGateTest` (#1703): it watches the raw streams rather than the bound output, so a print that bypasses the bound output still counts.

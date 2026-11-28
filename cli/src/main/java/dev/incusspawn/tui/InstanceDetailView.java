@@ -188,7 +188,7 @@ public final class InstanceDetailView {
         if (owner == null) return rows;
         rows.add(new DetailRow("Owner:", OutputFormat.oneLine(owner)
                 + (ownerId == null ? "" : " (" + OutputFormat.oneLine(ownerId) + ")")));
-        rows.add(new DetailRow(null, "that tool made it; drivers: in config.yaml says whether it may destroy it"));
+        rows.add(new DetailRow(null, "that tool made it; 'drivers:' in config.yaml says whether it may destroy it"));
         rows.add(new DetailRow(null, "a branch of it is yours, not the tool's"));
         return rows;
     }
@@ -271,16 +271,16 @@ public final class InstanceDetailView {
                         + (mcp.orphanedSince() == null ? "" : " since " + mcp.orphanedSince())
                         + (mcp.dormantSince() == null ? "" : ", stopped as dormant since " + mcp.dormantSince())));
                 if (mcp.dormantSince() == null) {
-                    rows.add(new DetailRow(null, "its session ended: another may adopt it, and one destroys it"));
-                    rows.add(new DetailRow(null, "after orphan-grace-hours in mcp.yaml unless someone is working in it"));
+                    rows.add(new DetailRow(null, "its session ended: another session may adopt it, or destroys it"));
+                    rows.add(new DetailRow(null, "after 'orphan-grace-hours' in mcp.yaml unless someone is working in it"));
                 } else {
                     rows.add(new DetailRow(null, "its delegate never finished and stopped moving: another session"));
-                    rows.add(new DetailRow(null, "may adopt it, or destroys it after dormant-grace-hours in mcp.yaml"));
+                    rows.add(new DetailRow(null, "may adopt it, or destroys it after 'dormant-grace-hours' in mcp.yaml"));
                 }
             }
             case KEPT -> {
                 rows.add(new DetailRow("MCP:", "kept"));
-                rows.add(new DetailRow(null, "an agent handed it to you: no session adopts or destroys it"));
+                rows.add(new DetailRow(null, "an agent handed it to you: sessions do not adopt or destroy it"));
             }
         }
         if (mcp.purpose() != null) rows.add(new DetailRow("  Purpose:", OutputFormat.oneLine(mcp.purpose())));
@@ -294,7 +294,7 @@ public final class InstanceDetailView {
      */
     public static List<DetailRow> mcpControlRows(boolean mcpCaller, dev.incusspawn.config.McpScope scope) {
         if (!mcpCaller) return List.of();
-        return List.of(new DetailRow("MCP control:", scope == null ? "cannot be told (mcp.yaml or the definitions could not be read)" : scope.summary()));
+        return List.of(new DetailRow("MCP control:", scope == null ? "unknown: mcp.yaml or the definitions could not be read" : scope.summary()));
     }
 
     /**

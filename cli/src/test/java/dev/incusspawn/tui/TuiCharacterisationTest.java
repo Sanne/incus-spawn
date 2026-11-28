@@ -670,7 +670,24 @@ class TuiCharacterisationTest {
         var tui = tui();
         press(tui, TAB, KeyEvent.ofKey(KeyCode.F9));
         assertEquals(Tui.Mode.BROWSE, tui.mode(), "nothing to offer opens no dialog");
-        assertEquals("No actions available for work-1", tui.statusMessage);
+        assertEquals("work-1 has no tool actions", tui.statusMessage);
+    }
+
+    /** A stopped instance whose actions all need it running has actions: F9 says what they need. */
+    @Test
+    void f9OnAStoppedInstanceSaysItsActionsNeedItRunning() {
+        var tui = tui();
+        tui.actionsCache.put("vm-1", List.of(new dev.incusspawn.tool.ToolAction() {
+            @Override public String toolName() { return "vscode-remote"; }
+            @Override public String label() { return "Open in VS Code"; }
+            @Override public dev.incusspawn.tool.ActionResult execute(dev.incusspawn.tool.ActionContext context) {
+                throw new AssertionError("a stopped instance's action must not run");
+            }
+        }));
+        press(tui, TAB, DOWN, KeyEvent.ofKey(KeyCode.F9));
+        assertEquals("vm-1", tui.selectedInstance().name());
+        assertEquals(Tui.Mode.BROWSE, tui.mode(), "nothing it can run opens no dialog");
+        assertEquals("vm-1's tool actions need it running", tui.statusMessage);
     }
 
     @Test

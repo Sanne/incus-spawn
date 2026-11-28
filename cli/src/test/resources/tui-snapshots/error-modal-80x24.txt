@@ -3,19 +3,19 @@
 
 
 
-
-
-
-                    ╭ Error ───────────────────────────────╮
-                    │ The MITM proxy is not running.       │
-                    │                                      │
-                    │ Start it:                            │
-                    │   isx proxy start                    │
-                    │                                      │
-                    │  any key Dismiss                     │
-                    ╰──────────────────────────────────────╯
-
-
+            ╭ Error ───────────────────────────────────────────────╮
+            │ The isx proxy is not running.                        │
+            │                                                      │
+            │ Instances and builds use your accounts through it.   │
+            │                                                      │
+            │ Start it in a separate terminal:                     │
+            │   isx proxy start                                    │
+            │                                                      │
+            │ Or install it as a service that starts at boot:      │
+            │   isx init --service                                 │
+            │                                                      │
+            │  any key Dismiss                                     │
+            ╰──────────────────────────────────────────────────────╯
 
 
 

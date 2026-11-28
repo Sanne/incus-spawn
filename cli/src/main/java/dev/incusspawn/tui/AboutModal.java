@@ -114,10 +114,10 @@ final class AboutModal {
                         Style.EMPTY.underlined().fg(modal.accent()).bg(modal.bg()))
                         .hyperlink("https://github.com/Sanne/incus-spawn"),
                 Line.styled("", Style.EMPTY),
-                Line.styled("Manage isolated Incus development environments.",
+                Line.styled("Isolated Linux instances for coding agents.",
                         Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
-                Line.styled("Templates define base images; Instances are", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
-                Line.styled("lightweight copy-on-write branches of them.", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
+                Line.styled("Each instance is a branch of a template, made in a moment.", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
+                Line.styled("It shares the template's storage and keeps only its changes.", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
                 Line.styled("", Style.EMPTY),
                 Line.styled("Keyboard shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
                 Line.styled("", Style.EMPTY),
@@ -188,7 +188,7 @@ final class AboutModal {
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F1/Esc", "Close");
-        modal.addKey(hintSpans, "?", "AI-assisted help");
+        modal.addKey(hintSpans, "?", "AI Help");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 

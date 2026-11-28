@@ -99,7 +99,7 @@ final class WorkPreview {
         if (effort == null) {
             row(out, "Tokens", ColumnFit.ELLIPSIS, faint, width, theme);
         } else if (effort.modelCalls() == 0) {
-            row(out, "Tokens", "none counted", faint, width, theme);
+            row(out, "Tokens", "the proxy has not logged any model calls", faint, width, theme);
         } else {
             row(out, "Tokens", OverviewCommand.tokensCell(effort) + " in " + effort.modelCalls()
                     + (effort.modelCalls() == 1 ? " model call" : " model calls"), Style.EMPTY, width, theme);
@@ -193,7 +193,7 @@ final class WorkPreview {
         switch (work.state()) {
             case NOT_READ -> row(out, "Work", "not read: the instance is stopped", faint, width, theme);
             case UNKNOWN -> row(out, "Work", "unknown" + (work.why() == null ? "" : ": " + work.why()), warn, width, theme);
-            case NO_REPOS -> row(out, "Work", "no Git clones", Style.EMPTY.fg(theme.textDim()), width, theme);
+            case NO_REPOS -> row(out, "Work", "it has no Git clones", Style.EMPTY.fg(theme.textDim()), width, theme);
             case CLEAN -> row(out, "Work", "clean, " + work.repos().size()
                     + (work.repos().size() == 1 ? " clone" : " clones"), Style.EMPTY.fg(theme.statusSuccess()), width, theme);
             case UNSAVED -> {
@@ -230,7 +230,7 @@ final class WorkPreview {
             return null;
         }
         if ("untouched".equals(summary.from())) {
-            row(out, "Done", "untouched: no agent session", faint, width, theme);
+            row(out, "Done", "untouched: it has no agent session", faint, width, theme);
             return null;
         }
         var sessions = reading.sessionsOf(s.instance());
