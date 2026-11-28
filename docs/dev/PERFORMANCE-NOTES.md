@@ -1387,8 +1387,8 @@ The second run, the one in the table, destroyed such a probe before the idle rea
 
 Memory a guest has touched stays resident on the host under both launchers until the VM stops.
 The two `isx-vm` rounds of the second run that destroyed vfkit's leftover probe just before their reading are its two highest, 1229 and 1239 MiB against 1131 to 1168 MiB for the other three.
-A lower balloon target is what might hand such memory back, since the framework's balloon offers no free page reporting (design/macos-and-vms.md "The launcher's machine"); it was not tried.
 So the bench now also starts the VM again after it destroys a leftover probe, before the reading; that was not part of either run.
+The framework's balloon offers no free page reporting, and a lower balloon target hands back only a small part of such memory ("What a balloon target gives back on a Mac").
 
 The second run's `stop_ms` read 4964 ms for `isx-vm` against 4407 ms for vfkit, flagged as a regression, while the first run read 4978 against 4986 ms; it was not looked into.
 
@@ -1679,3 +1679,37 @@ Raising the target again made no host memory resident: the guest touches the pag
 
 **Losing the page cache costs a read from disk.**
 The re-read after `drop_caches` took about a hundred times as long as a cached one under TCG, through the host's cache of the disk image; the ratio on KVM was not measured.
+
+## What a balloon target gives back on a Mac (issue #2741)
+
+Measured by the Mac runner on 2026-11-28 (Mac18,5, 16 GiB, macOS 27.2.1), on appliance 0.6.0 (incusd 7.0.2, kernel 7.3.6) with 2 CPUs and 6.4 GiB.
+The launcher was a scratch build of `isx-vm` from `main` with a `VZVirtioTraditionalMemoryBalloonDeviceConfiguration` attached and a control-socket verb that sets the device's `targetVirtualMachineMemorySize`; that build is not part of any branch.
+The host figures are `footprint` of the framework's machine process, in total and for its guest RAM region ("App-Specific Tag 1"), and that region's dirty size in `vmmap -summary`.
+The guest's are the appliance's own `/proc/meminfo`, read through a privileged instance; each row is read 10 to 180 s after its step, as given.
+
+The device the framework attaches offers deflate on OOM (feature bit 2) and the tell-host bit (0), and neither free page hinting (3) nor free page reporting (5).
+
+| Step, in order | Footprint | Guest RAM, footprint | Guest RAM, `vmmap` dirty | Guest free | Guest page cache |
+|---|---|---|---|---|---|
+| idle after boot, one instance running | 1214 MB | 1191 MB | not read | 5462 MiB | 710 MiB |
+| 2 GiB written and read back in the instance | 3203 MB | 3179 MB | not read | 3415 MiB | 2761 MiB |
+| `drop_caches=3` in the appliance, 60 s later | 3264 MB | 3239 MB | not read | 6020 MiB | 197 MiB |
+| balloon target 3276 MiB (half), 60 s later | 3021 MB | 2996 MB | 585 MB | 2746 MiB | 198 MiB |
+| the same, 180 s later | 3005 MB | 2980 MB | 588 MB | 2747 MiB | 202 MiB |
+| balloon target back to 6553 MiB, 60 s later | 3005 MB | 2980 MB | 2.7 GB | 6024 MiB | 203 MiB |
+
+**Without free page reporting, the guest freeing memory gives the Mac nothing back.**
+`drop_caches` freed 2.5 GiB in the guest and the machine process's footprint did not move.
+
+**A lower target takes memory from the guest, but not from the machine process's footprint.**
+Inflating by 3.2 GiB left the guest 2.7 GiB free instead of 5.9 GiB, and the footprint fell by 260 MB in three minutes.
+`vmmap` shows the framework does mark the ballooned pages: after the inflate the region's dirty size was 585 MB while its resident size was 2.9 GB, and `footprint` still charged them; neither was read before the inflate.
+Whether macOS takes those pages back under memory pressure was not tested.
+Raising the target again made them dirty again (2.7 GB) without the guest using them.
+
+**A guest that needs more than the target still gets it, slowly.**
+One process holding 4000 MiB took 46 s at the half target and 2 s at the full one, with no OOM kill: the guest deflated the balloon as it ran out (bit 2).
+The footprint rose to 4173 MB and, after the same at the full target, to 5374 MB.
+
+**Attaching the device costs no boot time.**
+Five alternating rounds each, from `isx vm start` to `isx list` answering: a median of 2326 ms with the balloon (2307 to 2335) and 2327 ms without (2308 to 2339).
