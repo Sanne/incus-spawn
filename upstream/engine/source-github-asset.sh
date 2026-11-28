@@ -1,7 +1,9 @@
-# Source type github-asset (#2210): a tool's downloads pinned to the assets of one GitHub release, starship
-# and the IntelliJ index plugin today. The manifest names the repository, the tag's prefix, one asset
-# name per label (x86_64, aarch64, or any for an entry with no arch; {version} stands for the version)
-# and where the sum comes from:
+# Source type github-asset (#2210): a tool's downloads pinned to the assets of one GitHub release, starship,
+# GraalVM and the IntelliJ index plugin today. The manifest names the repository, the tag's prefix, one asset
+# name per label (x86_64, aarch64, or any for an entry with no arch; {version} stands for the version,
+# {version.N} for its Nth dotted part and {version.N+} for the parts from the Nth on, for a publisher
+# that spells the version apart in its asset names, as GraalVM's graal-25.6.5.1 ships
+# graalvm-community-jdk-25i6-25.0.5.1_...) and where the sum comes from:
 #   sums: sha256-asset   the publisher's own <asset>.sha256 beside it (verify.type publisher-sums).
 #   sums: github-digest  GitHub's record of the asset's hash at upload, for a release that ships no
 #                        sums (verify.type asset-digest). It is not the publisher's sum, so only a
@@ -20,8 +22,23 @@ _sums() { item "$ITEM" source.sums; }
 _base() { printf 'https://github.com/%s/releases/download/%s' "$(_repo)" "$(_prefix)"; }
 _labels() { yq -r '.items["'"$ITEM"'"].source.assets | keys | .[]' "$MANIFEST"; }
 _template() { yq -r ".items[\"$ITEM\"].source.assets[\"$1\"]" "$MANIFEST"; }
-# _asset <label> <version>: the asset's name for the version.
-_asset() { local t; t="$(_template "$1")"; printf '%s' "${t//\{version\}/$2}"; }
+# _expand <template> <version>: the asset name the template gives the version; it fails for a version
+# with fewer parts than the name uses.
+PART_RE='\{version\.([1-9])(\+?)\}'
+_expand() {
+    local t="$1" v="$2" r i
+    local -a parts
+    IFS=. read -ra parts <<<"$v"
+    while [[ "$t" =~ $PART_RE ]]; do
+        i="${BASH_REMATCH[1]}"
+        (( i <= ${#parts[@]} )) || return 1
+        if [[ -n "${BASH_REMATCH[2]}" ]]; then r="$(IFS=.; printf '%s' "${parts[*]:i-1}")"; else r="${parts[i-1]}"; fi
+        t="${t//"${BASH_REMATCH[0]}"/$r}"
+    done
+    printf '%s' "${t//\{version\}/$v}"
+}
+# _asset <label> <version>: the label's asset name for the version.
+_asset() { _expand "$(_template "$1")" "$2"; }
 _numeric() { [[ "$1" =~ ^[0-9]+(\.[0-9]+)+$ ]]; }
 
 # _url <label>: the tool YAML's download URL of the label's asset, whatever version it names. The
@@ -44,9 +61,9 @@ _desc() { yq -r '.description' "$TREE/$TOOL_FILE"; }
 _versioned_description() { [[ "$(item "$ITEM" source.versioned-description false)" == true ]]; }
 
 src_validate() {
-    local l t
+    local l t s
     [[ "$(_repo)" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die "manifest: item $ITEM: source.repo must be owner/name"
-    [[ "$(_prefix)" =~ ^[A-Za-z]*$ ]] || die "manifest: item $ITEM: source.tag-prefix must be letters only"
+    [[ "$(_prefix)" =~ ^([A-Za-z]+-?)?$ ]] || die "manifest: item $ITEM: source.tag-prefix must be letters, with one dash at most at its end"
     case "$(_sums)" in
         sha256-asset) ;;
         github-digest)
@@ -58,8 +75,10 @@ src_validate() {
     for l in $(_labels); do
         [[ "$l" =~ ^[a-z0-9_]+$ ]] || die "manifest: item $ITEM: asset label '$l' is not [a-z0-9_]"
         t="$(_template "$l")"
-        [[ "$t" =~ ^[A-Za-z0-9._{}-]+$ && "${t//\{version\}/}" != *[\{\}]* ]] \
-            || die "manifest: item $ITEM: asset '$t' is not a file name, with {version} the only placeholder"
+        s="${t//\{version\}/}"
+        while [[ "$s" =~ $PART_RE ]]; do s="${s//"${BASH_REMATCH[0]}"/}"; done
+        [[ "$s" =~ ^[A-Za-z0-9._-]+$ ]] \
+            || die "manifest: item $ITEM: asset '$t' is not a file name, with {version}, {version.N} and {version.N+} the only placeholders"
         # Reading the pin checks that the YAML holds exactly one download for it.
         _url "$l" > /dev/null
     done
@@ -83,19 +102,29 @@ src_first_party() { return 1; }
 # Every published release of numeric tag that lists each asset (and its .sha256 when the sums are
 # those), oldest first.
 src_releases() {
-    local want="[]" l n
-    for l in $(_labels); do
-        n="$(_asset "$l" '{v}')"
-        want="$(jq -c --arg n "$n" '. + [$n]' <<<"$want")"
-        [[ "$(_sums)" != sha256-asset ]] || want="$(jq -c --arg n "$n.sha256" '. + [$n]' <<<"$want")"
-    done
+    local v assets l n ok labels sums
+    local -a want
+    local -A templates=()
+    # The manifest is read once here, and each release costs one jq: starship lists about a hundred.
+    labels="$(_labels)"; sums="$(_sums)"
+    for l in $labels; do templates[$l]="$(_template "$l")"; done
     gh api --paginate "repos/$(_repo)/releases" \
         --jq '.[] | select(.draft == false and .prerelease == false) | {tag: .tag_name, assets: [.assets[].name]}' \
-        | jq -r --argjson want "$want" --arg p "$(_prefix)" '
-            . as $r | select($r.tag | startswith($p)) | ($r.tag[($p | length):]) as $v
+        | jq -r --arg p "$(_prefix)" '
+            select(.tag | startswith($p)) | (.tag[($p | length):]) as $v
             | select($v | test("^[0-9]+(\\.[0-9]+)+$"))
-            | select(all($want[] | gsub("\\{v\\}"; $v); . as $n | $r.assets | index($n) != null))
-            | $v' \
+            | "\($v)\t\(.assets | tojson)"' \
+        | while IFS=$'\t' read -r v assets; do
+            ok=1; want=()
+            for l in $labels; do
+                n="$(_expand "${templates[$l]}" "$v")" || { ok=0; break; }
+                want+=("$n")
+                [[ "$sums" != sha256-asset ]] || want+=("$n.sha256")
+            done
+            [[ "$ok" == 1 ]] && jq -e --args '. as $a | all($ARGS.positional[]; . as $n | $a | index($n) != null)' \
+                "${want[@]}" <<<"$assets" > /dev/null || continue
+            printf '%s\n' "$v"
+        done \
         | sort -V
 }
 
@@ -111,7 +140,7 @@ src_released_at() {
 # release, checked against the asset's own hash unless UPSTREAM_REHASH=0.
 _publisher_sum() {
     local rel="$1" label="$2" version="$3" name url sum have f listed
-    name="$(_asset "$label" "$version")"
+    name="$(_asset "$label" "$version")" || die "release $(_prefix)$version: the version has fewer parts than asset '$label' names"
     url="$(_base)$version/$name"
     listed="$(jq -r --arg n "$name" '[.assets[] | select(.name == $n)] | first | .url // empty' <<<"$rel")"
     [[ "$listed" == "$url" ]] || die "release $(_prefix)$version lists $name at '$listed', not at $url"
