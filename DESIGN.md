@@ -230,6 +230,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The antigravity source type
   - The signed-file source type
   - The rpm-repo source type
+  - The apt-repo source type
   - The github-action source type
   - The maven-central source type
   - The model-deprecations source type
