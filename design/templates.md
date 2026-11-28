@@ -467,6 +467,19 @@ Parameter resolution rejects negative values and tells the template author to us
 isx multiplies `compression-threshold` by 100 for Bob's `session.compactionThresholdPercent`, which defaults to 90.
 Parameter resolution also tells template authors to remove `checkpointing`, which Bob Shell 2.1 cannot read.
 
+### GraalVM is Community Edition
+
+The `graalvm` tool installs GraalVM Community Edition under `/opt`, with `native-image` on the path and `GRAALVM_HOME` set, so a template on isx alone can run native builds (#2719).
+It also installs the packages a native build links against: `gcc`, `glibc-devel`, `zlib-devel` and `libstdc++-static`.
+Its archive unpacks to a directory named with a build number the release gives nowhere else.
+The tool links it to `/opt/graalvm`, and its YAML names the version only in the URLs and the description, which the upstream watch moves (item `graalvm`, design/upstream.md "The github-asset source type").
+Chosen: Community Edition alone, with no parameter for the distribution.
+Alternatives: Oracle GraalVM, which `incus-spawn-templates` installed from `gds.oracle.com`, under Oracle's GraalVM Free Terms and Conditions.
+Mandrel, the distribution Quarkus's builder images use, which is built from Community Edition.
+A `distribution` parameter, which nobody has asked for.
+Why: Community Edition is under GPLv2 with the Classpath Exception and publishes a `.sha256` beside each archive, so the watch can move the pin by itself.
+It gives up Oracle GraalVM's extra optimizations, such as profile-guided optimization; a template that wants them overrides the tool with a same-name file in `~/.config/incus-spawn/tools/`.
+
 ## Tools declare the memory they need
 
 A tool's `resources.memory` says how much memory it needs (#2355): `resident`, held for as long as the tool runs, and `peak`, needed on top of that for a short while, such as an index.

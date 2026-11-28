@@ -88,6 +88,7 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `base-image` | `common/src/main/resources/images/minimal.yaml` (tag, both URLs, four sums) | `Sanne/incus-spawn-images` releases, `SHA256SUMS` and `SHA256SUMS.v2` | `publisher-sums` | mechanical | `series` (one Fedora line) | 0 | a new Fedora line (`go:build`) |
 | `idea-backend` | `common/src/main/resources/tools/idea-backend.yaml` (`description`, both URLs and sums) | JetBrains products API, `.sha256` beside each tarball, URLs under `https://download.jetbrains.com/idea/` only | `publisher-sums` | mechanical | `any` | 0 | none; the tool installs whatever `idea-IU-*` unpacks to |
 | `starship` | `common/src/main/resources/tools/starship.yaml` (`description`, both URLs and sums) | `starship/starship` releases, the `.sha256` asset beside each tarball | `publisher-sums` | mechanical | `series` (the major) | 0 | a new major (`go:build`) |
+| `graalvm` | `common/src/main/resources/tools/graalvm.yaml` (`description`, both URLs and sums) | `graalvm/graalvm-ce-builds` releases tagged `graal-`, the `.sha256` asset beside each tarball | `publisher-sums` | mechanical | `series` (the major) | 0 | a new major (`go:build`) |
 | `idea-index-plugin` | `common/src/main/resources/tools/idea-backend.yaml` (the plugin's `downloads:` entry) | `hechtcarmel/jetbrains-index-mcp-plugin` releases, GitHub's digest of the signed zip | `asset-digest` | review | `series` (the major) | 0 | a new major (`go:build`) |
 | `jasolo` | `common/src/main/resources/tools/jasolo.yaml` (`description`, the jar's URL and sum) | `mkouba/jasolo` releases, GitHub's digest of the runner jar | `asset-digest` | review | `series` (the major) | 0 | a new major (`go:build`) |
 | `antigravity` | `common/src/main/java/dev/incusspawn/tool/AntigravitySetup.java` (`VERSION`, `BUILD`, both sha256) | Google's stable Linux manifests (the installer's), and the `manifest.json` beside each build in the bucket, a sha512 per tarball | `publisher-sums` | review | `series` (the major) | 0 | a new major (`go:build`) |
@@ -113,18 +114,21 @@ A source type may define `src_order` (versions on stdin, oldest first) wherever 
 The images repo's `repository_dispatch` to this one, and its `INCUS_SPAWN_DISPATCH_TOKEN`, retire in favour of the six-hourly poll: the payload was only ever cross-checked against the release.
 `publisher-sums` proves consistency and transfer, not provenance, since the sums come from the same origin as the artifact; the manifest says so in the verifier's name rather than pretending otherwise.
 The siblings' items, `ISX_REF` and the engine pin of `incus-spawn-images`, are in that repository's own manifest ("Sibling repositories" below).
-Items the design inventories for later phases (Gradle in `incus-spawn-templates`) and the judgement-only ones (Quarkus, GraalVM, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
+Items the design inventories for later phases (Gradle in `incus-spawn-templates`) and the judgement-only ones (Quarkus, herdr, zmx) are listed on the issue; each lands as a manifest item with a source type and its fixture tests, never as a special case.
 
 ## The github-asset source type
 
 A tool YAML that downloads assets of one GitHub release is pinned by a `github-asset` item (#2210).
 The manifest names the `repo`, the `tag-prefix`, one asset name per label (`x86_64`, `aarch64` or `any`, with `{version}` standing for the version) and where the sum comes from.
+An asset name may also take one part of the version, `{version.N}`, or the parts from the Nth on, `{version.N+}`, for a publisher that spells the version apart in its asset names (#2719).
+GraalVM's release `graal-25.6.5.1` ships `graalvm-community-jdk-25i6-25.0.5.1_linux-x64_bin.tar.gz`, which is `graalvm-community-jdk-{version.1}i{version.2}-{version.1}.0.{version.3+}_linux-x64_bin.tar.gz`.
+A tag prefix is letters with at most one dash at its end, so `graal-` keeps GraalVM's `jdk-` tags out.
 The version is read from the URLs in the tool YAML, so the YAML holds each pin once, and `versioned-description: true` also moves the version named in its `description`.
 Its series is the major version, so a new major opens an issue.
 A draft, a prerelease, a tag that is not numeric and a release that lacks one of the assets (or its `.sha256`) is never a candidate.
 Every URL is built from the repository, the tag and the asset name, and must be the one GitHub lists for that asset, so a feed cannot send the engine elsewhere.
 The engine downloads each asset again and checks that it hashes to the sum.
-`sums: sha256-asset` takes the sum from the `<asset>.sha256` beside it, and the verifier is `publisher-sums` (starship).
+`sums: sha256-asset` takes the sum from the `<asset>.sha256` beside it, and the verifier is `publisher-sums` (starship and GraalVM).
 `sums: github-digest` takes GitHub's digest of the uploaded asset, for a release that ships no sums, and the verifier is `asset-digest` (the IntelliJ index plugin, and jasolo).
 That digest is GitHub's record, not a sum the publisher signed, and the re-hash proves only that the two agree.
 So `validate` refuses it on a mechanical item and the bot never merges such a PR: the item is `class: review`.

@@ -44,6 +44,7 @@ public class ToolDefLoader {
             "atlassian-mcp.yaml",
             "headroom.yaml",
             "herdr.yaml",
+            "graalvm.yaml",
             "perf.yaml",
             "podman.yaml",
             "maven-3.yaml",

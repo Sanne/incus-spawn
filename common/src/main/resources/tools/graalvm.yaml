@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://isx.run/schema/tool.json
+name: graalvm
+description: GraalVM Community Edition 25.6.5.1 for JDK 25
+
+# What native-image links a binary against.
+packages:
+  - tar
+  - gcc
+  - glibc-devel
+  - zlib-devel
+  - libstdc++-static
+
+# The archive unpacks to graalvm-community-<version>+<build>/, a build number the release names
+# nowhere else, so run links it to /opt/graalvm and nothing below repeats the version. The upstream
+# watch moves both pins (item graalvm).
+downloads:
+  - url: https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.6.5.1/graalvm-community-jdk-25i6-25.0.5.1_linux-x64_bin.tar.gz
+    sha256: d792848db26f1602f0a5cf2cd9279d9a652d32ab450d891ce616c9ca67e359d0
+    extract: /opt
+    extract_in_container: true
+    arch: x86_64
+    links:
+      /opt/graalvm/bin/native-image: /usr/local/bin/native-image
+  - url: https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.6.5.1/graalvm-community-jdk-25i6-25.0.5.1_linux-aarch64_bin.tar.gz
+    sha256: d8e6edf0009bb5d70c6a670eb030d36aa804795427306434c0f7f63c01435307
+    extract: /opt
+    extract_in_container: true
+    arch: aarch64
+    links:
+      /opt/graalvm/bin/native-image: /usr/local/bin/native-image
+
+run:
+  - ln -snf "$(ls -d /opt/graalvm-community-[0-9]* | sort -V | tail -n 1)" /opt/graalvm
+
+env:
+  - name: GRAALVM_HOME
+    value: /opt/graalvm
+
+verify: native-image --version
