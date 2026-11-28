@@ -34,7 +34,7 @@ import java.util.TreeSet;
 
 @CommandDefinition(
         name = "proxy",
-        description = "Manage the MITM authentication proxy",
+        description = "Manage the isx proxy, which adds your credentials to requests leaving an instance",
         generateHelp = true,
         groupCommands = {
                 ProxyStartCommand.class,
@@ -60,7 +60,7 @@ public class ProxyCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "status",
-            description = "Check if the MITM TLS proxy is running",
+            description = "Show whether the proxy is running",
             generateHelp = true
     )
     public static class Status extends BaseCommand {
@@ -509,7 +509,7 @@ public class ProxyCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "stop",
-            description = "Stop the proxy (handles both systemd service and manual processes)",
+            description = "Stop the proxy, whether it runs as a service or you started it yourself",
             generateHelp = true
     )
     public static class Stop extends BaseCommand {
@@ -548,7 +548,7 @@ public class ProxyCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "install",
-            description = "Install the proxy as a systemd user service (auto-starts on boot)",
+            description = "Install the proxy as a background service that starts automatically (systemd on Linux, launchd on macOS)",
             generateHelp = true
     )
     public static class Install extends BaseCommand {
@@ -599,7 +599,7 @@ public class ProxyCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "uninstall",
-            description = "Stop and remove the systemd proxy service",
+            description = "Stop and remove the proxy service",
             generateHelp = true
     )
     public static class Uninstall extends BaseCommand {

@@ -47,34 +47,34 @@ public class BranchCommand extends BaseCommand {
     String source;
 
     @Option(name = "gui", description = "Enable GUI passthrough (Wayland + GPU + audio); "
-            + "the default for a gui: true container template, from a Wayland session", hasValue = false)
+            + "the default for a container template with 'gui: true', from a Wayland session", hasValue = false)
     boolean gui;
 
-    @Option(name = "no-gui", description = "Disable GUI passthrough even if the template has gui: true", hasValue = false)
+    @Option(name = "no-gui", description = "Disable GUI passthrough even if the template has 'gui: true'", hasValue = false)
     boolean noGui;
 
-    @Option(name = "kvm", description = "Expose /dev/kvm for nested virtualization", hasValue = false)
+    @Option(name = "kvm", description = "Enable nested virtualization: the instance gets /dev/kvm", hasValue = false)
     boolean kvm;
 
-    @Option(name = "no-kvm", description = "Disable KVM even if the template was built with type: kvm", hasValue = false)
+    @Option(name = "no-kvm", description = "Disable nested virtualization, even if the template was built with 'type: kvm'", hasValue = false)
     boolean noKvm;
 
-    @Option(name = "airgap", description = "No network devices (masks NICs and outbound proxies, refuses pci/usb passthrough)", hasValue = false)
+    @Option(name = "airgap", description = "Run the instance without any network (NICs and outbound proxy devices masked, pci/usb passthrough refused)", hasValue = false)
     boolean airgap;
 
-    @Option(name = "proxy-only", description = "Restrict network to host proxy only (Claude + GitHub via proxy)", hasValue = false)
+    @Option(name = "proxy-only", description = "Restrict the instance's network to the isx proxy and DNS", hasValue = false)
     boolean proxyOnly;
 
     @Option(name = "inbox", completer = Completers.HostPath.class, description = "Host directory to mount read-only at /home/agentuser/inbox")
     Path inbox;
 
-    @Option(name = "cpu", description = "CPU core limit; any count from 1 up to the host's CPUs (default: none for containers; for a VM the host's CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores)")
+    @Option(name = "cpu", description = "CPU core limit; any count from 1 up to the host's CPUs (default: unlimited for a container; for a VM the host's CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores)")
     Integer cpuLimit;
 
     @Option(name = "memory", description = "Memory limit, e.g. '8GB' (default: 60% of host RAM for containers, 25% up to 16GiB for VMs, raised to what a trusted template's tools need, at most 60%)")
     String memoryLimit;
 
-    @Option(name = "disk", description = "Disk size limit (default: adaptive)")
+    @Option(name = "disk", description = "Disk size limit (default: 100GB, a ceiling, not space taken up front)")
     String diskLimit;
 
     @Option(name = "no-start", description = "Create the instance without starting it", hasValue = false)
@@ -84,8 +84,8 @@ public class BranchCommand extends BaseCommand {
     boolean shell;
 
     @Option(name = "mcp-client", description = "Let this instance drive isx over MCP, at https://"
-            + ProxyConfig.MCP_DOMAIN + "/mcp (a coordinating agent); the default for a template whose coordinator: block says so"
-            + " (isx-control-capability, true when control-over lists templates). Never inherited by its copies.",
+            + ProxyConfig.MCP_DOMAIN + "/mcp, as a coordinating agent; the default when the template enables it in the 'coordinator:' section of its definition."
+            + " Never inherited by its copies.",
             hasValue = false)
     boolean mcpClient;
 
@@ -111,8 +111,8 @@ public class BranchCommand extends BaseCommand {
     List<String> accounts;
 
     // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-    @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), or plain or json to print"
-            + " only the new instance's name, json with how to reach it (progress to stderr, no shell opened)")
+    @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json. plain prints"
+            + " only the new instance's name, json adds how to reach it, and both send progress to stderr and do not open a shell")
     String format;
 
     private IncusClient incus;

@@ -45,11 +45,11 @@ public class DestroyCommand extends BaseCommand {
             description = "Destroy without asking first")
     boolean skipConfirmation;
 
-    @Option(name = "owner", description = "Destroy the instance only if this external tool owns it (isx branch"
-            + " --owner), for that tool: drivers: in config.yaml must let it destroy. One already gone is success.")
+    @Option(name = "owner", description = "Destroy the instance only if this external tool owns it (set by isx branch"
+            + " --owner) and the 'drivers:' section of config.yaml lets that tool destroy. Succeeds if the instance is already gone.")
     String owner;
 
-    @Option(name = "owner-id", description = "...and only if the owner's handle for it is this one (needs --owner)")
+    @Option(name = "owner-id", description = "With --owner: destroy it only if the owner's handle for it is this one")
     String ownerId;
 
     @Override

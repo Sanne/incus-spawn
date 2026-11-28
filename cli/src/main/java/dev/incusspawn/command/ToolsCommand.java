@@ -54,7 +54,7 @@ public class ToolsCommand extends BaseCommand {
             generateHelp = true)
     public static class ListSub extends BaseCommand {
 
-        @Option(shortName = 'v', name = "verbose", description = "Show source and description",
+        @Option(shortName = 'v', name = "verbose", description = "Also show where each definition comes from, and what the tool is for",
                 hasValue = false)
         boolean verbose;
 

@@ -28,7 +28,7 @@ public class RunCommand extends BaseCommand {
     @Argument(completer = Completers.Instance.class, description = "Name of the instance", required = true)
     String name;
 
-    @Option(name = "action", hasValue = true, description = "Action to run (tool-name or tool-name:action-id). If not specified, runs the default action.")
+    @Option(name = "action", hasValue = true, description = "Action to run, as tool-name or tool-name:action-id (default: the template's default action, or a shell when it does not have one)")
     String action;
 
     @Override

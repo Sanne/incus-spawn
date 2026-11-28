@@ -253,12 +253,12 @@ isx branch <name> [options]
 | `--from <source>` | Source instance to branch from, detected from the current directory if omitted |
 | `--gui` | Enable GUI passthrough: Wayland, GPU and audio. The default for a `gui: true` container template when isx runs in a Wayland session, except for a project-local template, one a cloned repository ships in `.incus-spawn/` |
 | `--no-gui` | Disable GUI passthrough even if the template has `gui: true` |
-| `--kvm` | Expose `/dev/kvm` for nested virtualization. Linux only: refused on macOS |
-| `--no-kvm` | Disable KVM even if the template was built with `type: kvm` |
-| `--airgap` | No network devices: every NIC, InfiniBand device and outbound `proxy` device is masked, and `pci`/`usb` passthrough is refused |
-| `--proxy-only` | Restrict network to the host proxy only |
+| `--kvm` | Enable nested virtualization: the instance gets `/dev/kvm`. Linux only: refused on macOS |
+| `--no-kvm` | Disable nested virtualization, even if the template was built with `type: kvm` |
+| `--airgap` | Run the instance without any network: every NIC, InfiniBand device and outbound `proxy` device is masked, and `pci`/`usb` passthrough is refused |
+| `--proxy-only` | Restrict the instance's network to the isx proxy and DNS on the host's bridge |
 | `--inbox <dir>` | Host directory to mount read-only at `~/inbox` inside the instance |
-| `--cpu <N>` | CPU core limit; any count from 1 up to the host's CPUs, so `--cpu 16` gives a VM 16 on a host with at least 16. Default: none for containers; for VMs the host's CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores |
+| `--cpu <N>` | CPU core limit; any count from 1 up to the host's CPUs, so `--cpu 16` gives a VM 16 on a host with at least 16. Default: unlimited for a container; for a VM the host's CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores |
 | `--memory <size>` | Memory limit, such as `8GB`. Default: 60% of the host's RAM for a container; for a VM a quarter of it, between 4 GiB and 16 GiB. Either is raised to what a trusted template's tools need, at most 60% of the host's RAM |
 | `--disk <size>` | Disk size limit (default: `100GB`, a ceiling on a copy-on-write pool, not an allocation) |
 | `--no-start` | Do not start the instance after creation |
@@ -417,7 +417,7 @@ isx run <instance> [options]
 
 | Option | What it does |
 |--------|--------------|
-| `--action <ref>` | Action to run (`tool-name` or `tool-name:action-id`) |
+| `--action <ref>` | Action to run, as `tool-name` or `tool-name:action-id`. The default is the template's default action, or a shell when it does not have one |
 
 It exits 1 when no action matches or the action fails.
 
@@ -709,7 +709,7 @@ isx tools list [options]
 
 | Option | What it does |
 |--------|--------------|
-| `-v`, `--verbose` | Show source and description |
+| `-v`, `--verbose` | Also show where each definition comes from, and what the tool is for |
 | `--format=<format>` | `table` (the default), `plain` or `json`; bare `isx tools` and `isx tools show` take it too |
 
 ### `isx tools show`
@@ -823,12 +823,12 @@ isx project <subcommand>
 
 | Subcommand | What it does |
 |------------|--------------|
-| `create` | Create a project template from a parent base image |
-| `update` | Update an existing project template (packages, repos, deps) |
+| `create` | Create a project template from `incus-spawn.yaml`, the file in a project's directory that names its parent template, its repositories and its pre-build command |
+| `update` | Update a project template's system packages, repositories and dependencies |
 
 ### `isx project create`
 
-Create a project template from a parent base image.
+Create a project template from `incus-spawn.yaml`, the file in a project's directory that names its parent template, its repositories and its pre-build command.
 
 ```shell
 isx project create <name> [options]
@@ -859,7 +859,7 @@ If any step fails (system update, npm update, git fetch, pre-build), the command
 
 ## `isx proxy`
 
-Manage the MITM authentication proxy.
+Manage the isx proxy, which adds your credentials to requests leaving an instance.
 
 ```shell
 isx proxy <subcommand>
@@ -867,13 +867,13 @@ isx proxy <subcommand>
 
 | Subcommand | What it does |
 |------------|--------------|
-| `start` | Start the proxy |
-| `stop` | Stop the proxy (handles both systemd and manual processes) |
+| `start` | Start the proxy: through its service when one is installed and you give it only default options, otherwise in this terminal |
+| `stop` | Stop the proxy, whether it runs as a service or you started it yourself |
 | `restart` | Restart the proxy service |
-| `status` | Check if the proxy is running |
+| `status` | Show whether the proxy is running |
 | `activity` | What each instance sent through the proxy: requests, in flight, bytes, model calls and tokens. `--by-domain` gives one row per domain, `--format=plain\|json` serves scripts |
-| `install` | Install as a systemd user service (auto-starts on boot) |
-| `uninstall` | Stop and remove the systemd proxy service |
+| `install` | Install the proxy as a background service that starts automatically: at login, or at boot on Linux once lingering is on |
+| `uninstall` | Stop and remove the proxy service |
 | `logs` | Follow the proxy log in real time |
 | `dump` | Run a pass-through proxy for host-side traffic capture |
 
@@ -887,10 +887,10 @@ isx proxy start [options]
 
 | Option | What it does |
 |--------|--------------|
-| `--port <port>` | MITM TLS proxy port (default: `18443`) |
-| `--health-port <port>` | Health check HTTP port (default: `18080`) |
+| `--port <port>` | Port the proxy serves instances on (default: `18443`) |
+| `--health-port <port>` | Port of the proxy's health check (default: `18080`) |
 | `--gateway-ip <ip>` | The bridge address, where instances reach the proxy, for when Incus cannot report it |
-| `--debug` | Log full request/response details |
+| `--debug` | Log every API request and response in full, to inspect the traffic |
 
 On Linux, `--gateway-ip` must be the bridge's own address, which is where every `isx` command looks for the proxy.
 
@@ -923,7 +923,7 @@ isx doctor [options]
 |--------|--------------|
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
 | `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
-| `--explain` | Ask your AI Help account for a first diagnosis of the material `--bundle` collects (uses AI tokens); implies `--deep` |
+| `--explain` | Ask an AI model for a first diagnosis of the material `--bundle` collects (uses AI tokens from your account); implies `--deep` |
 | `--account <namespace>=<account>` | With `--explain`, the account that answers, as for `isx ask` |
 | `--format=<format>` | `table` (the default), `plain` or `json`; not with `--bundle` or `--explain` |
 
@@ -1106,7 +1106,7 @@ Rebuild your templates afterwards with `isx build --all`.
 
 ## `isx ask`
 
-Ask the AI any question about isx; it uses AI tokens.
+Ask an AI model any question about isx; it uses AI tokens from your account.
 It answers with an Anthropic API key, Claude on Vertex AI, an OpenAI API key or a Gemini API key.
 
 A Claude subscription does not answer, since its token works only in Claude Code.
@@ -1119,7 +1119,7 @@ isx ask <question...>
 
 | Option | What it does |
 |--------|--------------|
-| `--with-templates` | Include template and tool definitions in the AI context |
+| `--with-templates` | Include your template and tool definitions in what the AI model reads |
 | `--account <namespace>=<account>` | Ask this account, such as `claude=work` or `gemini=free` |
 
 isx asks the account that last answered, so an account you name once with `--account` is asked from then on.

@@ -47,7 +47,7 @@ class IncusSpawnCommandTreeTest {
     void helpListsCompletion() {
         for (var top : List.of(IncusSpawn.IncusSpawnCommand.class, IncusSpawn.IncusSpawnLinuxCommand.class)) {
             var help = IncusSpawn.filterHiddenCommands(LazyHelp.render(top, new String[] {"--help"}));
-            assertTrue(help.contains("Print shell completion script"), top.getSimpleName() + " help must list isx completion");
+            assertTrue(help.contains("Print the shell completion script"), top.getSimpleName() + " help must list isx completion");
             assertFalse(help.contains("ssh-proxy"), top.getSimpleName() + " help must still hide ssh-proxy");
         }
     }

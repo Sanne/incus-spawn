@@ -100,7 +100,7 @@ public class DoctorCommand extends BaseCommand {
     boolean bundle;
 
     @Option(name = "explain", hasValue = false,
-            description = "Send the findings and the redacted support material to the AI Help account for a first-pass diagnosis (uses AI tokens); implies --deep")
+            description = "Send the findings and the redacted support material to an AI model for a first diagnosis (uses AI tokens from your account); implies --deep")
     boolean explain;
 
     @Option(name = "account", completer = Completers.AiHelpAccount.class,

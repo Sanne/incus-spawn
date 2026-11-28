@@ -257,12 +257,12 @@ public class TemplatesCommand extends BaseCommand {
         String name;
 
         @Option(name = "project",
-                description = "Create in project-local directory (.incus-spawn/images/)",
+                description = "Create it in this project's .incus-spawn/images/ directory",
                 hasValue = false)
         boolean project;
 
         @Option(name = "from",
-                description = "Take the whole definition from this file ('-' for stdin): check it and store it, with no editor")
+                description = "Take the whole definition from this file ('-' for stdin): check it and store it, without opening an editor")
         String from;
 
         @Option(name = "replace", hasValue = false,

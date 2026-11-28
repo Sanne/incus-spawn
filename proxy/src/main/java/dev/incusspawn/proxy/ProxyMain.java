@@ -41,13 +41,13 @@ public class ProxyMain implements QuarkusApplication {
                 case "--help", "-h" -> {
                     ProxyLog.stdout("Usage: isx-proxy [OPTIONS]");
                     ProxyLog.stdout("");
-                    ProxyLog.stdout("MITM authentication proxy for incus-spawn containers.");
+                    ProxyLog.stdout("The isx proxy adds your credentials to requests leaving an instance.");
                     ProxyLog.stdout("");
                     ProxyLog.stdout("Options:");
-                    ProxyLog.option("--port <port>", "MITM listen port (default: " + ProxyConfig.DEFAULT_MITM_PORT + ")");
-                    ProxyLog.option("--health-port <port>", "Health check port (default: " + ProxyConfig.DEFAULT_HEALTH_PORT + ")");
-                    ProxyLog.option("--gateway-ip <ip>", "Bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)");
-                    ProxyLog.option("--debug", "Enable API traffic debug logging");
+                    ProxyLog.option("--port <port>", "Port the proxy serves instances on (default: " + ProxyConfig.DEFAULT_MITM_PORT + ")");
+                    ProxyLog.option("--health-port <port>", "Port of the proxy's health check (default: " + ProxyConfig.DEFAULT_HEALTH_PORT + ")");
+                    ProxyLog.option("--gateway-ip <ip>", "The bridge address, where instances reach the proxy, for when Incus cannot report it (on macOS, the VM's bridge)");
+                    ProxyLog.option("--debug", "Log every API request and response in full, to inspect the traffic");
                     ProxyLog.option("--version, -V", "Display version info");
                     ProxyLog.option("--help, -h", "Show this help");
                     return 0;

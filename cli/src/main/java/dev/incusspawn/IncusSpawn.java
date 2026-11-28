@@ -58,7 +58,7 @@ public class IncusSpawn implements QuarkusApplication {
                 question.remove("--help");
                 BuildOutput.error("--help takes no question.",
                         "Did you mean: isx ask " + String.join(" ", question),
-                        "Use 'isx ask <question>' for AI-powered help (uses AI tokens).",
+                        "Use 'isx ask <question>' to ask an AI model (uses AI tokens from your account).",
                         "Use 'isx --help' for command usage.");
                 return 1;
             }

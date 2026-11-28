@@ -429,12 +429,12 @@ A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](do
 | [`isx account`](docs/CLI.md#isx-account) | Add, remove or rename credentials, and show or change the accounts an instance uses |
 | [`isx agent`](docs/CLI.md#isx-agent) | Show or set your preferred coding agent |
 | [`isx project`](docs/CLI.md#isx-project) | Manage project templates |
-| [`isx proxy`](docs/CLI.md#isx-proxy) | Manage the MITM authentication proxy |
+| [`isx proxy`](docs/CLI.md#isx-proxy) | Manage the isx proxy, which adds your credentials to requests leaving an instance |
 | [`isx doctor`](docs/CLI.md#isx-doctor) | Run health checks and offer to fix problems |
 | [`isx clean`](docs/CLI.md#isx-clean) | Remove cached data, state, or configuration |
 | [`isx reset`](docs/CLI.md#isx-reset) | Reset to a clean slate |
 | [`isx vm`](docs/CLI.md#isx-vm) | Manage the VM appliance (macOS only) |
-| [`isx ask`](docs/CLI.md#isx-ask) | AI-powered help |
+| [`isx ask`](docs/CLI.md#isx-ask) | Ask an AI model any question about isx |
 | [`isx mcp`](docs/CLI.md#isx-mcp) | Serve isx to a local agent over MCP |
 | [`isx completion`](docs/CLI.md#isx-completion) | Print the shell completion script for bash, zsh, fish or PowerShell |
 

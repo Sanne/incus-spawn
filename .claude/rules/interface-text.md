@@ -168,3 +168,8 @@ It reads a line together with the line whose sentence it continues, since the fl
 A use that is meant, such as the option label "None for now", is listed in `TranscriptGate.MEANT` with what it labels, and matches only a whole line where it is that label.
 A new flow with a transcript test runs the same gate, with the words that flow never uses.
 Terms used before they are introduced need a reviewer, and so does every flow without a transcript test.
+
+`HelpTextGateTest` holds the `--help` text of every command to the same vocabulary and negations, read from the annotations aesh renders, the macOS tree's `isx vm` and the hidden commands included.
+There "container" is a fault unless the same text names a VM, "this computer" is the first run's word and not help's, and "MITM" says how the proxy works rather than what it does for the person.
+A quoted value the person types, such as `'none'`, is not read as a negation.
+The hand-written usage of `isx ask` and of `isx-proxy --help` is not read, and needs a reviewer.
