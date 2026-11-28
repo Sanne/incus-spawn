@@ -1387,7 +1387,7 @@ The second run, the one in the table, destroyed such a probe before the idle rea
 
 Memory a guest has touched stays resident on the host under both launchers until the VM stops.
 The two `isx-vm` rounds of the second run that destroyed vfkit's leftover probe just before their reading are its two highest, 1229 and 1239 MiB against 1131 to 1168 MiB for the other three.
-A balloon, or the guest's free-page reporting, is what would hand such memory back; it was not tried.
+A lower balloon target is what might hand such memory back, since the framework's balloon offers no free page reporting (design/macos-and-vms.md "The launcher's machine"); it was not tried.
 So the bench now also starts the VM again after it destroys a leftover probe, before the reading; that was not part of either run.
 
 The second run's `stop_ms` read 4964 ms for `isx-vm` against 4407 ms for vfkit, flagged as a regression, while the first run read 4978 against 4986 ms; it was not looked into.
@@ -1647,3 +1647,35 @@ The same eight clones, copied with their mtimes, their indexes refreshed after a
 Quarkus alone: 657 ms by default, 184 ms with `core.checkStat=minimal`, of which the index refresh is 9 ms.
 In the instance as branched, with no settled index, the change takes the read from 0.82 s to 0.52 s on 32 CPUs and to 0.78 s on two, by its overlap alone, at the same CPU time.
 
+## What free page reporting gives back, and what it leaves, on Linux (issue #2741)
+
+Measured 2026-11-28 in an isx box with no KVM, so under QEMU's TCG (QEMU 11.1.3, x86_64, 4 vCPUs, 4 GiB).
+The guest was Fedora 45 Cloud (kernel 7.2.11) with Incus's balloon device as isx sets it, `virtio-balloon-pci` with `free-page-reporting` on, and again with it off.
+The host figure is the QEMU process's `VmRSS`, read 20 s after each step; the guest's are `/proc/meminfo`'s.
+The guest's columns are the run with reporting on; the other run's page cache matched them within 2 MiB.
+TCG's code cache adds about 1 GiB to every host figure, so only the differences between rows count, not the levels.
+Timings under TCG say nothing of KVM, so the one ratio below is all that is given of them.
+
+| Step, in order | Host RSS, reporting on | Host RSS, reporting off | Guest page cache, reporting on | Guest free memory, reporting on |
+|---|---|---|---|---|
+| idle after boot | 1287 MiB | 1350 MiB | 277 MiB | 3411 MiB |
+| 2.5 GiB file written, then `drop_caches=3` | 1312 MiB | 3870 MiB | 178 MiB | 3523 MiB |
+| the file read back, cached | 3846 MiB | 3918 MiB | 2742 MiB | 953 MiB |
+| 1.5 GiB touched and freed by a process | 3193 MiB | 4683 MiB | 2021 MiB | 1682 MiB |
+| `echo 1G > /sys/fs/cgroup/memory.reclaim` | 2186 MiB | 4688 MiB | 1008 MiB | 2695 MiB |
+| `echo 1 > /proc/sys/vm/drop_caches` | 1374 MiB | 4696 MiB | 177 MiB | 3536 MiB |
+| the file read again, from disk | 3891 MiB | 4710 MiB | 2740 MiB | 970 MiB |
+| balloon target 1.5 GiB (QMP `balloon`) | 2153 MiB | 2176 MiB | 1038 MiB | 100 MiB |
+| balloon target back to 4 GiB | 2115 MiB | 2184 MiB | 1039 MiB | 2655 MiB |
+
+**With reporting on, the host holds what the guest uses, and clean page cache is the only part reclaim can still return.**
+Memory a process freed came back at once, and so did every page the guest's own reclaim took from its page cache.
+`memory.reclaim` on the root cgroup gave back about the 1 GiB asked for, and `drop_caches` the rest of the clean cache.
+With reporting off, none of the three gave anything back, and the host kept every page the guest had touched.
+
+**A balloon target returns memory either way, and lowers what the guest can use until it is raised.**
+Inflating to 1.5 GiB took the host down by about 1.7 GiB with reporting on and 2.5 GiB with it off, to about 2.1 GiB in both runs, and the guest was left with 100 MiB free.
+Raising the target again made no host memory resident: the guest touches the pages it gets back only as it uses them.
+
+**Losing the page cache costs a read from disk.**
+The re-read after `drop_caches` took about a hundred times as long as a cached one under TCG, through the host's cache of the disk image; the ratio on KVM was not measured.
