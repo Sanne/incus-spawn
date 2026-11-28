@@ -692,7 +692,7 @@ isx templates edit <name>
 
 ## `isx tools`
 
-List and inspect the available tool definitions.
+List, inspect and create tool definitions.
 Bare `isx tools` runs `list`.
 
 ```shell
@@ -703,6 +703,7 @@ isx tools <subcommand>
 |------------|--------------|
 | `list` | List available tools |
 | `show` | Show details of a tool definition |
+| `new` | Create a new tool definition |
 | `validate` | Check a tool definition without building it |
 
 ### `isx tools list`
@@ -725,6 +726,32 @@ Show the details of one tool definition.
 ```shell
 isx tools show <name>
 ```
+
+### `isx tools new`
+
+Create a new tool definition.
+The name is used exactly as given, and the file is named after it: `isx tools new my-tool` writes `~/.config/incus-spawn/tools/my-tool.yaml`, where a build finds it.
+isx refuses a name that a built-in tool or another tool file already has.
+
+The file holds a name, a description and a link to [every field a tool takes](TOOLS.md#tool-schema-fields).
+isx opens it in `$EDITOR` and checks it as `isx tools validate` does when you close the editor.
+When the check finds an error, isx asks whether to edit it again, and keeps the file if you stop.
+
+```shell
+isx tools new <name>
+isx tools new <name> --from <file>
+```
+
+With `--from`, it takes the whole definition from a file, or from stdin for `-`, and does not open an editor.
+It stores the definition only when the check finds no error, and the definition's `name:` must be the name you give.
+It never prompts, so a script or an agent can run it.
+
+| Option | What it does |
+|--------|--------------|
+| `--project` | Create it in the project-local directory (`.incus-spawn/tools/`) |
+| `--from <file>` | Take the whole definition from this file, or `-` for stdin, check it and store it |
+| `--replace` | With `--from`, replace the tool's own file when it has one; isx never replaces a built-in tool or a tool defined in another file |
+| `--format=<format>` | With `--from`, `table` (the default), `plain` or `json`, as `isx tools validate` prints; `json` adds `written` |
 
 ### `isx tools validate`
 
@@ -1320,6 +1347,7 @@ The fields of each command, in order:
 | `isx tools list` | `name`, `source`, `description` |
 | `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains`, `architectures` |
 | `isx tools validate` | `name`, `path`, `valid`, `findings` (each `severity`, `message`) |
+| `isx tools new --from` | `name`, `path`, `valid`, `findings` (each `severity`, `message`), `written` |
 | `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem`, `pinned_by`, `following` |
 | `isx account show <instance>` | one record per namespace: `namespace`, `account`, `description`, `chosen_by`, `chosen_in`, `template`, `template_account`, `problem`, `identity_pending`, `template_problem` |
 | `isx agent` | one record per agent: `agent`, `title`, `preferred`, `on_host` |

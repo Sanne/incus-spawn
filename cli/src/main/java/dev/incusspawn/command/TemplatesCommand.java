@@ -695,8 +695,13 @@ public class TemplatesCommand extends BaseCommand {
      * file the loader never reads, so no reader sees half a definition.
      */
     static void store(Path target, String written, boolean replace) throws IOException {
-        // A template given by --from gets the schema modeline too, unless it opens with one
-        var yaml = SchemaModeline.TEMPLATE.applyTo(written);
+        store(target, written, replace, SchemaModeline.TEMPLATE);
+    }
+
+    /** {@link #store(Path, String, boolean)} for a file of {@code schema}'s kind, which names it on its first line. */
+    static void store(Path target, String written, boolean replace, SchemaModeline schema) throws IOException {
+        // A definition given by --from gets the schema modeline too, unless it opens with one
+        var yaml = schema.applyTo(written);
         makeDirectory(target.getParent());
         if (!replace) {
             Files.writeString(target, yaml, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
@@ -824,7 +829,7 @@ public class TemplatesCommand extends BaseCommand {
         return null;
     }
 
-    private static String resolveEditor() {
+    static String resolveEditor() {
         var editor = System.getenv("EDITOR");
         if (editor != null && !editor.isBlank()) return editor;
         editor = System.getenv("VISUAL");
@@ -832,7 +837,7 @@ public class TemplatesCommand extends BaseCommand {
         return "vi";
     }
 
-    private static int launchEditor(Path file) throws IOException, InterruptedException {
+    static int launchEditor(Path file) throws IOException, InterruptedException {
         var editor = resolveEditor();
         var parts = new ArrayList<>(List.of(WHITESPACE.split(editor)));
         parts.add(file.toString());

@@ -424,7 +424,7 @@ A Mac that ran isx's VM with vfkit needs one restart of the VM: see [the FAQ](do
 | [`isx update-base`](docs/CLI.md#isx-update-base) | Check for and install base image updates |
 | [`isx update-all`](docs/CLI.md#isx-update-all) | Update packages and repos in all templates |
 | [`isx templates`](docs/CLI.md#isx-templates) | Manage template definitions |
-| [`isx tools`](docs/CLI.md#isx-tools) | List and inspect available tool definitions |
+| [`isx tools`](docs/CLI.md#isx-tools) | List, inspect and create tool definitions |
 | [`isx validate`](docs/CLI.md#isx-validate) | Check a template, tool, config or mcp file the way isx reads it |
 | [`isx account`](docs/CLI.md#isx-account) | Add, remove or rename credentials, and show or change the accounts an instance uses |
 | [`isx agent`](docs/CLI.md#isx-agent) | Show or set your preferred coding agent |

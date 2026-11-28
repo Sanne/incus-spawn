@@ -40,11 +40,12 @@ These tools ship with isx; a template's `tools:` list names them.
 
 Run `isx tools list -v` to see all available tools, including user-defined definitions and project-local definitions, which a cloned repository ships in `.incus-spawn/`.
 Use `isx tools show <name>` to inspect a tool's dependencies, packages, configurable parameters, downloads, TUI actions, proxy domains and the architectures it can be installed on.
-Use `isx tools validate <file-or-name>` to check a tool definition before a build uses it.
+Use `isx tools new <name>` to create a tool definition, and `isx tools validate <file-or-name>` to check one before a build uses it.
 
 ## Custom Tools
 
 A custom tool is a YAML file that any template can name in its `tools:` list.
+`isx tools new <name>` creates one in `~/.config/incus-spawn/tools/`, or with `--project` in `.incus-spawn/tools/`, and checks it when you close the editor ([`isx tools new`](CLI.md#isx-tools-new)).
 Template inheritance forms a single chain: a template has exactly one parent.
 Tools provide composition: reusable capabilities that any template can mix in independently.
 
