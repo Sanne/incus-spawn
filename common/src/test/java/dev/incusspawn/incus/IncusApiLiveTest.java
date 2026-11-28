@@ -1,6 +1,7 @@
 package dev.incusspawn.incus;
 
 import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -125,34 +126,22 @@ class IncusApiLiveTest {
     void createStartStopDeleteInstance() throws Exception {
         if (skip()) return;
 
-        // Pull a small test image - use the busybox image from the Incus test images
-        // Actually, let's use a pre-existing image if available, otherwise skip
-        var imagesResp = http.get("/1.0/images?recursion=1");
-        assertTrue(imagesResp.isSuccess());
-
-        String imageFingerprint = null;
-        String imageType = "container";
-        for (var img : imagesResp.body().getField("metadata").asList()) {
-            imageFingerprint = img.pathText("fingerprint", "");
-            imageType = img.pathText("type", "container");
-            break;
-        }
-
-        if (imageFingerprint == null) {
-            System.out.println("Skipping create/start/stop/delete test: no local images available.");
+        var image = testImage();
+        if (image == null) {
+            System.out.println("Skipping create/start/stop/delete test: no local container image available.");
             System.out.println("Run: incus image copy images:alpine/edge local: --alias test-image");
             return;
         }
 
         String name = "isx-live-test-" + System.currentTimeMillis() % 10000;
-        System.out.println("Creating test instance: " + name + " from image " + imageFingerprint.substring(0, 12));
+        System.out.println("Creating test instance: " + name + " from image " + image.fingerprint().substring(0, 12));
 
         try {
             // Create (privileged to avoid nested idmap issues in CI/nested environments)
             var createBody = new java.util.LinkedHashMap<String, Object>();
             createBody.put("name", name);
-            createBody.put("type", imageType);
-            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", imageFingerprint));
+            createBody.put("type", image.type());
+            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", image.fingerprint()));
             createBody.put("config", java.util.Map.of("security.privileged", "true"));
             var createResp = http.requestAndWait("POST", "/1.0/instances", createBody);
             assertTrue(createResp.isSuccess(), "Create should succeed: " + createResp.body());
@@ -244,7 +233,7 @@ class IncusApiLiveTest {
 
         var image = testImage();
         if (image == null) {
-            System.out.println("Skipping copy test: no local images."); return;
+            System.out.println("Skipping copy test: no local container image."); return;
         }
         String src = "isx-copy-src-" + System.currentTimeMillis() % 10000;
         String dst = src + "-copy";
@@ -284,20 +273,17 @@ class IncusApiLiveTest {
     void launchFromImage() throws Exception {
         if (skip()) return;
 
-        var imagesResp = http.get("/1.0/images?recursion=1");
-        if (imagesResp.body().getField("metadata").size() == 0) {
-            System.out.println("Skipping launch test: no local images."); return;
+        var image = testImage();
+        if (image == null) {
+            System.out.println("Skipping launch test: no local container image."); return;
         }
-        var imageNode = imagesResp.body().getField("metadata").getElement(0);
-        var fingerprint = imageNode.pathText("fingerprint", "");
-        var imageType = imageNode.pathText("type", "container");
 
         String name = "isx-launch-test-" + System.currentTimeMillis() % 10000;
         try {
             var createBody = new java.util.LinkedHashMap<String, Object>();
             createBody.put("name", name);
-            createBody.put("type", imageType);
-            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", fingerprint));
+            createBody.put("type", image.type());
+            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", image.fingerprint()));
             createBody.put("config", java.util.Map.of("security.privileged", "true"));
             var createResp = http.requestAndWait("POST", "/1.0/instances", createBody);
             assertTrue(createResp.isSuccess(), "Create from image should succeed");
@@ -327,7 +313,7 @@ class IncusApiLiveTest {
 
         var image = testImage();
         if (image == null) {
-            System.out.println("Skipping deviceConfigSet test: no local images."); return;
+            System.out.println("Skipping deviceConfigSet test: no local container image."); return;
         }
         String name = "isx-devset-test-" + System.currentTimeMillis() % 10000;
         try {
@@ -373,13 +359,31 @@ class IncusApiLiveTest {
 
     private record TestImage(String fingerprint, String type) {}
 
+    /**
+     * A local container image, the same one on every call, or null when there is
+     * none. Never the first image listed: Incus lists images in a different order on each request
+     * (a Go map), so with a VM image beside it the first one was a VM about one time in six, whose
+     * exec right after its start fails while its agent is not up yet, and which a host without KVM
+     * cannot create at all (#2711). The {@code test-image} alias the skip message asks for wins,
+     * then the smallest image, so a large base image does not eat the tests' time limits.
+     */
     private static TestImage testImage() throws Exception {
         if (skip()) return null;
         var r = http.get("/1.0/images?recursion=1");
-        var meta = r.body().path("metadata");
-        if (meta.size() == 0) return null;
-        var img = meta.getElement(0);
-        return new TestImage(img.pathText("fingerprint", ""), img.pathText("type", "container"));
+        assertTrue(r.isSuccess(), "GET /1.0/images should return 200, got: " + r.statusCode());
+        return r.body().path("metadata").asList().stream()
+                .filter(img -> "container".equals(img.pathText("type", "container")))
+                .filter(img -> !img.pathText("fingerprint", "").isEmpty())
+                .min(java.util.Comparator
+                        .comparing((JqValue img) -> !hasAlias(img, "test-image"))
+                        .thenComparingLong(img -> Jjq.longOr(img.path("size"), Long.MAX_VALUE))
+                        .thenComparing(img -> img.pathText("fingerprint", "")))
+                .map(img -> new TestImage(img.pathText("fingerprint", ""), "container"))
+                .orElse(null);
+    }
+
+    private static boolean hasAlias(JqValue image, String alias) {
+        return image.path("aliases").asList().stream().anyMatch(a -> alias.equals(a.pathText("name", "")));
     }
 
     private static String createAndStartContainer(String name, TestImage image) throws Exception {
@@ -407,7 +411,7 @@ class IncusApiLiveTest {
     void execCaptureReturnsStdoutStderrAndExitCode() throws Exception {
         if (skip()) return;
         var image = testImage();
-        if (image == null) { System.out.println("Skipping exec test: no images."); return; }
+        if (image == null) { System.out.println("Skipping exec test: no local container image."); return; }
 
         String name = "isx-exec-test-" + System.currentTimeMillis() % 10000;
         try {
@@ -433,7 +437,7 @@ class IncusApiLiveTest {
     void execCaptureWithUserAndGroup() throws Exception {
         if (skip()) return;
         var image = testImage();
-        if (image == null) { System.out.println("Skipping exec user test: no images."); return; }
+        if (image == null) { System.out.println("Skipping exec user test: no local container image."); return; }
 
         String name = "isx-execuser-test-" + System.currentTimeMillis() % 10000;
         try {
@@ -470,7 +474,7 @@ class IncusApiLiveTest {
     void execStreamWritesToOutputStreams() throws Exception {
         if (skip()) return;
         var image = testImage();
-        if (image == null) { System.out.println("Skipping execStream test: no images."); return; }
+        if (image == null) { System.out.println("Skipping execStream test: no local container image."); return; }
 
         String name = "isx-stream-test-" + System.currentTimeMillis() % 10000;
         try {
@@ -495,7 +499,7 @@ class IncusApiLiveTest {
     void getLogReturnsContent() throws Exception {
         if (skip()) return;
         var image = testImage();
-        if (image == null) { System.out.println("Skipping log test: no images."); return; }
+        if (image == null) { System.out.println("Skipping log test: no local container image."); return; }
 
         String name = "isx-log-test-" + System.currentTimeMillis() % 10000;
         try {
@@ -549,7 +553,7 @@ class IncusApiLiveTest {
         // Need a running instance for file push
         var image = testImage();
         if (image == null) {
-            System.out.println("Skipping file push test: no local images.");
+            System.out.println("Skipping file push test: no local container image.");
             return;
         }
         String name = "isx-filepush-test-" + System.currentTimeMillis() % 10000;
