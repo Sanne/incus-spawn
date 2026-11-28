@@ -260,7 +260,7 @@ A tool definition is refused the same way with a bare key under `parameters:` or
 
 `site/schema/{template,tool,config,mcp}.json` are JSON Schemas (draft 7, the dialect every YAML language server reads) for the YAML files people edit.
 `site/build.sh` publishes them at `https://isx.run/schema/`, with `application/schema+json` set in `site/_headers`.
-The skeletons that `isx templates new` writes start with the modeline `# yaml-language-server: $schema=...`, so the editor finds the template schema with no setup.
+The skeletons that `isx templates new` and `isx tools new` write start with the modeline `# yaml-language-server: $schema=...`, so the editor finds the template or tool schema with no setup.
 `docs/CONFIGURATION.md` "Editor completion" gives the modeline of each file.
 
 The schemas are written by hand and held true by `EditorSchemasTest` (`cli`, tagged `docs`), because the loaders' keys, defaults and converters are Java and a generator would have to model each converter anyway.
@@ -281,8 +281,7 @@ What a schema cannot say stays in the validators: that a parent exists, a projec
 
 Every writer of these files goes through `SchemaModeline`, so the line is there whichever command made the file.
 `SpawnConfig.save` and `McpConfig.save` write the whole file from the model each time, so their line is part of what they write and is never lost.
-`TemplatesCommand.store`, which `isx templates new` (skeleton or `--from`) and the TUI use, and the copy of a built-in template for `isx templates edit` apply it to the text, unless the file already opens with a `yaml-language-server` line, which is the person's choice.
-isx creates no tool file, so a tool takes the line by hand.
+`TemplatesCommand.store`, which `isx templates new` and `isx tools new` (skeleton or `--from`) and the TUI use, and the copy of a built-in template for `isx templates edit` apply it to the text, unless the file already opens with a `yaml-language-server` line, which is the person's choice.
 `BaseImagePin` files are isx's own bookkeeping, with no schema, and carry none.
 
 The schemas are a public contract, since files in the wild name their address: a key is added, never renamed or removed.
@@ -291,6 +290,14 @@ SchemaStore.org registration, which would apply them with no modeline, is not do
 ## Tool System
 
 Tools define how software gets installed into template images.
+
+**A tool is made the way a template is** (#2764).
+`isx tools new <name>` writes a short skeleton to `~/.config/incus-spawn/tools/<name>.yaml` (`--project`: `.incus-spawn/tools/`), opens the editor and checks the file as `isx tools validate` does until it is valid or the person stops.
+`--from <file|->` takes the whole definition with no editor and no prompt, as `isx templates new --from` does (#2076).
+So a guide gives a reader a command, not a directory and a file name to get right, and the file is checked before a build reads it.
+It never shadows a tool defined elsewhere, a built-in or another layer's, since a new name that does is almost always a mistake; overriding one stays a file written by hand.
+An edit left invalid is kept, so what the person typed is not lost, and the command says to fix or delete it, since `isx build` refuses every build while a tool file in it does not load.
+
 Two formats:
 
 **YAML tools** (primary format) — declarative, no Java needed:

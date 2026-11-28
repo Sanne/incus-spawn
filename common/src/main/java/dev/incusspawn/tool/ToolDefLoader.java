@@ -61,14 +61,20 @@ public class ToolDefLoader {
             "zmx.yaml"
     );
 
-    private static Path userToolsDir() { return SpawnConfig.configDir().resolve("tools"); }
+    private static final Path PROJECT_TOOLS_DIR = Path.of(".incus-spawn/tools");
+
+    /** The user's {@code tools/} directory, where {@code isx tools new} writes a tool. */
+    public static Path userToolsDir() { return SpawnConfig.configDir().resolve("tools"); }
+
+    /** A project's {@code .incus-spawn/tools/}, relative to the directory isx runs from. */
+    public static Path projectToolsDir() { return PROJECT_TOOLS_DIR; }
 
     /** Whether a file in a tools directory is a tool definition this loader reads. */
     public static boolean isToolFile(Path path) {
         var name = path.getFileName().toString();
         return name.endsWith(".yaml") || name.endsWith(".yml");
     }
-    private Path projectToolsDir = Path.of(".incus-spawn/tools");
+    private Path projectToolsDir = PROJECT_TOOLS_DIR;
     private List<String> searchPaths;
 
     private LayeredDefinitions<YamlToolSetup> defs;

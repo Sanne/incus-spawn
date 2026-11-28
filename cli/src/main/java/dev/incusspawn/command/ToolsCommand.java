@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.SchemaModeline;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -15,6 +16,7 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
+import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,11 +29,12 @@ import java.util.function.UnaryOperator;
 
 @CommandDefinition(
         name = "tools",
-        description = "List and inspect available tool definitions",
+        description = "List, inspect and create tool definitions",
         generateHelp = true,
         groupCommands = {
                 ToolsCommand.ListSub.class,
                 ToolsCommand.Show.class,
+                ToolsCommand.New.class,
                 ToolsCommand.Validate.class
         }
 )
@@ -265,6 +268,200 @@ public class ToolsCommand extends BaseCommand {
         }
     }
 
+    // ── new ─────────────────────────────────────────────────────────────────────
+
+    @CommandDefinition(name = "new", description = "Create a new tool definition",
+            generateHelp = true)
+    public static class New extends BaseCommand {
+
+        @Argument(required = true, description = "Tool name, used as given (e.g. my-tool)")
+        String name;
+
+        @Option(name = "project",
+                description = "Create it in this project's .incus-spawn/tools/ directory",
+                hasValue = false)
+        boolean project;
+
+        @Option(name = "from",
+                description = "Take the whole definition from this file ('-' for stdin): check it and store it, without opening an editor")
+        String from;
+
+        @Option(name = "replace", hasValue = false,
+                description = "With --from, replace the tool's file when it already has one")
+        boolean replace;
+
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", completer = Completers.Format.class,
+                description = "With --from, output format: table (default), plain or json, with the check's findings")
+        String format;
+
+        /** The editor, where it asks to re-edit, and where {@code --from -} reads, which a test replaces. */
+        TemplatesCommand.Editor editor = TemplatesCommand::launchEditor;
+        java.util.function.Supplier<Prompts> reEdit = Prompts::terminal;
+        java.util.function.Supplier<java.io.InputStream> stdin = () -> System.in;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            if (from == null && (replace || format != null)) {
+                BuildOutput.error((replace ? "--replace" : "--format") + " needs --from.");
+                return CommandResult.valueOf(1);
+            }
+            var outputFormat = OutputFormat.parse(format);
+            var invalid = ToolDefValidator.invalidName(name);
+            if (invalid != null) {
+                BuildOutput.error(cell(invalid));
+                return CommandResult.valueOf(1);
+            }
+            var dir = project ? ToolDefLoader.projectToolsDir() : ToolDefLoader.userToolsDir();
+            var target = dir.resolve(name + ".yaml");
+            var searchPaths = SpawnConfig.load().getSearchPaths();
+            // Read now, not the process's cached tools, so a file just written counts
+            var loader = new ToolDefLoader(searchPaths);
+            var refused = placeProblem(name, target, loader, from != null && replace, from != null);
+            if (from != null) return fromDefinition(target, refused, loader, outputFormat);
+            if (refused != null) {
+                if (loader.allToolSetups().containsKey(name)) {
+                    BuildOutput.error(cell(refused), "Use 'isx tools show " + name + "' to see where it is defined.");
+                } else {
+                    BuildOutput.error(cell(refused));
+                }
+                return CommandResult.valueOf(1);
+            }
+            try {
+                TemplatesCommand.store(target, SKELETON.replace("CHANGEME", name), false, SchemaModeline.TOOL);
+            } catch (IOException e) {
+                BuildOutput.error("Failed to create tool file: " + cell(e.getMessage()));
+                return CommandResult.valueOf(1);
+            }
+            BuildOutput.step("Created " + target);
+            if (!editLoop(target, name, searchPaths, editor, reEdit)) return CommandResult.valueOf(1);
+            BuildOutput.note("Add '" + name + "' to a template's tools: list to install it");
+            return CommandResult.SUCCESS;
+        }
+
+        /**
+         * {@code --from}: the whole definition, checked as {@code isx tools validate} checks it,
+         * stored only when it has no error, never with a prompt or an editor.
+         */
+        private CommandResult fromDefinition(Path target, String refused, ToolDefLoader loader,
+                                             OutputFormat outputFormat) {
+            String yaml;
+            try {
+                yaml = TemplatesCommand.readDefinition(from, stdin);
+            } catch (IOException e) {
+                BuildOutput.error("Could not read " + ("-".equals(from) ? "stdin" : "'" + cell(from) + "'")
+                        + ": " + cell(e.getMessage()));
+                return CommandResult.valueOf(1);
+            }
+            var findings = new ArrayList<Validate.Finding>();
+            if (refused != null) findings.add(new Validate.Finding(true, refused));
+            var named = Validate.checkText(yaml, target.getFileName().toString(), loader, findings);
+            if (named != null && !named.equals(name)) {
+                findings.add(new Validate.Finding(true, "The definition is named '" + named
+                        + "', not '" + name + "': the two must agree"));
+            }
+            var written = false;
+            if (findings.stream().noneMatch(Validate.Finding::error)) {
+                try {
+                    TemplatesCommand.store(target, yaml, replace, SchemaModeline.TOOL);
+                    written = true;
+                } catch (IOException e) {
+                    findings.add(new Validate.Finding(true, "Could not write " + target + ": " + e.getMessage()));
+                }
+            }
+            var result = Validate.report(outputFormat, named, target.toString(), findings, "Tool is valid", written);
+            if (written && outputFormat == OutputFormat.TABLE) {
+                BuildOutput.step("Created " + target);
+                BuildOutput.note("Add '" + name + "' to a template's tools: list to install it");
+            }
+            return result;
+        }
+
+        /**
+         * Why tool {@code name} cannot be stored at {@code target}, or null when it can. A tool
+         * defined elsewhere (a built-in, another file or layer) is never shadowed by accident, and
+         * a file already there is replaced only with {@code replace}, and only when it is that
+         * tool's or names no tool. {@code fromFile} says whether the command was given {@code --from},
+         * the only way to replace a file.
+         */
+        static String placeProblem(String name, Path target, ToolDefLoader loader, boolean replace, boolean fromFile) {
+            var absolute = target.toAbsolutePath().normalize();
+            var tool = loader.allToolSetups().get(name);
+            var source = tool == null ? null : loader.getSource(name);
+            var here = source != null && !"built-in".equals(source)
+                    && Path.of(source).toAbsolutePath().normalize().equals(absolute);
+            if (tool != null && !here) {
+                return "Tool '" + name + "' already exists (source: " + source + ")"
+                        + (replace ? "; --replace replaces only " + target : "");
+            }
+            for (var other : loader.allToolSetups().keySet()) {
+                var otherSource = loader.getSource(other);
+                if (other.equals(name) || otherSource == null || "built-in".equals(otherSource)) continue;
+                if (Path.of(otherSource).toAbsolutePath().normalize().equals(absolute)) {
+                    return "File " + target + " defines tool '" + other + "', which "
+                            + (replace ? "--replace would remove" : "a new tool cannot replace");
+                }
+            }
+            if (Files.exists(target) && !replace) {
+                return "File already exists: " + target + (fromFile
+                        ? "; add --replace to replace it"
+                        : "; edit it, or replace it with --from and --replace");
+            }
+            return null;
+        }
+
+        /**
+         * Edits {@code file} until it is a valid tool named {@code name} or the user stops; whether
+         * it ended valid. The name must stay the one checked before the file was made, so an edit
+         * never shadows a tool defined elsewhere.
+         */
+        static boolean editLoop(Path file, String name, List<String> searchPaths, TemplatesCommand.Editor editor,
+                                java.util.function.Supplier<Prompts> reEdit) {
+            while (true) {
+                try {
+                    int exitCode = editor.edit(file);
+                    if (exitCode != 0) BuildOutput.warn("Editor exited with code " + exitCode);
+                } catch (IOException e) {
+                    BuildOutput.error("Failed to launch editor '" + cell(TemplatesCommand.resolveEditor()) + "': "
+                            + cell(e.getMessage()), "Set $EDITOR or $VISUAL to your preferred editor.");
+                    return false;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+                var findings = new ArrayList<Validate.Finding>();
+                var named = Validate.checkFile(file, new ToolDefLoader(searchPaths), findings);
+                if (named != null && !named.equals(name)) {
+                    findings.add(new Validate.Finding(true, "The definition is named '" + named
+                            + "', not '" + name + "': the two must agree"));
+                }
+                var valid = Validate.report(OutputFormat.TABLE, null, file.toString(), findings,
+                        "Tool is valid").getResultValue() == 0;
+                if (valid) return true;
+                // Only on a terminal: piped stdin is not an answer. Its end, like Ctrl-D, stops editing.
+                var prompts = reEdit.get();
+                if (prompts == null || !askYesNo(prompts, "Re-edit?", true, false)) {
+                    BuildOutput.warn("Left " + file + " as it is.",
+                            "Fix it and check it with 'isx tools validate " + file + "', or delete it.");
+                    return false;
+                }
+            }
+        }
+
+        /** What a new tool starts as: a name, a description, and where every other field is described. */
+        static final String SKELETON = """
+                # yaml-language-server: $schema=https://isx.run/schema/tool.json
+                # Every other field, with what it does: https://isx.run/docs/tools#tool-schema-fields
+
+                name: CHANGEME
+                description: My custom tool
+
+                # dnf packages to install
+                # packages:
+                #   - htop
+                """;
+    }
+
     // ── validate ────────────────────────────────────────────────────────────────
 
     @CommandDefinition(name = "validate", description = "Check a tool definition without building it",
@@ -332,6 +529,15 @@ public class ToolsCommand extends BaseCommand {
         /** Prints {@code findings} in {@code outputFormat}; success when none is an error. */
         static CommandResult report(OutputFormat outputFormat, String name, String path, List<Finding> findings,
                                     String validMessage) {
+            return report(outputFormat, name, path, findings, validMessage, null);
+        }
+
+        /**
+         * {@link #report(OutputFormat, String, String, List, String)}, with {@code written} last in
+         * the {@code json} record when it is not null: whether {@code isx tools new --from} stored it.
+         */
+        static CommandResult report(OutputFormat outputFormat, String name, String path, List<Finding> findings,
+                                    String validMessage, Boolean written) {
             var valid = findings.stream().noneMatch(Finding::error);
             if (outputFormat == OutputFormat.PLAIN) {
                 var lines = new ArrayList<Map<String, Object>>();
@@ -343,7 +549,9 @@ public class ToolsCommand extends BaseCommand {
                 }
                 outputFormat.print(BuildOutput.results(), lines);
             } else if (outputFormat == OutputFormat.JSON) {
-                outputFormat.printOne(BuildOutput.results(), record(name, path, valid, findings));
+                var record = record(name, path, valid, findings);
+                if (written != null) record.put("written", written);
+                outputFormat.printOne(BuildOutput.results(), record);
             } else {
                 findings.stream().filter(Finding::error).forEach(f -> BuildOutput.error(cell(f.message())));
                 findings.stream().filter(f -> !f.error()).forEach(f -> BuildOutput.warn(cell(f.message())));
@@ -395,7 +603,7 @@ public class ToolsCommand extends BaseCommand {
         }
 
         /** Checks the tool file {@code file}; the name it gives, or null. */
-        private static String checkFile(Path file, ToolDefLoader loader, List<Finding> findings) {
+        static String checkFile(Path file, ToolDefLoader loader, List<Finding> findings) {
             var result = ToolDefValidator.validate(file);
             result.errors().forEach(e -> findings.add(new Finding(true, e)));
             result.warnings().forEach(w -> findings.add(new Finding(false, w)));
