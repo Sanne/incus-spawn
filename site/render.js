@@ -136,9 +136,10 @@ function tabs(body, consumedIds) {
   });
 }
 
-// A code block preceded by <!-- copy --> gets the Copy button the homepage's install box has
-// (copy.js): it is wrapped in a .copy-box, which the script finds.
-const copyBoxes = body => body.replace(/<!-- copy -->\s*(<pre>[\s\S]*?<\/pre>)/g, '<div class="copy-box">$1</div>');
+// A code block whose fence names a language (```shell, ```yaml, ```text) is something to run or
+// paste, so it gets the Copy button the homepage's install box has (copy.js): it is wrapped in a
+// .copy-box, which the script finds. A bare fence is output or a file tree, and gets none.
+const copyBoxes = body => body.replace(/<pre><code class="language-[\s\S]*?<\/pre>/g, '<div class="copy-box">$&</div>');
 
 const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 

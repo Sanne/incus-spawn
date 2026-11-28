@@ -77,11 +77,14 @@ class AgentInstallPromptTest {
         assertEquals(passed, named, "the page's tested agents are not the ones the validation notes record as passing");
     }
 
-    /** The page's prompt is the block a reader copies, so it carries the homepage's Copy button (#2177). */
+    /**
+     * The page's prompt is the block a reader copies, so it carries the homepage's Copy button
+     * (#2177), which site/render.js gives a block whose fence names a language (#2749).
+     */
     @Test
     void thePromptHasACopyButton() throws IOException {
-        assertTrue(page().contains("<!-- copy -->\n```text\nInstall isx (https://isx.run)"),
-                "the prompt's block is not marked <!-- copy --> right before its fence, so site/render.js gives it no Copy button");
+        assertTrue(page().contains("```text\nInstall isx (https://isx.run)"),
+                "the prompt's fence names no language, so site/render.js gives it no Copy button");
     }
 
     @Test

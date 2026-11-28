@@ -1,6 +1,6 @@
 // The Copy button on a code box: each command of the homepage's install box, and each docs block
-// marked <!-- copy --> in its Markdown, which render.js wraps in a .copy-box. One component, so
-// both look and behave the same.
+// whose fence names a language, which render.js wraps in a .copy-box. One component, so both look
+// and behave the same.
 document.querySelectorAll('.install-tabs .tab-panel, .copy-box').forEach(function(panel) {
   var btn = document.createElement('button');
   btn.className = 'copy-btn';

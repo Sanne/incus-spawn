@@ -546,13 +546,17 @@ kbd {
   border-color: rgba(110, 231, 183, 0.35);
 }
 
-/* A docs block with the Copy button (render.js): the prompt wraps, so no line runs under the button. */
+/* A docs block with the Copy button (render.js). A text prompt wraps, so no line runs under the
+   button; code keeps its lines and scrolls, since a wrapped YAML or Python line reads as dedented. */
 .copy-box {
   position: relative;
 }
 
 .docs-content .copy-box pre {
   padding-right: 4.5rem;
+}
+
+.docs-content .copy-box pre:has(> code.language-text) {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

@@ -426,6 +426,10 @@ The guides become a section of the site, an index at `/guides`, a sidebar group 
 Each guide is checked by running it on a clean host before it is published.
 Every whole template a guide shows passes `isx templates validate`'s check and names only built-in tools (`GuidesTest`).
 
+**A code block** a reader runs or pastes names its language on its fence (`shell`, `yaml`, `text` for a prompt), which gives it the home page's Copy button on the site (`site/render.js`).
+Output and file trees use a bare fence, which gets none.
+A `shell` block holds only what to type: no `$ ` prompt, no output, since the button copies the block whole (`DocsCopyButtonsTest`).
+
 **A project guide** ("Contribute to Quarkus from an isx sandbox") sets up a machine for contributing to one well-known project.
 Its first section, before any command, is that project's own rules for AI-assisted work, linked to where the project publishes them and summarised from that text alone.
 It says what the rules allow and what they do not, and the rest of the guide follows them: the agent works inside its machine, and the person reads, owns and sends every change.
