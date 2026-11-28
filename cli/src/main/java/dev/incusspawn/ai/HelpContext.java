@@ -26,7 +26,7 @@ public class HelpContext {
             "help/docs/CREDENTIAL-PROOFS.md", "help/docs/FAQ.md", "help/docs/FEDORA.md", "help/docs/GITHUB.md", "help/docs/INTEGRATIONS.md", "help/docs/MCP-PROTOCOL.md", "help/docs/MCP.md", "help/docs/SANDBOXES.md",
             "help/docs/TEMPLATE-EXAMPLE.md", "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md",
             "help/docs/guides/agent-commits.md", "help/docs/guides/claude-code.md", "help/docs/guides/codex-cli.md", "help/docs/guides/contribute-to-hibernate-orm.md", "help/docs/guides/contribute-to-quarkus.md", "help/docs/guides/delegate-over-mcp.md", "help/docs/guides/ollama.md",
-            "help/docs/guides/openjdk.md", "help/docs/guides/project-template.md",
+            "help/docs/guides/openjdk.md", "help/docs/guides/project-template.md", "help/docs/guides/zmx.md",
             "help/DESIGN.md",
             "help/design/accounts.md", "help/design/doctor.md", "help/design/git.md",
             "help/design/host-resources.md", "help/design/init.md", "help/design/instances.md", "help/design/macos-and-vms.md",
