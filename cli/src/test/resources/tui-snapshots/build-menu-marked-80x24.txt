@@ -9,14 +9,14 @@
           │       Rebuilds tpl-minimal → tpl-a → tpl-b             █ │
           │                                                        █ │
           │    5  Build templates not yet built  1 template        █ │
-          │       Builds all templates that haven't been built yet █ │
+          │       Builds every template that is not built yet      █ │
           │                                                        █ │
           │    6  Rebuild out of sync templates  1 template        █ │
           │       Rebuilds all templates whose definition changed  █ │
           │       since last build, built with an older version,   █ │
           │       or whose parent was rebuilt after them           █ │
           │                                                        █ │
-          │  ▸ 7  (Re)build all templates                          █ │
+          │  ▸ 7  Rebuild all templates                            █ │
           │       Deletes and rebuilds every template              █ │
           │                                                          │
           │  1-7 Select   Enter Build   Esc Cancel                   │

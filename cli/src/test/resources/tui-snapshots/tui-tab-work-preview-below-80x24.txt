@@ -14,7 +14,7 @@
   ● Running   from tpl-minimal
 
   Idle     never started
-  Tokens   none counted
+  Tokens   the proxy has not logged any model calls
   Work     2 unpushed
            app: 2 unpushed
 

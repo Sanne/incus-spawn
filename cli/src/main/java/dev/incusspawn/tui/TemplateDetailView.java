@@ -276,7 +276,7 @@ final class TemplateDetailView {
                 var hostMatch = repo.isHostSource() ? repo.getHostSource() : source.hostRepoMatch(repo.getUrl());
                 lines.add(Line.styled(hostMatch != null
                         ? "    Linked to host repository at " + hostMatch
-                        : "    No matching host checkout found", dimStyle));
+                        : "    Not linked: the host has no checkout of it", dimStyle));
             }
         }
         lines.add(Line.styled("", lineStyle));
@@ -579,7 +579,7 @@ final class TemplateDetailView {
                 var hostMatch = repo.isHostSource() ? repo.getHostSource() : source.hostRepoMatch(repo.getUrl());
                 lines.add(Line.styled(contentIndent + (hostMatch != null
                         ? "  Linked to host repository at " + hostMatch
-                        : "  No matching host checkout found"), dimStyle));
+                        : "  Not linked: the host has no checkout of it"), dimStyle));
             }
 
             for (var hr : def.getHostResources()) {

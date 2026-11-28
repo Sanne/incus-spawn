@@ -1,5 +1,6 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.tamboui.widgets.checkbox.CheckboxState;
 import dev.tamboui.widgets.select.SelectState;
 import org.junit.jupiter.api.Test;
@@ -11,18 +12,20 @@ class ModalRendererTest {
 
     private static final TuiTheme THEME = TuiTheme.dark();
 
+    /** The proxy's error, in the words a command's refusal uses, wrapped to the dialog (#2542). */
     @Test
     void rendersAnError() {
         var modal = new ModalRenderer(THEME);
+        var message = String.join("\n", ProxyHealthCheck.explanation(ProxyHealthCheck.ProxyStatus.NOT_RUNNING));
         TuiSnapshot.assertMatches("error-modal-80x24", TuiSnapshot.render(80, 24,
-                f -> modal.renderErrorModal(f, f.area(), "The MITM proxy is not running.\n\nStart it:\n  isx proxy start")));
+                f -> modal.renderErrorModal(f, f.area(), message)));
     }
 
     @Test
     void rendersProgressOverTheScreen() {
         var modal = new ModalRenderer(THEME);
         TuiSnapshot.assertMatches("progress-overlay-80x24", TuiSnapshot.render(80, 24,
-                f -> modal.renderProgressOverlay(f, f.area(), "Scanning pool...")));
+                f -> modal.renderProgressOverlay(f, f.area(), "Scanning the storage pool")));
     }
 
     /** 30 ideographs: 30 UTF-16 units, 60 cells (#1412). */

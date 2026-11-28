@@ -788,7 +788,7 @@ public class Tui {
         // TUI entry clears (reloadData drops requests raised before it started).
         eventWatcher = new InstanceEventWatcher(incus::openLifecycleEvents,
                 this::onInstanceEvent, () -> liveRefreshRequested.set(true),
-                () -> pendingStatusMessage.set("Live updates unavailable -- refreshing every "
+                () -> pendingStatusMessage.set("Live updates unavailable: refreshing every "
                         + FALLBACK_POLL_MS / 1000 + "s instead")).start();
         try {
             runTuiSessions();
@@ -1058,7 +1058,7 @@ public class Tui {
                     tui.quit();
                     return true;
                 }
-                setStatusMessage("Failed to restart the proxy. Try: isx proxy start");
+                setStatusMessage("Failed to restart the proxy: 'isx proxy status' says why");
             }
             boolean repaint = needsRepaint.getAndSet(false);
             // The event log read off the UI thread may find more for the Work tab's search
@@ -1176,7 +1176,7 @@ public class Tui {
             return true;
         }
         if (!key.hasCtrl() && key.isCharIgnoreCase('c')) {
-            progressMessage = "Scanning pool...";
+            progressMessage = "Scanning the storage pool";
             tui.draw(frame -> render(frame, tableState));
             CleanCommand.CleanScan cleanScan;
             try {
@@ -1188,7 +1188,7 @@ public class Tui {
             }
             progressMessage = null;
             if (cleanScan == null) {
-                statusMessage = "No copy-on-write storage pool found.";
+                statusMessage = "There is no copy-on-write storage pool to clean.";
             } else {
                 clean = new CleanModal(modal, theme, cleanScan);
                 mode = Mode.CLEAN_CONFIRM;
@@ -1300,7 +1300,7 @@ public class Tui {
             var anyBuilt = templateEntries.stream()
                     .anyMatch(t -> !"not built".equals(t.buildStatus()));
             if (!anyBuilt) {
-                statusMessage = "No templates are built.";
+                statusMessage = "There is no built template to destroy.";
                 return true;
             }
             openDeleteConfirm("--all");
@@ -1387,7 +1387,7 @@ public class Tui {
         // Shift+F8 or Shift+Delete: Destroy all instances
         if (isDestroyKey(key) && key.hasShift()) {
             if (entries.isEmpty()) {
-                statusMessage = "No instances to destroy.";
+                statusMessage = "There are no instances to destroy.";
                 return true;
             }
             openDeleteConfirm("--all-instances");
@@ -1445,11 +1445,14 @@ public class Tui {
             return true;
         }
         if (key.isKey(KeyCode.F9)) {
-            var actions = getActionsForInstance(selected).stream()
+            var all = getActionsForInstance(selected);
+            var actions = all.stream()
                     .filter(a -> !a.requiresRunning() || isRunning(selected))
                     .toList();
             if (actions.isEmpty()) {
-                statusMessage = "No actions available for " + selected.name();
+                // A stopped instance's actions may all need it running, which is not having none
+                statusMessage = all.isEmpty() ? selected.name() + " has no tool actions"
+                        : selected.name() + "'s tool actions need it running";
                 return true;
             }
             actionsMenu.open(actions, instanceActions.buildActionContext(selected));
@@ -1495,7 +1498,7 @@ public class Tui {
         }
         var built = marked.stream().filter(TemplateInfo::isBuilt).map(TemplateInfo::name).toList();
         if (built.isEmpty()) {
-            statusMessage = "No marked template is built";
+            statusMessage = marked.size() == 1 ? "The marked template is not built" : "The marked templates are not built";
             return;
         }
         deleteConfirm = DeleteConfirm.ofSeveral(modal, derivedFirst(built), DeleteConfirm.Kind.TEMPLATE);
@@ -1521,7 +1524,7 @@ public class Tui {
         }
         var running = marked.stream().filter(Tui::isRunning).toList();
         if (running.isEmpty()) {
-            statusMessage = "No marked instance is running";
+            statusMessage = marked.size() == 1 ? "The marked instance is not running" : "The marked instances are not running";
             return;
         }
         // Asked first (Sanne, #1482): the marks may be out of sight, and a stop ends what runs there
@@ -2093,7 +2096,7 @@ public class Tui {
 
     /** Enter in the cleanup dialog with something checked: clean it, with the progress overlay, and show what it did. */
     private boolean cleanPool(TuiRunner tui, TableState tableState) {
-        progressMessage = "Cleaning pool...";
+        progressMessage = "Cleaning the storage pool";
         tui.draw(frame -> render(frame, tableState));
         CleanCommand.CleanResult cleanResult;
         try {
@@ -2752,7 +2755,7 @@ public class Tui {
             return;
         }
         if (rows.isEmpty()) {
-            statusMessage = "No credential accounts configured. Run 'isx account add' to add one.";
+            statusMessage = "There are no credential accounts yet. Run 'isx account add' to add one.";
             return;
         }
         accountsModal = new AccountsModal(modal, theme, instance, rows);
@@ -3979,7 +3982,7 @@ public class Tui {
             // Unreadable is not incomplete: a write would fail the same way.
             return;
         }
-        setStatusMessage("Updating bridge DNS overrides...");
+        setStatusMessage("Updating the bridge DNS overrides");
         var thread = new Thread(() -> {
             try {
                 ProxyConfig.writeBridgeDns(incus, config);
@@ -4001,28 +4004,28 @@ public class Tui {
             return false;
         }
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.WAITING_FOR_DNS) {
-            setStatusMessage("Proxy running, waiting for DNS configuration...");
+            setStatusMessage("Proxy running, waiting to set up DNS");
             return true;
         }
         if (proxyRestartInProgress) {
-            setStatusMessage("Proxy restarting...");
+            setStatusMessage("Restarting the proxy");
             return true;
         }
         if (ProxyHealthCheck.serviceRestartCanHelp(proxyStatus)) {
             proxyRestartInProgress = true;
             setStatusMessage(proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_GATEWAY
-                    ? "Proxy on an old bridge address, restarting service..."
-                    : "Proxy not running, restarting service...");
+                    ? "Proxy on an old bridge address: restarting its service"
+                    : "Proxy not running: restarting its service");
             var thread = new Thread(() -> {
                 try {
                     // Why a restart failed to the log; the status line says that it did
                     if (ProxyHealthCheck.tryAutoRestart(incus, drawing)) {
-                        setStatusMessage("Proxy restarted, waiting for DNS...");
+                        setStatusMessage("Proxy restarted, waiting to set up DNS");
                     } else if (!Environment.hasBeenInitialized()) {
                         // The restart was refused, not failed: it would only start a proxy that refuses to (#1048).
                         setStatusMessage("Proxy not restarted: run 'isx init' first.");
                     } else {
-                        setStatusMessage("Failed to restart the proxy. Check: isx proxy status");
+                        setStatusMessage("Failed to restart the proxy: 'isx proxy status' says why");
                     }
                 } finally {
                     proxyRestartInProgress = false;
@@ -4032,32 +4035,8 @@ public class Tui {
             thread.start();
             return true;
         }
-        if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_GATEWAY) {
-            errorMessage = "The MITM proxy is running, but on an old address\n"
-                    + "of the Incus bridge that instances cannot reach.\n"
-                    + "\n"
-                    + "Restart it to bind the current address:\n"
-                    + "\n"
-                    + "  isx proxy stop && isx proxy start";
-        } else if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
-            errorMessage = "The MITM proxy is not running, but DNS overrides\n"
-                    + "are still active from a previous session.\n"
-                    + "\n"
-                    + "Start the proxy to restore connectivity:\n"
-                    + "\n"
-                    + "  isx proxy start";
-        } else {
-            errorMessage = "The MITM proxy is not running.\n"
-                    + "\n"
-                    + "The proxy provides authentication for Claude,\n"
-                    + "GitHub, and caches Maven/Docker artifacts.\n"
-                    + "\n"
-                    + "Start it in a separate terminal:\n"
-                    + "  isx proxy start\n"
-                    + "\n"
-                    + "Or install it as a service (auto-starts on boot):\n"
-                    + "  isx init";
-        }
+        // The same words as the refusal of a command, which the dialog wraps to its width
+        errorMessage = String.join("\n", ProxyHealthCheck.explanation(proxyStatus));
         mode = Mode.ERROR;
         return true;
     }

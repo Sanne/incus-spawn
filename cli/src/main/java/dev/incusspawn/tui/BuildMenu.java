@@ -120,7 +120,7 @@ final class BuildMenu {
         if (missingCount > 0) {
             options.add(new BuildMenuOption(
                     "Build templates not yet built",
-                    "Builds all templates that haven't been built yet",
+                    "Builds every template that is not built yet",
                     missingCount + (missingCount == 1 ? " template" : " templates"),
                     new String[]{"--missing"}, true));
         }
@@ -141,9 +141,9 @@ final class BuildMenu {
                     new String[]{"--out-of-sync"}, true));
         }
 
-        // Option 5: (Re)build all templates
+        // Option 5: Rebuild all templates
         options.add(new BuildMenuOption(
-                "(Re)build all templates",
+                "Rebuild all templates",
                 "Deletes and rebuilds every template",
                 null, new String[]{"--all"}, true));
 

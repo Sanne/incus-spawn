@@ -140,7 +140,7 @@ Guest updates do not pass `--depth`, so a shallow repo in a long-lived instance 
 The other way round, a repo without a depth never inherits a shallow host checkout (one another template's depth made, or the user's own).
 Full preparation refuses shallow object sources and uses a remote-derived snapshot or the remote instead.
 
-**TUI visibility**: The F3 template detail view shows the host repo link status for each declared repo — the resolved host path when matched, or "No matching host checkout found" when not.
+**TUI visibility**: The F3 template detail view shows the host repo link status for each declared repo — the resolved host path when matched, or "Not linked: the host has no checkout of it" when not.
 This lets users verify their `host-paths`/`repo-paths` configuration without running a build.
 The view is full screen and shows the template's effective settings resolved across the inheritance chain (`TemplateDetails`), using the build's own resolvers so what it shows is what a build produces -- including the type a template was actually built as (its `instance-mode` stamp), flagged when the definition has since changed it.
 Under the template's source it names the definition that one overrides from an earlier search layer, and the file the image was built from when that is another one -- the "the built image doesn't match my file" confusion of #593, answered where people look rather than only in `isx doctor` (#1099).

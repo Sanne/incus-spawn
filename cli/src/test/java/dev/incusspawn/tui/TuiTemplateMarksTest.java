@@ -248,7 +248,7 @@ class TuiTemplateMarksTest {
         var tui = tui();
         press(tui, DOWN, DOWN, SPACE, UP);
         press(tui, KeyEvent.ofKey(KeyCode.F8));
-        assertEquals("No marked template is built", tui.statusMessage);
+        assertEquals("The marked template is not built", tui.statusMessage);
         assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
 

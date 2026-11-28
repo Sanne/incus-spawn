@@ -79,4 +79,15 @@ class CleanModalTest {
         TuiSnapshot.assertMatches("clean-modal-result-80x24",
                 TuiSnapshot.render(80, 24, f -> dialog.renderCleanResultModal(f, f.area())));
     }
+
+    /** What was checked is gone before the clean ran: the line says so whole, within the dialog. */
+    @Test
+    void aCleanThatDeletedNothingSaysSoWhole() {
+        var daemon = new FakeIncusDaemon().pool("default", "btrfs");
+        var dialog = dialog(new CleanCommand.CleanScan("default", null, List.of("tpl-broken-failed-build"),
+                List.of(), List.of(), false));
+        dialog.clean(daemon.client());
+        var text = TuiSnapshot.toText(TuiSnapshot.render(80, 24, f -> dialog.renderCleanResultModal(f, f.area())));
+        assertTrue(text.contains("Nothing checked could still be deleted."), text);
+    }
 }

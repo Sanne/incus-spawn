@@ -140,7 +140,7 @@ class TuiDigitKeysTest {
         press(tui, ESC);
         press(tui, KeyEvent.ofChar('9'));
         assertEquals(Tui.Mode.BROWSE, tui.mode());
-        assertTrue(screen(tui).contains("No actions available for alpha"), "9 is F9");
+        assertTrue(screen(tui).contains("alpha has no tool actions"), "9 is F9");
         press(tui, KeyEvent.ofChar('8'));
         assertEquals(Tui.Mode.CONFIRM_DELETE, tui.mode(), "8 is F8");
         assertEquals("alpha", tui.deleteConfirm().name());

@@ -10,15 +10,15 @@
   │ Licensed under the Apache License 2.0                                  █ │
   │ github.com/Sanne/incus-spawn                                           │ │
   │                                                                        │ │
-  │ Manage isolated Incus development environments.                        │ │
-  │ Templates define base images; Instances are                            │ │
-  │ lightweight copy-on-write branches of them.                            │ │
+  │ Isolated Linux instances for coding agents.                            │ │
+  │ Each instance is a branch of a template, made in a moment.             │ │
+  │ It shares the template's storage and keeps only its changes.           │ │
   │                                                                        │ │
   │ Keyboard shortcuts:                                                    │ │
   │                                                                        │ │
   │   Enter   Default instance action                                      │ │
   │   ?       AI Help — ask a question                                     │ │
   │   Tab     Switch panels             ⇧Tab         Reverse               │ │
-  │  F1/Esc Close   ? AI-assisted help                                       │
+  │  F1/Esc Close   ? AI Help                                                │
   ╰──────────────────────────────────────────────────────────────────────────╯
 

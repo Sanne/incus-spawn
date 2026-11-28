@@ -152,7 +152,7 @@ class BuildMenuTest {
         var menu = new BuildMenu(new ModalRenderer(THEME), THEME, root, defs,
                 List.of(root, template("tpl-a", "built"), template("tpl-b", TemplateInfo.NOT_BUILT)),
                 Set.of("tpl-a"), List.of("tpl-a", "tpl-b"));
-        // Down to the last option, "(Re)build all templates", which is past the bottom at 80x24.
+        // Down to the last option, "Rebuild all templates", which is past the bottom at 80x24.
         for (int i = 0; i < 8; i++) press(menu, KeyEvent.ofKey(KeyCode.DOWN));
         assertArrayEquals(new String[]{"--all"}, menu.selected().buildArgs());
         TuiSnapshot.assertMatches("build-menu-marked-80x24",

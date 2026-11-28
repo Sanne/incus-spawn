@@ -223,13 +223,13 @@ final class CleanModal {
 
         if (nothingActionable) {
             row++;
-            frame.renderWidget(Paragraph.from(Line.styled("Pool is clean.",
+            frame.renderWidget(Paragraph.from(Line.styled("Nothing to clean.",
                     Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg()))), rows.get(row++));
         }
         if (showResizeHint) {
             row++;
             frame.renderWidget(Paragraph.from(Line.styled(
-                    "Tip: isx vm resize can grow the storage pool",
+                    "'isx vm resize' grows the storage pool.",
                     Style.EMPTY.fg(theme.textDim()).bg(modal.bg()))), rows.get(row++));
         }
 
@@ -294,7 +294,11 @@ final class CleanModal {
             }
         } else {
             lines.add(Line.styled("", Style.EMPTY));
-            lines.add(Line.styled("Nothing to clean — no reclaimable artifacts found.",
+            // Within the dialog's 50 columns; a warning below says why when a delete failed. What
+            // was checked may be gone, or a template may have taken an image meanwhile.
+            lines.add(Line.styled(cleanResult.warnings().isEmpty()
+                            ? "Nothing checked could still be deleted."
+                            : "Nothing was deleted.",
                     Style.EMPTY.fg(theme.textDim()).bg(modal.bg())));
         }
 
