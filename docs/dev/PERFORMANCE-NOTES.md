@@ -1387,8 +1387,8 @@ The second run, the one in the table, destroyed such a probe before the idle rea
 
 Memory a guest has touched stays resident on the host under both launchers until the VM stops.
 The two `isx-vm` rounds of the second run that destroyed vfkit's leftover probe just before their reading are its two highest, 1229 and 1239 MiB against 1131 to 1168 MiB for the other three.
-A balloon, or the guest's free-page reporting, is what would hand such memory back; it was not tried.
 So the bench now also starts the VM again after it destroys a leftover probe, before the reading; that was not part of either run.
+The framework's balloon offers no free page reporting, and a lower balloon target hands back only a small part of such memory ("What a balloon target gives back on a Mac").
 
 The second run's `stop_ms` read 4964 ms for `isx-vm` against 4407 ms for vfkit, flagged as a regression, while the first run read 4978 against 4986 ms; it was not looked into.
 
@@ -1647,3 +1647,69 @@ The same eight clones, copied with their mtimes, their indexes refreshed after a
 Quarkus alone: 657 ms by default, 184 ms with `core.checkStat=minimal`, of which the index refresh is 9 ms.
 In the instance as branched, with no settled index, the change takes the read from 0.82 s to 0.52 s on 32 CPUs and to 0.78 s on two, by its overlap alone, at the same CPU time.
 
+## What free page reporting gives back, and what it leaves, on Linux (issue #2741)
+
+Measured 2026-11-28 in an isx box with no KVM, so under QEMU's TCG (QEMU 11.1.3, x86_64, 4 vCPUs, 4 GiB).
+The guest was Fedora 45 Cloud (kernel 7.2.11) with Incus's balloon device as isx sets it, `virtio-balloon-pci` with `free-page-reporting` on, and again with it off.
+The host figure is the QEMU process's `VmRSS`, read 20 s after each step; the guest's are `/proc/meminfo`'s.
+The guest's columns are the run with reporting on; the other run's page cache matched them within 2 MiB.
+TCG's code cache adds about 1 GiB to every host figure, so only the differences between rows count, not the levels.
+Timings under TCG say nothing of KVM, so the one ratio below is all that is given of them.
+
+| Step, in order | Host RSS, reporting on | Host RSS, reporting off | Guest page cache, reporting on | Guest free memory, reporting on |
+|---|---|---|---|---|
+| idle after boot | 1287 MiB | 1350 MiB | 277 MiB | 3411 MiB |
+| 2.5 GiB file written, then `drop_caches=3` | 1312 MiB | 3870 MiB | 178 MiB | 3523 MiB |
+| the file read back, cached | 3846 MiB | 3918 MiB | 2742 MiB | 953 MiB |
+| 1.5 GiB touched and freed by a process | 3193 MiB | 4683 MiB | 2021 MiB | 1682 MiB |
+| `echo 1G > /sys/fs/cgroup/memory.reclaim` | 2186 MiB | 4688 MiB | 1008 MiB | 2695 MiB |
+| `echo 1 > /proc/sys/vm/drop_caches` | 1374 MiB | 4696 MiB | 177 MiB | 3536 MiB |
+| the file read again, from disk | 3891 MiB | 4710 MiB | 2740 MiB | 970 MiB |
+| balloon target 1.5 GiB (QMP `balloon`) | 2153 MiB | 2176 MiB | 1038 MiB | 100 MiB |
+| balloon target back to 4 GiB | 2115 MiB | 2184 MiB | 1039 MiB | 2655 MiB |
+
+**With reporting on, the host holds what the guest uses, and clean page cache is the only part reclaim can still return.**
+Memory a process freed came back at once, and so did every page the guest's own reclaim took from its page cache.
+`memory.reclaim` on the root cgroup gave back about the 1 GiB asked for, and `drop_caches` the rest of the clean cache.
+With reporting off, none of the three gave anything back, and the host kept every page the guest had touched.
+
+**A balloon target returns memory either way, and lowers what the guest can use until it is raised.**
+Inflating to 1.5 GiB took the host down by about 1.7 GiB with reporting on and 2.5 GiB with it off, to about 2.1 GiB in both runs, and the guest was left with 100 MiB free.
+Raising the target again made no host memory resident: the guest touches the pages it gets back only as it uses them.
+
+**Losing the page cache costs a read from disk.**
+The re-read after `drop_caches` took about a hundred times as long as a cached one under TCG, through the host's cache of the disk image; the ratio on KVM was not measured.
+
+## What a balloon target gives back on a Mac (issue #2741)
+
+Measured by the Mac runner on 2026-11-28 (Mac18,5, 16 GiB, macOS 27.2.1), on appliance 0.6.0 (incusd 7.0.2, kernel 7.3.6) with 2 CPUs and 6.4 GiB.
+The launcher was a scratch build of `isx-vm` from `main` with a `VZVirtioTraditionalMemoryBalloonDeviceConfiguration` attached and a control-socket verb that sets the device's `targetVirtualMachineMemorySize`; that build is not part of any branch.
+The host figures are `footprint` of the framework's machine process, in total and for its guest RAM region ("App-Specific Tag 1"), and that region's dirty size in `vmmap -summary`.
+The guest's are the appliance's own `/proc/meminfo`, read through a privileged instance; each row is read 10 to 180 s after its step, as given.
+
+The device the framework attaches offers deflate on OOM (feature bit 2) and the tell-host bit (0), and neither free page hinting (3) nor free page reporting (5).
+
+| Step, in order | Footprint | Guest RAM, footprint | Guest RAM, `vmmap` dirty | Guest free | Guest page cache |
+|---|---|---|---|---|---|
+| idle after boot, one instance running | 1214 MB | 1191 MB | not read | 5462 MiB | 710 MiB |
+| 2 GiB written and read back in the instance | 3203 MB | 3179 MB | not read | 3415 MiB | 2761 MiB |
+| `drop_caches=3` in the appliance, 60 s later | 3264 MB | 3239 MB | not read | 6020 MiB | 197 MiB |
+| balloon target 3276 MiB (half), 60 s later | 3021 MB | 2996 MB | 585 MB | 2746 MiB | 198 MiB |
+| the same, 180 s later | 3005 MB | 2980 MB | 588 MB | 2747 MiB | 202 MiB |
+| balloon target back to 6553 MiB, 60 s later | 3005 MB | 2980 MB | 2.7 GB | 6024 MiB | 203 MiB |
+
+**Without free page reporting, the guest freeing memory gives the Mac nothing back.**
+`drop_caches` freed 2.5 GiB in the guest and the machine process's footprint did not move.
+
+**A lower target takes memory from the guest, but not from the machine process's footprint.**
+Inflating by 3.2 GiB left the guest 2.7 GiB free instead of 5.9 GiB, and the footprint fell by 260 MB in three minutes.
+`vmmap` shows the framework does mark the ballooned pages: after the inflate the region's dirty size was 585 MB while its resident size was 2.9 GB, and `footprint` still charged them; neither was read before the inflate.
+Whether macOS takes those pages back under memory pressure was not tested.
+Raising the target again made them dirty again (2.7 GB) without the guest using them.
+
+**A guest that needs more than the target still gets it, slowly.**
+One process holding 4000 MiB took 46 s at the half target and 2 s at the full one, with no OOM kill: the guest deflated the balloon as it ran out (bit 2).
+The footprint rose to 4173 MB and, after the same at the full target, to 5374 MB.
+
+**Attaching the device costs no boot time.**
+Five alternating rounds each, from `isx vm start` to `isx list` answering: a median of 2326 ms with the balloon (2307 to 2335) and 2327 ms without (2308 to 2339).

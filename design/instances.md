@@ -222,6 +222,23 @@ At branch (whose template may predate it) `configureBranch()` adds it to its one
 A `raw.qemu.conf` someone else set is left alone, because a merge that breaks the QEMU config leaves a VM that won't start.
 QEMU rejects unknown device properties, so this needs QEMU 5.1 or later.
 
+**What free page reporting leaves on the host, and the ways to give it back** (#2741).
+With reporting on, a VM holds on the host what the guest uses, its kernel's and processes' memory and its page cache, and gives back what it frees (docs/dev/PERFORMANCE-NOTES.md "What free page reporting gives back, and what it leaves, on Linux").
+Of that, clean page cache is the part left to return, and the guest's own reclaim returns it: what `memory.reclaim` or `drop_caches` frees is reported once it forms free blocks of a huge page's size, and dropped by QEMU.
+The options differ in who decides and what the guest can still grow to:
+- *Reclaim in the guest* (`memory.reclaim` on the root cgroup, or `drop_caches`) leaves the guest's size alone, so the `--memory` a person picks and the memory tools declare (#2355) stay what it can grow to.
+  It gives up the cache: the next build reads those files from disk again.
+  It needs reporting on, which a VM instance on Linux has unless someone else set its `raw.qemu.conf`.
+- *A balloon target* caps the guest at the target until the host raises it again.
+  On Linux, QEMU returns that memory to the host whether the guest freed it or not.
+  On a Mac, a lower target takes the memory from the guest but gives back only a small part of the host's (docs/dev/PERFORMANCE-NOTES.md "What a balloon target gives back on a Mac").
+  Something on the host has to decide the target and raise it before the guest needs the memory, which isx does not do today.
+  On Linux the only process isx always keeps running is the proxy, and on macOS the launcher, `isx-vm`, runs beside the VM and is where a target would be set.
+- *Free page hinting* (`free-page-hint`) serves only migration: QEMU reads the hints while it copies a VM to another host, and returns nothing to the host otherwise.
+- *virtio-mem* changes the guest's size by plugging memory blocks, so something on the host has to decide the size, as with a balloon; it was not tried.
+
+None of them is applied yet: which to build, and when it runs, is open on #2741.
+
 ## Container Configuration
 
 **Capabilities**: `lxc.cap.drop =` (don't drop any — the container is the security boundary).
