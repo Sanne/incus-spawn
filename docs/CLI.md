@@ -531,6 +531,8 @@ A second line under a row shows its purpose and its pull requests, each a link t
 
 The selected instance's preview shows the rest in full, including its whole closing message.
 It stands beside the table from 110 columns, and `p` shows or hides it.
+When it does not all fit, its last row says how many lines are hidden, and `J` and `K` scroll it.
+
 With several sessions, the TUI merges them only for the instance its preview shows.
 
 In the Work tab, Space marks rows and F8 destroys the marked ones.

@@ -29,6 +29,8 @@ final class Glyphs {
     static final String PUSHED = "⇡";
     /** Between a Work row's purpose and its references. */
     static final String BETWEEN_PARTS = "·";
+    /** The Work tab's divider beside the selected row: where the row meets its preview. */
+    static final String LINK = "┃";
     /** Something the person should look at. */
     static final String WARNING = "⚠";
 

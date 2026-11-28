@@ -2,6 +2,7 @@ package dev.incusspawn.tui;
 
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.OutputFormat;
+import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.style.Color;
@@ -201,6 +202,9 @@ final class MainScreen {
                     ? Style.EMPTY.bold().fg(tui.theme.accent()).bg(tui.theme.highlightBg())
                     : Style.EMPTY.fg(tui.theme.textDim()).bg(tui.theme.modalBg())));
             spans.add(Span.raw(" "));
+            // Where the tab is, for the tint that says its count changed
+            tui.motion.row(Tui.tabKey(view), new dev.tamboui.layout.Rect(area.left() + width, area.top(),
+                    Math.min(2 + tabLabel(view).length(), Math.max(0, area.width() - width)), 1));
             width += 3 + tabLabel(view).length();
         }
         int gap = area.width() - width - TABS_HINT.length();
@@ -575,6 +579,13 @@ final class MainScreen {
             renderRows(frame, inner, tableState, focused, null);
             return;
         }
+        // While the title says a read is under way, the spinner turns before it, in the caution colour
+        for (int at = area.left(), end = Math.min(area.right(), area.left() + CharWidth.of(overviewTitle())); at < end; at++) {
+            var cell = frame.buffer().get(at, area.top());
+            if (!Motion.SPINNER_STILL.equals(cell.symbol())) continue;
+            frame.buffer().set(at, area.top(), cell.symbol(tui.motion.spinner())
+                    .patchStyle(Style.EMPTY.fg(tui.theme.statusWarning())));
+        }
 
         // The Work tab: its table, and the selected instance's preview beside it or under it
         var selected = tui.selectedEntry(tableState);
@@ -604,11 +615,7 @@ final class MainScreen {
                     buffer.setString(titleEnd, area.top(), "─ ", border);
                     nameAt = titleEnd + 2;
                 }
-                int nameRoom = area.right() - nameAt - 2;
-                if (nameRoom > 0) {
-                    buffer.setString(nameAt, area.top(), WorkTable.middleCut(selected.name(), Math.min(nameRoom, previewWidth - 6)) + " ",
-                            Style.EMPTY.bold().fg(tui.theme.accent()));
-                }
+                previewName(buffer, nameAt, area.top(), selected, Math.min(area.right() - nameAt - 2, previewWidth - 6));
                 for (int y = inner.top(); y < inner.bottom(); y++) buffer.setString(x, y, "│", border);
             } else {
                 int previewHeight = Math.min(WorkTable.PREVIEW_BELOW_MOST, inner.height() / 2);
@@ -616,14 +623,53 @@ final class MainScreen {
                 int ruleY = tableArea.bottom();
                 buffer.setString(inner.left(), ruleY, "─".repeat(inner.width()), border);
                 buffer.setString(inner.left(), ruleY, "─ ", border);
-                buffer.setString(inner.left() + 2, ruleY, WorkTable.middleCut(selected.name(), Math.max(1, inner.width() - 6)) + " ",
-                        Style.EMPTY.bold().fg(tui.theme.accent()));
+                previewName(buffer, inner.left() + 2, ruleY, selected, inner.width() - 6);
                 previewArea = new dev.tamboui.layout.Rect(inner.left(), ruleY + 1, inner.width(), previewHeight - 1);
             }
         }
         renderRows(frame, tableArea, tableState, focused, workColumns());
+        if (previewArea != null && beside && focused) linkSelectedRow(buffer, previewDividerX, inner);
         if (previewArea != null) renderPreview(frame, previewArea, selected);
     }
+
+    /**
+     * The preview's instance on a rule, from {@code x}, within {@code room} cells: its state glyph
+     * as its row has it, then its name in the accent. The same mark is then at both ends, the row
+     * and its preview. A cursor that lands on another instance lights it ({@link Tui#PREVIEW_TITLE_KEY}).
+     */
+    private void previewName(Buffer buffer, int x, int y, InstanceInfo selected, int room) {
+        if (room <= 2) return;
+        var glyph = tui.stateGlyph(selected);
+        buffer.setString(x, y, glyph.content(), glyph.style());
+        if (!selected.pendingOp().isEmpty() && tui.motion.on()) {
+            buffer.set(x, y, buffer.get(x, y).symbol(tui.motion.spinner()));
+        }
+        var name = WorkTable.middleCut(selected.name(), room - 2);
+        buffer.setString(x + 2, y, name + " ", Style.EMPTY.bold().fg(tui.theme.accent()));
+        tui.motion.row(Tui.PREVIEW_TITLE_KEY, new dev.tamboui.layout.Rect(x, y, 2 + CharWidth.of(name), 1));
+    }
+
+    /**
+     * Where the divider passes the selected row it is a heavy line in the accent, on the row's own
+     * fill where the fill reaches it: the row opens into its preview, and the eye crosses there.
+     * Heavy against light reads with no colour.
+     */
+    private void linkSelectedRow(Buffer buffer, int x, dev.tamboui.layout.Rect inner) {
+        int top = Math.max(selectedTop, inner.top());
+        int bottom = Math.min(selectedTop + selectedLines, inner.bottom());
+        if (selectedTop < 0 || x <= inner.left() || bottom <= top) return;
+        for (int y = top; y < bottom; y++) {
+            var style = Style.EMPTY.bold().fg(tui.theme.accent());
+            var fill = buffer.get(x - 1, y).style().bg();
+            if (fill.isPresent()) style = style.bg(fill.get());
+            buffer.setString(x, y, Glyphs.LINK, style);
+        }
+        tui.motion.row(Tui.PREVIEW_LINK_KEY, new dev.tamboui.layout.Rect(x, top, 1, bottom - top));
+    }
+
+    /** The lines the selected row takes in this frame's instance table, from {@code selectedTop}; -1 for none on screen. */
+    private int selectedTop = -1;
+    private int selectedLines;
 
     /** The fewest rows the panel needs for the preview under its table. */
     static final int PREVIEW_BELOW_LEAST_ROWS = 8;
@@ -638,6 +684,7 @@ final class MainScreen {
     private void renderRows(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect inner, TableState tableState,
                             boolean focused, WorkColumns work) {
         var heights = work != null ? work.rows() : tui.tableRows;
+        selectedTop = -1;
         int visibleRows = Math.max(inner.height() - 1, 1);
         int lines = heights.stream().mapToInt(Row::height).sum();
         boolean needsScroll = lines > visibleRows;
@@ -741,6 +788,11 @@ final class MainScreen {
         int first = 0;
         while (first < tops.length && tops[first] < 0) first++;
         tui.instanceFirstRow = first;
+        var at = tableState.selected();
+        if (at != null && at >= 0 && at < tops.length && tops[at] >= 0) {
+            selectedTop = tops[at];
+            selectedLines = Math.min(shownRows.get(at).height(), actualArea.bottom() - tops[at]);
+        }
         if (work != null) renderSecondLines(frame, actualArea, tops, work);
         renderMarks(frame, actualArea, offset, shownRows, tui::instanceRowMarked);
         renderRowMotion(frame, actualArea, offset, shownRows, nameColumn, work != null);
@@ -785,16 +837,43 @@ final class MainScreen {
         }
     }
 
-    /** The selected instance's preview, as many of its lines as fit. */
+    /** The selected instance's preview: as many of its lines as fit, from where J and K scrolled it. */
     private void renderPreview(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, InstanceInfo selected) {
         var log = tui.overviewLog;
         var reading = tui.overviewReading;
         var subject = new WorkPreview.Subject(selected, tui.stateGlyph(selected), stateWord(selected),
                 log == null ? null : OverviewCommand.effortOf(log, selected), reading, tui.overviewAwaits(selected),
                 tui.mergingSessions(selected.name()), tui.motion.spinner(), tui.overviewClock.get(), tui.overviewZone);
-        var lines = WorkPreview.lines(subject, area.width(), tui.theme);
-        for (int i = 0; i < lines.size() && i < area.height(); i++) {
-            frame.buffer().setLine(area.left(), area.top() + i, lines.get(i), area.width());
+        var preview = WorkPreview.preview(subject, area.width(), tui.theme);
+        var lines = preview.lines();
+        tui.previewSays(selected.name(), preview.blocks());
+        // A preview that does not all fit says so on its last row, and J and K move it
+        boolean cut = lines.size() > area.height();
+        int shown = Math.max(0, cut ? area.height() - 1 : area.height());
+        int most = cut ? lines.size() - shown : 0;
+        tui.previewScrollMost = most;
+        int offset = Math.max(0, Math.min(tui.previewScroll, most));
+        for (int i = 0; i < shown && offset + i < lines.size(); i++) {
+            frame.buffer().setLine(area.left(), area.top() + i, lines.get(offset + i), area.width());
+        }
+        // The state glyph of its first line turns with the one on the title rule and on the row
+        if (offset == 0 && shown > 0 && !selected.pendingOp().isEmpty() && tui.motion.on()) {
+            var glyph = frame.buffer().get(area.left() + 1, area.top());
+            if (Motion.SPINNER_STILL.equals(glyph.symbol())) {
+                frame.buffer().set(area.left() + 1, area.top(), glyph.symbol(tui.motion.spinner()));
+            }
+        }
+        for (var part : preview.blocks()) {
+            int top = Math.max(0, part.from() - offset);
+            int bottom = Math.min(shown, part.to() - offset);
+            if (bottom > top) {
+                tui.motion.row(Tui.previewKey(part.key()),
+                        new dev.tamboui.layout.Rect(area.left(), area.top() + top, area.width(), bottom - top));
+            }
+        }
+        if (cut && area.height() > 0) {
+            frame.buffer().setLine(area.left(), area.bottom() - 1,
+                    WorkPreview.cutLine(lines.size() - offset - shown, offset, tui.theme), area.width());
         }
     }
 
@@ -818,7 +897,7 @@ final class MainScreen {
      * the list (review of #2511).
      */
     private record WorkColumns(List<InstanceInfo> instances, List<Row> rows, List<WorkTable.Work> work,
-                               List<String> idle, List<String> tokens, List<String> purposes,
+                               List<String> idle, List<WorkTable.Age> ages, List<String> tokens, List<String> purposes,
                                List<List<WorkTable.Ref>> refs, int nameNatural, int workNatural, MainScreen screen) {
 
         record Fitted(int[] widths, List<String> headers, List<Row> rows) {}
@@ -855,8 +934,13 @@ final class MainScreen {
                 var spent = tokens.get(i);
                 var cells = List.of(
                         dev.tamboui.widgets.table.Cell.from(screen.nameLine(instance, widths[0])),
+                        // Graded by age, so the table is scanned for what is live
                         dev.tamboui.widgets.table.Cell.from(Span.styled(rightAligned(idle.get(i), WorkTable.IDLE_WIDTH),
-                                Style.EMPTY.fg(theme.textDim()))),
+                                switch (ages.get(i)) {
+                                    case HOUR -> Style.EMPTY;
+                                    case DAY -> Style.EMPTY.fg(theme.textDim());
+                                    case OLDER -> Style.EMPTY.fg(theme.textFaint());
+                                })),
                         dev.tamboui.widgets.table.Cell.from(Span.styled(w.text(), tone)),
                         dev.tamboui.widgets.table.Cell.from(Span.styled(rightAligned(spent, WorkTable.TOKENS_WIDTH),
                                 "-".equals(spent) ? Style.EMPTY.fg(theme.textFaint()) : Style.EMPTY)));
@@ -908,6 +992,7 @@ final class MainScreen {
         var rows = new ArrayList<Row>();
         var work = new ArrayList<WorkTable.Work>();
         var idle = new ArrayList<String>();
+        var ages = new ArrayList<WorkTable.Age>();
         var tokens = new ArrayList<String>();
         var purposes = new ArrayList<String>();
         var refs = new ArrayList<List<WorkTable.Ref>>();
@@ -919,6 +1004,7 @@ final class MainScreen {
                 rows.add(base);
                 work.add(null);
                 idle.add(null);
+                ages.add(null);
                 tokens.add(null);
                 purposes.add(null);
                 refs.add(List.of());
@@ -928,16 +1014,26 @@ final class MainScreen {
             boolean awaits = reading == null || tui.overviewAwaits(instance);
             work.add(WorkTable.work(awaits ? null : reading.workOf(instance), awaits));
             var active = WorkTable.lastActive(instance, effort);
-            idle.add(active == null ? "-" : WorkTable.idle(java.time.Duration.between(active, now)));
+            var since = active == null ? null : java.time.Duration.between(active, now);
+            idle.add(WorkTable.idle(since));
+            ages.add(WorkTable.age(since));
             tokens.add(effort == null ? ColumnFit.ELLIPSIS : OverviewCommand.tokensCell(effort));
             var references = effort == null ? List.<WorkTable.Ref>of() : WorkTable.references(effort,
                     reading == null ? List.of() : OverviewCommand.statesOf(reading, instance, effort));
             refs.add(references);
+            // What a finished read says, for the tint on a row a later read changes
+            if (!awaits) {
+                tui.workSays(instance.name(), "clones", work.getLast().text());
+                if (log != null && reading.pulls().containsKey(instance.name())) {
+                    tui.workSays(instance.name(), "pulls", references.stream().filter(ref -> !ref.branch())
+                            .map(ref -> ref.text() + ref.state()).collect(java.util.stream.Collectors.joining(" ")));
+                }
+            }
             purposes.add(instance.purpose());
             boolean twoLines = !references.isEmpty() || instance.purpose() != null && !instance.purpose().isBlank();
             rows.add(base.height(twoLines ? 2 : 1));
         }
-        return new WorkColumns(instances, rows, work, idle, tokens, purposes, refs, nameNatural, workNatural, this);
+        return new WorkColumns(instances, rows, work, idle, ages, tokens, purposes, refs, nameNatural, workNatural, this);
     }
 
     /** How far the latest refresh has read the running guests, after {@code lead} ({@code , reading 3/12 instances}), or nothing once it has. */
@@ -953,8 +1049,9 @@ final class MainScreen {
         var log = tui.overviewLog;
         var name = tui.view == Tui.View.WORK ? " Work" : " Instances: overview";
         var back = tui.view == Tui.View.WORK ? " " : " (o: back) ";
-        if (log == null) return name + ", reading the proxy's event log" + readingCount(" and ") + back;
-        var reading = readingCount(", reading ");
+        var turning = Motion.SPINNER_STILL + " reading ";
+        if (log == null) return name + ", " + turning + "the proxy's event log" + readingCount(" and ") + back;
+        var reading = readingCount(", " + turning);
         if (!log.files() || log.since() == null) return name + ", the proxy's event log is empty" + reading + back;
         var lost = log.droppedLines() + log.unreadableLines();
         return name + " since "

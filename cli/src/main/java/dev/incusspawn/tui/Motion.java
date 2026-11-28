@@ -17,9 +17,9 @@ import java.util.function.LongSupplier;
 
 /**
  * The TUI's motion (design/visual-language.md "Motion"): a shimmer over text that names work under
- * way, a spinner beside it, and a flash on a row whose state changed. Nothing moves in answer to
- * a key: what a key opens is drawn whole in its first frame, since an entrance, however short,
- * reads as a slower TUI.
+ * way, a spinner beside it, a flash on what isx just saw change, and a shorter one where a key's
+ * consequence landed away from the cursor. What a key asks for is drawn whole in its first frame,
+ * since an entrance, however short, reads as a slower TUI.
  *
  * <p>Motion is drawn over a frame that is already complete, so it never delays what the frame
  * shows or a key. It asks for frames only while something moves ({@link #pump}): an idle TUI draws
@@ -36,6 +36,10 @@ final class Motion {
 
     static final long FRAME_MS = 40;
     static final long FLASH_MS = 900;
+    static final double FLASH_STRENGTH = 0.38;
+    /** How long the tint of {@link #settle} takes to fade after the last key that moved the cursor. */
+    static final long SETTLE_MS = 400;
+    static final double SETTLE_STRENGTH = 0.30;
     static final long SHIMMER_PERIOD_MS = 1800;
     static final int SHIMMER_BAND = 8;
     /** How lit a cell is before it stops being dimmed with the rest of its row. */
@@ -53,7 +57,10 @@ final class Motion {
 
     private final List<Rect> shimmers = new ArrayList<>();
     private final Map<String, Rect> rows = new HashMap<>();
-    private final Map<String, Long> flashes = new HashMap<>();
+    private final Map<String, Tint> flashes = new HashMap<>();
+
+    /** A tint on an area: when it started, how long it fades for, and how strong it starts. */
+    private record Tint(long start, long ms, double strength) {}
     private boolean spinnerShown;
 
     private ScheduledFuture<?> driver;
@@ -110,14 +117,26 @@ final class Motion {
         return SPINNER[(int) (millis.getAsLong() / SPINNER_FRAME_MS % SPINNER.length)];
     }
 
-    /** Where the row named {@code key} is drawn in this frame, for a flash that follows it. */
+    /**
+     * Where what is named {@code key} is drawn in this frame, for a flash that follows it: a row,
+     * a cell, a tab or a line of the preview.
+     */
     void row(String key, Rect area) {
-        rows.put(key, area);
+        if (area.width() > 0 && area.height() > 0) rows.put(key, area);
     }
 
-    /** The row named {@code key} changed state: it is tinted, and the tint fades. */
+    /** What is named {@code key} changed, and isx just saw it: it is tinted, and the tint fades. */
     void flash(String key) {
-        if (on() && theme.depth().blends()) flashes.put(key, millis.getAsLong());
+        if (on() && theme.depth().blends()) flashes.put(key, new Tint(millis.getAsLong(), FLASH_MS, FLASH_STRENGTH));
+    }
+
+    /**
+     * A key's consequence landed at {@code key}, away from the cursor: it is tinted, for less
+     * long than a flash. Each further key starts the fade again, so the tint holds still while the
+     * cursor keeps moving and fades once after the last key, and never flickers.
+     */
+    void settle(String key) {
+        if (on() && theme.depth().blends()) flashes.put(key, new Tint(millis.getAsLong(), SETTLE_MS, SETTLE_STRENGTH));
     }
 
     // --- Drawing over the finished frame ---
@@ -127,10 +146,11 @@ final class Motion {
         if (!on()) return;
         long now = millis.getAsLong();
         for (var area : shimmers) drawShimmer(buffer, area, now);
-        flashes.values().removeIf(start -> now - start >= FLASH_MS);
+        flashes.values().removeIf(tint -> now - tint.start() >= tint.ms());
         for (var flash : flashes.entrySet()) {
             var area = rows.get(flash.getKey());
-            if (area != null) drawFlash(buffer, area, (now - flash.getValue()) / (double) FLASH_MS);
+            var tint = flash.getValue();
+            if (area != null) drawFlash(buffer, area, tint.strength(), (now - tint.start()) / (double) tint.ms());
         }
     }
 
@@ -154,9 +174,9 @@ final class Motion {
         }
     }
 
-    private void drawFlash(Buffer buffer, Rect area, double progress) {
+    private void drawFlash(Buffer buffer, Rect area, double full, double progress) {
         var clip = area.intersection(buffer.area());
-        double strength = 0.38 * (1 - progress) * (1 - progress);
+        double strength = full * (1 - progress) * (1 - progress);
         for (int y = clip.y(); y < clip.bottom(); y++) {
             for (int x = clip.x(); x < clip.right(); x++) {
                 var cell = buffer.get(x, y);

@@ -57,7 +57,7 @@ A filled cell draws the eye more than any foreground colour does, so the TUI fil
 - A dialog, and the inputs in it.
 - The brand chip.
 - Each tab, as wide as its label and one cell at each side.
-- A row that just changed state, for under a second (see "Motion").
+- What isx just saw change, or where a key's consequence landed, for under a second (see "Motion").
 
 The header, the tab bar, the context line and the key bar are not bands.
 A tab is filled although the bar is not, because a row of unfilled labels did not show where one label ends and the next begins (`Templates 5   Instances 6`).
@@ -123,6 +123,7 @@ Where two meanings still share a glyph, the column tells them apart: `↑` is a 
 | `✓` `±` `↑` `≡` `?` `–` | Clean, changes not committed, commits not pushed, stashes alone, unknown, not read | The Work tab's WORK column |
 | `⇡` | A pushed branch | The second line of a Work row |
 | `·` | Between a row's purpose and its references | The second line of a Work row |
+| `┃` | Where the selected row meets its preview | The Work tab's divider, beside the selected row |
 | `▸` | The cursor, and a dialog's focused field | The cursor gutter's first cell |
 | `✓` `✗` | Work that ended well, or failed | The context line, the status line |
 | `⚠` | Something to look at | The header, and an account the first run saved unchecked in its recap |
@@ -227,14 +228,28 @@ From 110 columns the selected instance's preview stands right of the table, behi
 The preview is quiet labels (`Purpose`, `Idle`, `Work`) at one indent and values wrapped under their start, as in a dialog, but it is not filled.
 Narrower, `p` shows it under the table behind a rule that names the instance, and the context line says so (`p Preview`).
 
+**The selected row and its preview are joined.**
+A filled row at the left and a name on a rule at the top right did not read as one thing: nothing at the row's height pointed across.
+Beside the selected row the divider is a heavy `┃` in the accent, on the row's own fill, so the row opens into its preview and the eye crosses there.
+Heavy against light reads with no colour.
+The title rule repeats the row's state glyph before the name, in the same colour, so the same mark stands at both ends.
+
+**IDLE is graded by age.**
+Within the hour it is in the text's own colour, within the day quiet, and older or never faint, so the table is scanned for what is live.
+
+**A preview that does not all fit says so.**
+Its last row counts the lines below and above what is shown and names the keys that move it (`12 more lines   J/K Scroll`).
+Before, the lines that did not fit were dropped unmarked, so a closing message ended mid-thought.
+Another instance's preview starts at its top.
+
 ```
- Work since Nov 24 ─────────────────────────────────────────────┬─ mcp-isx-agent-2458-companion-y27vl ────────
+ Work since Nov 24 ─────────────────────────────────────────────┬─ ● mcp-isx-agent-2458-companion-y27vl ──────
      NAME                                 IDLE   WORK   TOKENS  │ ● Running   from tpl-claude
    ◐ bench-native restarting               40m   ≡2          -  │
    ● isx-coordinator-1                      2h   ±1       1.3G  │ Idle     2 days since its last logged
        Sanne/isx-workflow#132 #135 Sanne/incus-spawn#2650       │          activity, last start 4 days ago
- ▸ ● mcp-isx-agent-2458-companion-y27vl     2d   ↑22     16.8M  │ Active   Nov 24
-       ⇡ chatgpt-workspace-backfill                             │ Tokens   16.8M in 1 model call
+ ▸ ● mcp-isx-agent-2458-companion-y27vl     2d   ↑22     16.8M  ┃ Active   Nov 24
+       ⇡ chatgpt-workspace-backfill                             ┃ Tokens   16.8M in 1 model call
    ● quarkus-42871                         30m   ±3↑1     4.2M  │ Work     22 unpushed
        Fix the dev-mode reload race · ⇡ fix-reload-race         │          incus-spawn: 22 unpushed
    ● review-pr-2301                         2h   ✓       48.1M  │ Pushed   ⇡ chatgpt-workspace-backfill
@@ -259,7 +274,11 @@ Motion says that something is happening or has just happened, and is never decor
 |---|---|---|
 | A spinner before an instance's name, beside "Running:" and in a progress dialog | While an operation is under way | As long as it lasts |
 | A band of the caution colour crossing the name of what is being worked on | The same | One pass every 1.8 s |
-| A tint on a row, fading | The row's status changed, or the row is new | 0.9 s |
+| A tint on a row, fading | The row's status changed, the row is new, or a read changed what the Work table says of it | 0.9 s |
+| A tint on a part of the Work tab's preview, fading | Its value arrived, or a read changed it, while the instance stayed selected | 0.9 s |
+| A tint on a tab, fading | Its count changed, other than by a search | 0.9 s |
+| A spinner in the Work tab's title, before "reading" | While the event log or the guests are being read | As long as it lasts |
+| A lighter tint on the preview's title and on the divider beside the selected row | The cursor landed on another instance | 0.4 s after the last key |
 
 **The shimmer's band is in the caution colour.**
 That colour already says "under way" in the spinner before the name, so the band adds no meaning of its own.
@@ -267,10 +286,24 @@ A band from grey to white was tried first, and at 256 colours it had four steps 
 A change of hue survives the fitting.
 A row that is stopping or restarting is dimmed, and the band is not, or the terminal would dim the band with the row.
 
-**Nothing moves in answer to a key.**
-A dialog, a tab and the screen itself are drawn whole in the first frame after the key that opens them.
+**What a key asks for is drawn whole in its first frame.**
+A dialog, a tab, the screen itself and a preview's text have no entrance, fade or slide.
 A dialog that faded in over 0.16 s was tried, and it read as a slower TUI rather than as an effect, which is the opposite of what isx is for.
-So motion is kept for what isx is waiting on or has just seen change, and never for what the person just asked for.
+The rule was first written as "nothing moves in answer to a key", which was wider than that finding, and F8 already broke its wording: the row it destroys shimmers.
+
+**Motion after a key may mark where the key's consequence landed.**
+It does so only where that is away from where the person is looking, and it is drawn over the finished frame.
+On the Work tab the eye is on the list at the left when the cursor moves, and the preview changes at the right.
+So the preview's title and the divider beside the selected row are tinted, lighter and for less long than what isx saw change, since the person caused it.
+The preview's text is not tinted: it is what is read.
+Each further key starts the fade again, so the tint holds still while the cursor keeps moving and fades once after the last key.
+A tint started afresh on every row of a held arrow would flicker.
+Opening the preview or the tab tints nothing.
+
+**A first read is not news.**
+A row is tinted when a read says something else than an earlier read did, never for the first one of a session.
+A part of the preview is tinted when its value arrives too, since the person is waiting on it there, but not when the cursor brought another instance's preview.
+Idle is never tinted: the clock alone changes it.
 
 **Motion never delays anything.**
 The frame under an effect is the finished one, and a key pressed while a row is tinted acts on it at once.
@@ -317,7 +350,8 @@ A new screen, dialog or column follows from the sections above, and these are th
 - Does it read with no colour: is each state a glyph from `Glyphs` or a word?
 - Does it fill anything beyond the selected row, a tab, a dialog and its inputs?
 - Is the loudest thing on it the thing the person came for?
-- Does anything move while nothing is happening, or in answer to a key?
+- Does anything move while nothing is happening?
+- Is what a key asks for whole in its first frame, with motion only where its consequence landed away from the cursor?
 - Does a dialog start on its first row and end in a blank row and its keys, with quiet labels and nothing cut at its frame?
 - Does a table size its columns through `ColumnFit`, with the column a person reads first cut last?
 - Is it snapshotted at 80 by 24, and looked at in `scripts/tui-demo.sh` in both themes and at `ISX_COLORS=256`?

@@ -179,10 +179,13 @@ class TuiOverviewTest {
         assertEquals(Tui.View.WORK, tui.view);
     }
 
-    /** Whether {@code line} is {@code name}'s row: its state glyph, then the name. */
+    /**
+     * Whether {@code line} is {@code name}'s row: its state glyph, then the name. The preview's
+     * title has the same glyph and name, on a rule.
+     */
     private static boolean rowOf(String line, String name) {
         for (var glyph : List.of(Glyphs.RUNNING, Glyphs.STOPPED, Glyphs.BETWEEN)) {
-            if (line.contains(glyph + " " + name + " ")) return true;
+            if (line.contains(glyph + " " + name + " ") && !line.contains("─ " + glyph + " " + name)) return true;
         }
         return false;
     }
@@ -268,7 +271,7 @@ class TuiOverviewTest {
             var title = lines.stream().filter(l -> l.contains("Work since Nov 1")).findFirst().orElseThrow();
             assertEquals(entry.getValue().intValue(), title.indexOf("┬"), entry.getKey() + " columns: " + String.join("\n", lines));
             if (entry.getValue() > 0) {
-                assertTrue(title.contains("┬─ mine "), "the selected instance's name on the title rule: " + title);
+                assertTrue(title.contains("┬─ ● mine "), "the selected instance's name on the title rule: " + title);
                 var footer = lines.stream().filter(l -> l.startsWith("────")).reduce((a, b) -> b).orElseThrow();
                 assertEquals(entry.getValue().intValue(), footer.indexOf("┴"), footer);
                 assertTrue(lines.stream().anyMatch(l -> l.contains("│ Work     2 unpushed")), String.join("\n", lines));
@@ -285,12 +288,12 @@ class TuiOverviewTest {
         workTab(tui);
         readsFinish();
         var without = screen(tui);
-        assertFalse(without.contains("─ mine ─"), without);
+        assertFalse(without.contains("─ ● mine ─"), without);
         assertTrue(without.contains("p Preview"), "the context line names the key: " + without);
 
         press(tui, KeyEvent.ofChar('p'));
         var with = screen(tui);
-        assertTrue(with.contains("─ mine ─"), "a rule names the instance under the table: " + with);
+        assertTrue(with.contains("─ ● mine ─"), "a rule names the instance under the table: " + with);
         assertTrue(with.contains("Done     1 session, Claude Code") && with.contains("Ported the parser"), with);
         assertTrue(with.contains("p Hide preview"), with);
         assertEquals(Tui.Mode.BROWSE, tui.mode(), "p opens no dialog on the Work tab");
@@ -321,7 +324,7 @@ class TuiOverviewTest {
         var tui = tui(120);
         workTab(tui);
         readsFinish();
-        assertTrue(screen(tui).contains("┬─ mine"));
+        assertTrue(screen(tui).contains("┬─ ● mine"));
         press(tui, KeyEvent.ofChar('p'));
         var hidden = screen(tui);
         assertFalse(hidden.contains("┬") || hidden.contains("┴"), hidden);
@@ -344,9 +347,9 @@ class TuiOverviewTest {
 
         press(tui, KeyEvent.ofKey(KeyCode.DOWN));
         var ws = screen(tui);
-        assertTrue(ws.contains("┬─ ws "), ws);
-        assertTrue(ws.contains("│ Purpose  Port the parser to the new grammar"), ws);
-        assertTrue(ws.contains("│ Idle     3 days since its last logged activity, last"), ws);
+        assertTrue(ws.contains("┬─ ○ ws "), ws);
+        assertTrue(ws.contains(Glyphs.LINK + " Purpose  Port the parser to the new grammar"), "the divider is heavy beside the selected row: " + ws);
+        assertTrue(ws.contains(Glyphs.LINK + " Idle     3 days since its last logged activity, last"), ws);
         assertTrue(ws.contains("│          start 4 days ago"), "wrapped under its value: " + ws);
         assertTrue(ws.contains("│ Tokens   42.0k in 1 model call"), ws);
         assertTrue(ws.contains("│ Work     not read: the instance is stopped"), ws);
@@ -370,7 +373,7 @@ class TuiOverviewTest {
         var after = screen(tui).lines().toList();
         assertEquals(before.size(), after.size());
         for (int y = 0; y < after.size(); y++) {
-            if (after.get(y).contains("○ ws")) {
+            if (rowOf(after.get(y), "ws")) {
                 assertTrue(after.get(y).contains(Glyphs.MARKED + "○ ws"), after.get(y));
                 assertEquals(before.get(y), after.get(y).replaceFirst(Glyphs.MARKED, " "), "only the mark cell changes");
             } else if (!after.get(y).contains("Space Mark")) {
@@ -450,7 +453,7 @@ class TuiOverviewTest {
         var tui = tui(80, daemon -> daemon.execOutput(dev.incusspawn.command.WorkState.HEADER, TWO_SESSIONS));
         workTab(tui);
         readsFinish();
-        assertFalse(screen(tui).contains("─ mine ─"), "no preview at 80 columns");
+        assertFalse(screen(tui).contains("─ ● mine ─"), "no preview at 80 columns");
         assertTrue(merges.isEmpty(), "nothing shows the merged summary, so nothing is merged");
 
         press(tui, KeyEvent.ofKey(KeyCode.F3));
@@ -480,7 +483,7 @@ class TuiOverviewTest {
         readsFinish();
         press(tui, KeyEvent.ofKey(KeyCode.HOME));
         assertEquals("busy", tui.selectedInstance().name());
-        assertTrue(screen(tui).contains("┬─ busy"));
+        assertTrue(screen(tui).contains("┬─ ◐ busy"));
         press(tui, KeyEvent.ofChar('p'));
         assertFalse(screen(tui).contains("┬"), "p is not an action on the instance: " + screen(tui));
     }
@@ -547,6 +550,152 @@ class TuiOverviewTest {
         assertFalse(shown.contains("\t"), "a tab the model echoed is a space: " + shown);
     }
 
+    /** Whether any cell of {@code name}'s row is tinted in {@code buffer}: a row's own text has no fill. */
+    private boolean rowTinted(dev.tamboui.buffer.Buffer buffer, String name) {
+        var lines = TuiSnapshot.toText(buffer).lines().toList();
+        for (int y = 0; y < lines.size(); y++) {
+            if (rowOf(lines.get(y), name)) return buffer.get(lines.get(y).indexOf(name), y).style().bg().isPresent();
+        }
+        throw new AssertionError(name + " not on screen");
+    }
+
+    /** The cell where {@code text} starts on the screen. */
+    private dev.tamboui.buffer.Cell cellAt(dev.tamboui.buffer.Buffer buffer, String text) {
+        var lines = TuiSnapshot.toText(buffer).lines().toList();
+        for (int y = 0; y < lines.size(); y++) {
+            int x = lines.get(y).indexOf(text);
+            if (x >= 0) return buffer.get(x, y);
+        }
+        throw new AssertionError(text + " not on screen");
+    }
+
+    /** What a key asks for is whole in its first frame, and where its consequence landed is lit (visual-language.md "Motion"). */
+    @Test
+    void aCursorOnAnotherInstanceLightsThePreviewsTitleAndOpeningThePreviewLightsNothing() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(tui(120).theme.depth().blends());
+        var tui = tui(120);
+        tui.motion.start();
+        try {
+            workTab(tui);
+            readsFinish();
+            render(tui);
+            assertTrue(cellAt(render(tui), "─ ● mine").style().bg().isEmpty(), "the tab opens with nothing lit");
+            press(tui, KeyEvent.ofKey(KeyCode.DOWN));
+            var lit = render(tui);
+            var lines = TuiSnapshot.toText(lit).lines().toList();
+            int y = 0;
+            while (!lines.get(y).contains("┬─ ○ ws")) y++;
+            int x = lines.get(y).indexOf("○ ws");
+            assertTrue(lit.get(x, y).style().bg().isPresent(), "the preview's title is lit: it changed away from the cursor");
+            assertTrue(lit.get(x - 2, y).style().bg().isEmpty(), "and the rule beside it is not");
+            assertTrue(tui.motion.moving());
+        } finally {
+            tui.motion.stop();
+        }
+    }
+
+    @Test
+    void aReadThatChangesARowTintsItAndTheFirstReadTintsNoRow() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(tui(120).theme.depth().blends());
+        var daemons = new java.util.ArrayList<FakeIncusDaemon>();
+        var tui = tui(120, daemons::add);
+        tui.motion.start();
+        try {
+            workTab(tui);
+            press(tui, KeyEvent.ofKey(KeyCode.DOWN));
+            readsFinish();
+            assertTrue(row(screen(tui), "mine").contains("↑2"));
+            assertFalse(rowTinted(render(tui), "mine"), "the first read is not news");
+
+            daemons.getFirst().execOutput(dev.incusspawn.command.WorkState.HEADER,
+                    guest("total 1\n" + claudeSession(1762164000, "Ported the parser")).replace("repo 0 2 0 app", "repo 3 2 0 app"));
+            press(tui, KeyEvent.ofChar('r'));
+            assertFalse(rowTinted(render(tui), "mine"), "the last read stays, untinted, while the next runs");
+            readsFinish();
+            var changed = render(tui);
+            assertTrue(row(TuiSnapshot.toText(changed), "mine").contains("±3↑2"), TuiSnapshot.toText(changed));
+            assertTrue(rowTinted(changed, "mine"), "a read that changed the row tints it");
+        } finally {
+            tui.motion.stop();
+        }
+    }
+
+    @Test
+    void aValueArrivingInThePreviewTintsItsLineAndAnotherInstancesPreviewTintsNothing() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(tui(120).theme.depth().blends());
+        var tui = tui(120);
+        tui.motion.start();
+        try {
+            workTab(tui);
+            assertTrue(screen(tui).contains("Work     reading the clones"), screen(tui));
+            readsFinish();
+            var arrived = render(tui);
+            assertTrue(cellAt(arrived, "Work     2 unpushed").style().bg().isPresent(), "the value that arrived is tinted");
+            assertTrue(cellAt(arrived, "Idle     ").style().bg().isEmpty(), "Idle, which only the clock changes, never is");
+
+            tui.motion.stop();
+            tui.motion.start();
+            press(tui, KeyEvent.ofKey(KeyCode.DOWN));
+            assertTrue(cellAt(render(tui), "Work     not read").style().bg().isEmpty(), "the cursor brought this preview: nothing in it is news");
+        } finally {
+            tui.motion.stop();
+        }
+    }
+
+    @Test
+    void aPreviewThatDoesNotFitSaysSoAndJAndKScrollIt() throws Exception {
+        height = 12;
+        var tui = tui(120);
+        workTab(tui);
+        readsFinish();
+        press(tui, KeyEvent.ofKey(KeyCode.DOWN));
+        var top = screen(tui);
+        var count = java.util.regex.Pattern.compile("(\\d+) more lines   J/K Scroll").matcher(top);
+        assertTrue(count.find(), "a cut preview says how much is below, and the keys: " + top);
+        int below = Integer.parseInt(count.group(1));
+        assertTrue(top.contains("○ Stopped   from tpl-minimal"), top);
+
+        press(tui, KeyEvent.ofChar('K'));
+        assertEquals(top, screen(tui), "K at the top moves nothing");
+        press(tui, KeyEvent.ofChar('J'));
+        var down = screen(tui);
+        assertTrue(down.contains((below - 1) + " more lines, 1 above"), down);
+        assertFalse(down.contains("○ Stopped   from tpl-minimal"), "the first line scrolled away: " + down);
+        for (int i = 0; i < below + 3; i++) press(tui, KeyEvent.ofChar('J'));
+        var end = screen(tui);
+        assertTrue(end.contains(below + " lines above   J/K Scroll"), "J stops at the last line: " + end);
+        assertTrue(end.contains("Done     not read"), end);
+
+        press(tui, KeyEvent.ofKey(KeyCode.UP), KeyEvent.ofKey(KeyCode.DOWN));
+        assertEquals(top, screen(tui), "another instance's preview starts at its top");
+    }
+
+    @Test
+    void idleIsGradedByAgeAndTheSelectedRowsDividerIsHeavy() throws Exception {
+        var tui = tui(120);
+        workTab(tui);
+        readsFinish();
+        var drawn = render(tui);
+        var lines = TuiSnapshot.toText(drawn).lines().toList();
+        int y = 0;
+        while (!rowOf(lines.get(y), "ws")) y++;
+        assertEquals(tui.theme.textFaint(), drawn.get(lines.get(y).indexOf("3d"), y).style().fg().orElseThrow(),
+                "idle for days is faint");
+        assertEquals(WorkTable.Age.HOUR, WorkTable.age(java.time.Duration.ofMinutes(59)));
+        assertEquals(WorkTable.Age.DAY, WorkTable.age(java.time.Duration.ofHours(23)));
+        assertEquals(WorkTable.Age.OLDER, WorkTable.age(java.time.Duration.ofHours(24)));
+        assertEquals(WorkTable.Age.OLDER, WorkTable.age(null), "never at work is the faintest");
+
+        // The divider is heavy beside the selected row alone, on the row's own fill
+        int mine = 0;
+        while (!rowOf(lines.get(mine), "mine")) mine++;
+        int x = lines.get(mine).indexOf(Glyphs.LINK);
+        assertTrue(x > 0, "the selected row meets its preview: " + lines.get(mine));
+        assertEquals(tui.theme.accent(), drawn.get(x, mine).style().fg().orElseThrow());
+        assertEquals(drawn.get(x - 1, mine).style().bg(), drawn.get(x, mine).style().bg(), "the row's fill runs into it");
+        assertTrue(lines.get(y).contains("│") && !lines.get(y).contains(Glyphs.LINK), lines.get(y));
+    }
+
     @Test
     void aMergesAgeIsCountedInTheGivenZone() {
         var merge = new dev.incusspawn.command.SessionMerge.Merged("h", "d", "s", "p", 2, 2, 1, NOW.minus(java.time.Duration.ofHours(2)));
@@ -610,7 +759,7 @@ class TuiOverviewTest {
         var before = screen(tui);
         assertTrue(row(before, "ws").contains("–"), "a stopped instance is not read, so nothing waits: " + before);
         assertTrue(row(before, "mine").contains("…"), before);
-        assertTrue(before.contains("reading the proxy's event log and 0/1 instance"), before);
+        assertTrue(before.contains("◐ reading the proxy's event log and 0/1 instance"), before);
     }
 
     @Test
@@ -660,7 +809,7 @@ class TuiOverviewTest {
         assertTrue(row(refreshing, "mine").contains("↑2") && refreshing.contains("Ported the parser"),
                 "the last read stays: " + refreshing);
         assertTrue(row(refreshing, "ws").contains("42.0k"), refreshing);
-        assertTrue(refreshing.contains("Work since Nov 1, reading 0/1 instance"), refreshing);
+        assertTrue(refreshing.contains("Work since Nov 1, ◐ reading 0/1 instance"), refreshing);
         readsFinish();
         assertFalse(screen(tui).contains("reading 0/1"));
     }

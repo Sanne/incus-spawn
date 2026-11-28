@@ -52,9 +52,25 @@ final class WorkPreview {
         return AGENTS.getOrDefault(agent, OutputFormat.oneLine(agent));
     }
 
+    /**
+     * One labelled part of the preview, for the tint that says its value just arrived or changed:
+     * its label, the lines it takes ({@code from} to {@code to}, the last excluded) and what it
+     * says, less what the clock or the spinner alone change.
+     */
+    record Block(String key, int from, int to, String says) {}
+
+    /** The preview's lines and the parts they are made of. */
+    record Preview(List<Line> lines, List<Block> blocks) {}
+
     /** The preview's lines, each within {@code width} cells; the caller shows as many as fit. */
     static List<Line> lines(Subject s, int width, TuiTheme theme) {
+        return preview(s, width, theme).lines();
+    }
+
+    /** The preview: its lines, each within {@code width} cells, and its parts. Idle is no part, since the clock alone changes it. */
+    static Preview preview(Subject s, int width, TuiTheme theme) {
         var out = new ArrayList<Line>();
+        var blocks = new ArrayList<Block>();
         var dim = Style.EMPTY.fg(theme.textDim());
         var faint = Style.EMPTY.fg(theme.textFaint());
         var instance = s.instance();
@@ -68,14 +84,18 @@ final class WorkPreview {
         out.add(Line.from(head));
         out.add(Line.from(""));
 
+        int from = out.size();
         if (instance.purpose() != null && !instance.purpose().isBlank()) {
             row(out, "Purpose", OutputFormat.oneLine(instance.purpose()), Style.EMPTY, width, theme);
         }
+        from = block(blocks, "Purpose", out, from);
         var effort = s.effort();
         row(out, "Idle", idle(instance, effort, s.now()), Style.EMPTY, width, theme);
+        from = out.size();
         if (effort != null && effort.any()) {
             row(out, "Active", OverviewCommand.activeCell(effort, s.zone()), Style.EMPTY, width, theme);
         }
+        from = block(blocks, "Active", out, from);
         if (effort == null) {
             row(out, "Tokens", ColumnFit.ELLIPSIS, faint, width, theme);
         } else if (effort.modelCalls() == 0) {
@@ -84,7 +104,9 @@ final class WorkPreview {
             row(out, "Tokens", OverviewCommand.tokensCell(effort) + " in " + effort.modelCalls()
                     + (effort.modelCalls() == 1 ? " model call" : " model calls"), Style.EMPTY, width, theme);
         }
+        from = block(blocks, "Tokens", out, from);
         work(out, s, width, theme);
+        from = block(blocks, "Work", out, from);
 
         if (effort != null) {
             var pulls = effort.pullRequests();
@@ -107,14 +129,43 @@ final class WorkPreview {
                 }
                 out.add(Line.from(spans));
             }
+            from = block(blocks, "GitHub", out, from);
             var branches = effort.branches();
             for (int i = 0; i < branches.size(); i++) {
                 row(out, i == 0 ? "Pushed" : "", Glyphs.PUSHED + " " + OutputFormat.oneLine(branches.get(i).name()), dim, width, theme);
             }
+            from = block(blocks, "Pushed", out, from);
         }
         out.add(Line.from(""));
-        done(out, s, width, theme);
-        return out;
+        from = out.size();
+        var passing = done(out, s, width, theme);
+        block(blocks, "Done", out, from, passing, s.spinner());
+        return new Preview(out, blocks);
+    }
+
+    /**
+     * Notes the lines added since {@code from} as the part {@code key}, when there are any, and
+     * returns where the next part starts. What the part says is its text with no white space, so
+     * a new width's wrapping changes nothing, and less each of {@code passing}.
+     */
+    private static int block(List<Block> blocks, String key, List<Line> out, int from, String... passing) {
+        if (out.size() == from) return from;
+        var says = new StringBuilder();
+        for (var line : out.subList(from, out.size())) {
+            for (var span : line.spans()) says.append(span.content());
+        }
+        var text = unspaced(says.toString());
+        for (var part : passing) {
+            if (part != null && !part.isBlank()) text = text.replace(unspaced(part), "");
+        }
+        blocks.add(new Block(key, from, out.size(), text));
+        return out.size();
+    }
+
+    private static String unspaced(String text) {
+        var kept = new StringBuilder();
+        text.codePoints().filter(c -> !Character.isWhitespace(c)).forEach(kept::appendCodePoint);
+        return kept.toString();
     }
 
     /** How long it has been idle, in words, and since what. */
@@ -166,7 +217,8 @@ final class WorkPreview {
         return n < 0 ? "unknown" : Integer.toString(n);
     }
 
-    private static void done(List<Line> out, Subject s, int width, TuiTheme theme) {
+    /** The DONE part; returns the text in it that the clock alone changes, or null. */
+    private static String done(List<Line> out, Subject s, int width, TuiTheme theme) {
         var faint = Style.EMPTY.fg(theme.textFaint());
         var dim = Style.EMPTY.fg(theme.textDim());
         var reading = s.reading();
@@ -174,11 +226,11 @@ final class WorkPreview {
         // Only the event log can say an instance with no session was not untouched
         if (summary == null || s.effort() == null && "untouched".equals(summary.from())) {
             row(out, "Done", "reading the sessions" + ColumnFit.ELLIPSIS, faint, width, theme);
-            return;
+            return null;
         }
         if ("untouched".equals(summary.from())) {
             row(out, "Done", "untouched: no agent session", faint, width, theme);
-            return;
+            return null;
         }
         var sessions = reading.sessionsOf(s.instance());
         var merge = summary.merged();
@@ -187,11 +239,11 @@ final class WorkPreview {
             if (merge == null) {
                 row(out, "Done", "not read".equals(summary.cell()) ? "not read: the instance is stopped" : OutputFormat.oneLine(summary.cell()),
                         faint, width, theme);
-                return;
+                return null;
             }
         } else if (summary.sessions() == 0) {
             row(out, "Done", OutputFormat.oneLine(summary.cell()), faint, width, theme);
-            return;
+            return null;
         }
         int total = summary.sessions() == null ? merge.total() : summary.sessions();
         var head = (total == 1 ? "1 session" : total + " sessions");
@@ -204,29 +256,45 @@ final class WorkPreview {
         if (s.merging() > 0) {
             out.add(Line.from(Span.raw("   "), Span.styled(s.spinner() + " merging " + s.merging() + " sessions",
                     Style.EMPTY.fg(theme.statusWarning()))));
-            return;
+            return null;
         }
         if (merge != null) {
             // The model's answer is the guest's text at one remove: one line each, as F3 shows it
-            paragraph(out, merge.label(s.now(), s.zone()), dim, width);
+            var label = merge.label(s.now(), s.zone());
+            paragraph(out, label, dim, width);
             paragraph(out, OutputFormat.oneLine(merge.headline()), Style.EMPTY.bold(), width);
             // The labels F3's details give the same fields
             paragraph(out, "Finished: " + OutputFormat.oneLine(merge.done()), Style.EMPTY, width);
             paragraph(out, "State: " + OutputFormat.oneLine(merge.current()), Style.EMPTY, width);
             paragraph(out, "Pending: " + OutputFormat.oneLine(merge.pending()) + " (inferred)", Style.EMPTY, width);
-            return;
+            return label;
         }
         var newest = sessions.sessions().isEmpty() ? null : sessions.sessions().getFirst();
         if (newest == null || !newest.closingReadable() || newest.closing() == null || newest.closing().isBlank()) {
             var why = newest != null && !newest.closingReadable() ? "closing message not readable" : "no closing message found";
             paragraph(out, why, faint, width);
-            return;
+            return null;
         }
         if (total > 1) paragraph(out, "the newest of " + total + " said:", dim, width);
         for (var line : newest.closing().lines().toList()) {
             if (line.isBlank()) continue;
             paragraph(out, OutputFormat.oneLine(line), Style.EMPTY, width);
         }
+        return null;
+    }
+
+    /**
+     * The last row of a preview that does not all fit: how many lines are below and above what is
+     * shown, and the keys that move it.
+     */
+    static Line cutLine(int below, int above, TuiTheme theme) {
+        var faint = Style.EMPTY.fg(theme.textFaint());
+        var says = below > 0
+                ? below + (below == 1 ? " more line" : " more lines") + (above > 0 ? ", " + above + " above" : "")
+                : above + (above == 1 ? " line above" : " lines above");
+        return Line.from(Span.raw(" "), Span.styled(says, faint),
+                Span.styled("   J/K", Style.EMPTY.bold().fg(theme.accent())),
+                Span.styled(" Scroll", Style.EMPTY.fg(theme.textDim())));
     }
 
     /** Text wrapped under the labels' column, from the third cell. */

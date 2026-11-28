@@ -63,6 +63,15 @@ final class WorkTable {
         return Math.round(m / 10080.0) + "w";
     }
 
+    /** How long ago an instance was last at work, as IDLE's colour says it: within the hour, within the day, or longer ago or never. */
+    enum Age { HOUR, DAY, OLDER }
+
+    static Age age(Duration since) {
+        if (since == null) return Age.OLDER;
+        long m = Math.max(0, since.toMinutes());
+        return m < 60 ? Age.HOUR : m < 1440 ? Age.DAY : Age.OLDER;
+    }
+
     /** The same in words, for the preview: {@code 1 minute}, {@code 3 hours}, {@code 2 days}, {@code 5 weeks}. */
     static String idleWords(Duration since) {
         long m = Math.max(0, since.toMinutes());
