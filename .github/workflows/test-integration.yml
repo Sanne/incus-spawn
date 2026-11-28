@@ -1063,12 +1063,7 @@ jobs:
 
       - name: Install Incus
         run: |
-          curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor \
-            | sudo tee /etc/apt/keyrings/zabbly.gpg >/dev/null
-          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
-          echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
-            | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
-          sudo .github/scripts/apt-install.sh incus btrfs-progs qemu-system-x86
+          sudo .github/scripts/install-incus.sh btrfs-progs qemu-system-x86
           sudo usermod -aG incus-admin "$USER"
 
       - name: Enable KVM
@@ -1711,12 +1706,7 @@ jobs:
 
       - name: Install Incus (deliberately WITHOUT 'incus admin init')
         run: |
-          curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor \
-            | sudo tee /etc/apt/keyrings/zabbly.gpg >/dev/null
-          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
-          echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
-            | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
-          sudo .github/scripts/apt-install.sh incus btrfs-progs busybox-static
+          sudo .github/scripts/install-incus.sh btrfs-progs busybox-static
           sudo usermod -aG incus-admin "$USER"
 
           # Create ONLY the storage pool — no admin init. This reproduces the reported broken

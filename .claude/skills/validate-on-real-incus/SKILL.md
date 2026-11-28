@@ -24,7 +24,7 @@ gh api repos/Sanne/incus-spawn/actions/jobs/<job-id> \
 If that job failed, find out whether the failure is in the area the change touched, and compare it
 with recent runs on `main` (`gh run list --workflow test-integration.yml`) before blaming the change.
 Then grep `.github/scripts/` and the workflow for the feature. What CI does not exercise is what
-needs checking by hand. CI also runs its own Incus version (Zabbly's latest), not the one a distro
+needs checking by hand. CI also runs its own Incus version (the Zabbly build `scripts/zabbly-incus.env` pins), not the one a distro
 ships, so version-dependent behaviour is not covered.
 
 ## 2. Set up

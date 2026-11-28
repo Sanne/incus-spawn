@@ -609,3 +609,36 @@ items:
     files:
       - common/src/main/resources/tools/rex.yaml
     fields: [version, sha256.x86_64, sha256.aarch64]
+  zabbly-incus:
+    # The Incus that CI installs on its Ubuntu runners (#2733). A person merges it: isx talks to
+    # Incus in every flow, and the release workflow's profile collection, which no PR runs, has
+    # been the first to break on a new Incus (#2720), so its bump PR is where a person decides.
+    # Any series: Incus releases a new minor each month, and each is proposed like a rebuild.
+    class: review
+    within: any
+    cooling: 0
+    judgement: build
+    source:
+      type: apt-repo
+      repo: https://pkgs.zabbly.com/incus/stable/
+      suite: noble
+      component: main
+      arch: amd64
+      package: incus
+      # install-incus.sh pins these beside incus: incus depends on incus-base, and incus-base on
+      # incus-client, each at its exact version.
+      with: [incus-base, incus-client]
+      variable: ZABBLY_INCUS_VERSION
+      note: |-
+        Zabbly keeps only the newest two builds in the repository, so this pin stops installing once two newer builds are out. Before merging, run `release.yml` by `workflow_dispatch` on this branch: its `profiles` job runs flows no PR job does (#2720).
+    verify:
+      type: signed-file
+      # Zabbly's package key, from https://pkgs.zabbly.com/key.asc; the primary key signs each
+      # suite's Release file. It expires 2030-08-17, and an expired signer fails closed until a
+      # person commits the renewed key.
+      key: upstream/keys/zabbly.asc
+      fingerprints:
+        - 4EFC590696CB15B87C73A3AD82CC8797C838DCFD
+    files:
+      - scripts/zabbly-incus.env
+    fields: [version, epoch]

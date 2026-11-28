@@ -82,13 +82,7 @@ jobs:
       # As isx-integration-tests-native in test-integration.yml prepares it.
       - name: Install Incus
         run: |
-          set -o pipefail  # a failed key download must fail here, not as a later NO_PUBKEY
-          curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor \
-            | sudo tee /etc/apt/keyrings/zabbly.gpg >/dev/null
-          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
-          echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
-            | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
-          sudo .github/scripts/apt-install.sh incus btrfs-progs
+          sudo .github/scripts/install-incus.sh btrfs-progs
           sudo usermod -aG incus-admin "$USER"
 
       - name: Build instrumented binaries

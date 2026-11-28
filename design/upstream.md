@@ -37,7 +37,7 @@ Two jobs rather than two steps because steps of one job share a runner and a use
 The app's commits carry its login and noreply address, resolved from the public user id, since the ruleset asks an extra approval for unattributed changes.
 Issues are opened with the run's own token: one per judgement item and version, one when a `within: series` item's publisher lists a newer series, one when a pinned version's values no longer match what the publisher gives for it (a republished or tampered release, never a silent re-pin; a publisher that cannot be read while the pin is checked fails the run instead, #2261), the kernel's `[upstream] kernel: series <s> is EOL`, and `[upstream] watch failing` from a final `track` job that judges both jobs' results once, after both, so a plan that passed never closes the issue a failed publish is about to open; the next run where both pass closes it.
 The kernel source reads the next major's signed sums file as well once kernel.org publishes it (a missing file is no release yet; one that does not verify fails the run), and an EOL issue of a series no longer pinned or no longer ended is closed by the next run, the retired job's `[kernel] <s> is EOL` title included.
-The `github-asset`, `signed-file`, `rpm-repo`, `maven-central`, `jetbrains`, `antigravity` and `model-deprecations` source types download through `fetch` in `lib.sh`, and so does the kernel source's `releases.json` (#2461).
+The `github-asset`, `signed-file`, `rpm-repo`, `apt-repo`, `maven-central`, `jetbrains`, `antigravity` and `model-deprecations` source types download through `fetch` in `lib.sh`, and so does the kernel source's `releases.json` (#2461).
 `fetch` tries a failed download six more times, waiting a second doubling each time, or the `Retry-After` the server names.
 Its waits stay within two minutes in all, and the time a transfer takes does not count, so a large download that drops after minutes is tried again.
 Three retries waited seven seconds in all, and Maven Central's rate limit answered all four attempts at a listing with HTTP 429.
@@ -99,6 +99,7 @@ Opening lives in Actions as the app and approving lives in the coordinator as th
 | `arch-cloud-image` | `scripts/distro-images.env` (`ARCH_IMAGE_URL`, `ARCH_IMAGE_SHA256`) | the Arch mirror's `images/` listing, the signed `.SHA256` of the image | `signed-file`, `upstream/keys/arch-linux.asc` | mechanical | `any` | 0 | none |
 | `ubuntu-cloud-image` | `scripts/distro-images.env` (`UBUNTU_IMAGE_URL`, `UBUNTU_IMAGE_SHA256`) | Canonical's `releases/noble/` listing, the `SHA256SUMS` signed by `SHA256SUMS.gpg` | `signed-file`, `upstream/keys/ubuntu-cloud-images.asc` | mechanical | `any` | 0 | none |
 | `rex` | `common/src/main/resources/tools/rex.yaml` (`description`, both rpm URLs and sums) | Superlogical's `rex/rpm/preview/<arch>/` repository: the signed `repomd.xml`, then the primary metadata it hashes | `signed-file`, `upstream/keys/superlogical-rex.asc` | review | `any` | 0 | none |
+| `zabbly-incus` | `scripts/zabbly-incus.env` (`ZABBLY_INCUS_VERSION`, the version and its epoch) | Zabbly's `incus/stable/` apt repository: the signed `Release` of the `noble` suite, then the amd64 `Packages.gz` it hashes | `signed-file`, `upstream/keys/zabbly.asc` | review | `any` | 0 | none |
 | `models` | `common/src/main/resources/models.yaml` (every model ID isx ships) | each vendor's keyless markdown deprecations page (Anthropic, OpenAI, Google) | none: a findings source pins nothing | judgement | none | none | a deprecated or retired ID, or a successor (`go:build`) |
 | `maven-plugins` | the four poms (`compiler-plugin.version`, `surefire-plugin.version`, which failsafe shares, and the exec, jandex and assertj versions) | Maven Central's listing of each artifact | `central-exists` | review | `series` (each member's major) | 0 | a member's new major (`go:build`) |
 | `aesh` | `pom.xml` (`aesh.version`, for aesh and its processor) | Maven Central's listings | `central-exists` | review | `series` (the major) | 0 | a new major (`go:build`) |
@@ -249,6 +250,38 @@ It is `within: any`, since a person merges every bump anyway, so a 0.2 preview i
 What this gives up: only the preview channel is watched; moving the tool to the stable channel, once it has packages, is a person's change.
 A new release of the version already pinned (`-2` after `-1`) is not proposed: the check reads it as a pin the repository no longer confirms and opens a pin-mismatch issue.
 Superlogical publishes a preview every day or two, and the candidate is always the newest, so each run proposes the newest preview at once.
+
+## The apt-repo source type
+
+CI installs Incus from Zabbly's stable apt repository on its Ubuntu 24.04 runners: the release workflow's `profiles` job and the integration jobs that need a real Incus (#2733).
+That install was not pinned, so every run took whatever Zabbly served that day.
+On 2026-11-27 Zabbly moved from Incus 7.6 to 7.7, and the next release dry run failed in `profiles` with no change in isx (#2720).
+A new Incus thus first showed up as a red release run, on whichever release came next.
+
+**Chosen:** CI installs the exact version `scripts/zabbly-incus.env` pins (`.github/scripts/install-incus.sh`), and the `zabbly-incus` item of the `apt-repo` source type moves the pin.
+The engine follows apt's own chain: the suite's `Release` file is signed (`Release.gpg`), checked by `verify_signed` against `upstream/keys/zabbly.asc` with the primary fingerprint pinned, so the verifier is `signed-file`.
+The `Release` file must name the suite it was asked for, and it gives the sha256 of the arch's `Packages.gz`, which must hash to it before its versions are read (`apt-repo.pl`).
+A version counts only when `incus-base` and `incus-client`, which `incus` depends on at its exact version and CI pins beside it, are listed at it too (`source.with`).
+The `Release`, its signature and the index are three downloads, so a chain that does not check is downloaded once more, and fails the run only when it fails again: a republish between them is not a tamper.
+No package is downloaded: the pin is a version, and the runner's apt checks each package against the same signed chain when it installs it.
+The install script trusts the same committed key, so CI no longer downloads Zabbly's key at run time.
+The pin holds the epoch, which the check compares too, so the whole value apt installs is proven.
+A version is Zabbly's form without the epoch, `7.6-ubuntu24.04-202611072126`, ordered by the Incus version and then by its build stamp, which also dates it.
+Each rebuild is a version of its own, so a rebuild is proposed rather than left to vanish under the pin.
+The item is `class: review`: isx talks to Incus in every flow, and `profiles` runs flows that no PR job runs, so a person runs `release.yml` by `workflow_dispatch` on the bump's branch before merging it, as the PR body says.
+It is `within: any`, since Incus ships a new minor each month and a person merges each one anyway.
+
+**Alternatives:** keep the install unpinned and add a scheduled job that runs the integration suite and `profiles` against Zabbly's newest Incus, opening an issue when it fails.
+That tests what Linux users run on the day they run it, but a release run could still go red for a reason outside the change.
+A `signed-file` item does not fit, since it needs a signature of each file or a signed sums file listing it, and an apt repository signs a two-level index instead.
+
+**Why:** every run then installs a known Incus, so a release run is reproducible, and a new Incus arrives as a PR where a break like #2720 shows before it reaches a release.
+
+What this gives up: CI tests an older Incus than Zabbly's users have until the bump merges, while Linux users take each new Incus on their next package update.
+Zabbly keeps only the newest two builds, so a pin left two builds behind no longer installs, and every Incus job fails until the bump merges, with an error from `install-incus.sh` that names the pin.
+A pinned build the repository dropped is a pin-mismatch issue (`src_confirms`), not a run that fails.
+The watch then proposes nothing for the item until the pin matches again, so the issue names the newest build for a person to apply with `upstream.sh apply`.
+Only noble's amd64 build is pinned, the one CI's runners use; `install-incus.sh` refuses another Ubuntu or another arch.
 
 ## The github-action source type
 
