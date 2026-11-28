@@ -1,4 +1,5 @@
 ---
+title: "Review a coding agent's commits from its sandbox"
 description: Fetch an agent's commits from its isx sandbox to your host with plain git, review exactly what it did, and take only what you want.
 ---
 

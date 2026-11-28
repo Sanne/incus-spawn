@@ -1,4 +1,5 @@
 ---
+title: Contribute to Hibernate ORM with a sandboxed AI agent
 description: Build and test Hibernate ORM against real databases with your coding agent in an isx sandbox, and send every change yourself, under its contributing guide.
 ---
 

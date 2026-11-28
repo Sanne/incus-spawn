@@ -1,4 +1,5 @@
 ---
+title: Run Claude Code in a safe sandbox
 description: Run Claude Code with full autonomy in an isx sandbox, a Linux machine of its own with your project cloned in and no credential inside it.
 ---
 

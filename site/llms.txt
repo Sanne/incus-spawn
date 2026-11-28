@@ -71,7 +71,7 @@ Each guide is one task, from an installed isx to a working result.
 - [Driving `isx mcp` from a program](https://isx.run/docs/mcp-protocol): structured results, task states, notifications, idempotency keys, activity counters
 - [Driving isx from other tools](https://isx.run/docs/integrations): orchestrators such as Orca and herdr, with an instance per task, and host routes to a controller of your own
 - [CLI reference](https://isx.run/docs/cli): every command, and the stable output formats for scripts
-- [Compared with other sandboxes](https://isx.run/docs/sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
+- [isx compared to other sandboxes](https://isx.run/docs/sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
 - [FAQ](https://isx.run/docs/faq): URL clicks in Codex, the clipboard, a model server on your host such as Ollama, and why there is no read-write project mount
 
 ## Optional

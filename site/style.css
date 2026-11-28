@@ -682,6 +682,26 @@ kbd {
   margin-bottom: 0.4rem;
 }
 
+.works-with {
+  max-width: var(--max-width);
+  margin: 2rem auto 0;
+  padding: 0 1.5rem;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: var(--fg-subtle);
+}
+
+.works-with a {
+  color: var(--fg-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.works-with a:hover {
+  color: var(--accent);
+}
+
 .pillar p {
   font-size: 0.875rem;
   line-height: 1.55;

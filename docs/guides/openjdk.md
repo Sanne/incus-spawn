@@ -1,4 +1,5 @@
 ---
+title: Build and debug OpenJDK with a sandboxed AI agent
 description: Build, debug and explore OpenJDK with your coding agent in an isx sandbox, within OpenJDK's policy that no AI-generated content is ever contributed.
 ---
 

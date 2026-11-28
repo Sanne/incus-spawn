@@ -24,7 +24,7 @@ The tradeoff: system containers are heavier than application containers (~200MB 
 This is acceptable for development environments that persist for hours or days, and copy-on-write storage means clones are cheap regardless of base image size.
 
 The choice is what a sandbox *is*: in isx, a branch of a template, as a container by default or a VM.
-Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, "Compared with other sandboxes", says how.
+Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, "isx compared to other sandboxes", says how.
 
 ## Goals
 

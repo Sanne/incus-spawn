@@ -1,4 +1,5 @@
 ---
+title: Run a coding agent on a local Ollama model in a sandbox
 description: Run the Pi coding agent in an isx sandbox on a local model from Ollama on your host, with no cloud account and no model server inside the machine.
 ---
 

@@ -1,4 +1,4 @@
-# Compared with other sandboxes
+# isx compared to other sandboxes
 
 "Sandbox" names three different things, and the right one depends on what you need.
 This page says what each kind is, where isx sits, and for each of the other tools when it is the better fit.

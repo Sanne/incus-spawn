@@ -1,4 +1,5 @@
 ---
+title: Run Codex CLI in a safe sandbox
 description: Run OpenAI's Codex CLI unconstrained in an isx sandbox, a Linux machine of its own, with your OpenAI key or ChatGPT sign-in kept on your host.
 ---
 
