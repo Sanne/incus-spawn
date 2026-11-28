@@ -208,7 +208,7 @@ final class Tasks {
             task = tasks.get(id);
         }
         if (task == null) {
-            throw new ToolError(ToolError.Code.NOT_FOUND, "no task '" + id + "' in this session. Tasks are listed by list_instances; "
+            throw new ToolError(ToolError.Code.NOT_FOUND, "this session has no task '" + id + "'. Tasks are listed by list_instances; "
                     + "a task of an instance another session held becomes yours with adopt_instance.");
         }
         return task;
@@ -320,7 +320,7 @@ final class Tasks {
                 var recovered = run(task.instance(), "node -e " + ExecScript.quote(WorkerRunners.of(task.agent())) + " \""
                         + TaskScripts.dir(task.id()) + "\" recover" + empty, null).strip();
                 if (!SESSION_ID.matcher(recovered).matches())
-                    throw new ToolError(ToolError.Code.WRONG_STATE, "no valid recovered " + what + " ID");
+                    throw new ToolError(ToolError.Code.WRONG_STATE, "the recovered " + what + " ID is not valid");
                 attached = status(task, 0).attachedPid();
             } catch (ToolError e) {
                 throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id()

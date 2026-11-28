@@ -14,7 +14,7 @@ import java.util.regex.Pattern;
  * <p>Lines of the test's own ({@code ⟪...⟫}) and bare addresses are not the program's and are not
  * read; what the person typed is cut from the end of its line.
  */
-final class TranscriptGate {
+public final class TranscriptGate {
 
     private TranscriptGate() { }
 
@@ -112,7 +112,7 @@ final class TranscriptGate {
         return false;
     }
 
-    static boolean negatesANoun(String line) {
+    public static boolean negatesANoun(String line) {
         return negatesANoun("", line);
     }
 

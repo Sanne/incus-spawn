@@ -357,7 +357,7 @@ final class IncusInstanceBackend implements InstanceBackend {
             raw = incus.instanceMetadataOrThrow(name);
         } catch (IncusException e) {
             throw new ToolError(ToolError.Code.UNAVAILABLE, "cannot read '" + name + "' from Incus right now (" + e.getMessage()
-                    + "); nothing was changed, try again.");
+                    + "); isx did not change it, so try again.");
         }
         return raw == null || raw.isNull() ? null : configOf(raw);
     }

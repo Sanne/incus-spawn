@@ -277,7 +277,7 @@ public final class TaskJoin {
      * its pid, and when its terminal last had input, or that it has none.
      */
     public static String holder(Entry entry, Instant now) {
-        if (!entry.attachedTty()) return "agent pid " + entry.attachedPid() + ", with no terminal";
+        if (!entry.attachedTty()) return "agent pid " + entry.attachedPid() + ", without a terminal";
         return "agent pid " + entry.attachedPid() + ", last input "
                 + (entry.attachedLastInputAt() == null ? "unknown" : age(entry.attachedLastInputAt(), now));
     }

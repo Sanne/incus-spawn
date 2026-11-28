@@ -749,7 +749,7 @@ class DelegationToolsTest {
         reclaimAnswer = "alive 77";
         var refused = call("reclaim_task", "{\"task_id\":\"" + task + "\"}");
         assertEquals("wrong_state", refused.path("_meta").path(ToolResult.ERROR_META).path("code").asText());
-        assertTrue(text(refused).contains("did not exit") && text(refused).contains("nothing harder"), text(refused));
+        assertTrue(text(refused).contains("did not exit") && text(refused).contains("harder signal"), text(refused));
         assertTrue(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"go\"}").path("isError").asBoolean(false));
 
         reclaimAnswer = "running";

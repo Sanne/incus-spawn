@@ -33,7 +33,7 @@ Modules: `common` (shared code), `cli` (the `isx` binary), `proxy` (the `isx-pro
   `README.md`, `docs/*.md` and the guides in `docs/guides/` also keep to the budgets in `.claude/rules/writing.md`.
 - A guide (`docs/guides/`) is one task per page; it links to the reference and never restates it.
 - Every text a person reads follows `.claude/rules/writing.md`, and the text isx prints (prompts, output, warnings, errors, the TUI) also follows `.claude/rules/interface-text.md`.
-  `TranscriptGate` checks the transcripts of the main flows against its mechanical rules, and `HelpTextGateTest` every command's `--help` text.
+  `TranscriptGate` checks the transcripts of the main flows against its mechanical rules, `HelpTextGateTest` every command's `--help` text, and `McpToolTextGateTest` the texts `isx mcp` gives a model.
 - A divergence from stock Fedora is listed in `docs/FEDORA.md` in the same change.
 - Never print to stdout or stderr directly; all output goes through `BuildOutput` (`RawOutputGateTest`).
 - A regular expression is a `static final Pattern` (`PatternConstantGateTest`).

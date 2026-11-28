@@ -22,7 +22,7 @@ final class OutputSchemas {
 
     /** On a result that an earlier call with the same idempotency_key produced. */
     private static final String REPLAYED = "true when an earlier call with this idempotency_key made it, "
-            + "and this one made nothing";
+            + "and this one did not make anything";
 
     /** Delegates run with full access inside their instance, whatever the agent (#1857). */
     private static final String PERMISSION_MODE = "Full access inside the instance: bypassPermissions for Claude, "
@@ -61,11 +61,11 @@ final class OutputSchemas {
                 .string("permission_mode", "The delegated agent's permission mode", false)
                 .string("delegate_model", "The delegated agent's default model", false);
         return Schema.object()
-                .list("templates", "Approved templates; empty when none are", true, template)
+                .list("templates", "Approved templates; empty when the user has not approved any", true, template)
                 .integer("max_instances", null, true)
                 .integer("max_concurrent_tasks", null, true)
                 .integer("orphan_grace_hours", null, true)
-                .string("scope_note", "Why a coordinator in an instance may use no template, and what the user has to change", false)
+                .string("scope_note", "Why a coordinator in an instance may not use any template, and what the user has to change", false)
                 .build();
     }
 
@@ -94,7 +94,7 @@ final class OutputSchemas {
                 .string("task_id", null, true)
                 .choice("kind", null, true, KINDS)
                 .string("agent", "Worker agent; unknown for unsupported persisted metadata", false)
-                .choice("state", "As this session last saw it; unknown: nothing has read how it ended "
+                .choice("state", "As this session last saw it; unknown: isx has not read how it ended "
                         + "(as after cancel_task). task_status reads it now", true, TASK_STATES);
         var instance = Schema.object()
                 .string("instance", null, true)
@@ -102,14 +102,14 @@ final class OutputSchemas {
                 .string("purpose", null, false)
                 .string("created", "ISO-8601", false)
                 .choice("state", "creating or ready: held by this session; held: by another live session; "
-                        + "orphaned: by none, adopt_instance takes it", true, "creating", "ready", "held", "orphaned")
+                        + "orphaned: the session that held it ended or released it, and adopt_instance takes it", true, "creating", "ready", "held", "orphaned")
                 .bool("kept", null, true)
                 .string("held_by", "The session holding it, as <pid>-<start>", false)
                 .string("held_by_client", "The MCP client of that session", false)
                 .string("orphaned_since", "ISO-8601", false)
                 .string("orphan_until", "ISO-8601: destroyed after this unless adopted", false)
-                .string("dormant_since", "ISO-8601: when the orphan sweep stopped it, its delegate "
-                        + "showing no activity; adopt_instance starts it again", false)
+                .string("dormant_since", "ISO-8601: when the orphan sweep stopped it, because its delegate "
+                        + "had been idle; adopt_instance starts it again", false)
                 .string("dormant_until", "ISO-8601: destroyed after this unless adopted", false)
                 .bool("supports_delegate", null, false)
                 .list("delegate_agents", null, false, delegateAgent())
@@ -282,7 +282,7 @@ final class OutputSchemas {
                 .choice("kind", null, true, KINDS)
                 .string("agent", "Worker agent; unknown for unsupported persisted metadata", false)
                 .choice("state", "After the reclaim: finished once its holder exited", true, TASK_STATES)
-                .bool("reclaimed", "An agent held its conversation and exited; false when none held it", true)
+                .bool("reclaimed", "An agent held its conversation and exited; false when the conversation was not held", true)
                 .integer("reclaimed_pid", "The agent that held it", false)
                 .build();
     }
@@ -329,7 +329,7 @@ final class OutputSchemas {
                 .integer("requests_in_flight", null, true)
                 .string("last_request_at", "ISO-8601", false)
                 .string("last_response_at", "ISO-8601", false)
-                .integer("idle_seconds", "Since the last call ended; only while none is in flight", false)
+                .integer("idle_seconds", "Since the last call ended; only while there is no call in flight", false)
                 .stringList("model_usage_providers", "Providers measured by the proxy model counters", false)
                 .integer("input_tokens", null, true)
                 .integer("output_tokens", null, true)

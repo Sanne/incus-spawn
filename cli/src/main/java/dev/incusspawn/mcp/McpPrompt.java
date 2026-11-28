@@ -29,7 +29,7 @@ record McpPrompt(String name, String description, String text) {
             an idempotency_key derived from the work, so that repeating the call after an error or a \
             restart returns the same instance instead of making another.
             3. delegate hands work to an installed agent; list_templates lists the supported agents. Its brief must stand on \
-            its own: that agent sees nothing of this conversation. Select agent: claude, codex, pi, opencode or antigravity when needed. Use exec for commands you run \
+            its own: that agent does not see this conversation. Select agent: claude, codex, pi, opencode or antigravity when needed. Use exec for commands you run \
             yourself, such as a build or a check.
             4. wait_any over the running tasks returns as soon as any one finishes: one call per \
             tick, never a poll of each task. instance_activity tells a working agent from a stuck \
@@ -48,9 +48,9 @@ record McpPrompt(String name, String description, String text) {
             asking for more; never work around a refusal.
 
             After a restart: instances outlive your session. list_instances shows the ones you hold \
-            and the orphans of ended sessions; adopt_instance takes one back, tasks included. Orphans \
-            nobody adopts are destroyed after a grace period, so adopt what you still need and leave \
-            the rest.""");
+            and the orphans of ended sessions; adopt_instance takes one back, tasks included. An orphan \
+            is destroyed after a grace period unless a session adopts it, so adopt what you still need \
+            and leave the rest.""");
 
     /** All prompts {@code isx mcp} serves. */
     static final List<McpPrompt> ALL = List.of(COORDINATE);

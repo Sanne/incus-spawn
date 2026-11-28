@@ -104,8 +104,8 @@ final class ModelCheck {
         if (exit == 0 && success && !isError && result != null) return null;
         var detail = !err.isBlank() ? err.strip() : last;
         var why = isError && result != null && !result.isBlank() ? result
-                : exit == 0 ? "Claude Code gave no successful result" + (detail.isEmpty() ? "" : ": " + detail)
-                : exit == 124 ? "no answer within " + TIMEOUT_SECONDS + " seconds"
+                : exit == 0 ? "Claude Code did not report a successful result" + (detail.isEmpty() ? "" : ": " + detail)
+                : exit == 124 ? "Claude Code did not answer within " + TIMEOUT_SECONDS + " seconds"
                 : !detail.isEmpty() ? detail
                 : "Claude Code failed (exit " + exit + ")";
         return why.length() > ERROR_LIMIT ? why.substring(why.length() - ERROR_LIMIT) : why;

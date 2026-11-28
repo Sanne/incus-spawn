@@ -103,15 +103,15 @@ record Reclaim(Outcome outcome, Long pid) {
         return switch (outcome) {
             case RECLAIMED, NONE -> null;
             case RUNNING -> "a run of task " + taskId + " is going, which is not a person's agent; reclaim does not stop it (cancel_task does).";
-            case UNKNOWN -> "systemd in the instance could not say whether a run of task " + taskId + " is going, so nothing was signalled.";
-            case OTHER -> "another agent (pid " + pid + ") holds task " + taskId + "'s conversation now, so nothing was signalled.";
+            case UNKNOWN -> "systemd in the instance could not say whether a run of task " + taskId + " is going, so isx did not signal its agent.";
+            case OTHER -> "another agent (pid " + pid + ") holds task " + taskId + "'s conversation now, so isx did not signal it.";
             case UNSIGNALLED -> "the agent holding task " + taskId + "'s conversation (pid " + pid + ") could not be sent SIGHUP: "
                     + "it is another user's, and sudo is not available in the instance.";
             case ALIVE -> "the agent holding task " + taskId + "'s conversation (pid " + pid + ") was sent SIGHUP and did not exit within "
-                    + WAIT_SECONDS + " s; nothing harder was sent.";
+                    + WAIT_SECONDS + " s; isx did not send it a harder signal.";
             case LOCKED -> "the agent holding task " + taskId + "'s conversation (pid " + pid + ") exited, but a run or another person "
                     + "took the conversation within " + WAIT_SECONDS + " s.";
-            case UNRECORDED -> "the reclaim could not be recorded in task " + taskId + "'s directory, so nothing was signalled.";
+            case UNRECORDED -> "the reclaim could not be recorded in task " + taskId + "'s directory, so isx did not signal its agent.";
             case UNREADABLE -> "isx could not read what the instance did with task " + taskId
                     + "'s conversation, so its holder may or may not have been sent SIGHUP; task_status says whether it is still attached.";
         };
@@ -124,9 +124,9 @@ record Reclaim(Outcome outcome, Long pid) {
     String personRefusal(String taskId, String instance) {
         var join = TaskJoin.hostCommand(instance, taskId);
         return switch (outcome) {
-            case RUNNING -> "a run of task " + taskId + " is going, which is not a person's agent, so nothing was signalled; "
+            case RUNNING -> "a run of task " + taskId + " is going, which is not a person's agent, so isx did not signal it; "
                     + "join it once the turn ends: " + join;
-            case OTHER -> "another agent (pid " + pid + ") holds task " + taskId + "'s conversation now, so nothing was signalled; "
+            case OTHER -> "another agent (pid " + pid + ") holds task " + taskId + "'s conversation now, so isx did not signal it; "
                     + "to see who it is and take it: " + join + " --take";
             case UNREADABLE -> "isx could not read what the instance did with task " + taskId + "'s conversation, "
                     + "so the other agent may or may not have been ended; to see whether it is still held: " + join;

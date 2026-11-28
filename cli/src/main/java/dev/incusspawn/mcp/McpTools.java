@@ -53,10 +53,10 @@ final class McpTools {
             + "models as provider/model, to pass back whole; Antigravity CLI takes an ID agy models lists). "
             + "Default: the template's. Claude checks access before launch; Codex reports access failures in task_result. Later turns keep it.";
     private static final String EFFORT = "Reasoning effort for the selected agent, one of the efforts list_templates.delegate_agents "
-            + "lists for it (Claude low to max; Codex minimal to xhigh; Pi off to xhigh; opencode none to max, as the model's variant; "
-            + "Antigravity CLI low to max). Default: the template's effort, which a Claude or opencode task keeps on another model too. Later turns keep it.";
+            + "lists for it (Claude 'low' to 'max'; Codex 'minimal' to 'xhigh'; Pi 'off' to 'xhigh'; opencode 'none' to 'max', as the model's variant; "
+            + "Antigravity CLI 'low' to 'max'). Default: the template's effort, which a Claude or opencode task keeps on another model too. Later turns keep it.";
     private static final String ACTIVITY = "A tag of your own for the kind of work this run is (1-16 chars of a-z, 0-9, '-'), "
-            + "e.g. 'implement', 'pr-review', 'review-fixes': isx gives it no meaning and records it in the host's event log "
+            + "e.g. 'implement', 'pr-review', 'review-fixes': isx does not interpret it, and records it in the host's event log "
             + "beside the run's start and end, so a report can say what each kind of work cost.";
     private static final String IDEMPOTENCY_KEY = "Makes the call safe to repeat (1-64 characters of A-Z, a-z, "
             + "0-9, '.', '_', ':', '-'): a later call with the same key returns what this one made, with "
@@ -96,11 +96,11 @@ final class McpTools {
                 "Create a disposable instance from an approved template: a copy-on-write branch, "
                         + "ready in seconds. Returns its name, which the other tools take. It outlives "
                         + "this session: when the session ends it is orphaned, and a later session of "
-                        + "yours can take it back with adopt_instance until orphan-grace-hours in mcp.yaml pass. "
+                        + "yours can take it back with adopt_instance until 'orphan-grace-hours' in mcp.yaml pass. "
                         + "Destroy it with destroy_instance when you are done with it. Or fork one of "
                         + "your instances with from_instance: prepare it once (build, prime caches), "
                         + "stop it with stop_instance, then fork it as many times as you need -- each "
-                        + "fork starts with an identical copy of its files and no tasks.",
+                        + "fork starts with an identical copy of its files, and does not carry its tasks.",
                 Schema.object()
                         .string("template", "Template name, from list_templates", false)
                         .string("from_instance", "Or: one of your instances, stopped, to fork", false)
@@ -118,8 +118,8 @@ final class McpTools {
         tools.add(new McpTool("list_instances",
                 "List your instances: the ones this session holds (with their tasks), and the ones "
                         + "other sessions of yours hold or left orphaned, which adopt_instance takes over. "
-                        + "An orphan whose delegate showed no activity for dormant-after-hours in mcp.yaml past its "
-                        + "grace period is stopped rather than destroyed: dormant_since says when, and it is "
+                        + "An orphan past its grace period whose delegate has been idle for 'dormant-after-hours' in "
+                        + "mcp.yaml is stopped rather than destroyed: dormant_since says when, and it is "
                         + "destroyed at dormant_until unless adopted.",
                 Schema.object().build(),
                 OutputSchemas.listInstances(),
@@ -158,7 +158,7 @@ final class McpTools {
                         .stringMap("env", "Extra environment variables")
                         .string("stdin", "Text to send to the command's standard input", false)
                         .integer("timeout_seconds", "Kill the command after this many seconds "
-                                + "(default: no limit)", false)
+                                + "(by default it has no limit)", false)
                         .integer("max_output_bytes", "How much of the end of each of stdout and "
                                 + "stderr to return (default " + DEFAULT_OUTPUT_BYTES + ", max "
                                 + MAX_OUTPUT_BYTES + ")", false)
@@ -177,7 +177,7 @@ final class McpTools {
                         + "have supports_delegate): an instruction in plain language, or a skill the "
                         + "instance defines. The agent works autonomously with the instance's tools and "
                         + "the credentials its template carries, with full access inside the instance "
-                        + "and no turn limit; it can commit, push and open pull requests if you ask it to. Give either "
+                        + "and without a turn limit; it can commit, push and open pull requests if you ask it to. Give either "
                         + "an instance you hold or a template, which gets a fresh instance. Returns a "
                         + "task_id at once: follow it with task_status or wait_any, read the outcome "
                         + "with task_result, review changes with get_diff, and continue the "
@@ -185,7 +185,7 @@ final class McpTools {
                 Schema.object()
                         .choice("agent", "Worker agent; defaults to Claude when installed, otherwise Codex, then Pi, then opencode, then Antigravity CLI", false, "claude", "codex", "pi", "opencode", "antigravity")
                         .string("instruction", "What the agent should do, with everything it needs "
-                                + "to know: it sees nothing of your conversation", false)
+                                + "to know: it does not see your conversation", false)
                         .string("skill", "Or: a skill defined in the instance, run as /<skill> <args> -- "
                                 + "the skill is the brief, so you pass only its name and arguments", false)
                         .string("args", "Arguments to the skill", false)
@@ -264,7 +264,7 @@ final class McpTools {
                         + "(task_status says attached): that agent is sent SIGHUP, which ends it, and its "
                         + "conversation stays saved. Whatever the person typed and did not send is lost, so "
                         + "weigh attached_tty and attached_last_input_at first. Refused if the agent does "
-                        + "not exit; nothing harder is sent. Then send_message continues the conversation.",
+                        + "not exit; isx does not send it a harder signal. Then send_message continues the conversation.",
                 Schema.object().string("task_id", "Task id of a delegated agent", true)
                         .integer("attached_pid", "The attached_pid task_status reported: refused if another "
                                 + "agent holds the conversation now", false)
@@ -302,10 +302,10 @@ final class McpTools {
                         + "it (your tasks and a person's session alike), without touching the instance: "
                         + "calls made and in flight, when the last one started and ended, and the tokens "
                         + "their responses reported. A call in flight or a recent one means working; "
-                        + "idle_seconds (since the last call ended, present only while none is in flight) "
+                        + "idle_seconds (since the last call ended, present only while there is no call in flight) "
                         + "growing means stuck or finished. Counts run from counting_since, when the proxy "
                         + "began counting this instance's calls; it is absent while the proxy does not know "
-                        + "the instance (yet), and then there is nothing to subtract from. For one task's "
+                        + "the instance (yet), and then a read cannot be compared with another. For one task's "
                         + "spend, read before and after it and subtract, only if both reads carry the same "
                         + "counting_since: a different one means the proxy started counting afresh in "
                         + "between (a restart) and the difference is not the task's. The traffic_ fields "
@@ -344,7 +344,7 @@ final class McpTools {
                 (args, ctx) -> startInstance(args, ctx)));
         tools.add(new McpTool("keep_instance",
                 "Hand one of your instances over to the user for good (e.g. to let them inspect a "
-                        + "result): it is never destroyed as an orphan, and no later session can adopt "
+                        + "result): it is never destroyed as an orphan, and a later session cannot adopt "
                         + "it. You can keep using it until this session ends.",
                 Schema.object().string("instance", "Instance name", true).build(),
                 OutputSchemas.keepInstance(),
@@ -441,7 +441,7 @@ final class McpTools {
             if (scope.isCoordinator() && !scope.mismatches().isEmpty()) {
                 var note = String.join(" ", scope.mismatches());
                 result.put("scope_note", note);
-                return ToolResult.text("This coordinator may use no template. " + note + " Only the user can change that.",
+                return ToolResult.text("This coordinator may not use any template. " + note + " Only the user can change that.",
                         result.build());
             }
             return ToolResult.text("No templates are approved for agents. " + McpScope.HOW_TO_APPROVE, result.build());
@@ -641,7 +641,7 @@ final class McpTools {
         var node = instanceNode(name, info, config.get(Metadata.MCP_PURPOSE), forkedFrom(config),
                 config.get(Metadata.STATIC_IP), IncusInstanceBackend.workdir(config));
         node = node.with("replayed", JqBoolean.TRUE);
-        return ToolResult.json(node, "An earlier call with this idempotency_key made it; nothing new was made.");
+        return ToolResult.json(node, "An earlier call with this idempotency_key made it; this call did not make another.");
     }
 
     /** Refuse a call under {@code key} that asks for another instance than the one the key made. */
@@ -887,7 +887,7 @@ final class McpTools {
                         .put("background", true)
                         .put("replayed", true);
                 return ToolResult.text("Task " + replayed.id() + " in " + name + " was started by an earlier call with this "
-                        + "idempotency_key; nothing new was started. Check it with task_status or wait_any.", node.build());
+                        + "idempotency_key; this call did not start another. Check it with task_status or wait_any.", node.build());
             }
             Tasks.Task task;
             try {

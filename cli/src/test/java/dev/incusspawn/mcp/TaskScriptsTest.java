@@ -327,7 +327,7 @@ class TaskScriptsTest {
         assertTrue(check("broken").contains("issue with the selected model"));
         Files.delete(bin.resolve("claude"));
         assertTrue(check("good").contains("no Claude Code"));
-        assertTrue(ModelCheck.refusal(124, "", "").contains("no answer within"), "timeout's exit says what happened");
+        assertTrue(ModelCheck.refusal(124, "", "").contains("did not answer within"), "timeout's exit says what happened");
         assertTrue(ModelCheck.script("good").contains("timeout " + ModelCheck.TIMEOUT_SECONDS + " claude -p"),
                 "a stalled API cannot hold the call");
     }
@@ -2469,7 +2469,7 @@ class TaskScriptsTest {
             assertEquals(new Reclaim(Reclaim.Outcome.ALIVE, agentPid), refused);
             assertTrue(ProcessHandle.of(agentPid).isPresent(), "still there: nothing harder was sent");
             assertEquals("attached", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state());
-            assertTrue(refused.refusal(id).contains("nothing harder"), refused.refusal(id));
+            assertTrue(refused.refusal(id).contains("harder signal"), refused.refusal(id));
         } finally {
             stopAll(person);
         }
