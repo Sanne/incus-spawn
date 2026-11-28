@@ -52,9 +52,7 @@ class WorkflowIncusPinTest {
                 for (var job : jobs.asMap().entrySet()) {
                     boolean checkedOut = false;
                     for (var step : job.getValue().path("steps").asList()) {
-                        // release.yml checks out with a `git clone` step of its own
-                        checkedOut |= step.pathText("uses", "").startsWith("actions/checkout@")
-                                || step.pathText("name", "").equals("Checkout") && step.pathText("run", "").startsWith("git clone");
+                        checkedOut |= WorkflowCheckout.checksOut(step);
                         if (step.pathText("run", "").contains(INVOCATION)) {
                             pinned++;
                             if (!checkedOut) offenders.add(file.getFileName() + " " + job.getKey() + " installs Incus before the checkout");
