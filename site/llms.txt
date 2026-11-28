@@ -50,6 +50,7 @@ Each guide is one task, from an installed isx to a working result.
 - [Write an isx template for your project](https://isx.run/guides/project-template): your agent, the packages your project builds with and a clone of its code, in a template you build once
 - [Contribute to Quarkus from an isx sandbox](https://isx.run/guides/contribute-to-quarkus): a Quarkus template with its JDK, container runtime and a primed build, and contributing within Quarkus's AI policy, where you understand and send every change yourself
 - [Contribute to Hibernate ORM from an isx sandbox](https://isx.run/guides/contribute-to-hibernate-orm): a Hibernate ORM template with JDK 25, Podman for its test databases and a compiled core, and sending every change yourself under Hibernate's contributing guide
+- [Build and debug OpenJDK with an agent in an isx sandbox](https://isx.run/guides/openjdk): a JDK build machine with every dependency, and research within OpenJDK's policy that no AI-generated content is ever contributed
 - [Review and take an agent's commits from an isx sandbox](https://isx.run/guides/agent-commits): `isx://` git remotes, added by hand or by isx, and plain `git fetch`, `diff` and `cherry-pick`
 
 ## Docs
