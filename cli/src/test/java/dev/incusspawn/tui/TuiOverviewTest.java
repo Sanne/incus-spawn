@@ -679,4 +679,46 @@ class TuiOverviewTest {
         var shown = screen(tui);
         assertTrue(row(shown, "ws").contains("42.0k"), "the earlier read's log is dropped: " + shown);
     }
+
+    private void search(Tui tui, String query) throws Exception {
+        press(tui, KeyEvent.ofChar('/'));
+        for (char c : query.toCharArray()) press(tui, KeyEvent.ofChar(c));
+    }
+
+    private static List<String> shown(Tui tui) {
+        return tui.entries.stream().map(InstanceListing.InstanceInfo::name).toList();
+    }
+
+    @Test
+    void theWorkTabsSearchFindsTheInstanceThatOpenedAPullRequestAndShowsItsPreview() throws Exception {
+        var tui = tui(120);
+        workTab(tui);
+        readsFinish();
+        search(tui, "2287");
+        assertEquals(List.of("ws"), shown(tui), "ws opened Sanne/incus-spawn#2287");
+        var found = screen(tui);
+        assertTrue(found.contains("Port the parser"), "the preview shows the row found: " + found);
+
+        press(tui, KeyEvent.ofKey(KeyCode.BACKSPACE), KeyEvent.ofKey(KeyCode.BACKSPACE));
+        assertEquals(List.of(), shown(tui), "22 is no whole number of ws's");
+        press(tui, KeyEvent.ofKey(KeyCode.ESCAPE));
+        assertEquals(List.of("mine", "ws"), shown(tui).stream().sorted().toList());
+
+        // The Instances tab still finds by name, parent and address alone
+        press(tui, KeyEvent.ofKey(KeyCode.LEFT));
+        search(tui, "2287");
+        assertEquals(List.of(), shown(tui));
+    }
+
+    @Test
+    void aSearchTypedBeforeTheLogIsReadFindsThePullRequestOnceItIs() throws Exception {
+        var tui = tui(120);
+        workTab(tui);
+        search(tui, "#2287");
+        assertEquals(List.of(), shown(tui), "the log is not read yet");
+        readsFinish();
+        tui.handleEvent(dev.tamboui.tui.event.TickEvent.of(1), runner);
+        assertEquals(List.of("ws"), shown(tui));
+        assertEquals("#2287", tui.searchInput.text());
+    }
 }

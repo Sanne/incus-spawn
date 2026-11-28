@@ -111,6 +111,53 @@ final class WorkTable {
         return start + ColumnFit.ELLIPSIS + text.substring(from);
     }
 
+    /** A query that is a number alone, {@code 2728} or {@code #2728}: it names an issue or a pull request. */
+    private static final java.util.regex.Pattern NUMBER_QUERY = java.util.regex.Pattern.compile("#?0*(\\d+)");
+    /** A run of digits in a name, a branch or a purpose, each run a whole number. */
+    private static final java.util.regex.Pattern DIGITS = java.util.regex.Pattern.compile("0*(\\d+)");
+
+    /**
+     * Whether the Work tab's search {@code query} finds {@code instance} (#2736): what the tab shows
+     * of its work as well as what the Instances tab searches, that is its name, parent and address,
+     * its purpose and {@code isx mcp}'s, the pull requests it opened, by {@code owner/repo#12} and by
+     * address, and the branches it pushed. A number alone, with or without {@code #}, names an issue
+     * or a pull request: it finds a pull request of that number and a whole number in the name, a
+     * branch or a purpose, never part of a longer one nor of an address, so {@code 27} does not find
+     * {@code 2728} or {@code 10.0.0.27}. {@code effort} is null until the event log is read.
+     */
+    static boolean matchesSearch(String query, InstanceInfo instance, EventLogReader.Effort effort) {
+        if (query == null || query.isBlank()) return true;
+        var pulls = effort == null ? List.<EventLogReader.PullRequest>of() : effort.pullRequests();
+        var branches = effort == null ? List.<EventLogReader.Branch>of() : effort.branches();
+        var mcpPurpose = instance.mcp() == null ? null : instance.mcp().purpose();
+        var number = NUMBER_QUERY.matcher(query.strip());
+        if (number.matches()) {
+            var wanted = number.group(1);
+            for (var pull : pulls) {
+                if (String.valueOf(pull.number()).equals(wanted)) return true;
+            }
+            var texts = new ArrayList<String>(List.of(instance.name()));
+            if (instance.purpose() != null) texts.add(instance.purpose());
+            if (mcpPurpose != null) texts.add(mcpPurpose);
+            for (var branch : branches) texts.add(branch.name());
+            for (var text : texts) {
+                var runs = DIGITS.matcher(text);
+                while (runs.find()) {
+                    if (runs.group(1).equals(wanted)) return true;
+                }
+            }
+            return false;
+        }
+        var fields = new ArrayList<String>(List.of(instance.name()));
+        java.util.Collections.addAll(fields, instance.parent(), instance.ipv4(), instance.purpose(), mcpPurpose);
+        for (var pull : pulls) {
+            fields.add(pull.toString());
+            fields.add(pull.url());
+        }
+        for (var branch : branches) fields.add(branch.name());
+        return Tui.matchesSearch(query, fields.toArray(String[]::new));
+    }
+
     /** How a WORK cell reads: its text and the role of its colour. */
     enum Tone { OK, WARN, FAINT, DIM }
 

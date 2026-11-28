@@ -165,4 +165,49 @@ class WorkTableTest {
         assertEquals(90, WorkTable.previewWidth(158));
         assertEquals(90, WorkTable.previewWidth(198));
     }
+
+    private static dev.incusspawn.command.InstanceListing.InstanceInfo searched(String name, String purpose, String mcpPurpose) {
+        var metadata = purpose == null ? null
+                : dev.incusspawn.config.Jjq.parseForeign("{\"config\":{\"" + dev.incusspawn.incus.Metadata.PURPOSE + "\":\"" + purpose + "\"}}", "test");
+        var mcp = mcpPurpose == null ? null
+                : new dev.incusspawn.mcp.McpStanding(dev.incusspawn.mcp.McpStanding.State.HELD, mcpPurpose, null, null, null, null, null);
+        return new dev.incusspawn.command.InstanceListing.InstanceInfo(name, "Running", "default", "default", "",
+                "container", "tpl-isx-agent", "", "", "", "10.0.0.27", "", "x86_64",
+                "", "", "branch", "", "", "", -1, -1, "", false, mcp, false, metadata);
+    }
+
+    private static EventLogReader.Effort opened(long pull, String branch) {
+        return new EventLogReader.Effort(0, 0, 0, 0, 0, null, null,
+                List.of(new EventLogReader.Branch("Sanne/incus-spawn", branch)),
+                List.of(new EventLogReader.PullRequest("Sanne/incus-spawn", pull)));
+    }
+
+    @Test
+    void theSearchFindsAnInstanceByThePullRequestItOpenedItsBranchAndItsPurposes() {
+        var worker = searched("mcp-isx-agent-2542-impl-auqvj", null, "Implement issue 2542");
+        var effort = opened(2728, "issue-2542-interface-text");
+        for (var query : List.of("2728", "#2728", "incus-spawn#2728", "pull/2728", "2542", "#2542", "interface-text", "IMPLEMENT")) {
+            assertTrue(WorkTable.matchesSearch(query, worker, effort), query);
+        }
+        assertFalse(WorkTable.matchesSearch("2728", worker, null), "nothing of the log before it is read");
+        assertTrue(WorkTable.matchesSearch("2542", worker, null), "the name is the listing's");
+
+        var person = searched("ws", "Port issue 2731 to the new grammar", null);
+        assertTrue(WorkTable.matchesSearch("2731", person, EventLogReader.Effort.NONE));
+        assertTrue(WorkTable.matchesSearch("grammar", person, EventLogReader.Effort.NONE));
+        assertTrue(WorkTable.matchesSearch("tpl-isx", person, null), "the parent, as on the Instances tab");
+        assertTrue(WorkTable.matchesSearch("10.0.0", person, null), "the address, as on the Instances tab");
+        assertTrue(WorkTable.matchesSearch("", person, null));
+    }
+
+    @Test
+    void aNumberAloneFindsOnlyThatWholeNumberNeverPartOfALongerOneOrOfTheAddress() {
+        var worker = searched("mcp-isx-agent-2542-impl-auqvj", "Review 2728", null);
+        var effort = opened(2728, "issue-2542-x");
+        for (var query : List.of("27", "#27", "254", "542", "0", "10")) {
+            assertFalse(WorkTable.matchesSearch(query, worker, effort), query);
+        }
+        assertTrue(WorkTable.matchesSearch("02728", worker, opened(2728, "b")), "leading zeros are the same number");
+        assertTrue(WorkTable.matchesSearch(" 2728 ", worker, EventLogReader.Effort.NONE), "spaces around it are not the query");
+    }
 }

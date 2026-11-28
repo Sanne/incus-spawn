@@ -1038,9 +1038,17 @@ final class MainScreen {
 
     private void renderSearchBar(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
         fillBackground(frame, area, tui.theme.contextBg());
+        // The search bar stands where the context line was, so it keeps that line's hint for
+        // joining the selected instance's task (#2736): the search finds it, Shift+F2 joins it
+        var selected = tui.focusedPanel == Tui.Panel.INSTANCES ? tui.selectedInstance() : null;
+        var join = selected != null && selected.mcp() != null ? Line.from(
+                Span.styled("⇧F2", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(tui.theme.contextBg())),
+                Span.styled(" Join task ", Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(tui.theme.contextBg()))) : null;
+        int joinWidth = join == null || area.width() < 40 ? 0 : join.width();
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(3), Constraint.fill())
+                .constraints(Constraint.length(3), Constraint.fill(), Constraint.length(joinWidth))
                 .split(area);
+        if (joinWidth > 0) frame.renderWidget(Paragraph.from(join), cols.get(2));
         frame.renderWidget(Paragraph.from(Line.styled(" / ",
                 Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(tui.theme.contextBg()))), cols.get(0));
         TextInput.builder()
