@@ -124,6 +124,7 @@
                                     <targetPath>docs</targetPath>
                                     <includes>
                                         <include>*.md</include>
+                                        <include>guides/*.md</include>
                                     </includes>
                                 </resource>
                             </resources>

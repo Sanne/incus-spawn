@@ -27,8 +27,16 @@ class HelpContextTest {
             var expected = pages.map(p -> p.getFileName().toString())
                     .filter(f -> f.endsWith(".md"))
                     .map(f -> "help/docs/" + f).sorted().toList();
-            var listed = HelpContext.HELP_RESOURCES.stream().filter(r -> r.startsWith("help/docs/")).sorted().toList();
+            var listed = HelpContext.HELP_RESOURCES.stream()
+                    .filter(r -> r.startsWith("help/docs/") && r.indexOf('/', "help/docs/".length()) < 0).sorted().toList();
             assertEquals(expected, listed);
+        }
+        try (var pages = Files.list(Path.of("..", "docs", "guides"))) {
+            var expected = pages.map(p -> p.getFileName().toString())
+                    .filter(f -> f.endsWith(".md"))
+                    .map(f -> "help/docs/guides/" + f).sorted().toList();
+            var listed = HelpContext.HELP_RESOURCES.stream().filter(r -> r.startsWith("help/docs/guides/")).sorted().toList();
+            assertEquals(expected, listed, "every guide is help context too, since reference pages point to them for the steps");
         }
         try (var pages = Files.list(Path.of("..", "design"))) {
             var expected = pages.map(p -> p.getFileName().toString())

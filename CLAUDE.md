@@ -124,13 +124,16 @@ A sentence never wraps, and a line never holds two sentences.
 In a list item, each sentence after the first goes on its own line, indented to the item's text; in a block quote, each line starts with `> `.
 Headings, tables (a row stays on one line), code, HTML and front matter are exempt.
 `DocsOneSentencePerLineTest` enforces this in `mvn test`.
+**A guide is one task per page**, `docs/guides/<slug>.md` at `isx.run/guides/<slug>` (#2682): a landing page for a search, from an installed isx to the working result.
+It links to the reference for every option and mechanism and never restates it, and states its search description in front matter; `.claude/rules/writing.md` "Documents" has the rest, and `GuidesTest` holds the description, `llms.txt` and the deploy paths.
 A docs-only PR runs these docs tests in `docs-gates.yml`, since `test-integration.yml` skips it; a test reading the repository's docs is tagged `@Tag("docs")` (`DocsGatesWorkflowTest`).
-README.md and `docs/*.md` also keep to the budgets in `.claude/rules/writing.md` (a paragraph of at most four sentences and 60 words, a sentence of at most 40, no dashes, no issue numbers), enforced by `DocsShapeTest`.
+README.md, `docs/*.md` and the guides in `docs/guides/` also keep to the budgets in `.claude/rules/writing.md` (a paragraph of at most four sentences and 60 words, a sentence of at most 40, no dashes, no issue numbers), enforced by `DocsShapeTest`.
 Their lists mirror the code's: every top-level command in the README's CLI table and `docs/CLI.md`, every built-in tool in the Tools page's table, every tool with a proxy credential in the README's credential table (`DocsListsTest`).
 A new command or tool fails that test until its page names it.
 What the reader needs comes before the mechanism, and clarity outranks brevity, in every text a person reads, PR descriptions and review comments included: `.claude/rules/writing.md` "What the reader needs comes first".
 State the point in the reader's terms before the mechanism, say what a design decision gives up, and tell a scenario in order through to its outcome.
 Never fix anything by going vague.
+State as fact only what isx enforces; what holds because a person follows a rule, such as a project's AI policy, is written as that rule ("is supposed to", "must"), never as a promise (`.claude/rules/writing.md` "Say who keeps a rule").
 In a sentence, negate the verb ("does not filter the connections", never "filters nothing"), name what a verb acts on and where, use literal words, and state the consequence.
 Split a sentence of more than about 40 words where it splits cleanly; `.claude/rules/writing.md` "Splitting a sentence" lists the only word changes a split may make.
 The text isx prints for a person (prompts, command output, warnings, errors, the TUI, `--help`, the proxy's 403 bodies) also follows `.claude/rules/interface-text.md`, which loads on the sources that word it (#2542).

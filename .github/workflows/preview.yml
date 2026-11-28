@@ -5,6 +5,7 @@ on:
     paths:
       - 'README.md'
       - 'docs/*.md'
+      - 'docs/guides/*.md'
       - 'site/**'
       - '.github/workflows/preview.yml'
 

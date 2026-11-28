@@ -112,12 +112,13 @@ class DocsShapeTest {
                 "[ref]: https://x.y \"Title -- two\"")));
     }
 
-    private static List<Path> pages() throws IOException {
+    static List<Path> pages() throws IOException {
         var files = new ArrayList<Path>();
         files.add(ROOT.resolve("README.md"));
         try (Stream<Path> docs = Files.list(ROOT.resolve("docs"))) {
             docs.filter(f -> f.toString().endsWith(".md")).sorted().forEach(files::add);
         }
+        files.addAll(GuidesTest.guides());
         return files;
     }
 

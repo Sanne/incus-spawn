@@ -6,6 +6,7 @@ on:
     paths:
       - 'README.md'
       - 'docs/*.md'
+      - 'docs/guides/*.md'
       - 'site/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:

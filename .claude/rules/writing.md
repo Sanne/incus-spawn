@@ -18,7 +18,7 @@ Some know Incus and TLS well, some are new to both, and many read English as a s
 Every rule here serves that reader.
 The home page (`site/index.html`) is the reference example of the shape and the voice.
 
-The Shape and Voice rules are checked by `DocsShapeTest` and `DocsOneSentencePerLineTest` (`cli`) on `README.md` and `docs/*.md`.
+The Shape and Voice rules are checked by `DocsShapeTest` and `DocsOneSentencePerLineTest` (`cli`) on `README.md`, `docs/*.md` and the guides in `docs/guides/`.
 `DocsListsTest` checks that the pages' lists mirror the code's: top-level commands, built-in tools, and tools with a proxy credential.
 A fact that is a list in the code is a list in the docs, and the test is what keeps them equal.
 `docs/dev/` is maintainer notes and is exempt from the budgets, and DESIGN.md and its `design/` pages keep their own register.
@@ -188,6 +188,13 @@ A token someone pastes into an instance by hand is not, so "isx never puts a cre
 **State a guarantee with isx as the subject.**
 "No credential ever enters an instance" is false once anyone puts one there.
 "isx never puts a credential into an instance" is true without a hedge, and says who guarantees it.
+
+**Say who keeps a rule.**
+What isx enforces is a fact, stated with isx as the subject: "isx never puts a credential into an instance".
+What holds only because a person follows a rule, such as a project's AI policy, is stated as that rule, with "is supposed to", "must" or an instruction to you.
+Written as a fact, it reads as a promise isx makes and does not keep.
+The OpenJDK guide said "nothing it writes reaches the project", when nothing in isx stops you from copying the agent's code into a contribution; it now says "nothing it writes is supposed to reach the project".
+Where isx does enforce part of it, say that part as a fact: the agent's own GitHub token cannot open a pull request on `openjdk/jdk`.
 
 **Warn about a tempting mistake once, as an instruction, where the reader would make it.**
 The FAQ does: "do not log in inside the instance, even when the agent asks you to".
@@ -406,6 +413,25 @@ The shape tests pass sentence by sentence while a page drifts into a second regi
 After adding a section, read the page's opener and ask whether its reader wanted the section.
 A page over about 2,000 words of prose has usually gained a second reader and wants splitting.
 A release note ("after upgrading, restart", "before downgrading") is never a user page's business; it goes to `docs/dev/`.
+
+**A guide** (`docs/guides/<slug>.md`, published at `isx.run/guides/<slug>`) is one task, from an installed isx to the working result.
+Its reader searched for that task, so its title is the phrase they typed, such as "Run Claude Code in an isx sandbox".
+It gives the commands and the template in order, and ends with how to tell that it worked.
+It links to the reference for every option and every mechanism, and never restates them: a copy ranks poorly and goes stale.
+Its front matter states its `description:`, the line a search result shows, at most 160 characters (`GuidesTest`).
+`site/llms.txt` lists it.
+A guide links to the guides its reader needs next, and a reference section that walks through the same task links to it.
+The guides become a section of the site, an index at `/guides`, a sidebar group and a nav link, only once there are `SECTION_FROM` of them in `site/render.js`; until then each one is reached by the links to it.
+`GuidesTest` keeps the nav links, the home page's footer link and the `llms.txt` index line in step with that number.
+Each guide is checked by running it on a clean host before it is published.
+Every whole template a guide shows passes `isx templates validate`'s check and names only built-in tools (`GuidesTest`).
+
+**A project guide** ("Contribute to Quarkus from an isx sandbox") sets up a machine for contributing to one well-known project.
+Its first section, before any command, is that project's own rules for AI-assisted work, linked to where the project publishes them and summarised from that text alone.
+It says what the rules allow and what they do not, and the rest of the guide follows them: the agent works inside its machine, and the person reads, owns and sends every change.
+Where a project forbids contributing generated content, as OpenJDK does, the guide is for building, diagnosing and experimenting, and says so.
+Where a project publishes no such rules, the guide says it found none, links the contributing guide, and keeps to the strictest reading.
+Its sections, in order: the project's rules, before you start, the template (its YAML, then one line for each line particular to the project), build it, branch a machine, check that it works with the project's own test command, take the change and send it yourself, clean up.
 
 **`docs/dev/`** is maintainer notes and is not published.
 DESIGN.md and its `design/` pages are the record of why, and the one place for issue numbers and internals.

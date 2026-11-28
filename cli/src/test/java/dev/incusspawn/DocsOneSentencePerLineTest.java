@@ -119,12 +119,13 @@ class DocsOneSentencePerLineTest {
                 "[ref]: https://x.y \"Title. Two\"")));
     }
 
-    private static List<Path> documents() throws IOException {
+    static List<Path> documents() throws IOException {
         var files = new ArrayList<Path>();
         files.add(ROOT.resolve("README.md"));
         try (Stream<Path> docs = Files.list(ROOT.resolve("docs"))) {
             docs.filter(f -> f.toString().endsWith(".md")).sorted().forEach(files::add);
         }
+        files.addAll(GuidesTest.guides());
         files.add(ROOT.resolve("DESIGN.md"));
         try (Stream<Path> design = Files.list(ROOT.resolve("design"))) {
             design.filter(f -> f.toString().endsWith(".md")).sorted().forEach(files::add);

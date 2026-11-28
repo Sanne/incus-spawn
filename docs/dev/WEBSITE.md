@@ -1,6 +1,6 @@
 # Website: isx.run
 
-The site at **https://isx.run** is built from `site/`, `README.md` and `docs/*.md` by `site/build.sh`, and served by
+The site at **https://isx.run** is built from `site/`, `README.md`, `docs/*.md` and `docs/guides/*.md` by `site/build.sh`, and served by
 **Cloudflare Pages**. The DNS for both domains, isx.run and getisx.com, is on Cloudflare as well. Most of the
 setup lives in the Cloudflare dashboard, not in this repository, so it is written down here.
 
@@ -8,8 +8,8 @@ setup lives in the Cloudflare dashboard, not in this repository, so it is writte
 
 | What | Where it goes | Workflow |
 |---|---|---|
-| Push to `main` touching `site/**`, `README.md`, `docs/*.md` or the workflow | Production: isx.run | `.github/workflows/pages.yml` |
-| Pull request touching `site/**`, `README.md` or `docs/*.md` | Built, uploaded as the `site-preview` artifact | `.github/workflows/preview.yml` |
+| Push to `main` touching `site/**`, `README.md`, `docs/*.md`, `docs/guides/*.md` or the workflow | Production: isx.run | `.github/workflows/pages.yml` |
+| Pull request touching `site/**`, `README.md`, `docs/*.md` or `docs/guides/*.md` | Built, uploaded as the `site-preview` artifact | `.github/workflows/preview.yml` |
 | That build succeeding, for a PR by a collaborator | `https://pr-<N>.isx-5ks.pages.dev`, linked in a PR comment | `.github/workflows/preview-deploy.yml` |
 | Pull request closed | Its preview deployments are deleted | `.github/workflows/preview-cleanup.yml` |
 
@@ -138,7 +138,10 @@ loaded with `defer`, so it does not hold up the first paint. How the player is s
   `docs/`; maintainer notes go in `docs/dev/`, which is not published. A link from one of these files to another
   becomes a link to its page; any other relative link goes to the file on GitHub. `DocsLinksTest` checks that every
   link between them reaches a file and a heading. The pages are served from `/docs/`, so `docs.html` uses absolute
-  addresses (`/style.css`).
+  addresses (`/style.css`). Every `docs/guides/*.md` is a guide at `/guides/<name>`; its `description:` front matter
+  is the page's search description. Once there are `SECTION_FROM` guides (render.js), render.js also writes the
+  `/guides` index and a sidebar group from them, and the Guides link goes in by hand, in every page's nav and the home
+  page's footer (`GuidesTest`).
 - `llms.txt` is written by hand and should say what the home page says; `llms-full.txt` is every docs page as one
   Markdown file, generated at build time.
 
