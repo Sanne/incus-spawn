@@ -31,7 +31,9 @@ Under dash that failure is silent, since the shell runs the host's command of th
 `ConcurrentTestClassesTest` refuses a class-level `@Execution(CONCURRENT)` in `common`.
 `common`'s surefire configuration enables JUnit's parallel execution for that, with every other class still running one test at a time.
 `GitTestServer` holds its listening socket and serves each connection with `git daemon --inetd`, since a port released for a daemon to bind could be taken by a concurrent test first.
-Four run at a time, and on three CPUs the class takes 10 s instead of 36 s, so the timeout stays at 20 minutes.
+Four run at a time, and on three CPUs the class takes 10 s instead of 36 s.
+The suite kept growing, and by November 2026 green runs on `macos-15` took 16 to 19 minutes, so a 20-minute limit cancelled runs with every test passed.
+So `unit-tests-macos` and its fallback now have 30 minutes, which still stops a hung run (#1839).
 A class added to the concurrent set must share no state between its tests: no bound `Output`, system property or fixed port.
 
 **A docs-only change runs the docs gates** (#1960).

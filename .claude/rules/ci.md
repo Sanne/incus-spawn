@@ -50,7 +50,8 @@ Key jobs:
   It checks nothing out and runs no action, on `schedule` and `workflow_dispatch` alone.
 - **`unit-tests-macos`**: `mvn test` on the Mac Mini or `macos-15` (a standard arm64 runner), as `mac-route` picks, so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970).
   It is arm64 only, by decision (#974); the reasoning is in design/testing.md "Testing".
-  Its Git tests are paced by process starts there: `GitPreparationTest` runs its tests concurrently and `releasesFixture` is built once per JVM, which keep the job inside its 20-minute timeout (#1839).
+  Its Git tests are paced by process starts there: `GitPreparationTest` runs its tests concurrently and `releasesFixture` is built once per JVM, which shortened the job.
+  Its timeout and its fallback's are 30 minutes, since green runs on `macos-15` took 16 to 19 minutes and a 20-minute limit cancelled passing runs (#1839).
   On GitHub's runners alone it sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`, which enables `KeychainTrustMacTest`: it adds CAs to the runner's System keychain, which only a discarded runner may do (#1467), so the Mini never runs it and `macos-keychain-trust.yml` runs it too (#2298).
   Test failures are counted from the surefire reports after the run, so a failure in `common` does not skip `cli` and `proxy` (`-fae` would: they depend on it), and the reports are uploaded when it fails, since few contributors have a Mac to reproduce on
 - **GraalVM version**: every `setup-graalvm` step, `release.yml`'s matrix, `install.sh`'s `GRAALVM_BASE` and its macOS `GRAALVM_LINE`, and both modules' `quarkus.native.builder-image` name one Oracle GraalVM line (`InstallScriptGraalVmTest`, design/native-image.md "One GraalVM line").
