@@ -155,6 +155,54 @@ A TUI label stays within its pane.
 **Separate the blocks of a long step.**
 An explanation, a list of steps and the question are three blocks, with a blank line between them, as the GitHub step lays out its numbered choices.
 
+## `--help` text
+
+A help line is read alone, by a person deciding whether to use the option, so these come on top of the rules above (Sanne, #2728).
+The examples are from the first rewording of every command's help, which satisfied the gate and the reviews and read worse than what it replaced.
+
+**Read the line alone: it says what the option does and when a person would use it.**
+This is the test every help line passes before any other rule is applied.
+"(otherwise its standard input is empty)" answered a gate and told nobody what `isx exec -i` is for.
+It should say "Pass standard input on to the command, so it reads what you pipe into isx exec; without -i it does not read any input".
+
+**One line for the common case, and a condition only when missing it would hurt.**
+A condition or an exception stays in the line when a person who did not know it could lose something they cannot get back, or would be confused by what happens.
+Any other condition goes to `docs/CLI.md`.
+`--mcp-client` listed every way a template makes coordinators by default, and did not guide the reader to what the option does.
+It should say "the default when the template's coordinator: block says so".
+A default names where it is decided, never the logic that decides it.
+
+**An accuracy finding is not answered by one more clause.**
+First ask whether the line's reader needs the detail, by the rule above.
+When they do not, the detail goes to the docs and the line stays as it was.
+Two review rounds each added a clause to `--gui`, and the original line was the clearer one.
+
+**A command's description uses the command's own verb, and an isx word keeps its meaning.**
+`isx project create` creates: "Build a project template" borrowed the word that means `isx build`.
+Keeping the verb is not enough when the line names something the person may not know: explain it in the line.
+"from the project's incus-spawn.yaml" should say what that file is: "from incus-spawn.yaml, the file in a project's directory that names its parent template, its repositories and its pre-build command".
+
+**An established technical term stays.**
+"No isx term before the text has introduced it" is about isx's own words.
+"Nested virtualization" and "standard input" are what a person searches for, so explain beside the term, never instead of it: "Enable nested virtualization: the instance gets /dev/kvm", not "so it can run VMs of its own".
+
+**A key of a file is quoted, and the line says where it is.**
+A terminal has no code font, so a bare key runs into the sentence around it.
+"the default when the template's coordinator: block says so" left the reader to guess which block.
+It should say "the default when the template enables it in the 'coordinator:' section of its definition": the key in single quotes, as help writes every literal, and the file it belongs to.
+
+## Rewording a text
+
+**Reword the whole text, never only the part a check flagged.**
+"(install alongside isx)" survived a rewording that replaced only the words before it, and then explained nothing.
+
+**A gate's flag is a reason to reread, not an instruction to change words.**
+When the text is clearer as it was, it goes on the gate's list of meant texts, with why (`TranscriptGate.MEANT`, `HelpTextGateTest.MEANT`).
+
+**A side-by-side table holds each text exactly as it is printed.**
+A note about the text goes in a column of its own or under the table.
+"…, in both" in a "Now" cell read as part of the help text.
+
 ## The transcript gate
 
 Two gates read interface text's string literals for its form alone: `StepLabelGateTest` holds a label bare, with no `...` and, for a live step, an `ok` or a `success`, no period, and `RawOutputGateTest` fails a print literal indented by hand.
@@ -170,6 +218,6 @@ A new flow with a transcript test runs the same gate, with the words that flow n
 Terms used before they are introduced need a reviewer, and so does every flow without a transcript test.
 
 `HelpTextGateTest` holds the `--help` text of every command to the same vocabulary and negations, read from the annotations aesh renders, the macOS tree's `isx vm` and the hidden commands included.
-There "container" is a fault unless the same text names a VM, "this computer" is the first run's word and not help's, and "MITM" says how the proxy works rather than what it does for the person.
+There "container" is a fault unless the same text names a VM or is listed in `HelpTextGateTest.MEANT`, "this computer" is the first run's word and not help's, and "MITM" says how the proxy works rather than what it does for the person.
 A quoted value the person types, such as `'none'`, is not read as a negation.
 The hand-written usage of `isx ask` and of `isx-proxy --help` is not read, and needs a reviewer.
