@@ -119,6 +119,6 @@ class ShellCommandTaskTest {
         var why = TaskJoin.refusal(new TaskJoin.Outcome.Busy(HELD), "box");
         assertTrue(why.contains("isx shell box --task t1-abcd --take"), why);
         var noTerminal = new TaskJoin.Entry("t1-abcd", "claude", "finished", null, "", "s1", "/a", 4242L, false, null);
-        assertTrue(TaskJoin.holder(noTerminal, Instant.now()).equals("agent pid 4242, with no terminal"));
+        assertTrue(TaskJoin.holder(noTerminal, Instant.now()).equals("agent pid 4242, without a terminal"));
     }
 }

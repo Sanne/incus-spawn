@@ -3,7 +3,7 @@
     "type" : "object",
     "properties" : {
       "templates" : {
-        "description" : "Approved templates; empty when none are",
+        "description" : "Approved templates; empty when the user has not approved any",
         "type" : "array",
         "items" : {
           "type" : "object",
@@ -102,7 +102,7 @@
         "type" : "integer"
       },
       "scope_note" : {
-        "description" : "Why a coordinator in an instance may use no template, and what the user has to change",
+        "description" : "Why a coordinator in an instance may not use any template, and what the user has to change",
         "type" : "string"
       }
     },
@@ -197,7 +197,7 @@
         "type" : "string"
       },
       "replayed" : {
-        "description" : "true when an earlier call with this idempotency_key made it, and this one made nothing",
+        "description" : "true when an earlier call with this idempotency_key made it, and this one did not make anything",
         "type" : "boolean"
       }
     },
@@ -226,7 +226,7 @@
               "type" : "string"
             },
             "state" : {
-              "description" : "creating or ready: held by this session; held: by another live session; orphaned: by none, adopt_instance takes it",
+              "description" : "creating or ready: held by this session; held: by another live session; orphaned: the session that held it ended or released it, and adopt_instance takes it",
               "type" : "string",
               "enum" : [ "creating", "ready", "held", "orphaned" ]
             },
@@ -250,7 +250,7 @@
               "type" : "string"
             },
             "dormant_since" : {
-              "description" : "ISO-8601: when the orphan sweep stopped it, its delegate showing no activity; adopt_instance starts it again",
+              "description" : "ISO-8601: when the orphan sweep stopped it, because its delegate had been idle; adopt_instance starts it again",
               "type" : "string"
             },
             "dormant_until" : {
@@ -332,7 +332,7 @@
                     "type" : "string"
                   },
                   "state" : {
-                    "description" : "As this session last saw it; unknown: nothing has read how it ended (as after cancel_task). task_status reads it now",
+                    "description" : "As this session last saw it; unknown: isx has not read how it ended (as after cancel_task). task_status reads it now",
                     "type" : "string",
                     "enum" : [ "running", "finished", "attached", "lost", "unknown" ]
                   }
@@ -502,7 +502,7 @@
         "additionalProperties" : false
       },
       "replayed" : {
-        "description" : "true when an earlier call with this idempotency_key made it, and this one made nothing",
+        "description" : "true when an earlier call with this idempotency_key made it, and this one did not make anything",
         "type" : "boolean"
       }
     },
@@ -545,7 +545,7 @@
         "type" : "string"
       },
       "replayed" : {
-        "description" : "true when an earlier call with this idempotency_key made it, and this one made nothing",
+        "description" : "true when an earlier call with this idempotency_key made it, and this one did not make anything",
         "type" : "boolean"
       }
     },
@@ -885,7 +885,7 @@
         "enum" : [ "running", "finished", "attached", "lost", "unknown" ]
       },
       "reclaimed" : {
-        "description" : "An agent held its conversation and exited; false when none held it",
+        "description" : "An agent held its conversation and exited; false when the conversation was not held",
         "type" : "boolean"
       },
       "reclaimed_pid" : {
@@ -1012,7 +1012,7 @@
         "type" : "string"
       },
       "idle_seconds" : {
-        "description" : "Since the last call ended; only while none is in flight",
+        "description" : "Since the last call ended; only while there is no call in flight",
         "type" : "integer"
       },
       "model_usage_providers" : {

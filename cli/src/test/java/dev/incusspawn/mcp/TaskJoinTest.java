@@ -77,7 +77,7 @@ class TaskJoinTest {
         var entries = TaskJoin.parse(finished("t1-abcd", "sess-1", "/a") + "presence claude 42 /elsewhere\npresence resume 42 sess-1\n");
         var busy = assertInstanceOf(TaskJoin.Outcome.Busy.class, TaskJoin.resolve(entries, null));
         assertEquals(42L, busy.entry().attachedPid());
-        assertEquals("A person is already in t1-abcd's conversation (agent pid 42, with no terminal); a second would write to it "
+        assertEquals("A person is already in t1-abcd's conversation (agent pid 42, without a terminal); a second would write to it "
                 + "at the same time. To end their agent and join instead: isx shell box --task t1-abcd --take",
                 TaskJoin.refusal(busy, "box"));
         var onTerminal = TaskJoin.parse(finished("t1-abcd", "sess-1", "/a")

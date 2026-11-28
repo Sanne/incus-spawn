@@ -507,7 +507,7 @@ final class McpSession {
 
     private static ToolError stillStopping(String name) {
         return new ToolError(ToolError.Code.BUSY, "'" + name + "' is yours now, but it is still being stopped (the "
-                + "orphan sweep stops one in which nothing moved); call adopt_instance again shortly, which starts it.");
+                + "orphan sweep stops one that stayed idle); call adopt_instance again shortly, which starts it.");
     }
 
     /**
@@ -522,12 +522,12 @@ final class McpSession {
         if (Metadata.OP_STOPPING.equals(Metadata.pendingOp(metadata))) throw stillStopping(name);
         var stopped = InstanceBackend.stopped(metadata);
         if (stopped) {
-            progress.accept("Starting " + name + ", stopped while nothing in it moved");
+            progress.accept("Starting " + name + ", stopped while it was idle");
             try {
                 backend.start(name);
             } catch (RuntimeException e) {
                 throw new ToolError(ToolError.Code.UNAVAILABLE, "'" + name + "' is yours now, but it was stopped "
-                        + "because nothing in it moved, and could not be started again: " + e.getMessage()
+                        + "because it was idle, and could not be started again: " + e.getMessage()
                         + ". Call adopt_instance again, or start_instance.");
             }
         }

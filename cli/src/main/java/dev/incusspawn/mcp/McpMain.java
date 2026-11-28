@@ -34,11 +34,11 @@ public final class McpMain {
     static final String INSTRUCTIONS = """
             isx gives you disposable Linux instances (full systems, not Docker containers) \
             branched copy-on-write from templates the user approved. Use them to run builds and \
-            tests, to try risky changes away from the user's machine, or to hand whole tasks to \
+            tests, to try risky changes away from the user's host, or to hand whole tasks to \
             Claude Code, Codex, Pi, opencode or Antigravity CLI inside one (delegate). Start with list_templates, then create_instance, \
             then exec. Instances outlive this session: if you restart, list_instances shows the \
-            ones you left and adopt_instance takes them back; orphans nobody adopts are destroyed \
-            after a grace period. Destroy instances you are done with. Credentials are injected by \
+            ones you left and adopt_instance takes them back; an orphan is destroyed after a grace \
+            period unless a session adopts it. Destroy instances you are done with. Credentials are injected by \
             a proxy on the host and never enter an instance.""";
 
     private McpMain() {}
@@ -230,7 +230,7 @@ public final class McpMain {
         return tools.stream().map(t -> new McpTool(t.name(), t.description(), t.inputSchema(), t.outputSchema(),
                 t.annotations(), (args, ctx) -> {
                     if (!initialized.getAsBoolean()) {
-                        throw new ToolError(ToolError.Code.REFUSED, "isx is not set up on this machine yet. "
+                        throw new ToolError(ToolError.Code.REFUSED, "isx is not set up on this host yet. "
                                 + "Ask the user to run: isx init");
                     }
                     takeBack.run();

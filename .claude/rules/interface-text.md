@@ -221,3 +221,7 @@ Terms used before they are introduced need a reviewer, and so does every flow wi
 There "container" is a fault unless the same text names a VM or is listed in `HelpTextGateTest.MEANT`, "this computer" is the first run's word and not help's, and "MITM" says how the proxy works rather than what it does for the person.
 A quoted value the person types, such as `'none'`, is not read as a negation.
 The hand-written usage of `isx ask` and of `isx-proxy --help` is not read, and needs a reviewer.
+
+`McpToolTextGateTest` holds what `isx mcp` gives a model to the same vocabulary and negations: its instructions, the `coordinate` prompt, and every tool's description with those of its arguments and results.
+There "container" is a fault unless the same text names a VM or Docker, and a quoted value the model passes back, such as `'none'`, is not read as a negation.
+Its refusals are not read, so they need a reviewer (design/terminal.md says why).

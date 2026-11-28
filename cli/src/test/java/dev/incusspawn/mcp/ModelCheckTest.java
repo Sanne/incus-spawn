@@ -29,9 +29,9 @@ class ModelCheckTest {
 
     @Test
     void anExitZeroWithoutAResultRefuses() {
-        assertTrue(refused(0, "", "", "nothing at all").contains("no successful result"));
-        assertTrue(refused(0, "  \n", "", "only blank lines").contains("no successful result"));
-        assertTrue(refused(0, "", "Update available: 9.9", "a notice on stderr").startsWith("Claude Code gave no successful result"),
+        assertTrue(refused(0, "", "", "nothing at all").contains("did not report a successful result"));
+        assertTrue(refused(0, "  \n", "", "only blank lines").contains("did not report a successful result"));
+        assertTrue(refused(0, "", "Update available: 9.9", "a notice on stderr").startsWith("Claude Code did not report a successful result"),
                 "what happened comes first, whatever stderr said");
         assertTrue(refused(0, "not json", "", "not a result").contains("not json"), "says what it got");
         refused(0, "[\"OK\"]", "", "JSON, but not a result object");
