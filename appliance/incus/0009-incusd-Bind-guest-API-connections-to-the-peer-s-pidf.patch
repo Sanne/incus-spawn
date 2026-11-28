@@ -1,0 +1,190 @@
+Backport of lxc/incus@2f46a964846c6a71e661221bbf74d988041a16e1 (stable-7.0; on main as
+5f2771bd1) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739): the fix for
+GHSA-63p9-v6jg-fvvp, a guest API connection answered as another instance once its caller's pid
+was reused there. Adapted: internal/linux/ucred.go gains only GetPeerPidfd, since the
+AcceptSameUser beside it on stable-7.0 belongs to an earlier commit (604774081, the rsync
+helper's socket) that v7.0.2 lacks and this fix does not use. Remove this file once
+INCUS_VERSION is a release that contains the commit (the next 7.0 release; 7.0.3 is not out
+yet).
+
+From 2f46a964846c6a71e661221bbf74d988041a16e1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Mon, 23 Nov 2026 12:03:11 -0500
+Subject: [PATCH] incusd: Bind guest API connections to the peer's pidfd
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The caller was resolved from the PID number recorded at accept time, so
+a PID freed and reused by another instance answered as that instance.
+
+This addresses GHSA-63p9-v6jg-fvvp (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+(cherry picked from commit 2f46a964846c6a71e661221bbf74d988041a16e1)
+---
+ cmd/incusd/dev_incus.go | 66 ++++++++++++++++++++++++++++++-----------
+ internal/linux/ucred.go | 23 ++++++++++++++
+ 2 files changed, 71 insertions(+), 18 deletions(-)
+
+diff --git a/cmd/incusd/dev_incus.go b/cmd/incusd/dev_incus.go
+index 18c49432f..a91a8abe0 100644
+--- a/cmd/incusd/dev_incus.go
++++ b/cmd/incusd/dev_incus.go
+@@ -280,20 +280,27 @@ var handlers = []devIncusHandler{
+ func hoistReq(f func(*Daemon, instance.Instance, http.ResponseWriter, *http.Request) response.Response, d *Daemon) func(http.ResponseWriter, *http.Request) {
+ 	return func(w http.ResponseWriter, r *http.Request) {
+ 		conn := ucred.GetConnFromContext(r.Context())
+-		cred := pidMapper.GetConnUcred(conn.(*net.UnixConn))
+-		if cred == nil {
++		peer := pidMapper.GetConnPeer(conn.(*net.UnixConn))
++		if peer == nil {
+ 			http.Error(w, errPIDNotInContainer.Error(), http.StatusInternalServerError)
+ 			return
+ 		}
+ 
+ 		s := d.State()
+ 
+-		c, err := findContainerForPid(cred.Pid, s)
++		c, err := findContainerForPid(peer.cred.Pid, s)
+ 		if err != nil {
+ 			http.Error(w, err.Error(), http.StatusInternalServerError)
+ 			return
+ 		}
+ 
++		// A PID can't be reused while its process exists, so the lookup was about our peer if it's still there.
++		err = unix.PidfdSendSignal(peer.pidfd, 0, nil, 0)
++		if err != nil {
++			http.Error(w, errPIDNotInContainer.Error(), http.StatusInternalServerError)
++			return
++		}
++
+ 		// Access control
+ 		rootUID := uint32(0)
+ 
+@@ -303,7 +310,7 @@ func hoistReq(f func(*Daemon, instance.Instance, http.ResponseWriter, *http.Requ
+ 			rootUID = uint32(uid)
+ 		}
+ 
+-		if rootUID != cred.Uid {
++		if rootUID != peer.cred.Uid {
+ 			http.Error(w, "Access denied for non-root user", http.StatusUnauthorized)
+ 			return
+ 		}
+@@ -349,21 +356,40 @@ func devIncusAPI(d *Daemon, f hoistFunc) http.Handler {
+  * from our http handlers, since there appears to be no way to pass information
+  * around here.
+  */
+-var pidMapper = ConnPidMapper{m: map[*net.UnixConn]*unix.Ucred{}}
++var pidMapper = ConnPidMapper{m: map[*net.UnixConn]*devIncusPeer{}}
++
++// devIncusPeer is the identity of a connection's peer, pinned for the lifetime of the connection.
++type devIncusPeer struct {
++	cred  *unix.Ucred
++	pidfd int
++}
+ 
+ type ConnPidMapper struct {
+-	m     map[*net.UnixConn]*unix.Ucred
++	m     map[*net.UnixConn]*devIncusPeer
+ 	mLock sync.Mutex
+ }
+ 
+-// GetConnUcred returns the credentials for the provided connection, if any.
+-func (m *ConnPidMapper) GetConnUcred(conn *net.UnixConn) *unix.Ucred {
++// GetConnPeer returns the peer identity for the provided connection, if any.
++func (m *ConnPidMapper) GetConnPeer(conn *net.UnixConn) *devIncusPeer {
+ 	m.mLock.Lock()
+ 	defer m.mLock.Unlock()
+ 
+ 	return m.m[conn]
+ }
+ 
++func (m *ConnPidMapper) forget(conn *net.UnixConn) {
++	m.mLock.Lock()
++	defer m.mLock.Unlock()
++
++	peer, ok := m.m[conn]
++	if !ok {
++		return
++	}
++
++	_ = unix.Close(peer.pidfd)
++	delete(m.m, conn)
++}
++
+ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, connState http.ConnState) {
+ 	unixConn, ok := conn.(*net.UnixConn)
+ 	if !ok {
+@@ -375,12 +401,20 @@ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, connState http.ConnState
+ 		cred, err := linux.GetUcred(unixConn)
+ 		if err != nil {
+ 			logger.Debugf("Error getting ucred for conn %s", err)
+-		} else {
+-			m.mLock.Lock()
+-			m.m[unixConn] = cred
+-			m.mLock.Unlock()
++			return
++		}
++
++		// Hold a pidfd on the peer so requests can tell it apart from a later owner of its PID.
++		pidfd, err := linux.GetPeerPidfd(unixConn)
++		if err != nil {
++			logger.Debugf("Error getting peer pidfd for conn %s", err)
++			return
+ 		}
+ 
++		m.mLock.Lock()
++		m.m[unixConn] = &devIncusPeer{cred: cred, pidfd: pidfd}
++		m.mLock.Unlock()
++
+ 	case http.StateActive:
+ 		return
+ 	case http.StateIdle:
+@@ -394,13 +428,9 @@ func (m *ConnPidMapper) ConnStateHandler(conn net.Conn, connState http.ConnState
+ 		 * more. Whatever the case, we want to forget about it since we
+ 		 * won't see it either.
+ 		 */
+-		m.mLock.Lock()
+-		delete(m.m, unixConn)
+-		m.mLock.Unlock()
++		m.forget(unixConn)
+ 	case http.StateClosed:
+-		m.mLock.Lock()
+-		delete(m.m, unixConn)
+-		m.mLock.Unlock()
++		m.forget(unixConn)
+ 	default:
+ 		logger.Debugf("Unknown state for connection %s", connState)
+ 	}
+diff --git a/internal/linux/ucred.go b/internal/linux/ucred.go
+index 5e0f4d253..8da9972e3 100644
+--- a/internal/linux/ucred.go
++++ b/internal/linux/ucred.go
+@@ -28,3 +28,26 @@ func GetUcred(conn *net.UnixConn) (*unix.Ucred, error) {
+ 
+ 	return ucred, nil
+ }
++
++// GetPeerPidfd returns a pidfd for the peer of a unix socket, which stays tied to that process if its PID is reused.
++func GetPeerPidfd(conn *net.UnixConn) (int, error) {
++	rawConn, err := conn.SyscallConn()
++	if err != nil {
++		return -1, err
++	}
++
++	pidfd := -1
++	var pidfdErr error
++	err = rawConn.Control(func(fd uintptr) {
++		pidfd, pidfdErr = unix.GetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_PEERPIDFD)
++	})
++	if err != nil {
++		return -1, err
++	}
++
++	if pidfdErr != nil {
++		return -1, pidfdErr
++	}
++
++	return pidfd, nil
++}

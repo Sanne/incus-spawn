@@ -1,0 +1,49 @@
+Backport of lxc/incus@a0156d57c1b91af5edf0547ffadd0f1a80bb29b7 (stable-7.0; on main as
+52a48d5f2) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739), unchanged: part of the fix
+for GHSA-v855-hxm9-5pwg. The template output limit only truncated the output, and rendering went
+on past it. Remove this file once INCUS_VERSION is a release that contains the commit (the next
+7.0 release; 7.0.3 is not out yet).
+
+From a0156d57c1b91af5edf0547ffadd0f1a80bb29b7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Fri, 20 Nov 2026 15:02:36 -0500
+Subject: [PATCH] incusd/util: Stop the rendering of a template past the output
+ limit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The renderer ignores write errors, so the limit only truncated the
+output.
+
+This addresses GHSA-v855-hxm9-5pwg (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+(cherry picked from commit a0156d57c1b91af5edf0547ffadd0f1a80bb29b7)
+---
+ internal/util/template.go | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/internal/util/template.go b/internal/util/template.go
+index f621d1551..a049abd68 100644
+--- a/internal/util/template.go
++++ b/internal/util/template.go
+@@ -39,7 +39,7 @@ func newTemplateSet() (*pongo2.TemplateSet, error) {
+ 	return custom, nil
+ }
+ 
+-// boundedWriter fails once more than templateMaxOutput bytes have been written.
++// boundedWriter stops the rendering once more than templateMaxOutput bytes have been written.
+ type boundedWriter struct {
+ 	w io.Writer
+ 	n int
+@@ -48,7 +48,8 @@ type boundedWriter struct {
+ func (b *boundedWriter) Write(p []byte) (int, error) {
+ 	b.n += len(p)
+ 	if b.n > templateMaxOutput {
+-		return 0, errors.New("Template output is too large")
++		// The renderer ignores write errors, executeTemplate recovers this.
++		panic("Template output is too large")
+ 	}
+ 
+ 	return b.w.Write(p)

@@ -1,0 +1,53 @@
+Backport of lxc/incus@d8c5baae9f90dc8bb265c0a15b16a193632a9d2f (stable-7.0; on main as
+f65d711a2) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739), unchanged: part of the fix
+for GHSA-42x8-664j-84w8. A template target that was not a regular file was rendered anyway.
+Remove this file once INCUS_VERSION is a release that contains the commit (the next 7.0 release;
+7.0.3 is not out yet).
+
+From d8c5baae9f90dc8bb265c0a15b16a193632a9d2f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Mon, 23 Nov 2026 11:49:16 -0500
+Subject: [PATCH] incusd/instance: Only render regular files as templates
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This addresses GHSA-42x8-664j-84w8 (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+(cherry picked from commit d8c5baae9f90dc8bb265c0a15b16a193632a9d2f)
+---
+ internal/server/instance/drivers/driver_lxc.go  | 4 ++--
+ internal/server/instance/drivers/driver_qemu.go | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/internal/server/instance/drivers/driver_lxc.go b/internal/server/instance/drivers/driver_lxc.go
+index 97c660a6e..cd6fc69ab 100644
+--- a/internal/server/instance/drivers/driver_lxc.go
++++ b/internal/server/instance/drivers/driver_lxc.go
+@@ -7811,8 +7811,8 @@ func (d *lxc) templateApplyNow(trigger instance.TemplateTrigger) error {
+ 				return fmt.Errorf("Couldn't access template file: %w", err)
+ 			}
+ 
+-			if tplFileStat.Mode()&os.ModeSymlink == os.ModeSymlink {
+-				return errors.New("Template file is a symlink")
++			if !tplFileStat.Mode().IsRegular() {
++				return errors.New("Template file isn't a regular file")
+ 			}
+ 
+ 			// Create the directory hierarchy, this has to be done
+diff --git a/internal/server/instance/drivers/driver_qemu.go b/internal/server/instance/drivers/driver_qemu.go
+index dfc48393f..6627e3b8d 100644
+--- a/internal/server/instance/drivers/driver_qemu.go
++++ b/internal/server/instance/drivers/driver_qemu.go
+@@ -4310,8 +4310,8 @@ func (d *qemu) templateApplyNow(trigger instance.TemplateTrigger, path string) e
+ 				return fmt.Errorf("Couldn't access template file: %w", err)
+ 			}
+ 
+-			if tplFileStat.Mode()&os.ModeSymlink == os.ModeSymlink {
+-				return errors.New("Template file is a symlink")
++			if !tplFileStat.Mode().IsRegular() {
++				return errors.New("Template file isn't a regular file")
+ 			}
+ 
+ 			// Create the file itself.

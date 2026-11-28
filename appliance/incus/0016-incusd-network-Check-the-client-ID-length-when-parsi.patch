@@ -1,0 +1,57 @@
+Backport of lxc/incus@ae5cb3a585de59c1d6183851f9e2629c1985a691 (stable-7.0; on main as
+075b0944f) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739), unchanged: part of the fix
+for GHSA-v855-hxm9-5pwg. A guest on the bridge could plant a malformed DHCP lease, with no Incus
+API access, that crashed incusd whenever the leases were read. Remove this file once
+INCUS_VERSION is a release that contains the commit (the next 7.0 release; 7.0.3 is not out
+yet).
+
+From ae5cb3a585de59c1d6183851f9e2629c1985a691 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Wed, 4 Nov 2026 19:57:45 -0500
+Subject: [PATCH] incusd/network: Check the client ID length when parsing
+ leases
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A lease with a short hardware address and a short client ID made the
+parsers slice past the start of the column and panic, which took the
+daemon down from the DNS server and the instance list.
+
+This addresses GHSA-v855-hxm9-5pwg (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+(cherry picked from commit ae5cb3a585de59c1d6183851f9e2629c1985a691)
+---
+ internal/server/network/driver_bridge.go | 3 ++-
+ internal/server/network/network_utils.go | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/internal/server/network/driver_bridge.go b/internal/server/network/driver_bridge.go
+index 271092b4c..48b75ac63 100644
+--- a/internal/server/network/driver_bridge.go
++++ b/internal/server/network/driver_bridge.go
+@@ -3484,7 +3484,8 @@ func (n *bridge) Leases(projectName string, clientType request.ClientType) ([]ap
+ 			mac := GetMACSlice(fields[1])
+ 			macStr := strings.Join(mac, ":")
+ 
+-			if len(macStr) < 17 && fields[4] != "" {
++			// A short hardware address may be a DHCPv6 IAID, the MAC then ends the DUID.
++			if len(macStr) < 17 && len(fields[4]) >= 17 {
+ 				macStr = fields[4][len(fields[4])-17:]
+ 			}
+ 
+diff --git a/internal/server/network/network_utils.go b/internal/server/network/network_utils.go
+index e39ddf06c..e0b88b036 100644
+--- a/internal/server/network/network_utils.go
++++ b/internal/server/network/network_utils.go
+@@ -964,7 +964,8 @@ func GetLeaseAddresses(networkName string, hwaddr string) ([]net.IP, error) {
+ 		mac := GetMACSlice(fields[1])
+ 		macStr := strings.Join(mac, ":")
+ 
+-		if len(macStr) < 17 && fields[4] != "" {
++		// A short hardware address may be a DHCPv6 IAID, the MAC then ends the DUID.
++		if len(macStr) < 17 && len(fields[4]) >= 17 {
+ 			macStr = fields[4][len(fields[4])-17:]
+ 		}
+ 
