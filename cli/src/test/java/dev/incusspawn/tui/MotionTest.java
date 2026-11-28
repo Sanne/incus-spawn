@@ -187,6 +187,30 @@ class MotionTest {
                 "quieter than what isx saw change: the person caused it");
     }
 
+    /** A frame draws its main screen's motion before its dialog, so none of it shows through the dialog. */
+    @Test
+    void whatMovesOnTheMainScreenIsNotDrawnAcrossADialogDrawnAfterIt() {
+        var motion = started(null);
+        motion.flash("a");
+        motion.beginFrame();
+        motion.row("a", ROW);
+        motion.shimmer(ROW);
+        var buffer = row("work-1 busy");
+        motion.process(buffer);
+        assertTrue(buffer.get(0, 0).style().bg().isPresent(), "the main screen's tint is drawn");
+
+        // The dialog is drawn over the row, then asks for its own shimmer elsewhere
+        buffer.setString(0, 0, "dialog      ", Style.EMPTY);
+        var dialog = new java.util.ArrayList<Cell>();
+        for (int x = 0; x < ROW.width(); x++) dialog.add(buffer.get(x, 0));
+        now.addAndGet(Motion.FLASH_MS / 3);
+        motion.process(buffer);
+        var after = new java.util.ArrayList<Cell>();
+        for (int x = 0; x < ROW.width(); x++) after.add(buffer.get(x, 0));
+        assertEquals(dialog, after, "the second pass draws no tint and no main-screen shimmer over it");
+        assertTrue(motion.moving(), "and the frame still counts as moving");
+    }
+
     @Test
     void aFlashForARowNotOnScreenDrawsNothing() {
         var motion = started(null);

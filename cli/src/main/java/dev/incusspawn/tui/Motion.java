@@ -62,6 +62,9 @@ final class Motion {
     /** A tint on an area: when it started, how long it fades for, and how strong it starts. */
     private record Tint(long start, long ms, double strength) {}
     private boolean spinnerShown;
+    /** Whether this frame drew a shimmer, and whether it drew its tints yet. */
+    private boolean shimmered;
+    private boolean tinted;
 
     private ScheduledFuture<?> driver;
     private boolean movedLastFrame;
@@ -103,6 +106,8 @@ final class Motion {
         shimmers.clear();
         rows.clear();
         spinnerShown = false;
+        shimmered = false;
+        tinted = false;
     }
 
     /** The text in {@code area} names work under way: a band of light crosses it. */
@@ -141,12 +146,21 @@ final class Motion {
 
     // --- Drawing over the finished frame ---
 
-    /** Draws what moves over the frame, which is complete without it. */
+    /**
+     * Draws what moves over what the frame has drawn so far, which is complete without it. A frame
+     * calls it once its main screen is drawn and again after a dialog: the first call draws the
+     * tints, which are all the main screen's, and the shimmers registered until then, so neither
+     * is drawn across a dialog that stands over them. The second draws what the dialog registered.
+     */
     void process(Buffer buffer) {
         if (!on()) return;
         long now = millis.getAsLong();
         for (var area : shimmers) drawShimmer(buffer, area, now);
+        shimmered |= !shimmers.isEmpty();
+        shimmers.clear();
         flashes.values().removeIf(tint -> now - tint.start() >= tint.ms());
+        if (tinted) return;
+        tinted = true;
         for (var flash : flashes.entrySet()) {
             var area = rows.get(flash.getKey());
             var tint = flash.getValue();
@@ -196,7 +210,7 @@ final class Motion {
     /** Whether the last frame drew anything that moves, so another is owed. */
     boolean moving() {
         if (!on()) return false;
-        return !shimmers.isEmpty() || spinnerShown || !flashes.isEmpty();
+        return shimmered || !shimmers.isEmpty() || spinnerShown || !flashes.isEmpty();
     }
 
     /**

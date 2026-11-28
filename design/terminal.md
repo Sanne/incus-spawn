@@ -721,7 +721,7 @@ A stopped instance's row is shown at once, as `not read` with its last merged su
 A running one shows its WORK as soon as its guest answers, and its merged summary when the cache holds it.
 A merge the model must make waits until the preview shows that instance ("Several sessions are merged by one model call").
 The reads of the guests whose rows are on screen are started first, so they take the first read slots.
-A cell says `…` only while nothing was read for it yet: a refresh, on `r` or on coming back to the Work tab, keeps the last read's values until each is read again, and the title counts the guests still being read (`Work since Nov 1, reading 3/12 instances`).
+A cell says `…` only while nothing was read for it yet: a refresh, on `r` or on coming back to the Work tab, keeps the last read's values until each is read again, and the title counts the guests still being read (`Work since Nov 1, ◐ reading 3/12 instances`, the glyph a spinner while motion is on).
 What that gives up: for a moment a row shows the previous reading beside newer ones, and only the title says the refresh is still under way.
 Only the latest read changes the table, so a read that ends after a later one started is dropped.
 `isx list` never reads it, since completion runs it on every TAB.
