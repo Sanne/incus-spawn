@@ -2,16 +2,23 @@ package dev.incusspawn;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.TemplateValidator;
+import dev.incusspawn.config.YamlErrors;
+import dev.incusspawn.tool.ToolDef;
+import dev.incusspawn.tool.ToolDefValidator;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -39,6 +46,7 @@ class GuidesTest {
     /** A YAML code block in a guide. */
     private static final Pattern YAML_BLOCK = Pattern.compile("(?ms)^```yaml\n(.*?)^```");
     private static final Pattern TEMPLATE_NAME = Pattern.compile("(?m)^name:\\s");
+    private static final Pattern TOOL_SCHEMA = Pattern.compile("(?m)^# yaml-language-server: \\$schema=https://isx\\.run/schema/tool\\.json$");
     private static final Pattern QUOTED = Pattern.compile("^([\"'])(.*)\\1$");
 
     /** Every guide's source, sorted. */
@@ -112,19 +120,21 @@ class GuidesTest {
 
     /**
      * Every whole template a guide shows, a block with a {@code name:}, passes the check
-     * {@code isx templates validate} runs, and names only tools isx ships, so a reader who copies
-     * it gets a template that builds. Its parent may be a built-in, {@code tpl-agent} (which
-     * {@code isx init} writes) or a template another guide shows.
+     * {@code isx templates validate} runs, and names only tools isx ships or the guide shows, so a
+     * reader who copies it gets a template that builds. Its parent may be a built-in,
+     * {@code tpl-agent} (which {@code isx init} writes) or a template another guide shows. A tool
+     * a guide shows, a block naming the tool schema, passes {@code isx tools validate}'s check.
      */
     @Test
     void everyTemplateAGuideShowsValidates() throws IOException {
         var templates = new ArrayList<Map.Entry<String, String>>();
+        var toolBlocks = new ArrayList<Map.Entry<String, String>>();
         for (var guide : guides()) {
             var blocks = YAML_BLOCK.matcher(Files.readString(guide));
             while (blocks.find()) {
-                if (TEMPLATE_NAME.matcher(blocks.group(1)).find()) {
-                    templates.add(Map.entry(ROOT.relativize(guide).toString(), blocks.group(1)));
-                }
+                var entry = Map.entry(ROOT.relativize(guide).toString(), blocks.group(1));
+                if (TOOL_SCHEMA.matcher(blocks.group(1)).find()) toolBlocks.add(entry);
+                else if (TEMPLATE_NAME.matcher(blocks.group(1)).find()) templates.add(entry);
             }
         }
         assertFalse(templates.isEmpty(), "no guide shows a template, so this test checks nothing");
@@ -132,13 +142,31 @@ class GuidesTest {
         known.put("tpl-agent", new ImageDef());
         for (var template : templates) known.put(ImageDef.parseYaml(template.getValue()).getName(), new ImageDef());
         var tools = DocsListsTest.builtInTools().keySet();
+        var guideTools = new HashMap<String, Set<String>>();
         var problems = new ArrayList<String>();
+        for (var tool : toolBlocks) {
+            ToolDef def;
+            try {
+                def = ToolDef.loadFromStream(new ByteArrayInputStream(tool.getValue().getBytes(StandardCharsets.UTF_8)));
+            } catch (IOException e) {
+                problems.add(tool.getKey() + ": " + YamlErrors.friendly("guide-tool.yaml", e));
+                continue;
+            }
+            var errors = new ArrayList<String>();
+            var warnings = new ArrayList<String>();
+            ToolDefValidator.validateDef(def, errors, warnings);
+            errors.forEach(e -> problems.add(tool.getKey() + ": " + e));
+            warnings.forEach(w -> problems.add(tool.getKey() + ": " + w));
+            guideTools.computeIfAbsent(tool.getKey(), k -> new HashSet<>()).add(def.getName());
+        }
         for (var template : templates) {
             var result = TemplateValidator.validate(template.getValue(), Path.of("guide-template.yaml"), known);
             result.errors().forEach(e -> problems.add(template.getKey() + ": " + e));
             result.warnings().forEach(w -> problems.add(template.getKey() + ": " + w));
             for (var tool : ImageDef.parseYaml(template.getValue()).getTools()) {
-                if (!tools.contains(tool.getName())) problems.add(template.getKey() + ": no built-in tool '" + tool.getName() + "'");
+                if (!tools.contains(tool.getName()) && !guideTools.getOrDefault(template.getKey(), Set.of()).contains(tool.getName())) {
+                    problems.add(template.getKey() + ": names '" + tool.getName() + "', which is neither a built-in tool nor one this guide shows");
+                }
             }
         }
         assertEquals(List.of(), problems);

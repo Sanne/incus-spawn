@@ -424,7 +424,7 @@ A guide links to the guides its reader needs next, and a reference section that 
 The guides become a section of the site, an index at `/guides`, a sidebar group and a nav link, only once there are `SECTION_FROM` of them in `site/render.js`; until then each one is reached by the links to it.
 `GuidesTest` keeps the nav links, the home page's footer link and the `llms.txt` index line in step with that number.
 Each guide is checked by running it on a clean host before it is published.
-Every whole template a guide shows passes `isx templates validate`'s check and names only built-in tools (`GuidesTest`).
+Every whole template a guide shows passes `isx templates validate`'s check and names only built-in tools or a tool the same guide shows, which passes `isx tools validate`'s check (`GuidesTest`).
 
 **A project guide** ("Contribute to Quarkus from an isx sandbox") sets up a machine for contributing to one well-known project.
 Its first section, before any command, is that project's own rules for AI-assisted work, linked to where the project publishes them and summarised from that text alone.
