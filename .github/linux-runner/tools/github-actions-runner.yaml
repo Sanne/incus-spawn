@@ -6,10 +6,13 @@
 name: github-actions-runner
 description: GitHub Actions runner 2.338.2, run once per instance with a just-in-time configuration
 
-# The runner's .NET needs ICU; jq reads the job's event in the job-started hook
+# The runner's .NET needs ICU and OpenSSL 3, which Fedora 45 ships as openssl3-libs beside its
+# OpenSSL 4 (without it config.sh and run.sh abort: "No usable version of libssl was found"); jq
+# reads the job's event in the job-started hook
 packages:
   - libicu
   - krb5-libs
+  - openssl3-libs
   - jq
 
 downloads:

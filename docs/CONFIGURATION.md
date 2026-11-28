@@ -679,6 +679,8 @@ The proxy intercepts all traffic of your instances to a listed domain, so a tool
 The copies may hold private files.
 `isx doctor` shows where they are and how much space they take, and `isx clean cache` removes them.
 
+[Run a self-hosted GitHub Actions runner in an isx sandbox](guides/github-actions-runner.md) sets up such a runner with this cache, step by step.
+
 Build-time caches:
 
 - **DNF packages**, shared by every build, so builds reuse each other's downloads.
