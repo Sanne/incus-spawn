@@ -45,6 +45,7 @@ If a person asked you to install isx and set it up, follow [Install with your ag
 Each guide is one task, from an installed isx to a working result.
 
 - [Run Claude Code in an isx sandbox](https://isx.run/guides/claude-code): a template with your project, a machine per task, and the agent's commits fetched back to your host
+- [Run Codex CLI in an isx sandbox](https://isx.run/guides/codex-cli): Codex unconstrained in a machine of its own, with your OpenAI key or ChatGPT sign-in kept on your host, and its commits fetched back
 - [Write an isx template for your project](https://isx.run/guides/project-template): your agent, the packages your project builds with and a clone of its code, in a template you build once
 - [Review and take an agent's commits from an isx sandbox](https://isx.run/guides/agent-commits): `isx://` git remotes, added by hand or by isx, and plain `git fetch`, `diff` and `cherry-pick`
 

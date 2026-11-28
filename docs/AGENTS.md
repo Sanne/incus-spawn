@@ -91,6 +91,8 @@ To sign Codex in with an OpenAI API key, [create one here](https://platform.open
 API usage needs billing credits, even on free accounts.
 Run `isx init` to configure the key: it stays on the host, and the proxy adds it to Codex's requests as they leave the instance.
 
+[Run Codex CLI in an isx sandbox](guides/codex-cli.md) goes from `isx init` to the agent's commits on your host, step by step.
+
 ### A ChatGPT plan, experimental
 
 With a ChatGPT plan, you can sign Codex in with ChatGPT instead of an API key.
