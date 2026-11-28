@@ -41,7 +41,8 @@ done
 mkdir -p "$OUT_DIR/schema"
 cp "$SCRIPT_DIR"/schema/*.json "$OUT_DIR/schema/"
 
-# The docs pages: README.md at /docs, every docs/*.md at /docs/<name>, with the sitemap and
+# The docs pages: README.md at /docs, every docs/*.md at /docs/<name>, every docs/guides/*.md at
+# /guides/<name> (with a /guides index once there are SECTION_FROM guides), and the sitemap and
 # llms-full.txt that list them (site/render.js)
 MARKED=$(mktemp -d)
 trap 'rm -rf "$MARKED"' EXIT

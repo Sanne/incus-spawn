@@ -20,11 +20,12 @@ import java.util.stream.Collectors;
 
 public class HelpContext {
 
-    /** README.md, the docs/ pages isx.run publishes beside it, DESIGN.md and its design/ pages. Listed: a native image cannot list its resources. */
+    /** README.md, the docs/ pages isx.run publishes beside it and its docs/guides/ pages, DESIGN.md and its design/ pages. Listed: a native image cannot list its resources. */
     static final List<String> HELP_RESOURCES = List.of("help/README.md",
             "help/docs/AGENT-INSTALL.md", "help/docs/AGENTS.md", "help/docs/CLI.md", "help/docs/CONFIGURATION.md",
             "help/docs/CREDENTIAL-PROOFS.md", "help/docs/FAQ.md", "help/docs/FEDORA.md", "help/docs/GITHUB.md", "help/docs/INTEGRATIONS.md", "help/docs/MCP-PROTOCOL.md", "help/docs/MCP.md", "help/docs/SANDBOXES.md",
-            "help/docs/TEMPLATE-EXAMPLE.md", "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md", "help/DESIGN.md",
+            "help/docs/TEMPLATE-EXAMPLE.md", "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md",
+            "help/DESIGN.md",
             "help/design/accounts.md", "help/design/doctor.md", "help/design/git.md",
             "help/design/host-resources.md", "help/design/init.md", "help/design/instances.md", "help/design/macos-and-vms.md",
             "help/design/mcp.md", "help/design/native-image.md", "help/design/network.md", "help/design/proxy.md",
@@ -61,7 +62,8 @@ public class HelpContext {
                 The project website is https://isx.run. Its documentation is \
                 generated from the files provided below: README.md is \
                 https://isx.run/docs, and each docs/NAME.md is \
-                https://isx.run/docs/name (docs/CLI.md is https://isx.run/docs/cli). \
+                https://isx.run/docs/name (docs/CLI.md is https://isx.run/docs/cli), \
+                and each docs/guides/name.md is https://isx.run/guides/name. \
                 When answering, link to relevant documentation sections. A section's \
                 anchor comes from its heading exactly as the site makes it: lowercase \
                 the heading, delete every character that is not an ASCII letter, digit, \

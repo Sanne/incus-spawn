@@ -30,7 +30,8 @@ Modules: `common` (shared code), `cli` (the `isx` binary), `proxy` (the `isx-pro
   A `.claude/rules/` file changes only when a rule does, and no fact is stated in two files.
 - A test is owed for behaviour, not for how the code is arranged today (design/testing.md "What earns a test").
 - Markdown is one sentence per line, with short sentences (`DocsOneSentencePerLineTest`).
-  `README.md` and `docs/*.md` also keep to the budgets in `.claude/rules/writing.md`.
+  `README.md`, `docs/*.md` and the guides in `docs/guides/` also keep to the budgets in `.claude/rules/writing.md`.
+- A guide (`docs/guides/`) is one task per page; it links to the reference and never restates it.
 - Every text a person reads follows `.claude/rules/writing.md`, and the text isx prints (prompts, output, warnings, errors, the TUI) also follows `.claude/rules/interface-text.md`.
   `TranscriptGate` checks the transcripts of the main flows against its mechanical rules.
 - A divergence from stock Fedora is listed in `docs/FEDORA.md` in the same change.

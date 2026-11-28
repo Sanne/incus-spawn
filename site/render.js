@@ -1,5 +1,8 @@
 // Renders the documentation pages of isx.run: README.md at /docs, and every docs/*.md beside it at
 // /docs/<name> (docs/CLI.md is /docs/cli). Maintainer notes live in docs/dev/ and are not published.
+// The guides, one task each, are docs/guides/<slug>.md at /guides/<slug>, listed at /guides once
+// there are SECTION_FROM of them; each states its own description in front matter, since that line
+// is what a search result shows.
 // Links between the Markdown files become links between the pages; any other relative link goes to
 // the file on GitHub.
 //
@@ -39,7 +42,46 @@ const RENAMED = {
 for (const name of FIRST.concat(LAST)) {
   if (!pages.some(p => p.name === name)) throw new Error('render.js lists docs/' + name.toUpperCase() + '.md, which does not exist');
 }
-const bySrc = new Map(pages.map(p => [p.src, p]));
+
+// A guide's front matter: the lines between a first line of --- and the next ---, as key: value
+const frontMatter = md => {
+  const m = md.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!m) return { fields: {}, md };
+  const fields = {};
+  for (const line of m[1].split('\n')) {
+    const kv = line.match(/^([\w-]+):\s*(.*)$/);
+    if (kv) fields[kv[1]] = kv[2].replace(/^(["'])(.*)\1$/, '$2');
+  }
+  return { fields, md: md.slice(m[0].length) };
+};
+
+// The guides, and their index page, which is written here from them once they are a section (SECTION_FROM)
+const GUIDES = 'docs/guides';
+const guides = (fs.existsSync(path.join(root, GUIDES)) ? fs.readdirSync(path.join(root, GUIDES)) : [])
+  .filter(f => f.endsWith('.md'))
+  .map(f => ({ src: GUIDES + '/' + f, name: f.slice(0, -3).toLowerCase(), url: '/guides/' + f.slice(0, -3).toLowerCase(), guide: true }));
+for (const guide of guides) {
+  const { fields, md } = frontMatter(fs.readFileSync(path.join(root, guide.src), 'utf8'));
+  if (!fields.description) throw new Error(guide.src + ' has no description: in its front matter');
+  guide.md = md;
+  guide.description = fields.description;
+}
+guides.sort((a, b) => a.name.localeCompare(b.name));
+// The guides become a section of the site, an index at /guides and a group in the sidebar, once
+// there are this many; until then each guide is a page of its own, reached by the links to it.
+// The nav's Guides link comes with the section: GuidesTest reads this number to hold the two together.
+const SECTION_FROM = 10;
+const section = guides.length >= SECTION_FROM;
+const guideIndex = {
+  src: GUIDES, url: '/guides', guide: true,
+  description: 'Guides to isx, one task each: from an installed isx to an agent at work in a sandbox of its own.',
+};
+guideIndex.md = '# Guides\n\n' + guideIndex.description + '\n'
+  + 'The [documentation](/docs) is the reference each guide links to for its options.\n\n'
+  + guides.map(g => '- [' + (g.md.match(/^# (.*)$/m) || [, g.name])[1] + '](' + g.url + '): ' + g.description + '\n').join('');
+const guidePages = section ? [guideIndex].concat(guides) : guides;
+const all = pages.concat(guidePages);
+const bySrc = new Map(all.map(p => [p.src, p]));
 
 const decode = s => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -100,8 +142,8 @@ const copyBoxes = body => body.replace(/<!-- copy -->\s*(<pre>[\s\S]*?<\/pre>)/g
 
 const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
-for (const page of pages) {
-  page.md = fs.readFileSync(path.join(root, page.src), 'utf8');
+for (const page of all) {
+  page.md ??= fs.readFileSync(path.join(root, page.src), 'utf8');
   page.title = (page.md.match(/^# (.*)$/m) || [, page.src])[1].replace(/[`*]/g, '');
 }
 
@@ -116,7 +158,7 @@ function description(body) {
   return first.slice(0, cut > 0 ? cut : 157).replace(/[.,;:]$/, '') + '…';
 }
 
-for (const page of pages) {
+for (const page of all) {
   let body = marked.parse(page.md, { gfm: true });
   page.tocItems = [];
   page.ids = new Set();
@@ -160,7 +202,21 @@ const redirect = `<script>
 })();
 </script>`;
 
-for (const page of pages) {
+// Each page is dated by the last commit that changed its content, for the sitemap and a guide's
+// structured data. Needs the history: the deploy workflows check out with fetch-depth: 0.
+const lastmod = (...files) => execFileSync('git', ['-C', root, 'log', '-1', '--format=%cs', '--', ...files]).toString().trim();
+for (const page of all) page.mod = lastmod(page.src, 'site/docs.html');
+
+// The groups of pages, each in its sidebar list: the reference, and the guides once they are a
+// section, the group of the page shown first
+const label = p => escape(p === pages[0] ? 'Start here' : p === guideIndex ? 'All guides' : p.title);
+const groups = page => {
+  const both = [{ heading: 'Documentation', list: pages }, { heading: 'Guides', list: guidePages }];
+  if (!section) return both.slice(0, 1);
+  return page.guide ? both.reverse() : both;
+};
+
+for (const page of all) {
   const { body, tocItems, consumedIds, top } = page;
 
   let toc = '<nav class="docs-toc" aria-label="Table of contents"><ul>';
@@ -168,46 +224,50 @@ for (const page of pages) {
   tocItems.filter(item => !consumedIds.includes(item.id)).forEach(item => {
     toc += '<li class="toc-item' + (item.level === 3 ? ' toc-item-nested' : '') + '"><a href="#' + item.id + '">' + escape(item.text) + '</a></li>';
   });
-  toc += '</ul><p class="toc-heading">Documentation</p><ul>';
-  pages.forEach(p => {
-    toc += '<li class="toc-item"><a href="' + p.url + '"' + (p === page ? ' aria-current="page" class="active"' : '') + '>'
-      + escape(p === pages[0] ? 'Start here' : p.title) + '</a></li>';
-  });
-  toc += '</ul></nav>';
+  toc += '</ul>' + groups(page).map(g => '<p class="toc-heading">' + g.heading + '</p><ul>'
+    + g.list.map(p => '<li class="toc-item"><a href="' + p.url + '"' + (p === page ? ' aria-current="page" class="active"' : '') + '>'
+      + label(p) + '</a></li>').join('') + '</ul>').join('') + '</nav>';
 
-  // The TOC is hidden on narrow screens, so the page list also follows the content there
-  const more = '<nav class="docs-pages" aria-label="Documentation"><p class="toc-heading">Documentation</p><ul>'
-    + pages.map(p => '<li><a href="' + p.url + '">' + escape(p === pages[0] ? 'Start here' : p.title) + '</a></li>').join('')
-    + '</ul></nav>';
+  // The TOC is hidden on narrow screens, so the page lists also follow the content there
+  const more = '<nav class="docs-pages" aria-label="Pages">' + groups(page).map(g => '<p class="toc-heading">' + g.heading + '</p><ul>'
+    + g.list.map(p => '<li><a href="' + p.url + '">' + label(p) + '</a></li>').join('') + '</ul>').join('') + '</nav>';
   let html = tpl.replace('<!-- README_CONTENT -->', () => body + more).replace('<!-- TOC -->', () => toc)
     .replace('<!-- MOVED -->', () => page === pages[0] ? redirect : '');
   if (page !== pages[0]) {
     const url = 'https://isx.run' + page.url;
-    const desc = description(body);
+    const desc = page.guide ? page.description : description(body);
     html = html.replace(/<title>.*?<\/title>/, '<title>' + escape(page.title) + ' &mdash; isx</title>')
       .replace(/(<meta (?:name="description"|property="og:description"|name="twitter:description") content=")[^"]*/g,
         (m, attr) => desc === null ? m : attr + escape(desc))
       .replace(/(<link rel="canonical" href=")[^"]*/, '$1' + url)
       .replace(/(<meta property="og:url" content=")[^"]*/, '$1' + url)
       .replace(/(<meta (?:property="og|name="twitter):title" content=")[^"]*/g, '$1' + escape(page.title) + ' — isx');
+    // A guide is an article, and says so to search engines in structured data
+    if (page.guide && page !== guideIndex) {
+      const article = {
+        '@context': 'https://schema.org', '@type': 'TechArticle', headline: page.title, description: desc,
+        url, dateModified: page.mod, inLanguage: 'en',
+        isPartOf: { '@type': 'WebSite', name: 'isx', url: 'https://isx.run/' },
+      };
+      html = html.replace('<meta property="og:type" content="website">', '<meta property="og:type" content="article">')
+        .replace('</head>', () => '  <script type="application/ld+json">' + JSON.stringify(article).replace(/</g, '\\u003c') + '</script>\n</head>');
+    }
   }
   const file = path.join(out, page.url.slice(1) + '.html');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, html);
 }
 
-// Sitemap, dated by the last commit that changed each page's content. Needs the history: the
-// deploy workflows check out with fetch-depth: 0.
-const lastmod = (...files) => execFileSync('git', ['-C', root, 'log', '-1', '--format=%cs', '--', ...files]).toString().trim();
+// Sitemap, with each page's date
 const entries = [{ url: '/', mod: lastmod('site/index.html') }]
-  .concat(pages.map(p => ({ url: p.url, mod: lastmod(p.src, 'site/docs.html') })));
+  .concat(all.map(p => ({ url: p.url, mod: p.mod })));
 fs.writeFileSync(path.join(out, 'sitemap.xml'), '<?xml version="1.0" encoding="UTF-8"?>\n'
   + '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
   + entries.map(e => '  <url>\n    <loc>https://isx.run' + e.url + '</loc>\n    <lastmod>' + e.mod + '</lastmod>\n  </url>\n').join('')
   + '</urlset>\n');
 
 // llms.txt (https://llmstxt.org) links here: the full docs as one Markdown file, every page in order
-fs.writeFileSync(path.join(out, 'llms-full.txt'), pages
+fs.writeFileSync(path.join(out, 'llms-full.txt'), all
   .map(p => (p === pages[0] ? '' : '\n\n<!-- ' + p.src + ': https://isx.run' + p.url + ' -->\n\n')
     + p.md)
   .join(''));
