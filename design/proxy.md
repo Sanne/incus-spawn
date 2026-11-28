@@ -1580,7 +1580,8 @@ Those are an Azure shared access signature's (`sv`, `se`, `sig` and the rest) an
 Every other parameter stays in the key, sorted: Azure answers `?comp=metadata` on a blob's path with the blob's own `ETag` and another body, so a key without the query would serve one as the other on a `304`.
 A domain that signs links with other parameter names only misses, it never serves the wrong bytes.
 Whether the key helps depends on the service keeping a blob's path stable across links.
-GitHub's toolkit fetches the blob from the signed URL the cache service hands out (`@actions/cache`, `downloadUtils.ts`, read 2026-11), and whether that path repeats from one job to the next is checked by the real run that #2519 makes possible.
+GitHub's toolkit fetches the blob from the signed URL the cache service hands out (`@actions/cache`, `downloadUtils.ts`, read 2026-11).
+The path repeats from one job to the next: a real run on a self-hosted runner (#2723) restored one cache through a single stored object, served from the host on the third run.
 Correctness never depends on it: a path that changes only misses.
 
 **Ranges.**
