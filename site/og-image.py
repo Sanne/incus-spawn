@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 SITE = os.path.dirname(os.path.abspath(__file__))
 HEADLINE = "A safe sandbox for"
-HIGHLIGHT = "Claude Code, Codex and other coding agents"
+HIGHLIGHT = "your AI coding agents"
 DOMAIN = "isx.run"
 
 W, H, PAD = 1200, 630, 64
