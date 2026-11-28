@@ -5,6 +5,7 @@ The agent inside can be Claude Code, Codex, Pi, opencode or Antigravity CLI.
 `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio.
 
 This page covers setup, what the agent gets, and running the coordinating agent in an instance of its own.
+[Delegate tasks from Claude Code to agents in isx sandboxes](guides/delegate-over-mcp.md) walks through a first delegated task, step by step.
 A program that drives `isx mcp` from code has [a page of its own](MCP-PROTOCOL.md).
 
 ## Setting it up
