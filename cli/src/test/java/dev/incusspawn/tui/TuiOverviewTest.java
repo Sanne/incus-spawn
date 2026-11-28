@@ -572,14 +572,13 @@ class TuiOverviewTest {
     /** What a key asks for is whole in its first frame, and where its consequence landed is lit (visual-language.md "Motion"). */
     @Test
     void aCursorOnAnotherInstanceLightsThePreviewsTitleAndOpeningThePreviewLightsNothing() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(tui(120).theme.depth().blends());
         var tui = tui(120);
         tui.motion.start();
         try {
             workTab(tui);
             readsFinish();
             render(tui);
-            assertTrue(cellAt(render(tui), "─ ● mine").style().bg().isEmpty(), "the tab opens with nothing lit");
+            assertTrue(cellAt(render(tui), "● mine ─").style().bg().isEmpty(), "the tab opens with nothing lit");
             press(tui, KeyEvent.ofKey(KeyCode.DOWN));
             var lit = render(tui);
             var lines = TuiSnapshot.toText(lit).lines().toList();
@@ -596,7 +595,6 @@ class TuiOverviewTest {
 
     @Test
     void aReadThatChangesARowTintsItAndTheFirstReadTintsNoRow() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(tui(120).theme.depth().blends());
         var daemons = new java.util.ArrayList<FakeIncusDaemon>();
         var tui = tui(120, daemons::add);
         tui.motion.start();
@@ -622,7 +620,6 @@ class TuiOverviewTest {
 
     @Test
     void aValueArrivingInThePreviewTintsItsLineAndAnotherInstancesPreviewTintsNothing() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(tui(120).theme.depth().blends());
         var tui = tui(120);
         tui.motion.start();
         try {
@@ -633,13 +630,63 @@ class TuiOverviewTest {
             assertTrue(cellAt(arrived, "Work     2 unpushed").style().bg().isPresent(), "the value that arrived is tinted");
             assertTrue(cellAt(arrived, "Idle     ").style().bg().isEmpty(), "Idle, which only the clock changes, never is");
 
-            tui.motion.stop();
-            tui.motion.start();
+            // At once, while the tint of what arrived is still fading: it does not go on to the next preview
             press(tui, KeyEvent.ofKey(KeyCode.DOWN));
             assertTrue(cellAt(render(tui), "Work     not read").style().bg().isEmpty(), "the cursor brought this preview: nothing in it is news");
         } finally {
             tui.motion.stop();
         }
+    }
+
+    /** The TUI is left open for days: a Work tab with nothing under way asks for no frames. */
+    @Test
+    void anIdleWorkTabWithItsPreviewAsksForNoFrames() throws Exception {
+        var tui = tui(120);
+        tui.motion.start();
+        try {
+            workTab(tui);
+            readsFinish();
+            Eventually.holdsWithin(Eventually.DEFAULT_TIMEOUT, () -> {
+                render(tui);
+                return !tui.motion.moving();
+            });
+            assertFalse(tui.motion.moving(), "the tints of what arrived have faded, and no spinner is shown");
+        } finally {
+            tui.motion.stop();
+        }
+    }
+
+    /** A closing message may hold a glyph the spinner uses: it is the guest's text, and says the same in every frame. */
+    @Test
+    void aSpinnerGlyphInAClosingMessageIsNotTakenForTheSpinner() throws Exception {
+        var tui = tui(120, daemon -> daemon.execOutput(dev.incusspawn.command.WorkState.HEADER,
+                guest("total 1\n" + claudeSession(1762164000, "Ported ⠙ the parser"))));
+        workTab(tui);
+        readsFinish();
+        var mine = tui.selectedInstance();
+        assertEquals("mine", mine.name());
+        var said = new java.util.HashSet<String>();
+        for (var glyph : List.of("⠋", "⠙", "⠹")) {
+            var subject = new WorkPreview.Subject(mine, dev.tamboui.text.Span.raw("● "), "Running",
+                    dev.incusspawn.command.OverviewCommand.effortOf(tui.overviewLog, mine), tui.overviewReading, false, 0,
+                    glyph, NOW, java.time.ZoneOffset.UTC);
+            said.add(WorkPreview.preview(subject, 60, tui.theme).blocks().stream()
+                    .filter(b -> b.key().equals("Done")).findFirst().orElseThrow().says());
+        }
+        assertEquals(1, said.size(), "nothing is merging, so the spinner's frame changes nothing: " + said);
+        assertTrue(said.iterator().next().contains("⠙"), said.toString());
+    }
+
+    @Test
+    void theCutPreviewNamesNoKeysWhileTheSearchBarTakesThem() throws Exception {
+        height = 12;
+        var tui = tui(120);
+        workTab(tui);
+        readsFinish();
+        assertTrue(screen(tui).contains("J/K Scroll"), screen(tui));
+        press(tui, KeyEvent.ofChar('/'));
+        var searching = screen(tui);
+        assertTrue(searching.contains("more lines") && !searching.contains("J/K Scroll"), searching);
     }
 
     @Test

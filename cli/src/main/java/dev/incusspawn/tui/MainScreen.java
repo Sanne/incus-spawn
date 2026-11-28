@@ -841,9 +841,11 @@ final class MainScreen {
     private void renderPreview(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, InstanceInfo selected) {
         var log = tui.overviewLog;
         var reading = tui.overviewReading;
+        // The spinner is asked for only while it is shown, or an idle preview would ask for frames for ever
+        int merging = tui.mergingSessions(selected.name());
         var subject = new WorkPreview.Subject(selected, tui.stateGlyph(selected), stateWord(selected),
                 log == null ? null : OverviewCommand.effortOf(log, selected), reading, tui.overviewAwaits(selected),
-                tui.mergingSessions(selected.name()), tui.motion.spinner(), tui.overviewClock.get(), tui.overviewZone);
+                merging, merging > 0 ? tui.motion.spinner() : Motion.SPINNER_STILL, tui.overviewClock.get(), tui.overviewZone);
         var preview = WorkPreview.preview(subject, area.width(), tui.theme);
         var lines = preview.lines();
         tui.previewSays(selected.name(), preview.blocks());
@@ -853,6 +855,8 @@ final class MainScreen {
         int most = cut ? lines.size() - shown : 0;
         tui.previewScrollMost = most;
         int offset = Math.max(0, Math.min(tui.previewScroll, most));
+        // A preview that got shorter keeps no scroll past its end, so K moves it at its first press
+        tui.previewScroll = offset;
         for (int i = 0; i < shown && offset + i < lines.size(); i++) {
             frame.buffer().setLine(area.left(), area.top() + i, lines.get(offset + i), area.width());
         }
@@ -867,13 +871,13 @@ final class MainScreen {
             int top = Math.max(0, part.from() - offset);
             int bottom = Math.min(shown, part.to() - offset);
             if (bottom > top) {
-                tui.motion.row(Tui.previewKey(part.key()),
+                tui.motion.row(Tui.previewKey(selected.name(), part.key()),
                         new dev.tamboui.layout.Rect(area.left(), area.top() + top, area.width(), bottom - top));
             }
         }
         if (cut && area.height() > 0) {
             frame.buffer().setLine(area.left(), area.bottom() - 1,
-                    WorkPreview.cutLine(lines.size() - offset - shown, offset, tui.theme), area.width());
+                    WorkPreview.cutLine(lines.size() - offset - shown, offset, !tui.searchActive, tui.theme), area.width());
         }
     }
 

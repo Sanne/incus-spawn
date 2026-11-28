@@ -139,7 +139,8 @@ final class WorkPreview {
         out.add(Line.from(""));
         from = out.size();
         var passing = done(out, s, width, theme);
-        block(blocks, "Done", out, from, passing, s.spinner());
+        // The spinner's glyph is in the part only while a merge is under way
+        block(blocks, "Done", out, from, passing, s.merging() > 0 ? s.spinner() : null);
         return new Preview(out, blocks);
     }
 
@@ -285,13 +286,15 @@ final class WorkPreview {
 
     /**
      * The last row of a preview that does not all fit: how many lines are below and above what is
-     * shown, and the keys that move it.
+     * shown, and the keys that move it, unless {@code keys} is false: while the search bar is open
+     * it takes every letter.
      */
-    static Line cutLine(int below, int above, TuiTheme theme) {
+    static Line cutLine(int below, int above, boolean keys, TuiTheme theme) {
         var faint = Style.EMPTY.fg(theme.textFaint());
         var says = below > 0
                 ? below + (below == 1 ? " more line" : " more lines") + (above > 0 ? ", " + above + " above" : "")
                 : above + (above == 1 ? " line above" : " lines above");
+        if (!keys) return Line.from(Span.raw(" "), Span.styled(says, faint));
         return Line.from(Span.raw(" "), Span.styled(says, faint),
                 Span.styled("   J/K", Style.EMPTY.bold().fg(theme.accent())),
                 Span.styled(" Scroll", Style.EMPTY.fg(theme.textDim())));

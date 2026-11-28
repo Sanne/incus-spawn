@@ -115,6 +115,8 @@
                         <environmentVariables>
                             <!-- A test JVM is not isx, so GroupContinuation must never re-run it under sg (#2201) -->
                             <ISX_GROUP_CONTINUED>1</ISX_GROUP_CONTINUED>
+                            <!-- A test's TUI blends colours whatever terminal the test JVM has, CI's included, so the tests of its tints run everywhere -->
+                            <ISX_COLORS>truecolor</ISX_COLORS>
                         </environmentVariables>
                     </configuration>
                 </plugin>

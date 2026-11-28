@@ -357,7 +357,6 @@ class TuiCharacterisationTest {
             daemon.instance(name, "container", "Stopped", branch("tpl-minimal", 3 * 60 + 30));
         }
         var tui = tui(false, daemon);
-        org.junit.jupiter.api.Assumptions.assumeTrue(tui.theme.depth().blends());
         java.util.function.Supplier<dev.tamboui.style.Style> tab = () -> {
             var drawn = TuiSnapshot.render(120, 40, tui::render);
             return drawn.get(TuiSnapshot.toText(drawn).lines().toList().get(1).indexOf("Instances"), 1).style();

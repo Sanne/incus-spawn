@@ -49,7 +49,7 @@ class AboutModalTest {
     @Test
     void rendersEveryShortcutOnMacOs() {
         var dialog = dialog(true);
-        TuiSnapshot.assertMatches("about-modal-macos-80x60", TuiSnapshot.render(80, 60, f -> dialog.render(f, f.area())));
+        TuiSnapshot.assertMatches("about-modal-macos-80x64", TuiSnapshot.render(80, 64, f -> dialog.render(f, f.area())));
     }
 
     /**

@@ -543,9 +543,12 @@ public class Tui {
     static final String PREVIEW_TITLE_KEY = "preview:title";
     static final String PREVIEW_LINK_KEY = "preview:link";
 
-    /** The key of a part of the preview, for the tint that says its value arrived or changed. */
-    static String previewKey(String part) {
-        return "preview:part:" + part;
+    /**
+     * The key of a part of {@code instance}'s preview, for the tint that says its value arrived or
+     * changed. It names the instance, so a tint never goes on to the next instance's preview.
+     */
+    static String previewKey(String instance, String part) {
+        return "preview:part:" + part + ":" + instance;
     }
 
     /** The key of a tab, for the tint that says its count changed. */
@@ -574,7 +577,7 @@ public class Tui {
         var says = new java.util.HashMap<String, String>();
         for (var block : blocks) {
             says.put(block.key(), block.says());
-            if (same && !block.says().equals(previewSaid.get(block.key()))) motion.flash(previewKey(block.key()));
+            if (same && !block.says().equals(previewSaid.get(block.key()))) motion.flash(previewKey(instance, block.key()));
         }
         previewSaidOf = instance;
         previewSaid = says;
@@ -2230,6 +2233,8 @@ public class Tui {
         if (view.shows(Panel.INSTANCES)) mainScreen.renderInstanceTable(frame, chunks.get(3), tableState);
         mainScreen.renderToolbar(frame, chunks.get(4), tableState, hasStatus);
 
+        // Before a dialog is drawn: what moves on the main screen is never drawn across it
+        motion.process(frame.buffer());
         if (mode != Mode.BROWSE) {
             renderModal(frame, area, tableState);
         }
@@ -3857,6 +3862,10 @@ public class Tui {
             tableRows.add(rows.get(entry));
             rowToEntry.add(entry);
         }
+        // An instance that is gone is forgotten: one that takes its name starts with a first read
+        var listed = (allEntries != null ? allEntries : entries).stream().map(InstanceInfo::name)
+                .collect(java.util.stream.Collectors.toSet());
+        workSaid.keySet().removeIf(key -> !listed.contains(key.substring(0, key.lastIndexOf('/'))));
         statusSeen.keySet().retainAll((allEntries != null ? allEntries : entries).stream().map(InstanceInfo::name)
                 .collect(java.util.stream.Collectors.toSet()));
         statusBaseline = true;

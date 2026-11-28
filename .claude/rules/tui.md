@@ -39,7 +39,9 @@ The shimmer's band blends towards `statusWarning` and is undimmed on a dimmed ro
 What a key asks for is whole in its first frame: a dialog's fade-in was tried and read as a slower TUI (Sanne), so nothing has an entrance.
 After a key, motion may only mark where its consequence landed away from the cursor, with `Motion.settle`, which holds while keys keep coming and fades once (the Work preview's title and divider, `Tui.notePreviewed`).
 `Motion.flash(key)` tints whatever area a frame registered under that key with `Motion.row`: a row, a tab (`Tui.tabKey`) or a part of the preview (`Tui.previewKey`).
-Flash only what isx saw change, never a first read: `Tui.workSays` and `Tui.previewSays` compare with what the last frame said, and a value the clock or the spinner alone changes stays out of what is compared (`WorkPreview.Block.says`).
+Flash only what isx saw change: `Tui.workSays` never tints a row for its first read, and `Tui.previewSays` tints a part when its value arrives or changes while its instance stays selected.
+A value the clock or the spinner alone changes stays out of what is compared (`WorkPreview.Block.says`).
+A frame calls `Motion.process` before its dialog and again after it, so no tint or shimmer of the main screen is drawn across a dialog.
 It runs only between `Motion.start` and `stop`, which `drawUntilQuit` calls, so a test's rendering holds still.
 It asks for frames (`Motion.FrameEvent`, 25 a second) only while something moves, so an idle TUI draws nothing; `ISX_MOTION=off` turns it off.
 `scripts/tui-demo.sh` runs the real TUI over a `FakeIncusDaemon` listing (`TuiDemo`, test scope) with no Incus, to look at a change in a real terminal.
