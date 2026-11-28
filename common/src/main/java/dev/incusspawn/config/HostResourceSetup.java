@@ -55,6 +55,42 @@ public final class HostResourceSetup {
         if (machineType == MachineType.CONTAINER && !Platform.isMacOS()) args.add("shift=true");
     }
 
+    /**
+     * {@link #addShiftIfSupported}, except for a source on overlayfs owned by uid 1000, which some
+     * kernels cannot idmap: Incus then refuses the device with "Required idmapping abilities not
+     * available" (#595). That source is what a host resource shows inside an isx instance whose own
+     * template mounted it as an overlay, so building there failed. Unshifted, the build's
+     * {@code raw.idmap} of uid 1000 shows the owner's files as {@code agentuser}'s, as the shift
+     * would. Newer kernels can idmap overlayfs, and isx cannot ask without making the mount, so a
+     * source owned by anyone else keeps its shift, which there is what makes it readable.
+     */
+    static void addShiftIfSupported(java.util.List<String> args, MachineType machineType, String source) {
+        if (machineType != MachineType.CONTAINER || Platform.isMacOS()) return;
+        var path = Path.of(source);
+        if (!"overlay".equals(filesystemType(path)) || ownerUid(path) != IDMAPPED_UID) args.add("shift=true");
+    }
+
+    /** The uid the build's {@code raw.idmap} maps to itself: {@code agentuser}'s. */
+    private static final int IDMAPPED_UID = 1000;
+
+    /** The filesystem type holding {@code path} ("overlay", "ext4", ...), or null when it cannot be read. */
+    static String filesystemType(Path path) {
+        try {
+            return Files.getFileStore(path).type();
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** The uid owning {@code path}, or -1 when it cannot be read. */
+    static int ownerUid(Path path) {
+        try {
+            return (Integer) Files.getAttribute(path, "unix:uid");
+        } catch (IOException | RuntimeException e) {
+            return -1;
+        }
+    }
+
     public static String translateForVm(String hostPath) {
         if (!Platform.isMacOS()) return hostPath;
         var home = System.getProperty("user.home");
@@ -652,7 +688,7 @@ public final class HostResourceSetup {
                 "source=" + translateForVm(expandHostTilde(hr.getSource())),
                 "path=" + containerPath,
                 "readonly=true"));
-        addShiftIfSupported(args, machineType);
+        addShiftIfSupported(args, machineType, expandHostTilde(hr.getSource()));
         incus.deviceAdd(container, deviceName(containerPath), "disk", args.toArray(String[]::new));
     }
 
@@ -664,7 +700,7 @@ public final class HostResourceSetup {
                 "source=" + translateForVm(expandHostTilde(hr.getSource())),
                 "path=" + overlayDir(containerPath) + "/lower",
                 "readonly=true"));
-        addShiftIfSupported(devArgs, machineType);
+        addShiftIfSupported(devArgs, machineType, expandHostTilde(hr.getSource()));
         incus.deviceAdd(container, overlayDeviceName(containerPath), "disk",
                 devArgs.toArray(String[]::new));
     }

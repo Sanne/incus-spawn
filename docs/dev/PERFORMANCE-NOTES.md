@@ -1620,3 +1620,17 @@ The same eight clones, copied with their mtimes, their indexes refreshed after a
 Quarkus alone: 657 ms by default, 184 ms with `core.checkStat=minimal`, of which the index refresh is 9 ms.
 In the instance as branched, with no settled index, the change takes the read from 0.82 s to 0.52 s on 32 CPUs and to 0.78 s on two, by its overlap alone, at the same CPU time.
 
+
+## A host resource's filesystem type and owner, on Linux (issue #595)
+
+Measured 2026-11-27 in an isx instance (tpl-isx-agent-vm, a KVM VM, kernel 7.3.5, x86_64) with 25 entries in `/proc/self/mounts`, on the JVM (Java 25), of a directory on ext4.
+Each figure is the mean of 1,000 calls after 2,000 warm-up calls, over three rounds.
+
+| Read | Per call |
+|---|---|
+| `Files.getFileStore(path).type()` | 30 to 35 µs |
+| `Files.getAttribute(path, "unix:uid")` | 1.1 to 1.3 µs |
+
+The type read parses the mount table on every call, so it grows with the number of mounts.
+A container's `readonly` or `overlay` host resource pays both once, when its device is added at build or branch.
+The first call in a process cost about 0.6 ms, most of it class initialization.

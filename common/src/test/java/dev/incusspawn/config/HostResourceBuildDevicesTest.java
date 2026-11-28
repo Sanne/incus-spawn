@@ -91,6 +91,47 @@ class HostResourceBuildDevicesTest {
         verify(incus, never()).shellExec(anyString(), any(String[].class));
     }
 
+    /**
+     * Inside an isx instance whose template mounted {@code ~/.m2/repository} as an overlay, that
+     * directory is on overlayfs, which the kernel cannot idmap, and a shifted device on it stops the
+     * nested build from starting (#595). There it belongs to uid 1000, which the build's raw.idmap
+     * maps unshifted. A source on any other filesystem, or owned by anyone else, is still shifted.
+     */
+    @Test
+    void containerDevicesAreShiftedUnlessTheirSourceIsOnOverlayfs(@TempDir Path tmp) throws Exception {
+        var plain = Files.createDirectories(tmp.resolve("plain"));
+        var onOverlayRo = Files.createDirectories(tmp.resolve("overlay-ro"));
+        var onOverlay = Files.createDirectories(tmp.resolve("overlay-ov"));
+        var othersOverlay = Files.createDirectories(tmp.resolve("overlay-other"));
+        var incus = mock(IncusClient.class);
+
+        try (var fs = mockStatic(HostResourceSetup.class, CALLS_REAL_METHODS)) {
+            fs.when(() -> HostResourceSetup.filesystemType(any(Path.class))).thenReturn("ext4");
+            fs.when(() -> HostResourceSetup.ownerUid(any(Path.class))).thenReturn(1000);
+            for (var p : List.of(onOverlayRo, onOverlay, othersOverlay)) {
+                fs.when(() -> HostResourceSetup.filesystemType(p)).thenReturn("overlay");
+            }
+            fs.when(() -> HostResourceSetup.ownerUid(othersOverlay)).thenReturn(1001);
+            HostResourceSetup.attachBuildDevices(incus, "b", List.of(
+                    new ImageDef.HostResource(plain.toString(), "/home/agentuser/plain", "readonly"),
+                    new ImageDef.HostResource(onOverlayRo.toString(), "/home/agentuser/ro", "readonly"),
+                    new ImageDef.HostResource(onOverlay.toString(), "/home/agentuser/ov", "overlay"),
+                    new ImageDef.HostResource(othersOverlay.toString(), "/home/agentuser/other", "readonly")),
+                    MachineType.CONTAINER);
+        }
+
+        verify(incus).deviceAdd(eq("b"), eq(HostResourceSetup.deviceName("/home/agentuser/plain")), eq("disk"),
+                eq("source=" + plain), eq("path=/home/agentuser/plain"), eq("readonly=true"), eq("shift=true"));
+        verify(incus).deviceAdd(eq("b"), eq(HostResourceSetup.deviceName("/home/agentuser/other")), eq("disk"),
+                eq("source=" + othersOverlay), eq("path=/home/agentuser/other"), eq("readonly=true"), eq("shift=true"));
+        verify(incus).deviceAdd(eq("b"), eq(HostResourceSetup.deviceName("/home/agentuser/ro")), eq("disk"),
+                eq("source=" + onOverlayRo), eq("path=/home/agentuser/ro"), eq("readonly=true"));
+        verify(incus).deviceAdd(eq("b"), eq(HostResourceSetup.overlayDeviceName("/home/agentuser/ov")),
+                eq("disk"), eq("source=" + onOverlay),
+                eq("path=/var/lib/incus-spawn/overlays/home/agentuser/ov/lower"), eq("readonly=true"));
+        verify(incus, times(4)).deviceAdd(anyString(), anyString(), anyString(), any(String[].class));
+    }
+
     @Test
     void attachSkipsSourcesIncusCouldNotStartWith(@TempDir Path tmp) throws Exception {
         // A missing source fails Incus start validation ("Missing source path"), and a VM cannot
