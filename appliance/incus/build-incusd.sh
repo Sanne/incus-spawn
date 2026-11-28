@@ -34,7 +34,8 @@ cd "$WORK/incus-$VERSION"
 patches=""
 for p in "$HERE"/*.patch; do
     [ -e "$p" ] || continue   # none left once a release has the fixes
-    patch -p1 --no-backup-if-mismatch < "$p"
+    # No fuzz: a hunk whose context moved fails the build rather than landing at a near match.
+    patch -p1 --fuzz=0 --no-backup-if-mismatch < "$p"
     patches="$patches
 patch=$(basename "$p") sha256:$(sha256sum "$p" | cut -d' ' -f1)"
 done
