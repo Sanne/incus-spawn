@@ -6,22 +6,8 @@ This page is the reference for the template schema, declared repositories, shell
 
 ## Your first template
 
-This guide makes a template for one project: your agent, the project's code and the packages it builds with.
-It starts from `tpl-agent`, the template `isx init` built for your agent.
-
-1. Create the template, named after your project, with `isx templates new tpl-my-app`.
-   Your editor opens a short file.
-2. Set `parent: tpl-agent`, so the new template starts with your agent and its accounts.
-3. Under `packages:`, list what the project needs to build, such as `maven` or `nodejs`.
-4. Under `repos:`, add the project's clone URL and a `path:`, such as `~/my-app`.
-   A shell in the instance opens in that path.
-5. Save and close the editor.
-   isx checks the file and says what is wrong, if anything.
-6. Build it with `isx build tpl-my-app`.
-   The build clones the repository once, and every instance you branch from the template starts with the clone.
-7. Branch an instance with `isx branch my-app-1 --from tpl-my-app`, and your agent opens in the project.
-
-Each field the steps use is described under [Image schema fields](#image-schema-fields), and [Declarative repos](#declarative-repos) covers private repositories.
+[Write an isx template for your project](guides/project-template.md) makes a template for one project, step by step: your agent, the packages the project builds with and a clone of its code.
+Each field it uses is described under [Image schema fields](#image-schema-fields), and [Declarative repos](#declarative-repos) covers private repositories.
 
 ## Inheritance
 
