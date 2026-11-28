@@ -1,4 +1,5 @@
 ---
+title: Write a sandbox template for your project
 description: Write an isx template for your project, with your coding agent, its packages and a clone of its code, so every sandbox you branch starts ready to work.
 ---
 

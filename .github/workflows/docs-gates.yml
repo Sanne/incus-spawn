@@ -56,3 +56,8 @@ jobs:
 
       - name: Run the docs gates
         run: .github/scripts/mvn-ci.sh '${{ steps.maven-cache.outputs.cache-hit }}' -B -ntp -pl common,cli -am test -Dgroups=docs
+
+      # site/render.js fails on what only the rendered pages show, such as a page title that does
+      # not end with the brand (SiteTitlesTest), so a PR sees it before pages.yml deploys
+      - name: Build the site
+        run: site/build.sh

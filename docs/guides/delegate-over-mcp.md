@@ -1,4 +1,5 @@
 ---
+title: Delegate tasks from Claude Code to sandboxed agents
 description: Let Claude Code or Codex on your host hand whole tasks to coding agents in isx sandboxes over MCP, each in a machine of its own, and review what comes back.
 ---
 

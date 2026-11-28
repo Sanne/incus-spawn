@@ -393,6 +393,11 @@ The value is creating a new machine, never disposing of one.
 **The home page** is the pitch, read once, quickly.
 It says what isx is worth, not how it works.
 
+**A page title names the page first and the brand last**: `<what the page is> — isx`, so a search result leads with the words a person searched for.
+Only the home page's title starts with `isx`.
+`site/render.js` adds the suffix to every docs and guide page and fails the build on a title that lacks it or is longer than its `TITLE_MAX`, and `SiteTitlesTest` holds the hand-written heads.
+The `og:title` and `twitter:title` of a page are its title.
+
 **The README** is the newcomer's path, and nothing else.
 Its order: the pitch, Quick Start, the core concepts at about 150 words each with a pointer to their page, the CLI table, further reading.
 Argument, reference and history go to a `docs/` page.
@@ -415,7 +420,8 @@ A page over about 2,000 words of prose has usually gained a second reader and wa
 A release note ("after upgrading, restart", "before downgrading") is never a user page's business; it goes to `docs/dev/`.
 
 **A guide** (`docs/guides/<slug>.md`, published at `isx.run/guides/<slug>`) is one task, from an installed isx to the working result.
-Its reader searched for that task, so its title is the phrase they typed, such as "Run Claude Code in an isx sandbox".
+Its reader searched for that task, so its heading is the phrase they typed, such as "Run Claude Code in an isx sandbox".
+Its front matter states its `title:`, the search title without the brand, such as "Run Claude Code in a safe sandbox", and `render.js` adds the suffix (`SiteTitlesTest`).
 It gives the commands and the template in order, and ends with how to tell that it worked.
 It links to the reference for every option and every mechanism, and never restates them: a copy ranks poorly and goes stale.
 Its front matter states its `description:`, the line a search result shows, at most 160 characters (`GuidesTest`).

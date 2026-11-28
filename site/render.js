@@ -1,8 +1,10 @@
 // Renders the documentation pages of isx.run: README.md at /docs, and every docs/*.md beside it at
 // /docs/<name> (docs/CLI.md is /docs/cli). Maintainer notes live in docs/dev/ and are not published.
 // The guides, one task each, are docs/guides/<slug>.md at /guides/<slug>, listed at /guides once
-// there are SECTION_FROM of them; each states its own description in front matter, since that line
-// is what a search result shows.
+// there are SECTION_FROM of them; each states its own title and description in front matter, since
+// those lines are what a search result shows.
+// Every page's title ends with TITLE_SUFFIX, the brand last, except the home page's, which starts
+// with it (SiteTitlesTest); the build fails on a title that does not, or is longer than TITLE_MAX.
 // Links between the Markdown files become links between the pages; any other relative link goes to
 // the file on GitHub.
 //
@@ -14,6 +16,9 @@ const { marked } = require('marked');
 
 const [root, out] = process.argv.slice(2);
 const GITHUB = 'https://github.com/Sanne/incus-spawn/blob/main/';
+const TITLE_SUFFIX = ' — isx';
+// What a search result shows of a title before it cuts it, roughly
+const TITLE_MAX = 65;
 const tpl = fs.readFileSync(path.join(root, 'site/docs.html'), 'utf8');
 
 // Every page: its source, relative to the root, and its address on the site. They are listed in
@@ -63,8 +68,10 @@ const guides = (fs.existsSync(path.join(root, GUIDES)) ? fs.readdirSync(path.joi
 for (const guide of guides) {
   const { fields, md } = frontMatter(fs.readFileSync(path.join(root, guide.src), 'utf8'));
   if (!fields.description) throw new Error(guide.src + ' has no description: in its front matter');
+  if (!fields.title) throw new Error(guide.src + ' has no title: in its front matter');
   guide.md = md;
   guide.description = fields.description;
+  guide.searchTitle = fields.title;
 }
 guides.sort((a, b) => a.name.localeCompare(b.name));
 // The guides become a section of the site, an index at /guides and a group in the sidebar, once
@@ -73,7 +80,7 @@ guides.sort((a, b) => a.name.localeCompare(b.name));
 const SECTION_FROM = 10;
 const section = guides.length >= SECTION_FROM;
 const guideIndex = {
-  src: GUIDES, url: '/guides', guide: true,
+  src: GUIDES, url: '/guides', guide: true, searchTitle: 'Guides to safe sandboxes for AI coding agents',
   description: 'Guides to isx, one task each: from an installed isx to an agent at work in a sandbox of its own.',
 };
 guideIndex.md = '# Guides\n\n' + guideIndex.description + '\n'
@@ -146,6 +153,8 @@ const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g,
 for (const page of all) {
   page.md ??= fs.readFileSync(path.join(root, page.src), 'utf8');
   page.title = (page.md.match(/^# (.*)$/m) || [, page.src])[1].replace(/[`*]/g, '');
+  // The title a search result shows: the brand goes last, so a heading's leading "isx: " is dropped
+  page.headTitle = (page.searchTitle ?? page.title).replace(/^isx: /, '') + TITLE_SUFFIX;
 }
 
 // The page's introduction, its first paragraph before any section, cut at a word to the length
@@ -237,12 +246,12 @@ for (const page of all) {
   if (page !== pages[0]) {
     const url = 'https://isx.run' + page.url;
     const desc = page.guide ? page.description : description(body);
-    html = html.replace(/<title>.*?<\/title>/, '<title>' + escape(page.title) + ' &mdash; isx</title>')
+    html = html.replace(/<title>.*?<\/title>/, '<title>' + escape(page.headTitle) + '</title>')
       .replace(/(<meta (?:name="description"|property="og:description"|name="twitter:description") content=")[^"]*/g,
         (m, attr) => desc === null ? m : attr + escape(desc))
       .replace(/(<link rel="canonical" href=")[^"]*/, '$1' + url)
       .replace(/(<meta property="og:url" content=")[^"]*/, '$1' + url)
-      .replace(/(<meta (?:property="og|name="twitter):title" content=")[^"]*/g, '$1' + escape(page.title) + ' — isx');
+      .replace(/(<meta (?:property="og|name="twitter):title" content=")[^"]*/g, '$1' + escape(page.headTitle));
     // A guide is an article, and says so to search engines in structured data
     if (page.guide && page !== guideIndex) {
       const article = {
@@ -272,3 +281,21 @@ fs.writeFileSync(path.join(out, 'llms-full.txt'), all
   .map(p => (p === pages[0] ? '' : '\n\n<!-- ' + p.src + ': https://isx.run' + p.url + ' -->\n\n')
     + p.md)
   .join(''));
+
+// Every page's title, and the titles a shared link shows, end with the brand, the home page's
+// alone starting with it, and fit in a search result. The pages copied as they are (404.html)
+// are checked here too.
+const titleProblems = [];
+for (const f of fs.readdirSync(out, { recursive: true }).filter(f => f.endsWith('.html'))) {
+  const html = fs.readFileSync(path.join(out, f), 'utf8');
+  const titles = [(html.match(/<title>(.*?)<\/title>/) || [])[1]]
+    .concat([...html.matchAll(/<meta (?:property="og|name="twitter):title" content="([^"]*)"/g)].map(m => m[1]));
+  for (const raw of titles) {
+    const title = raw === undefined ? undefined : decode(raw.replace(/&mdash;/g, '—'));
+    if (title === undefined) titleProblems.push(f + ' has no <title>');
+    else if (f === 'index.html' ? !title.startsWith('isx') : !title.endsWith(TITLE_SUFFIX)) {
+      titleProblems.push(f + "'s title \"" + title + '" does not ' + (f === 'index.html' ? 'start with isx' : 'end with "' + TITLE_SUFFIX + '"'));
+    } else if (title.length > TITLE_MAX) titleProblems.push(f + "'s title \"" + title + '" is longer than ' + TITLE_MAX + ' characters');
+  }
+}
+if (titleProblems.length) throw new Error('Page titles:\n  ' + titleProblems.join('\n  '));

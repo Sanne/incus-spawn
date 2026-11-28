@@ -1,4 +1,5 @@
 ---
+title: Contribute to Quarkus with a sandboxed AI agent
 description: Build and test Quarkus with your coding agent in an isx sandbox, and contribute within Quarkus's AI policy, where you understand and own every change you send.
 ---
 
