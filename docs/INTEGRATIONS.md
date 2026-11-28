@@ -12,29 +12,15 @@ Which way a tool connects depends on what it can do, not on a choice you make.
 | Runs a command to create a machine and another to destroy it | The tool drives isx through ordinary commands | Orca |
 | Only keeps a list of SSH machines | isx adds each instance to the tool's list, and removes it when you destroy the instance | herdr, Rex |
 
-Either way, you add the matching isx tool (`herdr`, `rex` or `orca`) to a template and build that template, as the sections below show.
+Either way, you add the matching isx tool (`herdr`, `rex` or `orca`) to a template and build that template, as the herdr and Orca guides and the Rex section below show.
 Agents still get no credentials in their instance: the proxy on your host adds the credentials to their requests, as for any branch.
 
 ## herdr
 
 [herdr](https://herdr.dev) runs agents in terminal workspaces, on your host or on SSH machines it lists.
+[Use herdr with isx sandboxes](guides/herdr.md) walks through the setup: the `herdr` tool in a template, and a branch of it.
 
-1. Install herdr on your host.
-2. Add the `herdr` tool to a template and build it:
-
-   ```yaml
-   name: tpl-herdr
-   parent: tpl-minimal
-   tools:
-     - herdr
-   ```
-
-3. Branch it: `isx branch agent-1 --from tpl-herdr`.
-
-isx adds `agent-1` to herdr as a machine when the instance first starts, and herdr starts its server in the instance.
-`herdr --machine agent-1 agent list` then reaches that server.
-When the instance is stopped, connecting to it from herdr starts it.
-
+isx adds an instance to herdr as a machine when the instance first starts, and herdr starts its server in the instance.
 When you destroy the instance, isx removes the machine from herdr.
 A machine you added to herdr yourself is never removed by isx.
 
@@ -44,13 +30,11 @@ From then on herdr can start that instance too.
 
 When isx stops the instance, it disables the machine in herdr first.
 herdr then shows the machine dimmed and does not reconnect to it, so the instance stays stopped.
-While it is disabled, `herdr --machine agent-1` refuses to reach the instance.
+While it is disabled, `herdr --machine <name>` refuses to reach the instance.
 
 Starting the instance with isx enables the machine again.
 So does enabling it in herdr, and herdr's connection then starts the instance.
 If the instance stops without isx, for example when its guest shuts down, the machine stays enabled and an open herdr starts the instance again.
-
-In the TUI, the instance's details (F3) say isx added it to herdr.
 
 ## Rex
 
@@ -84,106 +68,16 @@ In the TUI, the instance's details (F3) say isx added it to Rex.
 
 [Orca](https://github.com/stablyai/orca) can run each workspace on a machine of its own, through an environment recipe.
 A recipe is four commands: one creates the machine, and three suspend, resume and destroy it.
-isx's support for Orca is a first version: setting it up takes a few steps, which later releases will remove.
+isx ships a recipe script, `isx-orca-recipe`, and [Run Orca workspaces in isx sandboxes](guides/orca.md) walks through the setup.
 
-1. Build a template with the `orca` tool, which Orca's server needs, and with your repository cloned as the template's working directory (`workdir`):
+The script runs the commands of [Any other tool](#any-other-tool) below, with `orca` as the owner and Orca's runtime id as the workspace id.
+Each workspace gets an instance named from that id, such as `orca-3f2a6c1e0b5d`.
 
-   ```yaml
-   name: tpl-orca
-   parent: tpl-java
-   tools:
-     - orca
-   repos:
-     - url: https://github.com/you/your-project.git
-       path: ~/your-project
-   ```
-
-2. Let Orca destroy the instances it creates, in `~/.config/incus-spawn/config.yaml`.
-   The recipe also uses this permission to destroy an instance that a failed create left behind:
-
-   ```yaml
-   drivers:
-     orca:
-       destroy: true
-   ```
-
-3. Download the recipe script for your isx version into a directory on your `PATH`.
-   It needs `bash`, `jq`, and `sha256sum` or `shasum`:
-
-   ```shell
-   mkdir -p ~/.local/bin
-   curl -fsSLo ~/.local/bin/isx-orca-recipe https://raw.githubusercontent.com/Sanne/incus-spawn/v<version>/integrations/orca/isx-orca-recipe
-   chmod +x ~/.local/bin/isx-orca-recipe
-   ```
-
-   Make sure `~/.local/bin` is on the PATH of the Orca desktop app.
-
-4. Add a recipe to your repository's `orca.yaml`, naming the template:
-
-   ```yaml
-   environmentRecipes:
-     - id: isx
-       name: isx sandbox
-       create: isx-orca-recipe create --from tpl-orca
-       suspend: isx-orca-recipe suspend
-       resume: isx-orca-recipe resume
-       destroy: isx-orca-recipe destroy
-   ```
-
-5. In Orca, enable **Settings → Experimental → Cloud VM**.
-   Check that **isx sandbox** appears under **Recipes**, then select it under **Run on** when creating a worktree.
-   If it does not appear, make sure `orca.yaml` is in your repository's main checkout, not only in a worktree.
-
-   To check the setup without creating an instance:
-
-   ```shell
-   orca vm recipe doctor isx --repo-path /absolute/path/to/your/repo --json
-   ```
-
-Each workspace then gets an instance named from Orca's runtime id, such as `orca-3f2a6c1e0b5d`.
-Orca reaches the instance over SSH, adds the workspace's Git worktree under the template's workdir, and runs its agents in that worktree.
-The recipe supports Orca's worktree mode only, in which Orca makes the worktree itself.
+Destroying an instance needs `drivers: {orca: {destroy: true}}` in the isx configuration, which the script also uses to destroy an instance that a failed create left behind.
+The script supports Orca's worktree mode only, in which Orca makes the workspace's Git worktree itself, under the template's workdir.
 
 A workspace's instance gets what its template gives any branch: an instance of a [coordinator template](MCP.md#a-coordinator-in-an-instance) is a coordinator, whose agent may control other instances.
 To make workspaces that are not coordinators, name in the recipe's `--from` a child template whose `coordinator:` holds only `isx-control-capability: false`.
-
-### Faster first connections (experimental)
-
-On the first connection to each new instance, Orca uploads its server and installs Node.
-You can include them in your template instead, so new instances skip that step.
-
-1. Let Orca finish connecting to one instance.
-   In that instance, save Orca's installed server to an archive:
-
-   ```shell
-   cd ~/.orca-remote && tar -czf ~/orca-server-cache.tar.gz orcad-* runtimes/node-*
-   ```
-
-2. On your computer, copy the archive out and unpack it, replacing `INSTANCE` with that instance's name:
-
-   ```shell
-   scp INSTANCE:/home/agentuser/orca-server-cache.tar.gz .
-   mkdir -p ~/.cache/incus-spawn/orca-server-cache
-   tar -xzf orca-server-cache.tar.gz -C ~/.cache/incus-spawn/orca-server-cache
-   ```
-
-3. Run `isx templates edit tpl-orca` and change its `- orca` tool entry to the one below, adding the host resource:
-
-   ```yaml
-   tools:
-     - orca:
-         server-cache: /home/agentuser/orca-server-cache
-   host-resources:
-     - source: ~/.cache/incus-spawn/orca-server-cache
-       path: /home/agentuser/orca-server-cache
-       mode: copy
-   ```
-
-4. Run `isx build tpl-orca`.
-
-The saved server only works with the Orca version it came from.
-After you update Orca, repeat these steps.
-To go back to the default, remove `server-cache` and the host resource, then rebuild.
 
 ## Any other tool
 

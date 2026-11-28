@@ -655,7 +655,7 @@ Its next start through isx enables it.
 
 isx never adds an instance of a template built from project-local definitions.
 
-See [Driving isx from other tools](INTEGRATIONS.md#herdr).
+See [Use herdr with isx sandboxes](guides/herdr.md), and [Driving isx from other tools](INTEGRATIONS.md#herdr) for what isx does to herdr's machines.
 
 ### Rex sessions from the host's Rex
 
@@ -682,7 +682,10 @@ See [Driving isx from other tools](INTEGRATIONS.md#rex).
 ### Orca workspaces
 
 The `orca` tool adds what [Orca](https://github.com/stablyai/orca) needs to run its server in an instance: `sshd`, `tar` and `gawk`.
-See [Driving isx from other tools](INTEGRATIONS.md#orca) for the recipe that gives each Orca workspace an instance of its own.
+[Run Orca workspaces in isx sandboxes](guides/orca.md) sets up the recipe that gives each Orca workspace an instance of its own.
+
+The `orca` tool's `server-cache` parameter names a directory in the template that holds a saved Orca server, so new instances skip installing it.
+[Faster first connections](guides/orca.md#faster-first-connections-experimental) in the guide shows how to save one.
 
 ### Terminal Session Persistence (zmx)
 
