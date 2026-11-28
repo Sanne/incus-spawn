@@ -117,9 +117,12 @@ public final class InstanceDetailView {
             int w = line.width();
             if (w > maxLineWidth) maxLineWidth = w;
         }
-        int modalWidth = Math.min(maxLineWidth + 4, screen.width() - 4);
         int maxHeight = screen.height() - 2;
         int modalHeight = Math.min(contentLines.size() + 4, maxHeight);
+        // A dialog that scrolls (its frame and key row take three rows) gives its scrollbar a column
+        // of its own, so the text keeps its width
+        boolean scrolls = contentLines.size() > modalHeight - 3;
+        int modalWidth = Math.min(maxLineWidth + 4 + (scrolls ? 1 : 0), screen.width() - 4);
 
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
