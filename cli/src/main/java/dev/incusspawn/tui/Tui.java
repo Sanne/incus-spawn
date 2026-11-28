@@ -346,6 +346,7 @@ public class Tui {
         // Entering the Work tab is asking for its columns: they are read then, as on o
         if (target == View.WORK && view != View.WORK) readOverview();
         view = target;
+        refilterIfStale();
         if (!target.panels.isEmpty() && !target.shows(focusedPanel)) focusedPanel = target.panels.get(0);
     }
 
@@ -355,7 +356,10 @@ public class Tui {
      */
     void focus(Panel panel) {
         focusedPanel = panel;
-        if (!view.shows(panel)) view = panel == Panel.TEMPLATES ? View.TEMPLATES : View.INSTANCES;
+        if (!view.shows(panel)) {
+            view = panel == Panel.TEMPLATES ? View.TEMPLATES : View.INSTANCES;
+            refilterIfStale();
+        }
     }
 
     /** Tab and Shift+Tab: the other panel, which in a one-panel tab is the other such tab. */
@@ -970,6 +974,8 @@ public class Tui {
                 setStatusMessage("Failed to restart the proxy. Try: isx proxy start");
             }
             boolean repaint = needsRepaint.getAndSet(false);
+            // The event log read off the UI thread may find more for the Work tab's search
+            refilterIfStale();
             repaint |= tickLiveRefresh(tableState);
             return repaint || needsRefresh.get() || pendingStatusMessage.get() != null
                     || (warningLog.hasUnannounced() && canAnnounceWarnings())
@@ -986,7 +992,8 @@ public class Tui {
             tui.terminal().clear();
             return true;
         }
-        if (searchActive) return handleSearchEvent(key, tableState);
+        // The task picker opened from the search keeps the filter under it, and takes its own keys
+        if (searchActive && mode == Mode.BROWSE) return handleSearchEvent(key, tui, tableState);
         if (!mode.ownsDigits()) key = DigitKeys.asFunctionKey(key);
         return switch (mode) {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
@@ -3064,7 +3071,21 @@ public class Tui {
         }
     }
 
-    private boolean handleSearchEvent(KeyEvent key, TableState tableState) {
+    private boolean handleSearchEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
+        // Shift+F2 or Alt+2 joins the task of the row the filter found, so a person goes from an
+        // issue's number to its worker's conversation without leaving the search (#2736)
+        var asFunction = DigitKeys.asFunctionKey(key);
+        if (asFunction.isKey(KeyCode.F2) && asFunction.hasShift()) {
+            var selected = focusedPanel == Panel.INSTANCES ? selectedEntry(instanceTableState) : null;
+            if (selected == null) return true;
+            if (isBusy(selected)) {
+                statusMessage = busy(selected);
+                return true;
+            }
+            if (vanished(selected.name())) return true;
+            if (joinTask(selected)) tui.quit();
+            return true;
+        }
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
             deactivateSearch();
             return true;
@@ -3120,8 +3141,14 @@ public class Tui {
         templateEntries = allTemplateEntries.stream()
                 .filter(t -> matchesSearch(query, t.name(), t.description()))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        // The Work tab also finds an instance by what it shows of its work (#2736)
+        var log = view == View.WORK ? overviewLog : null;
+        filteredWith = log;
+        lastFilteredView = view;
         entries = allEntries.stream()
-                .filter(e -> matchesSearch(query, e.name(), e.parent(), e.ipv4()))
+                .filter(e -> view == View.WORK
+                        ? WorkTable.matchesSearch(query, e, log == null ? null : dev.incusspawn.command.OverviewCommand.effortOf(log, e))
+                        : matchesSearch(query, e.name(), e.parent(), e.ipv4()))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         buildTemplateRowData();
         buildRowData();
@@ -3130,6 +3157,28 @@ public class Tui {
         }
         if (instanceTableState.selected() == null || instanceTableState.selected() >= rowToEntry.size()) {
             selectFirstDataRow(instanceTableState);
+        }
+    }
+
+    /** The event log the instance filter last read, null when it read none: a newer one filters again. */
+    private dev.incusspawn.proxy.EventLogReader.Log filteredWith;
+    /** The tab the instance filter last matched for: another tab matches other fields. */
+    private View lastFilteredView;
+
+    /** Filters again when the tab or the event log changed what the search finds, keeping the selected row when it still matches. */
+    private void refilterIfStale() {
+        if (!searchActive || allTemplateEntries == null || allEntries == null) return;
+        var log = view == View.WORK ? overviewLog : null;
+        if (log == filteredWith && lastFilteredView == view) return;
+        var selected = instanceTableState == null ? null : selectedEntry(instanceTableState);
+        applySearchFilter();
+        if (selected != null) {
+            for (int i = 0; i < rowToEntry.size(); i++) {
+                if (rowToEntry.get(i) != null && rowToEntry.get(i).name().equals(selected.name())) {
+                    instanceTableState.select(i);
+                    break;
+                }
+            }
         }
     }
 
@@ -3199,7 +3248,9 @@ public class Tui {
         var model = overviewModel;
         var caches = overviewCache;
         var settled = overviewSettled;
-        var rows = entries == null ? List.<InstanceInfo>of() : List.copyOf(entries);
+        // Every instance, not only those a search left: the search may find more once the log is in
+        var listed = searchActive && allEntries != null ? allEntries : entries;
+        var rows = listed == null ? List.<InstanceInfo>of() : List.copyOf(listed);
         var running = viewportFirst(rows.stream().filter(i -> "running".equalsIgnoreCase(i.status())).toList());
         var stopped = new java.util.HashMap<String, dev.incusspawn.command.GuestRead>();
         for (var row : rows) {

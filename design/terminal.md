@@ -614,6 +614,7 @@ The search bar keeps Left and Right for its cursor.
 
 **One state, three views.**
 The selection, the marks and the search filter belong to the lists, not to a tab, so switching never loses a place.
+The Work tab finds more with the same search text, since it also matches each instance's work ("The Work tab's search finds an instance by its work").
 The focused panel is always on screen: an action that focuses the other panel, such as returning from a new branch's shell, shows the tab that draws it.
 
 **The tab bar costs one row.**
@@ -732,6 +733,18 @@ A last line the proxy has not yet ended with its newline is left for the next re
 The overview never shows a state nobody established.
 A branch shows as pushed only when GitHub's answer reported it updated (design/proxy.md "The event log", #2266).
 GitHub answers 200 even to a push whose branch it refused, a non-fast-forward or a protected one, so the proxy reads the per-branch report inside that answer.
+
+**The Work tab's search finds an instance by its work** (#2736).
+On the Work tab, `/` matches what the tab shows of each instance's work, beside the name, parent and address the Instances tab matches (`WorkTable.matchesSearch`).
+That is its purpose and `isx mcp`'s, the pull requests it opened, by `owner/repo#12` and by address, and the branches it pushed.
+A number alone, `2728` or `#2728`, names an issue or a pull request.
+It finds a pull request of that number, or that whole number in the name, a branch or a purpose, and never part of a longer number or of an address, so `27` does not find every address holding 27.
+Only what isx holds is matched: an issue named only on GitHub, such as in a claim comment, is not found, since asking GitHub on each keystroke would cost a request per instance.
+Workers name their branches and purposes after their issue, so the local fields find them.
+A search typed before the event log is read finds more once the log is in, and keeps the selected row.
+Shift+F2 or Alt+2 joins the selected row's task without leaving the search, and the search bar names that key where the context line did.
+The task picker it may open keeps the filter under it, so closing the picker returns to the narrowed rows.
+What this gives up: on the Work tab, a search for a number no longer finds it inside an address or a longer number.
 
 **The work state is read in the guest, and fails closed.**
 `WorkState` runs one fixed script in each running instance through `IncusClient.execProbe`: as agentuser, with no login shell, killed after 10 seconds, its output cut at 64 KiB.

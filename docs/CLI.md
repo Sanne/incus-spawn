@@ -536,6 +536,10 @@ With several sessions, the TUI merges them only for the instance its preview sho
 In the Work tab, Space marks rows and F8 destroys the marked ones.
 `o` on the instance list shows the same table.
 
+In the Work tab, `/` also finds an instance by its purpose, its pushed branches and the pull requests it opened.
+A number alone, such as `2728`, finds only that whole number, never part of an address.
+Shift+F2 or Alt+2 then joins the found instance's task without leaving the search.
+
 F3 also lists each pull request by its full address, as a link, and the branches the instance pushed.
 
 In `plain` and `json` it prints these fields, in this order: `name`, `status`, `purpose`, `last_used`, `model_calls`, `tokens`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `first_active`, `last_active`, `pushed_branches`, `pull_requests`, `pull_request_states`, `work_state`, `uncommitted_changes`, `unpushed_commits`, `stashes`, `repos`, `unsaved_repos`, `agent_sessions`, `headline`, `headline_from`, `last_session`, `first_ask` and `closing_message`.

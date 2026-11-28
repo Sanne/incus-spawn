@@ -696,6 +696,42 @@ class TuiCharacterisationTest {
     }
 
     @Test
+    void shiftF2OrAlt2JoinsTheTaskOfTheRowTheSearchFoundAndThePickerKeepsTheFilter() {
+        var tui = searchedMcpTui("task t1-abcd finished 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /a\n");
+        press(tui, KeyEvent.ofChar('2', KeyModifiers.ALT));
+        assertEquals(Tui.PendingAction.SHELL_WITH_COMMAND, tui.pendingAction(), "Alt+2 is Shift+F2, not typed");
+        assertEquals("mcp", tui.searchInput.text());
+        assertFalse(runner.isRunning());
+
+        tui = searchedMcpTui("task t1-abcd finished 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /a\n"
+                + "task t2-abcd finished 1700000000\nsid t2-abcd sess-2\ncwd t2-abcd /b\n");
+        press(tui, SHIFT_F2);
+        assertEquals(Tui.Mode.TASK_PICKER, tui.mode());
+        press(tui, DOWN);
+        assertEquals("mcp", tui.searchInput.text(), "the picker takes its own keys");
+        press(tui, ESC);
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        assertTrue(tui.searchActive, "closing the picker returns to the search");
+        assertEquals(List.of("mcp-box"), tui.entries.stream().map(InstanceListing.InstanceInfo::name).toList());
+    }
+
+    /** {@link #mcpTui} beside two other instances, the search narrowed to it. */
+    private Tui searchedMcpTui(String tasks) {
+        var config = branch("tpl-minimal", 30);
+        config.put(Metadata.MCP_OWNER, "alice");
+        config.put(Metadata.MCP_SESSION, "1-1");
+        var tui = tui(true, new FakeIncusDaemon().instance("mcp-box", "container", "Running", config)
+                .execOutput("prompt-1.md", tasks));
+        press(tui, TAB, KeyEvent.ofChar('/'));
+        typeText(tui, "mcp");
+        assertEquals(List.of("mcp-box"), tui.entries.stream().map(InstanceListing.InstanceInfo::name).toList());
+        var screen = TuiSnapshot.toText(TuiSnapshot.render(120, 40, tui::render));
+        assertTrue(screen.lines().anyMatch(l -> l.contains(" / mcp") && l.contains("⇧F2 Join task")),
+                "the search bar keeps the hint: " + screen);
+        return tui;
+    }
+
+    @Test
     void shiftF2OffersSeveralTasksAndRefusesOneMidTurn() {
         var tui = mcpTui("task t1-abcd running 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /a\n"
                 + "task t2-abcd finished 1700000000\nsid t2-abcd sess-2\ncwd t2-abcd /b\n");
