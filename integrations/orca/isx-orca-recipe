@@ -14,7 +14,7 @@
 # which is the template's workdir, so the template must clone the repository. The recipe needs
 #   drivers: { orca: { destroy: true } }
 # in ~/.config/incus-spawn/config.yaml. Needs bash, jq, and sha256sum or shasum on the host. See
-# docs/INTEGRATIONS.md.
+# docs/guides/orca.md.
 #
 # Stdout is Orca's: one JSON object from create and resume, nothing else. isx's own progress goes
 # to stderr, which Orca shows while it waits.

@@ -1,7 +1,7 @@
 # Driving isx from other tools
 
 Tools that run coding agents in parallel, such as Orca and herdr, can give each agent an isx instance of its own.
-This page shows how to connect them, what isx needs from any other tool, and how a program on your host is reached from instances.
+This page says what isx does with each tool, links to the guides for herdr and Orca, says what isx needs from any other tool, and shows how a program on your host is reached from instances.
 
 ## How a tool connects
 
