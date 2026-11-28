@@ -61,8 +61,13 @@ jobs:
       # Pinned: the load generator runs in this job, so a moved tag would change what it runs.
       HYPERFOIL_IMAGE: quay.io/hyperfoil/hyperfoil@sha256:caf92d80a32d81f531ef8adc1cf17e143b11c22199f0d8174d8c6bdb5dd7a918
     steps:
+      # The commit the run started on, never the ref's tip: on a dispatch the branch can move
+      # while the run waits, and jobs that cloned it apart would build different commits.
       - name: Checkout
-        run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
+        run: |
+          git init -q .
+          git fetch -q --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -168,8 +173,12 @@ jobs:
       # -Dnative.pgo=<dir> applies <dir>/cli.iprof.gz and <dir>/proxy.iprof.gz (cli/pom.xml, proxy/pom.xml)
       PGO_ARGS: ${{ matrix.pgo && format('-Dnative.pgo={0}/pgo', github.workspace) || '' }}
     steps:
+      # The run's commit, as in profiles.
       - name: Checkout
-        run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
+        run: |
+          git init -q .
+          git fetch -q --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -193,8 +202,8 @@ jobs:
           name: pgo-profiles
           path: pgo
 
-      # Each job clones the ref afresh, so a branch pushed to (or a tag moved) during the run
-      # would otherwise build one commit with another's profile.
+      # Every job checks out the run's commit, so this holds; it stays as the proof that the
+      # profile applied is the one collected for exactly this commit.
       - name: Check the profiles are this commit's
         if: matrix.pgo
         run: |
@@ -344,8 +353,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The run's commit, as in profiles.
       - name: Checkout
-        run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
+        run: |
+          git init -q .
+          git fetch -q --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -373,9 +386,16 @@ jobs:
     runs-on: ubuntu-26.04
     permissions:
       contents: write
+    env:
+      # The checkout has no remote to name the repository, and gh finds it nowhere else.
+      GH_REPO: ${{ github.repository }}
     steps:
+      # The run's commit, as in profiles.
       - name: Checkout
-        run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
+        run: |
+          git init -q .
+          git fetch -q --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -422,6 +442,11 @@ jobs:
       # checks its downloads against (#2080).
       - name: Create GitHub Release
         run: |
+          # Every job built $GITHUB_SHA, so a tag moved or deleted since the push would publish
+          # this commit's binaries under another commit's tag. The commits API peels an annotated tag.
+          TAGGED=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/tags/$GITHUB_REF_NAME" --jq .sha) || TAGGED=
+          [ "$TAGGED" = "$GITHUB_SHA" ] \
+            || { echo "::error::tag $GITHUB_REF_NAME names ${TAGGED:-no commit}, this run built $GITHUB_SHA"; exit 1; }
           set -- \
             artifacts/uber-jar/incus-spawn-runner.jar \
             artifacts/uber-jar/isx-proxy-runner.jar \
@@ -441,7 +466,7 @@ jobs:
           .github/scripts/release-sha256sums.sh SHA256SUMS "$@"
           cat SHA256SUMS
           gh release create $GITHUB_REF_NAME "$@" SHA256SUMS \
-            ${{ needs.channel.outputs.is_dev == 'true' && '--prerelease' || '' }} --generate-notes
+            ${{ needs.channel.outputs.is_dev == 'true' && '--prerelease' || '' }} --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
