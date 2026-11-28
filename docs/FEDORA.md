@@ -7,7 +7,7 @@ Some come from isx at build time, some from the `tpl-minimal` template, and some
 | What differs | Why | Where |
 | --- | --- | --- |
 | The isx CA is a system trust anchor | The host proxy signs traffic to intercepted domains with it | `update-ca-trust` |
-| Trust variables point runtimes at the system store | A runtime that ships its own root bundle does not read the system anchors | `/etc/profile.d/isx-env.sh`, `/etc/environment.d/00-isx-trust.conf` |
+| Trust variables point runtimes at the system store | A runtime that ships its own root bundle does not read the system anchors | `/etc/profile.d/isx-env.sh`, `/etc/environment.d/00-isx-trust.conf`, `/etc/systemd/system.conf.d/00-isx-trust.conf` |
 | JDK and `certifi` bundles are symlinks to the system store | A JDK or `certifi` from outside Fedora ships its own root bundle | `isx-trust-system.path`, `isx-trust-home.path`, `isx-trust` |
 | Host CAs are installed beside the isx CA | A host behind TLS inspection, or an isx inside another isx | `host-ca: { propagate: true }` in `config.yaml`, off by default |
 | `/tmp` is on disk | Instances restart often and agents clone into `/tmp`, so a `/tmp` in memory would lose their clones at each restart | `tmp.mount` masked in `tpl-minimal` |
@@ -44,6 +44,7 @@ isx does not turn off verification anywhere: every runtime still verifies chains
 ### Environment bindings
 
 Every login shell (`/etc/profile.d/isx-env.sh`) and systemd user session (`/etc/environment.d/00-isx-trust.conf`) gets these variables.
+So does every system service, through the system manager's `DefaultEnvironment=` (`/etc/systemd/system.conf.d/00-isx-trust.conf`).
 
 | Variable | Value |
 | --- | --- |
@@ -55,6 +56,9 @@ Every login shell (`/etc/profile.d/isx-env.sh`) and systemd user session (`/etc/
 A value already exported, or set by the template or a tool, takes precedence in a login shell.
 In a systemd user session any other `environment.d` file overrides isx's drop-in, because the drop-in is named `00-isx-trust.conf` and sorts first.
 `~/.config/environment.d/10-mine.conf` is such a file.
+
+For a system service, a unit's own `Environment=` overrides a variable, and so does a later `system.conf.d` file such as `10-mine.conf`.
+A change to `system.conf.d` reaches a service when the service next starts after a `systemctl daemon-reload` or a restart of the instance.
 
 Java is never bound through a variable: `JAVA_TOOL_OPTIONS` prints a "Picked up" line that breaks tools parsing `java -version`.
 

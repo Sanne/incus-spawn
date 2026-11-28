@@ -89,6 +89,25 @@ class TrustBindingsTest {
     }
 
     @Test
+    void systemServicesGetTheVariablesFromTheSystemManager() {
+        // #2748: a system service reads neither isx-env.sh nor environment.d, so Node.js in a
+        // GitHub Actions runner installed as a service rejected the proxy's certificates.
+        var incus = mock(IncusClient.class);
+        var container = recordingContainer(incus);
+
+        GuestProvisioning.writeTrustEnvironmentD(container);
+
+        var all = String.join("\n", writtenScripts(incus));
+        assertTrue(all.contains("cat > '/etc/systemd/system.conf.d/00-isx-trust.conf'"), all);
+        var line = all.lines().filter(l -> l.startsWith("DefaultEnvironment=")).findFirst().orElseThrow();
+        var assignments = List.of(line.substring("DefaultEnvironment=".length()).split(" "));
+        GuestProvisioning.TRUST_ENV.forEach((name, value) ->
+                assertTrue(assignments.contains(name + "=" + value), name + " in " + line));
+        assertEquals(GuestProvisioning.TRUST_ENV.size(), assignments.size(), line);
+        assertTrue(all.contains("[Manager]\nDefaultEnvironment="), all);
+    }
+
+    @Test
     void theTrustVariablesNameTheStoreUpdateCaTrustExtracts() {
         // ca-certificates 2026.2.90 (Fedora 44) no longer ships /etc/pki/tls/certs/ca-bundle.crt;
         // curl then fails with "(77) error adding trust anchors" in every login shell (#713).
