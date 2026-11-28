@@ -1094,6 +1094,8 @@ jobs:
           mkdir -p "$HOME/.local/bin"
           install -m 755 native-cli/incus-spawn-*-runner "$HOME/.local/bin/isx"
           install -m 755 native-proxy/incus-spawn-proxy-*-runner "$HOME/.local/bin/isx-proxy"
+          # A native isx init does not install the helper, and test-exec-stdin.sh pushes through it.
+          install -m 755 common/src/main/resources/git-remote-isx "$HOME/.local/bin/git-remote-isx"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Initialize isx
@@ -1350,6 +1352,9 @@ jobs:
           sg incus-admin -c "incus exec test-container -- bash -c '
             timeout 60 sh -c \"until systemctl is-active -q local-fs.target; do sleep 0.2; done\" &&
             test -f /tmp/isx-survives-restart'"
+
+      - name: Test an exec that outlives its stdin (git push to isx://, isx exec -i)
+        run: sg incus-admin -c "bash .github/scripts/test-exec-stdin.sh"
 
       - name: Test per-instance credential accounts
         run: |
