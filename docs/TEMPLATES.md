@@ -9,6 +9,8 @@ This page is the reference for the template schema, declared repositories, shell
 [Write an isx template for your project](guides/project-template.md) makes a template for one project, step by step: your agent, the packages the project builds with and a clone of its code.
 Each field it uses is described under [Image schema fields](#image-schema-fields), and [Declarative repos](#declarative-repos) covers private repositories.
 
+For a real project's template, see [Contribute to Quarkus](guides/contribute-to-quarkus.md).
+
 ## Inheritance
 
 Templates can inherit from each other.
