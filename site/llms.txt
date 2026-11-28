@@ -42,7 +42,7 @@ If a person asked you to install isx and set it up, follow [Install with your ag
 
 ## Guides
 
-Each guide is one task, from an installed isx to a working result.
+Each guide is one task, from an installed isx to a working result, and [the guides index](https://isx.run/guides) lists them all.
 
 - [Run Claude Code in an isx sandbox](https://isx.run/guides/claude-code): a template with your project, a machine per task, and the agent's commits fetched back to your host
 - [Run Codex CLI in an isx sandbox](https://isx.run/guides/codex-cli): Codex unconstrained in a machine of its own, with your OpenAI key or ChatGPT sign-in kept on your host, and its commits fetched back
@@ -53,6 +53,7 @@ Each guide is one task, from an installed isx to a working result.
 - [Use a local model with Ollama in an isx sandbox](https://isx.run/guides/ollama): Pi in a machine answering from a model your host's Ollama serves, through an exposed host port, with no cloud account
 - [Build and debug OpenJDK with an agent in an isx sandbox](https://isx.run/guides/openjdk): a JDK build machine with every dependency, and research within OpenJDK's policy that no AI-generated content is ever contributed
 - [Review and take an agent's commits from an isx sandbox](https://isx.run/guides/agent-commits): `isx://` git remotes, added by hand or by isx, and plain `git fetch`, `diff` and `cherry-pick`
+- [Keep agent sessions alive with zmx and isx](https://isx.run/guides/zmx): the `zmx` tool in a template, every `isx shell` entering the same session, and an agent still at work after you close the terminal
 
 ## Docs
 

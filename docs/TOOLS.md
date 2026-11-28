@@ -688,6 +688,7 @@ See [Driving isx from other tools](INTEGRATIONS.md#orca) for the recipe that giv
 
 [zmx](https://zmx.sh) provides session attach/detach for the terminal: persistent shell sessions that survive disconnections, with native scrollback and multi-client support.
 Unlike tmux, it delegates window management to your OS rather than reimplementing it.
+[Keep agent sessions alive with zmx and isx](guides/zmx.md) goes from a template to an agent that outlives a closed terminal, step by step.
 
 ```yaml
 name: tpl-zmx

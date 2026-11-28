@@ -292,6 +292,9 @@ When the instance auto-attaches to zmx or tmux, every `isx shell` enters its ses
 A name is 1 to 32 letters, digits, `-` or `_`, and does not start with `-`.
 `--no-attach` opens a plain login shell outside any session.
 
+From a host terminal that runs tmux, `isx shell` skips the session `isx` and opens a plain shell, unless you name it with `--session isx`.
+A template's [`shell-command`](TEMPLATES.md#shell-defaults) still runs in the zmx session `isx` from there.
+
 With `--task`, it opens the conversation of a task an agent [delegated over MCP](MCP.md) instead of a shell.
 The agent resumes the conversation in the directory it worked in, and leaving the conversation ends the session.
 
