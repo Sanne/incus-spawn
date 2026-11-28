@@ -114,6 +114,27 @@ fi
 nft delete table bridge isx_smoke
 echo "  PASS: bridge conntrack available (--proxy-only enforceable)"
 
+# incusd drops a frame whose source MAC is not the instance's in a netdev-family chain on the host
+# side's ingress, before the bridge learns where the MAC is (incus/0012, GHSA-48vp-j46r-q79m,
+# #2739). That needs CONFIG_NETFILTER_INGRESS and CONFIG_NF_TABLES_NETDEV, and without them every
+# filtered NIC fails to start, after which isx starts the instance with filtering off. The chain
+# is the one incusd writes, on a veth pair of the smoke test's own.
+if ! ip link add isx_smoke0 type veth peer name isx_smoke1 > /tmp/smoke-nft.log 2>&1; then
+    cat /tmp/smoke-nft.log
+    fail "cannot create a veth pair to check the nft ingress hooks on"
+fi
+if ! { nft add table netdev isx_smoke \
+        && nft add chain netdev isx_smoke srcmac '{ type filter hook ingress device "isx_smoke0" priority -100; policy accept; }' \
+        && nft add rule netdev isx_smoke srcmac ether saddr != 02:00:00:00:00:01 drop; } > /tmp/smoke-nft.log 2>&1; then
+    cat /tmp/smoke-nft.log
+    nft delete table netdev isx_smoke 2>/dev/null || true
+    ip link delete isx_smoke0 2>/dev/null || true
+    fail "kernel lacks nft ingress hooks (CONFIG_NF_TABLES_NETDEV, CONFIG_NETFILTER_INGRESS); no filtered NIC can start"
+fi
+nft delete table netdev isx_smoke
+ip link delete isx_smoke0
+echo "  PASS: nft netdev ingress hooks available (source MACs filtered before the bridge learns them)"
+
 # Rootful Podman's netavark accepts forwarded traffic by "ct mark", and nft refuses its whole
 # ruleset without connection marks (CONFIG_NF_CONNTRACK_MARK, #2003): no container in a
 # container on this kernel would start on a bridge network.
