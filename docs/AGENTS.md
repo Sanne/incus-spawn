@@ -27,6 +27,8 @@ default-action: claude
 The `claude` tool downloads the latest Claude Code binary, configures permissions for unattended agent use, and sets up authentication.
 The key or token stays on the host, and the proxy adds it to Claude Code's requests as they leave the instance.
 
+[Run Claude Code in an isx sandbox](guides/claude-code.md) goes from `isx init` to the agent's commits on your host, step by step.
+
 ### Parameters
 
 | Parameter | Default | What it does |

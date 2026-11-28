@@ -40,6 +40,12 @@ If a person asked you to install isx and set it up, follow [Install with your ag
   Your client may load it only in a new session; then do not write a client of your own to test it, but tell the person it is ready once they start you again. To check it, call `list_templates`: it lists the templates the person approved, and none before `isx mcp setup`. `list_instances` lists only instances created over MCP, so the first instance, made with `isx branch`, is not in it. `isx mcp setup` offers every template that installs a coding agent. You can `create_instance` from any template the person approved and `exec` in it, but `delegate` runs only `claude`, `codex`, `pi`, `opencode` and `antigravity`.
 - On Linux, when you are done, tell the person in these words: "If isx's tools are refused over MCP, with permission denied on the Incus socket, restart me from a new login, or log out and in again." That gives you the `incus-admin` group the root script added. On macOS there is no such group, so do not say it.
 
+## Guides
+
+Each guide is one task, from an installed isx to a working result.
+
+- [Run Claude Code in an isx sandbox](https://isx.run/guides/claude-code): a template with your project, a machine per task, and the agent's commits fetched back to your host
+
 ## Docs
 
 - [Install with your agent](https://isx.run/docs/agent-install): the prompt that has a coding agent install and set up isx, and the three steps that stay with the person
