@@ -40,6 +40,9 @@ public class StopCommand extends BaseCommand {
     /** How long a stop waits for another isx process holding the instance, as a start does. */
     Duration wait = InstanceStart.WAIT;
 
+    /** Where the guest's last reading is kept before it stops, for the overview to show while it is stopped (#2752). */
+    java.util.function.Supplier<KeptReads> kept = KeptReads::host;
+
     CommandResult stop(IncusClient incus, InstanceLockManager locks) throws InterruptedException {
         var shown = OutputFormat.oneLine(name);
         // Before a lock file is made for the name, as isx destroy checks
@@ -52,12 +55,17 @@ public class StopCommand extends BaseCommand {
             boolean stopped;
             // The status as the marked read saw it: no request of its own
             var status = new java.util.concurrent.atomic.AtomicReference<String>("");
+            var incarnation = new java.util.concurrent.atomic.AtomicReference<String>("");
             try {
                 stopped = InstanceDestroyer.stopMarkedIf(incus, name, instance -> {
                     status.set(instance.path("status").asText(""));
+                    incarnation.set(instance.path("created_at").asText(""));
                     return "Running".equals(status.get());
                     // A tool that would start it again is told first, under the mark (#2041)
-                }, () -> HostIntegration.stoppingAll(name, BuildOutput.bound()),
+                }, () -> {
+                    HostIntegration.stoppingAll(name, BuildOutput.bound());
+                    kept.get().beforeStop(incus, name, incarnation.get());
+                },
                         () -> HostIntegration.stopFailedAll(incus, name, BuildOutput.bound()));
             } catch (RuntimeException e) {
                 BuildOutput.stepBreak();

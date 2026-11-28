@@ -177,6 +177,40 @@ class IncusInstanceBackendTest {
         verify(incus).configUnset("adopted", Metadata.PENDING_OP);
     }
 
+    @org.junit.jupiter.api.io.TempDir
+    java.nio.file.Path keptDir;
+
+    @Test
+    void bothStopsReadTheGuestJustBeforeTheyStopIt() {
+        var locks = mock(InstanceLockManager.class);
+        when(locks.tryAcquire(anyString(), org.mockito.ArgumentMatchers.eq(Metadata.OP_STOPPING)))
+                .thenReturn(Optional.of(() -> { }));
+        var backend = new IncusInstanceBackend(incus, locks);
+        backend.kept = () -> new dev.incusspawn.command.KeptReads(keptDir);
+        var held = io.hyperfoil.tools.jjq.value.JqObject.builder(3)
+                .put("status", "Running")
+                .put("created_at", "2026-11-01T00:00:00Z")
+                .put("config", io.hyperfoil.tools.jjq.value.JqObject.builder(1)
+                        .put(Metadata.MCP_SESSION, "2-200").build())
+                .build();
+        when(incus.instanceMetadataOrThrow("held")).thenReturn(held);
+
+        assertTrue(backend.stopIfHeldBy("held", "2-200", java.util.Map.of()));
+        backend.stop("mine", "2026-11-01T00:00:00Z");
+
+        // Kept for the overview, which shows it while the instance is stopped (#2752)
+        var order = inOrder(incus);
+        order.verify(incus).execProbe(org.mockito.ArgumentMatchers.eq("held"), org.mockito.ArgumentMatchers.anyInt(),
+                anyString(), anyString(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        order.verify(incus).stop("held");
+        order.verify(incus).execProbe(org.mockito.ArgumentMatchers.eq("mine"), org.mockito.ArgumentMatchers.anyInt(),
+                anyString(), anyString(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        order.verify(incus).stop("mine");
+        var kept = new dev.incusspawn.command.KeptReads(keptDir);
+        org.junit.jupiter.api.Assertions.assertNotNull(kept.get("held", "2026-11-01T00:00:00Z"));
+        org.junit.jupiter.api.Assertions.assertNotNull(kept.get("mine", "2026-11-01T00:00:00Z"));
+    }
+
     @Test
     void aStopThatFailsTakesItsDormantStampBackFromARunningInstance() {
         var locks = mock(InstanceLockManager.class);

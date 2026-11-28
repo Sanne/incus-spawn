@@ -15,8 +15,16 @@ import java.util.concurrent.Executors;
  * its own section of the one script, run in its own subshell, and parsed on its own, so a session
  * read that fails or overflows never makes the work state unknown: the work section comes first,
  * and only the section the output bound cut is cut.
+ *
+ * <p>{@code at} is when the guest answered, null when it was not read. A running instance's read
+ * is kept on the host ({@link KeptReads}), and so is one made just before each stop isx makes, so
+ * a stopped instance shows the last reading of its guest with its age (#2752).
  */
-public record GuestRead(WorkState work, AgentSessions sessions) {
+public record GuestRead(WorkState work, AgentSessions sessions, java.time.Instant at) {
+
+    GuestRead(WorkState work, AgentSessions sessions) {
+        this(work, sessions, null);
+    }
 
     /**
      * The agents found but not read come first ({@link UnreadSessions}): their sections are a few
@@ -76,6 +84,14 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
         return new GuestRead(WorkState.unknown(why), AgentSessions.unknown(why));
     }
 
+    /** What the guest answered, as the exec gave it: kept as it is, and parsed when shown. */
+    record Answer(int exit, String output, boolean cut, java.time.Instant at) {
+        GuestRead parsed() {
+            var read = GuestRead.parse(exit, output, cut);
+            return new GuestRead(read.work(), read.sessions(), at);
+        }
+    }
+
     /** The script's exit and output, each section on its own. */
     static GuestRead parse(int exit, String output, boolean cut) {
         var lines = output.lines().toList();
@@ -105,16 +121,31 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
         return new GuestRead(work, AgentSessions.merge(agents, read, READERS.stream().map(AgentSessions.GuestReader::readsSessions).toList()));
     }
 
-    /** One instance: read in the guest when it runs, {@link #NOT_READ} when it does not. */
-    static GuestRead read(IncusClient incus, InstanceInfo instance) {
-        if (!"running".equalsIgnoreCase(instance.status())) return NOT_READ;
-        var out = new WorkState.Bounded(MAX_OUTPUT);
+    /**
+     * One instance: read in the guest when it runs, and kept; when it does not, the reading
+     * {@code kept} holds of it, or {@link #NOT_READ}.
+     */
+    static GuestRead read(IncusClient incus, InstanceInfo instance, KeptReads kept) {
+        var incarnation = OverviewCommand.incarnation(instance);
+        if (!"running".equalsIgnoreCase(instance.status())) {
+            var last = kept.get(instance.name(), incarnation);
+            return last == null ? NOT_READ : last;
+        }
         try {
-            int exit = incus.execProbe(instance.name(), WorkState.AGENT_UID, WorkState.AGENT_HOME, SCRIPT, out, WorkState.LIMIT);
-            return parse(exit, out.text(), out.cut);
+            var answer = ask(incus, instance.name(), WorkState.LIMIT);
+            // Kept only when it ended well, so a read killed at its limit keeps the earlier one
+            kept.put(instance.name(), incarnation, answer);
+            return answer.parsed();
         } catch (RuntimeException e) {
             return unknown("it did not answer: " + e.getMessage());
         }
+    }
+
+    /** Runs the script in the guest, killed after {@code limit}. */
+    static Answer ask(IncusClient incus, String name, java.time.Duration limit) {
+        var out = new WorkState.Bounded(MAX_OUTPUT);
+        int exit = incus.execProbe(name, WorkState.AGENT_UID, WorkState.AGENT_HOME, SCRIPT, out, limit);
+        return new Answer(exit, out.text(), out.cut, java.time.Instant.now());
     }
 
     /**
@@ -123,9 +154,9 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
      * N reads take about N/slots times one read. For 30 instances whose reads all time out that is
      * one wave on either platform, about 13 s (10 s and the 3 s kill grace).
      */
-    public static Map<String, GuestRead> readAll(IncusClient incus, List<InstanceInfo> instances) {
+    public static Map<String, GuestRead> readAll(IncusClient incus, List<InstanceInfo> instances, KeptReads kept) {
         var done = new java.util.concurrent.ConcurrentHashMap<String, GuestRead>();
-        readEach(incus, instances, done::put);
+        readEach(incus, instances, kept, done::put);
         var reads = new LinkedHashMap<String, GuestRead>();
         for (var instance : instances) reads.put(instance.name(), done.getOrDefault(instance.name(), unknown("it did not answer")));
         return reads;
@@ -137,7 +168,7 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
      * (#2625). The reads are started in the order of {@code instances}, so the first ones take the
      * first slots. Returns once every read was handed on.
      */
-    public static void readEach(IncusClient incus, List<InstanceInfo> instances,
+    public static void readEach(IncusClient incus, List<InstanceInfo> instances, KeptReads kept,
                                 java.util.function.BiConsumer<String, GuestRead> read) {
         // One operation subscription tells every read when its command ended (#2626); none is
         // opened when no instance runs, since then no read execs anything
@@ -148,7 +179,7 @@ public record GuestRead(WorkState work, AgentSessions sessions) {
                 pool.submit(() -> {
                     GuestRead guest;
                     try {
-                        guest = read(incus, instance);
+                        guest = read(incus, instance, kept);
                     } catch (RuntimeException e) {
                         guest = unknown("it did not answer: " + e.getMessage());
                     }

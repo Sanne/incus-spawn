@@ -147,12 +147,39 @@ class SessionMergeTest {
     void aStoppedInstanceShowsItsLastSummaryAndIsNeverAsked() {
         var failed = new ArrayList<String>();
         var stopped = instance("dev-2");
-        new SessionMerge.Cache(dir).put("dev-2", "2026-11-02T08:00:00Z", "fp",
+        new SessionMerge.Cache(dir).put("dev-2", "2026-11-02T08:00:00Z", "fp", SessionMerge.questionHash("q"),
                 new SessionMerge.Merged("Wrote the docs", "d", "s", "p", 2, 2, 1, Instant.parse("2026-11-02T10:00:00Z")), failed::add);
         var merged = SessionMerge.mergeAll(List.of(stopped), Map.of(), config(), model(ANSWER), new SessionMerge.Cache(dir), failed::add);
         assertEquals("Wrote the docs", merged.get("dev-2").headline());
         assertEquals(List.of(), asked);
         assertNull(new SessionMerge.Cache(dir).get("dev-2", "2026-10-01T00:00:00Z"), "another incarnation of the name has none");
+    }
+
+    @Test
+    void aStoppedInstancesKeptReadingShowsOnlyTheMergeOfItsOwnSessions() {
+        var failed = new ArrayList<String>();
+        // Merged while it ran, of the sessions it had then
+        var running = merge(List.of("dev-1"), Map.of("dev-1", guest("Fixed the parser.", "Started on the parser.")),
+                model(ANSWER), failed).get("dev-1");
+        daemon.instance("dev-1", "container", "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
+                Metadata.PARENT, "tpl", Metadata.accountKey("claude"), "personal")).createdAt("dev-1", "2026-11-01T08:00:00Z");
+        var stopped = instance("dev-1");
+        var merger = new SessionMerge.Merger(config(), model("never asked"), new SessionMerge.Cache(dir), failed::add);
+
+        var same = merger.step(stopped, guest("Fixed the parser.", "Started on the parser."));
+        assertNull(same.call(), "a stopped instance makes no model call");
+        assertEquals(running.headline(), same.known().headline(), "the merge of the sessions its kept reading holds");
+
+        // Stopped after more work: the kept reading holds a session the cached merge never saw
+        var newer = merger.step(stopped, guest("Merged PR #12.", "Fixed the parser.", "Started on the parser."));
+        assertNull(newer.call(), "still no model call");
+        assertNull(newer.known(), "an older merge is not shown for newer sessions: the newest session speaks");
+        assertEquals(1, asked.size());
+
+        // Its account is gone since: the merge of the same sessions is still its own
+        var noAccount = new SessionMerge.Merger(new SpawnConfig(), model("never asked"), new SessionMerge.Cache(dir), failed::add);
+        assertEquals(running.headline(), noAccount.step(stopped, guest("Fixed the parser.", "Started on the parser.")).known().headline(),
+                "matched on the sessions, whatever model or account merged them");
     }
 
     @Test
@@ -201,8 +228,8 @@ class SessionMergeTest {
     void theSummariesOfDestroyedInstancesArePruned() throws Exception {
         var cache = new SessionMerge.Cache(dir);
         var merged = new SessionMerge.Merged("h", "d", "s", "p", 2, 2, 0, Instant.now());
-        cache.put("dev-1", "2026-11-01T08:00:00Z", "fp", merged, f -> fail(f));
-        cache.put("old", "2026-01-01T00:00:00Z", "fp", merged, f -> fail(f));
+        cache.put("dev-1", "2026-11-01T08:00:00Z", "fp", SessionMerge.questionHash("q"), merged, f -> fail(f));
+        cache.put("old", "2026-01-01T00:00:00Z", "fp", SessionMerge.questionHash("q"), merged, f -> fail(f));
         cache.prune(List.of(instance("dev-1")));
         assertNotNull(cache.get("dev-1", "2026-11-01T08:00:00Z"));
         assertNull(cache.get("old", "2026-01-01T00:00:00Z"));

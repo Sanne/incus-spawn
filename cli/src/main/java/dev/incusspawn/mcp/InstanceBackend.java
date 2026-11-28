@@ -151,8 +151,10 @@ interface InstanceBackend {
     /**
      * Stop a running instance, as the TUI does: under its lock, marked
      * {@link dev.incusspawn.incus.Metadata#OP_STOPPING} meanwhile. Throws {@link ToolError} when another isx process holds the lock or the stop fails.
+     * {@code incarnation} is its {@link #CREATED_AT}, from the caller's read, under which its guest's
+     * reading is kept just before the stop (#2752); blank keeps none.
      */
-    void stop(String name);
+    void stop(String name, String incarnation);
 
     /**
      * Start a stopped instance as {@code isx shell} would before opening a shell: proxy check,

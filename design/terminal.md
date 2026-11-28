@@ -718,7 +718,7 @@ The log is read only when a person asks: on `isx overview`, on `o`, on entering 
 The guests and GitHub are asked on the same occasions, never on a live refresh.
 In the TUI each row is shown as soon as what it needs has arrived, never held back by the slowest guest (#2625).
 The log, the running guests and the host's config are read at once, and GitHub is asked as soon as the log is in.
-A stopped instance's row is shown at once, as `not read` with its last merged summary from the disk.
+A stopped instance's row is shown at once, with the reading kept on the host and its last merged summary, both from the disk ("A stopped instance shows its last reading").
 A running one shows its WORK as soon as its guest answers, and its merged summary when the cache holds it.
 A merge the model must make waits until the preview shows that instance ("Several sessions are merged by one model call").
 The reads of the guests whose rows are on screen are started first, so they take the first read slots.
@@ -775,9 +775,30 @@ A plain `.git` directory, not a worktree's or a reftable one, is read without as
 The agents' sessions are read at the same time as the clones, into a file removed as soon as it is open, and written after the work section, so the output keeps its order and the 64 KiB bound cuts the same section.
 The state is `unsaved` when any clone holds work, and `clean` only when every clone was read and holds none.
 A timeout, a failed exit, an answer cut short, a line that is not the script's, a count Git would not give or a 51st clone make it `unknown`.
-A stopped instance is `not read`: starting it would cost its boot and change its last use, for a question the person did not ask of it.
+A stopped instance is never started to be read: that would cost its boot and change its last use, for a question the person did not ask of it.
+It shows the reading kept on the host instead, and is `not read` only when there is none ("A stopped instance shows its last reading").
 What this gives up: a clone elsewhere, such as `/tmp` or `/workspace`, and work outside any clone are not seen.
 Every running instance is read in parallel, so the slowest one sets the wait of `isx overview`, while the TUI shows each as it answers.
+
+**A stopped instance shows its last reading** (#2752).
+A stopped instance's clones and sessions cannot change until it starts again, and every start moves its `last_used_at`.
+So the last reading of its guest stays exact for as long as it is stopped, when it was taken after its last start.
+`KeptReads` keeps that reading on the host, in `~/.cache/incus-spawn/overview-reads/`, one file per incarnation, as the merged summaries are kept.
+Two occasions write it: every read of a running guest that the overview, `o` and the Work tab make, and a read just before each stop isx makes.
+Those stops are `isx stop`, the TUI's stop and its stop before a rename, and `isx mcp`'s two stops, each after its tools are told and before the stop request.
+A rename moves the reading to the new name.
+The read before a stop is the overview's own script with a shorter limit (`KeptReads.STOP_LIMIT`), since a person waits for the stop.
+A guest that does not answer is stopped all the same, and its earlier reading stays.
+Only an answer whose script ended well (exit 0) is kept, on either occasion, so a read killed at its limit or cut short by a stop never replaces a good reading with `unknown`.
+A restart, and the stops a build, a network repair or `isx update-all` makes, read nothing, since the instance runs again or is not a person's.
+A stopped instance shows the kept reading with its age: the preview says `read 4 days ago, before it stopped`, the overview's WORK cell `clean, read 4 days ago`, and its formats `read_at`.
+When the instance started after the reading, the preview says `before its last start, so it may have changed`, the Work tab's WORK cell ends in a warning `?`, the overview's cell says `before its last start`, and the formats `read_before_last_start`.
+That happens when a stop isx did not make came after a start: a host reboot, a shutdown in the guest or a plain `incus stop`, after a start nobody looked at.
+What is kept is the guest's answer as the exec gave it, already bounded, and it is parsed again when shown, so it stays the guest's untrusted text; an answer to another version of the script is not read back.
+An overview of every instance removes the files of instances no longer listed, and the temporary files of a write a crash interrupted.
+The TUI keeps a stopped row's shown reading until the kept one is read only when it was made after the instance was created, since the readings it shows are by name.
+Reading a stopped instance's disk from the host was refused: `git status` on a clone whose `.git/config` the guest wrote runs that config's commands, such as `core.fsmonitor`, as the host user, and a VM's disk, or any disk on a Mac, is not readable from the host.
+What this gives up: each stop isx makes waits for one read of the guest, which took 0.2 to 0.8 s in the measurement of "The overview's guest read, on Linux" in docs/dev/PERFORMANCE-NOTES.md, and at most `KeptReads.STOP_LIMIT` plus the exec's kill.
 
 **Pull requests are asked about with the instance's own GitHub account** (Sanne on #2264).
 `PullRequestStates` resolves the account the proxy would use for the instance: its `account.github` stamp, else the namespace's default.
@@ -876,7 +897,10 @@ The instance details show the other three lines, pending labelled as inferred.
 Its fingerprint is a hash of the model, the prompt and the whole question, so the cache holds exactly when the model would be shown the same thing.
 That covers what the issue named: a new session or closing message changes it, and so do the clones' counts of uncommitted changes, unpushed commits and stashes.
 A commit that leaves the counts as they were, such as one pushed at once, does not; the closing messages describe it, which is what is merged.
-A stopped instance shows its last cached summary with its age, and nothing starts it to make a new one.
+A stopped instance is never merged anew, even from its kept reading: nothing starts it, and it makes no model call.
+With no kept reading it shows its last cached summary with its age.
+With one, it shows the cached summary only when that summary was made of the reading's sessions and clones, whatever model or account merged them, and otherwise the newest session's own message, so a merge of earlier sessions never stands for later work.
+The cache keeps a hash of the prompt and the question beside the fingerprint for that match, leaving out only the model, so a merge made with another prompt is not taken for a merge of these sessions.
 An overview of every instance removes the files of instances no longer listed; one filtered by `--status` removes none.
 Files are written whole through a rename and readable by the host user alone.
 At most four calls run at once in `isx overview`, which merges every instance that needs it before it prints.
@@ -887,7 +911,7 @@ A summary the cache holds is shown at once for every instance, as before.
 The cost and the wait of the lazy merge were not measured against a real Incus or a real account.
 What this gives up: the first overview after an instance's work changed waits for its call, up to the transport's two minutes; a model's summary can be wrong, and the exact columns beside it are the check.
 `untouched` is shown only when no session was found, every clone was read and holds nothing, the event log saw no activity, and every agent's sessions were read.
-So a read that failed, a stopped instance, or an opencode database that could not be read never reads as untouched.
+So a read that failed, a stopped instance with no kept reading or with one from before its last start, or an opencode database that could not be read never reads as untouched.
 Beside the newest message, DONE and the preview name such an agent as not read, since it may have worked since.
 What this gives up: a closing message can overstate what the agent finished, and WORK beside it is the check; a person's work outside an agent is not described.
 

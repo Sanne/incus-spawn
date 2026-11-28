@@ -989,7 +989,7 @@ final class MainScreen {
         for (var instance : tui.measuredRows.keySet()) {
             nameNatural = Math.max(nameNatural, Math.min(Tui.nameWidth(instance), 2 + WorkTable.NAME_MOST));
             if (reading != null && !tui.overviewAwaits(instance)) {
-                workNatural = Math.max(workNatural, CharWidth.of(WorkTable.work(reading.workOf(instance), false).text()));
+                workNatural = Math.max(workNatural, CharWidth.of(WorkTable.work(reading, instance, false).text()));
             }
         }
         var instances = new ArrayList<InstanceInfo>();
@@ -1016,7 +1016,7 @@ final class MainScreen {
             }
             var effort = log == null ? null : OverviewCommand.effortOf(log, instance);
             boolean awaits = reading == null || tui.overviewAwaits(instance);
-            work.add(WorkTable.work(awaits ? null : reading.workOf(instance), awaits));
+            work.add(awaits ? WorkTable.work(null, true) : WorkTable.work(reading, instance, false));
             var active = WorkTable.lastActive(instance, effort);
             var since = active == null ? null : java.time.Duration.between(active, now);
             idle.add(WorkTable.idle(since));

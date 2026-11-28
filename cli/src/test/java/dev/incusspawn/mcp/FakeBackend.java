@@ -196,7 +196,7 @@ class FakeBackend implements InstanceBackend {
         var held = session.equals(instance.get(Metadata.MCP_SESSION)) && !stopped.contains(name);
         if (held) {
             stamp(name, stamps);
-            stop(name);
+            stop(name, "");
         }
         instance.remove(Metadata.PENDING_OP);
         return held;
@@ -211,7 +211,7 @@ class FakeBackend implements InstanceBackend {
     }
 
     @Override
-    public void stop(String name) {
+    public void stop(String name, String incarnation) {
         stopped.add(name);
     }
 

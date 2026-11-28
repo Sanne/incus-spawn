@@ -48,8 +48,10 @@ import java.util.regex.Pattern;
  *
  * <p>The answer is cached on the host against a fingerprint of everything the model was given:
  * the closing messages and first asks, the clones' counts and the prompt. A second run pays only
- * for instances whose sessions or clones changed. A stopped instance shows its last cached
- * summary, with its age; nothing starts it.
+ * for instances whose sessions or clones changed. A stopped instance is never merged anew, and
+ * nothing starts it: with a kept reading ({@link KeptReads}) it shows the cached summary only when
+ * that was made of the reading's sessions and clones, whatever model or account merged them, and
+ * otherwise the newest session's message; with none, its last cached summary, with its age.
  *
  * <p>The model's answer is the guest's text at one remove: it is parsed in a fixed shape, scrubbed
  * and bounded like a closing message, and shown on one line. One not in that shape is not shown.
@@ -189,6 +191,14 @@ public final class SessionMerge {
         return ToolDef.sha256hex(model + "\n" + SYSTEM + "\n" + question);
     }
 
+    /**
+     * What a stopped instance's kept reading is matched on: the prompt and the question (its
+     * sessions and clones), whatever model or account merged them.
+     */
+    static String questionHash(String question) {
+        return ToolDef.sha256hex(SYSTEM + "\n" + question);
+    }
+
     private static final Pattern LABEL = Pattern.compile("^\\**(Headline|Done|State|Pending)\\**:\\**\\s*(.*)$");
 
     /**
@@ -213,8 +223,8 @@ public final class SessionMerge {
 
     /**
      * The merged summary of each instance that has one, by name: a cached one when its sessions
-     * and clones are unchanged, or a stopped instance's last; otherwise one call per instance, on
-     * its own account. {@code failed} hears a call that failed or answered out of shape.
+     * and clones are unchanged, or a stopped instance's last when nothing of it was kept; otherwise
+     * one call per running instance, on its own account. {@code failed} hears a call that failed or answered out of shape.
      */
     public static Map<String, Merged> mergeAll(List<InstanceInfo> instances, Map<String, GuestRead> guests,
                                                SpawnConfig config, Model model, Cache cache, Consumer<String> failed) {
@@ -291,8 +301,10 @@ public final class SessionMerge {
         public Step step(InstanceInfo instance, GuestRead guest) {
             var incarnation = OverviewCommand.incarnation(instance);
             if (incarnation.isEmpty()) return Step.NONE;
+            boolean running = "running".equalsIgnoreCase(instance.status());
             if (guest == null || guest.sessions().state() == AgentSessions.State.NOT_READ) {
-                if ("running".equalsIgnoreCase(instance.status())) return Step.NONE;
+                // Not read: a stopped instance shows its last summary, with its age
+                if (running) return Step.NONE;
                 var last = cache.get(instance.name(), incarnation);
                 return last == null ? Step.NONE : new Step(last.merged(), null);
             }
@@ -303,6 +315,13 @@ public final class SessionMerge {
             var fingerprint = fingerprint(target == null ? "" : target.model(), question);
             var cached = cache.get(instance.name(), incarnation);
             if (cached != null && cached.fingerprint().equals(fingerprint)) return new Step(cached.merged(), null);
+            // A stopped instance's kept reading makes no model call (#2752), and a merge of other
+            // sessions than it holds is not shown: its newest session speaks for it. It is matched
+            // on the prompt and the question, so a new model or account does not hide a merge of the same sessions
+            if (!running) {
+                return cached != null && questionHash(question).equals(cached.question())
+                        ? new Step(cached.merged(), null) : Step.NONE;
+            }
             if (target == null) return Step.NONE;
             return new Step(null, () -> {
                 try {
@@ -318,7 +337,7 @@ public final class SessionMerge {
                         failed.accept("The model's summary of " + instance.name() + "'s sessions was not in the shape asked for, so the newest session is shown.");
                         return null;
                     }
-                    cache.put(instance.name(), incarnation, fingerprint, made, failed);
+                    cache.put(instance.name(), incarnation, fingerprint, questionHash(question), made, failed);
                     return made;
                 } catch (IOException | RuntimeException e) {
                     // The message is the client's or the provider's, which never holds the key sent
@@ -342,8 +361,11 @@ public final class SessionMerge {
             return new Cache(Environment.cacheDir().resolve("overview-summaries"));
         }
 
-        /** A cached summary and the fingerprint it was made for. */
-        public record Entry(String fingerprint, Merged merged) {}
+        /**
+         * A cached summary, the fingerprint it was made for, and the {@link #questionHash} of its
+         * question (null in a summary an older isx kept).
+         */
+        public record Entry(String fingerprint, String question, Merged merged) {}
 
         static String key(String name, String incarnation) {
             return ToolDef.sha256hex(name + "\n" + incarnation);
@@ -363,18 +385,23 @@ public final class SessionMerge {
                 var fingerprint = json.pathText("fingerprint", null);
                 if (fingerprint == null || merged.headline() == null || merged.done() == null
                         || merged.current() == null || merged.pending() == null) return null;
-                return new Entry(fingerprint, merged);
+                return new Entry(fingerprint, json.pathText("question", null), merged);
             } catch (IOException | RuntimeException e) {
                 return null;
             }
         }
 
-        /** Keeps {@code merged} for the instance; {@code failed} hears why it could not be written. */
-        void put(String name, String incarnation, String fingerprint, Merged merged, Consumer<String> failed) {
-            var json = JqObject.builder(12)
+        /**
+         * Keeps {@code merged} for the instance, with its fingerprint and the {@link #questionHash}
+         * of what was merged; {@code failed} hears why it could not be written.
+         */
+        void put(String name, String incarnation, String fingerprint, String question, Merged merged, Consumer<String> failed) {
+            var builder = JqObject.builder(13)
                     .put("name", name)
                     .put("incarnation", incarnation)
                     .put("fingerprint", fingerprint)
+                    .put("question", question);
+            var json = builder
                     .put("made", merged.made().toString())
                     .put("sessions", (long) merged.sessions())
                     .put("total", (long) merged.total())
