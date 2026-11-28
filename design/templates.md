@@ -482,7 +482,7 @@ It gives up Oracle GraalVM's extra optimizations, such as profile-guided optimiz
 
 ## Tools declare the memory they need
 
-A tool's `resources.memory` says how much memory it needs (#2355): `resident`, held for as long as the tool runs, and `peak`, needed on top of that for a short while, such as an index.
+A tool's `resources.memory` says how much memory it needs (#2355): `resident`, held for as long as the tool runs, and `peak`, needed on top of that for a short while, such as an index or `graalvm`'s native build.
 Each is a size, or `{ parameter: <name>, plus: <size> }` for a need that is one of the tool's settings, such as `idea-backend`'s heap.
 Every figure comes from a measurement recorded in docs/dev/PERFORMANCE-NOTES.md "Memory a template's tools need".
 The loader refuses a size it cannot read, and a parameter the tool does not declare or whose default is missing or not a size (`ResourcesConverter`, `ToolDefValidator.invalidResources`).

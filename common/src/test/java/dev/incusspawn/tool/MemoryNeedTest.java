@@ -122,4 +122,23 @@ class MemoryNeedTest {
         need.warnIfShort(RecordingOutput.FAIL_ON_WARN, "x", need.total(), "enough", null);
         need.warnIfShort(RecordingOutput.FAIL_ON_WARN, "x", -1, "max", null);
     }
+
+    /**
+     * A native build runs short of a VM's smallest default RAM, 4 GiB on a host of up to 16 GiB,
+     * so the built-in GraalVM tool asks for more, and only while native-image runs (#2731).
+     */
+    @Test
+    void theBuiltInGraalVmAsksForMoreThanAVmsSmallestDefaultWhileItBuilds() throws Exception {
+        ToolDef graalvm;
+        try (var in = getClass().getClassLoader().getResourceAsStream("tools/graalvm.yaml")) {
+            graalvm = ToolDef.loadFromStream(in);
+        }
+        var need = MemoryNeed.of(List.of(new MemoryNeed.Declared("graalvm", graalvm.getResources(), Map.of())),
+                skipped -> fail(skipped));
+
+        assertNotNull(need);
+        var part = need.parts().getFirst();
+        assertEquals(0, part.resident(), "native-image holds its memory only while it runs");
+        assertTrue(part.peak() > 4 * GIB, "a native build needs more than a VM's smallest default: " + part.peak());
+    }
 }

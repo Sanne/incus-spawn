@@ -10,6 +10,14 @@ packages:
   - zlib-devel
   - libstdc++-static
 
+# What a native build of a mid-sized Quarkus application needed, Maven and the native-image
+# builder together (docs/dev/PERFORMANCE-NOTES.md "A GraalVM native build"). It counts Maven
+# because the maven tools declare nothing. A peak: native-image holds it only while it runs.
+# A larger project needs more.
+resources:
+  memory:
+    peak: 6656MiB
+
 # The archive unpacks to graalvm-community-<version>+<build>/, a build number the release names
 # nowhere else, so run links it to /opt/graalvm and nothing below repeats the version. The upstream
 # watch moves both pins (item graalvm).

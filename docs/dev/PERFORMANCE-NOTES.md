@@ -1489,6 +1489,33 @@ Incus reported 166 MiB for the same VM, and its QEMU process held 393 MiB of the
 On that host, a VM template installing `idea-backend` with `memory: 8g` has a figure of 9.2 GiB, rounded up to 10 GiB, and its build and template got `limits.memory` 9605MiB, the 60% cap of the host.
 Its branch got the same 9605MiB without a warning, since that is above the figure, and a branch with `--memory 4GiB` warned, naming idea-backend and suggesting `--memory 10GiB`.
 
+### A GraalVM native build (issue #2731)
+
+Measured 2026-11-28 on a Linux box (Fedora 45, x86_64, 32 threads, 51 GiB RAM) with Oracle GraalVM 25.5.5.0.3 for JDK 25, the box's own, not the built-in tool's Community Edition.
+The project was a Quarkus 4.0.1 application created with `rest-jackson`, `hibernate-orm-panache`, `jdbc-postgresql`, `hibernate-validator`, `smallrye-health` and `smallrye-openapi`, with 24,958 types and 122,177 methods reachable.
+Each run was `./mvnw package -Dnative -DskipTests`, the builder's heap set with `-Dquarkus.native.native-image-xmx`.
+
+| Builder heap | Result | native-image peak RSS | Image generation |
+|---|---|---|---|
+| unset (it took 30 GiB) | built | 7.35 GiB | 50.5 s |
+| 4g | built | 5.55 to 5.60 GiB; every Java process together, Maven's included, 6,548 MiB | 51.4 s |
+| 3g | built | 4.59 GiB | 1 min 51 s, 58% of it in GC |
+| 2560m | `GC overhead limit exceeded` | | |
+| 2g | `Java heap space` | | |
+
+Left unbounded, the builder grows into the memory it is given, so its RSS then is not what the build needs.
+At 3 GiB it builds, but spends most of its time collecting garbage.
+At 4 GiB it is as fast as unbounded, and Maven and the builder together held 6.4 GiB, so the `graalvm` tool declares a `peak` of 6656 MiB (6.5 GiB).
+With the guest baseline the figure rounds up to a 7 GiB VM.
+A build with fewer threads probably needs somewhat less, which was not measured, and a larger project needs more.
+
+The runs above capped the builder's heap, which a user's build does not.
+Without a cap, native-image's driver sizes the heap itself: 85% of the machine's memory in a container, under `CI=true`, or when less than 8 GiB is available, and otherwise the memory available, at most 30 GiB.
+So in a VM of 8 GiB or less it takes 85% of the VM's RAM.
+The same build with the built-in tool's GraalVM Community Edition 25.6.5.1, no heap set, in a cgroup limited to 7 GiB without swap, took 5.95 GiB of heap (85%), peaked at 5.02 GiB RSS and generated the image in 46.3 s, with nothing killed.
+In a 4 GiB VM the same rule gives the builder 3.4 GiB of heap, close to the 3 GiB floor above.
+That leaves too little room for its own memory beside the heap and for Maven's.
+
 ## Reading the event log with task runs booked (issue #2428)
 
 Measured 2026-11-20 on a Linux x86_64 box, JVM, `EventLogReader.read` on a synthetic full log: 80 MiB in one file, 295,825 lines, 40 instances, one task start line per 500 model calls.
