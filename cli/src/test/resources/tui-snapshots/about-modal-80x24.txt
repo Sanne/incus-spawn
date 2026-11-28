@@ -8,7 +8,7 @@
   │                                                                        █ │
   │ Copyright 2026 Sanne Grinovero                                         █ │
   │ Licensed under the Apache License 2.0                                  █ │
-  │ github.com/Sanne/incus-spawn                                           █ │
+  │ github.com/Sanne/incus-spawn                                           │ │
   │                                                                        │ │
   │ Manage isolated Incus development environments.                        │ │
   │ Templates define base images; Instances are                            │ │

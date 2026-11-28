@@ -35,6 +35,7 @@
   │   a       Credential accounts                                            │
   │   p       Edit the purpose          o            Overview                │
   │   p       On the Work tab: show or hide the preview                      │
+  │   J/K     On the Work tab: scroll the preview                            │
   │   C       Clean pool storage                                             │
   │   r       Refresh                                                        │
   │   w       Warnings                                                       │
@@ -54,7 +55,6 @@
   │   iTerm2        Settings > Profiles > Keys > General >                   │
   │                 Left Option key: Esc+                                    │
   │   Ghostty       macos-option-as-alt = true in the config                 │
-  │                                                                          │
   │  F1/Esc Close   ? AI-assisted help                                       │
   ╰──────────────────────────────────────────────────────────────────────────╯
 

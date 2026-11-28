@@ -349,6 +349,38 @@ class TuiCharacterisationTest {
         assertEquals("b-1", tui.selectedInstance().name(), "the last row gone, the cursor goes to the one above");
     }
 
+    /** A tab's count changing is something isx saw change, so its tab is tinted; a search narrowing it is not. */
+    @Test
+    void aTabWhoseCountChangedIsTintedAndASearchTintsNone() {
+        var daemon = new FakeIncusDaemon();
+        for (var name : List.of("a-1", "b-1", "c-1")) {
+            daemon.instance(name, "container", "Stopped", branch("tpl-minimal", 3 * 60 + 30));
+        }
+        var tui = tui(false, daemon);
+        org.junit.jupiter.api.Assumptions.assumeTrue(tui.theme.depth().blends());
+        java.util.function.Supplier<dev.tamboui.style.Style> tab = () -> {
+            var drawn = TuiSnapshot.render(120, 40, tui::render);
+            return drawn.get(TuiSnapshot.toText(drawn).lines().toList().get(1).indexOf("Instances"), 1).style();
+        };
+        tui.motion.start();
+        try {
+            var still = tab.get();
+            assertEquals(still, tab.get(), "nothing changed, nothing is tinted");
+
+            typeText(tui, "/a-");
+            assertEquals(still.bg(), tab.get().bg(), "a search narrows the count, which is not news");
+            press(tui, ESC);
+            assertEquals(still.bg(), tab.get().bg(), "nor is the search ending");
+
+            daemon.client().delete("c-1", true);
+            press(tui, KeyEvent.ofChar('r'));
+            assertNotEquals(still.bg(), tab.get().bg(), "the count went from 3 to 2: the tab is tinted");
+            assertTrue(tui.motion.moving());
+        } finally {
+            tui.motion.stop();
+        }
+    }
+
     /** A lasting state's word after the widest name is whole, and so is an operation's, which moves no column. */
     @Test
     void theWordAfterTheWidestNameIsNeverCutToAStub() {

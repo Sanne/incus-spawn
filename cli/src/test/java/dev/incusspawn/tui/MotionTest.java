@@ -155,6 +155,38 @@ class MotionTest {
         assertFalse(motion.frameDue(), "then none");
     }
 
+    /** Lit while the cursor keeps moving, faded once after its last key: it never flickers. */
+    @Test
+    void aSettleHoldsWhileKeysKeepComingAndFadesSoonerThanAFlash() {
+        var motion = started(null);
+        motion.settle("title");
+        motion.beginFrame();
+        motion.row("title", ROW);
+        var first = row("work-1");
+        motion.process(first);
+        var lit = first.get(0, 0).style().bg().orElseThrow();
+
+        // A held key: each move starts the fade again, so every frame is as lit as the first
+        for (int key = 0; key < 5; key++) {
+            now.addAndGet(Motion.SETTLE_MS / 2);
+            motion.settle("title");
+            motion.beginFrame();
+            motion.row("title", ROW);
+            var held = row("work-1");
+            motion.process(held);
+            assertEquals(lit, held.get(0, 0).style().bg().orElseThrow(), "held at its first strength");
+        }
+
+        now.addAndGet(Motion.SETTLE_MS);
+        motion.beginFrame();
+        motion.row("title", ROW);
+        var over = row("work-1");
+        motion.process(over);
+        assertEquals(row("work-1"), over, "gone a settle's time after the last key");
+        assertTrue(Motion.SETTLE_MS < Motion.FLASH_MS && Motion.SETTLE_STRENGTH < Motion.FLASH_STRENGTH,
+                "quieter than what isx saw change: the person caused it");
+    }
+
     @Test
     void aFlashForARowNotOnScreenDrawsNothing() {
         var motion = started(null);

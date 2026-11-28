@@ -702,6 +702,7 @@ The Instances tab still never cuts a name, since there every column but the name
 The preview shows the selected instance in full (`WorkPreview`): its state and parent, the purpose wrapped, how long it has been idle and since what, the days it was active, the tokens and model calls, each clone that holds work, every pull request with its state, every pushed branch, and what its sessions said they did.
 From 110 columns it stands beside the table, which keeps 64 cells until the preview reaches its cap of 90; on a wider terminal the table takes the rest.
 A divider runs between them from the title rule, which names the instance, to the footer rule.
+Beside the selected row the divider is heavy and in the accent, and a preview that does not all fit counts its hidden lines and scrolls with `J` and `K` ([The TUI's visual language](visual-language.md) "Layout").
 Narrower, `p` shows it under the table when the panel has eight rows for it, and on a wide terminal `p` hides it; on the Work tab F6 edits the purpose, which `p` does elsewhere.
 Whether the preview is drawn is one test (`Tui.previewDrawn`), which the context line's hint and the merge follow, so a terminal too short for it offers no key for it.
 A title longer than the table keeps all it says, and the instance's name follows it on the rule.

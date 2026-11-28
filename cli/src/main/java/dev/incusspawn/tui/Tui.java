@@ -521,9 +521,93 @@ public class Tui {
      */
     private void notePreviewed() {
         var selected = instanceTableState == null || entries == null ? null : selectedEntry(instanceTableState);
+        var shown = previewDrawn() && selected != null ? selected.name() : null;
+        if (!java.util.Objects.equals(shown, previewLanded)) {
+            previewScroll = 0;
+            // The cursor moved to another instance: the preview changed away from where the
+            // person looks, so where it changed is lit. Opening the preview lights nothing
+            if (shown != null && previewLanded != null) {
+                motion.settle(PREVIEW_TITLE_KEY);
+                motion.settle(PREVIEW_LINK_KEY);
+            }
+            previewLanded = shown;
+        }
         if (mode == Mode.INSTANCE_DETAIL && detailInstanceName != null) previewed = detailInstanceName;
-        else previewed = previewDrawn() && selected != null ? selected.name() : null;
+        else previewed = shown;
         mergePreviewed();
+    }
+
+    // --- What the Work tab's motion follows (design/visual-language.md "Motion") ---
+
+    /** Where the preview names its instance, and where the divider meets the selected row: lit when the cursor lands on another instance. */
+    static final String PREVIEW_TITLE_KEY = "preview:title";
+    static final String PREVIEW_LINK_KEY = "preview:link";
+
+    /** The key of a part of the preview, for the tint that says its value arrived or changed. */
+    static String previewKey(String part) {
+        return "preview:part:" + part;
+    }
+
+    /** The key of a tab, for the tint that says its count changed. */
+    static String tabKey(View view) {
+        return "tab:" + view;
+    }
+
+    /** The instance the preview showed after the last event, or null for none. */
+    private String previewLanded;
+    /** How far down the preview is scrolled, in lines: J and K move it, and another instance starts at its top. */
+    int previewScroll;
+    /** The furthest the preview drawn in the last frame scrolls. */
+    volatile int previewScrollMost;
+
+    /** What each part of the preview said in the last frame, and of which instance. */
+    private String previewSaidOf;
+    private Map<String, String> previewSaid = Map.of();
+
+    /**
+     * The preview of {@code instance} is drawn with these parts. A part that says something else
+     * than in the last frame, of the same instance, is tinted: its value arrived or a read
+     * changed it. Another instance's preview tints nothing, since the cursor brought it.
+     */
+    void previewSays(String instance, List<WorkPreview.Block> blocks) {
+        boolean same = instance.equals(previewSaidOf);
+        var says = new java.util.HashMap<String, String>();
+        for (var block : blocks) {
+            says.put(block.key(), block.says());
+            if (same && !block.says().equals(previewSaid.get(block.key()))) motion.flash(previewKey(block.key()));
+        }
+        previewSaidOf = instance;
+        previewSaid = says;
+    }
+
+    /** What the Work table last said of each instance, by {@code name/what}. */
+    private final Map<String, String> workSaid = new java.util.HashMap<>();
+
+    /**
+     * The Work table says {@code says} of the instance's {@code what} (its clones, its pull
+     * requests), from a finished read. When an earlier read said something else, the row is
+     * tinted. The first read of a session tints nothing.
+     */
+    void workSays(String instance, String what, String says) {
+        var before = workSaid.put(instance + "/" + what, says);
+        if (before != null && !before.equals(says)) motion.flash(MainScreen.instanceKey(instance));
+    }
+
+    /** The counts the tab bar last showed, or null while a search narrows them. */
+    private int[] tabCounts;
+
+    /** Tints a tab whose count changed since the last frame, unless a search is what changed it. */
+    private void noteTabCounts() {
+        if (searchActive) {
+            tabCounts = null;
+            return;
+        }
+        var counts = new int[] {templateEntries.size(), entries.size()};
+        if (tabCounts != null) {
+            if (tabCounts[0] != counts[0]) motion.flash(tabKey(View.TEMPLATES));
+            if (tabCounts[1] != counts[1]) motion.flash(tabKey(View.INSTANCES));
+        }
+        tabCounts = counts;
     }
 
     /**
@@ -1272,6 +1356,12 @@ public class Tui {
         // instance is doing; F6 edits the purpose there
         if (key.isChar('p') && !key.hasCtrl() && view == View.WORK) {
             previewChoice = !previewShown(lastWidth);
+            return true;
+        }
+        // J and K: the preview's text, a line down or up, where it does not all fit
+        if (view == View.WORK && previewDrawn() && !key.hasCtrl() && (key.isChar('J') || key.isChar('K'))) {
+            int to = previewScroll + (key.isChar('J') ? 1 : -1);
+            previewScroll = Math.max(0, Math.min(previewScrollMost, to));
             return true;
         }
         // With marks, F8, F7 and Shift+F7 act on the marked instances and leave the cursor row alone
@@ -2101,6 +2191,7 @@ public class Tui {
             warningLog.takeUnannounced();
         }
 
+        noteTabCounts();
         var area = frame.area();
         lastWidth = area.width();
         boolean hasStatus = statusMessage != null;

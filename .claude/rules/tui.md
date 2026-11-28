@@ -34,9 +34,12 @@ A new column says its floor, its turn to be cut and whether it is the free text 
 **Every dialog has one shape**: content from the first row inside the frame, one blank row, the keys on the last row (`ModalRenderer.confirmModalHeight` adds four to the text's lines).
 A dialog's label is `textDim` and never the accent, a list's current line is marked with `Glyphs.CURSOR`, a title names its subject in quotes, and text is wrapped, never cut at the frame.
 A spinner in a dialog is `ModalRenderer.spinner()` in `statusWarning`, never a clock of its own.
-**Motion is drawn by `Motion`, over a finished frame** (a spinner, a shimmer on the name being worked on, a tint on a row that changed).
+**Motion is drawn by `Motion`, over a finished frame** (a spinner, a shimmer on the name being worked on, a tint on what changed).
 The shimmer's band blends towards `statusWarning` and is undimmed on a dimmed row: grey to white did not show at 256 colours.
-Nothing moves in answer to a key: a dialog's fade-in was tried and read as a slower TUI (Sanne), so what a key opens is whole in its first frame.
+What a key asks for is whole in its first frame: a dialog's fade-in was tried and read as a slower TUI (Sanne), so nothing has an entrance.
+After a key, motion may only mark where its consequence landed away from the cursor, with `Motion.settle`, which holds while keys keep coming and fades once (the Work preview's title and divider, `Tui.notePreviewed`).
+`Motion.flash(key)` tints whatever area a frame registered under that key with `Motion.row`: a row, a tab (`Tui.tabKey`) or a part of the preview (`Tui.previewKey`).
+Flash only what isx saw change, never a first read: `Tui.workSays` and `Tui.previewSays` compare with what the last frame said, and a value the clock or the spinner alone changes stays out of what is compared (`WorkPreview.Block.says`).
 It runs only between `Motion.start` and `stop`, which `drawUntilQuit` calls, so a test's rendering holds still.
 It asks for frames (`Motion.FrameEvent`, 25 a second) only while something moves, so an idle TUI draws nothing; `ISX_MOTION=off` turns it off.
 `scripts/tui-demo.sh` runs the real TUI over a `FakeIncusDaemon` listing (`TuiDemo`, test scope) with no Incus, to look at a change in a real terminal.
@@ -123,6 +126,8 @@ A row with a purpose or a reference is two lines tall (`Row.height(2)`): the sec
 The table's offset then counts lines: `rowTops` places marks, row motion and second lines from the offset the table used, a row the offset cuts drawn from the top as tamboui draws it, `alignedOffset` keeps the offset at a row's first line and the whole selected row on screen, and `Tui.instanceFirstRow` is the first row shown, for `viewportFirst`.
 `ColumnFit.clipped` keeps a row's height.
 The references are `WorkTable.references`, each whole (`fitReferences`, the rest counted), the first pull request of a repository as `owner/repo#n` and later ones as `#n`, each a hyperlink span to `PullRequest.url()` (#2292).
+The divider beside the selected row is `Glyphs.LINK` on the row's fill (`MainScreen.linkSelectedRow`), the preview's title repeats the row's state glyph (`previewName`), and IDLE's colour is `WorkTable.age`.
+A preview that does not all fit ends in `WorkPreview.cutLine`, and `J` and `K` move `Tui.previewScroll`, which another instance resets.
 On the Work tab alone, `WorkPreview` draws the selected instance's preview beside the table from `WorkTable.SIDE_PREVIEW_MIN_WIDTH` (110) columns, the divider's `┴` drawn by `renderToolbar` from `MainScreen.previewDividerX`; narrower, `p` shows it under the table (`Tui.previewChoice`, `previewShown`), and there `p` never opens the purpose edit, which F6 does, and works while the instance is busy.
 `Tui.previewDrawn` (the choice, and `previewFits`, which `MainScreen` sets from the panel's room) is the one test of whether the preview is drawn, for the hint and the merge.
 `Tui.readOverview` reads the log (`eventLogReader`, an `EventLogReader.Incremental` kept for the session), the running guests (`GuestRead.readEach`, the rows on screen first, `viewportFirst`) and the config at once, then GitHub's `PullRequestStates` once the log is in (`overviewGitHub`, `overviewConfig` are the seams; `overviewSettled` keeps the merged pull requests), on `o`, on entering the Work tab and on `r` while the overview is shown, through `overviewExecutor` (a virtual thread; tests run it when they choose, `TuiOverviewTest`), never on a live refresh or in `render()`.

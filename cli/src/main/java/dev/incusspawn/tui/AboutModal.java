@@ -140,6 +140,7 @@ final class AboutModal {
                 shortcutRow("a", "Credential accounts", null, null),
                 shortcutRow("p", "Edit the purpose", "o", "Overview"),
                 shortcutRow("p", "On the Work tab: show or hide the preview", null, null),
+                shortcutRow("J/K", "On the Work tab: scroll the preview", null, null),
                 shortcutRow("C", "Clean pool storage", null, null),
                 shortcutRow("r", "Refresh", null, null),
                 shortcutRow(WarningsModal.KEY, "Warnings", null, null),
