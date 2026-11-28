@@ -7,7 +7,8 @@ set -uo pipefail
 #
 #   bench/vm-launcher-compare.sh --old=<isx> --new=<isx> [--rounds=5] [--sleep] [--out=<dir>]
 #
-# --old is an isx that runs vfkit (Homebrew's previous release, or a build of the base commit),
+# --old is an isx that runs vfkit (a development build of the base commit, or Homebrew's previous
+# release, which boots its own appliance: see below),
 # --new one with isx-vm beside it. Each round restarts the VM under each in turn, in alternating
 # order (old first in odd rounds), and measures, for each:
 #
@@ -22,6 +23,12 @@ set -uo pipefail
 #                       guest's own memory in use (idle_guest_mem_used_kb, Incus's resources);
 #                       the machine process's footprint and vmmap summaries go to
 #                       <out>/memory-<side>-<round>/, the breakdown of its resident memory
+#   idle_instances      instances running in the VM at that reading: each adds to the guest's
+#                       memory, so idle memory compares only between rounds with as many
+#   leftover_probes     probe instances of earlier rounds that this start destroyed before the
+#                       idle reading: a round whose tunnel wedged cannot destroy its own, and
+#                       one left running starts with the VM (about 130 MB each, #2579); after
+#                       a drop the VM starts again, as the memory it touched stays resident
 #   machine_fds         descriptors the machine process has open, idle (lsof's numbered rows only)
 #   branch_prompt_ms    bench/trace-branch.sh --isx: a branch to its prompt (TRACES times)
 #   exec_ms             incus exec <instance> -- true, through the VM's socket (EXECS times)
@@ -53,8 +60,8 @@ set -uo pipefail
 # A measurement: run it on a Mac that is otherwise idle, on mains power, and say where it was
 # not. It changes this Mac's VM (stops and starts it) and leaves it under the new build.
 #
-# Needs: macOS on Apple silicon, incus (the client), curl, perl, python3, and a template
-# TEMPLATE (tpl-minimal) built in the VM.
+# Needs: macOS on Apple silicon, incus (the client), curl, perl, python3, lsof, footprint, vmmap,
+# and a template TEMPLATE (tpl-minimal) built in the VM.
 
 ROUNDS=5
 SLEEP=0
@@ -165,6 +172,21 @@ SHARE_FILES="${SHARE_FILES:-40}"
 for i in $(seq 1 "$SHARE_FILES"); do echo "$i" > "$SHARE/f$i"; done
 chmod 755 "$SHARE"; chmod 644 "$SHARE"/*
 INCUS_CONF="$CONF" incus remote add isx-appliance "unix://$STATE/vm.incus.sock" > /dev/null 2>&1
+# Prints nothing when the list fails, so a failed list is no reading rather than a count of 0.
+running_instances() {
+    local states
+    states="$(INCUS_CONF="$CONF" incus list isx-appliance: -c s -f csv 2> /dev/null)" || return 0
+    printf '%s\n' "$states" | grep -c '^RUNNING$'
+}
+# drop_leftovers <isx>: destroys the probes of earlier rounds, of this run or of one that ended
+# before its cleanup (one VM, so no other run is going on), and prints how many.
+drop_leftovers() {
+    local name n=0
+    for name in $(INCUS_CONF="$CONF" incus list isx-appliance: -c n -f csv 2> /dev/null | grep -E '^compare-(old|new)-[0-9]+-[0-9]+$'); do
+        "$1" destroy "$name" --skip-confirmation > /dev/null 2>&1 && n=$((n + 1))
+    done
+    echo "$n"
+}
 
 measure() {
     local side="$1" isx="$2" round="$3" want t0 rc=0
@@ -200,6 +222,19 @@ measure() {
     else
         note "$side" "$round" appliance_replaced 0
     fi
+    # Before the idle reading: a probe left running by an earlier round would count in it.
+    local left; left="$(drop_leftovers "$isx")"
+    note "$side" "$round" leftover_probes "$left"
+    # The memory a destroyed probe touched stays resident in the machine process until the VM
+    # stops, so a VM that started with one is started again before the reading (untimed).
+    if [ "$left" -gt 0 ]; then
+        "$isx" vm stop > /dev/null 2>&1; "$isx" vm start >> "$OUT/start-$side-$round.log" 2>&1
+        t0=$(now_ms)
+        until api_up "$isx"; do
+            [ $(( $(now_ms) - t0 )) -lt 120000 ] || { say "FAIL: the API did not answer within 120 s of the restart"; return 1; }
+            sleep 0.2
+        done
+    fi
 
     # Idle: memory and CPU of both processes, descriptors of the machine's.
     sleep "$IDLE_SETTLE"
@@ -213,6 +248,8 @@ measure() {
     note "$side" "$round" idle_launcher_cpu_pct "$(python3 -c "print(round(($lc1 - $lc0) / $IDLE_WINDOW, 2))")"
     note "$side" "$round" idle_machine_cpu_pct "$(python3 -c "print(round(($mc1 - $mc0) / $IDLE_WINDOW, 2))")"
     note "$side" "$round" machine_fds "$(open_descriptors "$mp")"
+    local count; count="$(running_instances)"
+    [ -n "$count" ] && note "$side" "$round" idle_instances "$count"
     # What the machine process's resident memory is made of, read now, while it is still idle.
     local mem="$OUT/memory-$side-$round" used
     mkdir -p "$mem"
@@ -372,7 +409,7 @@ if [ "$SLEEP" = 1 ]; then
 fi
 # The VM stays under the new build.
 CURRENT="$NEW"
-switch_to new
+switch_to new && drop_leftovers "$NEW" > /dev/null
 
 echo
 echo "Mac: macOS $(sw_vers -productVersion), $(sysctl -n hw.model), $(sysctl -n hw.memsize | awk '{print $1/1073741824 " GiB"}')"
@@ -398,7 +435,9 @@ print(f"appliance: old {', '.join(sorted(old_app)) or '-'}, new {', '.join(sorte
 print(f"starts that replaced the root disk: old {old_rep}, new {new_rep}")
 # A round whose agent did not answer says nothing about which appliance ran.
 old_known, new_known = old_app - {"unknown"}, new_app - {"unknown"}
-if old_known != new_known or len(old_known) > 1:
+if not old_known and not new_known:
+    print("No round's agent said which appliance ran: whether the two builds ran one is not known.")
+elif old_known != new_known or len(old_known) > 1:
     print("The two builds did not run one appliance: the idle and guest rows compare guests as much as launchers.")
 # Higher is better for these; lower for everything else.
 higher = ("_mbs", "_accepted", "_still_open")

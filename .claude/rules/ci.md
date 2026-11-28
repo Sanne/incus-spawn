@@ -288,7 +288,7 @@ The **`kernel-mac-gate-steps`** job in `test-integration.yml` runs both scripts 
 A green CI is not evidence that the launcher's machine behaves.
 
 **The launcher is compared with vfkit on the same Mac, and no check waits for it** (#2031).
-`bench/vm-launcher-compare.sh --old=<isx> --new=<isx>` runs on a Mac, against its own VM, with an isx that runs vfkit (the previous release) and one that runs `isx-vm`, in alternating rounds (design/macos-and-vms.md "Comparing the shipped launcher with vfkit").
+`bench/vm-launcher-compare.sh --old=<isx> --new=<isx>` runs on a Mac, against its own VM, with an isx that runs vfkit (a development build of the base commit, so both boot one appliance; the previous release boots its own) and one that runs `isx-vm`, in alternating rounds (design/macos-and-vms.md "Comparing the shipped launcher with vfkit").
 It measures start, stop, idle memory and CPU, the machine process's descriptors, a branch to its prompt, exec, disk, share and network throughput in an instance, and `appliance/measure-tunnel.sh` on the VM's sockets; `--sleep` adds a minute of sleep under each, and needs `sudo -n pmset`.
 It prints a table of medians, ranges and counts, flags a new median a tenth worse, and keeps the raw values in `~/.cache/incus-spawn/launcher-compare/`.
 It is a measurement, so it counts only from a Mac that was otherwise idle; it posts nothing.
