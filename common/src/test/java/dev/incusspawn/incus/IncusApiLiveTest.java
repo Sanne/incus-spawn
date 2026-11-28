@@ -496,6 +496,32 @@ class IncusApiLiveTest {
     }
 
     @Test
+    @Timeout(30)
+    void execBidirectionalCommandOutlivesItsStdin() throws Exception {
+        // git receive-pack reads the pack, then answers. Incus 7.7 sends SIGPIPE to a command whose
+        // stdin socket ends with any status but a normal closure, so the answer was lost.
+        if (skip()) return;
+        var image = testImage();
+        if (image == null) { System.out.println("Skipping execBidirectional test: no images."); return; }
+
+        String name = "isx-stdin-test-" + System.currentTimeMillis() % 10000;
+        try {
+            createAndStartContainer(name, image);
+
+            var stdin = new java.io.ByteArrayInputStream("pack\n".repeat(1000).getBytes());
+            var stdoutBuf = new java.io.ByteArrayOutputStream();
+            var exitCode = http.execBidirectional(name,
+                    List.of("sh", "-c", "wc -l; sleep 1; echo answered"),
+                    0, 0, null, java.util.Map.of(), stdin, stdoutBuf, java.io.OutputStream.nullOutputStream());
+
+            assertEquals(0, exitCode, IncusApi::lastExecFailure);
+            assertTrue(stdoutBuf.toString().contains("answered"), "stdout: " + stdoutBuf);
+        } finally {
+            deleteContainer(name);
+        }
+    }
+
+    @Test
     void getLogReturnsContent() throws Exception {
         if (skip()) return;
         var image = testImage();

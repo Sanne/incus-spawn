@@ -86,6 +86,7 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
   A bounded exec (`execStreamWithin`) waits for a slot in `IncusApi.BOUNDED_EXECS` before it is posted (#2527, `ExecAdmissionTest`).
   `UnixSocketTransport.CONCURRENT_EXECS` slots exist: the cap less the pool's idle connections and a probe batch's subscription, divided by the four connections one exec holds, which is 62 on Linux and 36 on macOS.
   An exec opens control, stdout and stderr at once and connects and closes stdin beside them (`IncusApi.openExecSockets`, #2626); a failed handshake closes the others, and its `/wait` comes only after, so it holds at most four.
+  Never send a close frame without status 1000 (`UnixWsConnection.sendClose`): Incus 7.7 kills the command of a stdin socket that ends with any other status (design/macos-and-vms.md "macOS vsock robustness", which covers the exec path on every platform).
   Inside an `IncusClient.probeBatch()` (the overview's `GuestRead.readEach`) a bounded exec takes its end from the batch's one `/1.0/events?type=operation` subscription (`OperationWatcher`), registered right after its post, and asks `/wait` only once the subscription is lost or the command was killed.
   A probe's discarded stderr is not drained: it is closed once stdout is done (`drainThenClose`).
   An exec's limit starts once it has its slot.

@@ -100,7 +100,7 @@ interface IncusTransport {
         }
         /** Send a WebSocket ping frame (keepalive); nothing once a close frame has been sent. */
         void sendPing() throws IOException;
-        /** Send a WebSocket close frame. */
+        /** Send a WebSocket close frame, its status normal closure (1000). */
         void sendClose() throws IOException;
         @Override
         void close(); // best-effort, no throw
