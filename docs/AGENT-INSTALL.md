@@ -10,7 +10,6 @@ Paste this into the coding agent you use on your computer.
 The prompt is the same for every agent: the agent puts itself in your first template ([Agents](AGENTS.md)).
 It has been tested on a clean host with these agents: Claude Code, Codex CLI, Pi, opencode.
 
-<!-- copy -->
 ```text
 Install isx (https://isx.run) on this machine and set it up for me. I want to end up with a first isx instance branched from a template that runs the same coding agent as you, and with you able to drive isx over MCP afterwards.
 

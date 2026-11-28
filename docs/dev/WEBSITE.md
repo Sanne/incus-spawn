@@ -172,6 +172,6 @@ after these changes, with the first paint at about 0.9 s.
 
 ## Copy buttons
 
-A code block in `README.md` or `docs/*.md` gets the homepage's Copy button when a `<!-- copy -->` line comes right before its fence.
+A code block in `README.md`, `docs/*.md` or `docs/guides/*.md` gets the homepage's Copy button by the rule in `.claude/rules/writing.md` "A code block".
 `site/render.js` wraps that block in a `.copy-box`, and `site/copy.js`, shared with the homepage's install box, adds the button.
 `copy.js` is versioned by content hash like `style.css` (`build.sh`), so browsers may keep it.
