@@ -482,19 +482,30 @@ public class GuestProvisioning {
     }
 
     /**
-     * Writes {@link #TRUST_ENV} for systemd user sessions ({@code environment.d}) as plain
-     * assignments in {@code 00-isx-trust.conf}. {@code environment.d} files are applied in
-     * filename order and the last assignment wins, so the first-sorting name lets any other
-     * file (a user's {@code ~/.config/environment.d/10-*.conf}) override these defaults.
-     * ({@code NAME=${NAME:-value}} would say the same but broke rootless podman's registry
-     * pulls in the integration run.) Login shells get the same names from {@code isx-env.sh}
-     * (see {@link #writeEnvFile}).
+     * Writes {@link #TRUST_ENV} for systemd: as plain assignments in {@code environment.d}'s
+     * {@code 00-isx-trust.conf} for user sessions, and as the system manager's
+     * {@code DefaultEnvironment=} in {@code system.conf.d}'s {@code 00-isx-trust.conf} for system
+     * services, which read neither a login shell's files nor {@code environment.d} (#2748).
+     * Both directories are applied in filename order and the last assignment of a name wins, so
+     * the first-sorting name lets any other file (a user's {@code ~/.config/environment.d/10-*.conf},
+     * an admin's {@code system.conf.d/10-*.conf}) override these defaults, and a unit's own
+     * {@code Environment=} overrides the manager's. ({@code NAME=${NAME:-value}} would say the
+     * same but broke rootless podman's registry pulls in the integration run.) Login shells get
+     * the same names from {@code isx-env.sh} (see {@link #writeEnvFile}). The system manager reads
+     * its drop-in when it starts, so a branch's services have the variables from its first boot.
      */
     static void writeTrustEnvironmentD(Container container) {
         var sb = new StringBuilder();
         TRUST_ENV.forEach((name, value) -> sb.append(name).append('=').append(value).append('\n'));
-        container.writeFile("/etc/environment.d/00-isx-trust.conf", sb.toString());
+        container.writeFile(TRUST_ENVIRONMENT_D, sb.toString());
+        container.writeFile(TRUST_SYSTEM_CONF_D, "[Manager]\nDefaultEnvironment="
+                + TRUST_ENV.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue())
+                        .collect(java.util.stream.Collectors.joining(" "))
+                + "\n");
     }
+
+    static final String TRUST_ENVIRONMENT_D = "/etc/environment.d/00-isx-trust.conf";
+    static final String TRUST_SYSTEM_CONF_D = "/etc/systemd/system.conf.d/00-isx-trust.conf";
 
     /** Installs {@code isx-trust}, the one helper that applies the file bindings. */
     static void installTrustHelper(Container container) {

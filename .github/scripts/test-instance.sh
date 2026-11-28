@@ -352,9 +352,9 @@ assert "trusted MITM CA cert has Subject Key Identifier" own_mitm_ca_has_ski
 echo ""
 
 # --- 8b. Trust variables (#713) ---
-# The convention variables (SSL_CERT_FILE, CURL_CA_BUNDLE, ...) reach only login shells and
-# systemd user sessions, so the root checks above never read them. Each path must exist:
-# curl and Codex fail on a missing one instead of falling back to the system store.
+# The convention variables (SSL_CERT_FILE, CURL_CA_BUNDLE, ...) reach login shells, systemd user
+# sessions and system services, but not this exec, so the root checks above never read them.
+# Each path must exist: curl and Codex fail on a missing one instead of falling back to the system store.
 echo "[8b] Trust variables"
 TRUST_CONF=/etc/environment.d/00-isx-trust.conf
 # Each path-valued line of the drop-in, checked as root and then as a login shell sees it; every
@@ -368,6 +368,10 @@ done)
 [ -z "$bad" ] || { echo "$bad"; exit 1; }'
 assert "every path in $TRUST_CONF exists" sh -c "$TRUST_CHECK"
 assert "a login shell exports the same paths" su - agentuser -c "ISX_TRUST_CHECK_LOGIN=1; $TRUST_CHECK"
+# A system service reads neither file, so the system manager gives it the same assignments (#2748).
+assert "the system manager gives services every variable of $TRUST_CONF" \
+    sh -c 'env=$(systemctl show-environment) && while read -r l; do
+        printf "%s\n" "$env" | grep -qxF "$l" || { echo "$l missing"; exit 1; }; done < '"$TRUST_CONF"
 # A JDK unpacked by hand ships its own cacerts; isx-trust links it to the store update-ca-trust
 # extracts, which must exist (a link to a missing store leaves the JDK on its vendor roots).
 assert "isx-trust binds a JDK's cacerts to the extracted Java store" \
