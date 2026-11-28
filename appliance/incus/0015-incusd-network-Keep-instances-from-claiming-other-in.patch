@@ -1,0 +1,69 @@
+Backport of lxc/incus@75543793daa396d61e2f8d16e1e8a62c62a79c9e (stable-7.0; on main as
+5b6354a24) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739), unchanged: part of the fix
+for GHSA-fg2p-r659-c4q8. An instance on the bridge could remove or take over another instance's
+DNS name with forged DHCP messages, despite security.mac_filtering. dnsmasq now ignores the
+names DHCP clients send in managed mode, and the NIC's bridge filter drops DHCP requests whose
+client hardware address is not the NIC's. Remove this file once INCUS_VERSION is a release that
+contains the commit (the next 7.0 release; 7.0.3 is not out yet).
+
+From 75543793daa396d61e2f8d16e1e8a62c62a79c9e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Wed, 4 Nov 2026 20:03:00 -0500
+Subject: [PATCH] incusd/network: Keep instances from claiming other instances'
+ DNS names
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+dnsmasq accepted a DHCPRELEASE naming another instance's lease and then
+gave that instance's name to any client requesting it. Managed mode
+now ignores client-supplied names, and MAC-filtered NICs may only send
+DHCPv4 requests for their own hardware address.
+
+This addresses GHSA-fg2p-r659-c4q8 (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+(cherry picked from commit 75543793daa396d61e2f8d16e1e8a62c62a79c9e)
+---
+ .../server/firewall/drivers/drivers_nftables_templates.go    | 4 ++++
+ internal/server/network/driver_bridge.go                     | 5 +++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/internal/server/firewall/drivers/drivers_nftables_templates.go b/internal/server/firewall/drivers/drivers_nftables_templates.go
+index 19d3ea9fb..7b5423d50 100644
+--- a/internal/server/firewall/drivers/drivers_nftables_templates.go
++++ b/internal/server/firewall/drivers/drivers_nftables_templates.go
+@@ -227,6 +227,8 @@ chain in{{.chainSeparator}}{{.deviceLabel}} {
+ 	iifname "{{.hostName}}" ether saddr != {{.hwAddr}} drop
+ 	iifname "{{.hostName}}" ether type arp arp saddr ether != {{.hwAddr}} drop
+ 	iifname "{{.hostName}}" ether type ip6 icmpv6 type 136 @nh,528,48 != {{.hwAddrHex}} drop
++	iifname "{{.hostName}}" ether type ip ip frag-off & 0x2000 != 0 udp dport 67 drop
++	iifname "{{.hostName}}" ether type ip udp dport 67 @th,288,48 != {{.hwAddrHex}} drop
+ 	{{ end }}
+ 
+ 	{{ if .filterUnwantedFrames }}
+@@ -306,6 +308,8 @@ chain fwd{{.chainSeparator}}{{.deviceLabel}} {
+ 	iifname "{{.hostName}}" ether saddr != {{.hwAddr}} drop
+ 	iifname "{{.hostName}}" ether type arp arp saddr ether != {{.hwAddr}} drop
+ 	iifname "{{.hostName}}" ether type ip6 icmpv6 type 136 @nh,528,48 != {{.hwAddrHex}} drop
++	iifname "{{.hostName}}" ether type ip ip frag-off & 0x2000 != 0 udp dport 67 drop
++	iifname "{{.hostName}}" ether type ip udp dport 67 @th,288,48 != {{.hwAddrHex}} drop
+ 	{{ end }}
+ 
+ 	{{ if .filterUnwantedFrames }}
+diff --git a/internal/server/network/driver_bridge.go b/internal/server/network/driver_bridge.go
+index 1341df107..271092b4c 100644
+--- a/internal/server/network/driver_bridge.go
++++ b/internal/server/network/driver_bridge.go
+@@ -1959,6 +1959,11 @@ func (n *bridge) setup(oldConfig map[string]string) error {
+ 			dnsmasqCmd = append(dnsmasqCmd, "-S", fmt.Sprintf("/%s/", dnsDomain))
+ 		}
+ 
++		// Only use the generated names in managed mode, ignoring those supplied by DHCP clients.
++		if n.config["dns.mode"] == "" || n.config["dns.mode"] == "managed" {
++			dnsmasqCmd = append(dnsmasqCmd, "--dhcp-ignore-names")
++		}
++
+ 		// Don't serve the host's /etc/hosts entries.
+ 		if util.IsFalse(n.config["dns.include_hosts"]) {
+ 			dnsmasqCmd = append(dnsmasqCmd, "--no-hosts")

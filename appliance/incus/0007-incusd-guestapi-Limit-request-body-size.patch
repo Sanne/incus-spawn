@@ -1,0 +1,38 @@
+Backport of lxc/incus@a12e7d2a49bfd10cdef4217bd87f02527cd75687 (stable-7.0; on main as
+35ef104b4) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739), unchanged: part of the fix
+for GHSA-23fc-ggg4-5r2r, a guest API request body of any size, which any process in a container
+could send to make incusd run out of memory. Remove this file once INCUS_VERSION is a release
+that contains the commit (the next 7.0 release; 7.0.3 is not out yet).
+
+From a12e7d2a49bfd10cdef4217bd87f02527cd75687 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Wed, 4 Nov 2026 19:58:42 -0500
+Subject: [PATCH] incusd/guestapi: Limit request body size
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The guest API decoded request bodies with no size limit, so a guest
+could make the daemon buffer gigabytes outside its own memory limit.
+
+This addresses GHSA-23fc-ggg4-5r2r (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+---
+ cmd/incusd/dev_incus.go | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/cmd/incusd/dev_incus.go b/cmd/incusd/dev_incus.go
+index 78ea4de8e..365960d8a 100644
+--- a/cmd/incusd/dev_incus.go
++++ b/cmd/incusd/dev_incus.go
+@@ -324,7 +324,8 @@ func devIncusAPI(d *Daemon, f hoistFunc) http.Handler {
+ 		router.HandleFunc(handler.path, f(handler.f, d))
+ 	}
+ 
+-	return router
++	// Limit request body size like the main API.
++	return http.MaxBytesHandler(router, 1024*1024)
+ }
+ 
+ /*

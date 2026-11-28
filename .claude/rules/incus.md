@@ -136,6 +136,9 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
   Appliances built since #1313 have the fix: each connection is classified in its own goroutine under a 3s read deadline, so a silent one stalls nothing and incusd closes it after 3s.
   Alpine 3.24 ships incusd 7.0.0, which predates it, so `appliance/build.sh` replaces it with incusd built from the 7.0.2 LTS release's signed tarball (`INCUS_VERSION`, #2104), which has it, plus `appliance/incus/*.patch`, and records what it built in `/etc/isx-incus`; the smoke test prints that file.
   The patches are upstream `stable-7.0` security fixes 7.0.2 lacks (GHSA-v736-5xp3-jghf, GHSA-5pgx-q9xx-j3qv, GHSA-3wxw-5gh2-j2x2; the last is reachable through any crafted image, not only OCI ones); drop each once an `INCUS_VERSION` contains it.
+  Incus 7.7's batch added the fixes an instance or a crafted image reaches with no API access but isx's own (`0006` on, #2739).
+  `appliance/DESIGN.md` names which advisories are carried whole or in part, what each leaves out, and why.
+  The GHSA-48vp fix filters source MACs in a `netdev` ingress chain, so the appliance kernel needs `CONFIG_NF_TABLES_NETDEV` and `CONFIG_NETFILTER_INGRESS`, which the smoke test checks: without them every filtered start fails and isx starts it with filtering off.
   Alpine's packages stay pinned to `ALPINE_INCUS_VERSION`, so a new Alpine Incus fails the build rather than drifting.
   The rule stays, because an appliance built before #1313 is still affected.
   So no bare connect-and-close probes: `IncusApi.diagnoseVsock` sends a real `GET /1.0` (`IncusApiLossyTunnelTest` asserts the request arrives).

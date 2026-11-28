@@ -1,0 +1,91 @@
+Backport of lxc/incus@a60e93cb9aed72a63f3df4b1a08881d1da482b33 (stable-7.0; on main as
+bd894dee3) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739), unchanged: part of the fix
+for GHSA-v855-hxm9-5pwg. A null template entry in an image's metadata.yaml crashed incusd on the
+instance's next start. Remove this file once INCUS_VERSION is a release that contains the commit
+(the next 7.0 release; 7.0.3 is not out yet).
+
+From a60e93cb9aed72a63f3df4b1a08881d1da482b33 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Wed, 4 Nov 2026 20:02:21 -0500
+Subject: [PATCH] incusd: Reject template entries without a definition
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A null template in metadata.yaml was accepted by the metadata API and
+dereferenced on the next start.
+
+This addresses GHSA-v855-hxm9-5pwg (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+(cherry picked from commit a60e93cb9aed72a63f3df4b1a08881d1da482b33)
+---
+ cmd/incus-agent/templates.go                    | 4 ++++
+ cmd/incusd/instance_metadata.go                 | 7 +++++++
+ internal/server/instance/drivers/driver_lxc.go  | 4 ++++
+ internal/server/instance/drivers/driver_qemu.go | 4 ++++
+ 4 files changed, 19 insertions(+)
+
+diff --git a/cmd/incus-agent/templates.go b/cmd/incus-agent/templates.go
+index cf69b0659..734faaacb 100644
+--- a/cmd/incus-agent/templates.go
++++ b/cmd/incus-agent/templates.go
+@@ -36,6 +36,10 @@ func templatesApply(path string) ([]string, error) {
+ 	files := []string{}
+ 	for tplPath, tpl := range metadata.Templates {
+ 		err = func(tplPath string, tpl *api.ImageMetadataTemplate) error {
++			if tpl == nil {
++				return nil
++			}
++
+ 			filePath := filepath.Join(path, fmt.Sprintf("%s.out", tpl.Template))
+ 
+ 			if !util.PathExists(filePath) {
+diff --git a/cmd/incusd/instance_metadata.go b/cmd/incusd/instance_metadata.go
+index 19e60f873..1a5acd7a8 100644
+--- a/cmd/incusd/instance_metadata.go
++++ b/cmd/incusd/instance_metadata.go
+@@ -383,6 +383,13 @@ func instanceMetadataPut(d *Daemon, r *http.Request) response.Response {
+ }
+ 
+ func doInstanceMetadataUpdate(s *state.State, inst instance.Instance, metadata api.ImageMetadata, r *http.Request) response.Response {
++	// Every template needs a definition.
++	for tplPath, tpl := range metadata.Templates {
++		if tpl == nil {
++			return response.BadRequest(fmt.Errorf("Template %q has no definition", tplPath))
++		}
++	}
++
+ 	// Convert YAML.
+ 	data, err := yaml.Dump(metadata, yaml.WithV2Defaults())
+ 	if err != nil {
+diff --git a/internal/server/instance/drivers/driver_lxc.go b/internal/server/instance/drivers/driver_lxc.go
+index cd6fc69ab..af036bd3e 100644
+--- a/internal/server/instance/drivers/driver_lxc.go
++++ b/internal/server/instance/drivers/driver_lxc.go
+@@ -7781,6 +7781,10 @@ func (d *lxc) templateApplyNow(trigger instance.TemplateTrigger) error {
+ 	// Go through the templates.
+ 	for tplPath, tpl := range metadata.Templates {
+ 		err = func(tplPath string, tpl *api.ImageMetadataTemplate) error {
++			if tpl == nil {
++				return fmt.Errorf("Template %q has no definition", tplPath)
++			}
++
+ 			var w *os.File
+ 
+ 			// Check if the template should be applied now
+diff --git a/internal/server/instance/drivers/driver_qemu.go b/internal/server/instance/drivers/driver_qemu.go
+index 6627e3b8d..bdae6b284 100644
+--- a/internal/server/instance/drivers/driver_qemu.go
++++ b/internal/server/instance/drivers/driver_qemu.go
+@@ -4282,6 +4282,10 @@ func (d *qemu) templateApplyNow(trigger instance.TemplateTrigger, path string) e
+ 	// Go through the templates.
+ 	for tplPath, tpl := range metadata.Templates {
+ 		err = func(tplPath string, tpl *api.ImageMetadataTemplate) error {
++			if tpl == nil {
++				return fmt.Errorf("Template %q has no definition", tplPath)
++			}
++
+ 			var w *os.File
+ 
+ 			// Check if the template should be applied now.

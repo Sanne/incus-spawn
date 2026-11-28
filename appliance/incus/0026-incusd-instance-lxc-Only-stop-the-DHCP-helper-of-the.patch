@@ -1,0 +1,57 @@
+Backport of lxc/incus@377e450d2a7cd04fc712005d92d66cca947d6eaa (stable-7.0; on main as
+a7c0c01a3) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739), unchanged: part of the fix
+for GHSA-28m6-7v43-rr8m. Every container stop read network/dhcp.pid from the top of the
+instance's volume, which a crafted image supplies, with os.ReadFile: a symlink to /dev/zero or a
+large file there exhausted incusd's memory, and a FIFO hung the stop. It is now read only as a
+bounded regular file inside the volume, with readRegularFileInRoot from incus/0002 and 0017. A
+project-local template may import its own image. Remove this file once INCUS_VERSION is a release
+that contains the commit (the next 7.0 release; 7.0.3 is not out yet).
+
+From 377e450d2a7cd04fc712005d92d66cca947d6eaa Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Wed, 4 Nov 2026 20:14:12 -0500
+Subject: [PATCH] incusd/instance/lxc: Only stop the DHCP helper of the
+ instance
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The PID file comes from the instance volume, so an image could point it
+at another instance's helper.
+
+This addresses GHSA-28m6-7v43-rr8m (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+---
+ internal/server/instance/drivers/driver_lxc.go | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/internal/server/instance/drivers/driver_lxc.go b/internal/server/instance/drivers/driver_lxc.go
+index 175241449..728b609d0 100644
+--- a/internal/server/instance/drivers/driver_lxc.go
++++ b/internal/server/instance/drivers/driver_lxc.go
+@@ -3785,9 +3785,10 @@ func (d *lxc) Rebuild(img *api.Image, op *operations.Operation) error {
+ // stopDHCPClient kills the forknet dhcp process if any and waits for it to
+ // exit so the container's cgroup can be fully cleaned up.
+ func (d *lxc) stopDHCPClient() {
+-	pidPath := filepath.Join(d.Path(), "network", "dhcp.pid")
++	networkPath := filepath.Join(d.Path(), "network")
++	pidPath := filepath.Join(networkPath, "dhcp.pid")
+ 
+-	dhcpPIDStr, err := os.ReadFile(pidPath)
++	dhcpPIDStr, err := readRegularFileInRoot(networkPath, "dhcp.pid")
+ 	if err != nil {
+ 		return
+ 	}
+@@ -3804,9 +3805,9 @@ func (d *lxc) stopDHCPClient() {
+ 
+ 	defer func() { _ = pidFd.Close() }()
+ 
+-	// Guard against PID reuse.
++	// Guard against PID reuse and a planted PID file, the helper names the instance's network path.
+ 	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", dhcpPID))
+-	if err != nil || (!strings.HasPrefix(string(cmdline), "[incus dhcp]") && !strings.Contains(string(cmdline), "forknet\x00dhcp")) {
++	if err != nil || !strings.Contains(string(cmdline), networkPath) || (!strings.HasPrefix(string(cmdline), "[incus dhcp]") && !strings.Contains(string(cmdline), "forknet\x00dhcp")) {
+ 		return
+ 	}
+ 

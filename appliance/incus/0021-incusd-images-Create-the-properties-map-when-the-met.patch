@@ -1,0 +1,38 @@
+Backport of lxc/incus@0f31adbbb2715a7b78d25835f0c4ef9f6cb3360d (stable-7.0; on main as
+58123540f) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739), unchanged: part of the fix
+for GHSA-v855-hxm9-5pwg. An image whose metadata has no properties crashed incusd on import.
+Remove this file once INCUS_VERSION is a release that contains the commit (the next 7.0 release;
+7.0.3 is not out yet).
+
+From 0f31adbbb2715a7b78d25835f0c4ef9f6cb3360d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Wed, 4 Nov 2026 20:02:21 -0500
+Subject: [PATCH] incusd/images: Create the properties map when the metadata
+ has none
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This addresses GHSA-v855-hxm9-5pwg (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+(cherry picked from commit 0f31adbbb2715a7b78d25835f0c4ef9f6cb3360d)
+---
+ cmd/incusd/images.go | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/cmd/incusd/images.go b/cmd/incusd/images.go
+index 6204165d0..4e2e7301f 100644
+--- a/cmd/incusd/images.go
++++ b/cmd/incusd/images.go
+@@ -954,6 +954,10 @@ func getImgPostInfo(ctx context.Context, s *state.State, r *http.Request, buildd
+ 		info.Properties = imageMeta.Properties
+ 	}
+ 
++	if info.Properties == nil {
++		info.Properties = map[string]string{}
++	}
++
+ 	if len(propHeaders) > 0 {
+ 		for _, ph := range propHeaders {
+ 			p, _ := url.ParseQuery(ph)

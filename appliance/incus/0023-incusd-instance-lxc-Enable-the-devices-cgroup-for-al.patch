@@ -1,0 +1,81 @@
+Backport of lxc/incus@f8cab09b4b27341e144e4af3636a900cf2021cf3 (stable-7.0; on main as
+e8ebd25fc) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2739), unchanged: the fix for
+GHSA-f886-r3x9-fp2r. 7.0.2 sets up the devices cgroup only for privileged containers, and image
+unpacking strips device nodes only under /dev, so container root could open a block or char node
+a crafted image put elsewhere, such as the appliance's own disk. Every container now denies all
+devices but the default list, which keeps /dev/fuse and /dev/net/tun, and the ones its devices
+add. A project-local template may import its own image. Remove this file once INCUS_VERSION is a
+release that contains the commit (the next 7.0 release; 7.0.3 is not out yet).
+
+From f8cab09b4b27341e144e4af3636a900cf2021cf3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Thu, 22 Oct 2026 08:19:41 -0400
+Subject: [PATCH] incusd/instance/lxc: Enable the devices cgroup for all
+ containers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This addresses GHSA-f886-r3x9-fp2r (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+(cherry picked from commit f8cab09b4b27341e144e4af3636a900cf2021cf3)
+---
+ .../server/instance/drivers/driver_lxc.go     | 23 ++++---------------
+ 1 file changed, 5 insertions(+), 18 deletions(-)
+
+diff --git a/internal/server/instance/drivers/driver_lxc.go b/internal/server/instance/drivers/driver_lxc.go
+index af036bd3e..a9f3499d0 100644
+--- a/internal/server/instance/drivers/driver_lxc.go
++++ b/internal/server/instance/drivers/driver_lxc.go
+@@ -956,8 +956,8 @@ func (d *lxc) initLXC(config bool) (*liblxc.Container, error) {
+ 		}
+ 	}
+ 
+-	// Configure devices cgroup
+-	if d.IsPrivileged() && !d.state.OS.RunningInUserNS {
++	// Configure the devices cgroup for all containers so smuggled device nodes can't be opened.
++	if !d.state.OS.RunningInUserNS {
+ 		err = lxcSetConfigItem(cc, "lxc.cgroup2.devices.deny", "a")
+ 		if err != nil {
+ 			return nil, err
+@@ -1622,8 +1622,8 @@ func (d *lxc) deviceAddCgroupRules(cgroups []deviceConfig.RunConfigItem) error {
+ 	}
+ 
+ 	for _, rule := range cgroups {
+-		// Only apply devices cgroup rules if container is running privileged and host has devices cgroup controller.
+-		if strings.HasPrefix(rule.Key, "devices.") && (!d.isCurrentlyPrivileged() || d.state.OS.RunningInUserNS) {
++		// Devices cgroup rules need the host's devices cgroup controller.
++		if strings.HasPrefix(rule.Key, "devices.") && d.state.OS.RunningInUserNS {
+ 			continue
+ 		}
+ 
+@@ -2442,7 +2442,7 @@ func (d *lxc) startCommon() (string, []func() error, error) {
+ 		// Pass any cgroups rules into LXC.
+ 		if len(runConf.CGroups) > 0 {
+ 			for _, rule := range runConf.CGroups {
+-				if strings.HasPrefix(rule.Key, "devices.") && (!d.isCurrentlyPrivileged() || d.state.OS.RunningInUserNS) {
++				if strings.HasPrefix(rule.Key, "devices.") && d.state.OS.RunningInUserNS {
+ 					continue
+ 				}
+ 
+@@ -9321,19 +9321,6 @@ func (d *lxc) IsNesting() bool {
+ 	return util.IsTrue(d.expandedConfig["security.nesting"])
+ }
+ 
+-func (d *lxc) isCurrentlyPrivileged() bool {
+-	if !d.IsRunning() {
+-		return d.IsPrivileged()
+-	}
+-
+-	currentIdmap, err := d.CurrentIdmap()
+-	if err != nil {
+-		return d.IsPrivileged()
+-	}
+-
+-	return currentIdmap == nil
+-}
+-
+ // IsPrivileged returns if instance is privileged.
+ func (d *lxc) IsPrivileged() bool {
+ 	return util.IsTrue(d.expandedConfig["security.privileged"])
