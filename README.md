@@ -1,6 +1,6 @@
 # isx
 
-**Give your AI coding agents their own machines, not your credentials.**
+**A safe sandbox for Claude Code, Codex and other coding agents.**
 [isx.run](https://isx.run) is the website, with the full documentation.
 
 An AI agent in your terminal can read your API keys, your GitHub token, your `~/.ssh` and every repo you have checked out.
