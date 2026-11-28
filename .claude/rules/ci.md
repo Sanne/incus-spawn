@@ -376,6 +376,12 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
   Then it regenerates the guest's keys, checks strict ssh is refused, and checks `isx stop` and `isx start` pin the new ones.
   After `isx destroy` no `known_hosts` line or Host block names the instance.
   Only a real Incus runs the probe's guest script against a real sshd, so only this proves the probe carries the keys.
+- **`test-exec-stdin.sh`** (host-side): an exec must keep running after its stdin ends and return its output (#2734), the path Incus 7.7 broke with SIGPIPE (#2720).
+  It branches `tpl-minimal` and pushes random blobs, a larger pack than the push that failed in #2720, to `isx://` through `git-remote-isx`, which "Install isx" puts beside the binaries.
+  It clones, pushes back and fetches, checking each commit ID.
+  Then it runs `isx exec -i` on a command that reads its stdin, sleeps a second and prints how many bytes it read.
+  Only the git checks catch #2720: `isx exec` runs its command under `su`, which survives the SIGPIPE, so keep a check that must fail on that bug on a direct exec, as `git-remote-isx`'s is.
+  It is the only PR job that pushes to an instance or forwards stdin; `IncusApiLiveTest#execBidirectionalCommandOutlivesItsStdin` has the same shape but skips without Incus.
 - **`test-podman.sh`**: pushed into the podman container, tests rootless podman (pull, run, build).
 - **`test-project-proofs.sh`**: creates a project from an authenticated Git fixture served by `echo-server.py`, checks its selected account during pre-build and update, and checks revocation, shutdown and address release after success and failure.
   The fixture rejects clones without the synthetic selected credential, so a public repository cannot hide missing proof delivery.

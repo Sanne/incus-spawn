@@ -228,6 +228,16 @@ The Arch leg found at once that isx init needed `which`, which Arch's base syste
 - `IncusClientSmokeTest` — high-level API: pollUntilReady, shellExec, execBidirectional, execPty, runAsUser, copy, filePush, filePushRecursive (directory placement + permission preservation), login PATH
 - `BuildPipelineSmokeTest` — full buildFromScratch + buildFromParent operation sequence
 
+The live tests skip without an Incus socket, so CI never runs them, and the exec that outlives its stdin needs a real Incus to fail (#2734).
+Incus 7.7 started sending SIGPIPE to a command whose stdin socket closed without status 1000 (#2720), which killed `git receive-pack` after it read the pack.
+Only `release.yml`'s `profiles` job noticed, through the PGO flows of `bench/cli.sh`, which do not run on PRs.
+So `isx-integration-tests-native` runs `.github/scripts/test-exec-stdin.sh` on every PR, whose checks `.claude/rules/ci.md` lists.
+Only the git checks fail on Incus 7.7 without the fix: run 46137570542, of an earlier version of the script with nine checks, failed seven of them and passed the `isx exec -i` check.
+Incus sends the SIGPIPE to the exec's own process, and `isx exec` runs its command under `su - agentuser`, which survives it and waits for its child.
+`git-remote-isx` runs `git receive-pack` as the exec's process, so the push is the check that catches the bug.
+A script, not `IncusApiLiveTest` in CI: that class needs a cached test image and has flaky exec tests (#2711), and the script runs the native binaries and the shipped `git-remote-isx` as a user's push does.
+It does not run `isx mcp`'s exec with stdin, which runs its command under `su` as `isx exec` does.
+
 **Integration tests** (`mvn verify -DskipITs=false`, requires Incus):
 - `TemplateBuildIT` — builds actual images, verifies metadata, agentuser, and that the generated agent context file lands without touching the user-layer CLAUDE.md
 
