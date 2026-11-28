@@ -98,6 +98,10 @@ Orca can also check the recipe without creating an instance:
 orca vm recipe doctor isx --repo-path /absolute/path/to/your/repo --json
 ```
 
+It reports `"ok": true` with a warning for each of the four commands, "Command is not a repo-relative path": the recipe script is on your `PATH`, not in your repository, which is how isx ships it.
+
+Add `--provision` to run the recipe once: it branches an instance from your template, checks what the recipe returned, and destroys the instance again.
+
 ## Open a workspace
 
 Select isx sandbox under Run on when you create a worktree in Orca.
