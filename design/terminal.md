@@ -900,7 +900,7 @@ A commit that leaves the counts as they were, such as one pushed at once, does n
 A stopped instance is never merged anew, even from its kept reading: nothing starts it, and it makes no model call.
 With no kept reading it shows its last cached summary with its age.
 With one, it shows the cached summary only when that summary was made of the reading's sessions and clones, whatever model or account merged them, and otherwise the newest session's own message, so a merge of earlier sessions never stands for later work.
-The cache keeps a hash of the question beside the fingerprint for that match.
+The cache keeps a hash of the prompt and the question beside the fingerprint for that match, leaving out only the model, so a merge made with another prompt is not taken for a merge of these sessions.
 An overview of every instance removes the files of instances no longer listed; one filtered by `--status` removes none.
 Files are written whole through a rename and readable by the host user alone.
 At most four calls run at once in `isx overview`, which merges every instance that needs it before it prints.

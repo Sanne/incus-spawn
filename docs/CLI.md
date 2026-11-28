@@ -517,7 +517,10 @@ The same script reads the newest sessions of every coding agent isx installs in 
 
 With several sessions, one model call merges their closing messages into one line.
 DONE shows that line with how many sessions it read and how old it is.
-A stopped instance shows its last merged line.
+
+A stopped instance shows its merged line only when that line merged the sessions its kept reading holds, else its newest session's message.
+Without a kept reading, it shows its last merged line.
+
 A message or a merged line can claim more than the agent finished, so check WORK beside it.
 
 The call uses the instance's own Claude account, an API key or Vertex AI.

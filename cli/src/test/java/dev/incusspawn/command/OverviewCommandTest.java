@@ -104,7 +104,7 @@ class OverviewCommandTest {
 
     @Test
     void aStoppedInstanceShowsItsLastMergedSummaryWithItsAge() throws Exception {
-        new SessionMerge.Cache(dir.resolve("summaries")).put("dev-2", "2026-11-02T08:00:00Z", "fp",
+        new SessionMerge.Cache(dir.resolve("summaries")).put("dev-2", "2026-11-02T08:00:00Z", "fp", SessionMerge.questionHash("q"),
                 new SessionMerge.Merged("Wrote the docs", "Docs are written.", "All pushed.", "nothing reported", 2, 3, 1,
                         java.time.Instant.parse("2026-11-02T10:00:00Z")), f -> fail(f));
         var plain = overview("plain").lines().toList();

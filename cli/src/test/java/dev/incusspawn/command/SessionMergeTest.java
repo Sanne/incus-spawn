@@ -147,7 +147,7 @@ class SessionMergeTest {
     void aStoppedInstanceShowsItsLastSummaryAndIsNeverAsked() {
         var failed = new ArrayList<String>();
         var stopped = instance("dev-2");
-        new SessionMerge.Cache(dir).put("dev-2", "2026-11-02T08:00:00Z", "fp",
+        new SessionMerge.Cache(dir).put("dev-2", "2026-11-02T08:00:00Z", "fp", SessionMerge.questionHash("q"),
                 new SessionMerge.Merged("Wrote the docs", "d", "s", "p", 2, 2, 1, Instant.parse("2026-11-02T10:00:00Z")), failed::add);
         var merged = SessionMerge.mergeAll(List.of(stopped), Map.of(), config(), model(ANSWER), new SessionMerge.Cache(dir), failed::add);
         assertEquals("Wrote the docs", merged.get("dev-2").headline());
@@ -228,8 +228,8 @@ class SessionMergeTest {
     void theSummariesOfDestroyedInstancesArePruned() throws Exception {
         var cache = new SessionMerge.Cache(dir);
         var merged = new SessionMerge.Merged("h", "d", "s", "p", 2, 2, 0, Instant.now());
-        cache.put("dev-1", "2026-11-01T08:00:00Z", "fp", merged, f -> fail(f));
-        cache.put("old", "2026-01-01T00:00:00Z", "fp", merged, f -> fail(f));
+        cache.put("dev-1", "2026-11-01T08:00:00Z", "fp", SessionMerge.questionHash("q"), merged, f -> fail(f));
+        cache.put("old", "2026-01-01T00:00:00Z", "fp", SessionMerge.questionHash("q"), merged, f -> fail(f));
         cache.prune(List.of(instance("dev-1")));
         assertNotNull(cache.get("dev-1", "2026-11-01T08:00:00Z"));
         assertNull(cache.get("old", "2026-01-01T00:00:00Z"));

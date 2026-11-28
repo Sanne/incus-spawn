@@ -48,8 +48,10 @@ import java.util.regex.Pattern;
  *
  * <p>The answer is cached on the host against a fingerprint of everything the model was given:
  * the closing messages and first asks, the clones' counts and the prompt. A second run pays only
- * for instances whose sessions or clones changed. A stopped instance shows its last cached
- * summary, with its age; nothing starts it.
+ * for instances whose sessions or clones changed. A stopped instance is never merged anew, and
+ * nothing starts it: with a kept reading ({@link KeptReads}) it shows the cached summary only when
+ * that was made of the reading's sessions and clones, whatever model or account merged them, and
+ * otherwise the newest session's message; with none, its last cached summary, with its age.
  *
  * <p>The model's answer is the guest's text at one remove: it is parsed in a fixed shape, scrubbed
  * and bounded like a closing message, and shown on one line. One not in that shape is not shown.
@@ -189,9 +191,12 @@ public final class SessionMerge {
         return ToolDef.sha256hex(model + "\n" + SYSTEM + "\n" + question);
     }
 
-    /** What a stopped instance's kept reading is matched on: the sessions and clones alone, whatever model merged them. */
+    /**
+     * What a stopped instance's kept reading is matched on: the prompt and the question (its
+     * sessions and clones), whatever model or account merged them.
+     */
     static String questionHash(String question) {
-        return ToolDef.sha256hex(question);
+        return ToolDef.sha256hex(SYSTEM + "\n" + question);
     }
 
     private static final Pattern LABEL = Pattern.compile("^\\**(Headline|Done|State|Pending)\\**:\\**\\s*(.*)$");
@@ -312,7 +317,7 @@ public final class SessionMerge {
             if (cached != null && cached.fingerprint().equals(fingerprint)) return new Step(cached.merged(), null);
             // A stopped instance's kept reading makes no model call (#2752), and a merge of other
             // sessions than it holds is not shown: its newest session speaks for it. It is matched
-            // on the question alone, so a new model or account does not hide a merge of the same sessions
+            // on the prompt and the question, so a new model or account does not hide a merge of the same sessions
             if (!running) {
                 return cached != null && questionHash(question).equals(cached.question())
                         ? new Step(cached.merged(), null) : Step.NONE;
@@ -386,18 +391,16 @@ public final class SessionMerge {
             }
         }
 
-        /** Keeps {@code merged} for the instance; {@code failed} hears why it could not be written. */
-        void put(String name, String incarnation, String fingerprint, Merged merged, Consumer<String> failed) {
-            put(name, incarnation, fingerprint, null, merged, failed);
-        }
-
-        /** As {@link #put(String, String, String, Merged, Consumer)}, with the {@link #questionHash} of what was merged. */
+        /**
+         * Keeps {@code merged} for the instance, with its fingerprint and the {@link #questionHash}
+         * of what was merged; {@code failed} hears why it could not be written.
+         */
         void put(String name, String incarnation, String fingerprint, String question, Merged merged, Consumer<String> failed) {
             var builder = JqObject.builder(13)
                     .put("name", name)
                     .put("incarnation", incarnation)
-                    .put("fingerprint", fingerprint);
-            if (question != null) builder.put("question", question);
+                    .put("fingerprint", fingerprint)
+                    .put("question", question);
             var json = builder
                     .put("made", merged.made().toString())
                     .put("sessions", (long) merged.sessions())
