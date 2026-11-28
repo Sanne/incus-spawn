@@ -90,6 +90,27 @@ items:
     files:
       - common/src/main/resources/tools/starship.yaml
     fields: [description, url.x86_64, sha256.x86_64, url.aarch64, sha256.aarch64]
+  graalvm:
+    class: mechanical
+    # GraalVM 25's innovation releases only: GraalVM 26 would open an issue.
+    within: series
+    cooling: 0
+    judgement: build
+    source:
+      type: github-asset
+      repo: graalvm/graalvm-ce-builds
+      tag-prefix: graal-
+      sums: sha256-asset
+      versioned-description: true
+      # graal-25.6.5.1 ships graalvm-community-jdk-25i6-25.0.5.1_linux-x64_bin.tar.gz.
+      assets:
+        x86_64: graalvm-community-jdk-{version.1}i{version.2}-{version.1}.0.{version.3+}_linux-x64_bin.tar.gz
+        aarch64: graalvm-community-jdk-{version.1}i{version.2}-{version.1}.0.{version.3+}_linux-aarch64_bin.tar.gz
+    verify:
+      type: publisher-sums
+    files:
+      - common/src/main/resources/tools/graalvm.yaml
+    fields: [description, url.x86_64, sha256.x86_64, url.aarch64, sha256.aarch64]
   idea-index-plugin:
     # A person merges it: the plugin must fit the IDEA build idea-backend installs, which no
     # check here proves, and its release ships no sums (GitHub's digest is all there is).

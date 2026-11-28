@@ -23,6 +23,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `jasolo` | jasolo MCP server: the Java sources of dependencies, from the template's clones and `~/.m2` |
 | `maven-3` | Apache Maven |
 | `mvnd` | Apache Maven Daemon |
+| `graalvm` | GraalVM Community Edition JDK with `native-image`, for native builds |
 | `podman` | Podman container runtime configured for Testcontainers |
 | `agent-cli-tools` | `rg`, `fd`, `jq`, `yq`, `tree`, `ast-grep` and `difft`, which `antigravity` installs with it |
 | `perf` | Linux perf tools and tracing utilities for performance analysis |

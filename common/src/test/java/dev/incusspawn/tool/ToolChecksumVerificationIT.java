@@ -32,7 +32,8 @@ class ToolChecksumVerificationIT {
             "tools/maven-3.yaml",
             "tools/mvnd.yaml",
             "tools/idea-backend.yaml",
-            "tools/starship.yaml"
+            "tools/starship.yaml",
+            "tools/graalvm.yaml"
     );
 
     @Test
