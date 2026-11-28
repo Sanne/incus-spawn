@@ -497,16 +497,31 @@ public final class ProxyHealthCheck {
                     "",
                     "Or install it as a service that starts at boot:",
                     "  isx init --service");
-            case WAITING_FOR_DNS -> List.of(
-                    "The isx proxy is running, but it cannot serve instances yet.",
-                    "",
-                    "It waits for the VM to answer before it sets up DNS.",
-                    "Until then, instances cannot reach the sites it serves.",
-                    "",
-                    "VM status:     isx vm status",
-                    "Proxy status:  isx proxy status");
+            case WAITING_FOR_DNS -> waitingForDns(dev.incusspawn.Platform.isMacOS());
             case RUNNING -> List.of();
         };
+    }
+
+    /**
+     * Why a running proxy cannot serve instances yet. On macOS it waits for the VM to answer; on
+     * Linux, where there is no VM and no {@code isx vm}, it is still retrying the bridge's DNS.
+     */
+    static List<String> waitingForDns(boolean macOS) {
+        return macOS ? List.of(
+                "The isx proxy is running, but it cannot serve instances yet.",
+                "",
+                "It waits for the VM to answer before it sets up DNS.",
+                "Until then, instances cannot reach the sites it serves.",
+                "",
+                "VM status:     isx vm status",
+                "Proxy status:  isx proxy status")
+                : List.of(
+                "The isx proxy is running, but it cannot serve instances yet.",
+                "",
+                "It is still setting up the bridge's DNS through Incus.",
+                "Until then, instances cannot reach the sites it serves.",
+                "",
+                "Proxy status:  isx proxy status");
     }
 
     /** {@code status}'s refusal as a banner, through the bound output, which the TUI's log keeps. */

@@ -229,6 +229,18 @@ class ProxyHealthCheckTest {
         }
     }
 
+    /** Only macOS has a VM and an 'isx vm': Linux's text names neither (#2542). */
+    @Test
+    void waitingForDnsNamesTheVmOnlyOnMacOs() {
+        var linux = String.join("\n", ProxyHealthCheck.waitingForDns(false));
+        assertFalse(linux.contains("VM"), linux);
+        assertFalse(linux.contains("isx vm"), linux);
+        assertTrue(linux.contains("isx proxy status"), linux);
+        var macOS = String.join("\n", ProxyHealthCheck.waitingForDns(true));
+        assertTrue(macOS.contains("isx vm status"), macOS);
+        for (var line : ProxyHealthCheck.waitingForDns(true)) assertTrue(line.length() <= 60, line);
+    }
+
     @Test
     void aRunningProxyRefusesNothing() {
         assertEquals(List.of(), ProxyHealthCheck.refusal(ProxyHealthCheck.ProxyStatus.RUNNING));
