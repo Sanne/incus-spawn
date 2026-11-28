@@ -61,6 +61,10 @@ That single fault surfaced in two directions and shaped several design choices:
   Every exec fd is keepalive-pinged (each is a separate socat child that an inactivity reaper would otherwise collect on a quiet command).
   That includes stdin, which carries no output back, so an `isx ssh-proxy` session nobody types into for 180 s would otherwise lose its input (#1647).
   Its pongs are drained, and however the exec ends, its stdin socket closes with it (`StdinSocket`), even one still being opened.
+  The close frame that ends stdin carries status 1000, normal closure (`UnixWsConnection.sendClose`).
+  Incus 7.7 takes a stdin socket that ends with any other status, an empty close frame's 1005 included, for truncated input, and sends the command SIGPIPE.
+  Every Incus release since 6.0 reads status 1000 as the end of input, so the command reads its stdin to the end and keeps running.
+  A command that answers after its input ends depends on it: git ends the remote helper's stdin as soon as the pack is sent, and receive-pack answers afterwards.
   An exec or shell keepalive stops on a flag, never an interrupt (`IncusApi.Keepalive`): an interrupt that lands during a channel write closes the socket and discards output still unread in it.
   Stopping does not wait for a ping in flight either, since one can be stuck behind a stdin write the guest stopped reading.
   So the socket drops a ping that would follow its close frame (`UnixWsConnection.sendPing`).

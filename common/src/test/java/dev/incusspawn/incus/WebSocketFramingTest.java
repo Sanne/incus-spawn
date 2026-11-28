@@ -169,9 +169,27 @@ class WebSocketFramingTest {
             ws.sendPing();
         }
         var sent = written.get(5, java.util.concurrent.TimeUnit.SECONDS);
-        // One masked CLOSE with no payload: FIN|0x8, MASK|len 0, then the 4-byte key.
-        assertEquals(6, sent.length);
+        // One masked CLOSE with its 2-byte status: FIN|0x8, MASK|len 2, the 4-byte key, the status.
+        assertEquals(8, sent.length);
         assertEquals((byte) 0x88, sent[0]);
+    }
+
+    @Test
+    void closeFrameSaysNormalClosure() throws Exception {
+        // Incus 7.7 reads a stdin socket that ends with any status but 1000 as truncated input and
+        // sends the command SIGPIPE: a git push lost receive-pack's report that way. An empty close
+        // frame reads as 1005, "no status".
+        var dir = java.nio.file.Files.createTempDirectory("ws-test");
+        var socket = dir.resolve("s.sock");
+        var written = serveOnce(socket, new byte[0]);
+        try (var ws = new UnixSocketTransport(socket.toString()).openWebSocket("/x")) {
+            ws.sendClose();
+        }
+        var sent = written.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertEquals((byte) 0x88, sent[0], "a final CLOSE frame");
+        assertEquals((byte) 0x82, sent[1], "masked, with a 2-byte payload");
+        int status = ((sent[6] ^ sent[2]) & 0xFF) << 8 | ((sent[7] ^ sent[3]) & 0xFF);
+        assertEquals(1000, status, "the close status is normal closure");
     }
 
     @Test

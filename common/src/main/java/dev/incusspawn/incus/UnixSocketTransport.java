@@ -40,6 +40,9 @@ class UnixSocketTransport implements IncusTransport {
     private static final int WS_CLOSE  = 0x8;
     private static final int WS_PING   = 0x9;
     private static final int WS_PONG   = 0xA;
+    // A close frame's status, 1000: Incus 7.7 takes a stdin socket ending with any other, an empty
+    // close frame's 1005 included, as truncated input and sends the command SIGPIPE.
+    private static final byte[] NORMAL_CLOSURE = {0x03, (byte) 0xE8};
     // WebSocket masking is not a security mechanism (RFC 6455 §10.3 — it prevents
     // proxy confusion, not attacks). ThreadLocalRandom is sufficient and avoids
     // the GraalVM native-image issue with SecureRandom static fields captured at
@@ -778,7 +781,7 @@ class UnixSocketTransport implements IncusTransport {
         public void sendClose() throws IOException {
             synchronized (writeLock) {
                 closeSent = true;
-                send(WS_CLOSE, new byte[0], 0, 0);
+                send(WS_CLOSE, NORMAL_CLOSURE, 0, NORMAL_CLOSURE.length);
             }
         }
 
